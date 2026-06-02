@@ -57,7 +57,7 @@ def test_english_mode_generates_english_config_values(tmp_path):
                 "--role",
                 "strategy_office",
                 "--industry",
-                "solar",
+                "finance",
                 "--title",
                 "Weekly Solar Industry Brief",
                 "--audience",
@@ -162,7 +162,7 @@ def test_llm_decide_source_profile_generates_agent_policy(tmp_path):
         "--language", "zh-CN",
         "--company", "某公司",
         "--role", "strategy_office",
-        "--industry", "solar",
+        "--industry", "finance",
         "--audience", "management",
         "--source-profile", "llm_decide",
     ]) == 0

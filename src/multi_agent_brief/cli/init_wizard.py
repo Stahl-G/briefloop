@@ -115,7 +115,7 @@ class InitProfile:
     source_handling: str = "preserve_original"
     company: str = "Sample Company"
     role: str = "strategy_office"
-    industry: str = "solar"
+    industry: str = "finance"
     brief_title: str = "Weekly Industry Brief"
     audience: str = "management"
     focus_areas: list[str] = field(default_factory=lambda: ["policy", "competitor", "market", "customer_demand"])
@@ -248,14 +248,11 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "5": "management_support",
                 "6": "other",
             },
-            "industry": "Select industry:\n1. Solar / Renewable Energy\n2. Internet / Technology\n3. Finance\n4. Manufacturing\n5. Policy / Macro\n6. Custom\nDefault [1]: ",
+            "industry": "Select industry:\n1. Finance\n2. Internet / Technology\n3. Manufacturing\nDefault [1]: ",
             "industry_options": {
-                "1": "solar",
+                "1": "finance",
                 "2": "technology",
-                "3": "finance",
-                "4": "manufacturing",
-                "5": "policy_macro",
-                "6": "custom",
+                "3": "manufacturing",
             },
             "title": "Brief title: ",
             "audience": "Select audience:\n1. Management\n2. Strategy team\n3. Research team\n4. Investor relations\n5. Other\nDefault [1]: ",
@@ -283,7 +280,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
             {
                 "company": "Company name / 公司名称: ",
                 "role": "Select your role / 请选择岗位:\n1. Strategy / President Office / 总裁办・战略研究\n2. Investor Relations / 投资者关系\n3. Research Analyst / 行业研究\n4. Policy Analyst / 政策研究\n5. Management Support / 管理层支持\n6. Other / 其他\nDefault [1]: ",
-                "industry": "Select industry / 请选择行业:\n1. Solar / Renewable Energy / 光伏・新能源\n2. Internet / Technology / 互联网・科技\n3. Finance / 金融\n4. Manufacturing / 制造业\n5. Policy / Macro / 政策・宏观\n6. Custom / 自定义\nDefault [1]: ",
+                "industry": "Select industry / 请选择行业:\n1. Finance / 金融\n2. Internet / Technology / 互联网・科技\n3. Manufacturing / 制造业\nDefault [1]: ",
                 "title": "Brief title / 简报标题: ",
                 "audience": "Select audience / 请选择阅读对象:\n1. Management / 管理层\n2. Strategy team / 战略团队\n3. Research team / 研究团队\n4. Investor relations / 投资者关系\n5. Other / 其他\nDefault [1]: ",
                 "focus": "Focus areas / 关注领域，comma-separated / 逗号分隔: ",
@@ -308,14 +305,11 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "5": "management_support",
             "6": "other",
         },
-        "industry": "请选择行业：\n1. 光伏 / 新能源\n2. 互联网 / 科技\n3. 金融\n4. 制造业\n5. 政策 / 宏观\n6. 自定义\n默认 [1]：",
+        "industry": "请选择行业：\n1. 金融\n2. 互联网 / 科技\n3. 制造业\n默认 [1]：",
         "industry_options": {
-            "1": "solar",
+            "1": "finance",
             "2": "technology",
-            "3": "finance",
-            "4": "manufacturing",
-            "5": "policy_macro",
-            "6": "custom",
+            "3": "manufacturing",
         },
         "title": "请输入简报标题：",
         "audience": "请选择阅读对象：\n1. 管理层\n2. 战略团队\n3. 研究团队\n4. 投资者关系\n5. 其他\n默认 [1]：",
