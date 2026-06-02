@@ -1,0 +1,59 @@
+project:
+  name: "美国光储周报"
+  company: "TOYO"
+  industry: "solar"
+  role: "strategy_office"
+  audience: "management"
+language:
+  interface: "zh-CN"
+  output: "zh-CN"
+  source_handling: "preserve_original"
+report:
+  cadence: "weekly"
+  date: "auto"
+  max_source_age_days: 14
+  fail_on_stale_source: true
+input:
+  path: "input"
+output:
+  path: "output"
+  formats:
+    - "markdown"
+    - "claim_ledger"
+    - "audit_report"
+    - "source_map"
+source:
+  profile: "research"
+  decision_mode: "static"
+pipeline:
+  steps:
+    - "scout"
+    - "selector"
+    - "retrieval"
+    - "claim_ledger"
+    - "analyst"
+    - "auditor"
+    - "editor"
+    - "formatter"
+selector:
+  enabled: true
+  max_items: 8
+  require_fresh_source: true
+  topic_diversity: true
+retrieval:
+  enabled: false
+  provider: "ollama"
+  model: "nomic-embed-text"
+  chroma_dir: ".rag/chroma"
+  top_k: 5
+  lookback_days: 365
+audit:
+  fail_on_missing_source: true
+  fail_on_stale_source: true
+  redaction_scan: true
+  require_claim_citations: true
+safety:
+  no_investment_advice: true
+  no_legal_advice: true
+  no_trading_signals: true
+  require_human_review: true

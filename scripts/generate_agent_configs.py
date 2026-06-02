@@ -126,139 +126,181 @@ def _sensitive_check(text: str, context: str) -> list[str]:
 def render_agents_md(manifest: dict) -> str:
     project = manifest["project"]
     roles = manifest["roles"]
-    non_goals = _join_lines([f"- {g}" for g in project["non_goals"]])
+    non_goals = _join_lines([f"  - {g}" for g in project["non_goals"]])
 
     role_blocks = []
     for name, role in roles.items():
-        block = textwrap.dedent(f"""\
-            ### {name}
+        resp = _join_lines(role["responsibilities"])
+        rules = _join_lines(role["hard_rules"])
+        role_blocks.append(
+            f"### {name}\n\n"
+            f"**Stage:** {role['stage']}  \n"
+            f"**Description:** {role['description']}\n\n"
+            f"**Responsibilities:**\n{resp}\n\n"
+            f"**Hard rules:**\n{rules}"
+        )
 
-            **Stage:** {role['stage']}
-            **Description:** {role['description']}
+    roles_section = "\n\n".join(role_blocks)
 
-            **Responsibilities:**
-            {_join_lines(role['responsibilities'])}
-
-            **Hard rules:**
-            {_join_lines(role['hard_rules'])}
-        """)
-        role_blocks.append(block)
-
-    roles_section = "\n".join(role_blocks)
-
-    return textwrap.dedent(f"""\
-        {AUTOGEN_HEADER_MD}
-
-        # AGENTS.md
-
-        ## Project Purpose
-
-        This repository implements a source-grounded, audit-ready multi-agent workflow for producing business, research, market, policy, and management briefs.
-
-        Pipeline:
-
-        ```text
-        {PIPELINE_TEXT}
-        ```
-
-        ## Core Principle
-
-        Let code do lookup. Let models do judgment. Keep every important claim traceable.
-
-        ## Non-Goals
-
-        This project is not:
-        {non_goals}
-
-        ## Development Commands
-
-        Install:
-
-        ```bash
-        python3 -m venv .venv
-        source .venv/bin/activate
-        python -m pip install --upgrade pip
-        pip install -e ".[dev]"
-        ```
-
-        Run tests:
-
-        ```bash
-        python3 -m pytest -q
-        ```
-
-        Run demo:
-
-        ```bash
-        multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
-        ```
-
-        Run from config:
-
-        ```bash
-        multi-agent-brief run --config examples/basic_market_brief/config.yaml
-        ```
-
-        Generate agent configs:
-
-        ```bash
-        python3 scripts/generate_agent_configs.py --write
-        ```
-
-        Check agent configs:
-
-        ```bash
-        python3 scripts/generate_agent_configs.py --check
-        ```
-
-        ## Repository Rules
-
-        * Do not commit credentials, tokens, webhooks, raw internal logs, private reports, customer names, confidential files, internal paths, or company-specific prompts.
-        * Use public or synthetic examples only.
-        * Do not bypass Screener.
-        * Do not bypass Claim Ledger.
-        * Do not weaken deterministic audit, quality harness, or final delivery gates.
-        * Do not remove `[src:CLAIM_ID]` citations unless the corresponding claim is removed.
-        * Keep MVP runnable without API keys.
-        * Run tests before completing implementation work.
-
-        ## Output Contract
-
-        Expected artifacts:
-
-        * `brief.md`
-        * `claim_ledger.json`
-        * `audit_report.json`
-        * `source_map.md`
-
-        Every important source-backed statement in `brief.md` should cite a claim ID:
-
-        ```text
-        [src:CLAIM_ID]
-        ```
-
-        Every cited claim must exist in `claim_ledger.json`.
-
-        ## Harness Contract
-
-        Draft-level audit:
-
-        * DeterministicAuditAgent
-        * QualityHarnessAuditAgent
-        * Optional semantic audit adapter
-
-        Final delivery gate:
-
-        ```text
-        {HARNESS_TEXT}
-        ```
-
-        Correct facts are necessary but not sufficient for final delivery.
-
-        ## Agent Roles
-
-        {roles_section}
-    """)
+    return (
+        f"{AUTOGEN_HEADER_MD}\n"
+        f"\n"
+        f"# AGENTS.md\n"
+        f"\n"
+        f"## Quick Start (for agents)\n"
+        f"\n"
+        f"After cloning this repository, follow these steps in order:\n"
+        f"\n"
+        f"### Step 1: Setup\n"
+        f"\n"
+        f"```bash\n"
+        f"bash scripts/setup.sh\n"
+        f"source .venv/bin/activate\n"
+        f"```\n"
+        f"\n"
+        f"This creates a venv, installs the package, and verifies it works.\n"
+        f"Do NOT skip this step. The CLI will fail with `ModuleNotFoundError` if the package is not installed.\n"
+        f"\n"
+        f"### Step 2: Initialize a workspace\n"
+        f"\n"
+        f"```bash\n"
+        f"multi-agent-brief init my-workspace \\\n"
+        f"  --language zh-CN \\\n"
+        f"  --company \"Company Name\" \\\n"
+        f"  --industry solar \\\n"
+        f"  --title \"Weekly Brief\" \\\n"
+        f"  --audience management \\\n"
+        f"  --source-profile research\n"
+        f"```\n"
+        f"\n"
+        f"Or use the interactive wizard (no CLI args):\n"
+        f"\n"
+        f"```bash\n"
+        f"multi-agent-brief init my-workspace\n"
+        f"```\n"
+        f"\n"
+        f"### Step 3: Add source files\n"
+        f"\n"
+        f"Put `.md`, `.txt`, or `.json` source files into `my-workspace/input/`.\n"
+        f"See `my-workspace/input/README.md` for the expected format.\n"
+        f"\n"
+        f"### Step 4: Run the pipeline\n"
+        f"\n"
+        f"```bash\n"
+        f"multi-agent-brief run --config my-workspace/config.yaml\n"
+        f"```\n"
+        f"\n"
+        f"Output files will be in `my-workspace/output/`.\n"
+        f"\n"
+        f"### Step 5: Check source health (optional)\n"
+        f"\n"
+        f"```bash\n"
+        f"multi-agent-brief doctor --config my-workspace/config.yaml\n"
+        f"```\n"
+        f"\n"
+        f"---\n"
+        f"\n"
+        f"## Project Purpose\n"
+        f"\n"
+        f"This repository implements a source-grounded, audit-ready multi-agent workflow for producing business, research, market, policy, and management briefs.\n"
+        f"\n"
+        f"Pipeline:\n"
+        f"\n"
+        f"```text\n"
+        f"{PIPELINE_TEXT}\n"
+        f"```\n"
+        f"\n"
+        f"## Core Principle\n"
+        f"\n"
+        f"Let code do lookup. Let models do judgment. Keep every important claim traceable.\n"
+        f"\n"
+        f"## Non-Goals\n"
+        f"\n"
+        f"This project is not:\n"
+        f"{non_goals}\n"
+        f"\n"
+        f"## Development Commands\n"
+        f"\n"
+        f"Setup (one-time):\n"
+        f"\n"
+        f"```bash\n"
+        f"bash scripts/setup.sh\n"
+        f"source .venv/bin/activate\n"
+        f"```\n"
+        f"\n"
+        f"Run tests:\n"
+        f"\n"
+        f"```bash\n"
+        f"python3 -m pytest -q\n"
+        f"```\n"
+        f"\n"
+        f"Run demo:\n"
+        f"\n"
+        f"```bash\n"
+        f"multi-agent-brief init --demo\n"
+        f"multi-agent-brief run --config brief-demo/config.yaml\n"
+        f"```\n"
+        f"\n"
+        f"Generate agent configs:\n"
+        f"\n"
+        f"```bash\n"
+        f"python3 scripts/generate_agent_configs.py --write\n"
+        f"```\n"
+        f"\n"
+        f"Check agent configs:\n"
+        f"\n"
+        f"```bash\n"
+        f"python3 scripts/generate_agent_configs.py --check\n"
+        f"```\n"
+        f"\n"
+        f"## Repository Rules\n"
+        f"\n"
+        f"- Do not commit credentials, tokens, webhooks, raw internal logs, private reports, customer names, confidential files, internal paths, or company-specific prompts.\n"
+        f"- Use public or synthetic examples only.\n"
+        f"- Do not bypass Screener.\n"
+        f"- Do not bypass Claim Ledger.\n"
+        f"- Do not weaken deterministic audit, quality harness, or final delivery gates.\n"
+        f"- Do not remove `[src:CLAIM_ID]` citations unless the corresponding claim is removed.\n"
+        f"- Keep MVP runnable without API keys.\n"
+        f"- Run tests before completing implementation work.\n"
+        f"\n"
+        f"## Output Contract\n"
+        f"\n"
+        f"Expected artifacts:\n"
+        f"\n"
+        f"- `brief.md`\n"
+        f"- `claim_ledger.json`\n"
+        f"- `audit_report.json`\n"
+        f"- `source_map.md`\n"
+        f"\n"
+        f"Every important source-backed statement in `brief.md` should cite a claim ID:\n"
+        f"\n"
+        f"```text\n"
+        f"[src:CLAIM_ID]\n"
+        f"```\n"
+        f"\n"
+        f"Every cited claim must exist in `claim_ledger.json`.\n"
+        f"\n"
+        f"## Harness Contract\n"
+        f"\n"
+        f"Draft-level audit:\n"
+        f"\n"
+        f"- DeterministicAuditAgent\n"
+        f"- QualityHarnessAuditAgent\n"
+        f"- Optional semantic audit adapter\n"
+        f"\n"
+        f"Final delivery gate:\n"
+        f"\n"
+        f"```text\n"
+        f"{HARNESS_TEXT}\n"
+        f"```\n"
+        f"\n"
+        f"Correct facts are necessary but not sufficient for final delivery.\n"
+        f"\n"
+        f"## Agent Roles\n"
+        f"\n"
+        f"{roles_section}\n"
+    )
 
 
 # ---------------------------------------------------------------------------
