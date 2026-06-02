@@ -133,6 +133,10 @@ class PipelineContext:
     report_date: str = ""
     max_source_age_days: int | None = None
     fail_on_stale_source: bool = False
+    previous_report_dir: str = ""
+    previous_report_text: str = ""
+    max_claims: int = 160
+    quiet_week_min_claims: int = 5
     sources: list[SourceItem] = field(default_factory=list)
     candidates: list[CandidateItem] = field(default_factory=list)
     report_state: ReportState = field(default_factory=ReportState)

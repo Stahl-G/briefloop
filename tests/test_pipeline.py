@@ -24,7 +24,7 @@ def test_pipeline_writes_outputs(tmp_path):
 
     outputs = BriefPipeline().run(context)
 
-    assert len(outputs) == 5
+    assert len(outputs) == 6
     assert (output_dir / "brief.md").exists()
     assert (output_dir / "claim_ledger.json").exists()
     assert (output_dir / "audit_report.json").exists()
