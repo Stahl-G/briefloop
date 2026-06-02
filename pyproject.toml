@@ -7,8 +7,8 @@ name = "multi-agent-brief-workflow"
 version = "0.1.0"
 description = "Source-grounded, audit-ready multi-agent workflow for business and research briefs."
 readme = "README.md"
-requires-python = ">=3.10"
-license = {text = "MIT"}
+requires-python = ">=3.9"
+license = "MIT"
 authors = [
   {name = "Yihong Guo"}
 ]
@@ -28,4 +28,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-

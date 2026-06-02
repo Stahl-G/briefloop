@@ -59,6 +59,7 @@ See [docs/github-project.md](docs/github-project.md).
 cd multi-agent-brief-workflow
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -e ".[dev]"
 multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
 ```
