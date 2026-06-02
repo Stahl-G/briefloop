@@ -1,81 +1,110 @@
-# Multi-Agent Brief Workflow
+# 多Agent周报生成流水线
 
 <p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh-CN.md">简体中文</a>
+  <a href="README_en.md">English</a> |
+  <a href="README.md">简体中文</a>
 </p>
 
-A source-grounded, audit-ready multi-agent workflow for producing business, research, market, policy, and management briefs.
+一个基于来源、可审计的多智能体工作流，用于生成商业、研究、市场、政策和管理层简报。
 
-> Let code do lookup. Let models do judgment. Keep every important claim traceable.
+> 让代码负责查找，让模型负责判断，让每一个重要结论都可以追溯来源。
 
-This project turns the repeatable briefing workflow used by analysts, strategy teams, investor relations teams, research desks, and management offices into a transparent Python pipeline:
+本项目把分析师、战略团队、投资者关系团队、研究部门和管理层办公室常见的重复性简报生产流程，转化为一个透明的 Python 流水线：
 
 ```text
 Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 ```
 
-It is not an investment advice tool, trading signal generator, or replacement for human review.
+本项目不是投资建议工具，不是交易信号生成器，也不能替代人工审核。
 
-## What Problem This Solves
+## 解决什么问题
 
-Most weekly reports and executive briefs still depend on a fragile manual process: collect information, decide what matters, write analysis, verify facts, edit wording, and format the final file. That process is easy to rush, hard to audit, and difficult to reuse across teams.
+很多周报和管理层简报仍然依赖脆弱的手工流程：收集信息、判断重点、撰写分析、核验事实、编辑措辞、排版输出。这个过程很容易赶工，也很难在事后解释”这句话从哪里来”。
 
-This repo makes the workflow modular, inspectable, and runnable locally:
+本仓库把这个流程拆成可检查、可复用、可本地运行的模块：
 
-- Source-backed statements are written into a Claim Ledger before they enter the brief.
-- Drafts use explicit `[src:CLAIM_ID]` citations.
-- Auditors can check unsupported numbers, stale sources, duplicate claims, placeholders, and redaction risks.
-- Output artifacts keep the brief, audit report, claim ledger, and source map separate.
+- 重要表述先进入 Claim Ledger，再进入简报。
+- 简报草稿使用 `[src:CLAIM_ID]` 标注来源。
+- 审计环节检查无支撑数字、过期来源、重复 claim、占位符和脱敏风险。
+- 输出文件把正文、事实账本、审计报告和来源映射分开保存。
 
-## Why Multi-Agent Instead Of One Prompt
+## 为什么做这个项目
 
-A real briefing process is not one job. It is a small editorial desk:
+在企业战略部、券商研究所、基金投研、投资者关系、总裁办、管理层办公室等场景中，很多管培生、实习生和初级分析师都会花大量时间制作日报、周报、月报、晨会材料和领导层简报。
 
-- Scout finds reportable signals.
-- Screener filters and ranks candidates by novelty, source tier, and topic capacity.
-- Claim Ledger records evidence.
-- Analyst turns evidence into a structured draft.
-- Auditor checks whether the draft is supported and distribution-ready.
-- Editor improves readability without inventing new facts.
-- Formatter writes the final artifacts.
+这些工作本身很重要，因为它们连接了外部信息、内部判断和管理层决策。但现实中，很多时间并没有花在真正的分析上，而是花在高度重复的流程里：
 
-Splitting these roles reduces hidden reasoning shortcuts. Each step has a narrow responsibility, and the audit trail shows where a claim came from before it reaches the final brief.
+* 从新闻、公告、财报、RSS、网页、行业资料和本地文件中收集信息；
+* 判断哪些信息是本周真正值得写入报告的信号；
+* 去掉重复、过时、低质量或意义不大的内容；
+* 把零散事实整理成有结构的分析；
+* 核对数字、日期、来源和事实依据；
+* 检查 AI 是否写出了没有来源支撑的判断；
+* 修改措辞、压缩篇幅、调整结构；
+* 最后再输出成 Markdown、Word、PDF 或推送到协作平台。
 
-## Architecture
+这个项目希望把这类重复性的 briefing 工作抽象成一个开源 workflow：
+
+```text
+Source Providers -> Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
+```
+
+它不是为了替代人的判断，也不是为了生成投资建议，而是希望把”来源接入、信息筛选、事实追踪、初稿生成、审计校验、编辑润色、格式输出”这些环节拆开，让代码和多智能体协作承担更多重复劳动。
+
+项目的核心原则是：
+
+> 让代码负责查找，让模型负责判断，让每一个重要结论都可以追溯来源。
+
+换句话说，这个项目不是一个简单的”AI 写周报”工具，而是一个面向真实研究和管理场景的、可审计的简报生产流水线。它希望帮助新人和分析师把时间从重复整理中释放出来，更多投入到判断、讨论、提问和决策支持上。
+
+## 为什么不是一个 Prompt
+
+真实的简报生产不是一个任务，而像一个小型编辑台：
+
+- Scout（信息侦察员）负责发现可写入简报的信号。
+- Screener（筛选师）按新颖度、源层级和主题容量筛选候选声明。
+- Claim Ledger（事实账本）负责记录证据。
+- Analyst（分析员）把证据整理成结构化草稿。
+- Auditor（审计员）检查草稿是否有来源支撑、是否适合分发。
+- Editor（编辑）改善结构和表达，但不发明新事实。
+- Formatter（格式转换器）输出最终文件。
+
+把角色拆开，可以减少单个模型“顺手编”的空间。每一步职责更窄，审计轨迹也更清楚。
+
+## 架构
 
 ```mermaid
 flowchart LR
-  A["Inputs<br/>Markdown, text, JSON"] --> B["Scout"]
-  B --> C["Screener"]
-  C --> D["Claim Ledger"]
-  D --> E["Analyst"]
-  E --> F["Auditor"]
-  F --> G["Editor"]
-  G --> H["Formatter"]
-  H --> I["Outputs<br/>Brief, Claim Ledger, Audit Report, Source Map"]
+  A["输入<br/>Markdown、文本、JSON"] --> B["Scout<br/>信息侦察员"]
+  B --> C["Screener<br/>筛选师"]
+  C --> D["Claim Ledger<br/>事实账本"]
+  D --> E["Analyst<br/>分析员"]
+  E --> F["Auditor<br/>审计员"]
+  F --> G["Editor<br/>编辑"]
+  G --> H["Formatter<br/>格式转换器"]
+  H --> I["输出<br/>Brief、Claim Ledger、Audit Report、Source Map"]
 ```
 
-See [docs/architecture.md](docs/architecture.md) for the plain-language architecture guide.
+详见 [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)。
 
-## Current MVP
+## 当前 MVP
 
-The first local MVP supports:
+第一个本地 MVP 支持：
 
-- Local `.md`, `.txt`, and `.json` inputs
-- Scout agent that extracts candidate reportable items
-- Screener agent that filters claims by novelty scoring, topic capacity caps, and previous-report deduplication
-- Claim Ledger with source-grounded claims
-- Analyst agent that drafts a Markdown brief with `[src:CLAIM_ID]` citations
-- Auditor agent interface with deterministic audit and semantic-audit adapter hooks
-- Deterministic Auditor for missing claims, unsupported numbers, duplicate claims, redaction risks, and stale sources
-- Quality harness checks for placeholders, low-confidence sources, process residue, stale filler, and unit risks
-- Editor agent that prepares the final Markdown brief
-- Formatter agent that writes `brief.md`, `claim_ledger.json`, `audit_report.json`, and `source_map.md`
+- 本地 `.md`、`.txt` 和 `.json` 输入
+- Scout 智能体抽取候选可写入简报的事项
+- Screener 智能体按新颖度评分、主题容量上限和历史去重筛选候选声明
+- Claim Ledger 记录有来源支撑的事实与判断
+- Analyst 智能体用 `[src:CLAIM_ID]` 引用生成 Markdown 草稿
+- Auditor 智能体接口，支持确定性审计和语义审计适配器
+- Deterministic Auditor 检查缺失 claim、无支撑数字、重复 claim、脱敏风险和过期来源
+- Quality Harness 检查占位符、低置信来源、流程残留文本、陈旧填充内容和单位风险
+- Editor 智能体生成最终 Markdown 简报
+- Formatter 智能体写出 `brief.md`、`claim_ledger.json`、`audit_report.json` 和 `source_map.md`
 
-## Example Output
+## 输出示例
 
-The MVP creates a Markdown brief with source citations:
+MVP 会生成带来源引用的 Markdown 简报：
 
 ```markdown
 ## Market
@@ -83,7 +112,7 @@ The MVP creates a Markdown brief with source citations:
 - Synthetic module price checks showed a 3.5% week-over-week decline in selected spot-market channels. [src:MARKETDA_867A7D67D0]
 ```
 
-Every source-backed statement is also written to `claim_ledger.json`:
+每一条有来源支撑的表述，也会写入 `claim_ledger.json`：
 
 ```json
 {
@@ -94,7 +123,7 @@ Every source-backed statement is also written to `claim_ledger.json`:
 }
 ```
 
-The audit report records whether the draft is distribution-ready:
+审计报告会记录草稿是否已经适合分发：
 
 ```json
 {
@@ -104,7 +133,7 @@ The audit report records whether the draft is distribution-ready:
 }
 ```
 
-## Quick Start
+## 快速开始
 
 ```bash
 cd multi-agent-brief-workflow
@@ -115,13 +144,13 @@ pip install -e ".[dev]"
 multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
 ```
 
-Or run from a config file:
+也可以通过配置文件运行：
 
 ```bash
 multi-agent-brief run --config examples/basic_market_brief/config.yaml
 ```
 
-The example config enables a strict weekly reporting window:
+示例配置启用了严格的周报时间窗口：
 
 ```yaml
 report:
@@ -130,9 +159,9 @@ report:
   fail_on_stale_source: true
 ```
 
-When this mode is enabled, a three-month-old source cannot pass as a weekly item.
+启用该模式后，三个月前的来源不能作为本周事项通过审计。
 
-Open the generated files:
+查看生成文件：
 
 ```text
 output/basic_market_brief/brief.md
@@ -141,17 +170,17 @@ output/basic_market_brief/audit_report.json
 output/basic_market_brief/source_map.md
 ```
 
-## More Examples
+## 更多示例
 
-Run the synthetic earnings-season peer demo:
+运行合成的 earnings-season peer demo：
 
 ```bash
 multi-agent-brief run --config examples/earnings_season_peer_demo/config.yaml
 ```
 
-This demo uses only fictional peer names and synthetic source data. It is designed to show how public-safe earnings, competitor, policy, and market signals flow through the Claim Ledger and audit report.
+这个 demo 只使用虚构同行名称和合成来源数据，用来展示 earnings、competitor、policy 和 market 信号如何进入 Claim Ledger 与审计报告。
 
-## Example Without Install
+## 不安装也可以运行
 
 ```bash
 PYTHONPATH=src python3 -m multi_agent_brief.cli.main run examples/basic_market_brief/input --output output/basic_market_brief
@@ -159,14 +188,14 @@ PYTHONPATH=src python3 -m multi_agent_brief.cli.main run examples/basic_market_b
 
 ## CLI
 
-Create a synthetic demo workspace:
+创建一个合成 demo 工作区：
 
 ```bash
 multi-agent-brief init brief-demo
 multi-agent-brief run --config brief-demo/config.yaml
 ```
 
-Audit an existing brief:
+审计已有简报：
 
 ```bash
 multi-agent-brief audit output/basic_market_brief/brief.md \
@@ -174,7 +203,7 @@ multi-agent-brief audit output/basic_market_brief/brief.md \
   --output output/basic_market_brief/audit_report.json
 ```
 
-Print the version:
+打印版本号：
 
 ```bash
 multi-agent-brief version
@@ -182,100 +211,138 @@ multi-agent-brief version
 
 ## Auditor Agent Interface
 
-The pipeline-level `AuditorAgent` delegates to an audit backend that implements `AuditAgentInterface`.
+流水线层面的 `AuditorAgent` 会委托给实现了 `AuditAgentInterface` 的审计后端。
 
-Current audit backends:
+当前审计后端包括：
 
-- `DeterministicAuditAgent`: checks source IDs, unsupported numbers, duplicate claims, missing source evidence, redaction risks, and reporting-window freshness.
-- `QualityHarnessAuditAgent`: ports public-safe quality gates from local workflow prototypes, including placeholders, internal process residue, `needs_recrawl`, low source density, and possible unit inflation.
-- `NoOpSemanticAuditAgent`: placeholder adapter for future model-backed semantic source-support review.
-- `CompositeAuditAgent`: runs deterministic audit first, then an optional semantic audit adapter.
+- `DeterministicAuditAgent`：检查 source ID、无支撑数字、重复 claim、缺失来源证据、脱敏风险和报告时间窗口内的来源新鲜度。
+- `QualityHarnessAuditAgent`：迁移自本地 workflow prototype 的公开安全质量门控，包括占位符、内部流程残留文本、`needs_recrawl`、低来源密度和潜在单位膨胀风险。
+- `NoOpSemanticAuditAgent`：为未来基于模型的语义来源支撑审查预留的占位适配器。
+- `CompositeAuditAgent`：先运行确定性审计，再运行可选的语义审计适配器。
 
-This keeps the MVP runnable without API keys while leaving a clean interface for Claude, OpenAI, LiteLLM, or local-model audit agents.
+这样可以让 MVP 在没有 API key 的情况下运行，同时为 Claude、OpenAI、LiteLLM 或本地模型审计智能体保留干净接口。
 
-See [docs/harness.md](docs/harness.md) for the current harness and migration backlog.
+详见 [docs/harness.md](docs/harness.md)。
 
-For strict final-delivery gates, see [docs/harness_matrix.md](docs/harness_matrix.md). For Codex, Claude Code subagent, and external-agent handoff patterns, see [docs/agent-collaboration.md](docs/agent-collaboration.md).
+严格终稿交付门详见 [docs/harness_matrix.md](docs/harness_matrix.md)。Codex、Claude Code subagents 和外部 agent 的协作/交接方式详见 [docs/agent-collaboration.md](docs/agent-collaboration.md)。
 
-## Agent Support
+## 智能体支持
 
-This repository can generate Codex and Claude Code agent configurations from a single role manifest.
+本仓库可以从一个角色清单自动生成 Codex 和 Claude Code 的智能体配置。
 
-- `configs/agent_roles.yaml` is the source of truth.
-- `scripts/generate_agent_configs.py` generates platform-specific files.
-- `AGENTS.md` provides project-level instructions for Codex and other coding agents.
-- `.agents/skills/*/SKILL.md` provides Codex-compatible skills.
-- `.codex/agents/*.toml` provides Codex custom agents.
-- `.claude/agents/*.md` provides Claude Code subagents.
-- `docs/agents/` documents platform adaptation and harness subagents.
+- `configs/agent_roles.yaml` 是唯一事实来源。
+- `scripts/generate_agent_configs.py` 生成平台特定文件。
+- `AGENTS.md` 为 Codex 及其他编码智能体提供项目级指令。
+- `.agents/skills/*/SKILL.md` 提供 Codex 兼容的技能文件。
+- `.codex/agents/*.toml` 提供 Codex 自定义智能体。
+- `.claude/agents/*.md` 提供 Claude Code 子智能体。
+- `docs/agents/` 记录平台适配和 harness 子智能体设计。
 
-Regenerate configs:
+重新生成配置：
 
 ```bash
 python3 scripts/generate_agent_configs.py --write
 ```
 
-Check generated files:
+检查生成文件：
 
 ```bash
 python3 scripts/generate_agent_configs.py --check
 ```
 
-## Roadmap
+## 路线图
 
-- MVP: local inputs, Claim Ledger, deterministic audit, Markdown output, source map, and quality harness checks.
-- Near-term: DOCX/PDF output, SEC/RSS connectors, semantic audit adapters, richer synthetic examples, and stronger documentation.
-- Mid-term: industry modules, role-specific brief templates, external analysis plugins, local corpus retrieval, and source-tier policies.
-- Long-term: opt-in internal message ingestion, database and semantic layer integration, multi-model routing, and enterprise deployment patterns.
+- MVP：本地输入、Claim Ledger、确定性审计、Markdown 输出、来源映射和质量门控。
+- 近期：DOCX/PDF 输出、SEC/RSS 连接器、语义审计适配器、更完整的合成示例和文档。
+- 中期：行业模块、角色化简报模板、外部分析插件、本地语料检索和来源分级策略。
+- 长期：可选的内部消息接入、数据库与语义层集成、多模型路由和企业部署模式。
 
-See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
+详见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)。
 
-## Safety And Non-Investment-Advice Disclaimer
+## 安全与非投资建议声明
 
-Do not commit credentials, tokens, webhooks, raw internal logs, private reports, customer names, confidential files, internal paths, or company-specific prompts. All examples in this repo should use public or synthetic data.
+不要提交凭证、token、webhook、原始内部日志、私有报告、客户名称、机密文件、内部路径或公司特定 prompt。本仓库中的所有示例都应使用公开数据或合成数据。
 
-This project can help structure research and briefing workflows, but it does not provide legal, financial, investment, trading, or compliance advice. Human review remains required before any real-world distribution or decision-making use.
+本项目可以帮助组织研究和简报流程，但不提供法律、金融、投资、交易或合规建议。任何真实分发或决策使用前，都需要人工审核。
 
-## Changelog
+## 更新日志
 
-### v0.4.0 — Source Provider System
+### v0.4.0 — 信息来源提供器系统
 
-- Added `sources/` module: unified SourceProvider interface for all information sources.
-- Three source profiles: conservative, research, aggressive_signal.
-- Manual provider: loads local .md/.txt/.json files and manual URL entries.
-- RSS provider: fetches and parses RSS/Atom feeds with keyword filtering.
-- Stub providers for web_search, api, mcp, cli (Phase 1 placeholders).
-- Source normalization, deduplication, and recency filtering.
-- `multi-agent-brief doctor`: checks source configuration health.
-- Init wizard now asks for source profile and generates tailored `sources.yaml`.
-- 21 new tests covering providers, normalizer, registry, and doctor.
+- 新增 `sources/` 模块：统一的 SourceProvider 接口，支持所有信息来源。
+- 三种来源策略：conservative、research、aggressive_signal。
+- Manual provider：加载本地 .md/.txt/.json 文件和手动 URL 条目。
+- RSS provider：获取并解析 RSS/Atom 订阅源，支持关键词过滤。
+- Stub providers：web_search、api、mcp、cli（Phase 1 占位）。
+- 来源归一化、去重和时效性过滤。
+- `multi-agent-brief doctor`：检查来源配置健康状态。
+- Init 向导新增来源策略选择，生成定制化 `sources.yaml`。
+- 新增 21 个测试，覆盖 provider、normalizer、registry 和 doctor。
 
-### v0.3.0 — Agent Config Generation
+### v0.3.0 — 智能体配置生成
 
-- Added `configs/agent_roles.yaml` as single source of truth for all agent roles.
-- Added `scripts/generate_agent_configs.py` to generate platform-specific agent configs.
-- Generated Codex agents (`.codex/agents/*.toml`), skills (`.agents/skills/*/SKILL.md`).
-- Generated Claude Code subagents (`.claude/agents/*.md`).
-- Generated documentation (`docs/agents/`).
-- Added 25 tests for manifest validation, generation, and content checks.
-- `--check` mode for CI staleness detection.
+- 新增 `configs/agent_roles.yaml` 作为所有智能体角色的唯一事实来源。
+- 新增 `scripts/generate_agent_configs.py` 生成平台特定智能体配置。
+- 生成 Codex 智能体（`.codex/agents/*.toml`）、技能文件（`.agents/skills/*/SKILL.md`）。
+- 生成 Claude Code 子智能体（`.claude/agents/*.md`）。
+- 生成文档（`docs/agents/`）。
+- 新增 25 个测试，覆盖 manifest 验证、生成逻辑和内容检查。
+- `--check` 模式用于 CI 中检测生成文件是否过期。
 
-### v0.2.0 — Screener Agent
+### v0.2.0 — Screener 筛选师
 
-- Added ScreenerAgent between Scout and Analyst in the pipeline.
-- Topic-based capacity caps across 10 topic buckets (max 160 claims total).
-- Novelty scoring with source tier, claim type, and high-signal term weights.
-- Previous report deduplication via text matching and theme-group detection.
-- Stale source and low-confidence (T5) source exclusion.
-- Previous report loader supporting `.md`, `.txt`, and `.docx` formats.
-- Added pre-push hook and CI check: README must be updated before pushing code changes.
+- 在 Scout 与 Analyst 之间新增 ScreenerAgent。
+- 10 个主题分类，每个主题有容量上限（总计最多 160 条声明）。
+- 新颖度评分：叠加源层级、声明类型和高信号词权重。
+- 历史报告去重：通过文本匹配和主题词组检测排除重复内容。
+- 过期源和低置信源（T5）自动排除。
+- 历史报告加载器，支持 `.md`、`.txt` 和 `.docx` 格式。
+- 新增 pre-push hook 和 CI 检查：推送代码前必须更新 README。
 
-## Development
+## 开发
 
 ```bash
 python3 -m pytest -q
 ```
 
-## License
+## 欢迎参与
+
+目前这个项目主要由我一个人维护，仍处于早期阶段。
+
+我非常欢迎有过类似工作、实习或研究经历的同学一起参与、试用或提 issue。这个项目要真正变得有用，不能只靠一个人的工作场景来定义，而需要来自不同行业、不同岗位、不同职业阶段的人一起补充真实需求。
+
+尤其欢迎以下背景的朋友参与：
+
+* 企业战略部、总裁办、管理层办公室；
+* 券商研究所、基金投研、PE/VC、产业投资；
+* 投资者关系、董秘办、公司治理、法务合规；
+* 行业研究、市场研究、政策研究；
+* 咨询、产业研究、竞争情报、商业分析；
+* 曾经负责过日报、周报、月报、晨会材料、领导简报的实习生、管培生或初级分析师；
+* 正在尝试把 AI agent 用到真实 office work、research workflow 或 internal briefing 的开发者。
+
+你可以参与的方式包括：
+
+* 提出一个真实使用场景；
+* 反馈你所在岗位最痛苦、最重复的 briefing 环节；
+* 提供某个行业的周报结构建议；
+* 设计一个新的行业模块、岗位模块或外部分析模块；
+* 试用 demo 并指出哪里不像真实工作流；
+* 提交 issue、discussion 或 pull request；
+* 帮助完善中英文文档、示例、测试和安全边界。
+
+我尤其希望收集这些问题的反馈：
+
+* 你的岗位通常需要写什么类型的简报？
+* 周报、月报或日报里最浪费时间的是哪一步？
+* 哪些内容必须人工判断，哪些可以被自动化？
+* 哪些事实最容易被 AI 写错？
+* 管理层、基金经理、研究主管、IR、法务或合规分别关心什么？
+* 不同行业的周报模板应该有什么差异？
+* Source Provider、Screener、Claim Ledger、Auditor 这些模块在你的真实工作中应该怎样设计才有用？
+
+即使只是提出一个痛点、一个模板建议、一个真实反例，或者一个"不应该这样自动化"的提醒，也会对项目很有帮助。
+
+## 许可证
 
 MIT
