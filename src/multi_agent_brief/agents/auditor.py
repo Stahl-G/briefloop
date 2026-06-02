@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from multi_agent_brief.agents.base import BaseAgent
 from multi_agent_brief.audit.deterministic import DeterministicAuditAgent
+from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.audit.interfaces import AuditAgentInterface, CompositeAuditAgent
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AgentOutput, PipelineContext
@@ -11,7 +12,10 @@ class AuditorAgent(BaseAgent):
     name = "auditor"
 
     def __init__(self, audit_agent: AuditAgentInterface | None = None) -> None:
-        self.audit_agent = audit_agent or CompositeAuditAgent(DeterministicAuditAgent())
+        self.audit_agent = audit_agent or CompositeAuditAgent(
+            DeterministicAuditAgent(),
+            additional_agents=[QualityHarnessAuditAgent()],
+        )
 
     def run(self, context: PipelineContext, ledger: ClaimLedger) -> AgentOutput:
         report = self.audit_agent.run_audit(context.report_state.draft_markdown, ledger, context)

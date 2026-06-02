@@ -29,6 +29,7 @@ The first local MVP supports:
 - Auditor agent interface with deterministic audit and semantic-audit adapter hooks
 - Deterministic Auditor for missing claims, unsupported numbers, duplicate claims, and redaction risks
 - Reporting-window checks that flag stale sources in weekly briefs
+- Quality harness checks for placeholders, low-confidence sources, process residue, stale filler, and unit risks
 - Editor agent that prepares the final Markdown brief
 - Formatter agent that writes:
   - `brief.md`
@@ -160,10 +161,13 @@ Current audit backends:
 
 - `DeterministicAuditAgent`: checks source IDs, unsupported numbers, duplicate claims, missing source evidence, and redaction risks.
 - `DeterministicAuditAgent`: also checks reporting-window freshness when `report.date` and `report.max_source_age_days` are configured.
+- `QualityHarnessAuditAgent`: ports public-safe quality gates from the private workflow, including placeholders, internal process residue, `needs_recrawl`, T5 source use, low source density, and possible unit inflation.
 - `NoOpSemanticAuditAgent`: placeholder adapter for future model-backed semantic source-support review.
 - `CompositeAuditAgent`: runs deterministic audit first, then an optional semantic audit adapter.
 
 This keeps the MVP runnable without API keys while leaving a clean interface for Claude/OpenAI/LiteLLM or local-model audit agents.
+
+See [docs/harness.md](docs/harness.md) for the current harness and migration backlog.
 
 ## Development
 

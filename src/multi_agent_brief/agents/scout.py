@@ -36,10 +36,14 @@ class ScoutAgent(BaseAgent):
                     evidence_text=statement,
                     source_url=source.source_url,
                     source_type=source.source_type,
-                    claim_type=infer_claim_type(statement),
+                    claim_type=source.metadata.get("claim_type") or infer_claim_type(statement),
                     confidence="medium",
                     created_by=self.name,
-                    metadata={"candidate_item_id": item_id, "published_at": source.published_at},
+                    metadata={
+                        "candidate_item_id": item_id,
+                        "published_at": source.published_at,
+                        "source_tier": source.metadata.get("source_tier", ""),
+                    },
                 )
                 candidates.append(candidate)
                 ledger.add_claim(claim)
@@ -66,11 +70,15 @@ def load_local_sources(input_dir: Path) -> list[SourceItem]:
         content = path.read_text(encoding="utf-8")
         source_url = ""
         published_at = ""
+        source_tier = ""
+        claim_type = ""
         if path.suffix.lower() == ".json":
             try:
                 parsed = json.loads(content)
                 source_url = str(parsed.get("source_url", ""))
                 published_at = str(parsed.get("published_at", ""))
+                source_tier = str(parsed.get("source_tier", ""))
+                claim_type = str(parsed.get("claim_type", ""))
                 if isinstance(parsed.get("items"), list):
                     content = "\n".join(str(item) for item in parsed["items"])
                 elif parsed.get("content"):
@@ -87,7 +95,7 @@ def load_local_sources(input_dir: Path) -> list[SourceItem]:
                 content=content,
                 source_url=source_url,
                 published_at=published_at,
-                metadata={"path": str(path)},
+                metadata={"path": str(path), "source_tier": source_tier, "claim_type": claim_type},
             )
         )
     return sources

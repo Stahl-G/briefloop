@@ -32,6 +32,21 @@ Issues:
 - Implement deterministic audit
 - Implement Markdown/source-map output
 - Add basic tests
+- Keep porting public-safe quality harness checks from the private workflow
+
+### Epic 1B: Harness Migration
+
+Goal: Preserve mature private-pipeline quality gates as clean-room, configurable harness modules.
+
+Issues:
+
+- Add configurable rule packs
+- Add previous-report baseline ingestion
+- Add source-tier policy by audience/module
+- Add publication-mode final-clean checks
+- Add editor-fixable vs analyst-blocking failure classification
+- Add section taxonomy and required-section checks
+- Add model-backed semantic source-support audit
 
 ### Epic 2: Output Migration
 

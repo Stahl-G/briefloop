@@ -48,10 +48,13 @@ The pipeline-level `AuditorAgent` delegates to an `AuditAgentInterface` backend:
 AuditorAgent
   -> CompositeAuditAgent
        -> DeterministicAuditAgent
+       -> QualityHarnessAuditAgent
        -> optional SemanticAuditAgent
 ```
 
 This separation lets the pipeline keep one stable agent step while swapping audit implementations.
+
+`QualityHarnessAuditAgent` is the clean-room port of the private weekly workflow's offline gates. It checks placeholder text, internal workflow residue, low-confidence sources, `needs_recrawl` claims, stale/no-update filler language, source-density failures, and known unit-risk patterns.
 
 ### Editor
 
