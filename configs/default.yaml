@@ -1,0 +1,43 @@
+project:
+  name: "Weekly Intelligence Brief"
+  language: "en-US"
+  audience: "management"
+
+pipeline:
+  steps:
+    - scout
+    - analyst
+    - auditor
+    - editor
+    - formatter
+
+models:
+  provider: "mock"
+
+audit:
+  deterministic: true
+  semantic: false
+  fail_on_missing_source: true
+  redaction_scan: true
+
+outputs:
+  formats:
+    - markdown
+    - claim_ledger
+    - audit_report
+    - source_map
+
+connectors:
+  sec:
+    enabled: false
+  rss:
+    enabled: false
+  api:
+    enabled: false
+  feishu:
+    enabled: false
+  slack:
+    enabled: false
+  email:
+    enabled: false
+

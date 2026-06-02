@@ -1,0 +1,17 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+output/
+dist/
+build/
+*.egg-info/
+*.docx
+*.pdf
+*.xlsx
+logs/
+

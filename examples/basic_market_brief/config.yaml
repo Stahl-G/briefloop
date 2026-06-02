@@ -1,0 +1,11 @@
+project:
+  name: "Synthetic Market Brief Demo"
+  language: "en-US"
+  audience: "management"
+
+input:
+  path: "examples/basic_market_brief/input"
+
+output:
+  path: "output/basic_market_brief"
+

@@ -1,0 +1,17 @@
+agents:
+  scout:
+    role: "Collect and filter source-grounded candidate items."
+    model: "mock"
+  analyst:
+    role: "Draft brief sections using only Claim Ledger items."
+    model: "mock"
+  auditor:
+    role: "Check claim references, unsupported numbers, source gaps, duplicates, and redaction risks."
+    model: "deterministic"
+  editor:
+    role: "Improve readability without adding new facts."
+    model: "mock"
+  formatter:
+    role: "Write output artifacts without changing substantive content."
+    model: "deterministic"
+
