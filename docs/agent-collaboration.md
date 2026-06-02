@@ -40,13 +40,19 @@ Every material statement must enter the Claim Ledger before it can be cited in t
 
 ## Suggested Claude Code Subagents
 
-These are public-safe role specs, not private prompt text:
+These are public-safe role specs, not private prompt text. All configurations are generated from `configs/agent_roles.yaml`:
 
-- `research-scout`: collects public source packets and emits source metadata plus candidate statements.
-- `source-auditor`: checks source dates, source tier, stale-current framing, redaction risks, and unsupported numbers.
-- `semantic-auditor`: receives draft Markdown plus Claim Ledger evidence and returns only audit findings.
-- `editor-reviewer`: improves structure and wording after audit findings are resolved.
-- `formatter-reviewer`: checks rendered documents for heading mapping, bullet separation, page fields, margins, and wide tables.
+- `scout`: extracts candidate reportable items from local sources.
+- `screener`: filters, ranks, deduplicates, and capacity-caps Scout candidates.
+- `claim-ledger`: converts screened candidates into source-grounded claim entries.
+- `analyst`: drafts brief sections using only Claim Ledger entries.
+- `auditor`: checks source support, freshness, redaction risk, and harness failures.
+- `editor`: improves clarity and structure without adding facts.
+- `formatter`: writes and validates final output artifacts.
+- `draft-audit-harness`: reviews deterministic audit and quality harness checks.
+- `final-quality-harness`: reviews final text delivery gates.
+- `rendered-output-harness`: reviews DOCX/PDF rendering fidelity.
+- `orchestrator`: coordinates cross-role integration and pipeline changes.
 
 Each subagent should be constrained to its role and should write machine-readable findings where possible.
 

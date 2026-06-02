@@ -197,6 +197,30 @@ See [docs/harness.md](docs/harness.md) for the current harness and migration bac
 
 For strict final-delivery gates, see [docs/harness_matrix.md](docs/harness_matrix.md). For Codex, Claude Code subagent, and external-agent handoff patterns, see [docs/agent-collaboration.md](docs/agent-collaboration.md).
 
+## Agent Support
+
+This repository can generate Codex and Claude Code agent configurations from a single role manifest.
+
+- `configs/agent_roles.yaml` is the source of truth.
+- `scripts/generate_agent_configs.py` generates platform-specific files.
+- `AGENTS.md` provides project-level instructions for Codex and other coding agents.
+- `.agents/skills/*/SKILL.md` provides Codex-compatible skills.
+- `.codex/agents/*.toml` provides Codex custom agents.
+- `.claude/agents/*.md` provides Claude Code subagents.
+- `docs/agents/` documents platform adaptation and harness subagents.
+
+Regenerate configs:
+
+```bash
+python3 scripts/generate_agent_configs.py --write
+```
+
+Check generated files:
+
+```bash
+python3 scripts/generate_agent_configs.py --check
+```
+
 ## Roadmap
 
 - MVP: local inputs, Claim Ledger, deterministic audit, Markdown output, source map, and quality harness checks.
@@ -213,6 +237,16 @@ Do not commit credentials, tokens, webhooks, raw internal logs, private reports,
 This project can help structure research and briefing workflows, but it does not provide legal, financial, investment, trading, or compliance advice. Human review remains required before any real-world distribution or decision-making use.
 
 ## Changelog
+
+### v0.3.0 — Agent Config Generation
+
+- Added `configs/agent_roles.yaml` as single source of truth for all agent roles.
+- Added `scripts/generate_agent_configs.py` to generate platform-specific agent configs.
+- Generated Codex agents (`.codex/agents/*.toml`), skills (`.agents/skills/*/SKILL.md`).
+- Generated Claude Code subagents (`.claude/agents/*.md`).
+- Generated documentation (`docs/agents/`).
+- Added 25 tests for manifest validation, generation, and content checks.
+- `--check` mode for CI staleness detection.
 
 ### v0.2.0 — Screener Agent
 

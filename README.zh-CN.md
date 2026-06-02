@@ -197,6 +197,30 @@ multi-agent-brief version
 
 严格终稿交付门详见 [docs/harness_matrix.md](docs/harness_matrix.md)。Codex、Claude Code subagents 和外部 agent 的协作/交接方式详见 [docs/agent-collaboration.md](docs/agent-collaboration.md)。
 
+## 智能体支持
+
+本仓库可以从一个角色清单自动生成 Codex 和 Claude Code 的智能体配置。
+
+- `configs/agent_roles.yaml` 是唯一事实来源。
+- `scripts/generate_agent_configs.py` 生成平台特定文件。
+- `AGENTS.md` 为 Codex 及其他编码智能体提供项目级指令。
+- `.agents/skills/*/SKILL.md` 提供 Codex 兼容的技能文件。
+- `.codex/agents/*.toml` 提供 Codex 自定义智能体。
+- `.claude/agents/*.md` 提供 Claude Code 子智能体。
+- `docs/agents/` 记录平台适配和 harness 子智能体设计。
+
+重新生成配置：
+
+```bash
+python3 scripts/generate_agent_configs.py --write
+```
+
+检查生成文件：
+
+```bash
+python3 scripts/generate_agent_configs.py --check
+```
+
 ## 路线图
 
 - MVP：本地输入、Claim Ledger、确定性审计、Markdown 输出、来源映射和质量门控。
@@ -213,6 +237,16 @@ multi-agent-brief version
 本项目可以帮助组织研究和简报流程，但不提供法律、金融、投资、交易或合规建议。任何真实分发或决策使用前，都需要人工审核。
 
 ## 更新日志
+
+### v0.3.0 — 智能体配置生成
+
+- 新增 `configs/agent_roles.yaml` 作为所有智能体角色的唯一事实来源。
+- 新增 `scripts/generate_agent_configs.py` 生成平台特定智能体配置。
+- 生成 Codex 智能体（`.codex/agents/*.toml`）、技能文件（`.agents/skills/*/SKILL.md`）。
+- 生成 Claude Code 子智能体（`.claude/agents/*.md`）。
+- 生成文档（`docs/agents/`）。
+- 新增 25 个测试，覆盖 manifest 验证、生成逻辑和内容检查。
+- `--check` 模式用于 CI 中检测生成文件是否过期。
 
 ### v0.2.0 — Screener 筛选师
 

@@ -1,0 +1,237 @@
+schema_version: "multi-agent-brief-agent-roles/v1"
+
+project:
+  name: "multi-agent-brief-workflow"
+  purpose: "source-grounded, audit-ready multi-agent workflow for management and research briefs"
+  pipeline:
+    - scout
+    - screener
+    - claim-ledger
+    - analyst
+    - auditor
+    - editor
+    - formatter
+  output_contract:
+    - brief.md
+    - claim_ledger.json
+    - audit_report.json
+    - source_map.md
+  non_goals:
+    - investment advice
+    - trading signals
+    - legal advice
+    - tax advice
+    - compliance advice
+    - replacing human review
+
+tool_profiles:
+  read_only:
+    claude_tools: ["Read", "Grep", "Glob", "Bash"]
+    codex_mode: "exploration"
+    may_edit: false
+
+  edit_safe:
+    claude_tools: ["Read", "Grep", "Glob", "Bash", "Edit", "MultiEdit", "Write"]
+    codex_mode: "implementation"
+    may_edit: true
+
+  audit_read_only:
+    claude_tools: ["Read", "Grep", "Glob", "Bash"]
+    codex_mode: "audit"
+    may_edit: false
+
+  audit_edit:
+    claude_tools: ["Read", "Grep", "Glob", "Bash", "Edit", "MultiEdit", "Write"]
+    codex_mode: "audit_implementation"
+    may_edit: true
+
+roles:
+  orchestrator:
+    stage: coordination
+    tool_profile: edit_safe
+    description: "Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents."
+    trigger: "Use for multi-step feature planning, cross-role integration, pipeline changes, or agent config generation."
+    responsibilities:
+      - "Preserve the full pipeline order."
+      - "Preserve Screener before Claim Ledger."
+      - "Preserve Claim Ledger before Analyst."
+      - "Preserve audit gates."
+      - "Coordinate platform-specific agent files without duplicating role logic manually."
+      - "Run or document tests before completion."
+    hard_rules:
+      - "Do not bypass Screener."
+      - "Do not bypass Claim Ledger."
+      - "Do not weaken audit or harness checks."
+      - "Do not introduce private/company-specific examples."
+
+  scout:
+    stage: pipeline
+    tool_profile: read_only
+    description: "Extracts candidate reportable items from local markdown, text, JSON, and future connector sources."
+    trigger: "Use when inspecting source inputs or extracting candidate items before screening."
+    responsibilities:
+      - "Find reportable signals."
+      - "Preserve source path, source ID, source date, and evidence text."
+      - "Mark vague, stale-looking, duplicate-looking, or low-confidence items."
+      - "Return candidates, not final analysis."
+    hard_rules:
+      - "Do not write final brief prose."
+      - "Do not rank or capacity-cap candidates."
+      - "Do not create unsupported facts."
+
+  screener:
+    stage: pipeline
+    tool_profile: edit_safe
+    description: "Filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger."
+    trigger: "Use when implementing or reviewing novelty scoring, source-tier ranking, topic caps, stale source filtering, or previous-report deduplication."
+    responsibilities:
+      - "Filter and rank Scout candidates."
+      - "Deduplicate exact and near-duplicate items."
+      - "Enforce topic capacity caps."
+      - "Detect previous-report overlap."
+      - "Exclude stale or low-confidence candidates according to config."
+      - "Preserve source identity and evidence for included candidates."
+      - "Record exclusion reasons when practical."
+    hard_rules:
+      - "Do not create new facts."
+      - "Do not pass stale weekly items unless config permits."
+      - "Do not drop source identity."
+      - "Do not exceed topic capacity caps."
+
+  claim-ledger:
+    stage: pipeline
+    tool_profile: edit_safe
+    description: "Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence."
+    trigger: "Use when implementing or reviewing claim ID creation, source evidence storage, claim metadata, or ledger consistency."
+    responsibilities:
+      - "Create stable claim IDs."
+      - "Ensure every claim has source evidence."
+      - "Preserve source IDs and evidence text."
+      - "Carry useful Screener metadata forward."
+      - "Detect duplicate or unsupported claims."
+    hard_rules:
+      - "Every claim must be evidence-backed."
+      - "Do not merge claims in a way that loses traceability."
+      - "Do not upgrade weak evidence into strong language."
+
+  analyst:
+    stage: pipeline
+    tool_profile: edit_safe
+    description: "Drafts executive-readable brief sections using only Claim Ledger entries."
+    trigger: "Use when implementing or reviewing Markdown brief generation, section writing, or claim citation behavior."
+    responsibilities:
+      - "Draft clear brief sections."
+      - "Use only Claim Ledger material."
+      - "Attach [src:CLAIM_ID] citations to important statements."
+      - "Preserve uncertainty and source limitations."
+    hard_rules:
+      - "Do not add unsupported facts, numbers, or causality."
+      - "Do not write investment advice or trading signals."
+      - "Do not cite claims that do not exist in the ledger."
+
+  auditor:
+    stage: pipeline
+    tool_profile: audit_edit
+    description: "Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures."
+    trigger: "Use when implementing or reviewing deterministic audit, quality harness, semantic audit adapter hooks, or final delivery gates."
+    responsibilities:
+      - "Protect source grounding."
+      - "Check missing or orphan claim references."
+      - "Check unsupported numbers."
+      - "Check stale sources."
+      - "Check redaction risks."
+      - "Check low-confidence source leakage."
+      - "Check process residue and placeholders."
+      - "Coordinate draft and final harness agents when needed."
+    hard_rules:
+      - "Do not weaken audit gates to pass tests."
+      - "Do not treat model judgment as source evidence."
+      - "Do not mark blocked reports as distribution-ready."
+
+  editor:
+    stage: pipeline
+    tool_profile: edit_safe
+    description: "Improves clarity, structure, tone, and executive readability without adding facts."
+    trigger: "Use when improving final Markdown prose, documentation wording, or report readability after audit issues are resolved."
+    responsibilities:
+      - "Improve readability."
+      - "Reduce repetition."
+      - "Preserve all [src:CLAIM_ID] citations."
+      - "Preserve uncertainty."
+      - "Remove internal residue when safe."
+    hard_rules:
+      - "Do not add new claims."
+      - "Do not remove claim citations."
+      - "Do not convert caveats into certainty."
+
+  formatter:
+    stage: pipeline
+    tool_profile: edit_safe
+    description: "Writes and validates final artifacts: brief.md, claim_ledger.json, audit_report.json, source_map.md."
+    trigger: "Use when implementing or reviewing output file writing, JSON validity, source maps, Markdown/DOCX/PDF rendering contracts."
+    responsibilities:
+      - "Write files only inside configured output directories."
+      - "Validate JSON artifacts."
+      - "Validate cited claim IDs exist."
+      - "Preserve deterministic formatting."
+    hard_rules:
+      - "Do not hide failed audits."
+      - "Do not change substantive content to hide rendering defects."
+      - "Do not overwrite user files outside output directories."
+
+  draft-audit-harness:
+    stage: harness
+    tool_profile: audit_edit
+    description: "Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks."
+    trigger: "Use when working on DeterministicAuditAgent, QualityHarnessAuditAgent, CompositeAuditAgent, or draft-level source/freshness/redaction checks."
+    responsibilities:
+      - "Check missing or orphan [src:CLAIM_ID] references."
+      - "Check number/source coverage."
+      - "Check strict reporting-window freshness."
+      - "Check missing source dates."
+      - "Check placeholders."
+      - "Check internal workflow residue."
+      - "Check unsupported certainty wording."
+      - "Check investment-advice style language."
+      - "Check needs_recrawl and low-confidence claims appearing in briefs."
+      - "Check low numeric source density."
+      - "Check possible unit inflation."
+      - "Check repeat/background claims in executive summaries."
+    hard_rules:
+      - "Do not weaken draft audit gates."
+      - "Do not bypass CompositeAuditAgent."
+      - "Do not treat semantic model output as source truth."
+
+  final-quality-harness:
+    stage: harness
+    tool_profile: audit_edit
+    description: "Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target."
+    trigger: "Use when working on FinalQualityAuditAgent, final Markdown quality gates, report depth, metadata, summary bullet separation, stale-current framing, or publication readiness."
+    responsibilities:
+      - "Validate final report depth unless quiet_week is explicit."
+      - "Validate front-page metadata when configured."
+      - "Validate executive summary bullet separation."
+      - "Block stale-current framing."
+      - "Block internal workflow residue."
+      - "Keep final gate separate from default MVP draft audit."
+    hard_rules:
+      - "Do not let correct facts pass if final text quality is blocked."
+      - "Do not invent facts while repairing final prose."
+      - "Do not remove safety notes to pass formatting."
+
+  rendered-output-harness:
+    stage: harness
+    tool_profile: audit_edit
+    description: "Reviews rendered output gates for DOCX/PDF/Markdown rendering fidelity."
+    trigger: "Use when working on rendered document validation, DOCX text depth, heading mapping, margins, footer fields, or wide table conversion."
+    responsibilities:
+      - "Validate rendered text depth."
+      - "Validate heading mapping."
+      - "Validate bullet separation after rendering."
+      - "Validate wide table conversion."
+      - "Validate DOCX/PDF dependency behavior."
+      - "Keep renderer-level checks separate from prompt instructions."
+    hard_rules:
+      - "Do not hide rendering defects by changing substantive content."
+      - "Do not silently pass rendered-output validation if required dependencies are missing."
+      - "Do not treat prompt instructions as a substitute for deterministic rendering checks."
