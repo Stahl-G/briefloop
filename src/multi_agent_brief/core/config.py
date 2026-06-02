@@ -65,6 +65,7 @@ def build_run_settings(
 ) -> dict[str, str]:
     config = config or {}
     project = config.get("project", {}) or {}
+    report = config.get("report", {}) or {}
     input_config = config.get("input", {}) or {}
     output_config = config.get("output", {}) or {}
     config_dir = Path(config.get("_config_dir", "."))
@@ -88,4 +89,7 @@ def build_run_settings(
         "output_dir": str(output_path),
         "language": language or project.get("language") or "en-US",
         "audience": audience or project.get("audience") or "management",
+        "report_date": str(report.get("date", "")),
+        "max_source_age_days": int(report["max_source_age_days"]) if report.get("max_source_age_days") else None,
+        "fail_on_stale_source": bool(report.get("fail_on_stale_source", False)),
     }

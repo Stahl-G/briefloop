@@ -31,6 +31,17 @@ Analyst drafts the brief using only Claim Ledger claims. In the MVP, this is det
 
 Auditor checks references and source support. The MVP includes deterministic audit. A future semantic audit adapter can compare the draft against source evidence.
 
+For weekly briefs, deterministic audit can enforce a reporting window using:
+
+```yaml
+report:
+  date: "2026-06-02"
+  max_source_age_days: 14
+  fail_on_stale_source: true
+```
+
+Sources older than the configured window are flagged as `stale_source`; in strict mode they become high-severity findings.
+
 The pipeline-level `AuditorAgent` delegates to an `AuditAgentInterface` backend:
 
 ```text

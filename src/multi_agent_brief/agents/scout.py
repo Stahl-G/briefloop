@@ -39,7 +39,7 @@ class ScoutAgent(BaseAgent):
                     claim_type=infer_claim_type(statement),
                     confidence="medium",
                     created_by=self.name,
-                    metadata={"candidate_item_id": item_id},
+                    metadata={"candidate_item_id": item_id, "published_at": source.published_at},
                 )
                 candidates.append(candidate)
                 ledger.add_claim(claim)
@@ -138,4 +138,3 @@ def infer_claim_type(text: str) -> str:
     if any(word in lowered for word in ["expects", "forecast", "guidance"]):
         return "forecast"
     return "fact"
-

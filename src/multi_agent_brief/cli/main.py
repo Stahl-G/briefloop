@@ -12,12 +12,15 @@ from multi_agent_brief.core.pipeline import BriefPipeline
 from multi_agent_brief.core.schemas import PipelineContext
 
 
-DEMO_NEWS = """# Synthetic Market News
-
-- A public market tracker reported that utility-scale storage demand continued to expand in the Southwest during May 2026.
-- A policy update indicated that new interconnection queue reforms may shorten approval timelines for selected renewable projects.
-- A competitor announced a 2 GW manufacturing capacity expansion plan, with commercial production expected in 2027.
-"""
+DEMO_NEWS = {
+    "source_url": "https://example.com/synthetic-market-news",
+    "published_at": "2026-06-01",
+    "items": [
+        "A public market tracker reported that utility-scale storage demand continued to expand in the Southwest during May 2026.",
+        "A policy update indicated that new interconnection queue reforms may shorten approval timelines for selected renewable projects.",
+        "A competitor announced a 2 GW manufacturing capacity expansion plan, with commercial production expected in 2027.",
+    ],
+}
 
 DEMO_MARKET_DATA = {
     "source_url": "https://example.com/synthetic-market-data",
@@ -32,6 +35,11 @@ DEMO_CONFIG = """project:
   name: "Synthetic Market Brief Demo"
   language: "en-US"
   audience: "management"
+
+report:
+  date: "2026-06-02"
+  max_source_age_days: 14
+  fail_on_stale_source: true
 
 input:
   path: "input"
@@ -57,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     audit_parser.add_argument("brief", help="Markdown brief to audit.")
     audit_parser.add_argument("--ledger", required=True, help="Claim Ledger JSON file.")
     audit_parser.add_argument("--output", help="Optional path for audit_report.json.")
+    audit_parser.add_argument("--report-date", default="", help="Report date for stale-source checks, e.g. 2026-06-02.")
+    audit_parser.add_argument("--max-source-age-days", type=int, help="Maximum allowed source age.")
+    audit_parser.add_argument("--fail-on-stale-source", action="store_true", help="Treat stale sources as high-severity findings.")
 
     init_parser = subparsers.add_parser("init", help="Create a synthetic demo workspace.")
     init_parser.add_argument("target", nargs="?", default="brief-demo", help="Target demo directory.")
@@ -88,7 +99,13 @@ def run_audit_from_args(args: argparse.Namespace) -> int:
     if not brief_path.exists():
         raise FileNotFoundError(f"Brief not found: {brief_path}")
     ledger = ClaimLedger.import_json(args.ledger)
-    report = run_deterministic_audit(brief_path.read_text(encoding="utf-8"), ledger)
+    report = run_deterministic_audit(
+        brief_path.read_text(encoding="utf-8"),
+        ledger,
+        report_date=args.report_date,
+        max_source_age_days=args.max_source_age_days,
+        fail_on_stale_source=args.fail_on_stale_source,
+    )
     payload = json.dumps(report.to_dict(), ensure_ascii=False, indent=2)
     if args.output:
         Path(args.output).write_text(payload, encoding="utf-8")
@@ -102,7 +119,7 @@ def init_demo_from_args(args: argparse.Namespace) -> int:
     input_dir = target / "input"
     files = {
         target / "config.yaml": DEMO_CONFIG,
-        input_dir / "news.md": DEMO_NEWS,
+        input_dir / "news.json": json.dumps(DEMO_NEWS, indent=2),
         input_dir / "market_data.json": json.dumps(DEMO_MARKET_DATA, indent=2),
     }
     for path in files:

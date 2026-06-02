@@ -8,7 +8,7 @@ def test_cli_init_and_run_with_config(tmp_path):
 
     assert main(["init", str(demo_dir)]) == 0
     assert (demo_dir / "config.yaml").exists()
-    assert (demo_dir / "input" / "news.md").exists()
+    assert (demo_dir / "input" / "news.json").exists()
 
     assert main(["run", "--config", str(demo_dir / "config.yaml")]) == 0
     assert (demo_dir / "output" / "brief.md").exists()
@@ -29,6 +29,11 @@ def test_cli_audit_existing_brief(tmp_path):
             str(demo_dir / "output" / "claim_ledger.json"),
             "--output",
             str(audit_output),
+            "--report-date",
+            "2026-06-02",
+            "--max-source-age-days",
+            "14",
+            "--fail-on-stale-source",
         ]
     )
 
@@ -40,4 +45,3 @@ def test_cli_version(capsys):
     assert main(["version"]) == 0
     captured = capsys.readouterr()
     assert captured.out.strip()
-

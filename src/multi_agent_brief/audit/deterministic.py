@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 import re
 
 from multi_agent_brief.audit.redaction import scan_redaction_risks
@@ -12,6 +13,21 @@ SRC_REF_PATTERN = re.compile(r"\[src:([A-Z0-9_]{6,})\]")
 NUMBER_PATTERN = re.compile(r"(\$[\d,.]+|[\d,.]+%|\b\d+(?:\.\d+)?\s?(?:GW|GWh|MW|MWh|million|billion)\b)")
 
 
+def parse_date(value: str) -> date | None:
+    if not value:
+        return None
+    text = value.strip()
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(text[: len(fmt)], fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
 def extract_src_refs(markdown: str) -> list[dict]:
     refs: list[dict] = []
     for line_number, line in enumerate(markdown.splitlines(), start=1):
@@ -20,7 +36,14 @@ def extract_src_refs(markdown: str) -> list[dict]:
     return refs
 
 
-def run_deterministic_audit(markdown: str, ledger: ClaimLedger) -> AuditReport:
+def run_deterministic_audit(
+    markdown: str,
+    ledger: ClaimLedger,
+    *,
+    report_date: str = "",
+    max_source_age_days: int | None = None,
+    fail_on_stale_source: bool = False,
+) -> AuditReport:
     findings: list[AuditFinding] = []
     refs = extract_src_refs(markdown)
     referenced_ids = {ref["claim_id"] for ref in refs}
@@ -84,6 +107,41 @@ def run_deterministic_audit(markdown: str, ledger: ClaimLedger) -> AuditReport:
             )
         )
 
+    report_day = parse_date(report_date)
+    if report_day and max_source_age_days is not None:
+        for claim in ledger:
+            published_at = str(claim.metadata.get("published_at", ""))
+            source_day = parse_date(published_at)
+            if source_day is None:
+                findings.append(
+                    AuditFinding(
+                        finding_id=f"DATE_{len(findings)+1:03d}",
+                        severity="medium",
+                        finding_type="missing_source_date",
+                        related_claim_id=claim.claim_id,
+                        description="Claim source is missing a parseable published_at date for reporting-window audit.",
+                        recommendation="Add source published_at metadata or mark the source as evergreen/background.",
+                        evidence=claim.statement,
+                    )
+                )
+                continue
+            age_days = (report_day - source_day).days
+            if age_days > max_source_age_days:
+                findings.append(
+                    AuditFinding(
+                        finding_id=f"STALE_{len(findings)+1:03d}",
+                        severity="high" if fail_on_stale_source else "medium",
+                        finding_type="stale_source",
+                        related_claim_id=claim.claim_id,
+                        description=(
+                            f"Source date {source_day.isoformat()} is {age_days} days before report date "
+                            f"{report_day.isoformat()}, exceeding the {max_source_age_days}-day reporting window."
+                        ),
+                        recommendation="Remove this item from the weekly brief or recast it as dated background.",
+                        evidence=claim.statement,
+                    )
+                )
+
     for risk in scan_redaction_risks(markdown + "\n" + "\n".join(claim.evidence_text for claim in ledger)):
         findings.append(
             AuditFinding(
@@ -102,6 +160,9 @@ def run_deterministic_audit(markdown: str, ledger: ClaimLedger) -> AuditReport:
         "unique_refs": len(referenced_ids),
         "ledger_claims": len(ledger),
         "unused_claims": unused_claims,
+        "report_date": report_date,
+        "max_source_age_days": max_source_age_days,
+        "fail_on_stale_source": fail_on_stale_source,
     }
     high = sum(1 for finding in findings if finding.severity == "high")
     medium = sum(1 for finding in findings if finding.severity == "medium")
@@ -124,4 +185,10 @@ class DeterministicAuditAgent(AuditAgentInterface):
         ledger: ClaimLedger,
         context: PipelineContext | None = None,
     ) -> AuditReport:
-        return run_deterministic_audit(markdown, ledger)
+        return run_deterministic_audit(
+            markdown,
+            ledger,
+            report_date=context.report_date if context else "",
+            max_source_age_days=context.max_source_age_days if context else None,
+            fail_on_stale_source=context.fail_on_stale_source if context else False,
+        )

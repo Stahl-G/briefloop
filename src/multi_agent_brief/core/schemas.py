@@ -130,8 +130,10 @@ class PipelineContext:
     output_dir: str
     language: str = "en-US"
     audience: str = "management"
+    report_date: str = ""
+    max_source_age_days: int | None = None
+    fail_on_stale_source: bool = False
     sources: list[SourceItem] = field(default_factory=list)
     candidates: list[CandidateItem] = field(default_factory=list)
     report_state: ReportState = field(default_factory=ReportState)
     metadata: dict[str, Any] = field(default_factory=dict)
-

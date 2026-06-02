@@ -41,3 +41,28 @@ def test_audit_flags_number_without_source():
     assert report.audit_status == "warning"
     assert report.findings[0].finding_type == "number_without_source"
 
+
+def test_audit_fails_stale_source_when_reporting_window_is_strict():
+    ledger = ClaimLedger(
+        [
+            Claim(
+                claim_id="OLD_ABCDEF",
+                statement="A three-month-old source should not appear as a weekly item.",
+                source_id="OLD",
+                evidence_text="A three-month-old source should not appear as a weekly item.",
+                metadata={"published_at": "2026-03-01"},
+            )
+        ]
+    )
+    markdown = "- A three-month-old source should not appear as a weekly item. [src:OLD_ABCDEF]"
+
+    report = run_deterministic_audit(
+        markdown,
+        ledger,
+        report_date="2026-06-02",
+        max_source_age_days=14,
+        fail_on_stale_source=True,
+    )
+
+    assert report.audit_status == "fail"
+    assert report.findings[0].finding_type == "stale_source"

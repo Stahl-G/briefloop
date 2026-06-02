@@ -28,6 +28,7 @@ The first local MVP supports:
 - Analyst agent that drafts a Markdown brief with `[src:CLAIM_ID]` citations
 - Auditor agent interface with deterministic audit and semantic-audit adapter hooks
 - Deterministic Auditor for missing claims, unsupported numbers, duplicate claims, and redaction risks
+- Reporting-window checks that flag stale sources in weekly briefs
 - Editor agent that prepares the final Markdown brief
 - Formatter agent that writes:
   - `brief.md`
@@ -102,6 +103,17 @@ Or run from a config file:
 multi-agent-brief run --config examples/basic_market_brief/config.yaml
 ```
 
+The example config enables a strict weekly reporting window:
+
+```yaml
+report:
+  date: "2026-06-02"
+  max_source_age_days: 14
+  fail_on_stale_source: true
+```
+
+When this mode is enabled, a three-month-old source cannot pass as a weekly item.
+
 Open the generated files:
 
 ```text
@@ -147,6 +159,7 @@ The pipeline-level `AuditorAgent` delegates to an audit backend that implements 
 Current audit backends:
 
 - `DeterministicAuditAgent`: checks source IDs, unsupported numbers, duplicate claims, missing source evidence, and redaction risks.
+- `DeterministicAuditAgent`: also checks reporting-window freshness when `report.date` and `report.max_source_age_days` are configured.
 - `NoOpSemanticAuditAgent`: placeholder adapter for future model-backed semantic source-support review.
 - `CompositeAuditAgent`: runs deterministic audit first, then an optional semantic audit adapter.
 

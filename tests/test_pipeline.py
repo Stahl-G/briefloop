@@ -17,6 +17,9 @@ def test_pipeline_writes_outputs(tmp_path):
         project_name="Demo Brief",
         input_dir=str(input_dir),
         output_dir=str(output_dir),
+        report_date="2026-06-02",
+        max_source_age_days=14,
+        fail_on_stale_source=True,
     )
 
     outputs = BriefPipeline().run(context)
@@ -27,4 +30,3 @@ def test_pipeline_writes_outputs(tmp_path):
     assert (output_dir / "audit_report.json").exists()
     assert (output_dir / "source_map.md").exists()
     assert "Demo Brief" in (output_dir / "brief.md").read_text(encoding="utf-8")
-
