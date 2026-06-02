@@ -238,6 +238,18 @@ This project can help structure research and briefing workflows, but it does not
 
 ## Changelog
 
+### v0.4.0 — Source Provider System
+
+- Added `sources/` module: unified SourceProvider interface for all information sources.
+- Three source profiles: conservative, research, aggressive_signal.
+- Manual provider: loads local .md/.txt/.json files and manual URL entries.
+- RSS provider: fetches and parses RSS/Atom feeds with keyword filtering.
+- Stub providers for web_search, api, mcp, cli (Phase 1 placeholders).
+- Source normalization, deduplication, and recency filtering.
+- `multi-agent-brief doctor`: checks source configuration health.
+- Init wizard now asks for source profile and generates tailored `sources.yaml`.
+- 21 new tests covering providers, normalizer, registry, and doctor.
+
 ### v0.3.0 — Agent Config Generation
 
 - Added `configs/agent_roles.yaml` as single source of truth for all agent roles.

@@ -7,6 +7,7 @@ from pathlib import Path
 from multi_agent_brief import __version__
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.cli.init_wizard import build_profile_from_args, create_demo_workspace, create_workspace
+from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.core.pipeline import BriefPipeline
@@ -50,6 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--rag", choices=["on", "off"], help="Enable or disable retrieval settings.")
     init_parser.add_argument("--retrieval-provider", choices=["ollama", "gemini"], help="Retrieval provider.")
     init_parser.add_argument("--output-formats", help="Comma-separated output formats.")
+    init_parser.add_argument("--source-profile", choices=["conservative", "research", "aggressive_signal", "custom"], help="Source collection profile.")
+
+    doctor_parser = subparsers.add_parser("doctor", help="Check source configuration health.")
+    doctor_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
 
     subparsers.add_parser("version", help="Print package version.")
     return parser
@@ -109,6 +114,13 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_doctor_from_args(args: argparse.Namespace) -> int:
+    results = run_doctor(config_path=args.config)
+    print(format_doctor_report(results))
+    errors = sum(1 for r in results if r.status == "ERROR")
+    return 1 if errors else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -119,6 +131,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_audit_from_args(args)
     if args.command == "init":
         return init_demo_from_args(args) if args.demo else init_workspace_from_args(args)
+    if args.command == "doctor":
+        return run_doctor_from_args(args)
     if args.command == "version":
         print(__version__)
         return 0

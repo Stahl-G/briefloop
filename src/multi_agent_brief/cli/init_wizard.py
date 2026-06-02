@@ -128,6 +128,7 @@ class InitProfile:
     output_formats: list[str] = field(
         default_factory=lambda: ["markdown", "claim_ledger", "audit_report", "source_map"]
     )
+    source_profile: str = "research"
 
 
 def create_demo_workspace(target: Path, *, force: bool = False) -> None:
@@ -149,7 +150,7 @@ def create_workspace(target: Path, profile: InitProfile, *, force: bool = False)
     files = {
         target / "config.yaml": to_yaml(build_config(profile)),
         target / "profile.yaml": to_yaml(build_profile(profile)),
-        target / "sources.yaml": to_yaml(build_sources()),
+        target / "sources.yaml": to_yaml(build_sources(profile)),
         target / ".gitignore": WORKSPACE_GITIGNORE,
         input_dir / "README.md": build_input_readme(profile.interface_language),
     }
@@ -172,6 +173,7 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
         profile.selector_max_items = args.selector_max_items or profile.selector_max_items
         apply_rag_args(profile, args.rag, args.retrieval_provider)
         profile.output_formats = parse_list_arg(args.output_formats) or profile.output_formats
+        profile.source_profile = getattr(args, "source_profile", None) or profile.source_profile
         return profile
     return prompt_for_profile(input_func=input_func)
 
@@ -191,6 +193,7 @@ def has_noninteractive_profile_args(args: Any) -> bool:
         "retrieval_provider",
         "selector_max_items",
         "output_formats",
+        "source_profile",
     ]
     return any(getattr(args, field, None) is not None for field in fields)
 
@@ -222,6 +225,7 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
         profile.retrieval_model = retrieval_model_for_provider(profile.retrieval_provider)
     profile.output_formats = parse_list_arg(ask_text(input_func, prompts["outputs"], ",".join(profile.output_formats)))
     profile.max_source_age_days = parse_int(ask_text(input_func, prompts["max_age"], str(profile.max_source_age_days)), 14)
+    profile.source_profile = ask_choice(input_func, prompts["source_profile"], prompts["source_profile_options"], "2")
     return profile
 
 
@@ -264,6 +268,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "retrieval_provider": "Choose retrieval provider:\n1. Ollama local\n2. Gemini API\nDefault [1]: ",
             "outputs": "Output formats, comma-separated: ",
             "max_age": "Maximum source age in days: ",
+            "source_profile": "Source profile:\n1. Conservative: official and approved sources only\n2. Research: official + industry media + web search\n3. Aggressive signal: forums, social media, GitHub, blogs\n4. Custom\nDefault [2]: ",
+            "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom"},
         }
     if language == "bilingual":
         labels = prompt_labels("en-US")
@@ -280,6 +286,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "rag": "Enable historical retrieval / RAG? 是否启用历史检索？[y/N]: ",
                 "outputs": "Output formats / 输出格式，comma-separated / 逗号分隔: ",
                 "max_age": "Maximum source age in days / 最大来源天数: ",
+                "source_profile": "Source profile / 信息来源策略:\n1. Conservative / 仅官方和审核来源\n2. Research / 官方 + 行业媒体 + 网络搜索\n3. Aggressive signal / 论坛、社交、GitHub、博客\n4. Custom / 自定义\nDefault [2]: ",
+                "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom"},
             }
         )
         return labels
@@ -320,6 +328,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "retrieval_provider": "请选择检索 provider：\n1. Ollama 本地\n2. Gemini API\n默认 [1]：",
         "outputs": "请输入输出格式，逗号分隔：",
         "max_age": "请输入最大来源天数：",
+        "source_profile": "请选择信息来源策略：\n1. 保守：仅官方和审核来源\n2. 研究：官方 + 行业媒体 + 网络搜索\n3. 积极信号：论坛、社交、GitHub、博客\n4. 自定义\n默认 [2]：",
+        "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom"},
     }
 
 
@@ -402,31 +412,61 @@ def build_profile(profile: InitProfile) -> dict[str, Any]:
     }
 
 
-def build_sources() -> dict[str, Any]:
+def build_sources(profile: InitProfile) -> dict[str, Any]:
+    """Generate sources.yaml content based on the selected source profile."""
+    sp = profile.source_profile
+
+    # Base: always include manual local inputs
+    manual_sources = [
+        {
+            "name": "Local Input Directory",
+            "path": "input/",
+            "category": "local_files",
+            "language": profile.output_language.split("-")[0] if "-" in profile.output_language else profile.output_language,
+            "enabled": True,
+        }
+    ]
+
+    # Profile-specific provider enables
+    if sp == "conservative":
+        enabled = ["manual"]
+        rss_enabled = False
+        web_search_enabled = False
+    elif sp == "aggressive_signal":
+        enabled = ["manual", "rss", "web_search"]
+        rss_enabled = True
+        web_search_enabled = True
+    else:  # research or custom
+        enabled = ["manual", "rss"]
+        rss_enabled = True
+        web_search_enabled = sp == "custom"
+
     return {
-        "sources": [
-            {
-                "name": "Company Investor Relations",
-                "type": "website",
-                "url": "https://example.com/investors",
-                "tier": "company_official",
-                "enabled": False,
-            },
-            {
-                "name": "Industry Media",
-                "type": "rss",
-                "url": "https://example.com/rss",
-                "tier": "industry_media",
-                "enabled": False,
-            },
-            {
-                "name": "Manual Local Inputs",
-                "type": "local",
-                "path": "input/",
-                "tier": "user_provided",
-                "enabled": True,
-            },
-        ]
+        "source_strategy": {
+            "profile": sp,
+            "enabled_providers": enabled,
+        },
+        "manual": {
+            "enabled": True,
+            "sources": manual_sources,
+        },
+        "rss": {
+            "enabled": rss_enabled,
+            "feeds": [],
+        },
+        "web_search": {
+            "enabled": web_search_enabled,
+            "max_results": 20,
+            "recency_days": 7,
+        },
+        "api": {
+            "enabled": False,
+            "providers": [],
+        },
+        "mcp": {
+            "enabled": False,
+            "servers": [],
+        },
     }
 
 

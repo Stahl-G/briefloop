@@ -132,6 +132,27 @@
 - Do not weaken audit or harness checks.
 - Do not introduce private/company-specific examples.
 
+            ### source-provider
+
+            **Stage:** coordination
+            **Description:** Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
+
+            **Responsibilities:**
+            - Load and validate sources.yaml configuration.
+- Instantiate enabled source providers (manual, rss, web_search, api, mcp, cli).
+- Collect sources from all enabled providers.
+- Normalize source items into a unified SourceItem structure.
+- Deduplicate sources by dedupe_key.
+- Filter sources by recency.
+- Run doctor checks on source configuration health.
+- Generate proper sources.yaml templates in init wizard.
+
+            **Hard rules:**
+            - Do not write API keys into configuration files.
+- Do not bypass source profile constraints.
+- Do not claim sources are verified when they are only collected.
+- Do not silently skip provider validation errors.
+
             ### scout
 
             **Stage:** pipeline

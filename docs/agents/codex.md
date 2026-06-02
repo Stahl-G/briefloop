@@ -7,6 +7,7 @@
         Located in `.codex/agents/`:
 
         - `orchestrator.toml` — Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents.
+- `source-provider.toml` — Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
 - `scout.toml` — Extracts candidate reportable items from local markdown, text, JSON, and future connector sources.
 - `screener.toml` — Filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
 - `claim-ledger.toml` — Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.

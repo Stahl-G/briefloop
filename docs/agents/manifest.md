@@ -60,3 +60,4 @@ Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 ## Coordination Roles
 
 - **orchestrator** (coordination)
+- **source-provider** (coordination)

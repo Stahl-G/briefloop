@@ -238,6 +238,18 @@ python3 scripts/generate_agent_configs.py --check
 
 ## 更新日志
 
+### v0.4.0 — 信息来源提供器系统
+
+- 新增 `sources/` 模块：统一的 SourceProvider 接口，支持所有信息来源。
+- 三种来源策略：conservative、research、aggressive_signal。
+- Manual provider：加载本地 .md/.txt/.json 文件和手动 URL 条目。
+- RSS provider：获取并解析 RSS/Atom 订阅源，支持关键词过滤。
+- Stub providers：web_search、api、mcp、cli（Phase 1 占位）。
+- 来源归一化、去重和时效性过滤。
+- `multi-agent-brief doctor`：检查来源配置健康状态。
+- Init 向导新增来源策略选择，生成定制化 `sources.yaml`。
+- 新增 21 个测试，覆盖 provider、normalizer、registry 和 doctor。
+
 ### v0.3.0 — 智能体配置生成
 
 - 新增 `configs/agent_roles.yaml` 作为所有智能体角色的唯一事实来源。
