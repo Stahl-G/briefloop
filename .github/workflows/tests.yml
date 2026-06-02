@@ -17,3 +17,27 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
 
+  readme-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check README updated with code changes
+        run: |
+          BASE_SHA=$(git rev-parse origin/main)
+          SRC_CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD -- src/ | head -1)
+          if [ -z "$SRC_CHANGED" ]; then
+            echo "No src/ changes — README check skipped."
+            exit 0
+          fi
+          README_CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD -- README.md README.zh-CN.md | head -1)
+          if [ -z "$README_CHANGED" ]; then
+            echo ""
+            echo "src/ has changes but README.md and/or README.zh-CN.md"
+            echo "were not modified. Please update README to record changes."
+            echo ""
+            exit 1
+          fi
+          echo "README updated — check passed."
+

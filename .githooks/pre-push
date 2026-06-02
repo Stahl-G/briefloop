@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Pre-push hook: require README update when src/ changes.
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+remote="$1"
+url="$2"
+
+# Read push info from stdin (local_ref local_sha remote_ref remote_sha)
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Skip branch deletions
+  [ "$local_ref" = "(delete)" ] && continue
+
+  # Compare against main
+  base=$(git rev-parse --verify main 2>/dev/null || echo "")
+  [ -z "$base" ] && continue
+
+  # Check if src/ has changes
+  src_changed=$(git diff --name-only "$base"...HEAD -- src/ 2>/dev/null | head -1)
+  [ -z "$src_changed" ] && continue
+
+  # src/ changed — check README
+  readme_changed=$(git diff --name-only "$base"...HEAD -- README.md README.zh-CN.md 2>/dev/null | head -1)
+  if [ -z "$readme_changed" ]; then
+    echo ""
+    echo "=============================================="
+    echo "  PUSH BLOCKED: README not updated"
+    echo "=============================================="
+    echo ""
+    echo "  src/ has changes but README.md and/or"
+    echo "  README.zh-CN.md were not modified."
+    echo ""
+    echo "  Please update README to record the changes"
+    echo "  before pushing."
+    echo ""
+    echo "  To bypass (not recommended):"
+    echo "    git push --no-verify"
+    echo ""
+    exit 1
+  fi
+done
+
+exit 0

@@ -12,7 +12,7 @@ A source-grounded, audit-ready multi-agent workflow for producing business, rese
 This project turns the repeatable briefing workflow used by analysts, strategy teams, investor relations teams, research desks, and management offices into a transparent Python pipeline:
 
 ```text
-Scout -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
+Scout -> Screencer -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 ```
 
 It is not an investment advice tool, trading signal generator, or replacement for human review.
@@ -33,6 +33,7 @@ This repo makes the workflow modular, inspectable, and runnable locally:
 A real briefing process is not one job. It is a small editorial desk:
 
 - Scout finds reportable signals.
+- Screencer filters and ranks candidates by novelty, source tier, and topic capacity.
 - Claim Ledger records evidence.
 - Analyst turns evidence into a structured draft.
 - Auditor checks whether the draft is supported and distribution-ready.
@@ -46,12 +47,13 @@ Splitting these roles reduces hidden reasoning shortcuts. Each step has a narrow
 ```mermaid
 flowchart LR
   A["Inputs<br/>Markdown, text, JSON"] --> B["Scout"]
-  B --> C["Claim Ledger"]
-  C --> D["Analyst"]
-  D --> E["Auditor"]
-  E --> F["Editor"]
-  F --> G["Formatter"]
-  G --> H["Outputs<br/>Brief, Claim Ledger, Audit Report, Source Map"]
+  B --> C["Screencer"]
+  C --> D["Claim Ledger"]
+  D --> E["Analyst"]
+  E --> F["Auditor"]
+  F --> G["Editor"]
+  G --> H["Formatter"]
+  H --> I["Outputs<br/>Brief, Claim Ledger, Audit Report, Source Map"]
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the plain-language architecture guide.
@@ -62,6 +64,7 @@ The first local MVP supports:
 
 - Local `.md`, `.txt`, and `.json` inputs
 - Scout agent that extracts candidate reportable items
+- Screencer agent that filters claims by novelty scoring, topic capacity caps, and previous-report deduplication
 - Claim Ledger with source-grounded claims
 - Analyst agent that drafts a Markdown brief with `[src:CLAIM_ID]` citations
 - Auditor agent interface with deterministic audit and semantic-audit adapter hooks
@@ -206,6 +209,18 @@ See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap and [docs/repo-m
 Do not commit credentials, tokens, webhooks, raw internal logs, private reports, customer names, confidential files, internal paths, or company-specific prompts. All examples in this repo should use public or synthetic data.
 
 This project can help structure research and briefing workflows, but it does not provide legal, financial, investment, trading, or compliance advice. Human review remains required before any real-world distribution or decision-making use.
+
+## Changelog
+
+### v0.2.0 — Screencer Agent
+
+- Added ScreencerAgent between Scout and Analyst in the pipeline.
+- Topic-based capacity caps across 10 topic buckets (max 160 claims total).
+- Novelty scoring with source tier, claim type, and high-signal term weights.
+- Previous report deduplication via text matching and theme-group detection.
+- Stale source and low-confidence (T5) source exclusion.
+- Previous report loader supporting `.md`, `.txt`, and `.docx` formats.
+- Added pre-push hook and CI check: README must be updated before pushing code changes.
 
 ## Development
 

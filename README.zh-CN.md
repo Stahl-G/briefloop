@@ -12,7 +12,7 @@
 本项目把分析师、战略团队、投资者关系团队、研究部门和管理层办公室常见的重复性简报生产流程，转化为一个透明的 Python 流水线：
 
 ```text
-Scout -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
+Scout -> Screencer -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 ```
 
 本项目不是投资建议工具，不是交易信号生成器，也不能替代人工审核。
@@ -33,6 +33,7 @@ Scout -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 真实的简报生产不是一个任务，而像一个小型编辑台：
 
 - Scout（信息侦察员）负责发现可写入简报的信号。
+- Screencer（筛选员）按新颖度、源层级和主题容量筛选候选声明。
 - Claim Ledger（事实账本）负责记录证据。
 - Analyst（分析员）把证据整理成结构化草稿。
 - Auditor（审计员）检查草稿是否有来源支撑、是否适合分发。
@@ -46,12 +47,13 @@ Scout -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 ```mermaid
 flowchart LR
   A["输入<br/>Markdown、文本、JSON"] --> B["Scout<br/>信息侦察员"]
-  B --> C["Claim Ledger<br/>事实账本"]
-  C --> D["Analyst<br/>分析员"]
-  D --> E["Auditor<br/>审计员"]
-  E --> F["Editor<br/>编辑"]
-  F --> G["Formatter<br/>格式转换器"]
-  G --> H["输出<br/>Brief、Claim Ledger、Audit Report、Source Map"]
+  B --> C["Screencer<br/>筛选员"]
+  C --> D["Claim Ledger<br/>事实账本"]
+  D --> E["Analyst<br/>分析员"]
+  E --> F["Auditor<br/>审计员"]
+  F --> G["Editor<br/>编辑"]
+  G --> H["Formatter<br/>格式转换器"]
+  H --> I["输出<br/>Brief、Claim Ledger、Audit Report、Source Map"]
 ```
 
 详见 [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)。
@@ -62,6 +64,7 @@ flowchart LR
 
 - 本地 `.md`、`.txt` 和 `.json` 输入
 - Scout 智能体抽取候选可写入简报的事项
+- Screencer 智能体按新颖度评分、主题容量上限和历史去重筛选候选声明
 - Claim Ledger 记录有来源支撑的事实与判断
 - Analyst 智能体用 `[src:CLAIM_ID]` 引用生成 Markdown 草稿
 - Auditor 智能体接口，支持确定性审计和语义审计适配器
@@ -206,6 +209,18 @@ multi-agent-brief version
 不要提交凭证、token、webhook、原始内部日志、私有报告、客户名称、机密文件、内部路径或公司特定 prompt。本仓库中的所有示例都应使用公开数据或合成数据。
 
 本项目可以帮助组织研究和简报流程，但不提供法律、金融、投资、交易或合规建议。任何真实分发或决策使用前，都需要人工审核。
+
+## 更新日志
+
+### v0.2.0 — Screencer 筛选智能体
+
+- 在 Scout 与 Analyst 之间新增 ScreencerAgent。
+- 10 个主题分类，每个主题有容量上限（总计最多 160 条声明）。
+- 新颖度评分：叠加源层级、声明类型和高信号词权重。
+- 历史报告去重：通过文本匹配和主题词组检测排除重复内容。
+- 过期源和低置信源（T5）自动排除。
+- 历史报告加载器，支持 `.md`、`.txt` 和 `.docx` 格式。
+- 新增 pre-push hook 和 CI 检查：推送代码前必须更新 README。
 
 ## 开发
 
