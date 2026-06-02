@@ -1,4 +1,4 @@
-# Multi-Agent Brief Workflow
+# 多Agent周报生成流水线
 
 <p align="center">
   <a href="README.md">English</a> |
