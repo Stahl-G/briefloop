@@ -17,6 +17,7 @@ from multi_agent_brief.sources.api_news import NewsApiProvider
 from multi_agent_brief.sources.api_filings import FilingsProvider
 from multi_agent_brief.sources.mcp_provider import McpProvider
 from multi_agent_brief.sources.cli_provider import CliProvider
+from multi_agent_brief.sources.cached_package import CachedPackageProvider
 from multi_agent_brief.sources.normalizer import normalize_source_item, dedupe_sources, filter_by_recency
 
 
@@ -29,6 +30,7 @@ PROVIDER_CLASSES: dict[str, type[SourceProvider]] = {
     "filings": FilingsProvider,
     "mcp": McpProvider,
     "cli": CliProvider,
+    "cached_package": CachedPackageProvider,
 }
 
 
@@ -75,6 +77,7 @@ def collect_all_sources(
         "filings": source_config.api,  # filings share the api config section
         "mcp": source_config.mcp,
         "cli": source_config.mcp,  # cli shares the mcp config section
+        "cached_package": source_config.cached_package,
     }
 
     for name, provider in providers.items():
@@ -108,6 +111,7 @@ def validate_all_providers(source_config: SourceConfig) -> list[str]:
         "filings": source_config.api,
         "mcp": source_config.mcp,
         "cli": source_config.mcp,
+        "cached_package": source_config.cached_package,
     }
 
     for name, provider in providers.items():

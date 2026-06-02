@@ -118,9 +118,17 @@ def test_rss_provider_skips_disabled():
 
 # --- Stubs ---
 
-def test_web_search_stub_returns_empty():
+def test_web_search_returns_mock_results():
     provider = WebSearchProvider()
-    config = {"enabled": True}
+    config = {"enabled": True, "backend": "mock"}
+    items = provider.collect(SourceQuery(), config)
+    assert len(items) > 0
+    assert items[0].source_type == "web_search"
+
+
+def test_web_search_disabled_returns_empty():
+    provider = WebSearchProvider()
+    config = {"enabled": False}
     items = provider.collect(SourceQuery(), config)
     assert items == []
 

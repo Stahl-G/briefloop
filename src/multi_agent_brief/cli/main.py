@@ -8,6 +8,7 @@ from multi_agent_brief import __version__
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.cli.init_wizard import build_profile_from_args, create_demo_workspace, create_workspace
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
+from multi_agent_brief.sources.registry import load_sources_config
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.core.pipeline import BriefPipeline
@@ -25,6 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--name", help="Brief title.")
     run_parser.add_argument("--language")
     run_parser.add_argument("--audience")
+    run_parser.add_argument("--industry", help="Industry for source planning, e.g. solar.")
+    run_parser.add_argument("--days", type=int, help="Source recency in days.")
 
     audit_parser = subparsers.add_parser("audit", help="Run deterministic audit on an existing Markdown brief.")
     audit_parser.add_argument("brief", help="Markdown brief to audit.")
@@ -70,7 +73,38 @@ def run_pipeline_from_args(args: argparse.Namespace) -> int:
         language=args.language,
         audience=args.audience,
     )
+
+    # Handle --industry and --days: create SourceConfig and attach to context
+    industry = getattr(args, "industry", None) or (config or {}).get("project", {}).get("industry", "")
+    days = getattr(args, "days", None) or (config or {}).get("report", {}).get("max_source_age_days")
+
     context = PipelineContext(**settings)
+
+    # If industry is specified or sources.yaml exists, set up provider-based collection
+    if industry or (config and config.get("source_strategy")):
+        from multi_agent_brief.sources.base import SourceConfig
+        sources_path = Path(settings["output_dir"]).parent / "sources.yaml"
+        if not sources_path.exists():
+            sources_path = Path(settings["input_dir"]).parent / "sources.yaml" if Path(settings["input_dir"]).parent != Path(settings["input_dir"]) else None
+
+        if sources_path and sources_path.exists():
+            source_config = load_sources_config(sources_path)
+        else:
+            # Build from args/config
+            enabled = ["manual"]
+            if industry:
+                enabled.append("rss")
+            source_config = SourceConfig(
+                profile="research",
+                industry=industry or "",
+                enabled_providers=enabled,
+                manual={"enabled": True, "sources": [{"name": "Local Input Directory", "path": settings["input_dir"], "category": "local_files", "enabled": True}]},
+                rss={"enabled": bool(industry), "feeds": []},
+            )
+        if days:
+            context.max_source_age_days = days
+        context.metadata["source_config"] = source_config
+
     outputs = BriefPipeline().run(context)
     for output in outputs:
         print(f"[{output.agent_name}] {output.summary}")

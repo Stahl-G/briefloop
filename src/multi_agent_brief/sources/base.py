@@ -50,24 +50,28 @@ class SourceConfig:
     """Parsed source configuration from sources.yaml."""
 
     profile: str = "research"
+    industry: str = ""
     enabled_providers: list[str] = field(default_factory=lambda: ["manual"])
     manual: dict[str, Any] = field(default_factory=dict)
     rss: dict[str, Any] = field(default_factory=dict)
     web_search: dict[str, Any] = field(default_factory=dict)
     api: dict[str, Any] = field(default_factory=dict)
     mcp: dict[str, Any] = field(default_factory=dict)
+    cached_package: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SourceConfig:
         strategy = data.get("source_strategy", {})
         return cls(
             profile=strategy.get("profile", "research"),
+            industry=strategy.get("industry", ""),
             enabled_providers=strategy.get("enabled_providers", ["manual"]),
             manual=data.get("manual", {}),
             rss=data.get("rss", {}),
             web_search=data.get("web_search", {}),
             api=data.get("api", {}),
             mcp=data.get("mcp", {}),
+            cached_package=data.get("cached_package", {}),
         )
 
 

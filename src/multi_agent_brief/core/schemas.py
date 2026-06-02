@@ -4,6 +4,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+# Re-export SourceItem from the canonical location (sources.base)
+from multi_agent_brief.sources.base import SourceItem  # noqa: F401
+
 
 ClaimType = Literal["fact", "number", "date", "interpretation", "forecast", "risk"]
 Confidence = Literal["low", "medium", "high"]
@@ -13,20 +16,6 @@ AuditStatus = Literal["pass", "warning", "fail"]
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-@dataclass
-class SourceItem:
-    source_id: str
-    title: str
-    source_type: str
-    content: str
-    source_url: str = ""
-    published_at: str = ""
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
 
 
 @dataclass

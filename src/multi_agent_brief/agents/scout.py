@@ -34,7 +34,7 @@ class ScoutAgent(BaseAgent):
                     statement=statement,
                     source_id=source.source_id,
                     evidence_text=statement,
-                    source_url=source.source_url,
+                    source_url=source.url,
                     source_type=source.source_type,
                     claim_type=source.metadata.get("claim_type") or infer_claim_type(statement),
                     confidence="medium",
@@ -70,14 +70,14 @@ def load_local_sources(input_dir: Path) -> list[SourceItem]:
             continue
 
         content = path.read_text(encoding="utf-8")
-        source_url = ""
+        url = ""
         published_at = ""
         source_tier = ""
         claim_type = ""
         if path.suffix.lower() == ".json":
             try:
                 parsed = json.loads(content)
-                source_url = str(parsed.get("source_url", ""))
+                url = str(parsed.get("source_url", ""))
                 published_at = str(parsed.get("published_at", ""))
                 source_tier = str(parsed.get("source_tier", ""))
                 claim_type = str(parsed.get("claim_type", ""))
@@ -89,13 +89,15 @@ def load_local_sources(input_dir: Path) -> list[SourceItem]:
                 pass
 
         source_id = path.stem.upper().replace("-", "_")
+        title = path.stem.replace("_", " ").title()
         sources.append(
             SourceItem(
                 source_id=source_id,
-                title=path.stem.replace("_", " ").title(),
+                source_name=title,
                 source_type="local_file",
+                title=title,
                 content=content,
-                source_url=source_url,
+                url=url,
                 published_at=published_at,
                 metadata={"path": str(path), "source_tier": source_tier, "claim_type": claim_type},
             )

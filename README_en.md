@@ -256,6 +256,19 @@ This project can help structure research and briefing workflows, but it does not
 
 ## Changelog
 
+### v0.5.0 — Three-Layer Source Collection Architecture
+
+- Added `SourcePlanner`: generates search plans based on industry, role, and time window.
+- Added `industry_packs.py`: industry presets (solar, technology, finance, etc.) with RSS feeds and search tasks.
+- `WebSearchProvider` upgraded from stub to real implementation with pluggable backends (mock, tavily, serpapi).
+- Added `CachedPackageProvider`: reads pre-collected source package folders (supports OpenClaw-style workflows).
+- Added `search_backends/` module: SearchBackend ABC + MockSearchBackend.
+- Unified SourceItem: eliminated duplicate definitions in `core/schemas.py` and `sources/base.py`.
+- Pipeline restructured: Source Collection → Scout → Screener → ..., Scout now reads from Provider system.
+- CLI gained `--industry` and `--days` args for industry-aware automatic collection.
+- Backward compatible: without source_config, still reads local files from input_dir.
+- 14 new tests covering SourcePlanner, industry packs, WebSearch, CachedPackage, Pipeline integration.
+
 ### v0.4.0 — Source Provider System
 
 - Added `sources/` module: unified SourceProvider interface for all information sources.

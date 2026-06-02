@@ -267,6 +267,19 @@ python3 scripts/generate_agent_configs.py --check
 
 ## 更新日志
 
+### v0.5.0 — 三层来源采集架构
+
+- 新增 `SourcePlanner`：根据行业、岗位、时间窗口自动生成搜索计划。
+- 新增 `industry_packs.py`：行业预设包（solar、technology、finance 等），含 RSS 源和搜索任务。
+- `WebSearchProvider` 升级为真实实现，支持可插拔搜索后端（mock、tavily、serpapi）。
+- 新增 `CachedPackageProvider`：读取预收集的源包文件夹（支持 OpenClaw 式工作流）。
+- 新增 `search_backends/` 模块：SearchBackend ABC + MockSearchBackend。
+- 统一 SourceItem：消除 `core/schemas.py` 和 `sources/base.py` 的重复定义。
+- Pipeline 重构：Source Collection → Scout → Screener → ...，Scout 从 Provider 系统读取。
+- CLI 新增 `--industry` 和 `--days` 参数，支持行业感知的自动采集。
+- 向后兼容：无 source_config 时仍可从 input_dir 读取本地文件。
+- 14 个新测试覆盖 SourcePlanner、行业包、WebSearch、CachedPackage、Pipeline 集成。
+
 ### v0.4.0 — 信息来源提供器系统
 
 - 新增 `sources/` 模块：统一的 SourceProvider 接口，支持所有信息来源。
