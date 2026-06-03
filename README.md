@@ -101,7 +101,7 @@ flowchart LR
 - Quality Harness 检查占位符、低置信来源、流程残留文本、陈旧填充内容和单位风险
 - Editor 智能体生成最终 Markdown 简报
 - Formatter 智能体写出 `brief.md`、`claim_ledger.json`、`audit_report.json` 和 `source_map.md`
-- `sources decide` 子命令将 `llm_diside` 来源策略解析为具体候选来源，支持 `--merge` 合并回 `sources.yaml`
+- `sources decide` 子命令将 `llm_decide` 来源策略解析为具体候选来源，支持 `--merge` 合并回 `sources.yaml`
 - 入职向导映射器自动将中文岗位、行业、受众标签映射为英文配置值
 - 公共安全扫描器（`scripts/public_safe_scan.py`）检测公开文件中的个人信息和敏感内容泄露
 

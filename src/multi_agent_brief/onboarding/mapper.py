@@ -82,6 +82,7 @@ _AUDIENCE_MAP: dict[str, str] = {
     "ceo": "management",
     "leadership": "management",
     "管理层": "management",
+    "management team": "management",
     "总裁办": "management",
     "boss": "management",
     "investment": "investment",
