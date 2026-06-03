@@ -277,9 +277,17 @@ multi-agent-brief run --config ../mabw-workspace/config.yaml
 
 ---
 
-## 可选：启用 Tavily 实时搜索
+## 可选：启用 Web 搜索
 
-Web 搜索默认关闭。启用需要 Tavily API key。
+Web 搜索支持多个后端，默认使用 Tavily。
+
+| 后端 | 环境变量 | 适用场景 |
+|------|----------|----------|
+| Tavily | `TAVILY_API_KEY` | 默认，快速公开搜索 |
+| Exa | `EXA_API_KEY` | 深度研究、论文、财报 |
+| Brave | `BRAVE_SEARCH_API_KEY` | 独立索引、通用搜索 |
+| Firecrawl | `FIRECRAWL_API_KEY` | 全文提取 |
+| Serper | `SERPER_API_KEY` | Google 垂直搜索 |
 
 设置环境变量：
 
@@ -299,12 +307,14 @@ $env:TAVILY_API_KEY = Read-Host "Enter your Tavily API key"
 multi-agent-brief init ../mabw-workspace --tavily
 ```
 
+详细配置和后端对比见 [docs/search-backends.md](docs/search-backends.md)。
+
 注意事项：
 
 * API key 必须放在环境变量中，不要写进 README、配置文件或聊天记录；
 * Web 搜索结果可能缺少可靠发布时间；
 * 时间敏感简报仍应人工核实来源；
-* 启用 Tavily 但未设置 API key 时，工作流会直接报错退出。
+* 不同后端在日期质量、证据质量上有差异。
 
 ---
 

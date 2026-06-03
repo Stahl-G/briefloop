@@ -167,6 +167,8 @@ For web search, register at [tavily.com](https://tavily.com) to get a Tavily API
 export TAVILY_API_KEY=<your-key>
 ```
 
+Other search backends (Exa, Brave, Firecrawl, Serper) are also supported. See [docs/search-backends.md](docs/search-backends.md) for details.
+
 ---
 
 ## Quick Start (Developer / Manual)
