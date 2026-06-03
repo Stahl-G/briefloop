@@ -306,7 +306,7 @@ onboarding_rules:
   rules:
     - "Do not ask the user to edit YAML, JSON, schema files, or CLI flags."
     - "Ask plain-language business questions directly in chat."
-    - "Ask at most 4 questions before recommending defaults."
+    - "Cover all onboarding fields: company, industry, task, audience, language, cadence, source style, output style, must-watch, forbidden sources. Ask about each one or confirm its default."
     - "Accept natural-language answers."
     - "If the user says \"unknown\", \"default\", or \"choose for me\", choose sensible defaults."
     - "Convert the answers into `onboarding.json`."

@@ -129,44 +129,62 @@ The audit report records whether the draft is distribution-ready:
 }
 ```
 
-## Quick Start
+## Getting Started (for Humans)
+
+Open your Claude Code or Codex, and type:
+
+> Clone and read https://github.com/Stahl-G/multi-agent-brief-workflow
+
+Then follow the prompts. The agent will handle installation, onboarding, and brief generation automatically.
+
+For web search, register at [tavily.com](https://tavily.com) to get a Tavily API key, then set it:
+
+```bash
+export TAVILY_API_KEY=<your-key>
+```
+
+---
+
+## Quick Start (Developer / Manual)
 
 macOS / Linux / WSL:
 
 ```bash
-git clone https://github.com/ORG/multi-agent-brief-workflow.git
+git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-# 1. Init workspace
-multi-agent-brief init my-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
+# 1. Init workspace (recommended: use conversational onboarding, see docs/onboarding.md)
+multi-agent-brief init ../mabw-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
 
 # 2. Add source files
-echo "- Industry news summary" > my-workspace/input/news.md
+echo "- Industry news summary" > ../mabw-workspace/input/news.md
 
 # 3. Check config
-multi-agent-brief doctor --config my-workspace/config.yaml
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
 # 4. Run pipeline
-multi-agent-brief run --config my-workspace/config.yaml
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 
 # View output
-cat my-workspace/output/brief.md
+cat ../mabw-workspace/output/brief.md
 ```
+
+> **Note:** `multi-agent-brief run` produces a deterministic draft, not a final brief. For a polished user-facing brief, Claude Code subagents (analyst → editor → auditor → formatter) must be orchestrated after the CLI run. Use `/generate-brief <workspace>` for the full workflow.
 
 Windows 10/11 should use native PowerShell 5.1 or PowerShell 7. WSL/Git Bash is optional, not required. CMD is not the primary support target.
 
 ```powershell
-git clone https://github.com/ORG/multi-agent-brief-workflow.git
+git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief init my-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
-echo "- Industry news summary" > my-workspace\input\news.md
-multi-agent-brief doctor --config my-workspace\config.yaml
-multi-agent-brief run --config my-workspace\config.yaml
+multi-agent-brief init ../mabw-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
+echo "- Industry news summary" > ../mabw-workspace\input\news.md
+multi-agent-brief doctor --config ../mabw-workspace\config.yaml
+multi-agent-brief run --config ../mabw-workspace\config.yaml
 ```
 
 You can also use the built-in example for a quick check:
@@ -233,19 +251,19 @@ The default `llm_decide` source mode lets the agent automatically generate searc
 
 ```bash
 # 1. Init with llm_decide
-multi-agent-brief init my-workspace --language en-US --company "Company" --industry manufacturing --source-profile llm_decide
+multi-agent-brief init ../mabw-workspace --language en-US --company "Company" --industry manufacturing --source-profile llm_decide
 
 # 2. Generate candidate sources (template mode, no API key needed)
-multi-agent-brief sources decide --config my-workspace/config.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 
 # 3. Review candidates
-cat my-workspace/source_candidates.yaml
+cat ../mabw-workspace/source_candidates.yaml
 
 # 4. Merge into sources
-multi-agent-brief sources decide --config my-workspace/config.yaml --merge
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 # 5. Run pipeline
-multi-agent-brief run --config my-workspace/config.yaml
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
 The llm_decide mode does not block pipeline execution — if you skip `sources decide`, the pipeline continues with local `input/` files and prints a warning.

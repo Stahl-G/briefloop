@@ -20,7 +20,7 @@ Before running `multi-agent-brief run`, identify which mode you are in.
 
 ## Quick Start (for agents)
 
-After cloning this repository, follow these steps in order:
+**Single authoritative workflow.** Follow these steps in order. Do not skip steps.
 
 ### Step 1: Setup
 
@@ -29,87 +29,35 @@ bash scripts/setup.sh
 source .venv/bin/activate
 ```
 
-Windows (PowerShell):
+### Step 2: Conversational onboarding
 
-```powershell
-.\scripts\setup.ps1
-.\.venv\Scripts\Activate.ps1
-multi-agent-brief version
-```
+Ask the user about these fields in chat (accept natural-language answers):
 
-Windows users should use native PowerShell. WSL is optional, not required. CMD is not the primary support target.
+- Company or organization name (required)
+- Industry or theme (required)
+- Brief title / task objective (required)
+- Audience (default: "management team")
+- Language (default: "English")
+- Cadence: daily / weekly / monthly (default: "weekly")
+- Source style: official only / reliable research / broad scan (default: "reliable research")
+- Output style (default: "executive brief, conclusion-first")
+- Must-watch topics or entities (default: empty)
+- Forbidden sources or topics (default: empty)
 
-This creates a venv, installs the package, and verifies it works.
-Do NOT skip this step. The CLI will fail with `ModuleNotFoundError` if the package is not installed.
+If the user says "default" or "unknown", use sensible defaults.
+See `docs/onboarding.md` for field mappings.
 
-### Step 2: Initialize a workspace
-
-```bash
-multi-agent-brief init ../mabw-workspace \
-  --language zh-CN \
-  --company "Company Name" \
-  --industry solar \
-  --title "Weekly Brief" \
-  --audience management \
-  --source-profile research
-```
-
-Windows (PowerShell):
-
-```powershell
-multi-agent-brief init ../mabw-workspace `
-  --language zh-CN `
-  --company "Company Name" `
-  --industry solar `
-  --title "Weekly Brief" `
-  --audience management `
-  --source-profile research
-```
-
-Or use the interactive wizard (no CLI args):
+Create `onboarding.json` from the answers, then:
 
 ```bash
-multi-agent-brief init ../mabw-workspace
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 ```
 
-**Agent note:** If no CLI args are passed and stdin is not a TTY, init uses default settings.
-In agent environments (Bash tool, CI), either pass ALL args or tell the user to run `! multi-agent-brief init ../mabw-workspace`.
+Do NOT pass `--language`, `--company`, etc. directly — always use `--from-onboarding`.
 
-### Step 3: Add source files
+### Step 3: Source discovery (if llm_decide)
 
-Put `.md`, `.txt`, or `.json` source files into `../mabw-workspace/input/`.
-See `../mabw-workspace/input/README.md` for the expected format.
-
-### Step 4: Run the pipeline
-
-```bash
-multi-agent-brief run --config ../mabw-workspace/config.yaml
-```
-
-Output files will be in `../mabw-workspace/output/`.
-
-### Step 4.5: Claude Code subagent pass
-
-After `multi-agent-brief run`, the output is **not final** for real user delivery.
-
-The Python CLI does not automatically spawn Claude Code subagents.
-Use subagents to produce the real brief:
-
-- `analyst`: rewrite `output/brief.md` from `claim_ledger.json` and `user.md`
-- `editor`: polish final prose, remove residue, preserve citations
-- `auditor`: verify final brief against ledger
-- `formatter`: regenerate DOCX/output artifacts if needed
-
-Do not skip this step when the user expects a polished weekly brief.
-Use `/generate-brief <workspace>` in Claude Code for the full subagent-assisted workflow.
-
-### Step 5: Check source health (optional)
-
-```bash
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-```
-
-### Step 6: Source discovery (if using llm_decide profile)
+If `sources.yaml` has `source.mode: llm_decide`, run source discovery BEFORE the pipeline:
 
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
@@ -120,6 +68,54 @@ Review `../mabw-workspace/source_candidates.yaml`, then merge:
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 ```
+
+If the user explicitly chooses local input-only mode, skip this step.
+
+### Step 4: Doctor
+
+```bash
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
+```
+
+Fix any issues before proceeding.
+
+### Step 5: Run deterministic pipeline
+
+```bash
+multi-agent-brief run --config ../mabw-workspace/config.yaml
+```
+
+Output files will be in `../mabw-workspace/output/`.
+This produces a deterministic draft — it is NOT the final brief.
+
+### Step 6: Analyst subagent
+
+Use the `analyst` subagent to rewrite `output/brief.md` from `claim_ledger.json` and `user.md`.
+- Write in the workspace output language.
+- Use only claims in `claim_ledger.json`.
+- Preserve all valid `[src:CLAIM_ID]` citations.
+- Include source dates where available.
+
+### Step 7: Editor subagent
+
+Use the `editor` subagent to polish the final brief.
+- Remove process residue and invalid citation markers.
+- Preserve valid `[src:CLAIM_ID]`.
+
+### Step 8: Final auditor subagent
+
+Use the `auditor` subagent to audit the final `brief.md` against `claim_ledger.json`.
+This is the final delivery audit — distinct from the Python pipeline's draft-level audit.
+
+### Step 9: Formatter / DOCX refresh
+
+Re-run formatter or DOCX conversion so `brief.docx` reflects the edited final Markdown.
+
+### Step 10: Report artifacts
+
+Summarize final artifacts to the user. Do not claim success if audit failed.
+
+Use `/generate-brief <workspace>` in Claude Code for the full subagent-assisted workflow.
 
 ---
 
@@ -257,7 +253,7 @@ Correct facts are necessary but not sufficient for final delivery.
 
 - Do not ask the user to edit YAML, JSON, schema files, or CLI flags.
 - Ask plain-language business questions directly in chat.
-- Ask at most 4 questions before recommending defaults.
+- Cover all onboarding fields: company, industry, task, audience, language, cadence, source style, output style, must-watch, forbidden sources. Ask about each one or confirm its default.
 - Accept natural-language answers.
 - If the user says "unknown", "default", or "choose for me", choose sensible defaults.
 - Convert the answers into `onboarding.json`.

@@ -12,10 +12,16 @@ Follow this sequence exactly:
    - $ARGUMENTS/user.md
    - $ARGUMENTS/sources.yaml
 
-2. If sources.yaml has llm_decide, unresolved source_discovery, weak search_tasks, or missing live sources, invoke the source-planner subagent.
+2. **Source discovery gate (llm_decide only):**
+   If `sources.yaml` has `source.mode: llm_decide` and `source_candidates.yaml` does not exist or has not been merged, you MUST resolve sources before running the pipeline:
+   - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml`
+   - Review the generated `$ARGUMENTS/source_candidates.yaml`.
+   - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml --merge`
+   - Only proceed after sources are resolved, OR if the user explicitly chooses local input-only mode.
 
 3. Run:
    - `multi-agent-brief doctor --config $ARGUMENTS/config.yaml`
+   - Fix any issues before proceeding.
    - `multi-agent-brief run --config $ARGUMENTS/config.yaml`
 
 4. Read:
@@ -23,27 +29,28 @@ Follow this sequence exactly:
    - $ARGUMENTS/output/brief.md
    - $ARGUMENTS/user.md
 
-5. Invoke the analyst subagent:
+5. Invoke the **analyst** subagent:
    - Rewrite the brief into the configured output language.
    - Use only claim_ledger.json.
    - Preserve all valid [src:CLAIM_ID] citations.
    - Include dates for news items.
    - Target a real weekly brief, not a thin bullet list.
 
-6. Invoke the editor subagent:
+6. Invoke the **editor** subagent:
    - Polish for management / research team readability.
    - Remove invalid [SRC:], [SOURCE:], [src:] residue.
    - Remove Claude/Codex process residue.
    - Preserve valid [src:CLAIM_ID].
 
-7. Invoke the auditor subagent:
-   - Audit output/brief.md against output/claim_ledger.json.
+7. Invoke the **auditor** subagent:
+   - Audit the final $ARGUMENTS/output/brief.md against $ARGUMENTS/output/claim_ledger.json.
+   - This is the final delivery audit — distinct from the Python pipeline's draft-level audit.
    - Check orphan citations, unsupported facts, unsupported numbers, missing dates, investment advice language, and process residue.
-   - Write/update output/audit_report.json.
+   - Write/update $ARGUMENTS/output/audit_report.json.
 
 8. Regenerate DOCX:
    - If the CLI supports docx formatting, run the formatter or conversion command.
-   - Ensure output/brief.docx exists if docx is configured.
+   - Ensure $ARGUMENTS/output/brief.docx exists if docx is configured.
 
 9. Final response:
    - Report artifact paths.

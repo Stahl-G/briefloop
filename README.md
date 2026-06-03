@@ -140,44 +140,62 @@ MVP 会生成带来源引用的 Markdown 简报：
 }
 ```
 
-## 快速开始
+## 给人类的启动方式
+
+打开你的 Claude Code 或 Codex，输入：
+
+> Clone and read https://github.com/Stahl-G/multi-agent-brief-workflow
+
+接着按照提示运行就可以了。Agent 会自动完成安装、引导配置、生成简报的全流程。
+
+如需联网搜索，请在 [tavily.com](https://tavily.com) 注册并获取 Tavily API key，设置环境变量：
+
+```bash
+export TAVILY_API_KEY=<your-key>
+```
+
+---
+
+## 快速开始（开发者 / 手动操作）
 
 macOS / Linux / WSL:
 
 ```bash
-git clone https://github.com/ORG/multi-agent-brief-workflow.git
+git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-# 1. 初始化工作区
-multi-agent-brief init my-workspace --language zh-CN --company "公司名" --industry manufacturing --title "周报" --audience management
+# 1. 初始化工作区（推荐使用对话式引导，详见 docs/onboarding.md）
+multi-agent-brief init ../mabw-workspace --language zh-CN --company "公司名" --industry manufacturing --title "周报" --audience management
 
 # 2. 添加源文件
-echo "- 行业信息摘要" > my-workspace/input/news.md
+echo "- 行业信息摘要" > ../mabw-workspace/input/news.md
 
 # 3. 检查配置
-multi-agent-brief doctor --config my-workspace/config.yaml
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
 # 4. 运行流水线
-multi-agent-brief run --config my-workspace/config.yaml
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 
 # 查看输出
-cat my-workspace/output/brief.md
+cat ../mabw-workspace/output/brief.md
 ```
+
+> **注意：** `multi-agent-brief run` 生成的是确定性草稿，不是最终简报。如需交付给用户的正式简报，需要在 CLI 运行后调用 Claude Code 子智能体（analyst → editor → auditor → formatter）。使用 `/generate-brief <workspace>` 可以自动执行完整流程。
 
 Windows 10/11 推荐使用原生 PowerShell 5.1 或 PowerShell 7，不要求 WSL/Git Bash。CMD 不是主要支持目标。
 
 ```powershell
-git clone https://github.com/ORG/multi-agent-brief-workflow.git
+git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief init my-workspace --language zh-CN --company "公司名" --industry manufacturing --title "周报" --audience management
-echo "- 行业信息摘要" > my-workspace\input\news.md
-multi-agent-brief doctor --config my-workspace\config.yaml
-multi-agent-brief run --config my-workspace\config.yaml
+multi-agent-brief init ../mabw-workspace --language zh-CN --company "公司名" --industry manufacturing --title "周报" --audience management
+echo "- 行业信息摘要" > ../mabw-workspace\input\news.md
+multi-agent-brief doctor --config ../mabw-workspace\config.yaml
+multi-agent-brief run --config ../mabw-workspace\config.yaml
 ```
 
 也可以使用内置示例快速验证：
@@ -295,19 +313,19 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
 ```bash
 # 1. 使用 llm_decide 初始化
-multi-agent-brief init my-workspace --language zh-CN --company "公司名" --industry manufacturing --source-profile llm_decide
+multi-agent-brief init ../mabw-workspace --language zh-CN --company "公司名" --industry manufacturing --source-profile llm_decide
 
 # 2. 生成候选来源（模板模式，无需 API key）
-multi-agent-brief sources decide --config my-workspace/config.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 
 # 3. 审查候选来源
-cat my-workspace/source_candidates.yaml
+cat ../mabw-workspace/source_candidates.yaml
 
 # 4. 合并到正式来源
-multi-agent-brief sources decide --config my-workspace/config.yaml --merge
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 # 5. 运行流水线
-multi-agent-brief run --config my-workspace/config.yaml
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
 llm_decide 模式不阻塞流水线运行——即使尚未执行 `sources decide`，流水线也会使用本地 `input/` 目录中的文件继续运行，并显示警告。

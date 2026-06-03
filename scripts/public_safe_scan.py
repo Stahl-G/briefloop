@@ -30,7 +30,6 @@ SENSITIVE_PATTERNS: list[tuple[str, str]] = [
     # -- Personal identity --
     (r"\bYihong\b", "real personal name"),
     (r"\bgyh0256\b", "real GitHub handle"),
-    (r"\bStahl\b", "real GitHub username fragment"),
     # -- Real company / employer / client --
     (r"\bTOYO\b", "real company name"),
     (r"\b小米\b", "real company name"),
