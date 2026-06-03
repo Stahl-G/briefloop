@@ -69,6 +69,8 @@ class ScoutAgent(BaseAgent):
                         metadata={
                             "candidate_item_id": item_id,
                             "published_at": source.published_at,
+                            "retrieved_at": source.retrieved_at,
+                            "source_name": source.source_name,
                             "source_tier": source.metadata.get("source_tier", ""),
                         },
                     )
@@ -138,6 +140,8 @@ def _extract_web_search_claim(source: SourceItem, ledger: ClaimLedger, agent_nam
         created_by=agent_name,
         metadata={
             "published_at": source.published_at,
+            "retrieved_at": source.retrieved_at,
+            "source_name": source.source_name,
             "source_tier": source.metadata.get("source_tier", ""),
             "backend": source.metadata.get("backend", ""),
             "query": source.metadata.get("query", ""),

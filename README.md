@@ -312,32 +312,25 @@ multi-agent-brief run --config my-workspace/config.yaml
 
 llm_decide 模式不阻塞流水线运行——即使尚未执行 `sources decide`，流水线也会使用本地 `input/` 目录中的文件继续运行，并显示警告。
 
-## 启用 DOCX 输出
+## DOCX 输出
 
-流水线默认只生成 Markdown。要自动生成 Word 文档（brief.docx），需要安装 python-docx 并在配置中启用：
+初始化工作区时，默认输出格式已包含 `docx`。运行流水线会同时生成 `brief.md` 和 `brief.docx`。
+
+DOCX 需要 `python-docx` 依赖。使用 `.[dev]` 安装时已包含：
+
+```bash
+pip install -e ".[dev]"
+```
+
+单独安装：
 
 ```bash
 pip install "multi-agent-brief-workflow[docx]"
 ```
 
-在工作区的 `config.yaml` 中添加 `docx` 到输出格式：
+DOCX 使用专业投行风格排版，支持标题层级、表格、列表、引用块、代码块等 Markdown 元素。默认页脚为 "Confidential — Internal Use Only"，可在 `config.yaml` 的 `output.footer` 中自定义。
 
-```yaml
-output:
-  path: "output"
-  formats:
-    - "markdown"
-    - "docx"
-  footer: "Confidential — Internal Use Only"  # 可选，自定义页脚
-```
-
-运行后会在 `output/` 目录同时生成 `brief.md` 和 `brief.docx`。DOCX 使用专业投行风格排版，支持标题层级、表格、列表、引用块、代码块等 Markdown 元素。
-
-PowerShell:
-
-```powershell
-pip install "multi-agent-brief-workflow[docx]"
-```
+如果未安装 `python-docx`，流水线不会中断，但会在 `audit_report.json` 中记录 `docx_generation: skipped_missing_dependency`。
 
 ## CLI
 
@@ -435,6 +428,8 @@ Windows 原生 PowerShell 详细说明见 [docs/windows-powershell.md](docs/wind
 ## Claude Code 智能体模式
 
 本仓库支持 Claude Code 子智能体编排层，提供交互式的来源规划、信息提取、分析撰写和编辑校对能力。
+
+**重要说明：** Python CLI 不会自动调用 Claude Code 子智能体。在 Claude Code 中，使用 `/generate-brief <workspace>` 或要求 Claude Code 运行子智能体辅助工作流。子智能体是提示层编排，不是 Python SDK 调用。
 
 ### 两层架构
 

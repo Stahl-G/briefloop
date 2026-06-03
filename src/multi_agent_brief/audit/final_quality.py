@@ -30,6 +30,11 @@ class FinalQualityConfig:
     )
     stale_current_threshold_days: int | None = None
     rendered_docx_path: str = ""
+    min_selected_claims: int = 0  # 0 = not enforced; weekly default = 20
+    min_zh_chars: int = 0         # 0 = not enforced; weekly default = 3000
+    min_en_words: int = 0         # 0 = not enforced; weekly default = 1800
+    require_dates: bool = False   # True for weekly briefs
+    allow_quiet_week_exception: bool = False
 
 
 class FinalQualityAuditAgent(AuditAgentInterface):
@@ -55,6 +60,9 @@ class FinalQualityAuditAgent(AuditAgentInterface):
         findings.extend(_chapter_count_findings(markdown, config))
         findings.extend(_stale_current_framing_findings(markdown, context, config))
         findings.extend(_docx_fidelity_findings(config))
+        findings.extend(_claim_count_findings(ledger, markdown, config))
+        findings.extend(_brief_depth_findings(markdown, config))
+        findings.extend(_date_requirement_findings(ledger, markdown, config))
         report = AuditReport(
             audit_status="pass",
             audit_score=100,
@@ -91,6 +99,11 @@ def build_final_quality_config(
         stale_current_threshold_days=data.get("stale_current_threshold_days", base.stale_current_threshold_days)
         or report_threshold,
         rendered_docx_path=str(data.get("rendered_docx_path", base.rendered_docx_path)),
+        min_selected_claims=int(data.get("min_selected_claims", base.min_selected_claims)),
+        min_zh_chars=int(data.get("min_zh_chars", base.min_zh_chars)),
+        min_en_words=int(data.get("min_en_words", base.min_en_words)),
+        require_dates=bool(data.get("require_dates", base.require_dates)),
+        allow_quiet_week_exception=bool(data.get("allow_quiet_week_exception", base.allow_quiet_week_exception)),
     )
 
 
@@ -272,6 +285,109 @@ def _docx_fidelity_findings(config: FinalQualityConfig) -> list[AuditFinding]:
                 recommendation="Regenerate or edit the final report before delivery.",
             )
         )
+    return findings
+
+
+def _claim_count_findings(
+    ledger: ClaimLedger,
+    markdown: str,
+    config: FinalQualityConfig,
+) -> list[AuditFinding]:
+    """Check that enough claims were selected for the brief."""
+    if config.min_selected_claims <= 0:
+        return []
+    # Count claims that are actually cited in the markdown
+    cited_ids = set(re.findall(r"\[src:([A-Z0-9_]{6,})\]", markdown))
+    if len(cited_ids) >= config.min_selected_claims:
+        return []
+    if config.allow_quiet_week_exception and config.quiet_week:
+        return []
+    return [
+        AuditFinding(
+            finding_id="FINAL_CLAIMS_001",
+            severity="high",
+            finding_type="insufficient_claims",
+            description=(
+                f"Only {len(cited_ids)} reportable claims selected; "
+                f"weekly brief requires at least {config.min_selected_claims}."
+            ),
+            recommendation="Add more source inputs or enable additional source providers, or mark as quiet_week.",
+        )
+    ]
+
+
+def _brief_depth_findings(markdown: str, config: FinalQualityConfig) -> list[AuditFinding]:
+    """Check brief body has sufficient depth (Chinese chars or English words)."""
+    if config.min_zh_chars <= 0 and config.min_en_words <= 0:
+        return []
+    if config.allow_quiet_week_exception and config.quiet_week:
+        return []
+
+    # Count Chinese characters (CJK Unified Ideographs range)
+    zh_chars = sum(1 for ch in markdown if "一" <= ch <= "鿿")
+    # Count English words (rough approximation)
+    en_words = len(re.findall(r"[a-zA-Z]+", markdown))
+
+    findings: list[AuditFinding] = []
+    if config.min_zh_chars > 0 and zh_chars < config.min_zh_chars:
+        findings.append(
+            AuditFinding(
+                finding_id="FINAL_DEPTH_002",
+                severity="high",
+                finding_type="brief_too_thin_zh",
+                description=(
+                    f"Brief has {zh_chars} Chinese characters; "
+                    f"weekly brief requires at least {config.min_zh_chars}."
+                ),
+                recommendation="Add more sourced analysis or mark as quiet_week.",
+            )
+        )
+    if config.min_en_words > 0 and en_words < config.min_en_words:
+        findings.append(
+            AuditFinding(
+                finding_id="FINAL_DEPTH_003",
+                severity="high",
+                finding_type="brief_too_thin_en",
+                description=(
+                    f"Brief has {en_words} English words; "
+                    f"weekly brief requires at least {config.min_en_words}."
+                ),
+                recommendation="Add more sourced analysis or mark as quiet_week.",
+            )
+        )
+    return findings
+
+
+def _date_requirement_findings(
+    ledger: ClaimLedger,
+    markdown: str,
+    config: FinalQualityConfig,
+) -> list[AuditFinding]:
+    """Check that claims cited in the brief have dates."""
+    if not config.require_dates:
+        return []
+    if config.allow_quiet_week_exception and config.quiet_week:
+        return []
+
+    cited_ids = set(re.findall(r"\[src:([A-Z0-9_]{6,})\]", markdown))
+    findings: list[AuditFinding] = []
+    for claim in ledger:
+        if claim.claim_id not in cited_ids:
+            continue
+        has_pub = bool(claim.metadata.get("published_at"))
+        has_ret = bool(claim.metadata.get("retrieved_at"))
+        if not has_pub and not has_ret:
+            findings.append(
+                AuditFinding(
+                    finding_id=f"FINAL_DATE_{len(findings)+1:03d}",
+                    severity="high",
+                    finding_type="missing_date",
+                    description=(
+                        f"Claim {claim.claim_id} has no published_at or retrieved_at."
+                    ),
+                    recommendation="Ensure all source items have date metadata before drafting.",
+                )
+            )
     return findings
 
 

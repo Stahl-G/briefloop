@@ -163,26 +163,30 @@ roles:
     stage: pipeline
     tool_profile: edit_safe
     description: "Drafts executive-readable brief sections using only Claim Ledger entries."
-    trigger: "Use when implementing or reviewing Markdown brief generation, section writing, or claim citation behavior."
+    trigger: "Use after multi-agent-brief run whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis."
     responsibilities:
       - "Read claim_ledger.json and user.md to understand context and available evidence."
       - "Draft management-ready sections using only Claim Ledger material."
       - "Attach [src:CLAIM_ID] citations to every important statement."
       - "Preserve every [src:CLAIM_ID] citation — do not remove or rewrite claim IDs."
+      - "Include source dates (published_at or retrieved_at) where available."
       - "Preserve uncertainty and source limitations."
       - "Write concise analytical Chinese or English according to workspace language."
       - "Do not add unsupported facts."
+      - "Do not use the deterministic brief.md as truth; use it only as a rough scaffold."
+      - "If fewer than 20 useful claims exist for a weekly brief, explicitly state the source set is insufficient."
     hard_rules:
       - "Do not add unsupported facts, numbers, or causality."
       - "Do not write investment advice or trading signals."
       - "Do not cite claims that do not exist in the ledger."
       - "Do not remove or rewrite [src:CLAIM_ID] citations."
+      - "Always read claim_ledger.json before writing."
 
   auditor:
     stage: pipeline
     tool_profile: audit_edit
     description: "Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures."
-    trigger: "Use when implementing or reviewing deterministic audit, quality harness, semantic audit adapter hooks, or final delivery gates."
+    trigger: "Use before final delivery of any real brief. Must verify brief against claim_ledger.json and enforce quality thresholds."
     responsibilities:
       - "Review final brief against claim_ledger.json and audit_report.json."
       - "Check unsupported facts — every important statement must have a [src:CLAIM_ID]."
@@ -193,6 +197,9 @@ roles:
       - "Check redaction risks — no private identifiers, internal paths, or confidential content."
       - "Check low-confidence source leakage."
       - "Check process residue and placeholders."
+      - "Check [SRC:] or process residue remains in final text."
+      - "Check weekly brief has enough claims (default: >= 20) unless quiet-week exception configured."
+      - "Check source dates are present for claims in final brief."
       - "Recommend fixes for each finding."
       - "Prefer running python deterministic audit commands where available."
       - "Coordinate draft and final harness agents when needed."
@@ -205,13 +212,15 @@ roles:
     stage: pipeline
     tool_profile: edit_safe
     description: "Improves clarity, structure, tone, and executive readability without adding facts."
-    trigger: "Use when improving final Markdown prose, documentation wording, or report readability after audit issues are resolved."
+    trigger: "Use after the analyst subagent and before final DOCX rendering. Must remove process residue while preserving valid citations."
     responsibilities:
       - "Improve readability and management tone."
       - "Reduce repetition."
       - "Preserve all [src:CLAIM_ID] citations exactly — do not remove or rewrite claim IDs."
       - "Preserve uncertainty."
       - "Remove internal residue when safe."
+      - "Remove [SRC:], [SOURCE:], empty [src:] markers."
+      - "Remove Claude/Codex process residue (Thought for..., Agent completed, Bash(...), audit in background)."
       - "Do not add new facts."
       - "Do not remove or rewrite claim IDs."
     hard_rules:

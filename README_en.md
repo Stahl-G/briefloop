@@ -250,32 +250,25 @@ multi-agent-brief run --config my-workspace/config.yaml
 
 The llm_decide mode does not block pipeline execution — if you skip `sources decide`, the pipeline continues with local `input/` files and prints a warning.
 
-## Enable DOCX Output
+## DOCX Output
 
-The pipeline generates Markdown by default. To also produce a styled Word document (`brief.docx`):
+When initializing a workspace, the default output formats now include `docx`. After running the pipeline, both `brief.md` and `brief.docx` will appear in the `output/` directory.
+
+DOCX requires the `python-docx` dependency. It is included when installing with `.[dev]`:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Or install separately:
 
 ```bash
 pip install "multi-agent-brief-workflow[docx]"
 ```
 
-Add `docx` to the output formats in your workspace `config.yaml`:
+The DOCX uses a professional investment-bank-style layout with heading hierarchy, tables, lists, blockquotes, and code blocks. The default footer is "Confidential — Internal Use Only" — customize via `output.footer` in `config.yaml`.
 
-```yaml
-output:
-  path: "output"
-  formats:
-    - "markdown"
-    - "docx"
-  footer: "Confidential — Internal Use Only"  # optional custom footer
-```
-
-After running, both `brief.md` and `brief.docx` will appear in the `output/` directory. The DOCX uses a professional investment-bank-style layout with heading hierarchy, tables, lists, blockquotes, and code blocks.
-
-PowerShell:
-
-```powershell
-pip install "multi-agent-brief-workflow[docx]"
-```
+If `python-docx` is not installed, the pipeline continues without interruption but records `docx_generation: skipped_missing_dependency` in `audit_report.json`.
 
 ## CLI
 
@@ -424,6 +417,8 @@ See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows 
 ## Claude Code Agent Mode
 
 This repository supports a Claude Code subagent orchestration layer for interactive source planning, claim extraction, analysis, and editing.
+
+**Important:** The Python CLI does not automatically spawn Claude Code subagents. In Claude Code, use `/generate-brief <workspace>` or ask Claude Code to run the subagent-assisted workflow. The subagents are prompt-layer orchestration, not Python SDK calls.
 
 ### Two-Layer Architecture
 

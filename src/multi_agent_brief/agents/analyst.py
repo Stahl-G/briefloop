@@ -46,7 +46,10 @@ class AnalystAgent(BaseAgent):
             for claim in claims:
                 claim.used_in_sections.append(title)
                 claim_ids.append(claim.claim_id)
-                lines.append(f"- {claim.statement} [src:{claim.claim_id}]")
+                # Include source date where available
+                date_str = claim.metadata.get("published_at") or claim.metadata.get("retrieved_at", "")
+                date_prefix = f"{date_str}｜" if date_str else ""
+                lines.append(f"- {date_prefix}{claim.statement} [src:{claim.claim_id}]")
             sections.append(BriefSection(title=title, body="\n".join(lines), claim_ids=claim_ids))
 
         if not sections:

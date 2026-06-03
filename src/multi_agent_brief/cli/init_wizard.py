@@ -125,12 +125,12 @@ class InitProfile:
     forbidden_sources: list[str] = field(default_factory=list)
     cadence: str = "weekly"
     max_source_age_days: int = 14
-    selector_max_items: int = 8
+    selector_max_items: int = 24
     retrieval_enabled: bool = False
     retrieval_provider: str = "ollama"
     retrieval_model: str = "nomic-embed-text"
     output_formats: list[str] = field(
-        default_factory=lambda: ["markdown", "claim_ledger", "audit_report", "source_map"]
+        default_factory=lambda: ["markdown", "docx", "claim_ledger", "audit_report", "source_map"]
     )
     source_profile: str = "llm_decide"
     source_decision_mode: str = "agent_decide"
@@ -395,7 +395,11 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
             "fail_on_stale_source": True,
         },
         "input": {"path": "input"},
-        "output": {"path": "output", "formats": profile.output_formats},
+        "output": {
+            "path": "output",
+            "formats": profile.output_formats,
+            "footer": "Confidential — Internal Use Only",
+        },
         "source": {
             "mode": profile.source_profile,
             "optional_seed_pack": profile.optional_seed_pack or None,
@@ -410,6 +414,12 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
                 "editor",
                 "formatter",
             ]
+        },
+        "brief_quality": {
+            "min_items": 20,
+            "min_zh_chars": 3000,
+            "require_dates": True,
+            "allow_quiet_week_exception": False,
         },
         "selector": {
             "enabled": True,

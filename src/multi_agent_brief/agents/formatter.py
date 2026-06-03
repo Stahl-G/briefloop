@@ -26,20 +26,18 @@ class FormatterAgent(BaseAgent):
 
         brief_path.write_text(context.report_state.final_markdown, encoding="utf-8")
         ledger.export_json(ledger_path)
-
-        audit_report = context.report_state.audit_report
-        if audit_report:
-            audit_path.write_text(json.dumps(audit_report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
         source_map_path.write_text(render_source_map(ledger), encoding="utf-8")
 
         artifacts: dict[str, str] = {
             "brief": str(brief_path),
             "claim_ledger": str(ledger_path),
-            "audit_report": str(audit_path),
             "source_map": str(source_map_path),
         }
 
-        # DOCX output — only if "docx" is in output_formats
+        # DOCX output — only if "docx" is in output_formats.
+        # Must run BEFORE writing audit_report.json so docx_generation
+        # metadata is included in the persisted file.
+        docx_status = None
         if "docx" in (context.output_formats or []):
             docx_path = output_dir / "brief.docx"
             try:
@@ -52,13 +50,28 @@ class FormatterAgent(BaseAgent):
                     footer=context.output_footer or None,
                 )
                 artifacts["brief_docx"] = str(docx_path)
+                docx_status = "generated"
             except ImportError:
                 logger.warning(
                     "python-docx is not installed. "
                     "Install it with: pip install 'multi-agent-brief-workflow[docx]'"
                 )
+                docx_status = "skipped_missing_dependency"
             except Exception:
                 logger.exception("DOCX generation failed")
+                docx_status = "failed"
+
+        # Record docx generation status in audit report metadata
+        audit_report = context.report_state.audit_report
+        if audit_report:
+            if docx_status:
+                audit_report.metadata["docx_generation"] = docx_status
+            # Write audit_report.json AFTER docx status is set
+            audit_path.write_text(
+                json.dumps(audit_report.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            artifacts["audit_report"] = str(audit_path)
 
         return AgentOutput(
             agent_name=self.name,

@@ -1,6 +1,6 @@
 ---
 name: editor
-description: Improves clarity, structure, tone, and executive readability without adding facts. Use when improving final Markdown prose, documentation wording, or report readability after audit issues are resolved.
+description: Improves clarity, structure, tone, and executive readability without adding facts. Use after the analyst subagent and before final DOCX rendering. Must remove process residue while preserving valid citations.
 ---
 
 # Editor Skill
@@ -11,7 +11,7 @@ Improves clarity, structure, tone, and executive readability without adding fact
 
 ## When To Use
 
-Use when improving final Markdown prose, documentation wording, or report readability after audit issues are resolved.
+Use after the analyst subagent and before final DOCX rendering. Must remove process residue while preserving valid citations.
 
 ## Responsibilities
 
@@ -20,6 +20,8 @@ Use when improving final Markdown prose, documentation wording, or report readab
 - Preserve all [src:CLAIM_ID] citations exactly — do not remove or rewrite claim IDs.
 - Preserve uncertainty.
 - Remove internal residue when safe.
+- Remove [SRC:], [SOURCE:], empty [src:] markers.
+- Remove Claude/Codex process residue (Thought for..., Agent completed, Bash(...), audit in background).
 - Do not add new facts.
 - Do not remove or rewrite claim IDs.
 

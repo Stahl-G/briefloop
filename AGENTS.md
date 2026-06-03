@@ -88,6 +88,21 @@ multi-agent-brief run --config ../mabw-workspace/config.yaml
 
 Output files will be in `../mabw-workspace/output/`.
 
+### Step 4.5: Claude Code subagent pass
+
+After `multi-agent-brief run`, the output is **not final** for real user delivery.
+
+The Python CLI does not automatically spawn Claude Code subagents.
+Use subagents to produce the real brief:
+
+- `analyst`: rewrite `output/brief.md` from `claim_ledger.json` and `user.md`
+- `editor`: polish final prose, remove residue, preserve citations
+- `auditor`: verify final brief against ledger
+- `formatter`: regenerate DOCX/output artifacts if needed
+
+Do not skip this step when the user expects a polished weekly brief.
+Use `/generate-brief <workspace>` in Claude Code for the full subagent-assisted workflow.
+
 ### Step 5: Check source health (optional)
 
 ```bash

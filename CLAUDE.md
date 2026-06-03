@@ -69,6 +69,40 @@ multi-agent-brief version
 4. `run` pipeline → show `../mabw-workspace/output/brief.md`
 5. If audit fails → show findings → fix → re-run
 
+### Real Brief Generation Rule
+
+When the user asks to generate, run, improve, or deliver a real brief/workspace,
+do NOT stop after `multi-agent-brief run`.
+
+`multi-agent-brief run` is only the deterministic collection / ledger / draft / artifact step.
+For a real user-facing brief, Claude Code must orchestrate the subagents.
+
+**The Python CLI does not automatically spawn Claude Code subagents.** In Claude Code,
+use `/generate-brief <workspace>` or ask Claude Code to run the subagent-assisted workflow.
+The subagents are prompt-layer orchestration, not Python SDK calls.
+
+Required sequence:
+
+1. Initialize or locate the workspace.
+2. Use the `source-planner` subagent when sources/search tasks need to be created, reviewed, or improved.
+3. Run `multi-agent-brief doctor --config <workspace>/config.yaml`.
+4. Run `multi-agent-brief run --config <workspace>/config.yaml`.
+5. Use the `analyst` subagent to rewrite `output/brief.md` from `output/claim_ledger.json` and `user.md`.
+   - The analyst must write in the workspace output language.
+   - The analyst must use only claims in claim_ledger.json.
+   - Every important statement must preserve `[src:CLAIM_ID]`.
+   - The analyst must include source dates where available.
+6. Use the `editor` subagent to polish the final brief.
+   - Remove internal process residue.
+   - Remove invalid `[SRC:]`, `[SOURCE:]`, `[src:]` markers.
+   - Preserve valid `[src:CLAIM_ID]`.
+7. Use the `auditor` subagent to audit `brief.md` against `claim_ledger.json`.
+8. Re-run formatter or DOCX conversion so `brief.docx` reflects the edited final Markdown.
+9. Only then summarize final artifacts to the user.
+
+Hard rule: if `.claude/agents/analyst.md`, `.claude/agents/editor.md`, or `.claude/agents/auditor.md` exists,
+use those subagents for real brief delivery. Do not silently deliver the deterministic Python draft as final.
+
 ### Source profiles
 
 - `conservative` — official only
