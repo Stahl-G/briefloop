@@ -13,7 +13,7 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path):
     onboarding = {
         "target": "exampleco-weekly",
         "company_or_org": "ExampleCo",
-        "industry_or_theme": "renewable energy",
+        "industry_or_theme": "manufacturing",
         "audience_plain": "management team",
         "source_style_plain": "reliable, but include sector news",
         "output_style_plain": "executive brief, conclusion-first",
@@ -33,7 +33,7 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path):
     assert (ws / "input" / "README.md").exists()
 
     sources = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
-    assert sources["source_strategy"]["industry"] == "energy"
+    assert sources["source_strategy"]["industry"] == "manufacturing"
     assert sources["web_search"]["enabled"] is False
 
 
@@ -89,9 +89,9 @@ def test_sources_decide_search_no_mock_residual(capsys, tmp_path: Path):
         encoding="utf-8",
     )
     sources_yaml = (
-        "source_strategy:\n  profile: research\n  industry: energy\n"
+        "source_strategy:\n  profile: research\n  industry: manufacturing\n"
         "  enabled_providers: [manual]\nmanual:\n  enabled: true\n  sources: []\n"
-        "source_discovery:\n  company: TestCo\n  industry: energy\n"
+        "source_discovery:\n  company: TestCo\n  industry: manufacturing\n"
         "  topics: [policy]\n  queries:\n    - test query\n"
     )
     (ws / "sources.yaml").write_text(sources_yaml, encoding="utf-8")

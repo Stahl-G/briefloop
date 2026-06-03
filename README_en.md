@@ -231,10 +231,10 @@ web_search:
   search_depth: basic
   max_results: 5
   search_tasks:
-    - query: "solar policy tariff regulation update"
+    - query: "manufacturing tariff trade policy"
       domains:
-        - "energy.gov"
-        - "pv-magazine.com"
+        - "reuters.com"
+        - "bloomberg.com"
 ```
 
 2. Set the environment variable and run:
@@ -392,7 +392,7 @@ This project can help structure research and briefing workflows, but it does not
 ### v0.5.0 — Three-Layer Source Collection Architecture
 
 - Added `SourcePlanner`: generates search plans based on industry, role, and time window.
-- Added `industry_packs.py`: industry presets (solar, technology, finance, etc.) with RSS feeds and search tasks.
+- Added `industry_packs.py`: industry presets (manufacturing, banking, fund, internet, general) with search tasks.
 - `WebSearchProvider` provides a pluggable backend interface (tavily, serpapi, etc.); no runtime mock backend shipped.
 - Added `CachedPackageProvider`: reads pre-collected source package folders (supports OpenClaw-style workflows).
 - Added `search_backends/` module: SearchBackend ABC (pluggable backend interface).

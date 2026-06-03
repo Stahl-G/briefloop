@@ -77,11 +77,11 @@ jobs:
           multi-agent-brief init /tmp/mabw-ci-smoke \
             --language zh-CN \
             --company "CI Test" \
-            --industry solar \
+            --industry manufacturing \
             --title "Smoke Brief" \
             --audience management \
             --source-profile conservative
-          echo "- Solar manufacturing capacity expanded by 15 percent in Q1 2026 according to industry data." > /tmp/mabw-ci-smoke/input/smoke.md
+          echo "- Manufacturing output improved as supply chain disruption eased in the latest reporting period." > /tmp/mabw-ci-smoke/input/smoke.md
 
       - name: Run pipeline
         run: multi-agent-brief run --config /tmp/mabw-ci-smoke/config.yaml

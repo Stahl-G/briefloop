@@ -240,10 +240,10 @@ web_search:
   search_depth: basic
   max_results: 5
   search_tasks:
-    - query: "solar policy tariff regulation update"
+    - query: "manufacturing tariff trade policy"
       domains:
-        - "energy.gov"
-        - "pv-magazine.com"
+        - "reuters.com"
+        - "bloomberg.com"
 ```
 
 2. 设置环境变量并运行：
@@ -403,7 +403,7 @@ Windows 原生 PowerShell 详细说明见 [docs/windows-powershell.md](docs/wind
 ### v0.5.0 — 三层来源采集架构
 
 - 新增 `SourcePlanner`：根据行业、岗位、时间窗口自动生成搜索计划。
-- 新增 `industry_packs.py`：行业预设包（solar、technology、finance 等），含 RSS 源和搜索任务。
+- 新增 `industry_packs.py`：行业预设包（manufacturing、banking、fund、internet、general），含搜索任务。
 - `WebSearchProvider` 支持可插拔搜索后端接口（tavily、serpapi 等），不附带运行时 mock backend。
 - 新增 `CachedPackageProvider`：读取预收集的源包文件夹（支持 OpenClaw 式工作流）。
 - 新增 `search_backends/` 模块：SearchBackend ABC（可插拔后端接口）。

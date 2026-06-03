@@ -220,37 +220,37 @@ def test_all_source_profiles_generate_valid_workspace(tmp_path):
 # --- P1: Industry propagation into SourceConfig ---
 
 def test_init_with_industry_writes_source_strategy_industry(tmp_path):
-    """--industry solar --source-profile research should write industry into source_strategy."""
+    """--industry manufacturing --source-profile research should write industry into source_strategy."""
     workspace = tmp_path / "ws"
     assert main([
         "init", str(workspace),
         "--language", "en-US",
-        "--industry", "solar",
+        "--industry", "manufacturing",
         "--source-profile", "research",
     ]) == 0
 
     sources_text = (workspace / "sources.yaml").read_text(encoding="utf-8")
-    assert "solar" in sources_text
+    assert "manufacturing" in sources_text
 
     # Load via SourceConfig.from_dict to verify the field is populated
     import yaml
     from multi_agent_brief.sources.base import SourceConfig
     data = yaml.safe_load(sources_text)
     config = SourceConfig.from_dict(data)
-    assert config.industry == "solar"
+    assert config.industry == "manufacturing"
 
 
 def test_cli_run_loads_industry_from_init_workspace(tmp_path):
-    """Running CLI with a workspace init'd with --industry solar should propagate industry."""
+    """Running CLI with a workspace init'd with --industry manufacturing should propagate industry."""
     workspace = tmp_path / "ws"
     assert main([
         "init", str(workspace),
         "--language", "en-US",
-        "--industry", "solar",
+        "--industry", "manufacturing",
         "--source-profile", "research",
     ]) == 0
 
-    # Run the pipeline and check that source-collection sees industry=solar
+    # Run the pipeline and check that source-collection sees industry=manufacturing
     from multi_agent_brief.cli.main import main as cli_main
     import yaml
     from multi_agent_brief.sources.base import SourceConfig
@@ -258,7 +258,7 @@ def test_cli_run_loads_industry_from_init_workspace(tmp_path):
     sources_path = workspace / "sources.yaml"
     data = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
     config = SourceConfig.from_dict(data)
-    assert config.industry == "solar"
+    assert config.industry == "manufacturing"
 
 
 def test_pipeline_context_gets_industry_from_source_config(tmp_path):
@@ -279,7 +279,7 @@ def test_pipeline_context_gets_industry_from_source_config(tmp_path):
     )
     context.metadata["source_config"] = SourceConfig(
         profile="research",
-        industry="solar",
+        industry="manufacturing",
         enabled_providers=["manual"],
         manual={"enabled": True, "sources": [{"name": "Test", "path": str(input_dir), "enabled": True}]},
     )
@@ -287,7 +287,7 @@ def test_pipeline_context_gets_industry_from_source_config(tmp_path):
     outputs = BriefPipeline().run(context)
     source_output = outputs[0]
     assert source_output.agent_name == "source-collection"
-    assert source_output.artifacts.get("industry") == "solar"
+    assert source_output.artifacts.get("industry") == "manufacturing"
 
 
 def test_industry_fallback_when_sources_yaml_missing_field(tmp_path):
@@ -305,7 +305,7 @@ def test_industry_fallback_when_sources_yaml_missing_field(tmp_path):
     }
     (workspace / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
     (workspace / "config.yaml").write_text(
-        "project:\n  name: Test\n  industry: solar\nreport:\n  date: 2026-06-02\ninput:\n  path: input\noutput:\n  path: output\n",
+        "project:\n  name: Test\n  industry: manufacturing\nreport:\n  date: 2026-06-02\ninput:\n  path: input\noutput:\n  path: output\n",
         encoding="utf-8",
     )
     (workspace / "input").mkdir()
@@ -316,7 +316,7 @@ def test_industry_fallback_when_sources_yaml_missing_field(tmp_path):
     assert source_config.industry == ""  # not in YAML
 
     # Simulate the fallback from run_pipeline_from_args
-    industry = "solar"
+    industry = "manufacturing"
     if not source_config.industry and industry:
         source_config.industry = industry
-    assert source_config.industry == "solar"
+    assert source_config.industry == "manufacturing"

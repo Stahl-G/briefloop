@@ -27,9 +27,9 @@ class FakeSearchBackend:
         from multi_agent_brief.sources.search_backends.base import SearchResult
         return [
             SearchResult(
-                title="Fake solar result",
-                url="https://example.com/fake-solar",
-                snippet="Solar manufacturing capacity expanded in Q1 2026.",
+                title="Fake manufacturing result",
+                url="https://example.com/fake-manufacturing",
+                snippet="Manufacturing capacity expanded in Q1 2026.",
                 published_at="2026-05-01",
                 source_name="Fake Search",
             ),
@@ -41,12 +41,10 @@ class FakeSearchBackend:
 
 # --- SourcePlanner ---
 
-def test_create_source_plan_solar():
-    plan = create_source_plan(industry="solar", report_date="2026-06-02", recency_days=7)
-    assert plan.industry == "solar"
+def test_create_source_plan_manufacturing():
+    plan = create_source_plan(industry="manufacturing", report_date="2026-06-02", recency_days=7)
+    assert plan.industry == "manufacturing"
     assert len(plan.search_tasks) > 0
-    assert len(plan.rss_feeds) > 0
-    assert any("pv-tech.org" in str(task.source_domains) for task in plan.search_tasks)
 
 
 def test_create_source_plan_unknown_industry():
@@ -56,7 +54,7 @@ def test_create_source_plan_unknown_industry():
 
 
 def test_create_source_plan_with_extra_keywords():
-    plan = create_source_plan(industry="solar", extra_keywords=["bifacial module"])
+    plan = create_source_plan(industry="manufacturing", extra_keywords=["bifacial module"])
     assert any("bifacial" in task.query for task in plan.search_tasks)
 
 
@@ -64,12 +62,15 @@ def test_create_source_plan_with_extra_keywords():
 
 def test_list_industries():
     industries = list_industries()
-    assert "solar" in industries
-    assert "technology" in industries
+    assert "manufacturing" in industries
+    assert "internet" in industries
+    assert "banking" in industries
+    assert "fund" in industries
+    assert "general" in industries
 
 
 def test_get_industry_pack():
-    pack = get_industry_pack("solar")
+    pack = get_industry_pack("manufacturing")
     assert pack is not None
     assert "rss_feeds" in pack
     assert "search_tasks" in pack
@@ -85,7 +86,7 @@ def test_get_industry_pack_unknown():
 def test_fake_search_backend():
     backend = FakeSearchBackend()
     assert backend.is_available()
-    results = backend.search("solar", max_results=2)
+    results = backend.search("manufacturing", max_results=2)
     assert len(results) >= 1
     assert results[0].title  # not empty
 
@@ -93,7 +94,7 @@ def test_fake_search_backend():
 def test_web_search_provider_collects():
     provider = WebSearchProvider(backend=FakeSearchBackend())
     config = {"enabled": True}
-    items = provider.collect(SourceQuery(keywords=["solar"]), config)
+    items = provider.collect(SourceQuery(keywords=["manufacturing"]), config)
     assert len(items) > 0
     assert all(item.source_type == "web_search" for item in items)
 
@@ -104,7 +105,7 @@ def test_web_search_domain_filtering():
     config = {
         "enabled": True,
         "search_tasks": [
-            {"query": "solar prices", "domains": ["pv-tech.org"]},
+            {"query": "manufacturing prices", "domains": ["industry-news.org"]},
         ],
     }
     items = provider.collect(SourceQuery(), config)
@@ -129,7 +130,7 @@ def test_cached_package_reads_json(tmp_path):
 def test_cached_package_reads_markdown(tmp_path):
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir()
-    (cache_dir / "notes.md").write_text("- Solar demand grew 10 percent in the first quarter of 2026\n- A new policy was announced that affects the solar industry\n", encoding="utf-8")
+    (cache_dir / "notes.md").write_text("- Manufacturing demand grew 10 percent in the first quarter of 2026\n- A new policy was announced that affects the manufacturing industry\n", encoding="utf-8")
 
     provider = CachedPackageProvider()
     config = {"enabled": True, "paths": [str(cache_dir)], "formats": ["md"]}
@@ -151,7 +152,7 @@ def test_pipeline_with_provider_sources(tmp_path):
     input_dir.mkdir()
 
     # Create a local source file
-    (input_dir / "news.md").write_text("- Solar industry expanded 15% in Q1.\n", encoding="utf-8")
+    (input_dir / "news.md").write_text("- Manufacturing industry expanded 15% in Q1.\n", encoding="utf-8")
 
     context = PipelineContext(
         project_name="Test Brief",
@@ -164,7 +165,7 @@ def test_pipeline_with_provider_sources(tmp_path):
     # Attach a SourceConfig to trigger provider-based collection
     source_config = SourceConfig(
         profile="research",
-        industry="solar",
+        industry="manufacturing",
         enabled_providers=["manual"],
         manual={"enabled": True, "sources": [{"name": "Test", "path": str(input_dir), "enabled": True}]},
     )
@@ -175,7 +176,7 @@ def test_pipeline_with_provider_sources(tmp_path):
     # Should have source-collection + 6 agents = 7 outputs
     assert len(outputs) == 7
     assert outputs[0].agent_name == "source-collection"
-    assert "2" in outputs[0].summary or "solar" in outputs[0].artifacts.get("industry", "")
+    assert "2" in outputs[0].summary or "manufacturing" in outputs[0].artifacts.get("industry", "")
 
 
 def test_pipeline_backward_compatible_local_only(tmp_path):
@@ -215,7 +216,7 @@ def test_scout_uses_provider_sources_when_available(tmp_path):
             source_id="PROVIDER_SRC",
             source_name="Provider Source",
             source_type="cached",
-            title="Cached solar news",
+            title="Cached manufacturing news",
             content="Solar manufacturing capacity expanded by 15 percent in Q1 2026 according to industry data.",
         ),
     ]
@@ -273,13 +274,13 @@ def test_pipeline_provider_sources_appear_in_brief(tmp_path):
     cache_dir.mkdir()
     import json
     (cache_dir / "industry.json").write_text(json.dumps([
-        {"title": "Solar expansion news", "content": "Global solar manufacturing capacity grew 15 percent in Q1 2026, reaching 800 GW annual throughput.", "url": "https://example.com/solar-expansion"},
+        {"title": "Manufacturing expansion news", "content": "Global manufacturing capacity grew 15 percent in Q1 2026, reaching 800 GW annual throughput.", "url": "https://example.com/manufacturing-expansion"},
     ]), encoding="utf-8")
 
     from multi_agent_brief.sources.base import SourceConfig
     source_config = SourceConfig(
         profile="research",
-        industry="solar",
+        industry="manufacturing",
         enabled_providers=["cached_package"],
         cached_package={
             "enabled": True,
@@ -300,14 +301,14 @@ def test_pipeline_provider_sources_appear_in_brief(tmp_path):
     outputs = BriefPipeline().run(context)
 
     brief_text = (output_dir / "brief.md").read_text(encoding="utf-8")
-    assert "solar" in brief_text.lower() or "capacity" in brief_text.lower()
+    assert "manufacturing" in brief_text.lower() or "capacity" in brief_text.lower()
     assert "[src:" in brief_text
 
     # Verify claim_ledger has the provider source claim
     import json as json_mod
     ledger_data = json_mod.loads((output_dir / "claim_ledger.json").read_text(encoding="utf-8"))
     assert len(ledger_data) > 0
-    assert any("solar" in c["statement"].lower() or "capacity" in c["statement"].lower() for c in ledger_data)
+    assert any("manufacturing" in c["statement"].lower() or "capacity" in c["statement"].lower() for c in ledger_data)
 
 
 # --- P1: manual_url placeholders should not become claims ---
@@ -326,11 +327,11 @@ def test_manual_url_placeholder_not_in_ledger(tmp_path):
     context.sources = [
         SourceItem(
             source_id="MANUAL_URL_1",
-            source_name="PV Magazine",
+            source_name="Trade Journal",
             source_type="manual_url",
-            title="PV Magazine",
-            content="Manual URL source: https://www.pv-magazine.com/",
-            url="https://www.pv-magazine.com/",
+            title="Trade Journal",
+            content="Manual URL source: https://www.trade-journal.com/",
+            url="https://www.trade-journal.com/",
             metadata={"requires_fetch": True, "ingestion_status": "placeholder"},
         ),
         SourceItem(
@@ -338,7 +339,7 @@ def test_manual_url_placeholder_not_in_ledger(tmp_path):
             source_name="Real File",
             source_type="local_file",
             title="Real News",
-            content="Solar demand grew 10 percent in Q1 2026 according to the latest industry report.",
+            content="Manufacturing demand grew 10 percent in Q1 2026 according to the latest industry report.",
         ),
     ]
 
@@ -409,7 +410,7 @@ def test_manual_paths_resolved_against_config_dir(tmp_path):
 
     items, errors = collect_all_sources(config)
     assert len(items) > 0, "Manual source should be found via config_dir-relative path"
-    assert "solar" in items[0].content.lower()
+    assert "manufacturing" in items[0].content.lower()
 
 
 def test_cli_run_with_external_workspace(tmp_path):
@@ -421,7 +422,7 @@ def test_cli_run_with_external_workspace(tmp_path):
         "init", str(ws),
         "--language", "zh-CN",
         "--company", "TestCo",
-        "--industry", "solar",
+        "--industry", "manufacturing",
         "--source-profile", "conservative",
     ]) == 0
 

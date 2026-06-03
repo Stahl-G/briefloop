@@ -28,8 +28,8 @@ class FakeSearchBackend:
         self.last_domains = domains
         return [
             SearchResult(
-                title="Fake solar result",
-                url="https://example.com/fake-solar",
+                title="Fake manufacturing result",
+                url="https://example.com/fake-manufacturing",
                 snippet="Solar manufacturing capacity expanded in Q1 2026.",
                 published_at="2026-05-01",
                 source_name="Fake Search",
@@ -71,7 +71,7 @@ def test_source_profiles_defined():
 def test_manual_provider_loads_local_files(tmp_path):
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    (input_dir / "news.md").write_text("- Solar demand grew 10% in Q1.\n- New tariff announced.\n", encoding="utf-8")
+    (input_dir / "news.md").write_text("- Manufacturing demand grew 10% in Q1.\n- New tariff announced.\n", encoding="utf-8")
 
     provider = ManualProvider()
     config = {"sources": [{"name": "Test", "path": str(input_dir)}]}
@@ -80,7 +80,7 @@ def test_manual_provider_loads_local_files(tmp_path):
 
     assert len(items) == 1
     assert items[0].source_type == "local_file"
-    assert "Solar demand" in items[0].content
+    assert "Manufacturing demand" in items[0].content
 
 
 def test_manual_provider_loads_json(tmp_path):
@@ -104,12 +104,12 @@ def test_manual_provider_loads_json(tmp_path):
 
 def test_manual_provider_url_entry():
     provider = ManualProvider()
-    config = {"sources": [{"name": "PV Magazine", "url": "https://www.pv-magazine.com/"}]}
+    config = {"sources": [{"name": "Trade Journal", "url": "https://www.trade-journal.com/"}]}
     items = provider.collect(SourceQuery(), config)
 
     assert len(items) == 1
     assert items[0].source_type == "manual_url"
-    assert items[0].url == "https://www.pv-magazine.com/"
+    assert items[0].url == "https://www.trade-journal.com/"
 
 
 def test_manual_provider_skips_disabled():
@@ -155,7 +155,7 @@ def test_web_search_with_injected_fake_backend_returns_results():
 def test_web_search_metadata_uses_backend_name():
     """metadata["backend"] should come from the injected backend, not _get_backend({})."""
     provider = WebSearchProvider(backend=FakeSearchBackend())
-    items = provider.collect(SourceQuery(keywords=["solar"]), {"enabled": True})
+    items = provider.collect(SourceQuery(keywords=["manufacturing"]), {"enabled": True})
     assert len(items) > 0
     assert items[0].metadata["backend"] == "fake"
 
@@ -267,7 +267,7 @@ def test_validate_all_providers_passes():
 def test_collect_all_sources_manual(tmp_path):
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    (input_dir / "test.md").write_text("- A solar factory expanded capacity.\n", encoding="utf-8")
+    (input_dir / "test.md").write_text("- A manufacturing factory expanded capacity.\n", encoding="utf-8")
 
     config = SourceConfig(
         enabled_providers=["manual"],
@@ -276,7 +276,7 @@ def test_collect_all_sources_manual(tmp_path):
     items, errors = collect_all_sources(config)
     assert len(items) == 1
     assert errors == []
-    assert "solar" in items[0].content.lower()
+    assert "manufacturing" in items[0].content.lower()
 
 
 # --- Doctor ---
@@ -368,7 +368,7 @@ def test_web_search_source_id_stable():
     """Same search result should produce same source_id across calls."""
     provider = WebSearchProvider(backend=FakeSearchBackend())
     config = {"enabled": True}
-    query = SourceQuery(keywords=["solar"])
+    query = SourceQuery(keywords=["manufacturing"])
 
     items1 = provider.collect(query, config)
     items2 = provider.collect(query, config)
@@ -492,12 +492,12 @@ def test_web_search_passes_domains_to_backend():
     config = {
         "enabled": True,
         "search_tasks": [
-            {"query": "solar prices", "domains": ["pv-tech.org", "reuters.com"]},
+            {"query": "manufacturing prices", "domains": ["industry-news.org", "reuters.com"]},
         ],
     }
     items = provider.collect(SourceQuery(), config)
     assert len(items) > 0
-    assert backend.last_domains == ["pv-tech.org", "reuters.com"]
+    assert backend.last_domains == ["industry-news.org", "reuters.com"]
 
 
 def test_web_search_no_domains_passes_none():
@@ -505,7 +505,7 @@ def test_web_search_no_domains_passes_none():
     backend = FakeSearchBackend()
     provider = WebSearchProvider(backend=backend)
     config = {"enabled": True}
-    items = provider.collect(SourceQuery(keywords=["solar"]), config)
+    items = provider.collect(SourceQuery(keywords=["manufacturing"]), config)
     assert len(items) > 0
     assert backend.last_domains is None
 

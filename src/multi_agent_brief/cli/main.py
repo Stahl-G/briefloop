@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--name", help="Brief title.")
     run_parser.add_argument("--language")
     run_parser.add_argument("--audience")
-    run_parser.add_argument("--industry", help="Industry for source planning, e.g. solar.")
+    run_parser.add_argument("--industry", help="Industry for source planning, e.g. manufacturing.")
     run_parser.add_argument("--days", type=int, help="Source recency in days.")
 
     audit_parser = subparsers.add_parser("audit", help="Run deterministic audit on an existing Markdown brief.")
@@ -53,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--output-language", choices=["en-US", "zh-CN", "bilingual"], help="Generated brief language.")
     init_parser.add_argument("--company", help="Company or organization name.")
     init_parser.add_argument("--role", help="User role, e.g. strategy_office.")
-    init_parser.add_argument("--industry", help="Industry slug, e.g. solar.")
+    init_parser.add_argument("--industry", help="Industry slug, e.g. manufacturing.")
     init_parser.add_argument("--title", help="Brief title.")
     init_parser.add_argument("--audience", help="Target reader group.")
     init_parser.add_argument("--focus-areas", help="Comma-separated focus areas.")

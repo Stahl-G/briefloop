@@ -199,36 +199,28 @@ def normalize_source_profile(text: str) -> str:
 # ── industry mapping ───────────────────────────────────────────────
 
 _INDUSTRY_MAP: dict[str, str] = {
-    "solar": "solar",
-    "pv": "solar",
-    "photovoltaic": "solar",
-    "renewable solar": "solar",
-    "光伏": "solar",
-    "太阳能": "solar",
-    "technology": "technology",
-    "tech": "technology",
-    "ai": "technology",
-    "software": "technology",
-    "科技": "technology",
-    "finance": "finance",
-    "banking": "finance",
-    "securities": "finance",
-    "investment": "finance",
-    "金融": "finance",
-    "renewable energy": "energy",
-    "clean energy": "energy",
-    "energy": "energy",
-    "新能源": "energy",
-    "consumer": "consumer",
-    "retail": "consumer",
-    "beer": "consumer",
-    "food & beverage": "consumer",
-    "啤酒": "consumer",
-    "automotive": "automotive",
-    "ev": "automotive",
-    "smart vehicle": "automotive",
-    "vehicle": "automotive",
-    "汽车": "automotive",
+    "manufacturing": "manufacturing",
+    "industrial": "manufacturing",
+    "制造业": "manufacturing",
+    "banking": "banking",
+    "bank": "banking",
+    "银行": "banking",
+    "fund": "fund",
+    "asset management": "fund",
+    "基金": "fund",
+    "technology": "internet",
+    "tech": "internet",
+    "ai": "internet",
+    "software": "internet",
+    "internet": "internet",
+    "互联网": "internet",
+    "科技": "internet",
+    "finance": "banking",
+    "securities": "banking",
+    "investment": "fund",
+    "金融": "banking",
+    "general": "general",
+    "通用": "general",
 }
 
 
@@ -240,31 +232,27 @@ def normalize_industry(text: str) -> str:
     if t in _INDUSTRY_MAP:
         return _INDUSTRY_MAP[t]
     # Substring/keyword matching for natural-language phrases
-    if any(k in t for k in ("solar", "pv", "photovoltaic", "光伏", "太阳能")):
-        return "solar"
-    if any(k in t for k in ("renewable energy", "clean energy", "新能源")):
-        return "energy"
-    if any(k in t for k in ("technology", "tech", "ai", "software", "科技")):
-        return "technology"
-    if any(k in t for k in ("finance", "banking", "securities", "investment", "金融")):
-        return "finance"
-    if any(k in t for k in ("consumer", "retail", "beer", "food", "啤酒")):
-        return "consumer"
-    if any(k in t for k in ("automotive", "ev", "vehicle", "汽车")):
-        return "automotive"
+    if any(k in t for k in ("manufacturing", "industrial", "制造业", "factory", "production")):
+        return "manufacturing"
+    if any(k in t for k in ("banking", "bank", "银行", "finance", "securities", "金融")):
+        return "banking"
+    if any(k in t for k in ("fund", "asset management", "基金", "investment", "私募")):
+        return "fund"
+    if any(k in t for k in ("technology", "tech", "ai", "software", "internet", "互联网", "科技")):
+        return "internet"
+    if any(k in t for k in ("general", "通用", "研究")):
+        return "general"
     # Fallback: lowercase, spaces/hyphens -> underscores
     return re.sub(r"[\s\-]+", "_", t)
 
 # ── industry label for titles ──────────────────────────────────────
 
 _INDUSTRY_LABELS: dict[str, str] = {
-    "solar": ("Solar", "solar"),
-    "technology": ("Technology", "technology"),
-    "finance": ("Finance", "finance"),
-    "energy": ("Renewable Energy", "renewable energy"),
-    "consumer": ("Consumer", "consumer"),
-    "automotive": ("Automotive", "automotive"),
-    "general": ("Industry", "industry"),
+    "manufacturing": ("Manufacturing", "manufacturing"),
+    "banking": ("Banking", "banking"),
+    "fund": ("Fund / Asset Management", "fund"),
+    "internet": ("Internet / Technology", "internet"),
+    "general": ("General Research", "general"),
 }
 
 

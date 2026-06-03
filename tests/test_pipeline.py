@@ -44,7 +44,7 @@ def test_analyst_renders_all_topics(tmp_path):
     topics_and_keywords = [
         ("compliance", "UFLPA compliance review triggered by CBP at port of entry."),
         ("technology", "TopCon cell efficiency reached 26.5 percent in pilot production line."),
-        ("capital", "Major acquisition deal worth 2 billion for solar project portfolio."),
+        ("capital", "Major acquisition deal worth 2 billion for manufacturing project portfolio."),
         ("demand", "PPA interconnection queue grew 40 percent in the Southwest region."),
         ("rates", "Treasury yield spread tightened as Fed signals rate pause in Q3."),
     ]
@@ -115,9 +115,9 @@ def test_analyst_renders_all_claims_no_truncation(tmp_path):
     for i in range(8):
         claim = Claim(
             claim_id=f"TEST_TECH_{i:02d}",
-            statement=f"Technology update number {i}: solar cell efficiency milestone reached.",
+            statement=f"Technology update number {i}: manufacturing efficiency milestone reached.",
             source_id="TEST_SRC",
-            evidence_text=f"Technology update number {i}: solar cell efficiency milestone reached.",
+            evidence_text=f"Technology update number {i}: manufacturing efficiency milestone reached.",
             claim_type="fact",
             metadata={"topic": "technology"},
         )

@@ -22,7 +22,7 @@ class TestInitTavilyGuidance:
         assert main([
             "init", str(ws),
             "--language", "zh-CN",
-            "--industry", "solar",
+            "--industry", "manufacturing",
             "--source-profile", "research",
         ]) == 0
         # Without tavily_enabled CLI arg, web_search should be disabled
@@ -37,7 +37,7 @@ class TestInitTavilyGuidance:
         ws = tmp_path / "ws"
         profile = InitProfile(
             interface_language="en-US",
-            industry="solar",
+            industry="manufacturing",
             tavily_enabled=True,
         )
         create_workspace(ws, profile)
@@ -167,7 +167,7 @@ class TestRunTavilyGuidance:
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
         ws = tmp_path / "ws"
-        assert main(["init", str(ws), "--language", "zh-CN", "--industry", "solar"]) == 0
+        assert main(["init", str(ws), "--language", "zh-CN", "--industry", "manufacturing"]) == 0
 
         # Manually enable Tavily in sources.yaml
         sources = (ws / "sources.yaml").read_text(encoding="utf-8")

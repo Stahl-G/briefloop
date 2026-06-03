@@ -16,7 +16,7 @@ def test_onboarding_mapper_management_weekly_en():
     result = OnboardingResult(
         target="exampleco-weekly",
         company_or_org="ExampleCo",
-        industry_or_theme="renewable energy",
+        industry_or_theme="manufacturing",
         audience_plain="management team",
         source_style_plain="reliable, but include sector news",
         language_plain="English",
@@ -25,7 +25,7 @@ def test_onboarding_mapper_management_weekly_en():
     )
     profile = map_onboarding_to_profile(result)
     assert profile.company == "ExampleCo"
-    assert profile.industry == "energy"
+    assert profile.industry == "manufacturing"
     assert profile.audience == "management"
     assert profile.source_profile == "research"
     assert profile.interface_language == "en-US"
@@ -69,10 +69,12 @@ def test_onboarding_mapper_bilingual():
 
 def test_onboarding_mapper_natural_language_industry():
     """Substring matching handles natural-language industry phrases."""
-    assert normalize_industry("renewable energy sector") == "energy"
-    assert normalize_industry("solar manufacturing") == "solar"
-    assert normalize_industry("technology sector") == "technology"
-    assert normalize_industry("global finance outlook") == "finance"
+    assert normalize_industry("manufacturing sector") == "manufacturing"
+    assert normalize_industry("banking regulation") == "banking"
+    assert normalize_industry("technology sector") == "internet"
+    assert normalize_industry("global finance outlook") == "banking"
+    assert normalize_industry("fund management") == "fund"
+    assert normalize_industry("general research") == "general"
 
 
 def test_onboarding_mapper_natural_language_audience():

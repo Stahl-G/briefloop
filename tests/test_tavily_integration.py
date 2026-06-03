@@ -52,15 +52,15 @@ class TestTavilyBackend:
             "results": [
                 {
                     "title": "Solar Policy Update 2026",
-                    "url": "https://energy.gov/solar-policy",
-                    "content": "New tariff regulations for solar imports announced.",
+                    "url": "https://gov-policy.org/manufacturing-policy",
+                    "content": "New tariff regulations for manufacturing imports announced.",
                     "published_date": "2026-06-01",
                     "score": 0.95,
                     "raw_content": "Full text here...",
                 },
                 {
-                    "title": "PV Magazine Report",
-                    "url": "https://pv-magazine.com/report",
+                    "title": "Trade Journal Report",
+                    "url": "https://trade-journal.com/report",
                     "content": "Manufacturing capacity expanded.",
                     "score": 0.87,
                 },
@@ -78,12 +78,12 @@ class TestTavilyBackend:
 
         with patch("urllib.request.urlopen", mock_urlopen):
             backend = TavilyBackend()
-            results = backend.search("solar policy", max_results=5)
+            results = backend.search("manufacturing policy", max_results=5)
 
         assert len(results) == 2
         assert results[0].title == "Solar Policy Update 2026"
-        assert results[0].url == "https://energy.gov/solar-policy"
-        assert results[0].snippet == "New tariff regulations for solar imports announced."
+        assert results[0].url == "https://gov-policy.org/manufacturing-policy"
+        assert results[0].snippet == "New tariff regulations for manufacturing imports announced."
         assert results[0].published_at == "2026-06-01"
         assert results[0].metadata["score"] == 0.95
         assert results[0].metadata["backend"] == "tavily"
@@ -106,9 +106,9 @@ class TestTavilyBackend:
 
         with patch("urllib.request.urlopen", mock_urlopen):
             backend = TavilyBackend()
-            backend.search("test", domains=["energy.gov", "pv-magazine.com"])
+            backend.search("test", domains=["gov-policy.org", "trade-journal.com"])
 
-        assert captured_payload.get("include_domains") == ["energy.gov", "pv-magazine.com"]
+        assert captured_payload.get("include_domains") == ["gov-policy.org", "trade-journal.com"]
 
     def test_no_api_key_in_metadata(self, monkeypatch):
         """API key must never appear in result metadata."""
@@ -170,25 +170,25 @@ class TestWebSearchProviderTavily:
         query = SourceQuery()
         config = {
             "search_tasks": [
-                {"query": "solar policy update", "domains": ["energy.gov"]},
-                {"query": "manufacturing capacity", "domains": ["pv-magazine.com"]},
+                {"query": "manufacturing policy update", "domains": ["gov-policy.org"]},
+                {"query": "manufacturing capacity", "domains": ["trade-journal.com"]},
                 {"query": "tariff regulation"},
             ]
         }
         queries = provider._build_queries(query, config)
         assert len(queries) == 3
-        assert queries[0] == ("solar policy update", ["energy.gov"])
-        assert queries[1] == ("manufacturing capacity", ["pv-magazine.com"])
+        assert queries[0] == ("manufacturing policy update", ["gov-policy.org"])
+        assert queries[1] == ("manufacturing capacity", ["trade-journal.com"])
         assert queries[2] == ("tariff regulation", None)
 
     def test_build_queries_separate_keywords_fallback(self):
         """When no search_tasks, keywords should be separate queries."""
         provider = WebSearchProvider()
-        query = SourceQuery(keywords=["solar", "tariff", "manufacturing"])
+        query = SourceQuery(keywords=["manufacturing", "tariff", "manufacturing"])
         config = {}
         queries = provider._build_queries(query, config)
         assert len(queries) == 3
-        assert queries[0] == ("solar", None)
+        assert queries[0] == ("manufacturing", None)
         assert queries[1] == ("tariff", None)
 
     def test_domains_preserved_to_backend(self, monkeypatch):
@@ -208,14 +208,14 @@ class TestWebSearchProviderTavily:
         config = {
             "enabled": True,
             "search_tasks": [
-                {"query": "solar", "domains": ["energy.gov"]},
+                {"query": "manufacturing", "domains": ["gov-policy.org"]},
                 {"query": "tariff"},
             ]
         }
         provider.collect(SourceQuery(), config)
 
         assert len(captured_calls) == 2
-        assert captured_calls[0]["domains"] == ["energy.gov"]
+        assert captured_calls[0]["domains"] == ["gov-policy.org"]
         assert captured_calls[1]["domains"] is None
 
 
@@ -234,7 +234,7 @@ class TestEditorAuditResidue:
         output_dir = tmp_path / "output"
         input_dir.mkdir()
         (input_dir / "news.md").write_text(
-            "- A solar manufacturer announced a 2 GW expansion plan.\n",
+            "- A manufacturing company announced a 2 GW expansion plan.\n",
             encoding="utf-8",
         )
 
@@ -330,13 +330,13 @@ class TestRssDateNormalization:
 class TestRssTokenMatching:
 
     def test_token_match_basic(self):
-        assert _token_match(["solar"], "Solar panel efficiency increased")
+        assert _token_match(["manufacturing"], "Manufacturing efficiency increased")
 
     def test_token_match_substring(self):
         assert _token_match(["photovoltaic"], "New photovoltaic cells announced")
 
     def test_token_match_no_match(self):
-        assert not _token_match(["quantum", "computing"], "Solar panel efficiency increased")
+        assert not _token_match(["quantum", "computing"], "Manufacturing efficiency increased")
 
     def test_token_match_empty_keywords(self):
         """Empty keywords should match everything (no filter)."""
@@ -433,12 +433,12 @@ class TestDoctorTavily:
 
 
 # ---------------------------------------------------------------------------
-# Init wizard solar
+# Init wizard manufacturing
 # ---------------------------------------------------------------------------
 
 class TestInitSolar:
 
-    def test_solar_selectable(self, tmp_path):
+    def test_manufacturing_selectable(self, tmp_path):
         """Solar industry should be selectable in init."""
         from multi_agent_brief.cli.main import main
 
@@ -446,9 +446,9 @@ class TestInitSolar:
         assert main([
             "init", str(workspace),
             "--language", "zh-CN",
-            "--industry", "solar",
+            "--industry", "manufacturing",
             "--source-profile", "conservative",
         ]) == 0
         assert (workspace / "config.yaml").exists()
         config = (workspace / "config.yaml").read_text(encoding="utf-8")
-        assert "solar" in config
+        assert "manufacturing" in config

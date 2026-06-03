@@ -106,7 +106,7 @@ class TestPipelineSteps:
 
         profile = InitProfile(
             company="TestCo",
-            industry="solar",
+            industry="manufacturing",
             brief_title="Test Brief",
             audience="management",
             source_profile="conservative",

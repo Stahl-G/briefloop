@@ -5,45 +5,6 @@ from typing import Any
 
 
 INDUSTRY_PACKS: dict[str, dict[str, Any]] = {
-    "solar": {
-        "name": "Solar / Renewable Energy",
-        "rss_feeds": [
-            {"name": "PV Tech", "url": "https://www.pv-tech.org/feed/", "reliability": "medium", "category": "industry_news"},
-            {"name": "PV Magazine", "url": "https://www.pv-magazine.com/feed/", "reliability": "medium", "category": "industry_news"},
-            {"name": "Solar Power World", "url": "https://www.solarpowerworldonline.com/feed/", "reliability": "medium", "category": "industry_news"},
-            {"name": "Greentech Media", "url": "https://www.greentechmedia.com/feed", "reliability": "medium", "category": "industry_news"},
-        ],
-        "search_tasks": [
-            {"query": "solar policy tariff regulation update", "topic": "policy", "domains": ["pv-tech.org", "pv-magazine.com"]},
-            {"query": "solar module price market", "topic": "market", "domains": ["pv-tech.org", "pv-magazine.com"]},
-            {"query": "solar earnings revenue guidance", "topic": "earnings", "domains": []},
-            {"query": "solar manufacturing capacity expansion plant", "topic": "competitor", "domains": ["pv-tech.org"]},
-            {"query": "solar technology efficiency record TOPCon perovskite", "topic": "technology", "domains": ["pv-tech.org", "pv-magazine.com"]},
-            {"query": "battery storage energy storage demand", "topic": "market", "domains": ["pv-tech.org"]},
-        ],
-    },
-    "technology": {
-        "name": "Internet / Technology",
-        "rss_feeds": [
-            {"name": "TechCrunch", "url": "https://techcrunch.com/feed/", "reliability": "medium", "category": "tech_news"},
-            {"name": "The Verge", "url": "https://www.theverge.com/rss/index.xml", "reliability": "medium", "category": "tech_news"},
-        ],
-        "search_tasks": [
-            {"query": "technology earnings revenue guidance", "topic": "earnings", "domains": []},
-            {"query": "AI artificial intelligence launch product", "topic": "competitor", "domains": []},
-            {"query": "technology regulation policy antitrust", "topic": "policy", "domains": []},
-            {"query": "semiconductor chip manufacturing capacity", "topic": "market", "domains": []},
-        ],
-    },
-    "finance": {
-        "name": "Finance / Banking",
-        "rss_feeds": [],
-        "search_tasks": [
-            {"query": "financial earnings revenue bank", "topic": "earnings", "domains": []},
-            {"query": "interest rate monetary policy central bank", "topic": "policy", "domains": []},
-            {"query": "M&A acquisition investment deal", "topic": "capital", "domains": []},
-        ],
-    },
     "manufacturing": {
         "name": "Manufacturing / Industrial",
         "rss_feeds": [],
@@ -53,13 +14,40 @@ INDUSTRY_PACKS: dict[str, dict[str, Any]] = {
             {"query": "manufacturing tariff trade policy", "topic": "policy", "domains": []},
         ],
     },
-    "policy_macro": {
-        "name": "Policy / Macro Economics",
+    "banking": {
+        "name": "Banking",
         "rss_feeds": [],
         "search_tasks": [
-            {"query": "government policy regulation update", "topic": "policy", "domains": []},
-            {"query": "GDP economic growth forecast", "topic": "market", "domains": []},
-            {"query": "trade tariff sanctions", "topic": "policy", "domains": []},
+            {"query": "bank earnings net interest margin regulation", "topic": "earnings", "domains": []},
+            {"query": "central bank interest rate policy banking", "topic": "policy", "domains": []},
+            {"query": "bank capital adequacy credit risk", "topic": "capital", "domains": []},
+        ],
+    },
+    "fund": {
+        "name": "Fund / Asset Management",
+        "rss_feeds": [],
+        "search_tasks": [
+            {"query": "asset management fund flows market update", "topic": "market", "domains": []},
+            {"query": "investment fund regulation disclosure", "topic": "policy", "domains": []},
+            {"query": "private equity venture capital fundraising deal", "topic": "capital", "domains": []},
+        ],
+    },
+    "internet": {
+        "name": "Internet / Technology",
+        "rss_feeds": [],
+        "search_tasks": [
+            {"query": "internet platform product launch competition", "topic": "competitor", "domains": []},
+            {"query": "technology company earnings revenue guidance", "topic": "earnings", "domains": []},
+            {"query": "AI internet regulation antitrust policy", "topic": "policy", "domains": []},
+        ],
+    },
+    "general": {
+        "name": "General Research",
+        "rss_feeds": [],
+        "search_tasks": [
+            {"query": "business policy market update", "topic": "market", "domains": []},
+            {"query": "company earnings guidance update", "topic": "earnings", "domains": []},
+            {"query": "regulation policy industry update", "topic": "policy", "domains": []},
         ],
     },
 }
