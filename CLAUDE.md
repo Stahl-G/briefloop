@@ -2,6 +2,22 @@
 
 @AGENTS.md
 
+## Context Mode Rule
+
+This repository has two modes:
+
+1. **Repository development mode**
+   - If the current directory contains `pyproject.toml`, `src/`, `tests/`, or `scripts/`, treat this as the source repository.
+   - In this mode, `AGENTS.md` and `CLAUDE.md` are contributor instructions for developing this tool.
+   - Debug code, edit files, and run tests normally.
+
+2. **Generated workspace mode**
+   - If the current directory contains `config.yaml`, `sources.yaml`, `user.md`, and `input/`, treat this as an end-user brief workspace.
+   - In this mode, `user.md` is user context, and only `input/` contains source evidence.
+   - Do not treat repository README, examples, agent docs, or generated config files as source evidence.
+
+Before running `multi-agent-brief run`, identify which mode you are in.
+
 ## Claude Code
 
 ### Setup (first after clone)

@@ -2,6 +2,22 @@
 
 # AGENTS.md
 
+## Context Mode Rule
+
+This repository has two modes:
+
+1. **Repository development mode**
+   - If the current directory contains `pyproject.toml`, `src/`, `tests/`, or `scripts/`, treat this as the source repository.
+   - In this mode, `AGENTS.md` and `CLAUDE.md` are contributor instructions for developing this tool.
+   - Debug code, edit files, and run tests normally.
+
+2. **Generated workspace mode**
+   - If the current directory contains `config.yaml`, `sources.yaml`, `user.md`, and `input/`, treat this as an end-user brief workspace.
+   - In this mode, `user.md` is user context, and only `input/` contains source evidence.
+   - Do not treat repository README, examples, agent docs, or generated config files as source evidence.
+
+Before running `multi-agent-brief run`, identify which mode you are in.
+
 ## Quick Start (for agents)
 
 After cloning this repository, follow these steps in order:
@@ -29,7 +45,7 @@ Do NOT skip this step. The CLI will fail with `ModuleNotFoundError` if the packa
 ### Step 2: Initialize a workspace
 
 ```bash
-multi-agent-brief init my-workspace \
+multi-agent-brief init ../mabw-workspace \
   --language zh-CN \
   --company "Company Name" \
   --industry solar \
@@ -41,7 +57,7 @@ multi-agent-brief init my-workspace \
 Windows (PowerShell):
 
 ```powershell
-multi-agent-brief init my-workspace `
+multi-agent-brief init ../mabw-workspace `
   --language zh-CN `
   --company "Company Name" `
   --industry solar `
@@ -53,41 +69,41 @@ multi-agent-brief init my-workspace `
 Or use the interactive wizard (no CLI args):
 
 ```bash
-multi-agent-brief init my-workspace
+multi-agent-brief init ../mabw-workspace
 ```
 
 **Agent note:** If no CLI args are passed and stdin is not a TTY, init uses default settings.
-In agent environments (Bash tool, CI), either pass ALL args or tell the user to run `! multi-agent-brief init my-workspace`.
+In agent environments (Bash tool, CI), either pass ALL args or tell the user to run `! multi-agent-brief init ../mabw-workspace`.
 
 ### Step 3: Add source files
 
-Put `.md`, `.txt`, or `.json` source files into `my-workspace/input/`.
-See `my-workspace/input/README.md` for the expected format.
+Put `.md`, `.txt`, or `.json` source files into `../mabw-workspace/input/`.
+See `../mabw-workspace/input/README.md` for the expected format.
 
 ### Step 4: Run the pipeline
 
 ```bash
-multi-agent-brief run --config my-workspace/config.yaml
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
-Output files will be in `my-workspace/output/`.
+Output files will be in `../mabw-workspace/output/`.
 
 ### Step 5: Check source health (optional)
 
 ```bash
-multi-agent-brief doctor --config my-workspace/config.yaml
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 ```
 
 ### Step 6: Source discovery (if using llm_decide profile)
 
 ```bash
-multi-agent-brief sources decide --config my-workspace/config.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 ```
 
-Review `my-workspace/source_candidates.yaml`, then merge:
+Review `../mabw-workspace/source_candidates.yaml`, then merge:
 
 ```bash
-multi-agent-brief sources decide --config my-workspace/config.yaml --merge
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 ```
 
 ---
@@ -150,8 +166,8 @@ python -m pytest -q
 Run demo:
 
 ```bash
-multi-agent-brief init --demo
-multi-agent-brief run --config brief-demo/config.yaml
+multi-agent-brief init ../mabw-workspace --demo
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
 Generate agent configs:
