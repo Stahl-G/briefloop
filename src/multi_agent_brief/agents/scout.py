@@ -6,6 +6,7 @@ from pathlib import Path
 from multi_agent_brief.agents.base import BaseAgent
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AgentOutput, CandidateItem, Claim, PipelineContext, SourceItem
+from multi_agent_brief.sources.content_quality import is_low_quality_snippet, sanitize_snippet
 
 
 class ScoutAgent(BaseAgent):
@@ -25,36 +26,54 @@ class ScoutAgent(BaseAgent):
             # Skip placeholder sources that have no real content to extract
             if _is_placeholder(source):
                 continue
-            for index, statement in enumerate(extract_candidate_lines(source.content), start=1):
-                item_id = f"{source.source_id}_ITEM_{index:03d}"
-                claim_id = ledger.build_claim_id(statement, source.source_id)
-                candidate = CandidateItem(
-                    item_id=item_id,
-                    title=statement[:80],
-                    summary=statement,
-                    source_id=source.source_id,
-                    topic=infer_topic(statement),
-                    importance=infer_importance(statement),
-                    reason_for_inclusion="Contains a reportable business, market, policy, or risk signal.",
-                )
-                claim = Claim(
-                    claim_id=claim_id,
-                    statement=statement,
-                    source_id=source.source_id,
-                    evidence_text=statement,
-                    source_url=source.url,
-                    source_type=source.source_type,
-                    claim_type=source.metadata.get("claim_type") or infer_claim_type(statement),
-                    confidence="medium",
-                    created_by=self.name,
-                    metadata={
-                        "candidate_item_id": item_id,
-                        "published_at": source.published_at,
-                        "source_tier": source.metadata.get("source_tier", ""),
-                    },
-                )
-                candidates.append(candidate)
-                ledger.add_claim(claim)
+
+            if source.source_type == "web_search":
+                # Web search: at most one claim per SourceItem from title + snippet
+                claim = _extract_web_search_claim(source, ledger, self.name)
+                if claim is not None:
+                    item_id = f"{source.source_id}_ITEM_001"
+                    candidate = CandidateItem(
+                        item_id=item_id,
+                        title=source.title[:80] if source.title else claim.statement[:80],
+                        summary=claim.statement,
+                        source_id=source.source_id,
+                        topic=infer_topic(claim.statement),
+                        importance=infer_importance(claim.statement),
+                        reason_for_inclusion="Web search result with reportable signal.",
+                    )
+                    candidates.append(candidate)
+                    ledger.add_claim(claim)
+            else:
+                for index, statement in enumerate(extract_candidate_lines(source.content), start=1):
+                    item_id = f"{source.source_id}_ITEM_{index:03d}"
+                    claim_id = ledger.build_claim_id(statement, source.source_id)
+                    candidate = CandidateItem(
+                        item_id=item_id,
+                        title=statement[:80],
+                        summary=statement,
+                        source_id=source.source_id,
+                        topic=infer_topic(statement),
+                        importance=infer_importance(statement),
+                        reason_for_inclusion="Contains a reportable business, market, policy, or risk signal.",
+                    )
+                    claim = Claim(
+                        claim_id=claim_id,
+                        statement=statement,
+                        source_id=source.source_id,
+                        evidence_text=statement,
+                        source_url=source.url,
+                        source_type=source.source_type,
+                        claim_type=source.metadata.get("claim_type") or infer_claim_type(statement),
+                        confidence="medium",
+                        created_by=self.name,
+                        metadata={
+                            "candidate_item_id": item_id,
+                            "published_at": source.published_at,
+                            "source_tier": source.metadata.get("source_tier", ""),
+                        },
+                    )
+                    candidates.append(candidate)
+                    ledger.add_claim(claim)
 
         context.candidates = candidates
         return AgentOutput(
@@ -65,12 +84,65 @@ class ScoutAgent(BaseAgent):
 
 
 def _is_placeholder(source: SourceItem) -> bool:
-    """Return True if source is a manual_url placeholder with no real content."""
+    """Return True if source should be skipped (placeholder, error, low quality)."""
     if source.metadata.get("requires_fetch"):
+        return True
+    if source.metadata.get("error_type"):
+        return True
+    if source.metadata.get("low_quality"):
+        return True
+    if source.metadata.get("filtered_reason"):
+        return True
+    if source.source_type.endswith("_error"):
         return True
     if source.source_type == "manual_url" and source.content.startswith("Manual URL source:"):
         return True
     return False
+
+
+def _extract_web_search_claim(source: SourceItem, ledger: ClaimLedger, agent_name: str) -> Claim | None:
+    """Extract at most one claim from a web_search SourceItem.
+
+    Combines title and snippet, sanitizes, and checks quality.
+    Returns None if the snippet is low quality.
+    """
+    title = (source.title or "").strip()
+    snippet = (source.content or "").strip()
+
+    # Check snippet quality
+    if is_low_quality_snippet(snippet):
+        return None
+
+    sanitized = sanitize_snippet(snippet)
+    if not sanitized:
+        return None
+
+    # Build statement from title + snippet
+    if title and sanitized:
+        statement = f"{title}: {sanitized}"
+    elif sanitized:
+        statement = sanitized
+    else:
+        return None
+
+    claim_id = ledger.build_claim_id(statement, source.source_id)
+    return Claim(
+        claim_id=claim_id,
+        statement=statement,
+        source_id=source.source_id,
+        evidence_text=sanitized,
+        source_url=source.url,
+        source_type=source.source_type,
+        claim_type=infer_claim_type(statement),
+        confidence="medium",
+        created_by=agent_name,
+        metadata={
+            "published_at": source.published_at,
+            "source_tier": source.metadata.get("source_tier", ""),
+            "backend": source.metadata.get("backend", ""),
+            "query": source.metadata.get("query", ""),
+        },
+    )
 
 
 def load_local_sources(input_dir: Path) -> list[SourceItem]:

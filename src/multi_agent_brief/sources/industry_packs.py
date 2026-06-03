@@ -50,12 +50,43 @@ INDUSTRY_PACKS: dict[str, dict[str, Any]] = {
             {"query": "regulation policy industry update", "topic": "policy", "domains": []},
         ],
     },
+    "automotive": {
+        "name": "Automotive / Mobility",
+        "rss_feeds": [],
+        "search_tasks": [
+            {"query": "automotive industry production sales inventory", "topic": "market", "domains": []},
+            {"query": "EV battery supply chain automotive manufacturing", "topic": "competitor", "domains": []},
+            {"query": "automotive regulation tariffs safety recalls", "topic": "policy", "domains": []},
+            {"query": "autonomous driving software defined vehicle competition", "topic": "technology", "domains": []},
+        ],
+    },
+}
+
+
+_AUTOMOTIVE_ALIASES: dict[str, str] = {
+    "auto": "automotive",
+    "mobility": "automotive",
+    "vehicle": "automotive",
+    "ev": "automotive",
 }
 
 
 def get_industry_pack(industry: str) -> dict[str, Any] | None:
-    """Get industry pack by name. Returns None if not found."""
-    return INDUSTRY_PACKS.get(industry)
+    """Get industry pack by name. Returns None if not found.
+
+    Supports aliases: auto, mobility, vehicle, ev -> automotive.
+    """
+    if not industry:
+        return None
+    normalized = industry.lower().strip()
+    # Direct match first
+    if normalized in INDUSTRY_PACKS:
+        return INDUSTRY_PACKS[normalized]
+    # Alias match
+    aliased = _AUTOMOTIVE_ALIASES.get(normalized)
+    if aliased and aliased in INDUSTRY_PACKS:
+        return INDUSTRY_PACKS[aliased]
+    return None
 
 
 def list_industries() -> list[str]:

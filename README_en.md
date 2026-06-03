@@ -326,6 +326,9 @@ Notes:
 - API keys must be stored in environment variables, not config files
 - API keys are never printed or stored in configuration
 - If Tavily is enabled but the API key is missing, the pipeline fails immediately (fail-fast)
+- Web search results may not provide reliable `published_at` dates — time-sensitive web_search claims should be manually verified
+- Web search ingestion includes boilerplate filtering (cookies, privacy policy, TOC, etc.) but is not perfect
+- Real-time search feature is not release-ready until live smoke passes
 
 Create a synthetic demo workspace:
 

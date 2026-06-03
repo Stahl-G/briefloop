@@ -285,6 +285,9 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 - API key 必须存储在环境变量中，不能写入配置文件
 - 配置文件中不会打印或存储 API key
 - 如果启用了 Tavily 但未设置 API key，流水线会立即报错退出（fail-fast）
+- Web 搜索结果可能不包含可靠的 `published_at` 日期，时间敏感的 web_search 来源应人工核实
+- Web 搜索结果包含 boilerplate 过滤（cookie/隐私政策/目录等），但不完美
+- 实时搜索功能在通过线上 smoke 测试前不算发布就绪（not release-ready）
 
 ## llm_decide 来源发现
 

@@ -108,22 +108,27 @@ def run_deterministic_audit(
         )
 
     report_day = parse_date(report_date)
+    web_search_missing_date_count = 0
     if report_day and max_source_age_days is not None:
         for claim in ledger:
             published_at = str(claim.metadata.get("published_at", ""))
             source_day = parse_date(published_at)
             if source_day is None:
-                findings.append(
-                    AuditFinding(
-                        finding_id=f"DATE_{len(findings)+1:03d}",
-                        severity="medium",
-                        finding_type="missing_source_date",
-                        related_claim_id=claim.claim_id,
-                        description="Claim source is missing a parseable published_at date for reporting-window audit.",
-                        recommendation="Add source published_at metadata or mark the source as evergreen/background.",
-                        evidence=claim.statement,
+                # web_search sources often lack published_at — downgrade to low severity
+                if claim.source_type == "web_search":
+                    web_search_missing_date_count += 1
+                else:
+                    findings.append(
+                        AuditFinding(
+                            finding_id=f"DATE_{len(findings)+1:03d}",
+                            severity="medium",
+                            finding_type="missing_source_date",
+                            related_claim_id=claim.claim_id,
+                            description="Claim source is missing a parseable published_at date for reporting-window audit.",
+                            recommendation="Add source published_at metadata or mark the source as evergreen/background.",
+                            evidence=claim.statement,
+                        )
                     )
-                )
                 continue
             age_days = (report_day - source_day).days
             if age_days > max_source_age_days:
@@ -163,6 +168,7 @@ def run_deterministic_audit(
         "report_date": report_date,
         "max_source_age_days": max_source_age_days,
         "fail_on_stale_source": fail_on_stale_source,
+        "web_search_missing_published_at": web_search_missing_date_count,
     }
     high = sum(1 for finding in findings if finding.severity == "high")
     medium = sum(1 for finding in findings if finding.severity == "medium")

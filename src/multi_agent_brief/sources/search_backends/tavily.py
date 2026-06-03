@@ -86,18 +86,22 @@ class TavilyBackend(SearchBackend):
 
         results: list[SearchResult] = []
         for item in data.get("results", []):
+            raw_published = (item.get("published_date") or "").strip()
+            has_published = bool(raw_published)
             results.append(
                 SearchResult(
                     title=item.get("title", ""),
                     url=item.get("url", ""),
                     snippet=item.get("content", ""),
-                    published_at=item.get("published_date", ""),
+                    published_at=raw_published,
                     source_name=_extract_domain(item.get("url", "")),
                     metadata={
                         "score": item.get("score"),
                         "backend": "tavily",
                         "query": query,
                         "has_raw_content": bool(item.get("raw_content")),
+                        "date_status": "published_at_present" if has_published else "missing_published_at",
+                        "source_temporality": "published" if has_published else "retrieved_only",
                     },
                 )
             )

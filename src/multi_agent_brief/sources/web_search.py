@@ -119,10 +119,19 @@ class WebSearchProvider(SourceProvider):
 
     def _result_to_source_item(self, result: SearchResult, query: str, backend_name: str) -> SourceItem:
         """Convert a SearchResult to a SourceItem."""
+        from multi_agent_brief.sources.base import _utc_now_iso
+
         raw = f"{result.url}|{result.title}"
         digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10].upper()
         source_id = f"WS_{digest}"
-        metadata = {"query": query, "backend": backend_name}
+        retrieved_at = _utc_now_iso()
+        metadata: dict[str, Any] = {
+            "query": query,
+            "backend": backend_name,
+            "retrieved_at": retrieved_at,
+            "date_status": result.metadata.get("date_status", "missing_published_at"),
+            "source_temporality": result.metadata.get("source_temporality", "retrieved_only"),
+        }
         metadata.update(result.metadata)
         return SourceItem(
             source_id=source_id,
@@ -132,6 +141,7 @@ class WebSearchProvider(SourceProvider):
             content=result.snippet,
             url=result.url,
             published_at=result.published_at,
+            retrieved_at=retrieved_at,
             reliability="medium",
             metadata=metadata,
         )
