@@ -227,4 +227,4 @@ jobs:
 
       - name: Check README updated with source changes
         if: github.event_name == 'push'
-        run: python scripts/check_readme_updated.py --base "${{ github.before }}"
+        run: python scripts/check_readme_updated.py --base "${{ github.event.before }}"
