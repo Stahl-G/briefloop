@@ -326,6 +326,8 @@ This project can help structure research and briefing workflows, but it does not
 - Fixed Manual URL placeholders entering Claim Ledger: placeholder sources now carry requires_fetch metadata and Scout skips them automatically.
 - Fixed collect_all_sources() silently swallowing provider exceptions: errors are now captured in a returned errors list and included in pipeline artifacts as collection_errors.
 - Added 10 new tests covering all fixes.
+- Fixed web_search.py nested f-string SyntaxError on Python 3.9; refactored to intermediate variables.
+- CI now runs compileall before tests to catch syntax compatibility issues early.
 
 ### v0.5.0 — Three-Layer Source Collection Architecture
 

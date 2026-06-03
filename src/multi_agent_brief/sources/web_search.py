@@ -84,7 +84,9 @@ class WebSearchProvider(SourceProvider):
 
     def _result_to_source_item(self, result: SearchResult, query: str) -> SourceItem:
         """Convert a SearchResult to a SourceItem."""
-        source_id = f"WS_{hashlib.sha1(f"{result.url}|{result.title}".encode("utf-8")).hexdigest()[:10].upper()}"
+        raw = f"{result.url}|{result.title}"
+        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10].upper()
+        source_id = f"WS_{digest}"
         return SourceItem(
             source_id=source_id,
             source_name=result.source_name or "web_search",

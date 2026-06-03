@@ -337,6 +337,8 @@ Windows 原生 PowerShell 详细说明见 [docs/windows-powershell.md](docs/wind
 - 修复 Manual URL placeholder 进入 Claim Ledger 的问题：placeholder source 增加 requires_fetch metadata，Scout 自动跳过。
 - 修复 collect_all_sources() 静默吞掉 provider 异常的问题：错误记录到返回值的 errors 列表，pipeline artifacts 包含 collection_errors。
 - 新增 10 个测试覆盖所有修复。
+- 修复 web_search.py 嵌套 f-string 在 Python 3.9 下的 SyntaxError，改用中间变量。
+- CI 新增 compileall 步骤，提前捕获语法兼容性问题。
 
 ### v0.5.0 — 三层来源采集架构
 
