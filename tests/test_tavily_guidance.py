@@ -70,7 +70,7 @@ class TestInitTavilyGuidance:
         assert ws["enabled"] is True
         assert ws["backend"] == "tavily"
         assert ws["api_key_env"] == "TAVILY_API_KEY"
-        assert "web_search" in sources["source_strategy"]["enabled_providers"]
+        # llm_decide profile doesn't use enabled_providers; web_search config is the contract
 
     def test_init_no_tavily_no_env_example(self, tmp_path, monkeypatch):
         """Init without Tavily should not create .env.example."""
@@ -167,17 +167,7 @@ class TestRunTavilyGuidance:
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
         ws = tmp_path / "ws"
-        assert main(["init", str(ws), "--language", "zh-CN", "--industry", "manufacturing"]) == 0
-
-        # Manually enable Tavily in sources.yaml
-        sources = (ws / "sources.yaml").read_text(encoding="utf-8")
-        sources = sources.replace("enabled: false", "enabled: true", 1)
-        sources = sources.replace('backend: ""', "backend: tavily")
-        sources = sources.replace(
-            'note: "Configure a real backend or external agent before enabling web_search."',
-            "api_key_env: TAVILY_API_KEY",
-        )
-        (ws / "sources.yaml").write_text(sources, encoding="utf-8")
+        assert main(["init", str(ws), "--language", "zh-CN", "--industry", "manufacturing", "--tavily"]) == 0
 
         # Add a source file
         (ws / "input" / "news.md").write_text(

@@ -2,13 +2,19 @@
 
 All mapping is business-language → internal fields.
 Users never see source_profile, selector_max_items, etc.
+
+Architecture principle:
+- user.md = rich user profile and task context (primary semantic layer)
+- config.yaml = operational run settings only
+- sources.yaml = approved or discovered sources only
+- source.mode = llm_decide by default
+- industry packs = optional seed packs, not the source of truth
 """
 from __future__ import annotations
 
-import re
-
 from multi_agent_brief.cli.init_wizard import InitProfile
 from multi_agent_brief.onboarding.schema import OnboardingResult
+from multi_agent_brief.sources.industry_packs import INDUSTRY_PACKS
 
 
 # ── language mapping ────────────────────────────────────────────────
@@ -70,10 +76,8 @@ def normalize_cadence(text: str) -> str:
     t = text.strip().lower()
     if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
         return _DEFAULT_CADENCE
-    # Exact match first
     if t in _CADENCE_MAP:
         return _CADENCE_MAP[t]
-    # Substring/keyword matching
     if any(k in t for k in ("daily", "每日", "every day")):
         return "daily"
     if any(k in t for k in ("monthly", "月报", "每月", "every month")):
@@ -127,10 +131,8 @@ def normalize_audience(text: str) -> str:
     t = text.strip().lower()
     if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
         return _DEFAULT_AUDIENCE
-    # Exact match first
     if t in _AUDIENCE_MAP:
         return _AUDIENCE_MAP[t]
-    # Substring/keyword matching for natural-language phrases
     if any(k in t for k in ("investor relations", "ir", "投关", "披露")):
         return "investor_relations"
     if any(k in t for k in ("investment", "portfolio", "fund", "investor", "投资", "持仓", "基金")):
@@ -177,88 +179,54 @@ _SOURCE_STYLE_MAP: dict[str, str] = {
     "信号": "aggressive_signal",
 }
 
-_DEFAULT_SOURCE_PROFILE = "research"
+_DEFAULT_SOURCE_PROFILE = "llm_decide"
 
 
 def normalize_source_profile(text: str) -> str:
     t = text.strip().lower()
     if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
         return _DEFAULT_SOURCE_PROFILE
-    # Direct match
     if t in _SOURCE_STYLE_MAP:
         return _SOURCE_STYLE_MAP[t]
-    # Compound phrases
     if "official" in t or "filing" in t or "announcement" in t or "公告" in t:
         return "conservative"
     if "social" in t or "github" in t or "radar" in t or "broad" in t or "社媒" in t or "信号" in t:
         return "aggressive_signal"
-    # Default to research for vague "reliable", "industry", etc.
-    return "research"
+    # Default to llm_decide for vague or unknown source preferences
+    return "llm_decide"
 
 
-# ── industry mapping ───────────────────────────────────────────────
+# ── industry matching (optional seed pack only) ────────────────────
 
-_INDUSTRY_MAP: dict[str, str] = {
-    "manufacturing": "manufacturing",
-    "industrial": "manufacturing",
-    "制造业": "manufacturing",
-    "banking": "banking",
-    "bank": "banking",
-    "银行": "banking",
-    "fund": "fund",
-    "asset management": "fund",
-    "基金": "fund",
-    "technology": "internet",
-    "tech": "internet",
-    "ai": "internet",
-    "software": "internet",
-    "internet": "internet",
-    "互联网": "internet",
-    "科技": "internet",
-    "finance": "banking",
-    "securities": "banking",
-    "investment": "fund",
-    "金融": "banking",
-    "general": "general",
-    "通用": "general",
-}
+_REGISTERED_PACK_KEYS = set(INDUSTRY_PACKS.keys())
+
+
+def _try_match_seed_pack(text: str) -> str:
+    """Try to match user text to a registered industry pack key.
+
+    Returns the pack key if clearly matched, empty string otherwise.
+    Does NOT guess or invent unsupported slugs.
+    """
+    t = text.strip().lower()
+    if not t:
+        return ""
+    # Exact match against registered pack keys
+    if t in _REGISTERED_PACK_KEYS:
+        return t
+    # Substring match against registered pack keys
+    for key in _REGISTERED_PACK_KEYS:
+        if key in t:
+            return key
+    return ""
 
 
 def normalize_industry(text: str) -> str:
-    t = text.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选", "general"):
-        return "general"
-    # Exact match first
-    if t in _INDUSTRY_MAP:
-        return _INDUSTRY_MAP[t]
-    # Substring/keyword matching for natural-language phrases
-    if any(k in t for k in ("manufacturing", "industrial", "制造业", "factory", "production")):
-        return "manufacturing"
-    if any(k in t for k in ("banking", "bank", "银行", "finance", "securities", "金融")):
-        return "banking"
-    if any(k in t for k in ("fund", "asset management", "基金", "investment", "私募")):
-        return "fund"
-    if any(k in t for k in ("technology", "tech", "ai", "software", "internet", "互联网", "科技")):
-        return "internet"
-    if any(k in t for k in ("general", "通用", "研究")):
-        return "general"
-    # Fallback: lowercase, spaces/hyphens -> underscores
-    return re.sub(r"[\s\-]+", "_", t)
+    """Normalize industry text to a registered pack key or empty string.
 
-# ── industry label for titles ──────────────────────────────────────
-
-_INDUSTRY_LABELS: dict[str, str] = {
-    "manufacturing": ("Manufacturing", "manufacturing"),
-    "banking": ("Banking", "banking"),
-    "fund": ("Fund / Asset Management", "fund"),
-    "internet": ("Internet / Technology", "internet"),
-    "general": ("General Research", "general"),
-}
-
-
-def _industry_label(industry: str) -> tuple[str, str]:
-    """Return (English label, description) for an industry slug."""
-    return _INDUSTRY_LABELS.get(industry, (industry.replace("_", " ").title(), industry))
+    Returns a registered pack key if clearly matched, empty string otherwise.
+    Does NOT guess or invent unsupported slugs.
+    """
+    return _try_match_seed_pack(text)
 
 
 # ── selector_max_items ─────────────────────────────────────────────
@@ -267,13 +235,19 @@ _SELECTOR_MAP: dict[str, int] = {
     "conservative": 8,
     "research": 12,
     "aggressive_signal": 20,
+    "llm_decide": 12,
 }
 
 
 # ── main mapper ────────────────────────────────────────────────────
 
 def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
-    """Convert business-language OnboardingResult into an InitProfile."""
+    """Convert business-language OnboardingResult into an InitProfile.
+
+    Preserves raw user text in user.md-facing fields.
+    Only maps to registered pack keys when clearly matched.
+    Defaults to llm_decide mode for source discovery.
+    """
     profile = InitProfile()
 
     language = normalize_language(result.language_plain)
@@ -282,28 +256,30 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
 
     profile.company = result.company_or_org.strip() or "Sample Company"
 
-    industry = normalize_industry(result.industry_or_theme)
-    profile.industry = industry
+    # Preserve raw industry text for user.md
+    industry_raw = result.industry_or_theme.strip()
+    profile.industry_text = industry_raw
+    # Only set industry slug if clearly matches a registered pack
+    profile.industry = _try_match_seed_pack(industry_raw)
+    profile.optional_seed_pack = profile.industry  # same as industry if matched
 
     profile.audience = normalize_audience(result.audience_plain)
     profile.cadence = normalize_cadence(result.cadence_plain)
     profile.source_profile = normalize_source_profile(result.source_style_plain)
     profile.selector_max_items = _SELECTOR_MAP.get(profile.source_profile, 12)
 
-    # Brief title
-    en_label, _ = _industry_label(industry)
+    # Brief title: use raw industry text, not a slug
+    industry_display = industry_raw or "Industry"
     company = profile.company
     cadence_word = profile.cadence.capitalize()
     if language == "zh-CN" and company and company != "Sample Company":
-        profile.brief_title = f"{company} {en_label}周报"
+        profile.brief_title = f"{company} {industry_display}周报"
     elif company and company != "Sample Company":
-        profile.brief_title = f"{company} {cadence_word} {en_label} Brief"
-    elif en_label and en_label != "Industry":
-        profile.brief_title = f"{cadence_word} {en_label} Brief"
+        profile.brief_title = f"{company} {cadence_word} Brief"
     else:
         profile.brief_title = "Multi-Agent Brief"
 
-    # Focus areas
+    # Focus areas: preserve raw must_watch items
     base_focus = ["company", "industry", "policy", "competitors", "risk_events"]
     seen: set[str] = set()
     focus: list[str] = []
@@ -318,10 +294,14 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
             seen.add(key.lower())
     profile.focus_areas = focus
 
-    # Output formats: default markdown + json (user never asked)
+    # Store task objective and forbidden sources
+    if hasattr(result, "task_objective") and result.task_objective:
+        profile.task_objective = result.task_objective
+    if hasattr(result, "forbidden_sources") and result.forbidden_sources:
+        profile.forbidden_sources = list(result.forbidden_sources)
+
+    # Output formats: default markdown + json
     profile.output_formats = ["markdown", "json"]
 
     # Web search: never enable by default
-    # (build_sources() handles this; we don't override here)
-
     return profile

@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--retrieval-provider", choices=["ollama", "gemini"], help="Retrieval provider.")
     init_parser.add_argument("--output-formats", help="Comma-separated output formats.")
     init_parser.add_argument("--source-profile", choices=["conservative", "research", "aggressive_signal", "custom", "llm_decide"], help="Source collection profile.")
+    init_parser.add_argument("--tavily", action="store_true", help="Enable Tavily live web search backend.")
     init_parser.add_argument("--from-onboarding", help="Path to onboarding.json for conversational init.")
 
     doctor_parser = subparsers.add_parser("doctor", help="Check source configuration health.")

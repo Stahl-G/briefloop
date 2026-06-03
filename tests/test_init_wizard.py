@@ -203,9 +203,9 @@ def test_source_profile_noninteractive_arg_is_respected(tmp_path):
     workspace = tmp_path / "workspace"
     main(["init", str(workspace), "--language", "en-US", "--source-profile", "llm_decide"])
     config = (workspace / "config.yaml").read_text(encoding="utf-8")
-    assert 'profile: "llm_decide"' in config
+    assert 'mode: "llm_decide"' in config or "mode: llm_decide" in config
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
-    assert 'profile: "llm_decide"' in sources
+    assert "llm_decide" in sources
 
 
 def test_all_source_profiles_generate_valid_workspace(tmp_path):

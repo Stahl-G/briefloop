@@ -116,10 +116,13 @@ class InitProfile:
     source_handling: str = "preserve_original"
     company: str = "Sample Company"
     role: str = "strategy_office"
-    industry: str = "manufacturing"
+    industry: str = ""
+    industry_text: str = ""  # raw user description, preserved in user.md
     brief_title: str = "Weekly Industry Brief"
     audience: str = "management"
     focus_areas: list[str] = field(default_factory=lambda: ["policy", "competitor", "market", "customer_demand"])
+    task_objective: str = ""  # free-text task description
+    forbidden_sources: list[str] = field(default_factory=list)
     cadence: str = "weekly"
     max_source_age_days: int = 14
     selector_max_items: int = 8
@@ -129,8 +132,9 @@ class InitProfile:
     output_formats: list[str] = field(
         default_factory=lambda: ["markdown", "claim_ledger", "audit_report", "source_map"]
     )
-    source_profile: str = "research"
-    source_decision_mode: str = "static"
+    source_profile: str = "llm_decide"
+    source_decision_mode: str = "agent_decide"
+    optional_seed_pack: str = ""  # registered pack key or empty
     tavily_enabled: bool = False
 
 
@@ -190,6 +194,7 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
         apply_rag_args(profile, args.rag, args.retrieval_provider)
         profile.output_formats = parse_list_arg(args.output_formats) or profile.output_formats
         profile.source_profile = getattr(args, "source_profile", None) or profile.source_profile
+        profile.tavily_enabled = getattr(args, "tavily", False) or profile.tavily_enabled
         return profile
     # No CLI args → try interactive prompt
     if _is_interactive():
@@ -386,8 +391,8 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
         "input": {"path": "input"},
         "output": {"path": "output", "formats": profile.output_formats},
         "source": {
-            "profile": profile.source_profile,
-            "decision_mode": profile.source_decision_mode,
+            "mode": profile.source_profile,
+            "optional_seed_pack": profile.optional_seed_pack or None,
         },
         "pipeline": {
             "steps": [
@@ -473,11 +478,20 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
     else:  # research or custom
         enabled = ["manual", "rss"]
         rss_enabled = True
+
+    # Seed pack: use optional_seed_pack if set and registered
+    from multi_agent_brief.sources.industry_packs import get_industry_pack
+    seed_tasks = []
+    if profile.optional_seed_pack:
+        pack = get_industry_pack(profile.optional_seed_pack)
+        if pack:
+            seed_tasks = pack.get("search_tasks", [])
+
     # web_search: only enabled if user opted in to Tavily
     if profile.tavily_enabled:
         if "web_search" not in enabled:
             enabled.append("web_search")
-        web_search_config = {
+        web_search_config: dict[str, Any] = {
             "enabled": True,
             "backend": "tavily",
             "api_key_env": "TAVILY_API_KEY",
@@ -486,6 +500,8 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             "max_results": 5,
             "recency_days": 7,
         }
+        if seed_tasks:
+            web_search_config["search_tasks"] = seed_tasks
     else:
         web_search_config = {
             "enabled": False,
@@ -498,7 +514,7 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
     return {
         "source_strategy": {
             "profile": sp,
-            "industry": profile.industry,
+            "industry": profile.industry_text or profile.industry,
             "enabled_providers": enabled,
         },
         "manual": {
@@ -529,16 +545,19 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
             "profile": "llm_decide",
             "decision_mode": "agent_decide",
             "requires_agent_resolution": True,
+            "optional_seed_pack": profile.optional_seed_pack or None,
         },
         "source_discovery": {
             "instruction": (
-                "Let an LLM or external agent decide which sources to use based on "
-                "company, industry, role, audience, focus areas, cadence, source age limit, "
-                "and safety constraints. The agent must propose sources before ingestion."
+                "Read user.md first for full user context (company, industry, role, "
+                "task objective, focus areas, forbidden sources). "
+                "Propose search intents and candidate sources based on user.md. "
+                "Write source_candidates.yaml for user review before first ingestion."
             ),
             "company": profile.company,
-            "industry": profile.industry,
+            "industry": profile.industry_text or profile.industry,
             "role": profile.role,
+            "task_objective": profile.task_objective,
             "audience": profile.audience,
             "focus_areas": profile.focus_areas,
             "cadence": profile.cadence,
@@ -567,7 +586,7 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
                 "customer names",
                 "confidential files",
                 "material non-public information",
-            ],
+            ] + [s for s in profile.forbidden_sources if s],
             "review_policy": {
                 "require_user_confirmation_before_first_live_ingestion": True,
                 "write_candidate_sources_to": "source_candidates.yaml",
@@ -586,7 +605,19 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
             ],
         },
         "rss": {"enabled": False, "feeds": []},
-        "web_search": {"enabled": False},
+        "web_search": (
+            {
+                "enabled": True,
+                "backend": "tavily",
+                "api_key_env": "TAVILY_API_KEY",
+                "topic": "news",
+                "search_depth": "basic",
+                "max_results": 5,
+                "recency_days": 7,
+            }
+            if profile.tavily_enabled
+            else {"enabled": False}
+        ),
         "api": {"enabled": False, "providers": []},
         "mcp": {"enabled": False, "servers": []},
     }
@@ -613,66 +644,74 @@ def build_user_md(profile: InitProfile) -> str:
 
 
 def _user_md_zh(profile: InitProfile, focus: str) -> str:
+    forbidden = "\n".join(f"- {s}" for s in profile.forbidden_sources) if profile.forbidden_sources else ""
+    forbidden_section = f"\n## 禁止来源\n\n{forbidden}\n" if forbidden else ""
+    task_section = f"\n## 任务目标\n\n{profile.task_objective}\n" if profile.task_objective else ""
+    industry_raw = profile.industry_text or profile.industry
     return (
         "# 用户简报画像\n\n"
-        "本文件用于帮助 Codex、Claude Code、OpenCode 或其他 agent 理解用户的简报需求。\n"
+        "本文件用于帮助 agent 理解用户的简报需求。\n"
         "它不是新闻来源、不是证据来源，不应被 Scout 当作 source ingestion 输入。\n\n"
         "## 基本信息\n\n"
         f"- 公司：{profile.company}\n"
-        f"- 行业：{profile.industry}\n"
+        f"- 行业：{industry_raw}\n"
         f"- 岗位：{profile.role}\n"
         f"- 阅读对象：{profile.audience}\n"
         f"- 简报标题：{profile.brief_title}\n"
         f"- 简报频率：{profile.cadence}\n"
         f"- 最大来源天数：{profile.max_source_age_days}\n"
         f"- 每期筛选条数：{profile.selector_max_items}\n"
-        f"- 信息来源策略：{profile.source_profile}\n\n"
+        f"- 来源模式：{profile.source_profile}\n"
+        f"- 种子包：{profile.optional_seed_pack or '无'}\n"
+        f"{task_section}\n"
         "## 关注领域\n\n"
-        f"{focus}\n\n"
-        "## 来源选择偏好\n\n"
-        "如果 source_profile = llm_decide，请根据以下原则选择来源：\n\n"
-        "1. 优先使用公开、可引用、有发布时间的来源。\n"
-        "2. 优先覆盖公司官方、同行公司、监管政策、行业媒体、市场数据、客户需求和竞争动态。\n"
-        "3. 不要使用私有邮件、内部聊天记录、机密报告、客户名称、凭据、token 或重大非公开信息。\n"
-        "4. 对第一次自动发现的来源，应先写入 source_candidates.yaml，等待用户确认后再进入正式 sources.yaml。\n"
-        "5. 所有进入简报的事实仍必须经过 Claim Ledger 和 Auditor。\n\n"
+        f"{focus}\n"
+        f"{forbidden_section}\n"
+        "## 来源发现策略\n\n"
+        "如果 source mode = llm_decide，请根据以下原则发现来源：\n\n"
+        "1. 先读取本文件（user.md）理解用户的行业、岗位、任务目标和关注领域。\n"
+        "2. 根据用户描述的行业和关注领域，生成搜索意图和候选来源。\n"
+        "3. 优先使用公开、可引用、有发布时间的来源。\n"
+        "4. 不要使用私有邮件、内部聊天记录、机密报告、客户名称、凭据、token 或重大非公开信息。\n"
+        "5. 对第一次自动发现的来源，应先写入 source_candidates.yaml，等待用户确认后再进入正式 sources.yaml。\n"
+        "6. 所有进入简报的事实仍必须经过 Claim Ledger 和 Auditor。\n\n"
         "## Safety\n\n"
         "This project is not investment advice, legal advice, tax advice, trading signal generation, or a replacement for human review.\n"
     )
 
 
 def _user_md_en(profile: InitProfile, focus: str) -> str:
-    goals = "\n".join(f"- {g}" for g in [
-        "official company and peer company updates",
-        "regulator and policy sources",
-        "industry media",
-        "market data",
-        "customer or demand signals",
-        "competitor movements",
-    ])
+    forbidden = "\n".join(f"- {s}" for s in profile.forbidden_sources) if profile.forbidden_sources else ""
+    forbidden_section = f"\n## Forbidden Sources\n\n{forbidden}\n" if forbidden else ""
+    task_section = f"\n## Task Objective\n\n{profile.task_objective}\n" if profile.task_objective else ""
+    industry_raw = profile.industry_text or profile.industry
     return (
         "# User Briefing Profile\n\n"
         "This file describes the user/workspace context for agents.\n"
         "It is not source evidence and must not be ingested as a report source.\n\n"
         "## Basic Information\n\n"
         f"- Company: {profile.company}\n"
-        f"- Industry: {profile.industry}\n"
+        f"- Industry: {industry_raw}\n"
         f"- Role: {profile.role}\n"
         f"- Audience: {profile.audience}\n"
         f"- Brief title: {profile.brief_title}\n"
         f"- Cadence: {profile.cadence}\n"
         f"- Max source age: {profile.max_source_age_days} days\n"
         f"- Max items per brief: {profile.selector_max_items}\n"
-        f"- Source profile: {profile.source_profile}\n\n"
+        f"- Source mode: {profile.source_profile}\n"
+        f"- Seed pack: {profile.optional_seed_pack or 'none'}\n"
+        f"{task_section}\n"
         "## Focus Areas\n\n"
-        f"{focus}\n\n"
-        "## Source Selection Policy\n\n"
-        "If source_profile = llm_decide, use these principles:\n\n"
-        "1. Prefer public, citable, timestamped sources.\n"
-        "2. Cover official company, peers, regulators, industry media, market data, demand signals, competitor moves.\n"
-        "3. Do not use private emails, chat logs, internal reports, customer names, credentials, tokens, or MNPI.\n"
-        "4. Write first-discovered sources to source_candidates.yaml for user confirmation before adding to sources.yaml.\n"
-        "5. All facts entering the brief must pass through Claim Ledger and Auditor.\n\n"
+        f"{focus}\n"
+        f"{forbidden_section}\n"
+        "## Source Discovery Policy\n\n"
+        "If source mode = llm_decide, use these principles:\n\n"
+        "1. Read this file (user.md) first to understand the user's industry, role, task objective, and focus areas.\n"
+        "2. Generate search intents and candidate sources based on the user's description.\n"
+        "3. Prefer public, citable, timestamped sources.\n"
+        "4. Do not use private emails, chat logs, internal reports, customer names, credentials, tokens, or MNPI.\n"
+        "5. Write first-discovered sources to source_candidates.yaml for user confirmation before adding to sources.yaml.\n"
+        "6. All facts entering the brief must pass through Claim Ledger and Auditor.\n\n"
         "## Safety\n\n"
         "This project is not investment advice, legal advice, tax advice, trading signal generation, or a replacement for human review.\n"
     )
@@ -755,6 +794,8 @@ def to_yaml(data: Any, indent: int = 0) -> str:
 
 
 def format_scalar(value: Any) -> str:
+    if value is None:
+        return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):

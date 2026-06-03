@@ -33,7 +33,9 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path):
     assert (ws / "input" / "README.md").exists()
 
     sources = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
-    assert sources["source_strategy"]["industry"] == "manufacturing"
+    assert sources["source_strategy"]["profile"] == "llm_decide"
+    # Industry is preserved in source_discovery for llm_decide mode
+    assert "manufacturing" in sources.get("source_discovery", {}).get("industry", "")
     assert sources["web_search"]["enabled"] is False
 
 

@@ -16,6 +16,8 @@ class OnboardingResult:
 
     company_or_org: str = ""
     industry_or_theme: str = ""
+    task_objective: str = ""  # free-text task description
+    forbidden_sources: list[str] = field(default_factory=list)
 
     audience_plain: str = "management team"
     source_style_plain: str = "reliable research"

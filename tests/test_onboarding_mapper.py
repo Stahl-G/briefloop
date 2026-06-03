@@ -26,8 +26,9 @@ def test_onboarding_mapper_management_weekly_en():
     profile = map_onboarding_to_profile(result)
     assert profile.company == "ExampleCo"
     assert profile.industry == "manufacturing"
+    assert profile.industry_text == "manufacturing"
     assert profile.audience == "management"
-    assert profile.source_profile == "research"
+    assert profile.source_profile == "llm_decide"
     assert profile.interface_language == "en-US"
     assert profile.output_language == "en-US"
     assert profile.cadence == "weekly"
@@ -42,7 +43,7 @@ def test_onboarding_mapper_defaults():
     )
     profile = map_onboarding_to_profile(result)
     assert profile.audience == "management"
-    assert profile.source_profile == "research"
+    assert profile.source_profile == "llm_decide"
     assert profile.cadence == "weekly"
     assert profile.interface_language == "en-US"
 
@@ -51,11 +52,15 @@ def test_onboarding_mapper_source_style():
     conservative = OnboardingResult(source_style_plain="official filings and announcements")
     assert map_onboarding_to_profile(conservative).source_profile == "conservative"
 
-    research = OnboardingResult(source_style_plain="reliable research and sector news")
+    research = OnboardingResult(source_style_plain="research")
     assert map_onboarding_to_profile(research).source_profile == "research"
 
     aggressive = OnboardingResult(source_style_plain="broad radar and social signals")
     assert map_onboarding_to_profile(aggressive).source_profile == "aggressive_signal"
+
+    # Vague source style defaults to llm_decide
+    vague = OnboardingResult(source_style_plain="reliable research and sector news")
+    assert map_onboarding_to_profile(vague).source_profile == "llm_decide"
 
 
 def test_onboarding_mapper_bilingual():
@@ -68,13 +73,28 @@ def test_onboarding_mapper_bilingual():
 # ── Natural language tolerance tests ───────────────────────────────
 
 def test_onboarding_mapper_natural_language_industry():
-    """Substring matching handles natural-language industry phrases."""
+    """Substring matching handles registered pack keys."""
     assert normalize_industry("manufacturing sector") == "manufacturing"
     assert normalize_industry("banking regulation") == "banking"
-    assert normalize_industry("technology sector") == "internet"
-    assert normalize_industry("global finance outlook") == "banking"
     assert normalize_industry("fund management") == "fund"
+    assert normalize_industry("internet platform") == "internet"
     assert normalize_industry("general research") == "general"
+
+
+def test_onboarding_mapper_industry_returns_empty_for_unknown():
+    """Unknown industry text returns empty string, not a guessed slug."""
+    assert normalize_industry("technology sector") == ""
+    assert normalize_industry("global finance outlook") == ""
+    assert normalize_industry("renewable energy") == ""
+    assert normalize_industry("some random industry") == ""
+
+
+def test_onboarding_mapper_preserves_raw_industry_text():
+    """Raw industry text is preserved in industry_text field."""
+    result = OnboardingResult(industry_or_theme="光伏、HJT、储能、美国政策")
+    profile = map_onboarding_to_profile(result)
+    assert profile.industry_text == "光伏、HJT、储能、美国政策"
+    assert profile.industry == ""  # no registered pack matches
 
 
 def test_onboarding_mapper_natural_language_audience():
@@ -93,6 +113,34 @@ def test_onboarding_mapper_natural_language_cadence():
 
 def test_onboarding_mapper_natural_language_source_style():
     """Substring matching handles natural-language source style phrases."""
-    assert normalize_source_profile("reliable sources but include sector news") == "research"
+    assert normalize_source_profile("reliable sources but include sector news") == "llm_decide"
     assert normalize_source_profile("only official filings and announcements") == "conservative"
     assert normalize_source_profile("broad radar including social signals") == "aggressive_signal"
+    # Explicit research style still works
+    assert normalize_source_profile("research") == "research"
+
+
+def test_onboarding_mapper_task_objective_preserved():
+    """Task objective is preserved in profile."""
+    result = OnboardingResult(task_objective="Weekly market intelligence for investment team")
+    profile = map_onboarding_to_profile(result)
+    assert profile.task_objective == "Weekly market intelligence for investment team"
+
+
+def test_onboarding_mapper_forbidden_sources_preserved():
+    """Forbidden sources are preserved in profile."""
+    result = OnboardingResult(forbidden_sources=["internal chat", "customer data"])
+    profile = map_onboarding_to_profile(result)
+    assert "internal chat" in profile.forbidden_sources
+    assert "customer data" in profile.forbidden_sources
+
+
+def test_onboarding_mapper_optional_seed_pack():
+    """When industry matches a registered pack, optional_seed_pack is set."""
+    result = OnboardingResult(industry_or_theme="manufacturing")
+    profile = map_onboarding_to_profile(result)
+    assert profile.optional_seed_pack == "manufacturing"
+
+    result_unknown = OnboardingResult(industry_or_theme="quantum computing")
+    profile_unknown = map_onboarding_to_profile(result_unknown)
+    assert profile_unknown.optional_seed_pack == ""
