@@ -56,6 +56,36 @@ jobs:
           multi-agent-brief version
           multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
 
+  non-dev-smoke:
+    name: Non-dev install smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install without dev extras
+        run: python -m pip install -e .
+
+      - name: Version check
+        run: multi-agent-brief version
+
+      - name: Init workspace
+        run: |
+          multi-agent-brief init /tmp/mabw-ci-smoke \
+            --language zh-CN \
+            --company "CI Test" \
+            --industry solar \
+            --title "Smoke Brief" \
+            --audience management \
+            --source-profile conservative
+          echo "# CI smoke source" > /tmp/mabw-ci-smoke/input/smoke.md
+
+      - name: Run pipeline
+        run: multi-agent-brief run --config /tmp/mabw-ci-smoke/config.yaml
+
   readme-check:
     name: README update check
     runs-on: ubuntu-latest

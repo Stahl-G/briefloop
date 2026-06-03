@@ -125,12 +125,12 @@ Let code do lookup. Let models do judgment. Keep every important claim traceable
 ## Non-Goals
 
 This project is not:
--   - investment advice
--   - trading signals
--   - legal advice
--   - tax advice
--   - compliance advice
--   - replacing human review
+- investment advice
+- trading signals
+- legal advice
+- tax advice
+- compliance advice
+- replacing human review
 
 ## Development Commands
 

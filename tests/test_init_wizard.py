@@ -132,7 +132,7 @@ def test_workspace_gitignore_excludes_private_and_generated_paths(tmp_path):
     main(["init", str(workspace), "--language", "zh-CN"])
 
     gitignore = (workspace / ".gitignore").read_text(encoding="utf-8")
-    for expected in [".env", "output/", ".rag/", "private_inputs/", "private_outputs/"]:
+    for expected in [".env", "output/", ".rag/", "private_inputs/", "private_outputs/", "user.md"]:
         assert expected in gitignore
 
 

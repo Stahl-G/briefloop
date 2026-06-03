@@ -139,7 +139,7 @@ def _render_onboarding_rules(manifest: dict) -> str:
 def render_agents_md(manifest: dict) -> str:
     project = manifest["project"]
     roles = manifest["roles"]
-    non_goals = _join_lines([f"  - {g}" for g in project["non_goals"]])
+    non_goals = _join_lines(project["non_goals"])
 
     # Compact role summary — one line per role, no full details
     # Full details live in .claude/agents/*.md, .codex/agents/*.toml, .agents/skills/*/SKILL.md

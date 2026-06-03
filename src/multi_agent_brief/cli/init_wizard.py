@@ -49,6 +49,7 @@ output/
 private_inputs/
 private_outputs/
 logs/
+user.md
 *.docx
 *.pdf
 *.xlsx
@@ -379,10 +380,9 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
         },
         "pipeline": {
             "steps": [
+                "source_collection",
                 "scout",
-                "selector",
-                "retrieval",
-                "claim_ledger",
+                "screener",
                 "analyst",
                 "auditor",
                 "editor",

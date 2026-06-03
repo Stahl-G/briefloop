@@ -43,7 +43,7 @@ class AnalystAgent(BaseAgent):
             title = topic.replace("_", " ").title()
             lines = []
             claim_ids = []
-            for claim in claims[:5]:
+            for claim in claims:
                 claim.used_in_sections.append(title)
                 claim_ids.append(claim.claim_id)
                 lines.append(f"- {claim.statement} [src:{claim.claim_id}]")

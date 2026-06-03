@@ -75,6 +75,16 @@ def collect_all_sources(
     all_items: list[SourceItem] = []
     errors: list[dict[str, str]] = []
 
+    # Surface unknown providers as errors
+    for name in source_config.enabled_providers:
+        if name not in PROVIDER_CLASSES:
+            errors.append({
+                "provider": name,
+                "error_type": "UnknownProvider",
+                "message": f"Unknown provider '{name}' is not registered. "
+                f"Available: {', '.join(sorted(PROVIDER_CLASSES))}",
+            })
+
     config_map = {
         "manual": source_config.manual,
         "rss": source_config.rss,
@@ -112,6 +122,14 @@ def validate_all_providers(source_config: SourceConfig) -> list[str]:
     """Validate all enabled provider configs. Return list of error messages."""
     providers = get_providers(source_config)
     errors: list[str] = []
+
+    # Surface unknown providers as errors
+    for name in source_config.enabled_providers:
+        if name not in PROVIDER_CLASSES:
+            errors.append(
+                f"Unknown provider '{name}' is not registered. "
+                f"Available: {', '.join(sorted(PROVIDER_CLASSES))}"
+            )
 
     config_map = {
         "manual": source_config.manual,

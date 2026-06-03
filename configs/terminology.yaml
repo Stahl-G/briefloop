@@ -1,5 +1,8 @@
 # Terminology consistency lock.
 # Scripts and CI enforce these rules across docs, source, and tests.
+#
+# canonical_terms: documentation-only listing of preferred terms.
+# NOT enforced by check_terms.py (only forbidden_terms and cli_commands are validated).
 
 canonical_terms:
   - llm_decide

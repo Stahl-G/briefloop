@@ -131,6 +131,11 @@ def run_pipeline_from_args(args: argparse.Namespace) -> int:
     outputs = BriefPipeline().run(context)
     for output in outputs:
         print(f"[{output.agent_name}] {output.summary}")
+
+    audit_report = context.report_state.audit_report
+    if audit_report and audit_report.audit_status == "fail":
+        print("Audit failed. Review audit_report.json for details.")
+        return 2
     return 0
 
 

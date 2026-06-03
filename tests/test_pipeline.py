@@ -103,3 +103,37 @@ def test_analyst_handles_unknown_topics(tmp_path):
 
     draft = context.report_state.draft_markdown
     assert "geopolitics" in draft.lower() or "Geopolitics" in draft
+
+
+def test_analyst_renders_all_claims_no_truncation(tmp_path):
+    """Analyst must not silently truncate claims — all selected claims appear in brief."""
+    from multi_agent_brief.agents.analyst import AnalystAgent
+    from multi_agent_brief.core.claim_ledger import ClaimLedger
+    from multi_agent_brief.core.schemas import Claim, PipelineContext
+
+    ledger = ClaimLedger()
+    for i in range(8):
+        claim = Claim(
+            claim_id=f"TEST_TECH_{i:02d}",
+            statement=f"Technology update number {i}: solar cell efficiency milestone reached.",
+            source_id="TEST_SRC",
+            evidence_text=f"Technology update number {i}: solar cell efficiency milestone reached.",
+            claim_type="fact",
+            metadata={"topic": "technology"},
+        )
+        ledger.add_claim(claim)
+
+    context = PipelineContext(
+        project_name="Truncation Test",
+        input_dir=str(tmp_path),
+        output_dir=str(tmp_path / "output"),
+    )
+
+    agent = AnalystAgent()
+    agent.run(context, ledger)
+
+    draft = context.report_state.draft_markdown
+    for i in range(8):
+        assert f"TEST_TECH_{i:02d}" in draft, (
+            f"Claim TEST_TECH_{i:02d} missing from draft — Analyst may be truncating"
+        )

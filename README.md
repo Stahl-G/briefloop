@@ -228,15 +228,15 @@ Remove-Item Env:PYTHONPATH
 创建一个合成 demo 工作区：
 
 ```bash
-multi-agent-brief init --demo
-multi-agent-brief run --config brief-demo/config.yaml
+multi-agent-brief init ../mabw-workspace --demo
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief init --demo
-multi-agent-brief run --config brief-demo/config.yaml
+multi-agent-brief init ../mabw-workspace --demo
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
 审计已有简报：

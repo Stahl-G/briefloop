@@ -532,3 +532,21 @@ def test_init_research_does_not_enable_web_search_by_default(tmp_path):
     assert main(["init", str(workspace), "--language", "en-US", "--source-profile", "research"]) == 0
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
     assert "enabled: false" in sources.split("web_search:")[1].split("api:")[0]
+
+
+# --- Unknown provider validation ---
+
+def test_unknown_provider_surfaced_in_collect_errors():
+    """Unknown enabled providers must produce errors, not be silently skipped."""
+    config = SourceConfig(enabled_providers=["manual", "typo_provider"])
+    items, errors = collect_all_sources(config)
+    provider_names = [e["provider"] for e in errors]
+    assert "typo_provider" in provider_names
+    assert any("Unknown provider" in e["message"] for e in errors)
+
+
+def test_unknown_provider_surfaced_in_validate():
+    """validate_all_providers must report unknown providers."""
+    config = SourceConfig(enabled_providers=["manual", "nonexistent_provider"])
+    errors = validate_all_providers(config)
+    assert any("nonexistent_provider" in e for e in errors)

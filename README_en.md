@@ -217,15 +217,15 @@ Remove-Item Env:PYTHONPATH
 Create a synthetic demo workspace:
 
 ```bash
-multi-agent-brief init --demo
-multi-agent-brief run --config brief-demo/config.yaml
+multi-agent-brief init ../mabw-workspace --demo
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief init --demo
-multi-agent-brief run --config brief-demo/config.yaml
+multi-agent-brief init ../mabw-workspace --demo
+multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
 Audit an existing brief:

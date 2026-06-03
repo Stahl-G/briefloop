@@ -89,6 +89,7 @@ def build_run_settings(
     report = config.get("report", {}) or {}
     previous = config.get("previous", {}) or {}
     selection = config.get("selection", {}) or {}
+    selector = config.get("selector", {}) or {}
     input_config = config.get("input", {}) or {}
     output_config = config.get("output", {}) or {}
     config_dir = Path(config.get("_config_dir", "."))
@@ -116,6 +117,6 @@ def build_run_settings(
         "max_source_age_days": int(report["max_source_age_days"]) if report.get("max_source_age_days") else None,
         "fail_on_stale_source": bool(report.get("fail_on_stale_source", False)),
         "previous_report_dir": str(previous.get("path", "")),
-        "max_claims": int(selection.get("max_claims", 160)),
+        "max_claims": int(selector.get("max_items") or selection.get("max_claims") or 160),
         "quiet_week_min_claims": int(selection.get("quiet_week_min_claims", 5)),
     }

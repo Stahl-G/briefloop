@@ -38,11 +38,11 @@ multi-agent-brief version
 
 | Task | Command |
 |------|---------|
-| Init workspace | `multi-agent-brief init ws --language zh-CN --company "Name" --industry finance --title "Brief" --audience management --source-profile research` |
-| Run pipeline | `multi-agent-brief run --config ws/config.yaml` |
-| Doctor check | `multi-agent-brief doctor --config ws/config.yaml` |
-| Source decide | `multi-agent-brief sources decide --config ws/config.yaml` |
-| Merge sources | `multi-agent-brief sources decide --config ws/config.yaml --merge` |
+| Init workspace | `multi-agent-brief init ../mabw-workspace --language zh-CN --company "Name" --industry finance --title "Brief" --audience management --source-profile research` |
+| Run pipeline | `multi-agent-brief run --config ../mabw-workspace/config.yaml` |
+| Doctor check | `multi-agent-brief doctor --config ../mabw-workspace/config.yaml` |
+| Source decide | `multi-agent-brief sources decide --config ../mabw-workspace/config.yaml` |
+| Merge sources | `multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge` |
 | Run tests | `python -m pytest -q` |
 | Agent config check | `python scripts/generate_agent_configs.py --check` |
 
@@ -50,7 +50,7 @@ multi-agent-brief version
 
 **`multi-agent-brief init` (no args)** → enters interactive wizard with 13 prompts. The agent must STOP and let the user answer each question. Do NOT pre-fill answers.
 
-**`multi-agent-brief init ws --language zh-CN --company "Name" --industry finance --title "..." --audience management --source-profile research`** → non-interactive, uses CLI args. Agent can run this directly without asking user.
+**`multi-agent-brief init ../mabw-workspace --language zh-CN --company "Name" --industry finance --title "..." --audience management --source-profile research`** → non-interactive, uses CLI args. Agent can run this directly without asking user.
 
 **Important:** If you pass even ONE arg (like `--language`), the entire interactive wizard is SKIPPED. So either pass ALL args or pass NONE.
 
@@ -58,15 +58,15 @@ multi-agent-brief version
 - If no CLI args are passed and stdin is not a TTY, init uses default settings and prints guidance.
 - Agents should either:
   - (A) Use AskUserQuestion to collect user preferences, then pass ALL args as CLI args.
-  - (B) Tell the user to run `! cd <repo> && multi-agent-brief init <target>` in their terminal.
+  - (B) Tell the user to run setup from the repo, then initialize the workspace outside the repo, e.g. `multi-agent-brief init ../mabw-workspace`.
 - Do NOT attempt to pipe stdin to the init wizard — the Bash tool does not support interactive input.
 
 ### Generate a brief (workflow)
 
 1. Ask user: company, industry, title, audience (if not using interactive init)
 2. `init` workspace
-3. Ensure source files in `ws/input/` (`.md`, `.txt`, `.json`)
-4. `run` pipeline → show `ws/output/brief.md`
+3. Ensure source files in `../mabw-workspace/input/` (`.md`, `.txt`, `.json`)
+4. `run` pipeline → show `../mabw-workspace/output/brief.md`
 5. If audit fails → show findings → fix → re-run
 
 ### Source profiles
