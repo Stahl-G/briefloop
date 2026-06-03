@@ -55,7 +55,8 @@ The agent creates an `onboarding.json` file like this:
   "output_style_plain": "executive brief, conclusion-first",
   "language_plain": "English",
   "cadence_plain": "weekly",
-  "must_watch": ["ExampleCo", "policy", "competitors", "risk events"]
+  "must_watch": ["ExampleCo", "policy", "competitors", "risk events"],
+  "tavily_enabled": false
 }
 ```
 

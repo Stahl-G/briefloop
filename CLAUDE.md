@@ -34,7 +34,7 @@ When the user asks to initialize, start, or configure a brief workspace:
 
 1. Do not use AskUserQuestion as the primary onboarding path.
 2. Ask plain-language questions directly in chat.
-3. Cover all onboarding fields: company, industry, task, audience, language, cadence, source style, output style, must-watch, forbidden sources. Ask about each one or confirm its default.
+3. Cover all onboarding fields: company, industry, task, audience, language, cadence, source style, output style, must-watch, forbidden sources, Tavily API key. Ask about each one or confirm its default.
 4. Let the user answer naturally in one message.
 5. If the user says "unknown", "default", or "choose for me", choose defaults.
 6. Convert answers internally to `onboarding.json`.

@@ -308,5 +308,8 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     if any(k in style_lower for k in ("docx", "word", "docx格式", "word格式")):
         profile.output_formats.append("docx")
 
-    # Web search: never enable by default
+    # Web search: enable if user opted in during onboarding
+    if getattr(result, "tavily_enabled", False):
+        profile.tavily_enabled = True
+
     return profile

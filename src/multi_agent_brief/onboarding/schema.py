@@ -27,5 +27,7 @@ class OnboardingResult:
 
     must_watch: list[str] = field(default_factory=list)
 
+    tavily_enabled: bool = False
+
     confidence: str = "medium"
     missing: list[str] = field(default_factory=list)
