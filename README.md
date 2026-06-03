@@ -429,6 +429,52 @@ python scripts/generate_agent_configs.py --check
 
 Windows 原生 PowerShell 详细说明见 [docs/windows-powershell.md](docs/windows-powershell.md)。WSL 是可选高级路径，不是必需条件。
 
+## Claude Code 智能体模式
+
+本仓库支持 Claude Code 子智能体编排层，提供交互式的来源规划、信息提取、分析撰写和编辑校对能力。
+
+### 两层架构
+
+| 层 | 用途 | 特点 |
+|----|------|------|
+| Python CLI | 确定性流水线执行、审计、输出 | 可测试、无需 API key |
+| Claude Code 子智能体 | 交互式来源规划、信息提取、分析、编辑 | 模型辅助判断 |
+
+两层互补，不互相替代。Python CLI 是流水线逻辑和审计门控的事实来源。
+
+### 可用子智能体
+
+子智能体定义在 `.claude/agents/` 目录下：
+
+| 子智能体 | 用途 |
+|----------|------|
+| `source-planner` | 生成/优化来源候选和搜索任务 |
+| `scout` | 从源文件中提取候选事项 |
+| `analyst` | 撰写管理层就绪的简报章节 |
+| `editor` | 改善可读性，不添加新事实 |
+| `auditor` | 审核最终简报，检查来源支撑 |
+
+### 使用示例
+
+```text
+# 来源规划
+"Use the source-planner subagent to create sources for the workspace at ../mabw-workspace."
+
+# 信息提取
+"Use the scout subagent to extract claims from the latest search results."
+
+# 运行流水线
+multi-agent-brief run --config ../mabw-workspace/config.yaml
+
+# 分析改进
+"Use the analyst subagent to improve the brief while preserving citations."
+
+# 审核验证
+"Use the auditor subagent to verify the final output."
+```
+
+详见 [docs/claude-code-workflow.md](docs/claude-code-workflow.md) 和 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。
+
 ## 路线图
 
 - MVP：本地输入、Claim Ledger、确定性审计、Markdown 输出、来源映射和质量门控。

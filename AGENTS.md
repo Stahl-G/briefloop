@@ -254,6 +254,7 @@ Correct facts are necessary but not sufficient for final delivery.
 
 - **orchestrator** (coordination): Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents.
 - **source-provider** (coordination): Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
+- **source-planner** (coordination): Reads user.md, config.yaml, and sources.yaml to generate or refine source_candidates.yaml and search_tasks. Ensures all sources are public, citable, and timestamped.
 - **scout** (pipeline): Extracts candidate reportable items from local markdown, text, JSON, and future connector sources.
 - **screener** (pipeline): Filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
 - **claim-ledger** (pipeline): Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.

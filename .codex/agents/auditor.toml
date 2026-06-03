@@ -12,13 +12,17 @@ When to use:
 Use when implementing or reviewing deterministic audit, quality harness, semantic audit adapter hooks, or final delivery gates.
 
 Responsibilities:
-        - Protect source grounding.
-        - Check missing or orphan claim references.
-        - Check unsupported numbers.
-        - Check stale sources.
-        - Check redaction risks.
+        - Review final brief against claim_ledger.json and audit_report.json.
+        - Check unsupported facts — every important statement must have a [src:CLAIM_ID].
+        - Check missing citations — claims in ledger not cited in brief.
+        - Check orphan citations — [src:CLAIM_ID] in brief not found in ledger.
+        - Check stale sources — sources older than configured reporting window.
+        - Check investment-advice language — no trading signals or investment recommendations.
+        - Check redaction risks — no private identifiers, internal paths, or confidential content.
         - Check low-confidence source leakage.
         - Check process residue and placeholders.
+        - Recommend fixes for each finding.
+        - Prefer running python deterministic audit commands where available.
         - Coordinate draft and final harness agents when needed.
 
 Hard rules:

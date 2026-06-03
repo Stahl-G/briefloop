@@ -522,6 +522,7 @@ def render_claude_agent(role_name: str, role: dict, manifest: dict) -> str:
     title = role_name.replace("-", " ").title()
     desc = role["description"]
     trigger = role["trigger"]
+    model = role.get("model", "inherit")
 
     resp = "\n".join(f"- {r}" for r in role["responsibilities"])
     rules = "\n".join(f"- {r}" for r in role["hard_rules"])
@@ -531,7 +532,7 @@ def render_claude_agent(role_name: str, role: dict, manifest: dict) -> str:
         f"name: {role_name}\n"
         f"description: {desc} {trigger}\n"
         f"tools: {tools_str}\n"
-        f"model: inherit\n"
+        f"model: {model}\n"
         f"---\n"
         f"\n"
         f"You are the {title} subagent for `multi-agent-brief-workflow`.\n"
