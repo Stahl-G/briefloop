@@ -69,12 +69,14 @@ class ManualProvider(SourceProvider):
         published_at = ""
         source_tier = ""
 
+        claim_type = ""
         if path.suffix.lower() == ".json":
             try:
                 parsed = json.loads(content)
                 url = str(parsed.get("source_url", ""))
                 published_at = str(parsed.get("published_at", ""))
                 source_tier = str(parsed.get("source_tier", ""))
+                claim_type = str(parsed.get("claim_type", ""))
                 if isinstance(parsed.get("items"), list):
                     content = "\n".join(str(item) for item in parsed["items"])
                 elif parsed.get("content"):
@@ -95,6 +97,7 @@ class ManualProvider(SourceProvider):
             metadata={
                 "path": str(path),
                 "source_tier": source_tier,
+                "claim_type": claim_type,
                 "category": src_config.get("category", ""),
             },
         )

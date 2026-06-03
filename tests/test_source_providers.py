@@ -325,9 +325,11 @@ def test_doctor_errors_on_mock_backend_removed(tmp_path):
     assert any(r.status == "ERROR" for r in results)
 
 
-def test_doctor_warns_unimplemented_backend(tmp_path):
-    """Doctor should warn for an unimplemented backend like tavily."""
+def test_doctor_tavily_errors_without_key(tmp_path, monkeypatch):
+    """Doctor should error when Tavily backend is configured but API key is missing."""
     import yaml
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     config_path = tmp_path / "config.yaml"
     config_path.write_text("project:\n  name: Test\n", encoding="utf-8")
@@ -339,7 +341,7 @@ def test_doctor_warns_unimplemented_backend(tmp_path):
     (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
 
     results = run_doctor(config_path=config_path)
-    assert any("tavily" in r.message.lower() and r.status == "WARN" for r in results)
+    assert any("tavily" in r.message.lower() and r.status == "ERROR" for r in results)
 
 
 def test_doctor_errors_on_no_backend(tmp_path):

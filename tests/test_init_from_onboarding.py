@@ -100,4 +100,4 @@ def test_sources_decide_search_no_mock_residual(capsys, tmp_path: Path):
     assert rc == 0
     captured = capsys.readouterr()
     assert "mock" not in captured.out.lower()
-    assert "not implemented" in captured.out.lower()
+    assert "does not enable live search by default" in captured.out.lower() or "live web search" in captured.out.lower()

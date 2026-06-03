@@ -233,7 +233,7 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
 
     search_results = None
     if args.search:
-        print("[sources] Web search is not implemented in this package. Use manual input, RSS, cached packages, or an injected external backend.")
+        print("[sources] Live web search requires a configured backend such as Tavily or an injected external connector. This package does not enable live search by default.")
 
     candidates = generate_source_candidates(discovery, search_results)
     candidates_path = workspace / "source_candidates.yaml"

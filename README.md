@@ -225,6 +225,53 @@ python -m multi_agent_brief.cli.main run examples/basic_market_brief/input --out
 Remove-Item Env:PYTHONPATH
 ```
 
+## 启用 Tavily 实时搜索
+
+Web 搜索默认关闭。启用需要 Tavily API key。
+
+1. 编辑工作区的 `sources.yaml`：
+
+```yaml
+web_search:
+  enabled: true
+  backend: tavily
+  api_key_env: TAVILY_API_KEY
+  topic: news
+  search_depth: basic
+  max_results: 5
+  search_tasks:
+    - query: "solar policy tariff regulation update"
+      domains:
+        - "energy.gov"
+        - "pv-magazine.com"
+```
+
+2. 设置环境变量并运行：
+
+```bash
+export TAVILY_API_KEY=tvly-your-key-here
+multi-agent-brief run --config ../mabw-workspace/config.yaml
+```
+
+PowerShell:
+
+```powershell
+$env:TAVILY_API_KEY = Read-Host "Enter your Tavily API key"
+multi-agent-brief run --config ../mabw-workspace/config.yaml
+```
+
+3. 检查配置健康：
+
+```bash
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
+```
+
+注意事项：
+- Web 搜索默认禁用，必须显式启用
+- Tavily 需要 `TAVILY_API_KEY` 环境变量
+- API key 必须存储在环境变量中，不能写入配置文件
+- 配置文件中不会打印或存储 API key
+
 ## CLI
 
 创建一个合成 demo 工作区：

@@ -8,9 +8,9 @@ cd "$(dirname "$0")/.."
 
 echo "=== multi-agent-brief-workflow setup ==="
 
-# Find Python 3.9+: try python3, python, py -3
+# Find Python 3.9+: try python3, python
 PYTHON=""
-for cmd in python3 python "py -3"; do
+for cmd in python3 python; do
     if command -v $cmd >/dev/null 2>&1 || $cmd --version >/dev/null 2>&1; then
         if $cmd -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
             PYTHON=$cmd

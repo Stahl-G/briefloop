@@ -58,12 +58,23 @@ class BriefPipeline:
             enabled_providers=source_config.enabled_providers,
         )
 
-        # Build query from plan
+        # Build query from plan — preserve individual tasks, don't collapse
         query = SourceQuery(
-            keywords=[task.query for task in plan.search_tasks],
             recency_days=plan.recency_days,
             max_results=100,
         )
+
+        # Bridge planner search_tasks into web_search config as separate tasks
+        if plan.search_tasks and "web_search" in source_config.enabled_providers:
+            if not source_config.web_search.get("search_tasks"):
+                source_config.web_search["search_tasks"] = [
+                    {
+                        "query": task.query,
+                        "domains": task.source_domains or None,
+                    }
+                    for task in plan.search_tasks
+                    if task.query
+                ]
 
         # Merge industry RSS feeds into config
         if plan.rss_feeds and not source_config.rss.get("feeds"):

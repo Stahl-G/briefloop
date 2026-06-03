@@ -216,6 +216,53 @@ Remove-Item Env:PYTHONPATH
 
 ## CLI
 
+### Enable Tavily Live Search
+
+Web search is disabled by default. To enable it:
+
+1. Edit your workspace `sources.yaml`:
+
+```yaml
+web_search:
+  enabled: true
+  backend: tavily
+  api_key_env: TAVILY_API_KEY
+  topic: news
+  search_depth: basic
+  max_results: 5
+  search_tasks:
+    - query: "solar policy tariff regulation update"
+      domains:
+        - "energy.gov"
+        - "pv-magazine.com"
+```
+
+2. Set the environment variable and run:
+
+```bash
+export TAVILY_API_KEY=tvly-your-key-here
+multi-agent-brief run --config ../mabw-workspace/config.yaml
+```
+
+PowerShell:
+
+```powershell
+$env:TAVILY_API_KEY = Read-Host "Enter your Tavily API key"
+multi-agent-brief run --config ../mabw-workspace/config.yaml
+```
+
+3. Check configuration health:
+
+```bash
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
+```
+
+Notes:
+- Web search is disabled by default and must be explicitly enabled
+- Tavily requires `TAVILY_API_KEY` environment variable
+- API keys must be stored in environment variables, not config files
+- API keys are never printed or stored in configuration
+
 Create a synthetic demo workspace:
 
 ```bash

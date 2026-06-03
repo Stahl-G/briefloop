@@ -10,13 +10,6 @@ class EditorAgent(BaseAgent):
 
     def run(self, context: PipelineContext, ledger: ClaimLedger) -> AgentOutput:
         draft = context.report_state.draft_markdown
-        audit_report = context.report_state.audit_report
-        if audit_report and audit_report.audit_status == "fail":
-            final = draft + "\n\n> Audit status: fail. Review high-severity findings before distribution.\n"
-        elif audit_report and audit_report.audit_status == "warning":
-            final = draft + "\n\n> Audit status: pass with warnings. Review audit report for details.\n"
-        else:
-            final = draft
-        context.report_state.final_markdown = final
+        # Audit status belongs in audit_report.json, not in the reader-facing brief.
+        context.report_state.final_markdown = draft
         return AgentOutput(agent_name=self.name, summary="Prepared final Markdown brief.")
-

@@ -79,9 +79,14 @@ def run_doctor(
             results.append(CheckResult("ERROR", "web_search enabled but no backend configured"))
         elif backend_name == "mock":
             results.append(CheckResult("ERROR", "web_search: mock backend has been removed from runtime code"))
+        elif backend_name == "tavily":
+            api_key_env = source_config.web_search.get("api_key_env", "TAVILY_API_KEY")
+            if os.environ.get(api_key_env):
+                results.append(CheckResult("OK", f"web_search: Tavily backend configured, {api_key_env} is set"))
+            else:
+                results.append(CheckResult("ERROR", f"web_search: Tavily backend requires {api_key_env} to be set"))
         else:
-            # Backend is configured but not yet implemented in this package
-            results.append(CheckResult("WARN", f"web_search: backend '{backend_name}' configured but not yet implemented in this package"))
+            results.append(CheckResult("WARN", f"web_search: backend '{backend_name}' is not a known backend"))
 
     # 8. API providers
     api_providers = source_config.api.get("providers", [])

@@ -4,9 +4,49 @@ from __future__ import annotations
 import re
 import urllib.request
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from multi_agent_brief.sources.base import SourceItem, SourceProvider, SourceQuery
+
+
+def _normalize_date(raw: str) -> str:
+    """Normalize RSS/Atom date strings to ISO 8601 format.
+
+    Handles RFC 2822 (RSS pubDate), ISO 8601 (Atom), and common variants.
+    Returns empty string on failure.
+    """
+    if not raw:
+        return ""
+    raw = raw.strip()
+
+    # Try ISO 8601 first
+    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).isoformat()
+        except ValueError:
+            continue
+
+    # Try RFC 2822 (RSS pubDate)
+    try:
+        return parsedate_to_datetime(raw).isoformat()
+    except (ValueError, TypeError):
+        pass
+
+    return raw
+
+
+def _token_match(keywords: list[str], text: str) -> bool:
+    """Token-based matching: any keyword token appears in the text."""
+    text_lower = text.lower()
+    text_tokens = set(re.split(r"\s+", text_lower))
+    for kw in keywords:
+        kw_lower = kw.lower()
+        # Check both substring and token match
+        if kw_lower in text_lower or kw_lower in text_tokens:
+            return True
+    return False
 
 
 class RssProvider(SourceProvider):
@@ -35,10 +75,25 @@ class RssProvider(SourceProvider):
                 continue
             try:
                 items.extend(self._fetch_feed(url, feed_config, query))
-            except Exception:
-                # RSS fetch failures are non-fatal; log and continue
-                pass
+            except Exception as exc:
+                # Surface errors through metadata rather than silently swallowing
+                items.append(self._error_item(feed_config, url, exc))
         return items
+
+    def _error_item(self, feed_config: dict, url: str, exc: Exception) -> SourceItem:
+        """Create a diagnostic SourceItem for a failed feed fetch."""
+        name = feed_config.get("name", url)
+        source_id = _make_id(name, f"ERROR_{type(exc).__name__}")
+        return SourceItem(
+            source_id=source_id,
+            source_name=name,
+            source_type="rss_error",
+            title=f"RSS fetch error: {name}",
+            content=f"Failed to fetch feed {url}: {type(exc).__name__}: {str(exc)[:200]}",
+            url=url,
+            reliability="low",
+            metadata={"error_type": type(exc).__name__, "feed_url": url, "category": feed_config.get("category", "")},
+        )
 
     def _fetch_feed(self, url: str, feed_config: dict, query: SourceQuery) -> list[SourceItem]:
         req = urllib.request.Request(url, headers={"User-Agent": "multi-agent-brief/0.1"})
@@ -66,9 +121,8 @@ class RssProvider(SourceProvider):
     def _parse_rss_item(self, el: ET.Element, feed_url: str, feed_config: dict) -> SourceItem | None:
         title = (el.findtext("title") or "").strip()
         link = (el.findtext("link") or "").strip()
-        pub_date = (el.findtext("pubDate") or "").strip()
+        pub_date = _normalize_date((el.findtext("pubDate") or "").strip())
         description = (el.findtext("description") or "").strip()
-        # Strip HTML tags from description
         description = re.sub(r"<[^>]+>", "", description).strip()
 
         if not title:
@@ -93,8 +147,10 @@ class RssProvider(SourceProvider):
         title = (el.findtext("atom:title", namespaces=ns) or "").strip()
         link_el = el.find("atom:link", ns)
         link = link_el.get("href", "") if link_el is not None else ""
-        published = (el.findtext("atom:published", namespaces=ns)
-                     or el.findtext("atom:updated", namespaces=ns) or "").strip()
+        published = _normalize_date(
+            (el.findtext("atom:published", namespaces=ns)
+             or el.findtext("atom:updated", namespaces=ns) or "").strip()
+        )
         summary = (el.findtext("atom:summary", namespaces=ns) or "").strip()
         summary = re.sub(r"<[^>]+>", "", summary).strip()
 
@@ -119,8 +175,8 @@ class RssProvider(SourceProvider):
     def _matches_query(self, item: SourceItem, query: SourceQuery) -> bool:
         if not query.keywords:
             return True
-        text = f"{item.title} {item.content}".lower()
-        return any(kw.lower() in text for kw in query.keywords)
+        text = f"{item.title} {item.content}"
+        return _token_match(query.keywords, text)
 
 
 def _make_id(source_name: str, title: str) -> str:
