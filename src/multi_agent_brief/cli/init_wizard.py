@@ -469,6 +469,7 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
     return {
         "source_strategy": {
             "profile": sp,
+            "industry": profile.industry,
             "enabled_providers": enabled,
         },
         "manual": {

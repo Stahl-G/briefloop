@@ -328,6 +328,10 @@ This project can help structure research and briefing workflows, but it does not
 - Added 10 new tests covering all fixes.
 - Fixed web_search.py nested f-string SyntaxError on Python 3.9; refactored to intermediate variables.
 - CI now runs compileall before tests to catch syntax compatibility issues early.
+- Fixed init --industry not writing industry into source_strategy.industry, ensuring SourcePlanner receives the user-selected industry.
+- Fixed WebSearchProvider.collect() silently swallowing backend exceptions; errors now propagate to registry errors.
+- Implemented WebSearchProvider domain filtering: config.search_tasks supports domains field, passed through to backend.search().
+- Updated doctor.py: accurate warning when web_search uses mock backend instead of stale Phase 1 message.
 
 ### v0.5.0 — Three-Layer Source Collection Architecture
 

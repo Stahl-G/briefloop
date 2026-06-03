@@ -339,6 +339,10 @@ Windows 原生 PowerShell 详细说明见 [docs/windows-powershell.md](docs/wind
 - 新增 10 个测试覆盖所有修复。
 - 修复 web_search.py 嵌套 f-string 在 Python 3.9 下的 SyntaxError，改用中间变量。
 - CI 新增 compileall 步骤，提前捕获语法兼容性问题。
+- 修复 init --industry 未写入 source_strategy.industry 的问题，确保 SourcePlanner 能收到用户选择的行业。
+- 修复 WebSearchProvider.collect() 内部静默吞掉 backend 异常的问题，异常现在传递到 registry errors。
+- 实现 WebSearchProvider 域名过滤：config.search_tasks 支持 domains 字段并传递到 backend.search()。
+- 更新 doctor.py：web_search 使用 mock backend 时给出准确警告文案，不再提示 Phase 1 未实现。
 
 ### v0.5.0 — 三层来源采集架构
 

@@ -12,6 +12,7 @@ class MockSearchBackend(SearchBackend):
     name = "mock"
 
     def __init__(self, results: list[SearchResult] | None = None) -> None:
+        self.last_domains: list[str] | None = None
         self._results = results or [
             SearchResult(
                 title="Solar industry saw 15% capacity growth in Q1 2026",
@@ -36,7 +37,8 @@ class MockSearchBackend(SearchBackend):
             ),
         ]
 
-    def search(self, query: str, max_results: int = 10, **kwargs: Any) -> list[SearchResult]:
+    def search(self, query: str, max_results: int = 10, *, domains: list[str] | None = None, **kwargs: Any) -> list[SearchResult]:
+        self.last_domains = domains
         return self._results[:max_results]
 
     def is_available(self) -> bool:

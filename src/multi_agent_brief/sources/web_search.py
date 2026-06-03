@@ -50,35 +50,35 @@ class WebSearchProvider(SourceProvider):
         # Build search queries from query keywords or config
         queries = self._build_queries(query, config)
 
-        for q in queries:
-            try:
-                results = backend.search(q, max_results=max_results)
-                for r in results:
-                    item = self._result_to_source_item(r, q)
-                    all_items.append(item)
-            except Exception:
-                # Backend failures are non-fatal
-                pass
+        for q, domains in queries:
+            results = backend.search(q, max_results=max_results, domains=domains)
+            for r in results:
+                item = self._result_to_source_item(r, q)
+                all_items.append(item)
 
         return all_items
 
-    def _build_queries(self, query: SourceQuery, config: dict[str, Any]) -> list[str]:
-        """Build search queries from the query object and config."""
-        queries: list[str] = []
+    def _build_queries(self, query: SourceQuery, config: dict[str, Any]) -> list[tuple[str, list[str] | None]]:
+        """Build search queries from the query object and config.
+
+        Returns list of (query_string, domains_or_none) tuples.
+        """
+        queries: list[tuple[str, list[str] | None]] = []
 
         # Use query keywords if provided
         if query.keywords:
-            queries.append(" ".join(query.keywords))
+            queries.append((" ".join(query.keywords), None))
 
         # Use pre-defined queries from config
         for task in config.get("search_tasks", []):
             q = task.get("query", "")
             if q:
-                queries.append(q)
+                domains = task.get("domains") or None
+                queries.append((q, domains))
 
         # Fallback: generic query
         if not queries:
-            queries.append("latest news")
+            queries.append(("latest news", None))
 
         return queries
 

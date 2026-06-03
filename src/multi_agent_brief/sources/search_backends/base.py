@@ -24,8 +24,14 @@ class SearchBackend(ABC):
     name: str = "base"
 
     @abstractmethod
-    def search(self, query: str, max_results: int = 10, **kwargs: Any) -> list[SearchResult]:
-        """Execute a search query and return results."""
+    def search(self, query: str, max_results: int = 10, *, domains: list[str] | None = None, **kwargs: Any) -> list[SearchResult]:
+        """Execute a search query and return results.
+
+        Args:
+            query: The search query string.
+            max_results: Maximum number of results to return.
+            domains: Optional list of domains to restrict results to.
+        """
         raise NotImplementedError
 
     @abstractmethod

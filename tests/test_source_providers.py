@@ -350,3 +350,110 @@ def test_collect_all_sources_captures_provider_errors(tmp_path):
     finally:
         reg.PROVIDER_CLASSES.clear()
         reg.PROVIDER_CLASSES.update(old_registry)
+
+# --- P1: WebSearch backend errors propagate to registry errors ---
+
+def test_web_search_backend_error_captured_by_registry():
+    """Backend exceptions should propagate through to collect_all_sources errors."""
+    from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchResult
+    from multi_agent_brief.sources.registry import collect_all_sources
+
+    class FailingSearchBackend(SearchBackend):
+        name = "failing_search"
+        def search(self, query, max_results=10, **kwargs):
+            raise ConnectionError("API rate limit exceeded")
+        def is_available(self):
+            return True
+
+    from multi_agent_brief.sources.web_search import WebSearchProvider
+    import multi_agent_brief.sources.registry as reg
+
+    # Temporarily use our failing backend via WebSearchProvider
+    provider = WebSearchProvider(backend=FailingSearchBackend())
+    old_cls = reg.PROVIDER_CLASSES.get("web_search")
+    reg.PROVIDER_CLASSES["web_search"] = lambda: provider
+
+    config = SourceConfig(
+        enabled_providers=["web_search"],
+        web_search={"enabled": True},
+    )
+    try:
+        items, errors = collect_all_sources(config)
+        assert items == []
+        assert len(errors) == 1
+        assert errors[0]["provider"] == "web_search"
+        assert errors[0]["error_type"] == "ConnectionError"
+        assert "rate limit" in errors[0]["message"]
+    finally:
+        if old_cls:
+            reg.PROVIDER_CLASSES["web_search"] = old_cls
+
+
+# --- P2: Domain filtering ---
+
+def test_web_search_passes_domains_to_backend():
+    """search_tasks with domains should be forwarded to the backend."""
+    from multi_agent_brief.sources.search_backends.mock import MockSearchBackend
+
+    backend = MockSearchBackend()
+    provider = WebSearchProvider(backend=backend)
+    config = {
+        "enabled": True,
+        "search_tasks": [
+            {"query": "solar prices", "domains": ["pv-tech.org", "reuters.com"]},
+        ],
+    }
+    items = provider.collect(SourceQuery(), config)
+    assert len(items) > 0
+    # Verify the backend received the domains
+    assert backend.last_domains == ["pv-tech.org", "reuters.com"]
+
+
+def test_web_search_no_domains_passes_none():
+    """search_tasks without domains should pass domains=None."""
+    from multi_agent_brief.sources.search_backends.mock import MockSearchBackend
+
+    backend = MockSearchBackend()
+    provider = WebSearchProvider(backend=backend)
+    config = {"enabled": True}
+    items = provider.collect(SourceQuery(keywords=["solar"]), config)
+    assert len(items) > 0
+    assert backend.last_domains is None
+
+
+# --- P2: Doctor web_search message ---
+
+def test_doctor_warns_mock_backend_for_web_search(tmp_path):
+    """Doctor should warn about mock backend when web_search is enabled."""
+    from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
+    import yaml
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("project:\n  name: Test\n", encoding="utf-8")
+
+    sources = {
+        "source_strategy": {"profile": "research", "enabled_providers": ["web_search"]},
+        "web_search": {"enabled": True, "backend": "mock"},
+    }
+    (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
+
+    results = run_doctor(config_path=config_path)
+    assert any("mock backend" in r.message.lower() for r in results)
+
+
+def test_doctor_ok_for_real_backend(tmp_path):
+    """Doctor should report OK for a non-mock backend."""
+    from multi_agent_brief.sources.doctor import run_doctor
+    import yaml
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("project:\n  name: Test\n", encoding="utf-8")
+
+    sources = {
+        "source_strategy": {"profile": "research", "enabled_providers": ["web_search"]},
+        "web_search": {"enabled": True, "backend": "tavily"},
+    }
+    (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
+
+    results = run_doctor(config_path=config_path)
+    assert any("tavily" in r.message.lower() and r.status == "OK" for r in results)
