@@ -125,4 +125,6 @@ def build_run_settings(
         "previous_report_dir": str(previous.get("path", "")),
         "max_claims": int(selector.get("max_items") or selection.get("max_claims") or 160),
         "quiet_week_min_claims": int(selection.get("quiet_week_min_claims", 5)),
+        "output_formats": output_config.get("formats", ["markdown"]),
+        "output_footer": output_config.get("footer", ""),
     }

@@ -272,6 +272,33 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 - API key 必须存储在环境变量中，不能写入配置文件
 - 配置文件中不会打印或存储 API key
 
+## 启用 DOCX 输出
+
+流水线默认只生成 Markdown。要自动生成 Word 文档（brief.docx），需要安装 python-docx 并在配置中启用：
+
+```bash
+pip install "multi-agent-brief-workflow[docx]"
+```
+
+在工作区的 `config.yaml` 中添加 `docx` 到输出格式：
+
+```yaml
+output:
+  path: "output"
+  formats:
+    - "markdown"
+    - "docx"
+  footer: "Confidential — Internal Use Only"  # 可选，自定义页脚
+```
+
+运行后会在 `output/` 目录同时生成 `brief.md` 和 `brief.docx`。DOCX 使用专业投行风格排版，支持标题层级、表格、列表、引用块、代码块等 Markdown 元素。
+
+PowerShell:
+
+```powershell
+pip install "multi-agent-brief-workflow[docx]"
+```
+
 ## CLI
 
 创建一个合成 demo 工作区：

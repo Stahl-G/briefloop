@@ -129,4 +129,6 @@ class PipelineContext:
     sources: list[SourceItem] = field(default_factory=list)
     candidates: list[CandidateItem] = field(default_factory=list)
     report_state: ReportState = field(default_factory=ReportState)
+    output_formats: list[str] = field(default_factory=lambda: ["markdown"])
+    output_footer: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)

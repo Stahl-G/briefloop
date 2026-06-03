@@ -214,6 +214,33 @@ python -m multi_agent_brief.cli.main run examples/basic_market_brief/input --out
 Remove-Item Env:PYTHONPATH
 ```
 
+## Enable DOCX Output
+
+The pipeline generates Markdown by default. To also produce a styled Word document (`brief.docx`):
+
+```bash
+pip install "multi-agent-brief-workflow[docx]"
+```
+
+Add `docx` to the output formats in your workspace `config.yaml`:
+
+```yaml
+output:
+  path: "output"
+  formats:
+    - "markdown"
+    - "docx"
+  footer: "Confidential — Internal Use Only"  # optional custom footer
+```
+
+After running, both `brief.md` and `brief.docx` will appear in the `output/` directory. The DOCX uses a professional investment-bank-style layout with heading hierarchy, tables, lists, blockquotes, and code blocks.
+
+PowerShell:
+
+```powershell
+pip install "multi-agent-brief-workflow[docx]"
+```
+
 ## CLI
 
 ### Enable Tavily Live Search

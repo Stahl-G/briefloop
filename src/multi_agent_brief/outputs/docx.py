@@ -1,20 +1,29 @@
+"""DOCX output adapter — thin wrapper around ib_docx.convert()."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from pathlib import Path
+
+from multi_agent_brief.outputs.ib_docx import convert
 
 
-@dataclass
-class DocxOutputRequest:
-    markdown_path: str
-    output_path: str
-    template_path: str = ""
+def render_docx(
+    markdown_path: str | Path,
+    output_path: str | Path,
+    *,
+    title: str | None = None,
+    subtitle: str | None = None,
+    footer: str | None = None,
+) -> Path:
+    """Render a Markdown file as a styled DOCX document.
 
-
-class DocxOutputAdapter:
-    """Migration-track interface for DOCX generation."""
-
-    name = "docx"
-
-    def render(self, request: DocxOutputRequest) -> str:
-        raise RuntimeError("DOCX output is a migration-track interface and is not implemented in the MVP.")
-
+    This is the pipeline-facing entry point.  It delegates to
+    :func:`multi_agent_brief.outputs.ib_docx.convert`.
+    """
+    return convert(
+        markdown_path,
+        output_path,
+        title=title,
+        subtitle=subtitle,
+        footer=footer,
+    )
