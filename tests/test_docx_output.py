@@ -215,7 +215,7 @@ class TestFormatterDocxIntegration:
     """Test FormatterAgent DOCX output via the pipeline."""
 
     def test_markdown_only_output_no_docx(self, workspace):
-        """When output.formats does not include 'docx', no draft_brief.docx is created."""
+        """When output.formats does not include 'docx', no brief.docx is created."""
         from multi_agent_brief.agents.formatter import FormatterAgent
         from multi_agent_brief.core.claim_ledger import ClaimLedger
         from multi_agent_brief.core.schemas import PipelineContext, ReportState
@@ -230,12 +230,12 @@ class TestFormatterDocxIntegration:
         agent = FormatterAgent()
         result = agent.run(context, ClaimLedger())
 
-        assert "draft_brief" in result.artifacts
-        assert "draft_brief_docx" not in result.artifacts
-        assert not (workspace / "output" / "draft_brief.docx").exists()
+        assert "brief" in result.artifacts
+        assert "brief_docx" not in result.artifacts
+        assert not (workspace / "output" / "brief.docx").exists()
 
-    def test_docx_format_creates_draft_brief_docx(self, workspace):
-        """When 'docx' is in output.formats, draft_brief.docx is created."""
+    def test_docx_format_creates_brief_docx(self, workspace):
+        """When 'docx' is in output.formats, brief.docx is created."""
         from multi_agent_brief.agents.formatter import FormatterAgent
         from multi_agent_brief.core.claim_ledger import ClaimLedger
         from multi_agent_brief.core.schemas import PipelineContext, ReportState
@@ -250,9 +250,9 @@ class TestFormatterDocxIntegration:
         agent = FormatterAgent()
         result = agent.run(context, ClaimLedger())
 
-        assert "draft_brief" in result.artifacts
-        assert "draft_brief_docx" in result.artifacts
-        docx_path = Path(result.artifacts["draft_brief_docx"])
+        assert "brief" in result.artifacts
+        assert "brief_docx" in result.artifacts
+        docx_path = Path(result.artifacts["brief_docx"])
         assert docx_path.exists()
         assert docx_path.stat().st_size > 0
 
@@ -273,8 +273,8 @@ class TestFormatterDocxIntegration:
         agent = FormatterAgent()
         result = agent.run(context, ClaimLedger())
 
-        assert "draft_brief_docx" in result.artifacts
-        docx_path = Path(result.artifacts["draft_brief_docx"])
+        assert "brief_docx" in result.artifacts
+        docx_path = Path(result.artifacts["brief_docx"])
         assert docx_path.exists()
 
 

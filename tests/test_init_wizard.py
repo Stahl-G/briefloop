@@ -142,7 +142,7 @@ def test_generated_input_readme_is_not_treated_as_source(tmp_path):
     main(["init", str(workspace), "--language", "zh-CN"])
     assert main(["run", "--config", str(workspace / "config.yaml")]) == 0
 
-    ledger = (workspace / "output" / "claim_ledger.json").read_text(encoding="utf-8")
+    ledger = (workspace / "output" / "intermediate/claim_ledger.json").read_text(encoding="utf-8")
     assert ledger.strip() == "[]"
 
 
@@ -195,7 +195,7 @@ def test_llm_decide_user_md_not_treated_as_source(tmp_path):
     workspace = tmp_path / "workspace"
     main(["init", str(workspace), "--language", "zh-CN", "--source-profile", "llm_decide"])
     assert main(["run", "--config", str(workspace / "config.yaml")]) == 0
-    ledger = (workspace / "output" / "claim_ledger.json").read_text(encoding="utf-8")
+    ledger = (workspace / "output" / "intermediate/claim_ledger.json").read_text(encoding="utf-8")
     assert ledger.strip() == "[]"
 
 

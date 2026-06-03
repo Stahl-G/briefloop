@@ -226,7 +226,7 @@ class TestWebSearchProviderTavily:
 class TestEditorAuditResidue:
 
     def test_brief_does_not_contain_audit_status(self, tmp_path):
-        """draft_brief.md must not contain audit status text."""
+        """brief.md must not contain audit status text."""
         from multi_agent_brief.core.pipeline import BriefPipeline
         from multi_agent_brief.core.schemas import PipelineContext
 
@@ -246,7 +246,7 @@ class TestEditorAuditResidue:
         )
 
         BriefPipeline().run(context)
-        brief = (output_dir / "draft_brief.md").read_text(encoding="utf-8")
+        brief = (output_dir / "brief.md").read_text(encoding="utf-8")
         assert "Audit status:" not in brief
         assert "审计状态" not in brief
 

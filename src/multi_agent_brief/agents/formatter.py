@@ -19,17 +19,28 @@ class FormatterAgent(BaseAgent):
         output_dir = Path(context.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        brief_path = output_dir / "draft_brief.md"
-        ledger_path = output_dir / "claim_ledger.json"
-        audit_path = output_dir / "audit_report.json"
-        source_map_path = output_dir / "source_map.md"
+        # Intermediate artifacts go into output/intermediate/
+        intermediate_dir = output_dir / "intermediate"
+        intermediate_dir.mkdir(parents=True, exist_ok=True)
 
+        # Final reader-facing brief stays at output/brief.md
+        brief_path = output_dir / "brief.md"
+        # Intermediate artifacts
+        draft_path = intermediate_dir / "draft_brief.md"
+        ledger_path = intermediate_dir / "claim_ledger.json"
+        audit_path = intermediate_dir / "audit_report.json"
+        source_map_path = intermediate_dir / "source_map.md"
+
+        # Write the prepared (citation-stripped) brief as the final brief
         brief_path.write_text(context.report_state.prepared_markdown, encoding="utf-8")
+        # Also keep the draft with citations in intermediate/
+        draft_path.write_text(context.report_state.draft_markdown, encoding="utf-8")
         ledger.export_json(ledger_path)
         source_map_path.write_text(render_source_map(ledger), encoding="utf-8")
 
         artifacts: dict[str, str] = {
-            "draft_brief": str(brief_path),
+            "brief": str(brief_path),
+            "draft_brief": str(draft_path),
             "claim_ledger": str(ledger_path),
             "source_map": str(source_map_path),
         }
@@ -39,7 +50,7 @@ class FormatterAgent(BaseAgent):
         # metadata is included in the persisted file.
         docx_status = None
         if "docx" in (context.output_formats or []):
-            docx_path = output_dir / "draft_brief.docx"
+            docx_path = output_dir / "brief.docx"
             try:
                 from multi_agent_brief.outputs.ib_docx import convert
 
@@ -49,7 +60,7 @@ class FormatterAgent(BaseAgent):
                     title=context.project_name,
                     footer=context.output_footer or None,
                 )
-                artifacts["draft_brief_docx"] = str(docx_path)
+                artifacts["brief_docx"] = str(docx_path)
                 docx_status = "generated"
             except ImportError:
                 logger.warning(
@@ -75,6 +86,6 @@ class FormatterAgent(BaseAgent):
 
         return AgentOutput(
             agent_name=self.name,
-            summary=f"Wrote preparation artifacts to {output_dir}.",
+            summary=f"Wrote artifacts to {output_dir}.",
             artifacts=artifacts,
         )

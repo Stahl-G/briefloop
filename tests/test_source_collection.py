@@ -300,13 +300,15 @@ def test_pipeline_provider_sources_appear_in_brief(tmp_path):
 
     outputs = BriefPipeline().run(context)
 
-    brief_text = (output_dir / "draft_brief.md").read_text(encoding="utf-8")
+    brief_text = (output_dir / "brief.md").read_text(encoding="utf-8")
     assert "manufacturing" in brief_text.lower() or "capacity" in brief_text.lower()
-    assert "[src:" in brief_text
+    # Citations are stripped from final brief; check intermediate draft for [src:]
+    draft_text = (output_dir / "intermediate" / "draft_brief.md").read_text(encoding="utf-8")
+    assert "[src:" in draft_text
 
     # Verify claim_ledger has the provider source claim
     import json as json_mod
-    ledger_data = json_mod.loads((output_dir / "claim_ledger.json").read_text(encoding="utf-8"))
+    ledger_data = json_mod.loads((output_dir / "intermediate" / "claim_ledger.json").read_text(encoding="utf-8"))
     assert len(ledger_data) > 0
     assert any("manufacturing" in c["statement"].lower() or "capacity" in c["statement"].lower() for c in ledger_data)
 
@@ -371,7 +373,7 @@ def test_pipeline_backward_compat_empty_input(tmp_path):
     outputs = BriefPipeline().run(context)
     # Should complete without error, with 7 outputs
     assert len(outputs) == 7
-    assert (output_dir / "draft_brief.md").exists()
+    assert (output_dir / "brief.md").exists()
 
 
 # --- Manual source path resolution ---
@@ -434,9 +436,12 @@ def test_cli_run_with_external_workspace(tmp_path):
     exit_code = main(["run", "--config", str(ws / "config.yaml")])
     assert exit_code == 0
 
-    brief = (ws / "output" / "draft_brief.md").read_text(encoding="utf-8")
-    assert "[src:" in brief, "Brief should contain [src:] citations"
+    brief = (ws / "output" / "brief.md").read_text(encoding="utf-8")
+    assert len(brief) > 0, "Brief should not be empty"
+    # Citations are stripped from final brief; check intermediate draft
+    draft = (ws / "output" / "intermediate" / "draft_brief.md").read_text(encoding="utf-8")
+    assert "[src:" in draft, "Draft should contain [src:] citations"
 
     import json
-    ledger = json.loads((ws / "output" / "claim_ledger.json").read_text(encoding="utf-8"))
+    ledger = json.loads((ws / "output" / "intermediate" / "claim_ledger.json").read_text(encoding="utf-8"))
     assert len(ledger) > 0, "Claim ledger should not be empty"

@@ -34,7 +34,7 @@ def test_formatter_persists_docx_generation_metadata_when_docx_missing(tmp_path)
     # or it will succeed. Either way, docx_generation must be in the JSON.
     FormatterAgent().run(context, ClaimLedger())
 
-    audit_json_path = output_dir / "audit_report.json"
+    audit_json_path = output_dir / "intermediate" / "audit_report.json"
     assert audit_json_path.exists(), "audit_report.json should be written"
 
     data = json.loads(audit_json_path.read_text(encoding="utf-8"))
@@ -69,7 +69,7 @@ def test_formatter_no_docx_when_not_in_formats(tmp_path):
 
     FormatterAgent().run(context, ClaimLedger())
 
-    audit_json_path = output_dir / "audit_report.json"
+    audit_json_path = output_dir / "intermediate" / "audit_report.json"
     data = json.loads(audit_json_path.read_text(encoding="utf-8"))
     assert "docx_generation" not in data.get("metadata", {}), (
         "docx_generation should not appear when docx is not in output_formats"

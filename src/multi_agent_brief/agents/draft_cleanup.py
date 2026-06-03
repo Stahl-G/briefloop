@@ -51,3 +51,23 @@ def validate_citations_intact(original: str, cleaned: str) -> bool:
     original_refs = set(_VALID_SRC_REF.findall(original))
     cleaned_refs = set(_VALID_SRC_REF.findall(cleaned))
     return original_refs.issubset(cleaned_refs)
+
+
+def strip_claim_citations(text: str) -> str:
+    """Remove all [src:CLAIM_ID] citations from text.
+
+    Human readers cannot parse these internal references.
+    Call this before writing the final reader-facing brief.
+
+    Args:
+        text: Markdown text with [src:CLAIM_ID] citations.
+
+    Returns:
+        Text with all [src:...] markers removed.
+    """
+    text = _VALID_SRC_REF.sub("", text)
+    # Also strip any remaining [src:...] patterns (malformed, empty, etc.)
+    text = re.compile(r"\[src:[^\]]*\]").sub("", text)
+    # Collapse 3+ consecutive blank lines into 2
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()

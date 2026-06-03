@@ -25,11 +25,14 @@ def test_pipeline_writes_outputs(tmp_path):
     outputs = BriefPipeline().run(context)
 
     assert len(outputs) == 7  # source-collection + 6 agents
-    assert (output_dir / "draft_brief.md").exists()
-    assert (output_dir / "claim_ledger.json").exists()
-    assert (output_dir / "audit_report.json").exists()
-    assert (output_dir / "source_map.md").exists()
-    assert "Demo Brief" in (output_dir / "draft_brief.md").read_text(encoding="utf-8")
+    # Final brief at output/brief.md
+    assert (output_dir / "brief.md").exists()
+    # Intermediate artifacts at output/intermediate/
+    assert (output_dir / "intermediate" / "draft_brief.md").exists()
+    assert (output_dir / "intermediate" / "claim_ledger.json").exists()
+    assert (output_dir / "intermediate" / "audit_report.json").exists()
+    assert (output_dir / "intermediate" / "source_map.md").exists()
+    assert "Demo Brief" in (output_dir / "brief.md").read_text(encoding="utf-8")
 
 
 # --- P0: Analyst renders all 10 topics ---
