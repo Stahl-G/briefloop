@@ -163,9 +163,9 @@ def main() -> int:
         print(json.dumps(output, indent=2, ensure_ascii=False))
     else:
         if result.ok:
-            print("✅ No sensitive content found in public-facing files.")
+            print("OK: No sensitive content found in public-facing files.")
         else:
-            print(f"❌ Found {len(result.hits)} sensitive hit(s):\n")
+            print(f"FAIL: Found {len(result.hits)} sensitive hit(s):\n")
             for h in result.hits:
                 print(f"  {h.file}:{h.line}  [{h.pattern_desc}]  '{h.match}'")
 
