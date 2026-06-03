@@ -54,3 +54,50 @@ def test_init_from_onboarding_cli_workspace_overrides_target(tmp_path: Path):
     assert rc == 0
     assert ws.exists()
     assert not (tmp_path / "onboarding-target").exists()
+
+
+def test_init_from_onboarding_uses_onboarding_target_when_no_cli_target(tmp_path: Path):
+    """When CLI target is the default, onboarding.target should be used."""
+    onboarding = {
+        "target": "auto-target",
+        "company_or_org": "TestCo",
+        "industry_or_theme": "technology",
+        "language_plain": "English",
+        "cadence_plain": "weekly",
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding), encoding="utf-8")
+
+    # Pass CLI target as the default "brief-workspace" — onboarding.target should win
+    rc = main(["init", "--from-onboarding", str(ob_path), "--force"])
+    assert rc == 0
+    ws = Path("auto-target")
+    try:
+        assert ws.exists()
+        assert (ws / "config.yaml").exists()
+    finally:
+        import shutil
+        shutil.rmtree(ws, ignore_errors=True)
+
+
+def test_sources_decide_search_no_mock_residual(capsys, tmp_path: Path):
+    """sources decide --search must not mention mock backend."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "config.yaml").write_text(
+        "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
+        encoding="utf-8",
+    )
+    sources_yaml = (
+        "source_strategy:\n  profile: research\n  industry: energy\n"
+        "  enabled_providers: [manual]\nmanual:\n  enabled: true\n  sources: []\n"
+        "source_discovery:\n  company: TestCo\n  industry: energy\n"
+        "  topics: [policy]\n  queries:\n    - test query\n"
+    )
+    (ws / "sources.yaml").write_text(sources_yaml, encoding="utf-8")
+
+    rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "mock" not in captured.out.lower()
+    assert "not implemented" in captured.out.lower()

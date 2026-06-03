@@ -70,7 +70,17 @@ def normalize_cadence(text: str) -> str:
     t = text.strip().lower()
     if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
         return _DEFAULT_CADENCE
-    return _CADENCE_MAP.get(t, t)
+    # Exact match first
+    if t in _CADENCE_MAP:
+        return _CADENCE_MAP[t]
+    # Substring/keyword matching
+    if any(k in t for k in ("daily", "每日", "every day")):
+        return "daily"
+    if any(k in t for k in ("monthly", "月报", "每月", "every month")):
+        return "monthly"
+    if any(k in t for k in ("weekly", "week", "周报", "每周", "every week")):
+        return "weekly"
+    return t
 
 
 # ── audience mapping ───────────────────────────────────────────────
@@ -117,7 +127,23 @@ def normalize_audience(text: str) -> str:
     t = text.strip().lower()
     if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
         return _DEFAULT_AUDIENCE
-    return _AUDIENCE_MAP.get(t, t)
+    # Exact match first
+    if t in _AUDIENCE_MAP:
+        return _AUDIENCE_MAP[t]
+    # Substring/keyword matching for natural-language phrases
+    if any(k in t for k in ("investor relations", "ir", "投关", "披露")):
+        return "investor_relations"
+    if any(k in t for k in ("investment", "portfolio", "fund", "investor", "投资", "持仓", "基金")):
+        return "investment"
+    if any(k in t for k in ("management", "executive", "ceo", "leadership", "管理层", "总裁", "boss")):
+        return "management"
+    if any(k in t for k in ("research", "analyst", "研究员")):
+        return "research"
+    if any(k in t for k in ("legal", "compliance", "法务", "合规")):
+        return "compliance"
+    if any(k in t for k in ("business", "operations", "sales", "业务")):
+        return "business"
+    return t
 
 
 # ── source_profile mapping ─────────────────────────────────────────
@@ -210,11 +236,24 @@ def normalize_industry(text: str) -> str:
     t = text.strip().lower()
     if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选", "general"):
         return "general"
+    # Exact match first
     if t in _INDUSTRY_MAP:
         return _INDUSTRY_MAP[t]
-    # Fallback: lowercase, spaces/hyphens → underscores
+    # Substring/keyword matching for natural-language phrases
+    if any(k in t for k in ("solar", "pv", "photovoltaic", "光伏", "太阳能")):
+        return "solar"
+    if any(k in t for k in ("renewable energy", "clean energy", "新能源")):
+        return "energy"
+    if any(k in t for k in ("technology", "tech", "ai", "software", "科技")):
+        return "technology"
+    if any(k in t for k in ("finance", "banking", "securities", "investment", "金融")):
+        return "finance"
+    if any(k in t for k in ("consumer", "retail", "beer", "food", "啤酒")):
+        return "consumer"
+    if any(k in t for k in ("automotive", "ev", "vehicle", "汽车")):
+        return "automotive"
+    # Fallback: lowercase, spaces/hyphens -> underscores
     return re.sub(r"[\s\-]+", "_", t)
-
 
 # ── industry label for titles ──────────────────────────────────────
 

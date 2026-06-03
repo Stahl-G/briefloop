@@ -63,3 +63,34 @@ def test_onboarding_mapper_bilingual():
     profile = map_onboarding_to_profile(result)
     assert profile.interface_language == "bilingual"
     assert profile.output_language == "bilingual"
+
+
+# ── Natural language tolerance tests ───────────────────────────────
+
+def test_onboarding_mapper_natural_language_industry():
+    """Substring matching handles natural-language industry phrases."""
+    assert normalize_industry("renewable energy sector") == "energy"
+    assert normalize_industry("solar manufacturing") == "solar"
+    assert normalize_industry("technology sector") == "technology"
+    assert normalize_industry("global finance outlook") == "finance"
+
+
+def test_onboarding_mapper_natural_language_audience():
+    """Substring matching handles natural-language audience phrases."""
+    assert normalize_audience("for executive leadership team") == "management"
+    assert normalize_audience("investment portfolio review") == "investment"
+    assert normalize_audience("legal and compliance team") == "compliance"
+
+
+def test_onboarding_mapper_natural_language_cadence():
+    """Substring matching handles natural-language cadence phrases."""
+    assert normalize_cadence("weekly management update") == "weekly"
+    assert normalize_cadence("daily briefing") == "daily"
+    assert normalize_cadence("monthly report") == "monthly"
+
+
+def test_onboarding_mapper_natural_language_source_style():
+    """Substring matching handles natural-language source style phrases."""
+    assert normalize_source_profile("reliable sources but include sector news") == "research"
+    assert normalize_source_profile("only official filings and announcements") == "conservative"
+    assert normalize_source_profile("broad radar including social signals") == "aggressive_signal"

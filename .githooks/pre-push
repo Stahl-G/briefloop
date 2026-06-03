@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push hook: require README update when src/ changes.
+# Pre-push hook: public-safe scan + README check.
 # Install: git config core.hooksPath .githooks
 # Maintainer convenience only. Windows users do not need this hook.
 
@@ -12,9 +12,16 @@ if [ -z "$PYTHON_BIN" ]; then
   elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
   else
-    echo "README check skipped: python/python3 not found."
+    echo "Checks skipped: python/python3 not found."
     exit 0
   fi
 fi
 
+echo "[pre-push] Public-safe content scan..."
+"$PYTHON_BIN" scripts/public_safe_scan.py
+
+echo "[pre-push] Terminology check..."
+"$PYTHON_BIN" scripts/check_terms.py
+
+echo "[pre-push] README update check..."
 "$PYTHON_BIN" scripts/check_readme_updated.py

@@ -228,7 +228,7 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
 
     search_results = None
     if args.search:
-        print("[sources] Web search not yet implemented — use mock search backend or manual input.")
+        print("[sources] Web search is not implemented in this package. Use manual input, RSS, cached packages, or an injected external backend.")
 
     candidates = generate_source_candidates(discovery, search_results)
     candidates_path = workspace / "source_candidates.yaml"

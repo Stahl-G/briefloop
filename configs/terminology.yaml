@@ -1,0 +1,37 @@
+# Terminology consistency lock.
+# Scripts and CI enforce these rules across docs, source, and tests.
+
+canonical_terms:
+  - llm_decide
+  - sources decide
+  - Claim Ledger
+  - Source Provider
+  - OnboardingResult
+  - InitProfile
+  - AskUserQuestion
+  - BriefPipeline
+  - ScoutAgent
+  - ScreenerAgent
+  - AnalystAgent
+
+forbidden_terms:
+  - llm_diside
+  - diside
+
+cli_commands:
+  - name: sources decide
+    argv: ["sources", "decide"]
+    docs_should_contain:
+      - "sources decide"
+      - "llm_decide"
+
+  - name: init from onboarding
+    argv: ["init", "--from-onboarding"]
+    docs_should_contain:
+      - "init --from-onboarding"
+      - "onboarding.json"
+
+readme_command_snippets:
+  - "multi-agent-brief sources decide"
+  - "multi-agent-brief init --from-onboarding"
+  - "python scripts/public_safe_scan.py"
