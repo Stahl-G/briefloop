@@ -371,6 +371,16 @@ This project can help structure research and briefing workflows, but it does not
 
 ## Changelog
 
+### v0.6.0 — Profile-Driven Source Discovery
+
+- **user.md as primary semantic context**: Init generates `user.md` with company, industry, role, focus areas, task objective, and forbidden sources. Agents read this file first to understand user needs.
+- **Simplified onboarding mapper**: Removed long keyword mapping tables. Unknown industries return empty string instead of guessed slugs. Raw user text preserved in `user.md`.
+- **Default llm_decide source mode**: Agent-driven source discovery generates `source_candidates.yaml` for user review before ingestion.
+- **Industry packs as optional seeds**: Packs are no longer routing mechanism, only optional search task accelerators.
+- **New `--tavily` CLI flag**: `multi-agent-brief init --tavily` enables Tavily live web search backend directly.
+- **Fixed `format_scalar(None)` outputting `"None"` instead of `null`**.
+- Backward compatibility with `--industry`, `--company`, `--source-profile` CLI flags preserved.
+
 ### v0.5.1 — Source Provider Pipeline Fixes
 
 - Fixed ScoutAgent unconditionally overwriting context.sources: when the pipeline has already collected sources via providers, Scout now uses them directly instead of falling back to local files.

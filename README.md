@@ -382,6 +382,16 @@ Windows 原生 PowerShell 详细说明见 [docs/windows-powershell.md](docs/wind
 
 ## 更新日志
 
+### v0.6.0 — 用户画像驱动的来源发现
+
+- **user.md 成为主要语义控制层**：初始化时生成 `user.md`，包含公司、行业、岗位、关注领域、任务目标、禁止来源等完整用户画像，agent 优先读取此文件理解用户需求。
+- **简化 onboarding mapper**：移除长关键词映射表，未知行业返回空字符串而非猜测的 slug，原始用户文本完整保留在 `user.md` 中。
+- **默认 llm_decide 来源模式**：默认使用 agent 驱动的来源发现策略，生成 `source_candidates.yaml` 供用户确认后进入正式 `sources.yaml`。
+- **行业包变为可选种子**：行业包不再作为路由机制，仅作为可选的搜索任务种子加速器。
+- **新增 `--tavily` CLI 标志**：`multi-agent-brief init --tavily` 直接启用 Tavily 实时搜索后端。
+- **修复 `format_scalar(None)` 输出 `"None"` 而非 `null`**。
+- 保持 `--industry`、`--company`、`--source-profile` 等 CLI 参数的向后兼容性。
+
 ### v0.5.1 — Source Provider 流水线修复
 
 - 修复 ScoutAgent 无条件覆盖 context.sources 的问题：当 pipeline 已通过 provider 收集来源时，Scout 直接使用已有 sources，不再回退到本地文件。
