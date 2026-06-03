@@ -284,6 +284,7 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 - Tavily 需要 `TAVILY_API_KEY` 环境变量
 - API key 必须存储在环境变量中，不能写入配置文件
 - 配置文件中不会打印或存储 API key
+- 如果启用了 Tavily 但未设置 API key，流水线会立即报错退出（fail-fast）
 
 ## llm_decide 来源发现
 

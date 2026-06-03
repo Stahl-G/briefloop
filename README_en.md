@@ -325,6 +325,7 @@ Notes:
 - Tavily requires `TAVILY_API_KEY` environment variable
 - API keys must be stored in environment variables, not config files
 - API keys are never printed or stored in configuration
+- If Tavily is enabled but the API key is missing, the pipeline fails immediately (fail-fast)
 
 Create a synthetic demo workspace:
 
