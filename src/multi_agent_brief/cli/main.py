@@ -82,6 +82,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_tavily_guidance() -> None:
+    """Print setup guidance for Tavily live search."""
+    print()
+    print("Tavily live search is enabled. To use it, set the TAVILY_API_KEY")
+    print("environment variable before running the pipeline.")
+    print()
+    print("  Do not paste API keys into chat, config files, README, or GitHub.")
+    print("  Keys should be stored in environment variables only.")
+    print()
+    print("  Check configuration: multi-agent-brief doctor --config <workspace>/config.yaml")
+
+
 def run_pipeline_from_args(args: argparse.Namespace) -> int:
     config = load_config(args.config) if args.config else None
     settings = build_run_settings(
@@ -127,6 +139,24 @@ def run_pipeline_from_args(args: argparse.Namespace) -> int:
         if days:
             context.max_source_age_days = days
         context.metadata["source_config"] = source_config
+
+    # Pre-flight check: if Tavily is enabled, verify API key exists
+    _source_config = context.metadata.get("source_config")
+    if _source_config and hasattr(_source_config, "web_search"):
+        _ws = _source_config.web_search
+        if _ws.get("enabled") and _ws.get("backend") == "tavily":
+            import os
+            api_key_env = _ws.get("api_key_env", "TAVILY_API_KEY")
+            if not os.environ.get(api_key_env):
+                print(f"[ERROR] Tavily live search is enabled, but {api_key_env} is not set.")
+                print("  Set it as an environment variable before running the pipeline.")
+                print("  Do not paste API keys into chat, config files, README, or GitHub.")
+                # Surface as collection error, don't silently skip
+                context.metadata.setdefault("collection_errors", []).append({
+                    "provider": "web_search",
+                    "error_type": "MissingApiKey",
+                    "message": f"Tavily requires {api_key_env} to be set in the environment.",
+                })
 
     outputs = BriefPipeline().run(context)
     for output in outputs:
@@ -188,6 +218,11 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
     print(f"Run: multi-agent-brief run --config {target / 'config.yaml'}")
+
+    # Print Tavily setup guidance if enabled
+    if profile.tavily_enabled:
+        _print_tavily_guidance()
+
     return 0
 
 

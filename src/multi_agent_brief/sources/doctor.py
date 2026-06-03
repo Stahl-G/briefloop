@@ -82,9 +82,11 @@ def run_doctor(
         elif backend_name == "tavily":
             api_key_env = source_config.web_search.get("api_key_env", "TAVILY_API_KEY")
             if os.environ.get(api_key_env):
-                results.append(CheckResult("OK", f"web_search: Tavily backend configured, {api_key_env} is set"))
+                results.append(CheckResult("OK", f"Tavily API key detected via {api_key_env}."))
             else:
-                results.append(CheckResult("ERROR", f"web_search: Tavily backend requires {api_key_env} to be set"))
+                results.append(CheckResult("ERROR", f"Tavily live search is enabled, but {api_key_env} is missing."))
+                results.append(CheckResult("ERROR", "  Set it as an environment variable before running the pipeline."))
+                results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
         else:
             results.append(CheckResult("WARN", f"web_search: backend '{backend_name}' is not a known backend"))
 

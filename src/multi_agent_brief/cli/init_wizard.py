@@ -131,6 +131,7 @@ class InitProfile:
     )
     source_profile: str = "research"
     source_decision_mode: str = "static"
+    tavily_enabled: bool = False
 
 
 def create_demo_workspace(target: Path, *, force: bool = False) -> None:
@@ -161,6 +162,8 @@ def create_workspace(target: Path, profile: InitProfile, *, force: bool = False)
         target / ".gitignore": WORKSPACE_GITIGNORE,
         input_dir / "README.md": build_input_readme(profile.interface_language),
     }
+    if profile.tavily_enabled:
+        files[target / ".env.example"] = "# Tavily API key for live web search\n# Copy this file to .env and fill in your key.\n# Never commit .env to version control.\nTAVILY_API_KEY=\n"
     _write_files(files, force=force)
 
 
@@ -251,6 +254,7 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
     profile.output_formats = parse_list_arg(ask_text(input_func, prompts["outputs"], ",".join(profile.output_formats)))
     profile.max_source_age_days = parse_int(ask_text(input_func, prompts["max_age"], str(profile.max_source_age_days)), 14)
     profile.source_profile = ask_choice(input_func, prompts["source_profile"], prompts["source_profile_options"], "2")
+    profile.tavily_enabled = ask_yes_no(input_func, prompts["tavily"], default=False)
     return profile
 
 
@@ -293,6 +297,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "max_age": "Maximum source age in days: ",
             "source_profile": "Source profile:\n1. Conservative: official and high-confidence sources only\n2. Research: balanced official, industry, market, and research sources\n3. Aggressive signal: broader signal discovery, more noise allowed\n4. Custom: user will manually edit sources.yaml\n5. Let LLM decide: generate an agent-readable source discovery policy\nDefault [2]: ",
             "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
+            "tavily": "Enable live web search with Tavily? [y/N]: ",
         }
     if language == "bilingual":
         labels = prompt_labels("en-US")
@@ -311,6 +316,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "max_age": "Maximum source age in days / 最大来源天数: ",
                 "source_profile": "Source profile / 信息来源策略:\n1. Conservative / 保守：仅官方和高置信来源\n2. Research / 研究：官方、行业、市场、研究来源平衡\n3. Aggressive signal / 激进信号：扩大发现范围\n4. Custom / 自定义\n5. Let LLM decide / 让 LLM 自动决定来源\nDefault [2]: ",
                 "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
+                "tavily": "Enable live web search with Tavily? / 启用 Tavily 实时搜索？[y/N]: ",
             }
         )
         return labels
@@ -351,6 +357,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "max_age": "请输入最大来源天数：",
         "source_profile": "请选择信息来源策略：\n1. 保守：只使用官方和高置信来源\n2. 研究：官方、行业媒体、市场数据、研究来源平衡\n3. 激进信号：扩大信号发现范围，允许更多噪音\n4. 自定义：用户后续手动编辑 sources.yaml\n5. 让 LLM 自动决定：生成 agent 可读的来源发现策略\n默认 [2]：",
         "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
+        "tavily": "是否启用 Tavily 实时搜索？[y/N]：",
     }
 
 
@@ -464,7 +471,27 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
     else:  # research or custom
         enabled = ["manual", "rss"]
         rss_enabled = True
-    # web_search is never enabled by default; requires explicit backend configuration
+    # web_search: only enabled if user opted in to Tavily
+    if profile.tavily_enabled:
+        if "web_search" not in enabled:
+            enabled.append("web_search")
+        web_search_config = {
+            "enabled": True,
+            "backend": "tavily",
+            "api_key_env": "TAVILY_API_KEY",
+            "topic": "news",
+            "search_depth": "basic",
+            "max_results": 5,
+            "recency_days": 7,
+        }
+    else:
+        web_search_config = {
+            "enabled": False,
+            "backend": "",
+            "max_results": 20,
+            "recency_days": 7,
+            "note": "Configure a real backend or external agent before enabling web_search.",
+        }
 
     return {
         "source_strategy": {
@@ -480,13 +507,7 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             "enabled": rss_enabled,
             "feeds": [],
         },
-        "web_search": {
-            "enabled": False,
-            "backend": "",
-            "max_results": 20,
-            "recency_days": 7,
-            "note": "Configure a real backend or external agent before enabling web_search.",
-        },
+        "web_search": web_search_config,
         "api": {
             "enabled": False,
             "providers": [],
