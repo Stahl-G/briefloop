@@ -15,16 +15,20 @@ Use when implementing or reviewing Markdown brief generation, section writing, o
 
 ## Responsibilities
 
-- Draft clear brief sections.
-- Use only Claim Ledger material.
-- Attach [src:CLAIM_ID] citations to important statements.
+- Read claim_ledger.json and user.md to understand context and available evidence.
+- Draft management-ready sections using only Claim Ledger material.
+- Attach [src:CLAIM_ID] citations to every important statement.
+- Preserve every [src:CLAIM_ID] citation — do not remove or rewrite claim IDs.
 - Preserve uncertainty and source limitations.
+- Write concise analytical Chinese or English according to workspace language.
+- Do not add unsupported facts.
 
 ## Hard Rules
 
 - Do not add unsupported facts, numbers, or causality.
 - Do not write investment advice or trading signals.
 - Do not cite claims that do not exist in the ledger.
+- Do not remove or rewrite [src:CLAIM_ID] citations.
 
 ## Pipeline Context
 

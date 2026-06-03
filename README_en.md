@@ -418,6 +418,52 @@ python scripts/generate_agent_configs.py --check
 
 See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows setup. WSL is optional, not required.
 
+## Claude Code Agent Mode
+
+This repository supports a Claude Code subagent orchestration layer for interactive source planning, claim extraction, analysis, and editing.
+
+### Two-Layer Architecture
+
+| Layer | Purpose | Characteristics |
+|-------|---------|-----------------|
+| Python CLI | Deterministic pipeline execution, audit, output | Testable, no API keys required |
+| Claude Code subagents | Interactive source planning, extraction, analysis, editing | Model-assisted judgment |
+
+The two layers complement each other. The Python CLI is the source of truth for pipeline logic and audit gates.
+
+### Available Subagents
+
+Subagent definitions live in `.claude/agents/`:
+
+| Subagent | Purpose |
+|----------|---------|
+| `source-planner` | Generate/refine source candidates and search tasks |
+| `scout` | Extract candidate reportable items from sources |
+| `analyst` | Draft management-ready brief sections |
+| `editor` | Improve readability without adding facts |
+| `auditor` | Review final brief against ledger and audit report |
+
+### Usage Examples
+
+```text
+# Source planning
+"Use the source-planner subagent to create sources for the workspace at ../mabw-workspace."
+
+# Claim extraction
+"Use the scout subagent to extract claims from the latest search results."
+
+# Run pipeline
+multi-agent-brief run --config ../mabw-workspace/config.yaml
+
+# Analyst improvement
+"Use the analyst subagent to improve the brief while preserving citations."
+
+# Auditor review
+"Use the auditor subagent to verify the final output."
+```
+
+See [docs/claude-code-workflow.md](docs/claude-code-workflow.md) and [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md).
+
 ## Roadmap
 
 - MVP: local inputs, Claim Ledger, deterministic audit, Markdown output, source map, and quality harness checks.

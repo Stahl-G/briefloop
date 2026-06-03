@@ -86,20 +86,43 @@ roles:
       - "Do not claim sources are verified when they are only collected."
       - "Do not silently skip provider validation errors."
 
+  source-planner:
+    stage: coordination
+    tool_profile: edit_safe
+    description: "Reads user.md, config.yaml, and sources.yaml to generate or refine source_candidates.yaml and search_tasks. Ensures all sources are public, citable, and timestamped."
+    trigger: "Use when planning source discovery, generating search tasks, or refining source candidates for a brief workspace."
+    responsibilities:
+      - "Read user.md, config.yaml, and sources.yaml to understand the briefing context."
+      - "Generate or refine source_candidates.yaml with public, citable, timestamped sources."
+      - "Generate or refine search_tasks in sources.yaml."
+      - "Ensure all proposed sources are public, citable, and timestamped."
+      - "Only use public, citable sources — never include private or confidential content."
+      - "Align source discovery with user industry, role, and focus areas."
+    hard_rules:
+      - "Do not propose private, internal, or confidential sources."
+      - "Do not include credentials, tokens, or MNPI in source plans."
+      - "Do not claim sources are verified before collection."
+      - "Do not bypass source profile constraints."
+
   scout:
     stage: pipeline
     tool_profile: read_only
     description: "Extracts candidate reportable items from local markdown, text, JSON, and future connector sources."
     trigger: "Use when inspecting source inputs or extracting candidate items before screening."
     responsibilities:
-      - "Find reportable signals."
+      - "Read source packages, Tavily/RSS/local input outputs."
+      - "Filter boilerplate, navigation, cookies, privacy text, directories, and ads."
+      - "Extract structured claims from source content."
+      - "Each claim must include: statement, evidence_text, source_url, published_at or retrieved_at, topic, claim_type, confidence."
       - "Preserve source path, source ID, source date, and evidence text."
       - "Mark vague, stale-looking, duplicate-looking, or low-confidence items."
       - "Return candidates, not final analysis."
+      - "Do not invent facts."
     hard_rules:
       - "Do not write final brief prose."
       - "Do not rank or capacity-cap candidates."
       - "Do not create unsupported facts."
+      - "Do not invent claims not present in source material."
 
   screener:
     stage: pipeline
@@ -142,14 +165,18 @@ roles:
     description: "Drafts executive-readable brief sections using only Claim Ledger entries."
     trigger: "Use when implementing or reviewing Markdown brief generation, section writing, or claim citation behavior."
     responsibilities:
-      - "Draft clear brief sections."
-      - "Use only Claim Ledger material."
-      - "Attach [src:CLAIM_ID] citations to important statements."
+      - "Read claim_ledger.json and user.md to understand context and available evidence."
+      - "Draft management-ready sections using only Claim Ledger material."
+      - "Attach [src:CLAIM_ID] citations to every important statement."
+      - "Preserve every [src:CLAIM_ID] citation — do not remove or rewrite claim IDs."
       - "Preserve uncertainty and source limitations."
+      - "Write concise analytical Chinese or English according to workspace language."
+      - "Do not add unsupported facts."
     hard_rules:
       - "Do not add unsupported facts, numbers, or causality."
       - "Do not write investment advice or trading signals."
       - "Do not cite claims that do not exist in the ledger."
+      - "Do not remove or rewrite [src:CLAIM_ID] citations."
 
   auditor:
     stage: pipeline
@@ -157,13 +184,17 @@ roles:
     description: "Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures."
     trigger: "Use when implementing or reviewing deterministic audit, quality harness, semantic audit adapter hooks, or final delivery gates."
     responsibilities:
-      - "Protect source grounding."
-      - "Check missing or orphan claim references."
-      - "Check unsupported numbers."
-      - "Check stale sources."
-      - "Check redaction risks."
+      - "Review final brief against claim_ledger.json and audit_report.json."
+      - "Check unsupported facts — every important statement must have a [src:CLAIM_ID]."
+      - "Check missing citations — claims in ledger not cited in brief."
+      - "Check orphan citations — [src:CLAIM_ID] in brief not found in ledger."
+      - "Check stale sources — sources older than configured reporting window."
+      - "Check investment-advice language — no trading signals or investment recommendations."
+      - "Check redaction risks — no private identifiers, internal paths, or confidential content."
       - "Check low-confidence source leakage."
       - "Check process residue and placeholders."
+      - "Recommend fixes for each finding."
+      - "Prefer running python deterministic audit commands where available."
       - "Coordinate draft and final harness agents when needed."
     hard_rules:
       - "Do not weaken audit gates to pass tests."
@@ -176,15 +207,18 @@ roles:
     description: "Improves clarity, structure, tone, and executive readability without adding facts."
     trigger: "Use when improving final Markdown prose, documentation wording, or report readability after audit issues are resolved."
     responsibilities:
-      - "Improve readability."
+      - "Improve readability and management tone."
       - "Reduce repetition."
-      - "Preserve all [src:CLAIM_ID] citations."
+      - "Preserve all [src:CLAIM_ID] citations exactly — do not remove or rewrite claim IDs."
       - "Preserve uncertainty."
       - "Remove internal residue when safe."
+      - "Do not add new facts."
+      - "Do not remove or rewrite claim IDs."
     hard_rules:
       - "Do not add new claims."
       - "Do not remove claim citations."
       - "Do not convert caveats into certainty."
+      - "Do not remove or rewrite [src:CLAIM_ID] citations."
 
   formatter:
     stage: pipeline

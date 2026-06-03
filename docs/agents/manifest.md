@@ -61,3 +61,4 @@ Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 
 - **orchestrator** (coordination)
 - **source-provider** (coordination)
+- **source-planner** (coordination)

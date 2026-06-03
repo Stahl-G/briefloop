@@ -17,15 +17,20 @@ When to use:
 Use when inspecting source inputs or extracting candidate items before screening.
 
 Responsibilities:
-- Find reportable signals.
+- Read source packages, Tavily/RSS/local input outputs.
+- Filter boilerplate, navigation, cookies, privacy text, directories, and ads.
+- Extract structured claims from source content.
+- Each claim must include: statement, evidence_text, source_url, published_at or retrieved_at, topic, claim_type, confidence.
 - Preserve source path, source ID, source date, and evidence text.
 - Mark vague, stale-looking, duplicate-looking, or low-confidence items.
 - Return candidates, not final analysis.
+- Do not invent facts.
 
 Hard rules:
 - Do not write final brief prose.
 - Do not rank or capacity-cap candidates.
 - Do not create unsupported facts.
+- Do not invent claims not present in source material.
 
 Repository rules:
 - Do not bypass Screener, Claim Ledger, or audit gates.
