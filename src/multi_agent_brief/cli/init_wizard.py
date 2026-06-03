@@ -503,10 +503,10 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
         if pack:
             seed_tasks = pack.get("search_tasks", [])
 
-    # web_search: only enabled if user opted in to Tavily
+    # web_search: always enabled; configure Tavily backend if user has API key
+    if "web_search" not in enabled:
+        enabled.append("web_search")
     if profile.tavily_enabled:
-        if "web_search" not in enabled:
-            enabled.append("web_search")
         web_search_config: dict[str, Any] = {
             "enabled": True,
             "backend": "tavily",
@@ -520,11 +520,11 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             web_search_config["search_tasks"] = seed_tasks
     else:
         web_search_config = {
-            "enabled": False,
+            "enabled": True,
             "backend": "",
             "max_results": 20,
             "recency_days": 7,
-            "note": "Configure a real backend or external agent before enabling web_search.",
+            "note": "No search backend configured. Set TAVILY_API_KEY and run init with --tavily to enable live search.",
         }
 
     return {
@@ -639,7 +639,13 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
                 "recency_days": 7,
             }
             if profile.tavily_enabled
-            else {"enabled": False}
+            else {
+                "enabled": True,
+                "backend": "",
+                "max_results": 20,
+                "recency_days": 7,
+                "note": "No search backend configured. Set TAVILY_API_KEY and run init with --tavily to enable live search.",
+            }
         ),
         "api": {"enabled": False, "providers": []},
         "mcp": {"enabled": False, "servers": []},
