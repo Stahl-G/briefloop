@@ -300,7 +300,7 @@ def test_pipeline_provider_sources_appear_in_brief(tmp_path):
 
     outputs = BriefPipeline().run(context)
 
-    brief_text = (output_dir / "brief.md").read_text(encoding="utf-8")
+    brief_text = (output_dir / "draft_brief.md").read_text(encoding="utf-8")
     assert "manufacturing" in brief_text.lower() or "capacity" in brief_text.lower()
     assert "[src:" in brief_text
 
@@ -371,7 +371,7 @@ def test_pipeline_backward_compat_empty_input(tmp_path):
     outputs = BriefPipeline().run(context)
     # Should complete without error, with 7 outputs
     assert len(outputs) == 7
-    assert (output_dir / "brief.md").exists()
+    assert (output_dir / "draft_brief.md").exists()
 
 
 # --- Manual source path resolution ---
@@ -434,7 +434,7 @@ def test_cli_run_with_external_workspace(tmp_path):
     exit_code = main(["run", "--config", str(ws / "config.yaml")])
     assert exit_code == 0
 
-    brief = (ws / "output" / "brief.md").read_text(encoding="utf-8")
+    brief = (ws / "output" / "draft_brief.md").read_text(encoding="utf-8")
     assert "[src:" in brief, "Brief should contain [src:] citations"
 
     import json

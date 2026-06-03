@@ -215,7 +215,7 @@ class TestFormatterDocxIntegration:
     """Test FormatterAgent DOCX output via the pipeline."""
 
     def test_markdown_only_output_no_docx(self, workspace):
-        """When output.formats does not include 'docx', no brief.docx is created."""
+        """When output.formats does not include 'docx', no draft_brief.docx is created."""
         from multi_agent_brief.agents.formatter import FormatterAgent
         from multi_agent_brief.core.claim_ledger import ClaimLedger
         from multi_agent_brief.core.schemas import PipelineContext, ReportState
@@ -225,17 +225,17 @@ class TestFormatterDocxIntegration:
             input_dir=str(workspace / "input"),
             output_dir=str(workspace / "output"),
             output_formats=["markdown"],
-            report_state=ReportState(final_markdown="# Hello\n\nWorld.\n"),
+            report_state=ReportState(prepared_markdown="# Hello\n\nWorld.\n"),
         )
         agent = FormatterAgent()
         result = agent.run(context, ClaimLedger())
 
-        assert "brief" in result.artifacts
-        assert "brief_docx" not in result.artifacts
-        assert not (workspace / "output" / "brief.docx").exists()
+        assert "draft_brief" in result.artifacts
+        assert "draft_brief_docx" not in result.artifacts
+        assert not (workspace / "output" / "draft_brief.docx").exists()
 
-    def test_docx_format_creates_brief_docx(self, workspace):
-        """When 'docx' is in output.formats, brief.docx is created."""
+    def test_docx_format_creates_draft_brief_docx(self, workspace):
+        """When 'docx' is in output.formats, draft_brief.docx is created."""
         from multi_agent_brief.agents.formatter import FormatterAgent
         from multi_agent_brief.core.claim_ledger import ClaimLedger
         from multi_agent_brief.core.schemas import PipelineContext, ReportState
@@ -245,14 +245,14 @@ class TestFormatterDocxIntegration:
             input_dir=str(workspace / "input"),
             output_dir=str(workspace / "output"),
             output_formats=["markdown", "docx"],
-            report_state=ReportState(final_markdown=SAMPLE_MARKDOWN),
+            report_state=ReportState(prepared_markdown=SAMPLE_MARKDOWN),
         )
         agent = FormatterAgent()
         result = agent.run(context, ClaimLedger())
 
-        assert "brief" in result.artifacts
-        assert "brief_docx" in result.artifacts
-        docx_path = Path(result.artifacts["brief_docx"])
+        assert "draft_brief" in result.artifacts
+        assert "draft_brief_docx" in result.artifacts
+        docx_path = Path(result.artifacts["draft_brief_docx"])
         assert docx_path.exists()
         assert docx_path.stat().st_size > 0
 
@@ -268,13 +268,13 @@ class TestFormatterDocxIntegration:
             output_dir=str(workspace / "output"),
             output_formats=["docx"],
             output_footer="Confidential — Internal Use Only",
-            report_state=ReportState(final_markdown="# Report\n\nContent.\n"),
+            report_state=ReportState(prepared_markdown="# Report\n\nContent.\n"),
         )
         agent = FormatterAgent()
         result = agent.run(context, ClaimLedger())
 
-        assert "brief_docx" in result.artifacts
-        docx_path = Path(result.artifacts["brief_docx"])
+        assert "draft_brief_docx" in result.artifacts
+        docx_path = Path(result.artifacts["draft_brief_docx"])
         assert docx_path.exists()
 
 

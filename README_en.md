@@ -1,18 +1,18 @@
-# Multi-Agent Brief Workflow
+# Multi-Agent Brief Workflow Toolkit
 
 <p align="center">
   <a href="README_en.md">English</a> |
   <a href="README.md">简体中文</a>
 </p>
 
-A source-grounded, audit-ready multi-agent workflow for producing business, research, market, policy, and management briefs.
+A source-grounded, audit-ready agent-orchestrated workflow toolkit for producing business, research, market, policy, and management briefs.
 
 > Let code do lookup. Let models do judgment. Keep every important claim traceable.
 
-This project turns the repeatable briefing workflow used by analysts, strategy teams, investor relations teams, research desks, and management offices into a transparent Python pipeline:
+This project provides workspace initialization, source discovery, source collection, Claim Ledger/audit utilities, document rendering, and Claude/Codex agent workflow support. The final brief is written by Claude Code / Codex / external LLM agents using Claim Ledger and audit outputs.
 
 ```text
-Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
+Onboarding → Workspace Profile → Source Discovery → Source Collection → Claim Ledger/audit → Agent-assisted Drafting → Final Audit → Rendered Outputs
 ```
 
 It is not an investment advice tool, trading signal generator, or replacement for human review.
@@ -21,12 +21,13 @@ It is not an investment advice tool, trading signal generator, or replacement fo
 
 Most weekly reports and executive briefs still depend on a fragile manual process: collect information, decide what matters, write analysis, verify facts, edit wording, and format the final file. That process is easy to rush, hard to audit, and difficult to reuse across teams.
 
-This repo makes the workflow modular, inspectable, and runnable locally:
+This repo provides a toolkit that makes the workflow modular, inspectable, and runnable locally:
 
-- Source-backed statements are written into a Claim Ledger before they enter the brief.
+- Python tools handle source collection, signal filtering, evidence tracking, and audit checks.
+- Claude/Codex agents write the final brief from the Claim Ledger.
 - Drafts use explicit `[src:CLAIM_ID]` citations.
-- Auditors can check unsupported numbers, stale sources, duplicate claims, placeholders, and redaction risks.
-- Output artifacts keep the brief, audit report, claim ledger, and source map separate.
+- Auditors check unsupported numbers, stale sources, duplicate claims, placeholders, and redaction risks.
+- Output artifacts keep the draft brief, audit report, claim ledger, and source map separate.
 
 ## Project Motivation
 
@@ -34,10 +35,10 @@ This project is an open-source workflow for producing leadership briefs, weekly 
 
 In many organizations, interns, management trainees, and junior analysts spend a large amount of time preparing daily, weekly, and monthly reports. The work is important, but the process is often repetitive: collecting sources, filtering what matters, removing stale or duplicate signals, drafting analysis, checking facts, editing wording, and formatting the final document.
 
-This project turns that workflow into a source-grounded, audit-ready, multi-agent pipeline:
+This project turns that workflow into a source-grounded, audit-ready, agent-orchestrated toolkit:
 
 ```text
-Source Providers -> Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
+Onboarding → Source Discovery → Source Collection → Claim Ledger/audit → Agent-assisted Drafting → Final Audit → Rendered Outputs
 ```
 
 It does not replace human judgment and does not provide investment advice. Instead, it helps structure repetitive briefing work so people can spend more time on analysis, discussion, and decision support.
@@ -50,57 +51,80 @@ The core principle is:
 
 A real briefing process is not one job. It is a small editorial desk:
 
-- Scout finds reportable signals.
-- Screener filters and ranks candidates by novelty, source tier, and topic capacity.
-- Claim Ledger records evidence.
-- Analyst turns evidence into a structured draft.
-- Auditor checks whether the draft is supported and distribution-ready.
-- Editor improves readability without inventing new facts.
-- Formatter writes the final artifacts.
+- **Python preparation tools** handle source collection, signal filtering, evidence tracking, and audit checks.
+- **Claude/Codex agents** handle analysis writing, editing, and final delivery audit.
+- **Rendering tools** handle Markdown, DOCX, and other output formats.
 
-Splitting these roles reduces hidden reasoning shortcuts. Each step has a narrow responsibility, and the audit trail shows where a claim came from before it reaches the final brief.
+Splitting these roles reduces hidden reasoning shortcuts. Python tools handle deterministic tasks, agents handle tasks requiring judgment, and the audit trail shows where every claim came from.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-  A["Inputs<br/>Markdown, text, JSON"] --> B["Scout"]
-  B --> C["Screener"]
-  C --> D["Claim Ledger"]
-  D --> E["Analyst"]
-  E --> F["Auditor"]
-  F --> G["Editor"]
-  G --> H["Formatter"]
-  H --> I["Outputs<br/>Brief, Claim Ledger, Audit Report, Source Map"]
+flowchart TB
+  subgraph "User Onboarding"
+    A["Conversational Onboarding<br/>onboarding.json"] --> B["Workspace Profile<br/>config.yaml, sources.yaml, user.md"]
+  end
+
+  subgraph "Source Discovery & Collection"
+    B --> C["Source Discovery<br/>sources decide"]
+    C --> D["Source Collection<br/>Manual/RSS/Web/API"]
+  end
+
+  subgraph "Python Preparation Tools"
+    D --> E["Scout<br/>Signal Extraction"]
+    E --> F["Screener<br/>Filter & Dedup"]
+    F --> G["Claim Ledger<br/>Evidence Tracking"]
+    G --> H["Audit Utilities<br/>Deterministic + Quality Checks"]
+  end
+
+  subgraph "Agent-Assisted (Claude Code / Codex)"
+    H --> I["Analyst Agent<br/>Draft from Claim Ledger"]
+    I --> J["Editor Agent<br/>Polish & Clean"]
+    J --> K["Final Auditor<br/>Delivery Check"]
+  end
+
+  subgraph "Rendered Outputs"
+    K --> L["Formatter<br/>Markdown/DOCX/PDF"]
+  end
 ```
 
 See [docs/architecture.md](docs/architecture.md) for the plain-language architecture guide.
 
-## Current MVP
+## Current Features
 
-The first local MVP supports:
+This project provides the following tools and capabilities:
 
-- Local `.md`, `.txt`, and `.json` inputs
-- Scout agent that extracts candidate reportable items
-- Screener agent that filters claims by novelty scoring, topic capacity caps, and previous-report deduplication
-- Claim Ledger with source-grounded claims
-- Analyst agent that drafts a Markdown brief with `[src:CLAIM_ID]` citations
-- Auditor agent interface with deterministic audit and semantic-audit adapter hooks
-- Deterministic Auditor for missing claims, unsupported numbers, duplicate claims, redaction risks, and stale sources
-- Quality harness checks for placeholders, low-confidence sources, process residue, stale filler, and unit risks
-- Editor agent that prepares the final Markdown brief
-- Formatter agent that writes `brief.md`, `claim_ledger.json`, `audit_report.json`, and `source_map.md`
-- `multi-agent-brief sources decide` subcommand resolves `llm_decide` source policy into concrete candidates, with `--merge` to merge back into `sources.yaml`
+**Workspace & Onboarding:**
+- `multi-agent-brief init` creates a reusable brief workspace
 - `multi-agent-brief init --from-onboarding onboarding.json` supports conversational onboarding initialization
 - Onboarding mapper auto-translates Chinese role, industry, and audience labels into English config values
+
+**Source Discovery & Collection:**
+- `multi-agent-brief sources decide` subcommand resolves `llm_decide` source policy into concrete candidates, with `--merge` to merge back into `sources.yaml`
+- Supports manual files, RSS, web search, API, SEC filings, MCP, CLI source providers
+- `multi-agent-brief doctor` checks source configuration health
+
+**Preparation Tools (Python Deterministic Pipeline):**
+- Scout agent extracts candidate reportable items
+- Screener agent filters claims by novelty scoring, topic capacity caps, and previous-report deduplication
+- Claim Ledger records source-grounded evidence
+- Deterministic audit checks missing claims, unsupported numbers, duplicate claims, redaction risks, and stale sources
+- Quality harness checks for placeholders, low-confidence sources, process residue, stale filler, and unit risks
+- `multi-agent-brief run` prepares intermediate artifacts: `draft_brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md`
+
+**Agent-Assisted (Claude Code / Codex):**
+- Claude Code subagents (analyst, editor, auditor) write the final brief from Claim Ledger
+- `/generate-brief` slash command orchestrates the full agent workflow
+- Codex agent and skill configs auto-generated
+
+**Rendering & Output:**
+- DOCX renderer (enabled by default)
 - `python scripts/public_safe_scan.py` public-safe content scanner detects personal info and sensitive content leaks in public files
 - `python scripts/check_terms.py` terminology consistency checker prevents spelling drift
-- Manual source path resolution: relative paths in `sources.yaml` are resolved against the config file's parent directory, enabling workspaces outside the repo
-- `report.date: auto` automatically generates the report date using today's date
 
 ## Example Output
 
-The MVP creates a Markdown brief with source citations:
+The preparation tools create a Markdown draft with source citations:
 
 ```markdown
 ## Market

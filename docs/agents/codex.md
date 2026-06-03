@@ -15,7 +15,7 @@
 - `analyst.toml` — Drafts executive-readable brief sections using only Claim Ledger entries.
 - `auditor.toml` — Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures.
 - `editor.toml` — Improves clarity, structure, tone, and executive readability without adding facts.
-- `formatter.toml` — Writes and validates final artifacts: brief.md, claim_ledger.json, audit_report.json, source_map.md.
+- `formatter.toml` — Writes and validates preparation artifacts: draft_brief.md, claim_ledger.json, audit_report.json, source_map.md.
 - `draft-audit-harness.toml` — Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks.
 - `final-quality-harness.toml` — Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target.
 - `rendered-output-harness.toml` — Reviews rendered output gates for DOCX/PDF/Markdown rendering fidelity.

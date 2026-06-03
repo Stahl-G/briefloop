@@ -28,7 +28,7 @@ def test_formatter_persists_docx_generation_metadata_when_docx_missing(tmp_path)
         findings=[],
         metadata={},
     )
-    context.report_state.final_markdown = "# Test Brief\n\nSome content.\n"
+    context.report_state.prepared_markdown = "# Test Brief\n\nSome content.\n"
 
     # Run formatter — docx will fail because python-docx may not be installed,
     # or it will succeed. Either way, docx_generation must be in the JSON.
@@ -65,7 +65,7 @@ def test_formatter_no_docx_when_not_in_formats(tmp_path):
         findings=[],
         metadata={},
     )
-    context.report_state.final_markdown = "# Test Brief\n\nContent.\n"
+    context.report_state.prepared_markdown = "# Test Brief\n\nContent.\n"
 
     FormatterAgent().run(context, ClaimLedger())
 

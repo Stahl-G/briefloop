@@ -1,18 +1,18 @@
-# 多Agent周报生成流水线
+# 多Agent简报工作流工具包
 
 <p align="center">
   <a href="README_en.md">English</a> |
   <a href="README.md">简体中文</a>
 </p>
 
-一个基于来源、可审计的多智能体工作流，用于生成商业、研究、市场、政策和管理层简报。
+一个基于来源、可审计的智能体编排工作流工具包，用于生成商业、研究、市场、政策和管理层简报。
 
 > 让代码负责查找，让模型负责判断，让每一个重要结论都可以追溯来源。
 
-本项目把分析师、战略团队、投资者关系团队、研究部门和管理层办公室常见的重复性简报生产流程，转化为一个透明的 Python 流水线：
+本项目提供工作区初始化、来源发现、来源收集、Claim Ledger/审计工具、文档渲染和 Claude/Codex 智能体工作流支持。最终简报由 Claude Code / Codex / 外部 LLM 智能体基于 Claim Ledger 和审计输出撰写。
 
 ```text
-Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
+用户引导 → 工作区配置 → 来源发现 → 来源收集 → Claim Ledger/审计工具 → 智能体辅助撰写 → 最终审计 → 渲染输出
 ```
 
 本项目不是投资建议工具，不是交易信号生成器，也不能替代人工审核。
@@ -21,10 +21,11 @@ Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 
 很多周报和管理层简报仍然依赖脆弱的手工流程：收集信息、判断重点、撰写分析、核验事实、编辑措辞、排版输出。这个过程很容易赶工，也很难在事后解释”这句话从哪里来”。
 
-本仓库把这个流程拆成可检查、可复用、可本地运行的模块：
+本仓库提供一套工具，把这个流程拆成可检查、可复用、可本地运行的模块：
 
-- 重要表述先进入 Claim Ledger，再进入简报。
-- 简报草稿使用 `[src:CLAIM_ID]` 标注来源。
+- Python 工具负责来源收集、信息筛选、事实追踪和审计检查。
+- Claude/Codex 智能体负责基于 Claim Ledger 撰写最终简报。
+- 简报使用 `[src:CLAIM_ID]` 标注来源。
 - 审计环节检查无支撑数字、过期来源、重复 claim、占位符和脱敏风险。
 - 输出文件把正文、事实账本、审计报告和来源映射分开保存。
 
@@ -43,75 +44,98 @@ Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
 * 修改措辞、压缩篇幅、调整结构；
 * 最后再输出成 Markdown、Word、PDF 或推送到协作平台。
 
-这个项目希望把这类重复性的 briefing 工作抽象成一个开源 workflow：
+这个项目希望把这类重复性的 briefing 工作抽象成一个开源工具包：
 
 ```text
-Source Providers -> Scout -> Screener -> Claim Ledger -> Analyst -> Auditor -> Editor -> Formatter
+用户引导 → 来源发现 → 来源收集 → Claim Ledger/审计 → 智能体辅助撰写 → 最终审计 → 渲染输出
 ```
 
-它不是为了替代人的判断，也不是为了生成投资建议，而是希望把”来源接入、信息筛选、事实追踪、初稿生成、审计校验、编辑润色、格式输出”这些环节拆开，让代码和多智能体协作承担更多重复劳动。
+它不是为了替代人的判断，也不是为了生成投资建议，而是希望把”来源接入、信息筛选、事实追踪”这些确定性环节交给 Python 工具，把”分析撰写、编辑润色”这些需要判断的环节交给 Claude/Codex 智能体，让每一个重要结论都可以追溯来源。
 
 项目的核心原则是：
 
 > 让代码负责查找，让模型负责判断，让每一个重要结论都可以追溯来源。
 
-换句话说，这个项目不是一个简单的”AI 写周报”工具，而是一个面向真实研究和管理场景的、可审计的简报生产流水线。它希望帮助新人和分析师把时间从重复整理中释放出来，更多投入到判断、讨论、提问和决策支持上。
+换句话说，这个项目不是一个简单的”AI 写周报”工具，而是一个面向真实研究和管理场景的、可审计的智能体编排工作流工具包。它希望帮助新人和分析师把时间从重复整理中释放出来，更多投入到判断、讨论、提问和决策支持上。
 
 ## 为什么不是一个 Prompt
 
 真实的简报生产不是一个任务，而像一个小型编辑台：
 
-- Scout（信息侦察员）负责发现可写入简报的信号。
-- Screener（筛选师）按新颖度、源层级和主题容量筛选候选声明。
-- Claim Ledger（事实账本）负责记录证据。
-- Analyst（分析员）把证据整理成结构化草稿。
-- Auditor（审计员）检查草稿是否有来源支撑、是否适合分发。
-- Editor（编辑）改善结构和表达，但不发明新事实。
-- Formatter（格式转换器）输出最终文件。
+- **Python 准备工具**负责来源收集、信息筛选、事实追踪和审计检查。
+- **Claude/Codex 智能体**负责基于 Claim Ledger 撰写分析、润色编辑和最终审计。
+- **渲染工具**负责输出 Markdown、DOCX 等格式。
 
-把角色拆开，可以减少单个模型“顺手编”的空间。每一步职责更窄，审计轨迹也更清楚。
+把职责拆开，可以减少单个模型”顺手编”的空间。Python 工具处理确定性任务，智能体处理需要判断的任务，审计轨迹也更清楚。
 
 ## 架构
 
 ```mermaid
-flowchart LR
-  A["输入<br/>Markdown、文本、JSON"] --> B["Scout<br/>信息侦察员"]
-  B --> C["Screener<br/>筛选师"]
-  C --> D["Claim Ledger<br/>事实账本"]
-  D --> E["Analyst<br/>分析员"]
-  E --> F["Auditor<br/>审计员"]
-  F --> G["Editor<br/>编辑"]
-  G --> H["Formatter<br/>格式转换器"]
-  H --> I["输出<br/>Brief、Claim Ledger、Audit Report、Source Map"]
+flowchart TB
+  subgraph "用户引导"
+    A["对话式入职<br/>onboarding.json"] --> B["工作区配置<br/>config.yaml, sources.yaml, user.md"]
+  end
+
+  subgraph "来源发现与收集"
+    B --> C["来源发现<br/>sources decide"]
+    C --> D["来源收集<br/>手动/RSS/Web/API"]
+  end
+
+  subgraph "Python 准备工具"
+    D --> E["Scout<br/>信息侦察"]
+    E --> F["Screener<br/>筛选去重"]
+    F --> G["Claim Ledger<br/>事实账本"]
+    G --> H["审计工具<br/>确定性+质量检查"]
+  end
+
+  subgraph "智能体辅助（Claude Code / Codex）"
+    H --> I["分析智能体<br/>基于 Claim Ledger 撰写"]
+    I --> J["编辑智能体<br/>润色去残"]
+    J --> K["最终审计<br/>交付检查"]
+  end
+
+  subgraph "渲染输出"
+    K --> L["格式化<br/>Markdown/DOCX/PDF"]
+  end
 ```
 
 详见 [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)。
 
-## 当前 MVP
+## 当前功能
 
-第一个本地 MVP 支持：
+本项目提供以下工具和能力：
 
-- 本地 `.md`、`.txt` 和 `.json` 输入
+**工作区与入职：**
+- `multi-agent-brief init` 创建可复用的简报工作区
+- `multi-agent-brief init --from-onboarding onboarding.json` 支持对话式入职初始化
+- 入职向导映射器自动将中文岗位、行业、受众标签映射为英文配置值
+
+**来源发现与收集：**
+- `multi-agent-brief sources decide` 子命令将 `llm_decide` 来源策略解析为具体候选来源，支持 `--merge` 合并回 `sources.yaml`
+- 支持手动文件、RSS、Web 搜索、API、SEC Filing、MCP、CLI 等来源提供商
+- `multi-agent-brief doctor` 检查来源配置健康状态
+
+**准备工具（Python 确定性流水线）：**
 - Scout 智能体抽取候选可写入简报的事项
 - Screener 智能体按新颖度评分、主题容量上限和历史去重筛选候选声明
 - Claim Ledger 记录有来源支撑的事实与判断
-- Analyst 智能体用 `[src:CLAIM_ID]` 引用生成 Markdown 草稿
-- Auditor 智能体接口，支持确定性审计和语义审计适配器
-- Deterministic Auditor 检查缺失 claim、无支撑数字、重复 claim、脱敏风险和过期来源
+- 确定性审计检查缺失 claim、无支撑数字、重复 claim、脱敏风险和过期来源
 - Quality Harness 检查占位符、低置信来源、流程残留文本、陈旧填充内容和单位风险
-- Editor 智能体生成最终 Markdown 简报
-- Formatter 智能体写出 `brief.md`、`claim_ledger.json`、`audit_report.json` 和 `source_map.md`
-- `multi-agent-brief sources decide` 子命令将 `llm_decide` 来源策略解析为具体候选来源，支持 `--merge` 合并回 `sources.yaml`
-- `multi-agent-brief init --from-onboarding onboarding.json` 支持对话式入职初始化
-- 入职向导映射器自动将中文岗位、行业、受众标签映射为英文配置值
+- `multi-agent-brief run` 准备中间产物：`draft_brief.md`、`claim_ledger.json`、`audit_report.json`、`source_map.md`
+
+**智能体辅助（Claude Code / Codex）：**
+- Claude Code 子智能体（analyst、editor、auditor）基于 Claim Ledger 撰写最终简报
+- `/generate-brief` 斜杠命令自动执行完整的智能体编排工作流
+- Codex 智能体和技能配置自动生成
+
+**渲染与输出：**
+- DOCX 渲染器（默认启用）
 - `python scripts/public_safe_scan.py` 公共安全扫描器检测公开文件中的个人信息和敏感内容泄露
 - `python scripts/check_terms.py` 术语一致性检查器防止拼写漂移
-- 手动来源路径解析：`sources.yaml` 中的相对路径基于配置文件所在目录解析，支持在仓库外部运行工作区
-- `report.date: auto` 自动生成报告日期（使用当天日期）
 
 ## 输出示例
 
-MVP 会生成带来源引用的 Markdown 简报：
+准备工具会生成带来源引用的 Markdown 草稿：
 
 ```markdown
 ## Market

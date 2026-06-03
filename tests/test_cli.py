@@ -15,7 +15,7 @@ def test_cli_init_and_run(tmp_path):
     (workspace / "input" / "news.md").write_text("- Test signal for weekly brief.\n", encoding="utf-8")
 
     assert main(["run", "--config", str(workspace / "config.yaml")]) == 0
-    assert (workspace / "output" / "brief.md").exists()
+    assert (workspace / "output" / "draft_brief.md").exists()
     assert (workspace / "output" / "claim_ledger.json").exists()
 
 
@@ -27,7 +27,7 @@ def test_cli_run_with_industry(tmp_path):
     (workspace / "input" / "data.md").write_text("- Financial earnings report shows growth.\n", encoding="utf-8")
 
     assert main(["run", "--config", str(workspace / "config.yaml"), "--industry", "finance"]) == 0
-    assert (workspace / "output" / "brief.md").exists()
+    assert (workspace / "output" / "draft_brief.md").exists()
 
 
 def test_cli_audit_existing_brief(tmp_path):
@@ -41,7 +41,7 @@ def test_cli_audit_existing_brief(tmp_path):
     exit_code = main(
         [
             "audit",
-            str(workspace / "output" / "brief.md"),
+            str(workspace / "output" / "draft_brief.md"),
             "--ledger",
             str(workspace / "output" / "claim_ledger.json"),
             "--output",

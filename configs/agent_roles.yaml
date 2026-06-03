@@ -12,7 +12,7 @@ project:
     - editor
     - formatter
   output_contract:
-    - brief.md
+    - draft_brief.md
     - claim_ledger.json
     - audit_report.json
     - source_map.md
@@ -232,7 +232,7 @@ roles:
   formatter:
     stage: pipeline
     tool_profile: edit_safe
-    description: "Writes and validates final artifacts: brief.md, claim_ledger.json, audit_report.json, source_map.md."
+    description: "Writes and validates preparation artifacts: draft_brief.md, claim_ledger.json, audit_report.json, source_map.md."
     trigger: "Use when implementing or reviewing output file writing, JSON validity, source maps, Markdown/DOCX/PDF rendering contracts."
     responsibilities:
       - "Write files only inside configured output directories."

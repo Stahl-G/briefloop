@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="multi-agent-brief")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Run the local MVP brief pipeline.")
+    run_parser = subparsers.add_parser("run", help="Run deterministic brief preparation pipeline (produces draft artifacts, not final brief).")
     run_parser.add_argument("input_dir", nargs="?", help="Directory containing .md, .txt, or .json input files.")
     run_parser.add_argument("--config", help="YAML config file. Provides input/output/project settings.")
     run_parser.add_argument("--output", help="Output directory.")
@@ -96,6 +96,12 @@ def _print_tavily_guidance() -> None:
 
 
 def run_pipeline_from_args(args: argparse.Namespace) -> int:
+    print()
+    print("NOTE: This command prepares intermediate artifacts only.")
+    print("It does not generate a final user-facing brief.")
+    print("Use Claude Code / Codex agents to produce the final brief from these artifacts.")
+    print()
+
     config = load_config(args.config) if args.config else None
     settings = build_run_settings(
         config=config,
@@ -257,7 +263,7 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
         target = Path(args.target)
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
-        print(f"Run: multi-agent-brief run --config {target / 'config.yaml'}")
+        print(f"Prepare draft artifacts: multi-agent-brief run --config {target / 'config.yaml'}")
         return 0
 
     from_onboarding = getattr(args, "from_onboarding", None)
@@ -281,7 +287,7 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
 
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
-    print(f"Run: multi-agent-brief run --config {target / 'config.yaml'}")
+    print(f"Prepare draft artifacts: multi-agent-brief run --config {target / 'config.yaml'}")
 
     # Print Tavily setup guidance if enabled
     if profile.tavily_enabled:

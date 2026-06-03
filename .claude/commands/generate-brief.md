@@ -1,9 +1,11 @@
 ---
-description: Generate a real source-grounded brief using CLI + Claude Code subagents
+description: Generate a real source-grounded brief using CLI preparation + Claude Code subagents
 argument-hint: "<workspace-path>"
 ---
 
 You are generating a real user-facing brief for workspace: $ARGUMENTS
+
+The Python CLI prepares intermediate artifacts only. The final brief must be written by Claude Code subagents using Claim Ledger and audit outputs.
 
 Follow this sequence exactly:
 
@@ -19,22 +21,24 @@ Follow this sequence exactly:
    - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml --merge`
    - Only proceed after sources are resolved, OR if the user explicitly chooses local input-only mode.
 
-3. Run:
-   - `multi-agent-brief doctor --config $ARGUMENTS/config.yaml`
+3. **Prepare intermediate artifacts:**
+   - Run: `multi-agent-brief doctor --config $ARGUMENTS/config.yaml`
    - Fix any issues before proceeding.
-   - `multi-agent-brief run --config $ARGUMENTS/config.yaml`
+   - Run: `multi-agent-brief run --config $ARGUMENTS/config.yaml`
+   - This produces `draft_brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md` — these are intermediate artifacts, not the final brief.
 
 4. Read:
    - $ARGUMENTS/output/claim_ledger.json
-   - $ARGUMENTS/output/brief.md
+   - $ARGUMENTS/output/draft_brief.md
    - $ARGUMENTS/user.md
 
 5. Invoke the **analyst** subagent:
-   - Rewrite the brief into the configured output language.
-   - Use only claim_ledger.json.
+   - Write the final brief from claim_ledger.json and user.md.
+   - Use only claim_ledger.json as source evidence.
    - Preserve all valid [src:CLAIM_ID] citations.
    - Include dates for news items.
    - Target a real weekly brief, not a thin bullet list.
+   - Write the final brief to $ARGUMENTS/output/brief.md.
 
 6. Invoke the **editor** subagent:
    - Polish for management / research team readability.

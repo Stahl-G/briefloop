@@ -1,13 +1,13 @@
 ---
 name: formatter
-description: Writes and validates final artifacts: brief.md, claim_ledger.json, audit_report.json, source_map.md. Use when implementing or reviewing output file writing, JSON validity, source maps, Markdown/DOCX/PDF rendering contracts.
+description: Writes and validates preparation artifacts: draft_brief.md, claim_ledger.json, audit_report.json, source_map.md. Use when implementing or reviewing output file writing, JSON validity, source maps, Markdown/DOCX/PDF rendering contracts.
 ---
 
 # Formatter Skill
 
 ## Purpose
 
-Writes and validates final artifacts: brief.md, claim_ledger.json, audit_report.json, source_map.md.
+Writes and validates preparation artifacts: draft_brief.md, claim_ledger.json, audit_report.json, source_map.md.
 
 ## When To Use
 
@@ -39,7 +39,7 @@ Source files, claim ledger entries, or draft markdown as appropriate for the pip
 ## Expected Outputs
 
 Structured artifacts conforming to the pipeline contract:
-- `brief.md`
+- `draft_brief.md`
 - `claim_ledger.json`
 - `audit_report.json`
 - `source_map.md`

@@ -1,6 +1,6 @@
 ---
 name: formatter
-description: Writes and validates final artifacts: brief.md, claim_ledger.json, audit_report.json, source_map.md. Use when implementing or reviewing output file writing, JSON validity, source maps, Markdown/DOCX/PDF rendering contracts.
+description: Writes and validates preparation artifacts: draft_brief.md, claim_ledger.json, audit_report.json, source_map.md. Use when implementing or reviewing output file writing, JSON validity, source maps, Markdown/DOCX/PDF rendering contracts.
 tools: Read, Grep, Glob, Bash, Edit, MultiEdit, Write
 model: inherit
 ---

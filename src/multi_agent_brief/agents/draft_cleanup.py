@@ -1,4 +1,4 @@
-"""Reusable cleanup utilities for removing process residue from brief text.
+"""Reusable cleanup utilities for removing process residue from draft text.
 
 Used by the deterministic EditorAgent and can be referenced by the Claude Code
 editor subagent for consistent cleanup behavior.

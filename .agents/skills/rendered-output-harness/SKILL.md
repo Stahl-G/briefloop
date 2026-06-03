@@ -41,7 +41,7 @@ Source files, claim ledger entries, or draft markdown as appropriate for the har
 ## Expected Outputs
 
 Structured artifacts conforming to the pipeline contract:
-- `brief.md`
+- `draft_brief.md`
 - `claim_ledger.json`
 - `audit_report.json`
 - `source_map.md`

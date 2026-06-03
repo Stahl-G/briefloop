@@ -107,7 +107,7 @@ class AgentOutput:
 @dataclass
 class ReportState:
     draft_markdown: str = ""
-    final_markdown: str = ""
+    prepared_markdown: str = ""
     sections: list[BriefSection] = field(default_factory=list)
     audit_report: AuditReport | None = None
 

@@ -45,17 +45,17 @@ When the user asks to initialize, start, or configure a brief workspace:
 
 Known issue: AskUserQuestion "Other" free-text input may be dismissed by Claude Code TUI in some terminals. Therefore it must not be used for required free-text onboarding.
 
-### Python pipeline vs Claude final delivery
+### Python preparation vs Claude final delivery
 
-The Python CLI runs a deterministic pipeline:
+The Python CLI runs deterministic preparation tools:
 
 ```text
-Scout → Screener → Claim Ledger → Analyst → Auditor → Editor → Formatter
+Scout → Screener → Claim Ledger → Auditor → Editor → Formatter
 ```
 
-This produces a **draft** — not a final brief. The Python Auditor checks draft facts.
+This produces **intermediate artifacts** (`draft_brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md`) — not a final brief. The Python Auditor checks draft facts.
 
-For real user-facing delivery, Claude Code must orchestrate subagents after the pipeline:
+For real user-facing delivery, Claude Code must orchestrate subagents after the preparation:
 
 ```text
 analyst → editor → final auditor → formatter
@@ -63,7 +63,7 @@ analyst → editor → final auditor → formatter
 
 The Claude final auditor checks the polished text — distinct from the Python draft-level audit.
 
-**Hard rule:** Do not silently deliver the deterministic Python draft as the final brief.
+**Hard rule:** Do not silently deliver the deterministic Python draft as the final brief. The final brief must be written by Claude Code / Codex / external LLM agents using Claim Ledger and audit outputs.
 
 ### Source profiles
 
