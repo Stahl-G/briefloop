@@ -30,7 +30,7 @@ https://www.python.org/downloads/windows/
 ## Clone And Setup
 
 ```powershell
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
+git clone https://github.com/your-username/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1

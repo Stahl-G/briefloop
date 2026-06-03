@@ -84,3 +84,20 @@ tests/         pytest suite
 - Generated files have `AUTO-GENERATED` header — edit `configs/agent_roles.yaml`
 - No API keys in config — use env var refs
 - `user.md` is agent context, never put it in `input/`
+
+## Conversational Onboarding Policy
+
+When the user asks to initialize, start, or configure a brief workspace:
+
+1. Do not use AskUserQuestion as the primary onboarding path.
+2. Ask plain-language questions directly in chat.
+3. Ask at most 4 questions before choosing recommended defaults.
+4. Let the user answer naturally in one message.
+5. If the user says "unknown", "default", or "choose for me", choose defaults.
+6. Convert answers internally to `onboarding.json`.
+7. Run: `multi-agent-brief init --from-onboarding onboarding.json`
+8. Use AskUserQuestion only for optional single-choice refinements.
+9. Never use AskUserQuestion for required free-text fields such as company name, title, keywords, focus areas, or source descriptions.
+10. Never expose YAML, schema, source_profile, selector_max_items, retrieval_provider, output_formats, or CLI flags unless the user asks as a developer.
+
+Known issue: AskUserQuestion "Other" free-text input may be dismissed by Claude Code TUI in some terminals. Therefore it must not be used for required free-text onboarding.

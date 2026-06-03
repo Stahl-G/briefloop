@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [
-  {name = "Yihong Guo"}
+  {name = "multi-agent-brief-workflow contributors"}
 ]
 dependencies = []
 

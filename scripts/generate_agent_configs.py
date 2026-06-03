@@ -123,6 +123,19 @@ def _sensitive_check(text: str, context: str) -> list[str]:
 # AGENTS.md
 # ---------------------------------------------------------------------------
 
+
+def _render_onboarding_rules(manifest: dict) -> str:
+    section = manifest.get("onboarding_rules")
+    if not section:
+        return ""
+    title = section.get("title", "Conversational onboarding rule")
+    rules = section.get("rules", [])
+    lines = [f"## {title}\n", "\n"]
+    for r in rules:
+        lines.append(f"- {r}\n")
+    return "".join(lines)
+
+
 def render_agents_md(manifest: dict) -> str:
     project = manifest["project"]
     roles = manifest["roles"]
@@ -355,7 +368,9 @@ def render_agents_md(manifest: dict) -> str:
         f"\n"
         f"Correct facts are necessary but not sufficient for final delivery.\n"
         f"\n"
-        f"## Agent Roles\n"
+        + _render_onboarding_rules(manifest)
+        + f"\n"
+        + f"## Agent Roles\n"
         f"\n"
         f"{roles_section}\n"
         f"\n"

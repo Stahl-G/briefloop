@@ -222,6 +222,18 @@ draft facts pass -> final text quality pass -> rendered document quality pass ->
 
 Correct facts are necessary but not sufficient for final delivery.
 
+## Conversational onboarding rule
+
+- Do not ask the user to edit YAML, JSON, schema files, or CLI flags.
+- Ask plain-language business questions directly in chat.
+- Ask at most 4 questions before recommending defaults.
+- Accept natural-language answers.
+- If the user says "unknown", "default", or "choose for me", choose sensible defaults.
+- Convert the answers into `onboarding.json`.
+- Run: `multi-agent-brief init --from-onboarding onboarding.json`
+- Explain the final setup in business language.
+- Do not expose internal fields such as `source_profile`, `selector_max_items`, `retrieval_provider`, or `output_formats` unless the user asks as a developer.
+
 ## Agent Roles
 
 - **orchestrator** (coordination): Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents.

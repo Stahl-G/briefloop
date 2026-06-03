@@ -7,6 +7,8 @@ from pathlib import Path
 from multi_agent_brief import __version__
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.cli.init_wizard import build_profile_from_args, create_demo_workspace, create_workspace
+from multi_agent_brief.onboarding.io import load_onboarding_result
+from multi_agent_brief.onboarding.mapper import map_onboarding_to_profile
 from multi_agent_brief.sources.decider import (
     load_source_discovery,
     build_search_queries,
@@ -61,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--retrieval-provider", choices=["ollama", "gemini"], help="Retrieval provider.")
     init_parser.add_argument("--output-formats", help="Comma-separated output formats.")
     init_parser.add_argument("--source-profile", choices=["conservative", "research", "aggressive_signal", "custom", "llm_decide"], help="Source collection profile.")
+    init_parser.add_argument("--from-onboarding", help="Path to onboarding.json for conversational init.")
 
     doctor_parser = subparsers.add_parser("doctor", help="Check source configuration health.")
     doctor_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
@@ -152,13 +155,31 @@ def run_audit_from_args(args: argparse.Namespace) -> int:
 
 
 def init_workspace_from_args(args: argparse.Namespace) -> int:
-    target = Path(args.target)
+    # Priority: explicit CLI target > onboarding.target > default "brief-workspace"
     if args.demo:
+        target = Path(args.target)
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
         print(f"Run: multi-agent-brief run --config {target / 'config.yaml'}")
         return 0
-    profile = build_profile_from_args(args)
+
+    from_onboarding = getattr(args, "from_onboarding", None)
+    if from_onboarding:
+        onboarding = load_onboarding_result(from_onboarding)
+        profile = map_onboarding_to_profile(onboarding)
+        # CLI target overrides onboarding.target
+        cli_target = args.target
+        default_target = "brief-workspace"
+        if cli_target and cli_target != default_target:
+            target = Path(cli_target)
+        elif onboarding.target and onboarding.target != "brief-workspace":
+            target = Path(onboarding.target)
+        else:
+            target = Path(default_target)
+    else:
+        target = Path(args.target)
+        profile = build_profile_from_args(args)
+
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
     print(f"Run: multi-agent-brief run --config {target / 'config.yaml'}")
