@@ -90,6 +90,9 @@ The first local MVP supports:
 - Quality harness checks for placeholders, low-confidence sources, process residue, stale filler, and unit risks
 - Editor agent that prepares the final Markdown brief
 - Formatter agent that writes `brief.md`, `claim_ledger.json`, `audit_report.json`, and `source_map.md`
+- `sources decide` subcommand resolves `llm_diside` source policy into concrete candidates, with `--merge` to merge back into `sources.yaml`
+- Onboarding mapper auto-translates Chinese role, industry, and audience labels into English config values
+- Public-safe content scanner (`scripts/public_safe_scan.py`) detects personal info and sensitive content leaks in public files
 
 ## Example Output
 
