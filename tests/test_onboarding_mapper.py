@@ -144,3 +144,34 @@ def test_onboarding_mapper_optional_seed_pack():
     result_unknown = OnboardingResult(industry_or_theme="quantum computing")
     profile_unknown = map_onboarding_to_profile(result_unknown)
     assert profile_unknown.optional_seed_pack == ""
+
+
+def test_onboarding_mapper_output_formats_default():
+    """Default output_formats from onboarding must include standard artifacts."""
+    result = OnboardingResult()
+    profile = map_onboarding_to_profile(result)
+    assert "markdown" in profile.output_formats
+    assert "claim_ledger" in profile.output_formats
+    assert "audit_report" in profile.output_formats
+    assert "source_map" in profile.output_formats
+    # Should NOT include "json" as a format
+    assert "json" not in profile.output_formats
+
+
+def test_onboarding_mapper_output_formats_docx_on_request():
+    """When output_style_plain requests docx, include it in formats."""
+    result = OnboardingResult(output_style_plain="executive brief in docx format")
+    profile = map_onboarding_to_profile(result)
+    assert "docx" in profile.output_formats
+
+
+def test_language_default_sentinels_consistent():
+    """Language sentinels must be handled consistently between mapper and init_wizard."""
+    from multi_agent_brief.cli.init_wizard import normalize_language as iw_normalize
+
+    sentinels = ["default", "unknown", "choose for me", "默认", "不知道", "帮我选"]
+    for s in sentinels:
+        mapper_result = normalize_language(s)
+        iw_result = iw_normalize(s)
+        assert mapper_result == iw_result, f"Sentinel '{s}': mapper={mapper_result}, init_wizard={iw_result}"
+        assert mapper_result == "en-US"

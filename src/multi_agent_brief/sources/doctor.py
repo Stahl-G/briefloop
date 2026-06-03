@@ -59,14 +59,14 @@ def run_doctor(
     results.append(CheckResult("OK", f"Enabled providers: {', '.join(source_config.enabled_providers) or 'none'}"))
 
     # 5. Manual sources
-    manual_sources = source_config.manual.get("sources", [])
+    manual_sources = source_config.manual.get("sources") or []
     if source_config.manual.get("enabled", True):
         results.append(CheckResult("OK", f"Manual sources configured: {len(manual_sources)}"))
     elif manual_sources:
         results.append(CheckResult("WARN", "Manual sources configured but disabled"))
 
     # 6. RSS feeds
-    rss_feeds = source_config.rss.get("feeds", [])
+    rss_feeds = source_config.rss.get("feeds") or []
     if source_config.rss.get("enabled"):
         results.append(CheckResult("OK", f"RSS feeds configured: {len(rss_feeds)}"))
     elif rss_feeds:
@@ -90,8 +90,20 @@ def run_doctor(
         else:
             results.append(CheckResult("WARN", f"web_search: backend '{backend_name}' is not a known backend"))
 
+        # Cross-validate: web_search enabled but not in enabled_providers
+        if "web_search" not in source_config.enabled_providers:
+            results.append(CheckResult("WARN",
+                "web_search is enabled in config but 'web_search' is missing from enabled_providers. "
+                "The pipeline will not call web_search. Add 'web_search' to source_strategy.enabled_providers."))
+    else:
+        # web_search disabled — check if it's in enabled_providers (misconfiguration)
+        if "web_search" in source_config.enabled_providers:
+            results.append(CheckResult("WARN",
+                "'web_search' is in enabled_providers but web_search.enabled is false. "
+                "Either enable web_search or remove it from enabled_providers."))
+
     # 8. API providers
-    api_providers = source_config.api.get("providers", [])
+    api_providers = source_config.api.get("providers") or []
     if source_config.api.get("enabled"):
         for provider in api_providers:
             env_key = provider.get("api_key_env", "")
@@ -106,7 +118,7 @@ def run_doctor(
         results.append(CheckResult("WARN", "API providers configured but disabled"))
 
     # 9. MCP servers
-    mcp_servers = source_config.mcp.get("servers", [])
+    mcp_servers = source_config.mcp.get("servers") or []
     if source_config.mcp.get("enabled"):
         results.append(CheckResult("WARN", f"MCP enabled with {len(mcp_servers)} servers (Phase 1 stub)"))
     elif mcp_servers:

@@ -131,10 +131,26 @@ if (-not (Test-Path $venvPython)) {
 Write-Host "[3/4] Installing package and development dependencies..." -ForegroundColor Yellow
 & $venvPython -m pip install --upgrade pip -q
 & $venvPython -m pip install -e ".[dev]" -q
-& $venvPython -c "import multi_agent_brief" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Editable install did not expose the package; falling back to a standard install..." -ForegroundColor Yellow
+
+# Verify import works.  Use cmd /c to avoid PowerShell 5.1 ErrorActionPreference
+# issues with external command failures.
+$importOk = $false
+cmd /c "$venvPython -c `"import multi_agent_brief`" 2>nul" | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    $importOk = $true
+}
+
+if (-not $importOk) {
+    Write-Host "Editable install did not expose the package (common on macOS with iCloud)." -ForegroundColor Yellow
+    Write-Host "Falling back to standard install..." -ForegroundColor Yellow
     & $venvPython -m pip install ".[dev]" -q --force-reinstall
+    cmd /c "$venvPython -c `"import multi_agent_brief`" 2>nul" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Host "ERROR: Installation failed. multi_agent_brief cannot be imported." -ForegroundColor Red
+        Write-Host "Try: Remove-Item -Recurse -Force .venv; .\scripts\setup.ps1" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 Write-Host "[4/4] Verifying console scripts..." -ForegroundColor Yellow
@@ -152,7 +168,10 @@ Write-Host "Next steps:"
 Write-Host "  cd `"$projectRoot`""
 Write-Host "  .\.venv\Scripts\Activate.ps1"
 Write-Host "  multi-agent-brief version"
-Write-Host "  multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief"
+Write-Host "  multi-agent-brief init my-workspace --language zh-CN"
+Write-Host "  # Add source files to my-workspace/input/"
+Write-Host "  multi-agent-brief doctor --config my-workspace/config.yaml"
+Write-Host "  multi-agent-brief run --config my-workspace/config.yaml"
 Write-Host ""
 Write-Host "If Activate.ps1 is blocked, run this once for your user account:" -ForegroundColor Yellow
 Write-Host "  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor White

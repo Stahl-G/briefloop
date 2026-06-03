@@ -99,7 +99,8 @@ def test_sources_decide_search_no_mock_residual(capsys, tmp_path: Path):
     (ws / "sources.yaml").write_text(sources_yaml, encoding="utf-8")
 
     rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
-    assert rc == 0
+    # --search without a configured backend should fail with clear message
+    assert rc != 0
     captured = capsys.readouterr()
     assert "mock" not in captured.out.lower()
-    assert "does not enable live search by default" in captured.out.lower() or "live web search" in captured.out.lower()
+    assert "backend" in captured.out.lower() or "search" in captured.out.lower()

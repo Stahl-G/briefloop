@@ -134,32 +134,45 @@ The audit report records whether the draft is distribution-ready:
 macOS / Linux / WSL:
 
 ```bash
+git clone https://github.com/ORG/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
-multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
+
+# 1. Init workspace
+multi-agent-brief init my-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
+
+# 2. Add source files
+echo "- Industry news summary" > my-workspace/input/news.md
+
+# 3. Check config
+multi-agent-brief doctor --config my-workspace/config.yaml
+
+# 4. Run pipeline
+multi-agent-brief run --config my-workspace/config.yaml
+
+# View output
+cat my-workspace/output/brief.md
 ```
 
 Windows 10/11 should use native PowerShell 5.1 or PowerShell 7. WSL/Git Bash is optional, not required. CMD is not the primary support target.
 
 ```powershell
+git clone https://github.com/ORG/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
-multi-agent-brief version
-multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
+
+multi-agent-brief init my-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
+echo "- Industry news summary" > my-workspace\input\news.md
+multi-agent-brief doctor --config my-workspace\config.yaml
+multi-agent-brief run --config my-workspace\config.yaml
 ```
 
-Or run from a config file:
+You can also use the built-in example for a quick check:
 
 ```bash
-multi-agent-brief run --config examples/basic_market_brief/config.yaml
-```
-
-PowerShell:
-
-```powershell
-multi-agent-brief run --config examples/basic_market_brief/config.yaml
+multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
 ```
 
 The example config enables a strict weekly reporting window:
@@ -213,6 +226,29 @@ $env:PYTHONPATH = "src"
 python -m multi_agent_brief.cli.main run examples/basic_market_brief/input --output output/basic_market_brief
 Remove-Item Env:PYTHONPATH
 ```
+
+## llm_decide Source Discovery
+
+The default `llm_decide` source mode lets the agent automatically generate search intents and candidate sources based on `user.md`:
+
+```bash
+# 1. Init with llm_decide
+multi-agent-brief init my-workspace --language en-US --company "Company" --industry manufacturing --source-profile llm_decide
+
+# 2. Generate candidate sources (template mode, no API key needed)
+multi-agent-brief sources decide --config my-workspace/config.yaml
+
+# 3. Review candidates
+cat my-workspace/source_candidates.yaml
+
+# 4. Merge into sources
+multi-agent-brief sources decide --config my-workspace/config.yaml --merge
+
+# 5. Run pipeline
+multi-agent-brief run --config my-workspace/config.yaml
+```
+
+The llm_decide mode does not block pipeline execution — if you skip `sources decide`, the pipeline continues with local `input/` files and prints a warning.
 
 ## Enable DOCX Output
 
@@ -384,7 +420,7 @@ See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows 
 ## Roadmap
 
 - MVP: local inputs, Claim Ledger, deterministic audit, Markdown output, source map, and quality harness checks.
-- Near-term: DOCX/PDF output, SEC/RSS connectors, semantic audit adapters, richer synthetic examples, and stronger documentation.
+- Near-term: PDF output, SEC/RSS connectors, semantic audit adapters, richer synthetic examples, and stronger documentation.
 - Mid-term: industry modules, role-specific brief templates, external analysis plugins, local corpus retrieval, and source-tier policies.
 - Long-term: opt-in internal message ingestion, database and semantic layer integration, multi-model routing, and enterprise deployment patterns.
 

@@ -141,6 +141,23 @@ def run_pipeline_from_args(args: argparse.Namespace) -> int:
             context.max_source_age_days = days
         context.metadata["source_config"] = source_config
 
+    # Pre-flight check: llm_decide workspace without resolved sources
+    _config_dir = Path(config.get("_config_dir", ".")) if config else Path(".")
+    _sources_yaml = _config_dir / "sources.yaml"
+    if _sources_yaml.exists():
+        try:
+            import yaml as _yaml
+            _sy = _yaml.safe_load(_sources_yaml.read_text(encoding="utf-8")) or {}
+            _ss = _sy.get("source_strategy", {}) or {}
+            if _ss.get("requires_agent_resolution") and _ss.get("decision_mode") == "agent_decide":
+                _candidates = _config_dir / "source_candidates.yaml"
+                if not _candidates.exists():
+                    print("[WARN] Workspace uses llm_decide source profile but source_candidates.yaml has not been generated.")
+                    print("       Run: multi-agent-brief sources decide --config <config.yaml>")
+                    print("       The pipeline will continue with local/manual sources only.")
+        except Exception:
+            pass
+
     # Pre-flight check: if Tavily is enabled, verify API key exists
     _source_config = context.metadata.get("source_config")
     if _source_config and hasattr(_source_config, "web_search"):
@@ -190,6 +207,46 @@ def run_audit_from_args(args: argparse.Namespace) -> int:
     return 0 if report.audit_status != "fail" else 2
 
 
+def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
+    """Apply explicit CLI args onto a profile built from onboarding.
+
+    Only overrides fields where the CLI arg is non-None / truthy.
+    """
+    from multi_agent_brief.cli.init_wizard import normalize_language, parse_list_arg, apply_rag_args
+
+    if getattr(args, "language", None):
+        lang = normalize_language(args.language)
+        profile.interface_language = lang
+        profile.output_language = lang
+    if getattr(args, "output_language", None):
+        profile.output_language = normalize_language(args.output_language)
+    if getattr(args, "company", None):
+        profile.company = args.company
+    if getattr(args, "role", None):
+        profile.role = args.role
+    if getattr(args, "industry", None):
+        profile.industry = args.industry
+    if getattr(args, "title", None):
+        profile.brief_title = args.title
+    if getattr(args, "audience", None):
+        profile.audience = args.audience
+    focus = parse_list_arg(getattr(args, "focus_areas", None))
+    if focus:
+        profile.focus_areas = focus
+    if getattr(args, "cadence", None):
+        profile.cadence = args.cadence
+    if getattr(args, "selector_max_items", None):
+        profile.selector_max_items = args.selector_max_items
+    apply_rag_args(profile, getattr(args, "rag", None), getattr(args, "retrieval_provider", None))
+    formats = parse_list_arg(getattr(args, "output_formats", None))
+    if formats:
+        profile.output_formats = formats
+    if getattr(args, "source_profile", None):
+        profile.source_profile = args.source_profile
+    if getattr(args, "tavily", False):
+        profile.tavily_enabled = True
+
+
 def init_workspace_from_args(args: argparse.Namespace) -> int:
     # Priority: explicit CLI target > onboarding.target > default "brief-workspace"
     if args.demo:
@@ -203,6 +260,8 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
     if from_onboarding:
         onboarding = load_onboarding_result(from_onboarding)
         profile = map_onboarding_to_profile(onboarding)
+        # Apply any explicit CLI overrides on top of onboarding values
+        _apply_cli_overrides(profile, args)
         # CLI target overrides onboarding.target
         cli_target = args.target
         default_target = "brief-workspace"
@@ -269,7 +328,19 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
 
     search_results = None
     if args.search:
-        print("[sources] Live web search requires a configured backend such as Tavily or an injected external connector. This package does not enable live search by default.")
+        # Check if a real search backend is configured
+        ws_config = load_sources_config(sources_path) if sources_path.exists() else None
+        has_backend = (
+            ws_config
+            and ws_config.web_search.get("enabled")
+            and ws_config.web_search.get("backend")
+            and ws_config.web_search.get("backend") != "mock"
+        )
+        if not has_backend:
+            print("[error] --search requires a configured search backend (e.g. Tavily).")
+            print("        Enable web_search in sources.yaml with a real backend and API key,")
+            print("        or run without --search to generate template candidates.")
+            return 1
 
     candidates = generate_source_candidates(discovery, search_results)
     candidates_path = workspace / "source_candidates.yaml"

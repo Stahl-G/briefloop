@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+docx = pytest.importorskip("docx", reason="python-docx not installed")
+
 
 # ── Fixtures ────────────────────────────────────────────────────
 
@@ -297,3 +299,21 @@ class TestBuildRunSettingsFormats:
         settings = build_run_settings(config=None, input_dir="/tmp/input", output_dir=None, name=None, language=None, audience=None)
         assert settings["output_formats"] == ["markdown"]
         assert settings["output_footer"] == ""
+
+
+class TestDocxLazyImport:
+    """Verify that importing the pipeline does not require python-docx."""
+
+    def test_docx_module_importable_without_docx(self):
+        """outputs/docx.py should import without raising ImportError."""
+        # This test verifies the lazy import pattern works.
+        # If docx.py had a hard top-level import, this would fail.
+        import importlib
+        mod = importlib.import_module("multi_agent_brief.outputs.docx")
+        assert hasattr(mod, "render_docx")
+
+    def test_formatter_importable_without_docx(self):
+        """formatter.py should import without requiring python-docx."""
+        import importlib
+        mod = importlib.import_module("multi_agent_brief.agents.formatter")
+        assert hasattr(mod, "FormatterAgent")

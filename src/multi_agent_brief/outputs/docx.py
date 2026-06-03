@@ -1,10 +1,12 @@
-"""DOCX output adapter — thin wrapper around ib_docx.convert()."""
+"""DOCX output adapter — thin wrapper around ib_docx.convert().
+
+This module does NOT import python-docx at module level, so importing it
+from a Markdown-only pipeline does not require python-docx to be installed.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-
-from multi_agent_brief.outputs.ib_docx import convert
 
 
 def render_docx(
@@ -17,9 +19,10 @@ def render_docx(
 ) -> Path:
     """Render a Markdown file as a styled DOCX document.
 
-    This is the pipeline-facing entry point.  It delegates to
-    :func:`multi_agent_brief.outputs.ib_docx.convert`.
+    Raises ImportError if python-docx is not installed.
     """
+    from multi_agent_brief.outputs.ib_docx import convert
+
     return convert(
         markdown_path,
         output_path,

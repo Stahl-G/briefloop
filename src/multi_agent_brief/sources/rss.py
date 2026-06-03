@@ -57,7 +57,7 @@ class RssProvider(SourceProvider):
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         errors: list[str] = []
-        feeds = config.get("feeds", [])
+        feeds = config.get("feeds") or []
         for i, feed in enumerate(feeds):
             if not feed.get("url"):
                 errors.append(f"rss.feeds[{i}]: missing 'url'")
@@ -67,7 +67,7 @@ class RssProvider(SourceProvider):
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:
         items: list[SourceItem] = []
-        for feed_config in config.get("feeds", []):
+        for feed_config in (config.get("feeds") or []):
             if feed_config.get("enabled") is False:
                 continue
             url = feed_config.get("url", "")

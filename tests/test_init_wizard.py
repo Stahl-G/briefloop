@@ -320,3 +320,126 @@ def test_industry_fallback_when_sources_yaml_missing_field(tmp_path):
     if not source_config.industry and industry:
         source_config.industry = industry
     assert source_config.industry == "manufacturing"
+
+
+def test_tavily_flag_alone_triggers_noninteractive(tmp_path):
+    """--tavily alone should trigger non-interactive profile handling."""
+    from multi_agent_brief.cli.main import main
+
+    workspace = tmp_path / "ws"
+    assert main(["init", str(workspace), "--tavily"]) == 0
+    config = (workspace / "config.yaml").read_text(encoding="utf-8")
+    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
+    # Tavily should be enabled in sources.yaml
+    assert "enabled: true" in sources
+    assert 'backend: "tavily"' in sources or "backend: tavily" in sources
+
+
+def test_from_onboarding_cli_override(tmp_path):
+    """CLI flags override onboarding values when used with --from-onboarding."""
+    from multi_agent_brief.cli.main import main
+    import json
+
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps({
+        "company_or_org": "OldCompany",
+        "industry_or_theme": "banking",
+        "audience_plain": "research",
+        "language_plain": "中文",
+        "cadence_plain": "monthly",
+        "source_style_plain": "conservative",
+        "must_watch": ["rates"],
+    }), encoding="utf-8")
+
+    workspace = tmp_path / "ws"
+    assert main([
+        "init", str(workspace),
+        "--from-onboarding", str(ob_path),
+        "--company", "NewCompany",
+        "--industry", "manufacturing",
+        "--audience", "management",
+        "--language", "en-US",
+        "--source-profile", "llm_decide",
+    ]) == 0
+
+    config = (workspace / "config.yaml").read_text(encoding="utf-8")
+    # CLI overrides should take effect
+    assert "NewCompany" in config
+    assert "manufacturing" in config
+    assert "management" in config
+    assert "en-US" in config
+    # source_profile override
+    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
+    assert "llm_decide" in sources
+
+def test_llm_decide_init_generates_enabled_providers(tmp_path):
+    """llm_decide sources.yaml must include enabled_providers in source_strategy."""
+    from multi_agent_brief.cli.main import main
+
+    workspace = tmp_path / "ws"
+    assert main([
+        "init", str(workspace),
+        "--language", "en-US",
+        "--company", "Test",
+        "--industry", "manufacturing",
+        "--source-profile", "llm_decide",
+    ]) == 0
+
+    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
+    assert "enabled_providers:" in sources
+    assert "manual" in sources
+
+
+def test_llm_decide_with_tavily_includes_web_search_provider(tmp_path):
+    """llm_decide + --tavily should include web_search in enabled_providers."""
+    from multi_agent_brief.cli.main import main
+
+    workspace = tmp_path / "ws"
+    assert main([
+        "init", str(workspace),
+        "--language", "en-US",
+        "--company", "Test",
+        "--source-profile", "llm_decide",
+        "--tavily",
+    ]) == 0
+
+    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
+    assert "enabled_providers:" in sources
+    assert "web_search" in sources
+
+
+def test_doctor_warns_web_search_enabled_but_not_provider(tmp_path):
+    """Doctor must warn when web_search is enabled but not in enabled_providers."""
+    from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
+
+    # Create a workspace with web_search enabled but NOT in enabled_providers
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "sources.yaml").write_text(
+        'source_strategy:\n  profile: "llm_decide"\n  enabled_providers:\n    - manual\n'
+        'web_search:\n  enabled: true\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n'
+        'manual:\n  enabled: true\n  sources:\n    - name: Test\n      path: input/\n',
+        encoding="utf-8",
+    )
+    (ws / "config.yaml").write_text("project:\n  name: Test\n", encoding="utf-8")
+
+    results = run_doctor(config_path=ws / "config.yaml")
+    report = format_doctor_report(results)
+    assert "missing from enabled_providers" in report.lower() or "enabled_providers" in report.lower()
+
+
+def test_sources_decide_search_no_backend_returns_nonzero(tmp_path):
+    """sources decide --search must return non-zero when no search backend configured."""
+    from multi_agent_brief.cli.main import main
+
+    workspace = tmp_path / "ws"
+    assert main([
+        "init", str(workspace),
+        "--language", "en-US",
+        "--company", "Test",
+        "--source-profile", "llm_decide",
+    ]) == 0
+
+    # --search without a backend should fail
+    exit_code = main(["sources", "decide", "--config", str(workspace / "config.yaml"), "--search"])
+    assert exit_code != 0

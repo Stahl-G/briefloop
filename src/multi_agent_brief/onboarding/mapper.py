@@ -300,8 +300,13 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     if hasattr(result, "forbidden_sources") and result.forbidden_sources:
         profile.forbidden_sources = list(result.forbidden_sources)
 
-    # Output formats: default markdown + json
-    profile.output_formats = ["markdown", "json"]
+    # Output formats: standard artifact set
+    profile.output_formats = ["markdown", "claim_ledger", "audit_report", "source_map"]
+
+    # If output_style_plain requests docx/word, include it
+    style_lower = (getattr(result, "output_style_plain", "") or "").lower()
+    if any(k in style_lower for k in ("docx", "word", "docx格式", "word格式")):
+        profile.output_formats.append("docx")
 
     # Web search: never enable by default
     return profile

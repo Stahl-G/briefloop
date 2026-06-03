@@ -228,7 +228,13 @@ def has_noninteractive_profile_args(args: Any) -> bool:
         "output_formats",
         "source_profile",
     ]
-    return any(getattr(args, field, None) is not None for field in fields)
+    # Check string/list fields for non-None
+    if any(getattr(args, field, None) is not None for field in fields):
+        return True
+    # Check boolean flags — tavily is store_true, default False
+    if getattr(args, "tavily", False):
+        return True
+    return False
 
 
 def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> InitProfile:
@@ -540,12 +546,19 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
 def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
     """Generate sources.yaml for llm_decide profile: agent-readable discovery policy."""
     lang = profile.output_language.split("-")[0] if "-" in profile.output_language else profile.output_language
+
+    # Build enabled_providers: always include manual; add web_search if Tavily enabled
+    enabled_providers = ["manual"]
+    if profile.tavily_enabled:
+        enabled_providers.append("web_search")
+
     return {
         "source_strategy": {
             "profile": "llm_decide",
             "decision_mode": "agent_decide",
             "requires_agent_resolution": True,
             "optional_seed_pack": profile.optional_seed_pack or None,
+            "enabled_providers": enabled_providers,
         },
         "source_discovery": {
             "instruction": (
@@ -733,8 +746,15 @@ def retrieval_model_for_provider(provider: str) -> str:
 
 
 def normalize_language(value: str) -> str:
-    aliases = {"en": "en-US", "english": "en-US", "zh": "zh-CN", "cn": "zh-CN", "chinese": "zh-CN"}
-    return aliases.get(value, value)
+    t = value.strip().lower()
+    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+        return "en-US"
+    aliases = {
+        "en": "en-US", "en-us": "en-US", "en_us": "en-US", "english": "en-US",
+        "zh": "zh-CN", "zh-cn": "zh-CN", "zh_cn": "zh-CN", "cn": "zh-CN", "chinese": "zh-CN",
+        "bilingual": "bilingual", "dual language": "bilingual",
+    }
+    return aliases.get(t, t)
 
 
 def ask_choice(

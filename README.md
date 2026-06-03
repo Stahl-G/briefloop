@@ -145,32 +145,45 @@ MVP 会生成带来源引用的 Markdown 简报：
 macOS / Linux / WSL:
 
 ```bash
+git clone https://github.com/ORG/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
-multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
+
+# 1. 初始化工作区
+multi-agent-brief init my-workspace --language zh-CN --company "公司名" --industry manufacturing --title "周报" --audience management
+
+# 2. 添加源文件
+echo "- 行业信息摘要" > my-workspace/input/news.md
+
+# 3. 检查配置
+multi-agent-brief doctor --config my-workspace/config.yaml
+
+# 4. 运行流水线
+multi-agent-brief run --config my-workspace/config.yaml
+
+# 查看输出
+cat my-workspace/output/brief.md
 ```
 
 Windows 10/11 推荐使用原生 PowerShell 5.1 或 PowerShell 7，不要求 WSL/Git Bash。CMD 不是主要支持目标。
 
 ```powershell
+git clone https://github.com/ORG/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
-multi-agent-brief version
-multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
+
+multi-agent-brief init my-workspace --language zh-CN --company "公司名" --industry manufacturing --title "周报" --audience management
+echo "- 行业信息摘要" > my-workspace\input\news.md
+multi-agent-brief doctor --config my-workspace\config.yaml
+multi-agent-brief run --config my-workspace\config.yaml
 ```
 
-也可以通过配置文件运行：
+也可以使用内置示例快速验证：
 
 ```bash
-multi-agent-brief run --config examples/basic_market_brief/config.yaml
-```
-
-PowerShell:
-
-```powershell
-multi-agent-brief run --config examples/basic_market_brief/config.yaml
+multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
 ```
 
 示例配置启用了严格的周报时间窗口：
@@ -271,6 +284,29 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 - Tavily 需要 `TAVILY_API_KEY` 环境变量
 - API key 必须存储在环境变量中，不能写入配置文件
 - 配置文件中不会打印或存储 API key
+
+## llm_decide 来源发现
+
+默认的 `llm_decide` 来源模式让 agent 根据 `user.md` 自动生成搜索意图和候选来源，无需手动配置：
+
+```bash
+# 1. 使用 llm_decide 初始化
+multi-agent-brief init my-workspace --language zh-CN --company "公司名" --industry manufacturing --source-profile llm_decide
+
+# 2. 生成候选来源（模板模式，无需 API key）
+multi-agent-brief sources decide --config my-workspace/config.yaml
+
+# 3. 审查候选来源
+cat my-workspace/source_candidates.yaml
+
+# 4. 合并到正式来源
+multi-agent-brief sources decide --config my-workspace/config.yaml --merge
+
+# 5. 运行流水线
+multi-agent-brief run --config my-workspace/config.yaml
+```
+
+llm_decide 模式不阻塞流水线运行——即使尚未执行 `sources decide`，流水线也会使用本地 `input/` 目录中的文件继续运行，并显示警告。
 
 ## 启用 DOCX 输出
 
@@ -395,7 +431,7 @@ Windows 原生 PowerShell 详细说明见 [docs/windows-powershell.md](docs/wind
 ## 路线图
 
 - MVP：本地输入、Claim Ledger、确定性审计、Markdown 输出、来源映射和质量门控。
-- 近期：DOCX/PDF 输出、SEC/RSS 连接器、语义审计适配器、更完整的合成示例和文档。
+- 近期：PDF 输出、SEC/RSS 连接器、语义审计适配器、更完整的合成示例和文档。
 - 中期：行业模块、角色化简报模板、外部分析插件、本地语料检索和来源分级策略。
 - 长期：可选的内部消息接入、数据库与语义层集成、多模型路由和企业部署模式。
 
