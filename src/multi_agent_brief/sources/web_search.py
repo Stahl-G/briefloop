@@ -18,6 +18,8 @@ def _register_known_backends() -> None:
         return
     from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
     _KNOWN_BACKENDS["tavily"] = TavilyBackend
+    from multi_agent_brief.sources.search_backends.exa import ExaBackend
+    _KNOWN_BACKENDS["exa"] = ExaBackend
 
 
 class WebSearchProvider(SourceProvider):
