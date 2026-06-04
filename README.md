@@ -483,9 +483,21 @@ multi-agent-brief init ../mabw-workspace
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.1.0** — 正式发布版。支持交互式问答初始化、来源发现、事实账本、审计和质量门禁。
+当前版本：**v0.1.0** — 正式发布版。
 
-最新未发布修复：`multi-agent-brief run <workspace>` 会自动读取该目录下的 `config.yaml`，同时零来源/零 Claim 的空报告会被审计门拦截。
+**最新未发布 (v0.1.1)：来源层补齐 — 4 个 Source Provider 从接口变为可用**
+
+此前 `api_news`（新闻搜索）、`api_filings`（SEC 财报）、`mcp_provider`（MCP 协议）、`cli_provider`（本地脚本）
+四个来源提供者只有空接口，启用后返回 0 条结果。本次更新全部实现为可工作的来源通道：
+
+| 提供者 | 现在能做什么 |
+|--------|------------|
+| **NewsAPI** | 通过关键字、日期范围、语言、来源域名搜索新闻，返回结构化文章条目 |
+| **SEC EDGAR** | 输入公司名或 ticker，自动查找 CIK，拉取 10-K/10-Q/8-K 等近期申报 |
+| **MCP 协议** | 连接本地 MCP 服务器，通过 JSON-RPC 2.0 发现工具并执行，采集返回内容 |
+| **CLI 脚本** | 执行本地命令行脚本，自动解析 JSON 数组或纯文本输出为来源条目 |
+
+所有实现均使用 Python 标准库（urllib / subprocess），无额外依赖。
 
 [查看完整变更日志 →](CHANGELOG.md)
 

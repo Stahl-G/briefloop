@@ -539,9 +539,22 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.1.0** — first public release. Interactive onboarding, source discovery, claim ledger, audit and quality gates.
+Current version: **v0.1.0** — first public release.
 
-Latest unreleased fix: `multi-agent-brief run <workspace>` now auto-loads that workspace's `config.yaml`, while zero-source / zero-claim empty briefs remain blocked by the audit gate.
+**Latest unreleased (v0.1.1): Source layer completion — 4 stub providers now functional**
+
+Previously `api_news`, `api_filings` (SEC EDGAR), `mcp_provider`, and `cli_provider`
+were empty interfaces — enabling them silently returned 0 results.
+This release fills all four with working implementations:
+
+| Provider | What it does now |
+|----------|-----------------|
+| **NewsAPI** | Search news by keyword, date range, language, and source domains; returns structured article items |
+| **SEC EDGAR** | Input company name or ticker, auto-resolve CIK, fetch recent 10-K/10-Q/8-K filings |
+| **MCP Protocol** | Connect to local MCP servers over stdio JSON-RPC 2.0, discover and execute tools |
+| **CLI Scripts** | Run local shell commands, auto-parse JSON arrays or plain text output as source items |
+
+All implementations use Python stdlib only (urllib / subprocess) — zero additional dependencies.
 
 [View full changelog →](CHANGELOG.md)
 
