@@ -65,20 +65,20 @@ class FeishuProvider(SourceProvider):
                 "feishu: 'lark-cli' not found in PATH. "
                 "Install: npx @larksuite/cli@latest install"
             )
-            return errors  # can't do more checks without the binary
 
-        # Check auth status
-        try:
-            result = subprocess.run(
-                ["lark-cli", "auth", "status", "--format", "json"],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode != 0:
-                errors.append(
-                    "feishu: not authenticated. Run: lark-cli auth login --recommend"
+        # Check auth status (only if lark-cli was found)
+        if shutil.which("lark-cli"):
+            try:
+                result = subprocess.run(
+                    ["lark-cli", "auth", "status", "--format", "json"],
+                    capture_output=True, text=True, timeout=10,
                 )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            errors.append("feishu: unable to check auth status via lark-cli")
+                if result.returncode != 0:
+                    errors.append(
+                        "feishu: not authenticated. Run: lark-cli auth login --recommend"
+                    )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                errors.append("feishu: unable to check auth status via lark-cli")
 
         sources = config.get("sources", config.get("docs", []))
         if not sources:
