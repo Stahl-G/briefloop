@@ -27,7 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="multi-agent-brief")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Run deterministic brief preparation pipeline (produces draft artifacts, not final brief).")
+    run_parser = subparsers.add_parser("run", help="Run deterministic brief pipeline and write reader-facing plus audit artifacts.")
     run_parser.add_argument("input_dir", nargs="?", help="Directory containing .md, .txt, or .json input files.")
     run_parser.add_argument("--config", help="YAML config file. Provides input/output/project settings.")
     run_parser.add_argument("--output", help="Output directory.")
@@ -97,9 +97,8 @@ def _print_tavily_guidance() -> None:
 
 def run_pipeline_from_args(args: argparse.Namespace) -> int:
     print()
-    print("NOTE: This command prepares intermediate artifacts only.")
-    print("It does not generate a final user-facing brief.")
-    print("Use Claude Code / Codex agents to produce the final brief from these artifacts.")
+    print("NOTE: This command prepares deterministic draft artifacts and reader-facing output files.")
+    print("For polished final delivery, review the audit artifacts and use Claude Code / Codex agents or human editing.")
     print()
 
     config = load_config(args.config) if args.config else None
@@ -201,15 +200,25 @@ def run_pipeline_from_args(args: argparse.Namespace) -> int:
         except Exception:
             pass
 
-    # Pre-flight check: if Tavily is enabled, verify API key exists
+    # Pre-flight check: if live web search is enabled and selected for the run,
+    # verify that the configured backend can actually authenticate.
     _source_config = context.metadata.get("source_config")
     if _source_config and hasattr(_source_config, "web_search"):
         _ws = _source_config.web_search
-        if _ws.get("enabled") and _ws.get("backend") == "tavily":
+        if _ws.get("enabled") and _ws.get("backend") and "web_search" in _source_config.enabled_providers:
             import os
-            api_key_env = _ws.get("api_key_env", "TAVILY_API_KEY")
-            if not os.environ.get(api_key_env):
-                print(f"[ERROR] Tavily live search is enabled, but {api_key_env} is not set.")
+
+            from multi_agent_brief.sources.web_search import WebSearchProvider, backend_api_key_env
+
+            try:
+                backend = WebSearchProvider()._get_backend(_ws)
+            except Exception as exc:
+                print(f"[ERROR] Failed to initialize web search backend: {exc}")
+                return 1
+
+            api_key_env = backend_api_key_env(backend, _ws)
+            if api_key_env and not os.environ.get(api_key_env):
+                print(f"[ERROR] Web search backend '{backend.name}' is enabled, but {api_key_env} is not set.")
                 print("  Set it as an environment variable before running the pipeline.")
                 print("  Do not paste API keys into chat, config files, README, or GitHub.")
                 print("  Aborting. Either set the key or disable web_search in sources.yaml.")
@@ -292,7 +301,7 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
         target = Path(args.target)
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
-        print(f"Prepare draft artifacts: multi-agent-brief run --config {target / 'config.yaml'}")
+        print(f"Run pipeline: multi-agent-brief run --config {target / 'config.yaml'}")
         return 0
 
     from_onboarding = getattr(args, "from_onboarding", None)
@@ -316,7 +325,7 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
 
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
-    print(f"Prepare draft artifacts: multi-agent-brief run --config {target / 'config.yaml'}")
+    print(f"Run pipeline: multi-agent-brief run --config {target / 'config.yaml'}")
 
     # Print Tavily setup guidance if enabled
     if profile.tavily_enabled:
@@ -382,7 +391,7 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
             return 1
 
         # Actually execute searches via the configured backend
-        from multi_agent_brief.sources.web_search import WebSearchProvider
+        from multi_agent_brief.sources.web_search import WebSearchProvider, backend_api_key_env
         provider = WebSearchProvider()
         try:
             backend = provider._get_backend(ws_config.web_search)
@@ -391,7 +400,9 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
             return 1
 
         if not backend.is_available():
-            print("[error] Search backend is configured but not available (API key missing?).")
+            api_key_env = backend_api_key_env(backend, ws_config.web_search)
+            key_hint = f" Set {api_key_env}." if api_key_env else ""
+            print(f"[error] Search backend '{backend.name}' is configured but not available.{key_hint}")
             return 1
 
         print(f"[sources] Executing {len(queries)} search queries via backend: {backend.name}")

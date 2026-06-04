@@ -14,7 +14,7 @@ multi-agent-brief init → multi-agent-brief run → output artifacts
 
 - **Deterministic pipeline**: Scout → Screener → Claim Ledger → Analyst → Auditor → Editor → Formatter
 - **Audit harness**: DeterministicAuditAgent, QualityHarnessAuditAgent, CompositeAuditAgent
-- **Output contract**: `brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md`
+- **Output contract**: `brief.md` for readers, plus `output/intermediate/audited_brief.md`, `claim_ledger.json`, `audit_report.json`, and `source_map.md` for audit/review
 - **No API keys required**: runs entirely with local Python
 - **Testable**: `python -m pytest -q` covers all pipeline stages
 
@@ -52,7 +52,7 @@ Claude Code subagents complement the Python CLI — they do not replace it.
 │         ▼                                           │
 │  multi-agent-brief run --config config.yaml         │
 │    → Python CLI executes deterministic pipeline     │
-│    → produces brief.md, claim_ledger.json, etc.     │
+│    → produces reader brief + intermediate audit set │
 │         │                                           │
 │         ▼                                           │
 │  analyst subagent                                   │
@@ -67,9 +67,12 @@ Claude Code subagents complement the Python CLI — they do not replace it.
 │         │                                           │
 │         ▼                                           │
 │  auditor subagent                                   │
-│    → reviews final brief against ledger             │
+│    → reviews audited_brief.md against ledger        │
 │    → runs python deterministic audit commands       │
 │    → reports findings and recommends fixes          │
+│                                                     │
+│  formatter/final handoff                            │
+│    → strips [src:CLAIM_ID] only for brief.md        │
 └─────────────────────────────────────────────────────┘
 ```
 

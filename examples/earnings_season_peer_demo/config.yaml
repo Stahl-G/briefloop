@@ -13,3 +13,5 @@ input:
 
 output:
   path: "output"
+  filename_template: "{project_name}_{report_date}"
+  named_outputs: true

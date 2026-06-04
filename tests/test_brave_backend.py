@@ -209,7 +209,7 @@ class TestBraveBackend:
         assert "freshness=pd" in captured_url["url"]
 
     def test_search_handles_api_error(self, monkeypatch):
-        """Should return empty list on API error."""
+        """Should raise SearchBackendError on API error."""
         monkeypatch.setenv(DEFAULT_API_KEY_ENV, "test-key")
 
         def mock_urlopen(req, timeout=30):
@@ -217,9 +217,9 @@ class TestBraveBackend:
 
         with patch("urllib.request.urlopen", mock_urlopen):
             backend = BraveBackend()
-            results = backend.search("test query")
-
-        assert results == []
+            from multi_agent_brief.sources.search_backends.base import SearchBackendError
+            with pytest.raises(SearchBackendError, match="Brave search failed"):
+                backend.search("test query")
 
     def test_search_strips_html_from_description(self, monkeypatch):
         """Should strip HTML tags from description."""

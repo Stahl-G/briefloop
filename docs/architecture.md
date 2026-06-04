@@ -77,10 +77,14 @@ Formatter writes output files. It should not change the substance of the brief.
 
 Current outputs:
 
-- `brief.md`
-- `claim_ledger.json`
-- `audit_report.json`
-- `source_map.md`
+- `brief.md`: reader-facing Markdown with internal claim IDs removed
+- `{configured_name}.md`: optional named reader-facing copy, enabled by `output.named_outputs`
+- `intermediate/audited_brief.md`: audited Markdown with `[src:CLAIM_ID]` citations
+- `intermediate/claim_ledger.json`
+- `intermediate/audit_report.json`
+- `intermediate/source_map.md`
+
+The default filename template is `{project_name}_{report_date}` and supports project/report tokens such as `company`, `industry`, `cadence`, and `language`.
 
 ## Migration Tracks
 

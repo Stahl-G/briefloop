@@ -118,7 +118,7 @@ class TestDoctorTavilyGuidance:
         )
 
         results = run_doctor(config_path=config_path)
-        tavily_results = [r for r in results if "Tavily" in r.message]
+        tavily_results = [r for r in results if "tavily" in r.message.lower()]
         assert any(r.status == "OK" and "detected" in r.message.lower() for r in tavily_results)
 
     def test_doctor_tavily_error_without_key(self, tmp_path, monkeypatch):
@@ -182,3 +182,31 @@ class TestRunTavilyGuidance:
         assert "TAVILY_API_KEY" in captured.out
         assert "not set" in captured.out.lower() or "missing" in captured.out.lower()
         assert "Do not paste" in captured.out
+
+    def test_run_surfaces_exa_missing_key_error(self, tmp_path, monkeypatch, capsys):
+        """Run should use the configured backend env var, not Tavily's default."""
+        import yaml
+
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        monkeypatch.setenv("TAVILY_API_KEY", "tvly-present-but-wrong-backend")
+
+        ws = tmp_path / "ws"
+        assert main(["init", str(ws), "--language", "en-US", "--industry", "manufacturing"]) == 0
+
+        sources_path = ws / "sources.yaml"
+        sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+        sources["source_strategy"]["enabled_providers"] = ["manual", "web_search"]
+        sources["web_search"] = {"enabled": True, "backend": "exa"}
+        sources_path.write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
+
+        (ws / "input" / "news.md").write_text(
+            "- Solar manufacturing capacity expanded by 15 percent.\n",
+            encoding="utf-8",
+        )
+
+        exit_code = main(["run", "--config", str(ws / "config.yaml")])
+        captured = capsys.readouterr()
+        assert exit_code == 1
+        assert "exa" in captured.out.lower()
+        assert "EXA_API_KEY" in captured.out
+        assert "TAVILY_API_KEY" not in captured.out

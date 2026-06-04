@@ -73,18 +73,19 @@ multi-agent-brief run --config ../mabw-workspace\config.yaml
 ```
 
 This produces:
-- `output/brief.md` — the Markdown brief
-- `output/claim_ledger.json` — source-grounded claims
-- `output/audit_report.json` — audit findings
-- `output/source_map.md` — source mapping
+- `output/brief.md` — reader-facing Markdown without internal claim IDs
+- `output/intermediate/audited_brief.md` — auditable Markdown with `[src:CLAIM_ID]`
+- `output/intermediate/claim_ledger.json` — source-grounded claims
+- `output/intermediate/audit_report.json` — audit findings
+- `output/intermediate/source_map.md` — source mapping
 
 ### 4. Analyst Improvement
 
-Use the `analyst` subagent to improve the brief while preserving citations:
+Use the `analyst` subagent to improve the auditable brief while preserving citations:
 
 ```text
-Use the analyst subagent to improve the brief at ../mabw-workspace/output/brief.md.
-Read claim_ledger.json and user.md. Draft management-ready sections.
+Use the analyst subagent to improve the brief at ../mabw-workspace/output/intermediate/audited_brief.md.
+Read output/intermediate/claim_ledger.json and user.md. Draft management-ready sections.
 Preserve every [src:CLAIM_ID] citation. Write in Chinese according to the workspace language.
 ```
 
@@ -99,7 +100,7 @@ The subagent will:
 Use the `editor` subagent to improve readability:
 
 ```text
-Use the editor subagent to improve the readability of ../mabw-workspace/output/brief.md.
+Use the editor subagent to improve the readability of ../mabw-workspace/output/intermediate/audited_brief.md.
 Improve management tone and reduce repetition.
 Preserve all [src:CLAIM_ID] citations exactly. Do not add new facts.
 ```
@@ -115,8 +116,8 @@ The subagent will:
 Use the `auditor` subagent to verify the final output:
 
 ```text
-Use the auditor subagent to review the final brief at ../mabw-workspace/output/brief.md
-against claim_ledger.json and audit_report.json.
+Use the auditor subagent to review ../mabw-workspace/output/intermediate/audited_brief.md
+against output/intermediate/claim_ledger.json and output/intermediate/audit_report.json.
 Check for unsupported facts, missing citations, orphan citations, stale sources,
 and investment-advice language. Recommend fixes.
 ```
@@ -127,6 +128,8 @@ The subagent will:
 - Check for stale sources and investment-advice language
 - Recommend fixes
 - Run `python` deterministic audit commands where available
+
+After audit passes, regenerate `output/brief.md` as the reader-facing copy with `[src:CLAIM_ID]` markers stripped.
 
 ### 7. Doctor Check
 
@@ -157,11 +160,11 @@ User: I need to create a weekly brief for my solar manufacturing company.
 Claude Code:
   1. Uses source-planner to generate sources for solar manufacturing
   2. Runs multi-agent-brief init with the right settings
-  3. Runs multi-agent-brief run to produce the initial brief
-  4. Uses analyst to improve the brief sections
+  3. Runs multi-agent-brief run to produce the reader brief and audit artifacts
+  4. Uses analyst to improve the audited brief sections
   5. Uses editor to polish the prose
-  6. Uses auditor to verify the final output
-  7. Shows the user the final brief.md
+  6. Uses auditor to verify the audited brief
+  7. Regenerates and shows the user the final brief.md
 ```
 
 ## Subagent Reference
@@ -181,11 +184,11 @@ Claude Code:
 
 ## Tips
 
-- **Preserve citations**: Always tell subagents to preserve `[src:CLAIM_ID]` citations.
+- **Preserve citations internally**: Tell analyst/editor/auditor subagents to preserve `[src:CLAIM_ID]` in `audited_brief.md`; strip them only when regenerating reader-facing `brief.md`.
 - **Use Python CLI for determinism**: The Python pipeline is repeatable and testable.
 - **Use subagents for judgment**: Subagents are best for extraction, analysis, and editing.
 - **Check source health**: Run `multi-agent-brief doctor` before running the pipeline.
-- **Review audit output**: Always check `audit_report.json` before distributing a brief.
+- **Review audit output**: Always check `output/intermediate/audit_report.json` before distributing a brief.
 
 ## See Also
 

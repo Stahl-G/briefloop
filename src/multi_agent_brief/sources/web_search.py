@@ -28,6 +28,13 @@ def _register_known_backends() -> None:
     _KNOWN_BACKENDS["serper"] = SerperBackend
 
 
+def backend_api_key_env(backend: SearchBackend, config: dict[str, Any] | None = None) -> str:
+    """Return the env var name a backend uses for its API key."""
+    if config and config.get("api_key_env"):
+        return str(config["api_key_env"])
+    return str(getattr(backend, "_api_key_env", ""))
+
+
 class WebSearchProvider(SourceProvider):
     """Web search provider using pluggable search backends."""
 
@@ -54,9 +61,10 @@ class WebSearchProvider(SourceProvider):
                 return cls(api_key_env=api_key_env)
             return cls()
 
+        supported = ", ".join(sorted(_KNOWN_BACKENDS))
         raise NotImplementedError(
             f"web_search backend '{backend_name}' is not available. "
-            "Supported backends: tavily. Or inject a SearchBackend implementation."
+            f"Supported backends: {supported}. Or inject a SearchBackend implementation."
         )
 
     def validate_config(self, config: dict[str, Any]) -> list[str]:
@@ -75,8 +83,9 @@ class WebSearchProvider(SourceProvider):
         except (RuntimeError, NotImplementedError) as exc:
             return [str(exc)]
         if not backend.is_available():
-            api_key_env = config.get("api_key_env", "TAVILY_API_KEY")
-            return [f"web_search: backend '{backend_name}' requires env var {api_key_env} to be set"]
+            api_key_env = backend_api_key_env(backend, config)
+            key_hint = f"env var {api_key_env}" if api_key_env else "a configured API key"
+            return [f"web_search: backend '{backend_name}' requires {key_hint} to be set"]
         return []
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:

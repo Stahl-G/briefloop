@@ -57,15 +57,15 @@ class TestB18DocumentationConsistency:
         formatter = FormatterAgent()
         assert formatter.name == "formatter"
 
-    def test_brief_md_is_prepared_not_draft(self):
-        """Formatter writes prepared_markdown as brief.md, not draft_markdown."""
+    def test_brief_md_is_reader_copy_not_draft(self):
+        """Formatter writes a citation-stripped reader copy as brief.md."""
         from multi_agent_brief.agents.formatter import FormatterAgent
         # Verify the formatter's actual behavior via source
         import inspect
         source = inspect.getsource(FormatterAgent.run)
-        # brief_path should write prepared_markdown, not draft_markdown
-        assert "prepared_markdown" in source
+        assert "strip_claim_citations" in source
         assert "brief_path.write_text" in source
+        assert "audited_brief.md" in source
 
     def test_draft_brief_in_intermediate_dir(self):
         """draft_brief.md must go to output/intermediate/, not output/."""

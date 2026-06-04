@@ -120,6 +120,20 @@ class TestPipelineSteps:
             f"  Got:      {steps}"
         )
 
+    def test_init_config_includes_output_filename_template(self, tmp_path):
+        """Generated configs should enable human-readable named output files."""
+        sys.path.insert(0, str(ROOT / "src"))
+        from multi_agent_brief.cli.init_wizard import build_config, InitProfile
+
+        profile = InitProfile(
+            company="ExampleCo",
+            brief_title="ExampleCo 光储周报",
+        )
+        config = build_config(profile)
+
+        assert config["output"]["filename_template"] == "{project_name}_{report_date}"
+        assert config["output"]["named_outputs"] is True
+
 
 class TestReportDateAuto:
     """report.date == 'auto' must resolve to today's date."""

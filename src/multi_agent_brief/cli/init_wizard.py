@@ -40,6 +40,8 @@ input:
 
 output:
   path: "output"
+  filename_template: "{project_name}_{report_date}"
+  named_outputs: true
 """
 
 WORKSPACE_GITIGNORE = """.env
@@ -398,6 +400,8 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
         "output": {
             "path": "output",
             "formats": profile.output_formats,
+            "filename_template": "{project_name}_{report_date}",
+            "named_outputs": True,
             "footer": "Confidential — Internal Use Only",
         },
         "source": {

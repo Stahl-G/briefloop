@@ -13,7 +13,7 @@ import os
 import urllib.request
 from typing import Any
 
-from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchResult
+from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchBackendError, SearchResult
 from multi_agent_brief.sources.search_backends.capabilities import (
     BRAVE_CAPABILITIES,
     SearchBackendCapabilities,
@@ -121,8 +121,11 @@ class BraveBackend(SearchBackend):
                     data = json.loads(gzip.decompress(resp.read()).decode("utf-8"))
                 else:
                     data = json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            return []
+        except Exception as exc:
+            raise SearchBackendError(
+                f"Brave search failed: {type(exc).__name__}: {exc}",
+                backend="brave",
+            ) from exc
 
         results: list[SearchResult] = []
 

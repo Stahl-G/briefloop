@@ -256,6 +256,28 @@ class TestFormatterDocxIntegration:
         assert docx_path.exists()
         assert docx_path.stat().st_size > 0
 
+    def test_docx_format_creates_named_docx_copy(self, workspace):
+        """When named outputs are enabled, DOCX gets the same configured stem."""
+        from multi_agent_brief.agents.formatter import FormatterAgent
+        from multi_agent_brief.core.claim_ledger import ClaimLedger
+        from multi_agent_brief.core.schemas import PipelineContext, ReportState
+
+        context = PipelineContext(
+            project_name="ExampleCo Weekly Brief",
+            input_dir=str(workspace / "input"),
+            output_dir=str(workspace / "output"),
+            report_date="2026-06-04",
+            output_formats=["markdown", "docx"],
+            output_filename_template="{project_name}_{report_date}",
+            report_state=ReportState(prepared_markdown=SAMPLE_MARKDOWN),
+        )
+        result = FormatterAgent().run(context, ClaimLedger())
+
+        named_docx = Path(result.artifacts["brief_docx_named"])
+        assert named_docx.name == "ExampleCo_Weekly_Brief_2026-06-04.docx"
+        assert named_docx.exists()
+        assert named_docx.stat().st_size > 0
+
     def test_docx_with_custom_footer(self, workspace):
         """Custom footer from output.footer is passed to the DOCX."""
         from multi_agent_brief.agents.formatter import FormatterAgent

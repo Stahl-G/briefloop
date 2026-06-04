@@ -5,7 +5,7 @@ argument-hint: "<workspace-path>"
 
 You are generating a real user-facing brief for workspace: $ARGUMENTS
 
-The Python CLI prepares intermediate artifacts only. The final brief must be written by Claude Code subagents using Claim Ledger and audit outputs.
+The Python CLI prepares deterministic reader-facing files and intermediate audit artifacts. A polished final brief should still be reviewed by Claude Code subagents or a human using the Claim Ledger and audit outputs.
 
 Follow this sequence exactly:
 
@@ -25,11 +25,11 @@ Follow this sequence exactly:
    - Run: `multi-agent-brief doctor --config $ARGUMENTS/config.yaml`
    - Fix any issues before proceeding.
    - Run: `multi-agent-brief run --config $ARGUMENTS/config.yaml`
-   - This produces `draft_brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md` — these are intermediate artifacts, not the final brief.
+   - This produces `output/brief.md` for readers and `output/intermediate/` audit artifacts.
 
 4. Read:
-   - $ARGUMENTS/output/claim_ledger.json
-   - $ARGUMENTS/output/draft_brief.md
+   - $ARGUMENTS/output/intermediate/claim_ledger.json
+   - $ARGUMENTS/output/intermediate/audited_brief.md
    - $ARGUMENTS/user.md
 
 5. Invoke the **analyst** subagent:
@@ -38,22 +38,24 @@ Follow this sequence exactly:
    - Preserve all valid [src:CLAIM_ID] citations.
    - Include dates for news items.
    - Target a real weekly brief, not a thin bullet list.
-   - Write the final brief to $ARGUMENTS/output/brief.md.
+   - Write the auditable brief to $ARGUMENTS/output/intermediate/audited_brief.md.
 
 6. Invoke the **editor** subagent:
    - Polish for management / research team readability.
    - Remove invalid [SRC:], [SOURCE:], [src:] residue.
    - Remove Claude/Codex process residue.
-   - Preserve valid [src:CLAIM_ID].
+   - Preserve valid [src:CLAIM_ID] in audited_brief.md.
 
 7. Invoke the **auditor** subagent:
-   - Audit the final $ARGUMENTS/output/brief.md against $ARGUMENTS/output/claim_ledger.json.
+   - Audit $ARGUMENTS/output/intermediate/audited_brief.md against $ARGUMENTS/output/intermediate/claim_ledger.json.
    - This is the final delivery audit — distinct from the Python pipeline's draft-level audit.
    - Check orphan citations, unsupported facts, unsupported numbers, missing dates, investment advice language, and process residue.
-   - Write/update $ARGUMENTS/output/audit_report.json.
+   - Write/update $ARGUMENTS/output/intermediate/audit_report.json.
 
 8. Regenerate DOCX:
-   - If the CLI supports docx formatting, run the formatter or conversion command.
+   - Regenerate $ARGUMENTS/output/brief.md by stripping [src:CLAIM_ID] from the audited brief.
+   - Regenerate the configured named Markdown copy from `output.filename_template` if enabled.
+   - If DOCX is configured, run the formatter or conversion command from the stripped reader brief.
    - Ensure $ARGUMENTS/output/brief.docx exists if docx is configured.
 
 9. Final response:

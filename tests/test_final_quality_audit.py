@@ -1,4 +1,5 @@
 from multi_agent_brief.audit.final_quality import FinalQualityAuditAgent, FinalQualityConfig
+from multi_agent_brief.agents.draft_cleanup import strip_claim_citations
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim, PipelineContext
 
@@ -148,6 +149,32 @@ def test_sufficient_claims_passes():
     assert not any(f.finding_type == "insufficient_claims" for f in report.findings)
 
 
+def test_reader_brief_claim_count_uses_audited_context(tmp_path):
+    """A stripped reader brief can pass claim checks via prepared_markdown."""
+    ledger = _make_ledger_with_claims(25)
+    cited_lines = "\n".join(
+        f"- Claim {i} [src:TEST{i:04d}ABCD]" for i in range(25)
+    )
+    audited = f"# Brief\n\n## Executive Summary\n\n{cited_lines}\n"
+    reader = strip_claim_citations(audited)
+    context = PipelineContext(
+        project_name="Final",
+        input_dir=str(tmp_path),
+        output_dir=str(tmp_path / "output"),
+    )
+    context.report_state.prepared_markdown = audited
+
+    config = FinalQualityConfig(
+        min_markdown_chars=0,
+        expected_summary_bullets=None,
+        required_metadata_labels=[],
+        min_selected_claims=20,
+    )
+    report = FinalQualityAuditAgent(config).run_audit(reader, ledger, context)
+
+    assert not any(f.finding_type == "insufficient_claims" for f in report.findings)
+
+
 def test_quiet_week_exception_for_claims():
     """quiet_week should relax claim count requirement when allow_quiet_week_exception is set."""
     ledger = _make_ledger_with_claims(5)
@@ -203,6 +230,33 @@ def test_missing_date_claim_detected():
     report = FinalQualityAuditAgent(config).run_audit(markdown, ledger)
 
     assert report.audit_status == "fail"
+    date_findings = [f for f in report.findings if f.finding_type == "missing_date"]
+    assert len(date_findings) == 3
+
+
+def test_reader_brief_date_check_uses_audited_context(tmp_path):
+    """A stripped reader brief still checks dates against cited audited text."""
+    ledger = _make_ledger_with_claims(3, with_dates=False)
+    cited_lines = "\n".join(
+        f"- Claim {i} [src:TEST{i:04d}ABCD]" for i in range(3)
+    )
+    audited = f"# Brief\n\n## Executive Summary\n\n{cited_lines}\n"
+    reader = strip_claim_citations(audited)
+    context = PipelineContext(
+        project_name="Final",
+        input_dir=str(tmp_path),
+        output_dir=str(tmp_path / "output"),
+    )
+    context.report_state.prepared_markdown = audited
+
+    config = FinalQualityConfig(
+        min_markdown_chars=0,
+        expected_summary_bullets=None,
+        required_metadata_labels=[],
+        require_dates=True,
+    )
+    report = FinalQualityAuditAgent(config).run_audit(reader, ledger, context)
+
     date_findings = [f for f in report.findings if f.finding_type == "missing_date"]
     assert len(date_findings) == 3
 

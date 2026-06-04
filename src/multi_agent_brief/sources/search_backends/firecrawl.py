@@ -13,7 +13,7 @@ import os
 import urllib.request
 from typing import Any
 
-from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchResult
+from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchBackendError, SearchResult
 from multi_agent_brief.sources.search_backends.capabilities import (
     FIRECRAWL_CAPABILITIES,
     SearchBackendCapabilities,
@@ -99,11 +99,18 @@ class FirecrawlBackend(SearchBackend):
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            return []
+        except Exception as exc:
+            raise SearchBackendError(
+                f"Firecrawl search failed: {type(exc).__name__}: {exc}",
+                backend="firecrawl",
+            ) from exc
 
         if not data.get("success"):
-            return []
+            message = str(data.get("error") or "success=false")
+            raise SearchBackendError(
+                f"Firecrawl search failed: {message}",
+                backend="firecrawl",
+            )
 
         results: list[SearchResult] = []
         for item in data.get("data", {}).get("web", []):

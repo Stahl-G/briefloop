@@ -302,6 +302,7 @@ def test_pipeline_provider_sources_appear_in_brief(tmp_path):
 
     brief_text = (output_dir / "brief.md").read_text(encoding="utf-8")
     assert "manufacturing" in brief_text.lower() or "capacity" in brief_text.lower()
+    assert "[src:" not in brief_text
     # Citations are stripped from final brief; check intermediate draft for [src:]
     draft_text = (output_dir / "intermediate" / "draft_brief.md").read_text(encoding="utf-8")
     assert "[src:" in draft_text
@@ -438,6 +439,7 @@ def test_cli_run_with_external_workspace(tmp_path):
 
     brief = (ws / "output" / "brief.md").read_text(encoding="utf-8")
     assert len(brief) > 0, "Brief should not be empty"
+    assert "[src:" not in brief
     # Citations are stripped from final brief; check intermediate draft
     draft = (ws / "output" / "intermediate" / "draft_brief.md").read_text(encoding="utf-8")
     assert "[src:" in draft, "Draft should contain [src:] citations"

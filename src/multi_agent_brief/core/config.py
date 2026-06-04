@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.outputs.naming import DEFAULT_FILENAME_TEMPLATE
+
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - exercised when PyYAML is not installed
@@ -74,6 +76,16 @@ def normalize_language_config(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 def build_run_settings(
     *,
     config: dict[str, Any] | None,
@@ -82,7 +94,7 @@ def build_run_settings(
     name: str | None,
     language: str | None,
     audience: str | None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     config = config or {}
     project = config.get("project", {}) or {}
     language_config = config.get("language", {}) or {}
@@ -113,12 +125,34 @@ def build_run_settings(
     if output_dir is None and output_config.get("path") and not output_path.is_absolute():
         output_path = config_dir / output_path
 
+    project_name = name or project.get("name") or "Weekly Intelligence Brief"
+    resolved_language = language or language_config.get("output") or project.get("language") or "zh-CN"
+    resolved_audience = audience or project.get("audience") or "management"
+    output_filename_template = (
+        output_config.get("filename_template")
+        or output_config.get("file_name_template")
+        or output_config.get("name_template")
+        or output_config.get("filename")
+        or DEFAULT_FILENAME_TEMPLATE
+    )
+    output_filename_tokens = {
+        "project_name": str(project_name),
+        "title": str(project_name),
+        "company": str(project.get("company", "")),
+        "industry": str(project.get("industry", "")),
+        "audience": str(resolved_audience),
+        "cadence": str(report.get("cadence", "")),
+        "report_date": str(raw_date),
+        "date": str(raw_date),
+        "language": str(resolved_language),
+    }
+
     return {
-        "project_name": name or project.get("name") or "Weekly Intelligence Brief",
+        "project_name": project_name,
         "input_dir": str(input_path),
         "output_dir": str(output_path),
-        "language": language or language_config.get("output") or project.get("language") or "zh-CN",
-        "audience": audience or project.get("audience") or "management",
+        "language": resolved_language,
+        "audience": resolved_audience,
         "report_date": str(raw_date),
         "max_source_age_days": int(report["max_source_age_days"]) if "max_source_age_days" in report else None,
         "fail_on_stale_source": bool(report.get("fail_on_stale_source", False)),
@@ -130,4 +164,7 @@ def build_run_settings(
         "quiet_week_min_claims": int(selection.get("quiet_week_min_claims", 5)),
         "output_formats": output_config.get("formats", ["markdown"]),
         "output_footer": output_config.get("footer", ""),
+        "output_filename_template": str(output_filename_template),
+        "output_filename_tokens": output_filename_tokens,
+        "output_named_outputs": _as_bool(output_config.get("named_outputs"), True),
     }

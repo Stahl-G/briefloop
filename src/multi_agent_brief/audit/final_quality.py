@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
+from multi_agent_brief.agents.draft_cleanup import strip_claim_citations
 from multi_agent_brief.audit.deterministic import parse_date
 from multi_agent_brief.audit.interfaces import AuditAgentInterface, recompute_report_status
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -60,9 +61,9 @@ class FinalQualityAuditAgent(AuditAgentInterface):
         findings.extend(_chapter_count_findings(markdown, config))
         findings.extend(_stale_current_framing_findings(markdown, context, config))
         findings.extend(_docx_fidelity_findings(config))
-        findings.extend(_claim_count_findings(ledger, markdown, config))
+        findings.extend(_claim_count_findings(ledger, markdown, context, config))
         findings.extend(_brief_depth_findings(markdown, config))
-        findings.extend(_date_requirement_findings(ledger, markdown, config))
+        findings.extend(_date_requirement_findings(ledger, markdown, context, config))
         report = AuditReport(
             audit_status="pass",
             audit_score=100,
@@ -291,13 +292,15 @@ def _docx_fidelity_findings(config: FinalQualityConfig) -> list[AuditFinding]:
 def _claim_count_findings(
     ledger: ClaimLedger,
     markdown: str,
+    context: PipelineContext | None,
     config: FinalQualityConfig,
 ) -> list[AuditFinding]:
     """Check that enough claims were selected for the brief."""
     if config.min_selected_claims <= 0:
         return []
     # Count claims that are actually cited in the markdown
-    cited_ids = set(re.findall(r"\[src:([A-Z0-9_]{6,})\]", markdown))
+    citation_markdown = _markdown_for_claim_refs(markdown, context)
+    cited_ids = set(re.findall(r"\[src:([A-Z0-9_]{6,})\]", citation_markdown))
     if len(cited_ids) >= config.min_selected_claims:
         return []
     if config.allow_quiet_week_exception and config.quiet_week:
@@ -361,6 +364,7 @@ def _brief_depth_findings(markdown: str, config: FinalQualityConfig) -> list[Aud
 def _date_requirement_findings(
     ledger: ClaimLedger,
     markdown: str,
+    context: PipelineContext | None,
     config: FinalQualityConfig,
 ) -> list[AuditFinding]:
     """Check that claims cited in the brief have dates."""
@@ -369,7 +373,8 @@ def _date_requirement_findings(
     if config.allow_quiet_week_exception and config.quiet_week:
         return []
 
-    cited_ids = set(re.findall(r"\[src:([A-Z0-9_]{6,})\]", markdown))
+    citation_markdown = _markdown_for_claim_refs(markdown, context)
+    cited_ids = set(re.findall(r"\[src:([A-Z0-9_]{6,})\]", citation_markdown))
     findings: list[AuditFinding] = []
     for claim in ledger:
         if claim.claim_id not in cited_ids:
@@ -389,6 +394,15 @@ def _date_requirement_findings(
                 )
             )
     return findings
+
+
+def _markdown_for_claim_refs(markdown: str, context: PipelineContext | None) -> str:
+    if re.search(r"\[src:[A-Z0-9_]{6,}\]", markdown):
+        return markdown
+    audited = context.report_state.prepared_markdown if context else ""
+    if audited and strip_claim_citations(audited).strip() == markdown.strip():
+        return audited
+    return markdown
 
 
 def _section_by_heading(markdown: str, heading: str) -> str:

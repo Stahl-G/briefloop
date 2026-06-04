@@ -3,10 +3,13 @@
 ## Near-Term
 
 * Smart tone adjustment: automatically adjust expression based on different readers such as management, researchers, IR, legal/compliance, and investment teams.
-* Automatic document naming: generate output filenames based on company, topic, date, frequency, language, and report type.
 * Multiple DOCX templates: support different layouts for executive briefs, research notes, and formal internal reports.
 * Smart market and competitor strategy: automatically determine which markets, companies, policies, and competitors to track based on `user.md`.
 * More flexible search strategies: support tiered configuration for official sources, industry media, filings, RSS, and web search.
+
+## Recently Added
+
+* Automatic document naming via `output.filename_template` and `output.named_outputs`.
 
 ## Mid-Term
 

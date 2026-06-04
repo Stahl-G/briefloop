@@ -1,9 +1,10 @@
-"""Tests for B01: Final brief.md must be auditable and traceable to Claim Ledger.
+"""Tests for B01: delivered brief must be auditable without exposing Claim IDs.
 
 These tests verify the core contract:
 - Editor must preserve valid [src:CLAIM_ID] citations (only remove process residue)
-- The text Auditor audits must be the same text Formatter delivers
-- Final brief.md must be traceable back to Claim Ledger
+- Auditor audits the Editor-prepared text with citations
+- Formatter writes that audited text to intermediate/audited_brief.md
+- Formatter writes output/brief.md as a deterministic citation-stripped reader copy
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from multi_agent_brief.agents.analyst import AnalystAgent
 from multi_agent_brief.agents.editor import EditorAgent
 from multi_agent_brief.agents.auditor import AuditorAgent
 from multi_agent_brief.agents.formatter import FormatterAgent
+from multi_agent_brief.agents.draft_cleanup import strip_claim_citations
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.pipeline import BriefPipeline
 from multi_agent_brief.core.schemas import Claim, PipelineContext
@@ -132,12 +134,12 @@ class TestB01EditorPreservesCitations:
         )
 
 
-class TestB01AuditorAuditsDeliveredText:
-    """Auditor must audit the same text that Formatter delivers as brief.md."""
+class TestB01AuditedTextAndReaderBrief:
+    """Auditor must audit the claim-cited text that the reader brief derives from."""
 
     def test_auditor_audits_prepared_not_draft(self, tmp_path):
-        """After pipeline run (with Editor before Auditor), the audited text
-        must be prepared_markdown (what Formatter writes), not draft_markdown."""
+        """After pipeline run, the audited text must be prepared_markdown and
+        the reader brief must be a deterministic citation-stripped copy."""
         input_dir = tmp_path / "input"
         output_dir = tmp_path / "output"
         input_dir.mkdir()
@@ -158,27 +160,29 @@ class TestB01AuditorAuditsDeliveredText:
 
         outputs = BriefPipeline().run(context)
 
-        # Read the final brief
+        # Read the reader-facing brief and the audited internal brief
         brief_text = (output_dir / "brief.md").read_text(encoding="utf-8")
+        audited_text = (output_dir / "intermediate" / "audited_brief.md").read_text(encoding="utf-8")
 
         # Read the audit report to find what was audited
         audit_report_path = output_dir / "intermediate" / "audit_report.json"
         audit_data = json.loads(audit_report_path.read_text(encoding="utf-8"))
 
-        # If the brief has citations, the audit must have found references
         from multi_agent_brief.audit.deterministic import SRC_REF_PATTERN
-        brief_refs = SRC_REF_PATTERN.findall(brief_text)
 
-        if brief_refs:
-            # The audit report's refs_extracted should match the brief
-            refs_extracted = audit_data.get("metadata", {}).get("refs_extracted", 0)
-            assert refs_extracted > 0, (
-                "B01 FAIL: Final brief has citations but audit found zero refs — "
-                "Auditor did not audit the delivered text"
-            )
+        assert not SRC_REF_PATTERN.findall(brief_text), (
+            "B01 FAIL: reader-facing brief.md must not expose [src:CLAIM_ID] markers"
+        )
+        assert SRC_REF_PATTERN.findall(audited_text), (
+            "B01 FAIL: audited_brief.md must preserve [src:CLAIM_ID] markers for audit"
+        )
+        assert brief_text == strip_claim_citations(audited_text)
+        assert audit_data.get("metadata", {}).get("refs_extracted", 0) > 0
+        assert audit_data.get("metadata", {}).get("audited_markdown_artifact", "").endswith("audited_brief.md")
+        assert audit_data.get("metadata", {}).get("reader_brief_transform") == "strip_claim_citations"
 
-    def test_full_pipeline_final_brief_traceable(self, tmp_path):
-        """End-to-end: every [src:CLAIM_ID] in final brief.md must exist in claim_ledger.json."""
+    def test_full_pipeline_audited_brief_traceable_reader_brief_clean(self, tmp_path):
+        """End-to-end: audited_brief references the ledger while brief.md is clean."""
         input_dir = tmp_path / "input"
         output_dir = tmp_path / "output"
         input_dir.mkdir()
@@ -199,32 +203,37 @@ class TestB01AuditorAuditsDeliveredText:
 
         BriefPipeline().run(context)
 
-        # Read final brief
+        # Read final reader brief and audited internal brief
         brief_text = (output_dir / "brief.md").read_text(encoding="utf-8")
+        audited_text = (output_dir / "intermediate" / "audited_brief.md").read_text(encoding="utf-8")
 
         # Read claim ledger
         ledger = ClaimLedger.import_json(
             output_dir / "intermediate" / "claim_ledger.json"
         )
 
-        # Every [src:CLAIM_ID] in brief.md must exist in ledger
         from multi_agent_brief.audit.deterministic import SRC_REF_PATTERN
         brief_refs = SRC_REF_PATTERN.findall(brief_text)
+        audited_refs = SRC_REF_PATTERN.findall(audited_text)
 
-        assert len(brief_refs) > 0, (
-            "B01 FAIL: Final brief.md has zero [src:CLAIM_ID] citations — "
-            "the brief is not traceable to Claim Ledger"
+        assert not brief_refs, (
+            "B01 FAIL: reader-facing brief.md must not expose [src:CLAIM_ID] citations"
         )
+        assert len(audited_refs) > 0, (
+            "B01 FAIL: audited_brief.md has zero [src:CLAIM_ID] citations — "
+            "the audited text is not traceable to Claim Ledger"
+        )
+        assert brief_text == strip_claim_citations(audited_text)
 
-        for ref in brief_refs:
+        for ref in audited_refs:
             assert ledger.get_claim(ref) is not None, (
-                f"B01 FAIL: [src:{ref}] found in brief.md but NOT in claim_ledger.json "
-                f"— orphan citation in final output"
+                f"B01 FAIL: [src:{ref}] found in audited_brief.md but NOT in "
+                "claim_ledger.json — orphan citation in audited output"
             )
 
-    def test_audited_text_matches_delivered_text(self, tmp_path):
-        """After the pipeline runs, the text written to brief.md should be the
-        same text the Auditor audited (not draft_markdown)."""
+    def test_reader_brief_is_stripped_derivative_of_audited_text(self, tmp_path):
+        """After the pipeline runs, brief.md should be a deterministic stripped
+        derivative of the exact text Auditor audited."""
         input_dir = tmp_path / "input"
         output_dir = tmp_path / "output"
         input_dir.mkdir()
@@ -244,13 +253,15 @@ class TestB01AuditorAuditsDeliveredText:
 
         outputs = BriefPipeline().run(context)
 
-        # The Auditor result summary should reference the audited text
-        # The Formatter writes prepared_markdown
         brief_text = (output_dir / "brief.md").read_text(encoding="utf-8")
+        audited_text = (output_dir / "intermediate" / "audited_brief.md").read_text(encoding="utf-8")
         prepared = context.report_state.prepared_markdown
 
-        # Formatter writes prepared_markdown as brief.md — they must be identical
-        assert brief_text == prepared, (
-            "B01 FAIL: brief.md content does not match prepared_markdown — "
-            "Formatter is not delivering what Editor produced"
+        assert audited_text == prepared, (
+            "B01 FAIL: audited_brief.md content does not match prepared_markdown — "
+            "Formatter is not preserving the audited text"
+        )
+        assert brief_text == strip_claim_citations(prepared), (
+            "B01 FAIL: brief.md must be a deterministic citation-stripped copy "
+            "of the audited prepared_markdown"
         )

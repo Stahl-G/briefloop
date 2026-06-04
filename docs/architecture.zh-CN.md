@@ -77,10 +77,14 @@ Formatter 负责写出文件，不应改变简报实质内容。
 
 当前输出包括：
 
-- `brief.md`
-- `claim_ledger.json`
-- `audit_report.json`
-- `source_map.md`
+- `brief.md`：给人阅读的 Markdown，已移除内部 claim ID
+- `{配置命名}.md`：可选的具名交付副本，由 `output.named_outputs` 启用
+- `intermediate/audited_brief.md`：带 `[src:CLAIM_ID]` 的审计版本
+- `intermediate/claim_ledger.json`
+- `intermediate/audit_report.json`
+- `intermediate/source_map.md`
+
+默认文件名模板是 `{project_name}_{report_date}`，也支持 `company`、`industry`、`cadence`、`language` 等项目和报告字段。
 
 ## 迁移方向
 

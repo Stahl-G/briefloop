@@ -237,7 +237,7 @@ class TestFirecrawlBackend:
         assert captured_payload["scrapeOptions"]["formats"] == [{"type": "markdown"}]
 
     def test_search_handles_api_error(self, monkeypatch):
-        """Should return empty list on API error."""
+        """Should raise SearchBackendError on API error."""
         monkeypatch.setenv(DEFAULT_API_KEY_ENV, "test-key")
 
         def mock_urlopen(req, timeout=60):
@@ -245,12 +245,12 @@ class TestFirecrawlBackend:
 
         with patch("urllib.request.urlopen", mock_urlopen):
             backend = FirecrawlBackend()
-            results = backend.search("test query")
-
-        assert results == []
+            from multi_agent_brief.sources.search_backends.base import SearchBackendError
+            with pytest.raises(SearchBackendError, match="Firecrawl search failed"):
+                backend.search("test query")
 
     def test_search_handles_failure_response(self, monkeypatch):
-        """Should return empty list when success=false."""
+        """Should raise SearchBackendError when success=false."""
         monkeypatch.setenv(DEFAULT_API_KEY_ENV, "test-key")
 
         mock_response = {"success": False, "error": "Rate limit exceeded"}
@@ -265,9 +265,9 @@ class TestFirecrawlBackend:
 
         with patch("urllib.request.urlopen", mock_urlopen):
             backend = FirecrawlBackend()
-            results = backend.search("test query")
-
-        assert results == []
+            from multi_agent_brief.sources.search_backends.base import SearchBackendError
+            with pytest.raises(SearchBackendError, match="Rate limit exceeded"):
+                backend.search("test query")
 
     def test_search_uses_bearer_auth(self, monkeypatch):
         """Should use Bearer token authentication."""

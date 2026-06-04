@@ -25,7 +25,7 @@ This repo provides a toolkit that makes the workflow modular, inspectable, and r
 
 - Python tools handle source collection, signal filtering, evidence tracking, and audit checks.
 - Claude/Codex agents write the final brief from the Claim Ledger.
-- Drafts use explicit `[src:CLAIM_ID]` citations.
+- Draft and audited Markdown use explicit `[src:CLAIM_ID]` citations; the reader-facing `brief.md` strips those internal IDs.
 - Auditors check unsupported numbers, stale sources, duplicate claims, placeholders, and redaction risks.
 - Output artifacts keep the draft brief, audit report, claim ledger, and source map separate.
 
@@ -110,7 +110,7 @@ This project provides the following tools and capabilities:
 - Claim Ledger records source-grounded evidence
 - Deterministic audit checks missing claims, unsupported numbers, duplicate claims, redaction risks, and stale sources
 - Quality harness checks for placeholders, low-confidence sources, process residue, stale filler, and unit risks
-- `multi-agent-brief run` prepares intermediate artifacts: `draft_brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md`
+- `multi-agent-brief run` prepares `output/brief.md` plus intermediate audit artifacts: `audited_brief.md`, `draft_brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md`
 
 **Agent-Assisted (Claude Code / Codex):**
 - Claude Code subagents (analyst, editor, auditor) write the final brief from Claim Ledger
@@ -119,6 +119,7 @@ This project provides the following tools and capabilities:
 
 **Rendering & Output:**
 - DOCX renderer (enabled by default)
+- Stable `brief.md` / `brief.docx` outputs plus automatically named delivery copies from `output.filename_template`
 - `python scripts/public_safe_scan.py` public-safe content scanner detects personal info and sensitive content leaks in public files
 - `python scripts/check_terms.py` terminology consistency checker prevents spelling drift
 
@@ -195,6 +196,8 @@ multi-agent-brief run --config ../mabw-workspace/config.yaml
 
 # View output
 cat ../mabw-workspace/output/brief.md
+# Audit-ready version with claim IDs:
+cat ../mabw-workspace/output/intermediate/audited_brief.md
 ```
 
 > **Note:** `multi-agent-brief run` produces a deterministic draft, not a final brief. For a polished user-facing brief, Claude Code subagents (analyst → editor → auditor → formatter) must be orchestrated after the CLI run. Use `/generate-brief <workspace>` for the full workflow.
@@ -234,9 +237,10 @@ Open the generated files:
 
 ```text
 output/basic_market_brief/brief.md
-output/basic_market_brief/claim_ledger.json
-output/basic_market_brief/audit_report.json
-output/basic_market_brief/source_map.md
+output/basic_market_brief/intermediate/audited_brief.md
+output/basic_market_brief/intermediate/claim_ledger.json
+output/basic_market_brief/intermediate/audit_report.json
+output/basic_market_brief/intermediate/source_map.md
 ```
 
 ## More Examples
@@ -298,6 +302,14 @@ The llm_decide mode does not block pipeline execution — if you skip `sources d
 
 When initializing a workspace, the default output formats now include `docx`. After running the pipeline, both `brief.md` and `brief.docx` will appear in the `output/` directory.
 
+The formatter also writes human-readable named delivery copies. The default template is:
+
+```yaml
+output:
+  filename_template: "{project_name}_{report_date}"
+  named_outputs: true
+```
+
 DOCX requires the `python-docx` dependency. It is included when installing with `.[dev]`:
 
 ```bash
@@ -312,7 +324,7 @@ pip install "multi-agent-brief-workflow[docx]"
 
 The DOCX uses a professional investment-bank-style layout with heading hierarchy, tables, lists, blockquotes, and code blocks. The default footer is "Confidential — Internal Use Only" — customize via `output.footer` in `config.yaml`.
 
-If `python-docx` is not installed, the pipeline continues without interruption but records `docx_generation: skipped_missing_dependency` in `audit_report.json`.
+If `python-docx` is not installed, the pipeline continues without interruption but records `docx_generation: skipped_missing_dependency` in `output/intermediate/audit_report.json`.
 
 ## CLI
 
@@ -384,17 +396,17 @@ multi-agent-brief run --config ../mabw-workspace/config.yaml
 Audit an existing brief:
 
 ```bash
-multi-agent-brief audit output/basic_market_brief/brief.md \
-  --ledger output/basic_market_brief/claim_ledger.json \
-  --output output/basic_market_brief/audit_report.json
+multi-agent-brief audit output/basic_market_brief/intermediate/audited_brief.md \
+  --ledger output/basic_market_brief/intermediate/claim_ledger.json \
+  --output output/basic_market_brief/intermediate/audit_report.json
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief audit output/basic_market_brief/brief.md `
-  --ledger output/basic_market_brief/claim_ledger.json `
-  --output output/basic_market_brief/audit_report.json
+multi-agent-brief audit output/basic_market_brief/intermediate/audited_brief.md `
+  --ledger output/basic_market_brief/intermediate/claim_ledger.json `
+  --output output/basic_market_brief/intermediate/audit_report.json
 ```
 
 Print the version:

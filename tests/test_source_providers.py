@@ -347,6 +347,38 @@ def test_doctor_tavily_errors_without_key(tmp_path, monkeypatch):
     assert any("tavily" in r.message.lower() and r.status == "ERROR" for r in results)
 
 
+def test_web_search_validate_uses_backend_default_env(monkeypatch):
+    """Exa without api_key_env should ask for EXA_API_KEY, not TAVILY_API_KEY."""
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+    errors = WebSearchProvider().validate_config({"enabled": True, "backend": "exa"})
+
+    assert any("EXA_API_KEY" in e for e in errors)
+    assert all("TAVILY_API_KEY" not in e for e in errors)
+
+
+def test_doctor_recognizes_exa_backend_without_key(tmp_path, monkeypatch):
+    """Doctor should recognize Exa and report its real default env var."""
+    import yaml
+
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("project:\n  name: Test\n", encoding="utf-8")
+
+    sources = {
+        "source_strategy": {"profile": "research", "enabled_providers": ["web_search"]},
+        "web_search": {"enabled": True, "backend": "exa"},
+    }
+    (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
+
+    results = run_doctor(config_path=config_path)
+    messages = [r.message for r in results]
+    assert any("exa" in m.lower() and "EXA_API_KEY" in m for m in messages)
+    assert not any("not a known backend" in m.lower() for m in messages)
+
+
 def test_doctor_errors_on_no_backend(tmp_path):
     """Doctor should error when web_search enabled but no backend."""
     import yaml

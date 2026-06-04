@@ -131,4 +131,7 @@ class PipelineContext:
     report_state: ReportState = field(default_factory=ReportState)
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])
     output_footer: str = ""
+    output_filename_template: str = ""
+    output_filename_tokens: dict[str, str] = field(default_factory=dict)
+    output_named_outputs: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)

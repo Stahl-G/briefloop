@@ -7,6 +7,7 @@ from typing import Any
 
 from multi_agent_brief.sources.base import SourceConfig
 from multi_agent_brief.sources.registry import load_sources_config, validate_all_providers
+from multi_agent_brief.sources.web_search import WebSearchProvider, backend_api_key_env
 
 
 class CheckResult:
@@ -79,16 +80,24 @@ def run_doctor(
             results.append(CheckResult("ERROR", "web_search enabled but no backend configured"))
         elif backend_name == "mock":
             results.append(CheckResult("ERROR", "web_search: mock backend has been removed from runtime code"))
-        elif backend_name == "tavily":
-            api_key_env = source_config.web_search.get("api_key_env", "TAVILY_API_KEY")
-            if os.environ.get(api_key_env):
-                results.append(CheckResult("OK", f"Tavily API key detected via {api_key_env}."))
-            else:
-                results.append(CheckResult("ERROR", f"Tavily live search is enabled, but {api_key_env} is missing."))
-                results.append(CheckResult("ERROR", "  Set it as an environment variable before running the pipeline."))
-                results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
         else:
-            results.append(CheckResult("WARN", f"web_search: backend '{backend_name}' is not a known backend"))
+            try:
+                backend = WebSearchProvider()._get_backend(source_config.web_search)
+            except Exception as exc:
+                results.append(CheckResult("ERROR", str(exc)))
+            else:
+                api_key_env = backend_api_key_env(backend, source_config.web_search)
+                backend_label = backend.name
+                if backend.is_available():
+                    if api_key_env:
+                        results.append(CheckResult("OK", f"Web search backend '{backend_label}' API key detected via {api_key_env}."))
+                    else:
+                        results.append(CheckResult("OK", f"Web search backend '{backend_label}' is available."))
+                else:
+                    key_hint = api_key_env or "the configured API key env var"
+                    results.append(CheckResult("ERROR", f"Web search backend '{backend_label}' is enabled, but {key_hint} is missing."))
+                    results.append(CheckResult("ERROR", "  Set it as an environment variable before running the pipeline."))
+                    results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
 
         # Cross-validate: web_search enabled but not in enabled_providers
         if "web_search" not in source_config.enabled_providers:

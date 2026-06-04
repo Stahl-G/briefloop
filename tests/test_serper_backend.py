@@ -270,7 +270,7 @@ class TestSerperBackend:
         assert captured_payload.get("tbs") == "qdr:d"
 
     def test_search_handles_api_error(self, monkeypatch):
-        """Should return empty list on API error."""
+        """Should raise SearchBackendError on API error."""
         monkeypatch.setenv(DEFAULT_API_KEY_ENV, "test-key")
 
         def mock_urlopen(req, timeout=30):
@@ -278,9 +278,9 @@ class TestSerperBackend:
 
         with patch("urllib.request.urlopen", mock_urlopen):
             backend = SerperBackend()
-            results = backend.search("test query")
-
-        assert results == []
+            from multi_agent_brief.sources.search_backends.base import SearchBackendError
+            with pytest.raises(SearchBackendError, match="Serper search failed"):
+                backend.search("test query")
 
     def test_search_uses_x_api_key_header(self, monkeypatch):
         """Should use X-API-KEY header for authentication."""
