@@ -539,7 +539,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.7.0** — interactive onboarding workflow with enforced business fields.
+Current version: **v0.1.0** — first public release. Interactive onboarding, source discovery, claim ledger, audit and quality gates.
 
 Latest unreleased fix: `multi-agent-brief run <workspace>` now auto-loads that workspace's `config.yaml`, while zero-source / zero-claim empty briefs remain blocked by the audit gate.
 

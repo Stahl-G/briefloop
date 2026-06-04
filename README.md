@@ -483,7 +483,7 @@ multi-agent-brief init ../mabw-workspace
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.7.0** — 交互式问答初始化工作流。
+当前版本：**v0.1.0** — 正式发布版。支持交互式问答初始化、来源发现、事实账本、审计和质量门禁。
 
 最新未发布修复：`multi-agent-brief run <workspace>` 会自动读取该目录下的 `config.yaml`，同时零来源/零 Claim 的空报告会被审计门拦截。
 
