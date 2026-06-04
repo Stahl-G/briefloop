@@ -537,78 +537,11 @@ This project can help structure research and briefing workflows, but it does not
 
 ## Changelog
 
-### v0.6.0 — Profile-Driven Source Discovery
+See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-- **user.md as primary semantic context**: Init generates `user.md` with company, industry, role, focus areas, task objective, and forbidden sources. Agents read this file first to understand user needs.
-- **Simplified onboarding mapper**: Removed long keyword mapping tables. Unknown industries return empty string instead of guessed slugs. Raw user text preserved in `user.md`.
-- **Default llm_decide source mode**: Agent-driven source discovery generates `source_candidates.yaml` for user review before ingestion.
-- **Industry packs as optional seeds**: Packs are no longer routing mechanism, only optional search task accelerators.
-- **Tavily opt-in**: interactive init can enable Tavily live web search; developer-only direct CLI init must provide all required business fields.
-- **Fixed `format_scalar(None)` outputting `"None"` instead of `null`**.
-- Developer-only direct CLI init remains available, but it must provide all required business fields or use `--from-onboarding`.
+Current version: **v0.7.0** — interactive onboarding workflow with enforced business fields.
 
-### v0.5.1 — Source Provider Pipeline Fixes
-
-- Fixed ScoutAgent unconditionally overwriting context.sources: when the pipeline has already collected sources via providers, Scout now uses them directly instead of falling back to local files.
-- Fixed AnalystAgent only rendering 5 topics: expanded to all 10 Screener topics (added compliance, demand, rates, capital, technology); unknown topics are also appended.
-- Fixed merge_candidates_to_sources() auto-enabling web_search: merge no longer implicitly enables web_search, preventing mock search results from leaking into real reports.
-- Fixed WebSearchProvider using hash() for unstable source_id generation: switched to hashlib.sha1 for cross-process consistency.
-- Fixed Manual URL placeholders entering Claim Ledger: placeholder sources now carry requires_fetch metadata and Scout skips them automatically.
-- Fixed collect_all_sources() silently swallowing provider exceptions: errors are now captured in a returned errors list and included in pipeline artifacts as collection_errors.
-- Added 10 new tests covering all fixes.
-- Fixed web_search.py nested f-string SyntaxError on Python 3.9; refactored to intermediate variables.
-- CI now runs compileall before tests to catch syntax compatibility issues early.
-- Fixed init --industry not writing industry into source_strategy.industry, ensuring SourcePlanner receives the user-selected industry.
-- Fixed WebSearchProvider.collect() silently swallowing backend exceptions; errors now propagate to registry errors.
-- Implemented WebSearchProvider domain filtering: config.search_tasks supports domains field, passed through to backend.search().
-- Updated doctor.py: accurate warning when web_search uses mock backend instead of stale Phase 1 message.
-- Removed runtime MockSearchBackend: web_search.enabled=true without a real backend now fails explicitly via registry errors.
-- All init profiles default to web_search disabled; users must configure a real backend.
-
-### v0.5.0 — Three-Layer Source Collection Architecture
-
-- Added `SourcePlanner`: generates search plans based on industry, role, and time window.
-- Added `industry_packs.py`: industry presets (manufacturing, banking, fund, internet, general) with search tasks.
-- `WebSearchProvider` provides a pluggable backend interface (tavily, serpapi, etc.); no runtime mock backend shipped.
-- Added `CachedPackageProvider`: reads pre-collected source package folders (supports OpenClaw-style workflows).
-- Added `search_backends/` module: SearchBackend ABC (pluggable backend interface).
-- Unified SourceItem: eliminated duplicate definitions in `core/schemas.py` and `sources/base.py`.
-- Pipeline restructured: Source Collection → Scout → Screener → ..., Scout now reads from Provider system.
-- CLI gained `--industry` and `--days` args for industry-aware automatic collection.
-- Backward compatible: without source_config, still reads local files from input_dir.
-- 14 new tests covering SourcePlanner, industry packs, WebSearch, CachedPackage, Pipeline integration.
-
-### v0.4.0 — Source Provider System
-
-- Added `sources/` module: unified SourceProvider interface for all information sources.
-- Three source profiles: conservative, research, aggressive_signal.
-- Manual provider: loads local .md/.txt/.json files and manual URL entries.
-- RSS provider: fetches and parses RSS/Atom feeds with keyword filtering.
-- Stub providers for web_search, api, mcp, cli (Phase 1 placeholders).
-- Source normalization, deduplication, and recency filtering.
-- `multi-agent-brief doctor`: checks source configuration health.
-- Init wizard now asks for source profile and generates tailored `sources.yaml`.
-- 21 new tests covering providers, normalizer, registry, and doctor.
-
-### v0.3.0 — Agent Config Generation
-
-- Added `configs/agent_roles.yaml` as single source of truth for all agent roles.
-- Added `scripts/generate_agent_configs.py` to generate platform-specific agent configs.
-- Generated Codex agents (`.codex/agents/*.toml`), skills (`.agents/skills/*/SKILL.md`).
-- Generated Claude Code subagents (`.claude/agents/*.md`).
-- Generated documentation (`docs/agents/`).
-- Added 25 tests for manifest validation, generation, and content checks.
-- `--check` mode for CI staleness detection.
-
-### v0.2.0 — Screener Agent
-
-- Added ScreenerAgent between Scout and Analyst in the pipeline.
-- Topic-based capacity caps across 10 topic buckets (max 160 claims total).
-- Novelty scoring with source tier, claim type, and high-signal term weights.
-- Previous report deduplication via text matching and theme-group detection.
-- Stale source and low-confidence (T5) source exclusion.
-- Previous report loader supporting `.md`, `.txt`, and `.docx` formats.
-- Added pre-push hook and CI check: README must be updated before pushing code changes.
+[View full changelog →](CHANGELOG.md)
 
 ## Development
 

@@ -481,21 +481,11 @@ multi-agent-brief init ../mabw-workspace
 
 ## 版本
 
-### v0.1.0 — 初始公开发布版
+完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-这是 `multi-agent-brief-workflow` 的第一个公开发布版本。
+当前版本：**v0.7.0** — 交互式问答初始化工作流。
 
-当前包含：
-
-* 工作区初始化；
-* 用户画像和任务目标记录；
-* 本地文件输入；
-* 来源发现和来源配置；
-* Claim Ledger 事实账本；
-* 审计和质量检查；
-* Markdown / JSON / DOCX 输出；
-* Claude Code / Codex agent 配置；
-* 开源发布安全检查工具。
+[查看完整变更日志 →](CHANGELOG.md)
 
 ---
 
