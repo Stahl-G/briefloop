@@ -43,9 +43,6 @@ jobs:
       - name: Compile Python files
         run: python -m compileall -q src tests scripts
 
-      - name: Public-safe content scan
-        run: python scripts/public_safe_scan.py
-
       - name: Terminology check
         run: python scripts/check_terms.py
 

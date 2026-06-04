@@ -527,17 +527,7 @@ python -m pytest -q
 python scripts/generate_agent_configs.py --check
 ```
 
-公共安全扫描：
-
-```bash
-python scripts/public_safe_scan.py
-```
-
----
-
 ## 许可证
-
-MIT
 
 ## 交互问答配置项
 

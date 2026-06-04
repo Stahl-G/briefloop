@@ -120,7 +120,6 @@ This project provides the following tools and capabilities:
 **Rendering & Output:**
 - DOCX renderer (enabled by default)
 - Stable `brief.md` / `brief.docx` outputs plus automatically named delivery copies from `output.filename_template`
-- `python scripts/public_safe_scan.py` public-safe content scanner detects personal info and sensitive content leaks in public files
 - `python scripts/check_terms.py` terminology consistency checker prevents spelling drift
 
 ## Example Output

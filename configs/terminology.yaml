@@ -37,4 +37,3 @@ cli_commands:
 readme_command_snippets:
   - "multi-agent-brief sources decide"
   - "multi-agent-brief init --from-onboarding"
-  - "python scripts/public_safe_scan.py"
