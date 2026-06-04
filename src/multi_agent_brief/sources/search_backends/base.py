@@ -6,6 +6,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class SearchBackendError(Exception):
+    """Raised by search backends when a search fails (auth, rate-limit, network, etc.).
+    
+    Must never include API keys in the message or attributes.
+    """
+    def __init__(self, message: str, *, backend: str = "", status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.backend = backend
+        self.status_code = status_code
+
+
 @dataclass
 class SearchResult:
     """A single search result from a backend."""

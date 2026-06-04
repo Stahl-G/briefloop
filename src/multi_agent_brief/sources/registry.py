@@ -115,6 +115,15 @@ def collect_all_sources(
         "cached_package": source_config.cached_package,
     }
 
+    # Run provider config validation before collecting (B08)
+    validation_errors = validate_all_providers(source_config)
+    for ve in validation_errors:
+        errors.append({
+            "provider": "validation",
+            "error_type": "ConfigValidationError",
+            "message": ve,
+        })
+
     for name, provider in providers.items():
         config = config_map.get(name, {})
         try:
@@ -128,13 +137,40 @@ def collect_all_sources(
                 "message": str(exc)[:200],
             })
 
-    # Normalize, filter, dedupe
-    normalized = [normalize_source_item(item) for item in all_items]
+    # Normalize, separate error/placeholder items from usable (B10)
+    usable: list[SourceItem] = []
+    for item in all_items:
+        item = normalize_source_item(item)
+        if _is_error_or_placeholder(item):
+            errors.append({
+                "provider": item.source_type.replace("_error", ""),
+                "error_type": item.metadata.get("error_type", "PlaceholderSource"),
+                "message": f"Source '{item.source_name}' is not usable: {item.content[:120]}",
+            })
+        else:
+            usable.append(item)
 
     recency = query.recency_days if query.recency_days > 0 else 14
-    filtered = filter_by_recency(normalized, recency)
+    filtered = filter_by_recency(usable, recency)
 
     return dedupe_sources(filtered), errors
+
+
+def _is_error_or_placeholder(item: SourceItem) -> bool:
+    """Return True if this SourceItem is an error or placeholder, not usable content."""
+    if item.metadata.get("error_type"):
+        return True
+    if item.metadata.get("requires_fetch"):
+        return True
+    if item.metadata.get("ingestion_status") == "placeholder":
+        return True
+    if item.metadata.get("filtered_reason"):
+        return True
+    if item.metadata.get("low_quality"):
+        return True
+    if item.source_type.endswith("_error"):
+        return True
+    return False
 
 
 def validate_all_providers(source_config: SourceConfig) -> list[str]:

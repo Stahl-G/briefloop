@@ -11,7 +11,7 @@ import os
 import urllib.request
 from typing import Any
 
-from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchResult
+from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchBackendError, SearchResult
 from multi_agent_brief.sources.search_backends.capabilities import (
     TAVILY_CAPABILITIES,
     SearchBackendCapabilities,
@@ -92,8 +92,11 @@ class TavilyBackend(SearchBackend):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-        except Exception:
-            return []
+        except Exception as exc:
+            raise SearchBackendError(
+                f"Tavily search failed: {type(exc).__name__}: {exc}",
+                backend="tavily",
+            ) from exc
 
         results: list[SearchResult] = []
         for item in data.get("results", []):

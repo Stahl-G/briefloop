@@ -23,6 +23,10 @@ class ManualProvider(SourceProvider):
             # Either path or url must be present
             if not src.get("path") and not src.get("url"):
                 errors.append(f"manual.sources[{i}] '{src.get('name', '?')}': needs 'path' or 'url'")
+            # If path is present, check it exists
+            path = src.get("path")
+            if path and not Path(path).exists():
+                errors.append(f"manual.sources[{i}] '{src.get('name', '?')}': path does not exist: {path}")
         return errors
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:
@@ -40,12 +44,14 @@ class ManualProvider(SourceProvider):
 
     def _load_local_path(self, path: Path, src_config: dict) -> list[SourceItem]:
         if not path.exists():
-            return []
+            return [self._path_error_item(path, "path_not_found", src_config)]
         items: list[SourceItem] = []
         if path.is_file():
             item = self._load_file(path, src_config)
             if item:
                 items.append(item)
+            else:
+                items.append(self._path_error_item(path, "unreadable_file", src_config))
         elif path.is_dir():
             for f in sorted(path.iterdir()):
                 if f.is_dir() or f.name.startswith(".") or f.name.lower() == "readme.md":
@@ -118,5 +124,23 @@ class ManualProvider(SourceProvider):
                 "note": "URL registered but not fetched in Phase 1. Add content to input/ directory.",
                 "ingestion_status": "placeholder",
                 "requires_fetch": True,
+            },
+        )
+
+    def _path_error_item(self, path: Path, error_type: str, src_config: dict) -> SourceItem:
+        """Create a diagnostic SourceItem for a missing or unreadable manual path."""
+        name = src_config.get("name", str(path))
+        source_id = name.upper().replace(" ", "_").replace("-", "_")[:32]
+        return SourceItem(
+            source_id=source_id,
+            source_name=name,
+            source_type="manual_error",
+            title=f"Manual source error: {error_type}",
+            content=f"Path not accessible: {path} ({error_type})",
+            reliability="low",
+            metadata={
+                "path": str(path),
+                "error_type": error_type,
+                "category": src_config.get("category", ""),
             },
         )

@@ -309,7 +309,7 @@ class TestExaBackend:
         assert results[0].metadata["cost_dollars"] == 0.05
 
     def test_search_handles_api_error(self, monkeypatch):
-        """Should return empty list on API error."""
+        """Should raise SearchBackendError on API error (not silently return [])."""
         monkeypatch.setenv(DEFAULT_API_KEY_ENV, "test-key")
 
         def mock_urlopen(req, timeout=30):
@@ -317,9 +317,9 @@ class TestExaBackend:
 
         with patch("urllib.request.urlopen", mock_urlopen):
             backend = ExaBackend()
-            results = backend.search("test query")
-
-        assert results == []
+            from multi_agent_brief.sources.search_backends.base import SearchBackendError
+            with pytest.raises(SearchBackendError, match="Exa search failed"):
+                backend.search("test query")
 
     def test_provider_registry(self, monkeypatch):
         """WebSearchProvider should be able to instantiate ExaBackend."""

@@ -95,6 +95,8 @@ def _is_placeholder(source: SourceItem) -> bool:
         return True
     if source.metadata.get("filtered_reason"):
         return True
+    if source.metadata.get("ingestion_status") == "placeholder":
+        return True
     if source.source_type.endswith("_error"):
         return True
     if source.source_type == "manual_url" and source.content.startswith("Manual URL source:"):
