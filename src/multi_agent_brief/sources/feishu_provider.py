@@ -70,7 +70,7 @@ class FeishuProvider(SourceProvider):
         if shutil.which("lark-cli"):
             try:
                 result = subprocess.run(
-                    ["lark-cli", "auth", "status", "--format", "json"],
+                    ["lark-cli", "auth", "status"],
                     capture_output=True, text=True, timeout=10,
                 )
                 if result.returncode != 0:
