@@ -57,6 +57,7 @@ class SourceConfig:
     web_search: dict[str, Any] = field(default_factory=dict)
     api: dict[str, Any] = field(default_factory=dict)
     mcp: dict[str, Any] = field(default_factory=dict)
+    feishu: dict[str, Any] = field(default_factory=dict)
     cached_package: dict[str, Any] = field(default_factory=dict)
     config_dir: str = ""
 
@@ -72,6 +73,7 @@ class SourceConfig:
             web_search=data.get("web_search", {}),
             api=data.get("api", {}),
             mcp=data.get("mcp", {}),
+            feishu=data.get("feishu", {}),
             cached_package=data.get("cached_package", {}),
         )
 

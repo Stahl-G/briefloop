@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New tests: `test_mcp_jsonrpc_communication`, `test_mcp_jsonrpc_init_failure_returns_empty`, `test_news_api_validate_skips_non_newsapi_providers`, `test_cli_nonzero_exit_has_error_type`.
 
+### Added (feishu bidirectional integration)
+
+- **FeishuProvider** (`sources/feishu_provider.py`): New source provider that uses lark-cli to pull data from Feishu Docs, Meeting Minutes, Base, Spreadsheets, Calendar, and Approval tasks.
+- **FeishuDeliveryConnector** (`delivery/feishu.py`): Filled from stub to working implementation — sends briefs to Feishu chat, creates Feishu documents, and uploads files to Drive via lark-cli.
+- **SourceConfig**: Added `feishu` field to `SourceConfig` and `from_dict()`.
+- **Registry**: `feishu` provider registered in `PROVIDER_CLASSES` and `config_map`.
+- **Tests**: 9 new tests covering FeishuProvider (disabled, no sources, validate, registration, item creation) and FeishuDeliveryConnector (missing lark-cli).
+- **Documentation**: `docs/feishu-integration.md` covers setup, source configuration, delivery usage, and security notes.
+
 ### Changed (agent onboarding hardening)
 
 - **Agent rules**: Removed "choose sensible defaults" from all agent instructions. Added hard rule: "Do not infer or silently choose onboarding values. Generic requests such as 'start', 'run', 'initialize' do not authorize default values."
