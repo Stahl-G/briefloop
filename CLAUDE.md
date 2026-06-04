@@ -36,7 +36,7 @@ When the user asks to initialize, start, or configure a brief workspace:
 2. Ask plain-language questions directly in chat.
 3. Cover all onboarding fields: company, industry, task, audience, language, cadence, source style, output style, must-watch, forbidden sources, Tavily API key. Ask about each one or confirm its default.
 4. Let the user answer naturally in one message.
-5. If the user says "unknown", "default", or "choose for me", choose defaults.
+5. Do not infer or silently choose onboarding values. If the user says "unknown", "default", or "choose for me", stop and ask for explicit confirmation. Generic requests such as "start", "run", or "initialize" do not authorize the use of default values.
 6. Convert answers internally to `onboarding.json`.
 7. Run: `multi-agent-brief init <workspace> --from-onboarding onboarding.json`
 8. Use AskUserQuestion only for optional single-choice refinements.

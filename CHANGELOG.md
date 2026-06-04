@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New tests: `test_mcp_jsonrpc_communication`, `test_mcp_jsonrpc_init_failure_returns_empty`, `test_news_api_validate_skips_non_newsapi_providers`, `test_cli_nonzero_exit_has_error_type`.
 
+### Changed (agent onboarding hardening)
+
+- **Agent rules**: Removed "choose sensible defaults" from all agent instructions. Added hard rule: "Do not infer or silently choose onboarding values. Generic requests such as 'start', 'run', 'initialize' do not authorize default values."
+- **`onboarding/mapper.py`**: Removed sentinel value mapping ("default"/"unknown" → en-US) from all 6 `normalize_*` functions. The agent path (`--from-onboarding`) now passes unknown values through instead of silently converting to defaults.
+- **`onboarding/mapper.py`**: Removed `company = "... or "Sample Company"` fallback — empty company now stays empty and triggers a validation error.
+- **`cli/main.py`**: Added validation after `map_onboarding_to_profile()` — if company, industry, or title are empty, init fails with a clear error.
+- **`CLAUDE.md`**: Manually synchronized onboarding policy to match the hardened rules.
+
 ## [0.1.1] — 2026-06-04
 
 First public release. The following entries document the development iterations that led to this release.

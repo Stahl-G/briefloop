@@ -497,6 +497,17 @@ multi-agent-brief init ../mabw-workspace
 
 所有实现均使用 Python 标准库（urllib / subprocess），无额外依赖。
 
+**最新未发布：Agent 引导加固 — 彻底去除静默默认值**
+
+此前 Agent 指令允许用户说 "default" / "unknown" 时使用所谓"合理的默认值"创建 workspace，
+导致用户只说"开始"就被跳过了交互式问答，直接生成一个错误的 workspace。
+
+本次修复：
+- 删除 Agent 指令中所有 "choose sensible defaults" 的字样，改为硬性禁止："不许推断或静默选择 onboarding 值"
+- `onboarding/mapper.py` 中 6 个字段的 sentinel→默认值映射全部删除（"default" 不再自动变成 en-US、"Sample Company" 等）
+- `multi-agent-brief init --from-onboarding` 命令现在会校验 company/industry/title 三个必填字段，空值直接报错
+- `"start"` / `"run"` / `"initialize"` 等通用请求不再触发默认值
+
 [查看完整变更日志 →](CHANGELOG.md)
 
 ---

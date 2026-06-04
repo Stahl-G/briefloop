@@ -165,16 +165,23 @@ def test_onboarding_mapper_output_formats_docx_on_request():
     assert "docx" in profile.output_formats
 
 
-def test_language_default_sentinels_consistent():
-    """Language sentinels must be handled consistently between mapper and init_wizard."""
+def test_language_sentinels_mapper_no_longer_maps_to_defaults():
+    """Mapper sentinel handling was removed — sentinels must pass through as-is,
+    so Agent workflow fails instead of silently using defaults.
+    Init_wizard (interactive) still maps sentinels to en-US for terminal users.
+    """
     from multi_agent_brief.cli.init_wizard import normalize_language as iw_normalize
 
     sentinels = ["default", "unknown", "choose for me", "默认", "不知道", "帮我选"]
     for s in sentinels:
+        # Mapper: sentinel passes through — no silent default
         mapper_result = normalize_language(s)
+        assert mapper_result != "en-US", f"Mapper should not silently map sentinel '{s}' to en-US"
+        assert mapper_result == s, f"Mapper should pass sentinel '{s}' through as-is, got {mapper_result}"
+
+        # Init wizard (interactive): still maps to en-US for terminal fallback
         iw_result = iw_normalize(s)
-        assert mapper_result == iw_result, f"Sentinel '{s}': mapper={mapper_result}, init_wizard={iw_result}"
-        assert mapper_result == "en-US"
+        assert iw_result == "en-US", f"init_wizard should map sentinel '{s}' to en-US, got {iw_result}"
 
 
 def test_legacy_onboarding_without_search_backend_does_not_enable_tavily():

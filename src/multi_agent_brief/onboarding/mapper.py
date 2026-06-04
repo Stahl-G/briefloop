@@ -46,7 +46,7 @@ _DEFAULT_LANG = "en-US"
 
 def normalize_language(text: str) -> str:
     t = text.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+    if not t:
         return _DEFAULT_LANG
     return _LANG_MAP.get(t, t)
 
@@ -74,7 +74,7 @@ _DEFAULT_CADENCE = "weekly"
 
 def normalize_cadence(text: str) -> str:
     t = text.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+    if not t:
         return _DEFAULT_CADENCE
     if t in _CADENCE_MAP:
         return _CADENCE_MAP[t]
@@ -129,7 +129,7 @@ _DEFAULT_AUDIENCE = "management"
 
 def normalize_audience(text: str) -> str:
     t = text.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+    if not t:
         return _DEFAULT_AUDIENCE
     if t in _AUDIENCE_MAP:
         return _AUDIENCE_MAP[t]
@@ -179,7 +179,7 @@ _DEFAULT_SOURCE_PROFILE = "llm_decide"
 
 def normalize_source_profile(text: str) -> str:
     t = text.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+    if not t:
         return _DEFAULT_SOURCE_PROFILE
     if t in _SOURCE_STYLE_MAP:
         return _SOURCE_STYLE_MAP[t]
@@ -205,7 +205,7 @@ _DEFAULT_SEARCH_BACKEND = ""
 
 def normalize_search_backend(text: str) -> str:
     t = text.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+    if not t:
         return _DEFAULT_SEARCH_BACKEND
     if t in _SEARCH_BACKEND_MAP:
         return _SEARCH_BACKEND_MAP[t]
@@ -232,7 +232,7 @@ _DEFAULT_AUDIT_STRICTNESS = "standard"
 
 def normalize_audit_strictness(text: str) -> str:
     t = text.strip().lower()
-    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+    if not t:
         return _DEFAULT_AUDIT_STRICTNESS
     if t in _AUDIT_STRICTNESS_MAP:
         return _AUDIT_STRICTNESS_MAP[t]
@@ -301,7 +301,7 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     profile.interface_language = language
     profile.output_language = language
 
-    profile.company = result.company_or_org.strip() or "Sample Company"
+    profile.company = result.company_or_org.strip()
 
     # Preserve raw industry text for user.md
     industry_raw = result.industry_or_theme.strip()

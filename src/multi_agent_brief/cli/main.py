@@ -325,6 +325,23 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
     if from_onboarding:
         onboarding = load_onboarding_result(from_onboarding)
         profile = map_onboarding_to_profile(onboarding)
+
+        # Validate required fields — agent must not pass empty/sentinel values
+        missing_onboarding: list[str] = []
+        if not profile.company:
+            missing_onboarding.append("company_or_subject")
+        if not profile.industry_text:
+            missing_onboarding.append("industry_or_theme")
+        if not profile.task_objective and not profile.brief_title:
+            missing_onboarding.append("brief_objective")
+        if missing_onboarding:
+            print("[error] Onboarding data is incomplete. Required fields are missing or empty:")
+            for f in missing_onboarding:
+                print(f"  - {f}")
+            print("        Run the interactive onboarding wizard: multi-agent-brief init <workspace>")
+            print("        Or provide all required fields in onboarding.json before using --from-onboarding.")
+            return 1
+
         # Apply any explicit CLI overrides on top of onboarding values
         _apply_cli_overrides(profile, args)
         # CLI target overrides onboarding.target

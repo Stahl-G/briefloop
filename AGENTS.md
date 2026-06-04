@@ -44,7 +44,7 @@ Ask the user about these fields in chat (accept natural-language answers):
 - Must-watch topics or entities (default: empty)
 - Forbidden sources or topics (default: empty)
 
-If the user says "default" or "unknown", use sensible defaults.
+If the user says "default" or "unknown", stop and ask for explicit confirmation. Do NOT silently default values.
 See `docs/onboarding.md` for field mappings.
 
 Create `onboarding.json` from the answers, then:
@@ -255,7 +255,10 @@ Correct facts are necessary but not sufficient for final delivery.
 - Ask plain-language business questions directly in chat.
 - Cover all onboarding fields: company, industry, task, audience, language, cadence, source style, output style, must-watch, forbidden sources. Ask about each one or confirm its default.
 - Accept natural-language answers.
-- If the user says "unknown", "default", or "choose for me", choose sensible defaults.
+- Do not infer or silently choose onboarding values.
+- If the user provides "unknown" or "default" for a required field, stop and ask for explicit confirmation.
+- Generic requests such as "start", "run", "initialize" do not authorize the use of default values.
+- Only proceed with workspace creation when the user explicitly confirms all required fields (company, industry, title).
 - Convert the answers into `onboarding.json`.
 - Run: `multi-agent-brief init --from-onboarding onboarding.json`
 - Explain the final setup in business language.
