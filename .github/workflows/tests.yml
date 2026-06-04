@@ -116,6 +116,7 @@ jobs:
             --audience management \
             --cadence weekly \
             --source-profile llm_decide
+          echo "- Placeholder input" > /tmp/mabw-llm/input/placeholder.md
 
       - name: Doctor check
         run: multi-agent-brief doctor --config /tmp/mabw-llm/config.yaml
@@ -165,7 +166,9 @@ jobs:
           JSON
 
       - name: Init from onboarding
-        run: multi-agent-brief init --from-onboarding /tmp/onboarding.json
+        run: |
+          multi-agent-brief init --from-onboarding /tmp/onboarding.json
+          echo "- Placeholder input" > /tmp/mabw-onboarding/input/placeholder.md
 
       - name: Doctor check
         run: multi-agent-brief doctor --config /tmp/mabw-onboarding/config.yaml
