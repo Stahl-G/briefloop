@@ -309,6 +309,99 @@ def test_cli_validate_config_bad_command():
     assert any("not found in PATH" in e for e in errors)
 
 
+# --- Bugfix tests: MCP text/bytes, NewsAPI validate, CLI error_type ---
+
+def test_mcp_jsonrpc_communication(monkeypatch):
+    """Mock _jsonrpc_call to return canned responses and verify full lifecycle."""
+    provider = McpProvider()
+    call_responses = iter([
+        # initialize response
+        {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "mock", "version": "1.0"}},
+        # tools/list response
+        {"tools": [{"name": "echo", "description": "Echo tool", "inputSchema": {}}]},
+        # tools/call response
+        {"content": [{"type": "text", "text": "Hello from MCP"}]},
+    ])
+
+    def mock_call(_self, _proc, method, params):
+        return next(call_responses, None)
+
+    monkeypatch.setattr(McpProvider, "_jsonrpc_call", mock_call)
+    monkeypatch.setattr(McpProvider, "_jsonrpc_notify", lambda _self, _proc, _method: None)
+    monkeypatch.setattr(McpProvider, "_cleanup_proc", lambda _self, _proc: None)
+
+    config = {
+        "enabled": True,
+        "servers": [{
+            "name": "test-server",
+            "command": "echo",
+            "args": [],
+        }],
+    }
+    items = provider.collect(SourceQuery(keywords=["test"]), config)
+    assert len(items) == 1
+    assert items[0].content == "Hello from MCP"
+    assert items[0].metadata["server"] == "test-server"
+    assert items[0].metadata["tool"] == "echo"
+
+
+def test_mcp_jsonrpc_init_failure_returns_empty(monkeypatch):
+    """If initialize fails, collect should return empty list."""
+    provider = McpProvider()
+
+    def mock_fail(_self, _proc, method, params):
+        return None  # simulate failure
+
+    monkeypatch.setattr(McpProvider, "_jsonrpc_call", mock_fail)
+    monkeypatch.setattr(McpProvider, "_jsonrpc_notify", lambda _self, _proc, _method: None)
+    monkeypatch.setattr(McpProvider, "_cleanup_proc", lambda _self, _proc: None)
+
+    config = {
+        "enabled": True,
+        "servers": [{"name": "fail-server", "command": "true", "args": []}],
+    }
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_news_api_validate_skips_non_newsapi_providers():
+    """validate_config should only check providers with name=='newsapi'."""
+    provider = NewsApiProvider()
+    # Mixed providers: sec entry should be ignored by NewsApiProvider
+    errors = provider.validate_config({
+        "enabled": True,
+        "providers": [
+            {"name": "sec", "user_agent": "Test"},
+            {"name": "newsapi", "api_key_env": "NEWSAPI_API_KEY"},
+        ],
+    })
+    # Should NOT complain about the 'sec' provider
+    assert not any("sec" in e for e in errors)
+    # Should complain about missing key (since env isn't set in test)
+    assert any("env var" in e for e in errors)
+
+
+def test_cli_nonzero_exit_has_error_type(monkeypatch):
+    """Non-zero exit items should have error_type so registry filters them."""
+    provider = CliProvider()
+
+    def mock_run(*args, **kwargs):
+        class MockResult:
+            returncode = 1
+            stdout = ""
+            stderr = "Something went wrong"
+        return MockResult()
+
+    monkeypatch.setattr("multi_agent_brief.sources.cli_provider.subprocess.run", mock_run)
+    config = {
+        "enabled": True,
+        "scrapers": [{"name": "failer", "command": "false"}],
+    }
+    items = provider.collect(SourceQuery(), config)
+    assert len(items) == 1
+    assert items[0].metadata.get("error_type") == "CliExecutionError"
+
+
 # --- Normalizer ---
 
 def test_normalize_source_item():
