@@ -120,15 +120,17 @@ def test_merge_candidates_to_sources(workspace_with_sources: Path):
 
     result = merge_candidates_to_sources(sources_path, candidates_path)
 
-    assert result["added_manual"] == 1
-    assert result["added_rss"] == 1
+    # Both company_official and industry_media now go to manual (not RSS).
+    # Only explicitly verified rss_feed sources go to rss.feeds.
+    assert result["added_manual"] == 2
+    assert result["added_rss"] == 0
     assert result["total_enabled"] == 2
     assert result["total_disabled"] == 1
 
     # Verify sources.yaml was updated
     updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
-    assert len(updated["manual"]["sources"]) == 1
-    assert len(updated["rss"]["feeds"]) == 1
+    assert len(updated["manual"]["sources"]) == 2
+    assert len(updated["rss"]["feeds"]) == 0
     # After fix: merge should NOT auto-enable web_search
     assert updated["web_search"]["enabled"] is False
 

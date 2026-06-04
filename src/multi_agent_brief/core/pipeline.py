@@ -100,11 +100,21 @@ class BriefPipeline:
         if "manual" not in source_config.enabled_providers:
             source_config.enabled_providers.append("manual")
         input_dir = Path(context.input_dir)
-        if not source_config.manual.get("sources"):
+        # Ensure Local Input Directory is present in manual sources.
+        # Check by path/category, not by list emptiness — the list may already
+        # contain URL entries from source discovery without a local input entry.
+        manual_sources = source_config.manual.get("sources", [])
+        has_local_input = any(
+            s.get("category") == "local_files"
+            and s.get("path") and Path(s["path"]).resolve() == input_dir.resolve()
+            for s in manual_sources
+        )
+        if not has_local_input:
             source_config.manual["enabled"] = True
-            source_config.manual["sources"] = [
+            source_config.manual.setdefault("sources", [])
+            source_config.manual["sources"].append(
                 {"name": "Local Input Directory", "path": str(input_dir), "category": "local_files", "enabled": True}
-            ]
+            )
 
         # Collect from all providers
         items, collection_errors = collect_all_sources(source_config, query)

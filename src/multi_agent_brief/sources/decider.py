@@ -183,9 +183,12 @@ def merge_candidates_to_sources(
     recommended = candidates.get("recommended_sources", [])
     enabled = [s for s in recommended if s.get("enabled", True)]
 
-    # Group by category
+    # Group by category.
+    # Only explicitly verified rss_feed sources go to rss.feeds.
+    # All other URL categories (industry_media, research_institution,
+    # government_regulator, company_official) go to manual sources as
+    # URL entries — they are web pages, not RSS/Atom feeds.
     rss_feeds = []
-    web_search_urls = []
     manual_sources = []
 
     for src in enabled:
@@ -196,11 +199,10 @@ def merge_candidates_to_sources(
         if not url:
             continue
 
-        if category == "company_official":
-            manual_sources.append({"name": name, "url": url, "category": category, "enabled": True})
-        elif category in ("industry_media", "research_institution"):
+        if category == "rss_feed":
             rss_feeds.append({"name": name, "url": url, "category": category, "enabled": True})
-        elif category == "government_regulator":
+        else:
+            # All other URL types go to manual sources (not RSS)
             manual_sources.append({"name": name, "url": url, "category": category, "enabled": True})
 
     # Merge into sources
