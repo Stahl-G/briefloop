@@ -14,6 +14,7 @@ from multi_agent_brief.sources.api_news import NewsApiProvider
 from multi_agent_brief.sources.api_filings import FilingsProvider
 from multi_agent_brief.sources.mcp_provider import McpProvider
 from multi_agent_brief.sources.cli_provider import CliProvider
+from multi_agent_brief.sources.feishu_provider import FeishuProvider
 from multi_agent_brief.sources.normalizer import normalize_source_item, dedupe_sources, filter_by_recency
 from multi_agent_brief.sources.registry import load_sources_config, collect_all_sources, validate_all_providers
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
@@ -400,6 +401,105 @@ def test_cli_nonzero_exit_has_error_type(monkeypatch):
     items = provider.collect(SourceQuery(), config)
     assert len(items) == 1
     assert items[0].metadata.get("error_type") == "CliExecutionError"
+
+
+# --- Feishu Provider ---
+
+def test_feishu_disabled_returns_empty():
+    provider = FeishuProvider()
+    config = {"enabled": False}
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_feishu_no_sources_returns_empty():
+    provider = FeishuProvider()
+    config = {"enabled": True, "docs": []}
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_feishu_validate_no_sources():
+    provider = FeishuProvider()
+    errors = provider.validate_config({"enabled": True, "docs": []})
+    assert any("no sources configured" in e for e in errors)
+
+
+def test_feishu_validate_unknown_type():
+    provider = FeishuProvider()
+    errors = provider.validate_config({
+        "enabled": True,
+        "docs": [{"name": "bad", "token": "x", "type": "invalid_type"}],
+    })
+    assert any("unknown type" in e for e in errors)
+
+
+def test_feishu_validate_doc_without_token():
+    provider = FeishuProvider()
+    errors = provider.validate_config({
+        "enabled": True,
+        "docs": [{"name": "no-token", "type": "doc"}],
+    })
+    assert any("requires 'token'" in e for e in errors)
+
+
+def test_feishu_registered_in_provider_classes():
+    """FeishuProvider must be findable via PROVIDER_CLASSES."""
+    from multi_agent_brief.sources.registry import PROVIDER_CLASSES
+    assert "feishu" in PROVIDER_CLASSES
+    assert PROVIDER_CLASSES["feishu"] is FeishuProvider
+
+
+def test_feishu_source_config_has_feishu_field():
+    """SourceConfig must have a feishu field."""
+    config = SourceConfig()
+    assert hasattr(config, "feishu")
+    assert config.feishu == {}
+
+
+def test_feishu_collect_makes_source_items_with_mocked_lark_cli(monkeypatch):
+    """Verify FeishuProvider._make_item produces valid SourceItems."""
+    provider = FeishuProvider()
+
+    # Mock _collect_from_source to test _make_item directly
+    def mock_fetch_doc(_self, name, token, src):
+        return [_self._make_item(
+            title="Test Doc",
+            content="Test content from Feishu doc",
+            name=name,
+            stype="doc",
+            url="https://feishu.cn/doc/test",
+        )]
+
+    monkeypatch.setattr(FeishuProvider, "_fetch_doc", mock_fetch_doc)
+
+    config = {
+        "enabled": True,
+        "docs": [{"name": "test-doc", "token": "x", "type": "doc"}],
+    }
+    items = provider.collect(SourceQuery(), config)
+    assert len(items) == 1
+    assert items[0].title == "Test Doc"
+    assert "Test content from Feishu doc" in items[0].content
+    assert items[0].metadata["backend"] == "lark-cli"
+    assert items[0].metadata["feishu_type"] == "doc"
+
+
+# --- Feishu Delivery ---
+
+def test_feishu_delivery_no_lark_cli(monkeypatch):
+    """When lark-cli is not installed, deliver should fail gracefully."""
+    monkeypatch.setattr("multi_agent_brief.delivery.feishu.shutil.which", lambda cmd: None)
+    from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
+    from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
+
+    connector = FeishuDeliveryConnector()
+    artifact = DeliveryArtifact(path="/tmp/nonexistent.md", title="Test")
+    target = DeliveryTarget(channel="chat", recipient="oc_test")
+
+    result = connector.deliver(artifact, target)
+    assert not result.delivered
+    assert "lark-cli" in result.message or "not found" in result.message
 
 
 # --- Normalizer ---

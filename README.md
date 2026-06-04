@@ -367,6 +367,7 @@ multi-agent-brief init ../mabw-workspace
 * [Agent 协作设计](docs/agent-collaboration.md)
 * [审计与质量门控](docs/harness.md)
 * [Windows PowerShell 支持](docs/windows-powershell.md)
+* [飞书集成](docs/feishu-integration.md)
 * [路线图](docs/roadmap.zh-CN.md)
 
 ---
