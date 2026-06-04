@@ -26,3 +26,21 @@ logs/
 
 # Workspace
 brief-workspace/
+
+# IDE and personal settings
+.codegraph/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude/settings.local.json
+.codex/config.local.toml
+
+# Local environment overrides
+.env.local
+.env.*.local
+
+# Personal notes
+notes/
+TODO.md
