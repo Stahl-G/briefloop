@@ -1,0 +1,16 @@
+default_model = "opencode-go"
+language = "zh"
+
+[agent]
+auto_plan = "ask"
+
+# Flash 负责日常执行，Pro 只在复杂任务中担任规划器
+planner_model = "opencode-go/deepseek-v4-pro"
+
+[[providers]]
+name        = "opencode-go"
+kind        = "openai"
+base_url    = "https://opencode.ai/zen/go/v1"
+models      = ["deepseek-v4-flash", "deepseek-v4-pro"]
+default     = "deepseek-v4-flash"
+api_key_env = "OPENCODE_GO_API_KEY"

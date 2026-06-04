@@ -645,3 +645,45 @@ Even a single issue describing a real workflow, a template suggestion, or a fail
 ## License
 
 MIT
+
+## Interactive Onboarding Questions
+
+The initialization wizard asks the following 10 questions:
+
+1. **Monitor Content** - What should this brief monitor?
+   - Default: company + industry + policy + competitors + risk events
+
+2. **Target Audience** - Who will read this brief?
+   - Default: management / leadership team
+
+3. **Source Breadth** - How broad should sources be?
+   - Default: reliable public sources + industry media
+
+4. **Language and Cadence** - What language and frequency?
+   - Default: English, weekly
+
+5. **Focus Areas** - What specific areas are most important?
+   - Examples: sales data, autonomous driving, policy, supply chain, product launches
+
+6. **Search Backend** ⭐ - Choose web search provider
+   - tavily (default, fast AI search)
+   - exa (deep research)
+   - brave (independent web index)
+   - firecrawl (search + scrape)
+   - serper (Google SERP)
+   - serpapi (broad SERP)
+   - none (local files only)
+
+7. **Items Per Brief** - How many items per brief?
+   - Default: 8 items
+
+8. **Source Age Limit** - Maximum age for source materials (days)?
+   - Default: 14 days
+
+9. **Audit Strictness** - How strict should the audit be?
+   - standard (default)
+   - strict (fail on any issue)
+   - lenient (allow minor issues)
+
+10. **Forbidden Sources** - Any sources or topics to avoid?
+    - Default: none

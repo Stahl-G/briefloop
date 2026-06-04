@@ -151,32 +151,27 @@ def normalize_audience(text: str) -> str:
 # ── source_profile mapping ─────────────────────────────────────────
 
 _SOURCE_STYLE_MAP: dict[str, str] = {
+    "conservative": "conservative",
     "official": "conservative",
     "filing": "conservative",
     "announcement": "conservative",
-    "authoritative": "conservative",
-    "conservative": "conservative",
+    "官方": "conservative",
     "公告": "conservative",
-    "官网": "conservative",
-    "权威": "conservative",
+    "research": "research",
     "reliable research": "research",
     "industry media": "research",
-    "sector news": "research",
-    "research": "research",
-    "稳健": "research",
     "研究": "research",
     "行业媒体": "research",
-    "产业新闻": "research",
+    "aggressive_signal": "aggressive_signal",
     "radar": "aggressive_signal",
     "broad scan": "aggressive_signal",
-    "social media": "aggressive_signal",
-    "github": "aggressive_signal",
-    "signals": "aggressive_signal",
-    "aggressive": "aggressive_signal",
-    "雷达": "aggressive_signal",
-    "广泛": "aggressive_signal",
+    "social signals": "aggressive_signal",
     "社媒": "aggressive_signal",
     "信号": "aggressive_signal",
+    "llm_decide": "llm_decide",
+    "ai decide": "llm_decide",
+    "ai决定": "llm_decide",
+    "让ai决定": "llm_decide",
 }
 
 _DEFAULT_SOURCE_PROFILE = "llm_decide"
@@ -194,6 +189,58 @@ def normalize_source_profile(text: str) -> str:
         return "aggressive_signal"
     # Default to llm_decide for vague or unknown source preferences
     return "llm_decide"
+
+
+# ── search backend mapping ─────────────────────────────────────────
+
+_SEARCH_BACKEND_MAP: dict[str, str] = {
+    "tavily": "tavily",
+    "none": "none",
+    "无": "none",
+    "不启用": "none",
+}
+
+_DEFAULT_SEARCH_BACKEND = ""
+
+
+def normalize_search_backend(text: str) -> str:
+    t = text.strip().lower()
+    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+        return _DEFAULT_SEARCH_BACKEND
+    if t in _SEARCH_BACKEND_MAP:
+        return _SEARCH_BACKEND_MAP[t]
+    # Check for partial matches
+    for key, value in _SEARCH_BACKEND_MAP.items():
+        if key in t:
+            return value
+    return _DEFAULT_SEARCH_BACKEND
+
+
+# ── audit strictness mapping ───────────────────────────────────────
+
+_AUDIT_STRICTNESS_MAP: dict[str, str] = {
+    "standard": "standard",
+    "strict": "strict",
+    "lenient": "lenient",
+    "标准": "standard",
+    "严格": "strict",
+    "宽松": "lenient",
+}
+
+_DEFAULT_AUDIT_STRICTNESS = "standard"
+
+
+def normalize_audit_strictness(text: str) -> str:
+    t = text.strip().lower()
+    if not t or t in ("default", "unknown", "choose for me", "默认", "不知道", "帮我选"):
+        return _DEFAULT_AUDIT_STRICTNESS
+    if t in _AUDIT_STRICTNESS_MAP:
+        return _AUDIT_STRICTNESS_MAP[t]
+    if "strict" in t or "严格" in t:
+        return "strict"
+    if "lenient" in t or "宽松" in t:
+        return "lenient"
+    return _DEFAULT_AUDIT_STRICTNESS
 
 
 # ── industry matching (optional seed pack only) ────────────────────
@@ -308,7 +355,28 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     if any(k in style_lower for k in ("docx", "word", "docx格式", "word格式")):
         profile.output_formats.append("docx")
 
-    # Web search: enable if user opted in during onboarding
+    # New fields from extended onboarding
+    if hasattr(result, "max_items_per_brief") and result.max_items_per_brief:
+        profile.selector_max_items = result.max_items_per_brief
+    
+    if hasattr(result, "source_age_days") and result.source_age_days:
+        profile.max_source_age_days = result.source_age_days
+
+    # Web search: only enable if user explicitly requested Tavily
+    if getattr(result, "tavily_enabled", False):
+        profile.tavily_enabled = True
+
+    # Handle search backend selection
+    # Only enable tavily when search_backend_plain explicitly contains "tavily"
+    search_backend = getattr(result, "search_backend_plain", "").strip()
+    if search_backend:
+        search_backend = normalize_search_backend(search_backend)
+        if search_backend == "tavily":
+            profile.tavily_enabled = True
+        elif search_backend == "none":
+            profile.tavily_enabled = False
+        # Unrecognised / empty / choose-later backends: leave tavily disabled
+    # Also check the legacy tavily_enabled field
     if getattr(result, "tavily_enabled", False):
         profile.tavily_enabled = True
 

@@ -175,3 +175,42 @@ def test_language_default_sentinels_consistent():
         iw_result = iw_normalize(s)
         assert mapper_result == iw_result, f"Sentinel '{s}': mapper={mapper_result}, init_wizard={iw_result}"
         assert mapper_result == "en-US"
+
+
+def test_legacy_onboarding_without_search_backend_does_not_enable_tavily():
+    """A legacy onboarding.json without search_backend_plain must not enable Tavily."""
+    result = OnboardingResult(
+        target="workspace",
+        company_or_org="Sample Company",
+        industry_or_theme="manufacturing",
+    )
+    # search_backend_plain defaults to ""; no tavily_enabled flag set
+    assert result.search_backend_plain == ""
+    assert result.tavily_enabled is False
+
+    profile = map_onboarding_to_profile(result)
+    assert profile.tavily_enabled is False
+
+
+def test_onboarding_explicit_tavily_enables_backend():
+    """When user explicitly picks tavily, profile.tavily_enabled should be True."""
+    result = OnboardingResult(
+        target="workspace",
+        company_or_org="Sample Company",
+        industry_or_theme="manufacturing",
+        search_backend_plain="tavily",
+    )
+    profile = map_onboarding_to_profile(result)
+    assert profile.tavily_enabled is True
+
+
+def test_onboarding_explicit_none_disables_tavily():
+    """When user explicitly picks none, profile.tavily_enabled should be False."""
+    result = OnboardingResult(
+        target="workspace",
+        company_or_org="Sample Company",
+        industry_or_theme="manufacturing",
+        search_backend_plain="none",
+    )
+    profile = map_onboarding_to_profile(result)
+    assert profile.tavily_enabled is False

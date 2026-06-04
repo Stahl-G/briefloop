@@ -72,7 +72,7 @@ class WebSearchProvider(SourceProvider):
             return []
         backend_name = config.get("backend") or ""
         if not backend_name:
-            return ["web_search is enabled but no backend is configured"]
+            return []  # capability enabled but no backend; doctor handles this as WARN
 
         _register_known_backends()
         if backend_name not in _KNOWN_BACKENDS:

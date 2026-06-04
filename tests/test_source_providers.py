@@ -380,7 +380,7 @@ def test_doctor_recognizes_exa_backend_without_key(tmp_path, monkeypatch):
 
 
 def test_doctor_errors_on_no_backend(tmp_path):
-    """Doctor should error when web_search enabled but no backend."""
+    """Doctor should warn when web_search enabled but no backend (capability is on, backend can be added later)."""
     import yaml
 
     config_path = tmp_path / "config.yaml"
@@ -394,7 +394,7 @@ def test_doctor_errors_on_no_backend(tmp_path):
 
     results = run_doctor(config_path=config_path)
     assert any("no backend configured" in r.message.lower() for r in results)
-    assert any(r.status == "ERROR" for r in results)
+    assert any(r.status == "WARN" for r in results)
 
 
 # --- P1: WebSearch source_id stability ---
@@ -547,6 +547,7 @@ def test_web_search_no_domains_passes_none():
 # --- Init profiles should not enable web_search ---
 
 def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
+    import yaml
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
     assert main([
@@ -567,13 +568,14 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
         "--source-profile",
         "aggressive_signal",
     ]) == 0
-    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
-    web_section = sources.split("web_search:")[1].split("api:")[0]
-    assert "enabled: true" in web_section
-    assert 'backend: ""' in web_section
+    config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    web_search = config["web_search"]
+    assert web_search["enabled"] is True
+    assert web_search["backend"] == ""
 
 
 def test_init_custom_web_search_enabled_without_backend(tmp_path):
+    import yaml
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
     assert main([
@@ -594,13 +596,14 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
         "--source-profile",
         "custom",
     ]) == 0
-    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
-    web_section = sources.split("web_search:")[1].split("api:")[0]
-    assert "enabled: true" in web_section
-    assert 'backend: ""' in web_section
+    config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    web_search = config["web_search"]
+    assert web_search["enabled"] is True
+    assert web_search["backend"] == ""
 
 
 def test_init_research_web_search_enabled_without_backend(tmp_path):
+    import yaml
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
     assert main([
@@ -621,10 +624,10 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
         "--source-profile",
         "research",
     ]) == 0
-    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
-    web_section = sources.split("web_search:")[1].split("api:")[0]
-    assert "enabled: true" in web_section
-    assert 'backend: ""' in web_section
+    config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    web_search = config["web_search"]
+    assert web_search["enabled"] is True
+    assert web_search["backend"] == ""
 
 
 # --- Unknown provider validation ---
