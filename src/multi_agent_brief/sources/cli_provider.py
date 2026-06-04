@@ -142,6 +142,7 @@ class CliProvider(SourceProvider):
                             "scraper": scraper_name,
                             "exit_code": result.returncode,
                             "has_stderr": bool(error_text),
+                            "error_type": "CliExecutionError",  # caught by registry._is_error_or_placeholder
                         },
                     )
                 ]

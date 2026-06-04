@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP Provider**: Fixed `text=True` + bytes write type error — writes are now text strings. Added `_readline_timeout()` using `select.select()` with `MCP_TIMEOUT_SECONDS=30` so blocking reads don't hang. Added real JSON-RPC lifecycle tests (initialize → tools/list → tools/call).
+- **NewsAPI validate_config**: Now filters providers by `name == "newsapi"` before checking API key, preventing false positives when `sec` or other providers share the same config section.
+- **CLI Provider**: Non-zero exit items now set `metadata.error_type = "CliExecutionError"`, causing `registry._is_error_or_placeholder()` to filter them from the pipeline.
+
 ### Added
 
-_No unreleased changes yet._
+- New tests: `test_mcp_jsonrpc_communication`, `test_mcp_jsonrpc_init_failure_returns_empty`, `test_news_api_validate_skips_non_newsapi_providers`, `test_cli_nonzero_exit_has_error_type`.
 
 ## [0.1.1] — 2026-06-04
 

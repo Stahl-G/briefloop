@@ -56,13 +56,21 @@ class NewsApiProvider(SourceProvider):
         if not providers:
             errors.append("api: News API provider is enabled but no providers configured")
             return errors
+        # Only validate providers whose name is 'newsapi' — other providers
+        # (e.g. 'sec') in the same api: config section use different fields.
+        seen_newsapi = False
         for i, provider in enumerate(providers):
+            if provider.get("name") != "newsapi":
+                continue
+            seen_newsapi = True
             env_key = provider.get("api_key_env", DEFAULT_API_KEY_ENV)
             if not os.environ.get(env_key):
                 errors.append(
-                    f"api.providers[{i}] '{provider.get('name', '?')}': "
+                    f"api.providers[{i}] 'newsapi': "
                     f"env var {env_key} not set"
                 )
+        if not seen_newsapi:
+            errors.append("api: News API provider enabled but no 'newsapi' entry in providers")
         return errors
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:

@@ -12,7 +12,9 @@ Reference: https://modelcontextprotocol.io/docs/concepts/architecture
 """
 from __future__ import annotations
 
+import io
 import json
+import select
 import shutil
 import subprocess
 import time
@@ -113,6 +115,7 @@ class McpProvider(SourceProvider):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,  # line-buffered
         )
 
         try:
@@ -214,7 +217,7 @@ class McpProvider(SourceProvider):
     def _jsonrpc_call(
         self, proc: subprocess.Popen, method: str, params: dict[str, Any]
     ) -> dict[str, Any] | None:
-        """Send a JSON-RPC request and read the response."""
+        """Send a JSON-RPC request and read the response with timeout."""
         request_id = int(time.time() * 1000) % 100000
         request = {
             "jsonrpc": "2.0",
@@ -222,20 +225,22 @@ class McpProvider(SourceProvider):
             "method": method,
             "params": params,
         }
-        request_bytes = (json.dumps(request) + "\n").encode("utf-8")
+        request_text = json.dumps(request) + "\n"
 
         if proc.stdin is None or proc.stdout is None:
             return None
 
         try:
-            proc.stdin.write(request_bytes)
+            # Write as text string (text=True mode)
+            proc.stdin.write(request_text)
             proc.stdin.flush()
 
-            # Read response line
-            line = proc.stdout.readline()
-            if not line:
+            # Read response line with timeout via select.poll()
+            line = self._readline_timeout(proc.stdout, MCP_TIMEOUT_SECONDS)
+            if line is None:
                 return None
-            response = json.loads(line.decode("utf-8") if isinstance(line, bytes) else line)
+
+            response = json.loads(line)
 
             if "error" in response:
                 return None
@@ -243,17 +248,49 @@ class McpProvider(SourceProvider):
         except Exception:
             return None
 
+    def _readline_timeout(
+        self, stream: io.TextIOWrapper, timeout: float
+    ) -> str | None:
+        """Read one line from a text stream with a timeout.
+
+        Returns the line (without newline), or None on timeout/error.
+        """
+        fd = stream.buffer.fileno() if hasattr(stream, "buffer") else stream.fileno()
+        deadline = time.monotonic() + timeout
+        chunks: list[str] = []
+
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            r, _, _ = select.select([fd], [], [], remaining)
+            if not r:
+                # Timeout
+                break
+            char = stream.read(1)
+            if not char:
+                # EOF
+                break
+            if char == "\n":
+                return "".join(chunks)
+            chunks.append(char)
+
+        # Partial line before timeout/EOF
+        if chunks:
+            return "".join(chunks)
+        return None
+
     def _jsonrpc_notify(self, proc: subprocess.Popen, method: str) -> None:
         """Send a JSON-RPC notification (no response expected)."""
         notification = {
             "jsonrpc": "2.0",
             "method": method,
         }
-        notif_bytes = (json.dumps(notification) + "\n").encode("utf-8")
+        notif_text = json.dumps(notification) + "\n"
         if proc.stdin is None:
             return
         try:
-            proc.stdin.write(notif_bytes)
+            proc.stdin.write(notif_text)
             proc.stdin.flush()
         except Exception:
             pass
