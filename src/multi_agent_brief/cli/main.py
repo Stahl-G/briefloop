@@ -166,6 +166,24 @@ def run_pipeline_from_args(args: argparse.Namespace) -> int:
             except Exception:
                 pass
 
+    # B13: When no sources.yaml or source config sections exist but --industry
+    # or project.industry is set, create a minimal SourceConfig so the industry
+    # is available for source planning (Industry Pack, search tasks, etc.).
+    elif industry and not context.metadata.get("source_config"):
+        from multi_agent_brief.sources.base import SourceConfig
+        source_config = SourceConfig(
+            profile="research",
+            industry=industry,
+            enabled_providers=["manual"],
+            manual={"enabled": True, "sources": [
+                {"name": "Local Input Directory", "path": settings["input_dir"],
+                 "category": "local_files", "enabled": True}
+            ]},
+            rss={"enabled": False, "feeds": []},
+            web_search={"enabled": False},
+        )
+        context.metadata["source_config"] = source_config
+
     # Pre-flight check: llm_decide workspace without resolved sources
     _config_dir = Path(config.get("_config_dir", ".")) if config else Path(".")
     _sources_yaml = _config_dir / "sources.yaml"

@@ -30,6 +30,9 @@ class ManualProvider(SourceProvider):
         return errors
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:
+        # Respect top-level enabled flag (B07)
+        if config.get("enabled") is False:
+            return []
         sources: list[SourceItem] = []
         for src_config in config.get("sources", []):
             if src_config.get("enabled") is False:

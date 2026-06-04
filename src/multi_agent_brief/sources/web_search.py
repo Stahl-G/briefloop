@@ -47,8 +47,12 @@ class WebSearchProvider(SourceProvider):
         _register_known_backends()
         cls = _KNOWN_BACKENDS.get(backend_name)
         if cls is not None:
-            api_key_env = config.get("api_key_env", "TAVILY_API_KEY")
-            return cls(api_key_env=api_key_env)
+            # Only pass api_key_env if explicitly configured; otherwise each
+            # backend uses its own default (e.g. EXA_API_KEY for Exa). (B12)
+            api_key_env = config.get("api_key_env")
+            if api_key_env:
+                return cls(api_key_env=api_key_env)
+            return cls()
 
         raise NotImplementedError(
             f"web_search backend '{backend_name}' is not available. "

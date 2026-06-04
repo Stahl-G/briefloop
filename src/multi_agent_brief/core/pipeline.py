@@ -89,12 +89,13 @@ class BriefPipeline:
                         existing_tasks.append({"query": q, "domains": None})
                 source_config.web_search["search_tasks"] = existing_tasks
 
-        # Merge industry RSS feeds into config
+        # Merge industry RSS feeds into config — only when rss is in
+        # enabled_providers (B06): Industry Pack must not bypass user's
+        # provider/profile choice.
         if plan.rss_feeds and not source_config.rss.get("feeds"):
-            source_config.rss["feeds"] = plan.rss_feeds
-            source_config.rss["enabled"] = True
-            if "rss" not in source_config.enabled_providers:
-                source_config.enabled_providers.append("rss")
+            if "rss" in source_config.enabled_providers:
+                source_config.rss["feeds"] = plan.rss_feeds
+                source_config.rss["enabled"] = True
 
         # Always include manual provider for local input/ directory
         if "manual" not in source_config.enabled_providers:
