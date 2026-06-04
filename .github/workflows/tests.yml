@@ -80,6 +80,7 @@ jobs:
             --industry manufacturing \
             --title "Smoke Brief" \
             --audience management \
+            --cadence weekly \
             --source-profile conservative
           echo "- Manufacturing output improved as supply chain disruption eased in the latest reporting period." > /tmp/mabw-ci-smoke/input/smoke.md
 
@@ -111,6 +112,9 @@ jobs:
             --language en-US \
             --company "Sample Company" \
             --industry manufacturing \
+            --title "Sample Brief" \
+            --audience management \
+            --cadence weekly \
             --source-profile llm_decide
 
       - name: Doctor check
