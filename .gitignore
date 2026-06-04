@@ -29,6 +29,7 @@ brief-workspace/
 
 # IDE and personal settings
 .codegraph/
+.reasonix/
 .idea/
 .vscode/
 *.swp

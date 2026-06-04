@@ -385,12 +385,4 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     if getattr(result, "tavily_enabled", False):
         profile.tavily_enabled = True
 
-    # Handle max items per brief
-    if hasattr(result, "max_items_per_brief") and result.max_items_per_brief:
-        profile.selector_max_items = result.max_items_per_brief
-
-    # Handle source age days
-    if hasattr(result, "source_age_days") and result.source_age_days:
-        profile.max_source_age_days = result.source_age_days
-
     return profile

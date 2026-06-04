@@ -29,10 +29,10 @@ class TestInitTavilyGuidance:
             "--cadence", "weekly",
             "--source-profile", "research",
         ]) == 0
-        # Without tavily_enabled CLI arg, web_search should be enabled but without backend
+        # Without tavily_enabled CLI arg, web_search should be disabled
         sources = (ws / "sources.yaml").read_text(encoding="utf-8")
         web_section = sources.split("web_search:")[1].split("api:")[0]
-        assert "enabled: true" in web_section
+        assert "enabled: false" in web_section
         assert 'backend: ""' in web_section
 
     def test_init_tavily_creates_env_example(self, tmp_path, monkeypatch):

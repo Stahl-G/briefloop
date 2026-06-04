@@ -569,7 +569,7 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
     web_section = sources.split("web_search:")[1].split("api:")[0]
-    assert "enabled: true" in web_section
+    assert "enabled: false" in web_section
     assert 'backend: ""' in web_section
 
 
@@ -596,7 +596,7 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
     web_section = sources.split("web_search:")[1].split("api:")[0]
-    assert "enabled: true" in web_section
+    assert "enabled: false" in web_section
     assert 'backend: ""' in web_section
 
 
@@ -623,7 +623,7 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
     web_section = sources.split("web_search:")[1].split("api:")[0]
-    assert "enabled: true" in web_section
+    assert "enabled: false" in web_section
     assert 'backend: ""' in web_section
 
 

@@ -529,10 +529,10 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
         if pack:
             seed_tasks = pack.get("search_tasks", [])
 
-    # web_search: always enabled; configure Tavily backend if user has API key
-    if "web_search" not in enabled:
-        enabled.append("web_search")
+    # web_search: only enabled if tavily is configured
     if profile.tavily_enabled:
+        if "web_search" not in enabled:
+            enabled.append("web_search")
         web_search_config: dict[str, Any] = {
             "enabled": True,
             "backend": "tavily",
@@ -546,7 +546,7 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             web_search_config["search_tasks"] = seed_tasks
     else:
         web_search_config = {
-            "enabled": True,
+            "enabled": False,
             "backend": "",
             "max_results": 20,
             "recency_days": 7,
