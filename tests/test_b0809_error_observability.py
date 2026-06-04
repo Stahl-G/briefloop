@@ -9,6 +9,7 @@ B11 — Missing/unreadable manual files must generate visible errors.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -242,6 +243,7 @@ class TestB11ManualFileErrors:
             "B11 FAIL: validate_config must report non-existent path"
         )
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows file permissions don't support os.chmod 000 for readability")
     def test_unreadable_file_detected(self, tmp_path):
         """An unreadable file must produce an error."""
         bad_file = tmp_path / "unreadable.md"
