@@ -554,6 +554,21 @@ v0.1.1 fills all four with working implementations:
 
 All implementations use Python stdlib only (urllib / subprocess) — zero additional dependencies.
 
+**Latest unreleased: Agent onboarding hardening — remove sensible defaults**
+
+Previously, agent instructions allowed "choose sensible defaults" when the user said
+"default" / "unknown". This meant trivial requests like "start" would skip onboarding
+and create a workspace with incorrect settings.
+
+This fix:
+- Removed all "choose sensible defaults" language from agent instructions; replaced with:
+  "Do not infer or silently choose onboarding values."
+- Deleted sentinel→default mapping from all 6 `normalize_*` functions in `onboarding/mapper.py`
+  ("default" no longer becomes en-US, "Sample Company", etc.)
+- `multi-agent-brief init --from-onboarding` now validates company/industry/title are
+  non-empty and fails with a clear error if missing
+- Generic requests like "start", "run", "initialize" no longer trigger default values
+
 [View full changelog →](CHANGELOG.md)
 
 ## Development
