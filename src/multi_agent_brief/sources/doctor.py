@@ -96,7 +96,7 @@ def run_doctor(
                 else:
                     key_hint = api_key_env or "the configured API key env var"
                     results.append(CheckResult("ERROR", f"Web search backend '{backend_label}' is enabled, but {key_hint} is missing."))
-                    results.append(CheckResult("ERROR", "  Set it as an environment variable before running the pipeline."))
+                    results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))
                     results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
 
         # Cross-validate: web_search enabled but not in enabled_providers

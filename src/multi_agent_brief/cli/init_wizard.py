@@ -190,10 +190,9 @@ def create_workspace(target: Path, profile: InitProfile, *, force: bool = False)
         target / "sources.yaml": to_yaml(build_sources(profile)),
         target / "user.md": build_user_md(profile),
         target / ".gitignore": WORKSPACE_GITIGNORE,
+        target / ".env.example": _build_env_example(),
         input_dir / "README.md": build_input_readme(profile.interface_language),
     }
-    if profile.tavily_enabled:
-        files[target / ".env.example"] = "# Tavily API key for live web search\n# Copy this file to .env and fill in your key.\n# Never commit .env to version control.\nTAVILY_API_KEY=\n"
     _write_files(files, force=force)
 
 
@@ -850,6 +849,27 @@ def format_scalar(value: Any) -> str:
     if text == "auto" or not text or any(char in text for char in [":", "#", "[", "]", "{", "}", ","]):
         return json.dumps(text, ensure_ascii=False)
     return json.dumps(text, ensure_ascii=False)
+
+
+def _build_env_example() -> str:
+    """Build a .env.example file listing all supported web search backend env vars."""
+    return (
+        "# Web search API keys\n"
+        "# Copy this file to .env and fill in the key for your chosen backend.\n"
+        "# Only the backend configured in sources.yaml requires its key.\n"
+        "# Never commit .env to version control.\n"
+        "\n"
+        "# Tavily — fast AI search (default)\n"
+        "TAVILY_API_KEY=\n"
+        "# Exa — deep research, papers, filings\n"
+        "EXA_API_KEY=\n"
+        "# Brave — independent web index\n"
+        "BRAVE_SEARCH_API_KEY=\n"
+        "# Firecrawl — search + full-text crawl\n"
+        "FIRECRAWL_API_KEY=\n"
+        "# Serper — Google SERP\n"
+        "SERPER_API_KEY=\n"
+    )
 
 
 def _write_files(files: dict[Path, str], *, force: bool) -> None:

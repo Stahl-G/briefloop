@@ -85,7 +85,7 @@ class WebSearchProvider(SourceProvider):
         if not backend.is_available():
             api_key_env = backend_api_key_env(backend, config)
             key_hint = f"env var {api_key_env}" if api_key_env else "a configured API key"
-            return [f"web_search: backend '{backend_name}' requires {key_hint} to be set"]
+            return [f"web_search: backend '{backend_name}' requires {key_hint} to be set. Copy your workspace .env.example to .env and fill in the key, or export it in your shell."]
         return []
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:

@@ -80,14 +80,20 @@ class TestInitTavilyGuidance:
         # llm_decide profile doesn't use enabled_providers; web_search config is the contract
 
     def test_init_no_tavily_no_env_example(self, tmp_path, monkeypatch):
-        """Init without Tavily should not create .env.example."""
+        """Init always creates .env.example listing all 5 backends."""
         from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
 
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
         profile = InitProfile(tavily_enabled=False)
         create_workspace(ws, profile)
-        assert not (ws / ".env.example").exists()
+        # .env.example is now always generated to guide users
+        assert (ws / ".env.example").exists()
+        content = (ws / ".env.example").read_text(encoding="utf-8")
+        assert "TAVILY_API_KEY=" in content
+        assert "EXA_API_KEY=" in content
+        assert "BRAVE_SEARCH_API_KEY=" in content
+        assert "Copy this file to .env" in content
 
     def test_no_generated_config_contains_api_key(self, tmp_path, monkeypatch):
         """No generated config file should contain actual API key values."""
@@ -143,7 +149,7 @@ class TestDoctorTavilyGuidance:
         results = run_doctor(config_path=config_path)
         error_msgs = [r.message for r in results if r.status == "ERROR"]
         assert any("TAVILY_API_KEY" in m and "missing" in m.lower() for m in error_msgs)
-        assert any("environment variable" in m for m in error_msgs)
+        assert any(".env.example" in m for m in error_msgs)
         assert any("Do not paste" in m for m in error_msgs)
 
     def test_doctor_never_prints_key_value(self, tmp_path, monkeypatch):
