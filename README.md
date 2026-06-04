@@ -235,9 +235,10 @@ multi-agent-brief run --config ../mabw-workspace\config.yaml
 
 ```text
 ../mabw-workspace/output/brief.md
-../mabw-workspace/output/claim_ledger.json
-../mabw-workspace/output/audit_report.json
-../mabw-workspace/output/source_map.md
+../mabw-workspace/output/intermediate/claim_ledger.json
+../mabw-workspace/output/intermediate/audit_report.json
+../mabw-workspace/output/intermediate/source_map.md
+../mabw-workspace/output/intermediate/draft_brief.md
 ```
 
 > 注意：`multi-agent-brief run` 生成的是可审计草稿和中间产物，不等于可直接分发的正式简报。真实工作中建议再经过 Claude Code / Codex 辅助改写、审计和人工确认。

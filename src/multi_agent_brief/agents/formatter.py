@@ -31,7 +31,8 @@ class FormatterAgent(BaseAgent):
         audit_path = intermediate_dir / "audit_report.json"
         source_map_path = intermediate_dir / "source_map.md"
 
-        # Write the prepared (citation-stripped) brief as the final brief
+        # Write the Editor-cleaned brief as the final reader-facing brief.
+        # Valid [src:CLAIM_ID] citations are preserved for traceability (B01).
         brief_path.write_text(context.report_state.prepared_markdown, encoding="utf-8")
         # Also keep the draft with citations in intermediate/
         draft_path.write_text(context.report_state.draft_markdown, encoding="utf-8")

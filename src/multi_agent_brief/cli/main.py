@@ -421,14 +421,11 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
     candidates = generate_source_candidates(discovery, search_results)
     candidates_path = workspace / "source_candidates.yaml"
     try:
-        import yaml
-        with open(candidates_path, "w", encoding="utf-8") as f:
-            yaml.dump(candidates, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+        from multi_agent_brief.sources.decider import _save_yaml
+        _save_yaml(candidates_path, candidates)
     except Exception as e:
-        # Fallback: write as JSON
-        import json
-        candidates_path = workspace / "source_candidates.json"
-        candidates_path.write_text(json.dumps(candidates, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"[error] Failed to write source_candidates.yaml: {e}")
+        return 1
 
     print(f"[sources] Generated source_candidates.yaml at {candidates_path}")
     print("[sources] Review and enable/disable sources, then run:")
