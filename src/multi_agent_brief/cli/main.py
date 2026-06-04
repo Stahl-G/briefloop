@@ -363,6 +363,43 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
             print("        or run without --search to generate template candidates.")
             return 1
 
+        # Actually execute searches via the configured backend
+        from multi_agent_brief.sources.web_search import WebSearchProvider
+        provider = WebSearchProvider()
+        try:
+            backend = provider._get_backend(ws_config.web_search)
+        except Exception as exc:
+            print(f"[error] Failed to initialize search backend: {exc}")
+            return 1
+
+        if not backend.is_available():
+            print("[error] Search backend is configured but not available (API key missing?).")
+            return 1
+
+        print(f"[sources] Executing {len(queries)} search queries via backend: {backend.name}")
+        search_results = []
+        max_results = ws_config.web_search.get("max_results", 10)
+        for q in queries:
+            try:
+                results = backend.search(q, max_results=max_results)
+                search_results.append({
+                    "query": q,
+                    "results": [
+                        {
+                            "title": r.title,
+                            "url": r.url,
+                            "snippet": r.snippet,
+                            "published_at": r.published_at,
+                            "source_name": r.source_name,
+                        }
+                        for r in results
+                    ],
+                })
+                print(f"  [{len(results)} results] {q}")
+            except Exception as exc:
+                print(f"  [error] Search failed for '{q}': {exc}")
+                # Continue with remaining queries; errors are surfaced to user
+
     candidates = generate_source_candidates(discovery, search_results)
     candidates_path = workspace / "source_candidates.yaml"
     try:
