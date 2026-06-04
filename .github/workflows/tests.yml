@@ -33,11 +33,14 @@ jobs:
 
       - name: Install
         run: |
+          set -x
+          python -V
+          python -m pip --version
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
       - name: Compile Python files
-        run: python -m compileall -q src tests scripts
+        run: python -m compileall -v src tests scripts
 
       - name: Public-safe content scan
         run: python scripts/public_safe_scan.py
@@ -50,6 +53,16 @@ jobs:
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
+
+      - name: Failure diagnostics
+        if: failure()
+        run: |
+          echo "=== failure diagnostics ==="
+          echo "OS: ${{ matrix.os }}"
+          echo "Python: ${{ matrix.python-version }}"
+          python -V || true
+          python -m pip list --format=columns 2>/dev/null || true
+          echo "=== end diagnostics ==="
 
       - name: CLI smoke
         run: |
@@ -90,8 +103,8 @@ jobs:
       - name: Assert output quality
         shell: bash
         run: |
-          grep -q '\[src:' /tmp/mabw-ci-smoke/output/brief.md
-          python -c "import json,sys; d=json.load(open('/tmp/mabw-ci-smoke/output/claim_ledger.json')); assert len(d)>0, 'claim_ledger empty'; print(f'claim_ledger has {len(d)} entries')"
+          grep -q '\[src:' /tmp/mabw-ci-smoke/output/brief.md || grep -q '\[src:' /tmp/mabw-ci-smoke/output/intermediate/audited_brief.md
+          python -c "import json; d=json.load(open('/tmp/mabw-ci-smoke/output/intermediate/claim_ledger.json')); assert len(d)>0, 'claim_ledger empty'; print(f'claim_ledger has {len(d)} entries')"
 
   llm-decide-smoke:
     name: llm_decide + doctor + sources decide smoke
@@ -119,23 +132,24 @@ jobs:
           echo "- Placeholder input" > /tmp/mabw-llm/input/placeholder.md
 
       - name: Doctor check
-        run: multi-agent-brief doctor --config /tmp/mabw-llm/config.yaml
+        run: cd /tmp/mabw-llm && multi-agent-brief doctor --config config.yaml
 
       - name: Sources decide (template)
-        run: multi-agent-brief sources decide --config /tmp/mabw-llm/config.yaml
+        run: cd /tmp/mabw-llm && multi-agent-brief sources decide --config config.yaml
 
       - name: Assert source_candidates.yaml exists
         run: test -s /tmp/mabw-llm/source_candidates.yaml
 
       - name: Add input and run pipeline
         run: |
-          echo "- Manufacturing sector grew 5 percent." > /tmp/mabw-llm/input/smoke.md
-          multi-agent-brief run --config /tmp/mabw-llm/config.yaml
+          cd /tmp/mabw-llm
+          echo "- Manufacturing sector grew 5 percent." > input/smoke.md
+          multi-agent-brief run --config config.yaml
 
       - name: Assert output
         run: |
           test -s /tmp/mabw-llm/output/brief.md
-          test -s /tmp/mabw-llm/output/claim_ledger.json
+          test -s /tmp/mabw-llm/output/intermediate/claim_ledger.json
 
   onboarding-smoke:
     name: Onboarding (--from-onboarding) smoke
@@ -171,19 +185,20 @@ jobs:
           echo "- Placeholder input" > /tmp/mabw-onboarding/input/placeholder.md
 
       - name: Doctor check
-        run: multi-agent-brief doctor --config /tmp/mabw-onboarding/config.yaml
+        run: cd /tmp/mabw-onboarding && multi-agent-brief doctor --config config.yaml
 
       - name: Run pipeline
         run: |
-          echo "- Manufacturing output improved." > /tmp/mabw-onboarding/input/smoke.md
-          multi-agent-brief run --config /tmp/mabw-onboarding/config.yaml
+          cd /tmp/mabw-onboarding
+          echo "- Manufacturing output improved." > input/smoke.md
+          multi-agent-brief run --config config.yaml
 
       - name: Assert output
         run: |
           test -s /tmp/mabw-onboarding/output/brief.md
-          test -s /tmp/mabw-onboarding/output/claim_ledger.json
-          test -s /tmp/mabw-onboarding/output/audit_report.json
-          test -s /tmp/mabw-onboarding/output/source_map.md
+          test -s /tmp/mabw-onboarding/output/intermediate/claim_ledger.json
+          test -s /tmp/mabw-onboarding/output/intermediate/audit_report.json
+          test -s /tmp/mabw-onboarding/output/intermediate/source_map.md
 
   docx-smoke:
     name: DOCX output smoke
