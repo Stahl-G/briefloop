@@ -273,10 +273,10 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
     prompts = prompt_labels(language_choice)
 
     profile.company = ask_text(input_func, prompts["company"], profile.company)
-    profile.role = ask_choice(input_func, prompts["role"], prompts["role_options"], "1")
+    profile.role = ask_text(input_func, prompts["role"], profile.role)
     profile.industry = ask_choice(input_func, prompts["industry"], prompts["industry_options"], "1")
     profile.brief_title = ask_text(input_func, prompts["title"], profile.brief_title)
-    profile.audience = ask_choice(input_func, prompts["audience"], prompts["audience_options"], "1")
+    profile.audience = ask_text(input_func, prompts["audience"], profile.audience)
     profile.focus_areas = parse_list_arg(ask_text(input_func, prompts["focus"], ",".join(profile.focus_areas)))
     profile.cadence = ask_choice(input_func, prompts["cadence"], prompts["cadence_options"], "1")
     max_items = ask_text(input_func, prompts["selector_max_items"], str(profile.selector_max_items))
@@ -315,14 +315,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "5": "general",
             },
             "title": "Brief title: ",
-            "audience": "Select audience:\n1. Management\n2. Strategy team\n3. Research team\n4. Investor relations\n5. Other\nDefault [1]: ",
-            "audience_options": {
-                "1": "management",
-                "2": "strategy",
-                "3": "research",
-                "4": "investor_relations",
-                "5": "other",
-            },
+            "audience": "Audience (e.g. management, strategy, research, investor relations, marketing, etc.): ",
             "focus": "Focus areas, comma-separated: ",
             "cadence": "Reporting cadence:\n1. Weekly\n2. Biweekly\n3. Monthly\n4. Ad hoc\nDefault [1]: ",
             "cadence_options": {"1": "weekly", "2": "biweekly", "3": "monthly", "4": "ad_hoc"},
@@ -343,7 +336,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "role": "Select your role / 请选择岗位:\n1. Strategy / President Office / 总裁办・战略研究\n2. Investor Relations / 投资者关系\n3. Research Analyst / 行业研究\n4. Policy Analyst / 政策研究\n5. Management Support / 管理层支持\n6. Other / 其他\nDefault [1]: ",
                 "industry": "Select industry / 请选择行业:\n1. Manufacturing / 制造业\n2. Banking / 银行\n3. Fund / 基金\n4. Internet / 互联网\n5. General Research / 通用研究\nDefault [1]: ",
                 "title": "Brief title / 简报标题: ",
-                "audience": "Select audience / 请选择阅读对象:\n1. Management / 管理层\n2. Strategy team / 战略团队\n3. Research team / 研究团队\n4. Investor relations / 投资者关系\n5. Other / 其他\nDefault [1]: ",
+                "audience": "Audience / 阅读对象 (e.g. management/管理层, strategy/战略, research/研究, IR/投关, marketing/市场, etc.): ",
                 "focus": "Focus areas / 关注领域，comma-separated / 逗号分隔: ",
                 "cadence": "Reporting cadence / 简报频率:\n1. Weekly / 每周\n2. Biweekly / 双周\n3. Monthly / 每月\n4. Ad hoc / 不定期\nDefault [1]: ",
                 "selector_max_items": "How many news items / 每期筛选多少条新闻？Default [8]: ",
@@ -376,14 +369,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "5": "general",
         },
         "title": "请输入简报标题：",
-        "audience": "请选择阅读对象：\n1. 管理层\n2. 战略团队\n3. 研究团队\n4. 投资者关系\n5. 其他\n默认 [1]：",
-        "audience_options": {
-            "1": "management",
-            "2": "strategy",
-            "3": "research",
-            "4": "investor_relations",
-            "5": "other",
-        },
+        "audience": "请输入阅读对象（例如：管理层、战略团队、研究团队、投资者关系、市场团队 等）：",
         "focus": "请输入关注领域，逗号分隔：",
         "cadence": "请选择简报频率：\n1. 每周\n2. 双周\n3. 每月\n4. 不定期\n默认 [1]：",
         "cadence_options": {"1": "weekly", "2": "biweekly", "3": "monthly", "4": "ad_hoc"},
