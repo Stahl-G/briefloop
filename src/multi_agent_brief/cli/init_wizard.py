@@ -666,7 +666,7 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
             }
             if profile.tavily_enabled
             else {
-                "enabled": True,
+                "enabled": False,
                 "backend": "",
                 "max_results": 20,
                 "recency_days": 7,
