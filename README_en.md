@@ -327,6 +327,48 @@ The DOCX uses a professional investment-bank-style layout with heading hierarchy
 
 If `python-docx` is not installed, the pipeline continues without interruption but records `docx_generation: skipped_missing_dependency` in `output/intermediate/audit_report.json`.
 
+## Feishu / Lark Integration
+
+Bidirectional Feishu integration via the official [lark-cli](https://github.com/larksuite/cli) tool. Use Feishu Docs, meeting minutes, Base tables, sheets, calendar, and approval tasks as source inputs, or deliver generated briefs to Feishu chats, docs, and Drive.
+
+### Install lark-cli
+
+```bash
+npx @larksuite/cli@latest install      # install
+lark-cli config init                    # configure app credentials
+lark-cli auth login --recommend         # log in with recommended scopes
+lark-cli auth status                    # verify
+```
+
+### Source (input)
+
+Add to `sources.yaml`:
+
+```yaml
+feishu:
+  enabled: true
+  sources:
+    - name: "meeting-notes"
+      token: "..."            # from feishu doc URL
+      type: minutes           # doc | minutes | base | sheet | agenda | approval
+```
+
+### Delivery (output)
+
+Send briefs from Python:
+
+```python
+from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
+from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
+
+FeishuDeliveryConnector().deliver(
+    DeliveryArtifact(path="output/brief.md", title="Weekly Brief"),
+    DeliveryTarget(channel="chat", recipient="oc_your_chat_id"),
+)
+```
+
+See [docs/feishu-integration.md](docs/feishu-integration.md) for full details.
+
 ## CLI
 
 ### Enable Tavily Live Search

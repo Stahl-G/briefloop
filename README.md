@@ -324,6 +324,57 @@ multi-agent-brief init ../mabw-workspace
 
 ---
 
+## 可选：启用飞书集成
+
+通过官方 [lark-cli](https://github.com/larksuite/cli) 实现双向飞书集成——既可以从飞书文档、会议、表格、日程、审批采集数据，也可以把生成的简报发送到飞书。
+
+### 安装 lark-cli
+
+```bash
+npx @larksuite/cli@latest install      # 安装
+lark-cli config init                    # 配置应用凭证
+lark-cli auth login --recommend         # 登录授权
+lark-cli auth status                    # 验证
+```
+
+### 配置
+
+在 `sources.yaml` 中添加飞书数据源：
+
+```yaml
+source_strategy:
+  enabled_providers:
+    - feishu
+
+feishu:
+  enabled: true
+  sources:
+    - name: "周例会纪要"
+      token: "..."            # 从飞书文档 URL 获取
+      type: minutes           # doc | minutes | base | sheet | agenda | approval
+```
+
+### 使用
+
+**采集（输入）：** 飞书文档、会议纪要、多维表格、电子表格、日程、审批任务会自动进入来源收集流程。
+
+**发送（输出）：** 把生成好的简报推送到飞书聊天：
+
+```python
+from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
+from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
+
+connector = FeishuDeliveryConnector()
+connector.deliver(
+    DeliveryArtifact(path="output/brief.md", title="每日简报"),
+    DeliveryTarget(channel="chat", recipient="oc_你的群聊ID"),
+)
+```
+
+详细说明见 [docs/feishu-integration.md](docs/feishu-integration.md)。
+
+---
+
 ## 输出示例
 
 审计版 Markdown 中的重要表述会带有来源引用：
