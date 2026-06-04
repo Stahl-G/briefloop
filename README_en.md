@@ -158,9 +158,11 @@ The audit report records whether the draft is distribution-ready:
 
 Open your Claude Code or Codex, and type:
 
-> Clone and read https://github.com/Stahl-G/multi-agent-brief-workflow
+```text
+Clone https://github.com/Stahl-G/multi-agent-brief-workflow and start the interactive onboarding initialization
+```
 
-Then follow the prompts. The agent will handle installation, onboarding, and brief generation automatically.
+Then follow the prompts. The agent must ask plain-language onboarding questions before creating a workspace.
 
 For web search, register at [tavily.com](https://tavily.com) to get a Tavily API key, then set it:
 
@@ -182,8 +184,8 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-# 1. Init workspace (recommended: use conversational onboarding, see docs/onboarding.md)
-multi-agent-brief init ../mabw-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
+# 1. Init workspace via interactive onboarding
+multi-agent-brief init ../mabw-workspace
 
 # 2. Add source files
 echo "- Industry news summary" > ../mabw-workspace/input/news.md
@@ -210,7 +212,7 @@ cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief init ../mabw-workspace --language en-US --company "Company Name" --industry manufacturing --title "Weekly Brief" --audience management
+multi-agent-brief init ../mabw-workspace
 echo "- Industry news summary" > ../mabw-workspace\input\news.md
 multi-agent-brief doctor --config ../mabw-workspace\config.yaml
 multi-agent-brief run --config ../mabw-workspace\config.yaml
@@ -280,8 +282,8 @@ Remove-Item Env:PYTHONPATH
 The default `llm_decide` source mode lets the agent automatically generate search intents and candidate sources based on `user.md`:
 
 ```bash
-# 1. Init with llm_decide
-multi-agent-brief init ../mabw-workspace --language en-US --company "Company" --industry manufacturing --source-profile llm_decide
+# 1. Init through interactive onboarding
+multi-agent-brief init ../mabw-workspace
 
 # 2. Generate candidate sources (template mode, no API key needed)
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
@@ -541,9 +543,9 @@ This project can help structure research and briefing workflows, but it does not
 - **Simplified onboarding mapper**: Removed long keyword mapping tables. Unknown industries return empty string instead of guessed slugs. Raw user text preserved in `user.md`.
 - **Default llm_decide source mode**: Agent-driven source discovery generates `source_candidates.yaml` for user review before ingestion.
 - **Industry packs as optional seeds**: Packs are no longer routing mechanism, only optional search task accelerators.
-- **New `--tavily` CLI flag**: `multi-agent-brief init --tavily` enables Tavily live web search backend directly.
+- **Tavily opt-in**: interactive init can enable Tavily live web search; developer-only direct CLI init must provide all required business fields.
 - **Fixed `format_scalar(None)` outputting `"None"` instead of `null`**.
-- Backward compatibility with `--industry`, `--company`, `--source-profile` CLI flags preserved.
+- Developer-only direct CLI init remains available, but it must provide all required business fields or use `--from-onboarding`.
 
 ### v0.5.1 — Source Provider Pipeline Fixes
 

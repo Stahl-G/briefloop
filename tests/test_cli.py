@@ -3,10 +3,34 @@ from pathlib import Path
 from multi_agent_brief.cli.main import main
 
 
+def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra=None):
+    args = [
+        "init",
+        str(workspace),
+        "--language",
+        language,
+        "--company",
+        "Test Company",
+        "--industry",
+        industry,
+        "--title",
+        "Weekly Brief",
+        "--audience",
+        "management",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        "research",
+    ]
+    if extra:
+        args.extend(extra)
+    return args
+
+
 def test_cli_init_and_run(tmp_path):
     workspace = tmp_path / "ws"
 
-    assert main(["init", str(workspace), "--language", "zh-CN", "--industry", "finance"]) == 0
+    assert main(complete_init_args(workspace)) == 0
     assert (workspace / "config.yaml").exists()
     assert (workspace / "sources.yaml").exists()
 
@@ -22,7 +46,7 @@ def test_cli_init_and_run(tmp_path):
 
 def test_cli_run_with_industry(tmp_path):
     workspace = tmp_path / "ws"
-    main(["init", str(workspace), "--language", "zh-CN", "--industry", "finance"])
+    main(complete_init_args(workspace))
 
     (workspace / "input").mkdir(exist_ok=True)
     (workspace / "input" / "data.md").write_text("- Financial earnings report shows growth.\n", encoding="utf-8")
@@ -33,7 +57,7 @@ def test_cli_run_with_industry(tmp_path):
 
 def test_cli_audit_existing_brief(tmp_path):
     workspace = tmp_path / "ws"
-    main(["init", str(workspace), "--language", "zh-CN"])
+    main(complete_init_args(workspace))
     (workspace / "input").mkdir(exist_ok=True)
     (workspace / "input" / "news.md").write_text("- Test signal for audit.\n", encoding="utf-8")
     main(["run", "--config", str(workspace / "config.yaml")])
@@ -71,7 +95,7 @@ def test_cli_run_returns_2_on_audit_fail(tmp_path):
     from multi_agent_brief.core.schemas import AuditReport, AuditFinding
 
     workspace = tmp_path / "ws"
-    main(["init", str(workspace), "--language", "zh-CN"])
+    main(complete_init_args(workspace))
     (workspace / "input").mkdir(exist_ok=True)
     (workspace / "input" / "news.md").write_text(
         "- Test signal for audit fail scenario.\n", encoding="utf-8"

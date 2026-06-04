@@ -426,6 +426,9 @@ def test_cli_run_with_external_workspace(tmp_path):
         "--language", "zh-CN",
         "--company", "TestCo",
         "--industry", "manufacturing",
+        "--title", "Weekly Brief",
+        "--audience", "management",
+        "--cadence", "weekly",
         "--source-profile", "conservative",
     ]) == 0
 

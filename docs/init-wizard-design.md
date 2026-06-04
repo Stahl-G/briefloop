@@ -18,19 +18,13 @@ multi-agent-brief init --demo
 multi-agent-brief init demo-workspace --demo
 ```
 
-Non-interactive initialization for AI agents and scripts:
+Non-interactive initialization for AI agents and scripts must use conversational onboarding data:
 
 ```bash
-multi-agent-brief init solar-weekly \
-  --language zh-CN \
-  --company "Sample Solar Manufacturer" \
-  --role strategy_office \
-  --industry solar \
-  --title "Weekly Solar Industry Brief" \
-  --audience management \
-  --cadence weekly \
-  --rag off
+multi-agent-brief init solar-weekly --from-onboarding onboarding.json
 ```
+
+The CLI must not create a real workspace from hidden defaults in a non-interactive environment. Developer-only direct CLI initialization is allowed only when all required business fields are explicit.
 
 ## Prompt Order
 

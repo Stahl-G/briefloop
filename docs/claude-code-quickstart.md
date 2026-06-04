@@ -16,14 +16,10 @@ source .venv/bin/activate
 3. A brief workspace initialized:
 
 ```bash
-multi-agent-brief init ../mabw-workspace \
-  --language zh-CN \
-  --company "Your Company" \
-  --industry manufacturing \
-  --title "Weekly Brief" \
-  --audience management \
-  --source-profile research
+multi-agent-brief init ../mabw-workspace
 ```
+
+Answer the interactive onboarding questions before running the pipeline. In an agent workflow, create `onboarding.json` from natural-language answers and run `multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json`.
 
 ## Sample Prompts
 

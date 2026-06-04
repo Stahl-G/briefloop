@@ -190,7 +190,24 @@ class TestReportDateAuto:
         from multi_agent_brief.cli.main import main
 
         ws = tmp_path / "ws"
-        main(["init", str(ws), "--language", "zh-CN"])
+        main([
+            "init",
+            str(ws),
+            "--language",
+            "zh-CN",
+            "--company",
+            "Test Company",
+            "--industry",
+            "manufacturing",
+            "--title",
+            "Weekly Brief",
+            "--audience",
+            "management",
+            "--cadence",
+            "weekly",
+            "--source-profile",
+            "research",
+        ])
         config_text = (ws / "config.yaml").read_text(encoding="utf-8")
         assert "auto" in config_text
 

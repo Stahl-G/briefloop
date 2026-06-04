@@ -62,14 +62,10 @@ multi-agent-brief run examples/basic_market_brief/input --output output/basic_ma
 ## Init Workspace
 
 ```powershell
-multi-agent-brief init my-workspace `
-  --language zh-CN `
-  --company "Sample Company" `
-  --industry finance `
-  --title "Weekly Brief" `
-  --audience management `
-  --source-profile research
+multi-agent-brief init my-workspace
 ```
+
+Answer the interactive onboarding questions. For non-interactive agent runs, generate `onboarding.json` first and use `multi-agent-brief init my-workspace --from-onboarding onboarding.json`.
 
 ## Run Tests
 

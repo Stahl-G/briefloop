@@ -22,7 +22,11 @@ class TestInitTavilyGuidance:
         assert main([
             "init", str(ws),
             "--language", "zh-CN",
+            "--company", "Test Company",
             "--industry", "manufacturing",
+            "--title", "Weekly Brief",
+            "--audience", "management",
+            "--cadence", "weekly",
             "--source-profile", "research",
         ]) == 0
         # Without tavily_enabled CLI arg, web_search should be enabled but without backend
@@ -169,7 +173,25 @@ class TestRunTavilyGuidance:
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
         ws = tmp_path / "ws"
-        assert main(["init", str(ws), "--language", "zh-CN", "--industry", "manufacturing", "--tavily"]) == 0
+        assert main([
+            "init",
+            str(ws),
+            "--language",
+            "zh-CN",
+            "--company",
+            "Test Company",
+            "--industry",
+            "manufacturing",
+            "--title",
+            "Weekly Brief",
+            "--audience",
+            "management",
+            "--cadence",
+            "weekly",
+            "--source-profile",
+            "research",
+            "--tavily",
+        ]) == 0
 
         # Add a source file
         (ws / "input" / "news.md").write_text(
@@ -191,7 +213,24 @@ class TestRunTavilyGuidance:
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-present-but-wrong-backend")
 
         ws = tmp_path / "ws"
-        assert main(["init", str(ws), "--language", "en-US", "--industry", "manufacturing"]) == 0
+        assert main([
+            "init",
+            str(ws),
+            "--language",
+            "en-US",
+            "--company",
+            "Test Company",
+            "--industry",
+            "manufacturing",
+            "--title",
+            "Weekly Brief",
+            "--audience",
+            "management",
+            "--cadence",
+            "weekly",
+            "--source-profile",
+            "research",
+        ]) == 0
 
         sources_path = ws / "sources.yaml"
         sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))

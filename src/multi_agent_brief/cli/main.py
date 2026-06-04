@@ -6,7 +6,15 @@ from pathlib import Path
 
 from multi_agent_brief import __version__
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
-from multi_agent_brief.cli.init_wizard import build_profile_from_args, create_demo_workspace, create_workspace
+from multi_agent_brief.cli.init_wizard import (
+    InitOnboardingRequired,
+    _is_interactive,
+    build_profile_from_args,
+    create_demo_workspace,
+    create_workspace,
+    has_direct_init_args,
+    missing_required_direct_init_args,
+)
 from multi_agent_brief.onboarding.io import load_onboarding_result
 from multi_agent_brief.onboarding.mapper import map_onboarding_to_profile
 from multi_agent_brief.sources.decider import (
@@ -320,8 +328,28 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
         else:
             target = Path(default_target)
     else:
+        missing = missing_required_direct_init_args(args)
+        if missing and has_direct_init_args(args):
+            print("[error] Direct init with CLI args is incomplete.")
+            print("        Start conversational onboarding first and run:")
+            print("        multi-agent-brief init <workspace> --from-onboarding onboarding.json")
+            print("        Developer-only direct init must provide all business fields:")
+            print(f"        missing: {', '.join(missing)}")
+            return 1
+        if not _is_interactive() and missing:
+            print("[error] Non-interactive init cannot create a workspace from defaults.")
+            print("        Start conversational onboarding first and run:")
+            print("        multi-agent-brief init <workspace> --from-onboarding onboarding.json")
+            print("        Developer-only direct init must provide all business fields:")
+            print(f"        missing: {', '.join(missing)}")
+            return 1
         target = Path(args.target)
-        profile = build_profile_from_args(args)
+        try:
+            profile = build_profile_from_args(args)
+        except InitOnboardingRequired as exc:
+            print(f"[error] {exc}")
+            print("        Run init in an interactive terminal, or use --from-onboarding onboarding.json.")
+            return 1
 
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")

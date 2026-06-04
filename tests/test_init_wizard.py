@@ -4,6 +4,41 @@ from multi_agent_brief.cli.init_wizard import build_profile_from_args, prompt_fo
 from multi_agent_brief.cli.main import main
 
 
+def complete_init_args(
+    workspace,
+    *,
+    language="zh-CN",
+    company="Test Company",
+    industry="manufacturing",
+    title="Weekly Brief",
+    audience="management",
+    cadence="weekly",
+    source_profile="research",
+    extra=None,
+):
+    args = [
+        "init",
+        str(workspace),
+        "--language",
+        language,
+        "--company",
+        company,
+        "--industry",
+        industry,
+        "--title",
+        title,
+        "--audience",
+        audience,
+        "--cadence",
+        cadence,
+        "--source-profile",
+        source_profile,
+    ]
+    if extra:
+        args.extend(extra)
+    return args
+
+
 def test_init_demo_preserves_existing_demo_behavior(tmp_path):
     demo_dir = tmp_path / "demo"
 
@@ -17,7 +52,7 @@ def test_init_demo_preserves_existing_demo_behavior(tmp_path):
 def test_init_workspace_creates_expected_files(tmp_path):
     workspace = tmp_path / "workspace"
 
-    assert main(["init", str(workspace), "--language", "zh-CN"]) == 0
+    assert main(complete_init_args(workspace)) == 0
 
     assert (workspace / "config.yaml").exists()
     assert (workspace / "profile.yaml").exists()
@@ -66,6 +101,8 @@ def test_english_mode_generates_english_config_values(tmp_path):
                 "weekly",
                 "--rag",
                 "off",
+                "--source-profile",
+                "research",
             ]
         )
         == 0
@@ -129,7 +166,7 @@ def test_rag_provider_can_be_set_to_ollama_or_gemini():
 def test_workspace_gitignore_excludes_private_and_generated_paths(tmp_path):
     workspace = tmp_path / "workspace"
 
-    main(["init", str(workspace), "--language", "zh-CN"])
+    main(complete_init_args(workspace))
 
     gitignore = (workspace / ".gitignore").read_text(encoding="utf-8")
     for expected in [".env", "output/", ".rag/", "private_inputs/", "private_outputs/", "user.md"]:
@@ -139,7 +176,7 @@ def test_workspace_gitignore_excludes_private_and_generated_paths(tmp_path):
 def test_generated_input_readme_is_not_treated_as_source(tmp_path):
     workspace = tmp_path / "workspace"
 
-    main(["init", str(workspace), "--language", "zh-CN"])
+    main(complete_init_args(workspace))
     assert main(["run", "--config", str(workspace / "config.yaml")]) == 0
 
     ledger = (workspace / "output" / "intermediate/claim_ledger.json").read_text(encoding="utf-8")
@@ -148,7 +185,7 @@ def test_generated_input_readme_is_not_treated_as_source(tmp_path):
 
 def test_init_workspace_creates_user_md(tmp_path):
     workspace = tmp_path / "workspace"
-    assert main(["init", str(workspace), "--language", "zh-CN"]) == 0
+    assert main(complete_init_args(workspace)) == 0
     assert (workspace / "user.md").exists()
     user_md = (workspace / "user.md").read_text(encoding="utf-8")
     assert "用户简报画像" in user_md
@@ -163,7 +200,9 @@ def test_llm_decide_source_profile_generates_agent_policy(tmp_path):
         "--company", "某公司",
         "--role", "strategy_office",
         "--industry", "finance",
+        "--title", "行业周报",
         "--audience", "management",
+        "--cadence", "weekly",
         "--source-profile", "llm_decide",
     ]) == 0
 
@@ -182,18 +221,14 @@ def test_llm_decide_source_profile_generates_agent_policy(tmp_path):
 def test_llm_decide_does_not_call_llm(tmp_path):
     """llm_decide must only generate config, not make network calls."""
     workspace = tmp_path / "workspace"
-    assert main([
-        "init", str(workspace),
-        "--language", "en-US",
-        "--source-profile", "llm_decide",
-    ]) == 0
+    assert main(complete_init_args(workspace, language="en-US", source_profile="llm_decide")) == 0
     # Verify source_candidates.yaml is NOT created at init time
     assert not (workspace / "source_candidates.yaml").exists()
 
 
 def test_llm_decide_user_md_not_treated_as_source(tmp_path):
     workspace = tmp_path / "workspace"
-    main(["init", str(workspace), "--language", "zh-CN", "--source-profile", "llm_decide"])
+    main(complete_init_args(workspace, source_profile="llm_decide"))
     assert main(["run", "--config", str(workspace / "config.yaml")]) == 0
     ledger = (workspace / "output" / "intermediate/claim_ledger.json").read_text(encoding="utf-8")
     assert ledger.strip() == "[]"
@@ -201,7 +236,7 @@ def test_llm_decide_user_md_not_treated_as_source(tmp_path):
 
 def test_source_profile_noninteractive_arg_is_respected(tmp_path):
     workspace = tmp_path / "workspace"
-    main(["init", str(workspace), "--language", "en-US", "--source-profile", "llm_decide"])
+    main(complete_init_args(workspace, language="en-US", source_profile="llm_decide"))
     config = (workspace / "config.yaml").read_text(encoding="utf-8")
     assert 'mode: "llm_decide"' in config or "mode: llm_decide" in config
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
@@ -211,7 +246,7 @@ def test_source_profile_noninteractive_arg_is_respected(tmp_path):
 def test_all_source_profiles_generate_valid_workspace(tmp_path):
     for profile in ["conservative", "research", "aggressive_signal", "custom", "llm_decide"]:
         workspace = tmp_path / f"ws-{profile}"
-        assert main(["init", str(workspace), "--language", "zh-CN", "--source-profile", profile]) == 0
+        assert main(complete_init_args(workspace, source_profile=profile)) == 0
         assert (workspace / "config.yaml").exists()
         assert (workspace / "sources.yaml").exists()
         assert (workspace / "user.md").exists()
@@ -225,7 +260,11 @@ def test_init_with_industry_writes_source_strategy_industry(tmp_path):
     assert main([
         "init", str(workspace),
         "--language", "en-US",
+        "--company", "Test",
         "--industry", "manufacturing",
+        "--title", "Manufacturing Brief",
+        "--audience", "management",
+        "--cadence", "weekly",
         "--source-profile", "research",
     ]) == 0
 
@@ -246,7 +285,11 @@ def test_cli_run_loads_industry_from_init_workspace(tmp_path):
     assert main([
         "init", str(workspace),
         "--language", "en-US",
+        "--company", "Test",
         "--industry", "manufacturing",
+        "--title", "Manufacturing Brief",
+        "--audience", "management",
+        "--cadence", "weekly",
         "--source-profile", "research",
     ]) == 0
 
@@ -322,17 +365,53 @@ def test_industry_fallback_when_sources_yaml_missing_field(tmp_path):
     assert source_config.industry == "manufacturing"
 
 
-def test_tavily_flag_alone_triggers_noninteractive(tmp_path):
-    """--tavily alone should trigger non-interactive profile handling."""
+def test_noninteractive_init_without_onboarding_fails(tmp_path, capsys):
+    """Non-interactive init must not create a workspace from hidden defaults."""
     from multi_agent_brief.cli.main import main
 
     workspace = tmp_path / "ws"
-    assert main(["init", str(workspace), "--tavily"]) == 0
-    config = (workspace / "config.yaml").read_text(encoding="utf-8")
-    sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
-    # Tavily should be enabled in sources.yaml
-    assert "enabled: true" in sources
-    assert 'backend: "tavily"' in sources or "backend: tavily" in sources
+    assert main(["init", str(workspace)]) == 1
+    captured = capsys.readouterr()
+    assert "cannot create a workspace from defaults" in captured.out
+    assert "--from-onboarding" in captured.out
+    assert not (workspace / "config.yaml").exists()
+
+
+def test_noninteractive_partial_init_args_fail(tmp_path, capsys):
+    """Partial direct init args should fail instead of silently filling defaults."""
+    from multi_agent_brief.cli.main import main
+
+    workspace = tmp_path / "ws"
+    assert main(["init", str(workspace), "--language", "zh-CN"]) == 1
+    captured = capsys.readouterr()
+    assert "--company" in captured.out
+    assert "--source-profile" in captured.out
+    assert not (workspace / "config.yaml").exists()
+
+
+def test_interactive_partial_direct_init_args_fail(tmp_path, capsys, monkeypatch):
+    """Interactive users should use the wizard unless all direct CLI fields are explicit."""
+    import multi_agent_brief.cli.main as cli_main
+
+    monkeypatch.setattr(cli_main, "_is_interactive", lambda: True)
+    workspace = tmp_path / "ws"
+    assert cli_main.main(["init", str(workspace), "--language", "zh-CN"]) == 1
+    captured = capsys.readouterr()
+    assert "Direct init with CLI args is incomplete" in captured.out
+    assert "--company" in captured.out
+    assert not (workspace / "config.yaml").exists()
+
+
+def test_tavily_flag_alone_does_not_create_workspace(tmp_path, capsys):
+    """--tavily alone should not trigger hidden default profile handling."""
+    from multi_agent_brief.cli.main import main
+
+    workspace = tmp_path / "ws"
+    assert main(["init", str(workspace), "--tavily"]) == 1
+    captured = capsys.readouterr()
+    assert "--from-onboarding" in captured.out
+    assert "--company" in captured.out
+    assert not (workspace / "config.yaml").exists()
 
 
 def test_from_onboarding_cli_override(tmp_path):
@@ -382,6 +461,9 @@ def test_llm_decide_init_generates_enabled_providers(tmp_path):
         "--language", "en-US",
         "--company", "Test",
         "--industry", "manufacturing",
+        "--title", "Test Brief",
+        "--audience", "management",
+        "--cadence", "weekly",
         "--source-profile", "llm_decide",
     ]) == 0
 
@@ -399,6 +481,10 @@ def test_llm_decide_with_tavily_includes_web_search_provider(tmp_path):
         "init", str(workspace),
         "--language", "en-US",
         "--company", "Test",
+        "--industry", "manufacturing",
+        "--title", "Test Brief",
+        "--audience", "management",
+        "--cadence", "weekly",
         "--source-profile", "llm_decide",
         "--tavily",
     ]) == 0
@@ -437,6 +523,10 @@ def test_sources_decide_search_no_backend_returns_nonzero(tmp_path):
         "init", str(workspace),
         "--language", "en-US",
         "--company", "Test",
+        "--industry", "manufacturing",
+        "--title", "Test Brief",
+        "--audience", "management",
+        "--cadence", "weekly",
         "--source-profile", "llm_decide",
     ]) == 0
 
@@ -455,6 +545,10 @@ def test_pipeline_fails_when_tavily_key_missing(tmp_path, monkeypatch):
         "--language", "en-US",
         "--company", "Test",
         "--industry", "manufacturing",
+        "--title", "Test Brief",
+        "--audience", "management",
+        "--cadence", "weekly",
+        "--source-profile", "research",
         "--tavily",
     ]) == 0
 

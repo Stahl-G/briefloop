@@ -207,10 +207,10 @@ output:
 打开 Claude Code、Codex 或其他 coding agent，输入：
 
 ```text
-Clone and read https://github.com/Stahl-G/multi-agent-brief-workflow
+克隆 https://github.com/Stahl-G/multi-agent-brief-workflow， 并启动交互问答初始化
 ```
 
-Agent 会读取项目说明，协助你完成安装、初始化工作区、配置来源、运行示例和生成第一份可审计草稿。
+Agent 会读取项目说明，先用自然语言询问简报对象、行业主题、读者、语言、频率和来源偏好，再创建工作区、配置来源、运行示例和生成第一份可审计草稿。
 
 正式分发前仍需要人工确认来源、内容和审计结果。
 
@@ -224,7 +224,7 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-multi-agent-brief init ../mabw-workspace --demo
+multi-agent-brief init ../mabw-workspace
 multi-agent-brief run --config ../mabw-workspace/config.yaml
 ```
 
@@ -236,7 +236,7 @@ cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief init ../mabw-workspace --demo
+multi-agent-brief init ../mabw-workspace
 multi-agent-brief run --config ../mabw-workspace\config.yaml
 ```
 
@@ -257,15 +257,10 @@ multi-agent-brief run --config ../mabw-workspace\config.yaml
 
 ## 使用自己的材料
 
-初始化一个工作区：
+初始化一个工作区。请在交互问答里说明公司/组织、行业或主题、任务目标、读者、语言、频率和来源偏好：
 
 ```bash
-multi-agent-brief init ../mabw-workspace \
-  --language zh-CN \
-  --company "公司名" \
-  --industry manufacturing \
-  --title "周报" \
-  --audience management
+multi-agent-brief init ../mabw-workspace
 ```
 
 把 `.md`、`.txt` 或 `.json` 文件放入：
@@ -312,10 +307,10 @@ PowerShell:
 $env:TAVILY_API_KEY = Read-Host "Enter your Tavily API key"
 ```
 
-初始化时启用 Tavily：
+初始化时可在交互问答中选择启用 Tavily：
 
 ```bash
-multi-agent-brief init ../mabw-workspace --tavily
+multi-agent-brief init ../mabw-workspace
 ```
 
 详细配置和后端对比见 [docs/search-backends.md](docs/search-backends.md)。

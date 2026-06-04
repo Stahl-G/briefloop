@@ -549,7 +549,24 @@ def test_web_search_no_domains_passes_none():
 def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
-    assert main(["init", str(workspace), "--language", "en-US", "--source-profile", "aggressive_signal"]) == 0
+    assert main([
+        "init",
+        str(workspace),
+        "--language",
+        "en-US",
+        "--company",
+        "Test Company",
+        "--industry",
+        "manufacturing",
+        "--title",
+        "Weekly Brief",
+        "--audience",
+        "management",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        "aggressive_signal",
+    ]) == 0
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
     web_section = sources.split("web_search:")[1].split("api:")[0]
     assert "enabled: true" in web_section
@@ -559,7 +576,24 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
 def test_init_custom_web_search_enabled_without_backend(tmp_path):
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
-    assert main(["init", str(workspace), "--language", "en-US", "--source-profile", "custom"]) == 0
+    assert main([
+        "init",
+        str(workspace),
+        "--language",
+        "en-US",
+        "--company",
+        "Test Company",
+        "--industry",
+        "manufacturing",
+        "--title",
+        "Weekly Brief",
+        "--audience",
+        "management",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        "custom",
+    ]) == 0
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
     web_section = sources.split("web_search:")[1].split("api:")[0]
     assert "enabled: true" in web_section
@@ -569,7 +603,24 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
 def test_init_research_web_search_enabled_without_backend(tmp_path):
     from multi_agent_brief.cli.main import main
     workspace = tmp_path / "ws"
-    assert main(["init", str(workspace), "--language", "en-US", "--source-profile", "research"]) == 0
+    assert main([
+        "init",
+        str(workspace),
+        "--language",
+        "en-US",
+        "--company",
+        "Test Company",
+        "--industry",
+        "manufacturing",
+        "--title",
+        "Weekly Brief",
+        "--audience",
+        "management",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        "research",
+    ]) == 0
     sources = (workspace / "sources.yaml").read_text(encoding="utf-8")
     web_section = sources.split("web_search:")[1].split("api:")[0]
     assert "enabled: true" in web_section

@@ -446,7 +446,11 @@ class TestInitSolar:
         assert main([
             "init", str(workspace),
             "--language", "zh-CN",
+            "--company", "TestCo",
             "--industry", "manufacturing",
+            "--title", "Weekly Brief",
+            "--audience", "management",
+            "--cadence", "weekly",
             "--source-profile", "conservative",
         ]) == 0
         assert (workspace / "config.yaml").exists()

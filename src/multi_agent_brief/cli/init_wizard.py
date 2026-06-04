@@ -140,6 +140,30 @@ class InitProfile:
     tavily_enabled: bool = False
 
 
+class InitOnboardingRequired(RuntimeError):
+    """Raised when init would otherwise create a workspace from hidden defaults."""
+
+
+_REQUIRED_DIRECT_INIT_ARGS: dict[str, str] = {
+    "language": "--language",
+    "company": "--company",
+    "industry": "--industry",
+    "title": "--title",
+    "audience": "--audience",
+    "cadence": "--cadence",
+    "source_profile": "--source-profile",
+}
+
+
+def missing_required_direct_init_args(args: Any) -> list[str]:
+    """Return required business fields missing from direct CLI init."""
+    missing: list[str] = []
+    for attr, flag in _REQUIRED_DIRECT_INIT_ARGS.items():
+        if not getattr(args, attr, None):
+            missing.append(flag)
+    return missing
+
+
 def create_demo_workspace(target: Path, *, force: bool = False) -> None:
     input_dir = target / "input"
     files = {
@@ -182,7 +206,7 @@ def _is_interactive() -> bool:
 def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | None = None) -> InitProfile:
     input_func = input if input_func is None else input_func
     profile = InitProfile()
-    if has_noninteractive_profile_args(args):
+    if has_direct_init_args(args):
         profile.interface_language = normalize_language(args.language or profile.interface_language)
         profile.output_language = normalize_language(args.output_language or args.language or profile.output_language)
         profile.company = args.company or profile.company
@@ -203,17 +227,15 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
         try:
             return prompt_for_profile(input_func=input_func)
         except (EOFError, KeyboardInterrupt):
-            print("\n[init] Interactive input interrupted. Using defaults.")
-            return profile
-    # Non-interactive (agent Bash tool, pipe, CI) → use defaults with a clear message
-    print("[init] Non-interactive environment detected. Using default settings.")
-    print("[init] To customize, run with CLI args:")
-    print("  multi-agent-brief init <target> --language zh-CN --company \"Name\" --industry finance --title \"Brief\" --audience management --source-profile research")
-    print("[init] Or run interactively in a real terminal: multi-agent-brief init <target>")
-    return profile
+            raise InitOnboardingRequired(
+                "Interactive init was interrupted before onboarding completed."
+            )
+    raise InitOnboardingRequired(
+        "Non-interactive init without onboarding answers is not allowed."
+    )
 
 
-def has_noninteractive_profile_args(args: Any) -> bool:
+def has_direct_init_args(args: Any) -> bool:
     fields = [
         "language",
         "output_language",

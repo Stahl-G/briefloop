@@ -130,7 +130,7 @@ Path priority:
 
 ## Notes
 
-- The existing technical CLI init path (`--language`, `--company`, `--industry`, etc.) is preserved.
+- The technical CLI init flags are developer-only and require all required business fields.
 - `onboarding.json` is an agent protocol, not a user-facing interface.
 - Web search is not enabled by default.
 - No runtime mock backend is used.
