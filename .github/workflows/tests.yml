@@ -54,7 +54,7 @@ jobs:
       - name: CLI smoke
         run: |
           multi-agent-brief version
-          multi-agent-brief run examples/basic_market_brief/input --output output/basic_market_brief
+          multi-agent-brief run examples/basic_market_brief --output output/basic_market_brief
 
   non-dev-smoke:
     name: Non-dev install smoke
