@@ -35,8 +35,8 @@ Ask at most 10 questions:
    Recommended default: based on industry (e.g., for automotive: sales data, autonomous driving, policy, supply chain, product launches).
 
 6. Which search backend should be used for web search?
-   Options: tavily (default, fast AI search), exa (deep research), brave (independent web index), firecrawl (search + scrape), serper (Google SERP), serpapi (broad SERP), none (local files only).
-   Recommended default: tavily.
+   Options: tavily (AI-powered web search, requires API key), none (local files only), choose later (web search capability enabled but no backend configured).
+   Recommended default: choose later.
 
 7. How many items should each brief contain?
    Recommended default: 8 items.

@@ -77,7 +77,7 @@ def run_doctor(
     if source_config.web_search.get("enabled"):
         backend_name = source_config.web_search.get("backend") or ""
         if not backend_name:
-            results.append(CheckResult("ERROR", "web_search enabled but no backend configured"))
+            results.append(CheckResult("WARN", "web_search is enabled but no backend configured. Set TAVILY_API_KEY and run init with --tavily to enable live search."))
         elif backend_name == "mock":
             results.append(CheckResult("ERROR", "web_search: mock backend has been removed from runtime code"))
         else:

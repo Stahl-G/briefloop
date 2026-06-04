@@ -529,10 +529,10 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
         if pack:
             seed_tasks = pack.get("search_tasks", [])
 
-    # web_search: only enabled if tavily is configured
+    # web_search: always enabled as a capability; backend may be unconfigured
+    if "web_search" not in enabled:
+        enabled.append("web_search")
     if profile.tavily_enabled:
-        if "web_search" not in enabled:
-            enabled.append("web_search")
         web_search_config: dict[str, Any] = {
             "enabled": True,
             "backend": "tavily",
@@ -546,7 +546,7 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             web_search_config["search_tasks"] = seed_tasks
     else:
         web_search_config = {
-            "enabled": False,
+            "enabled": True,
             "backend": "",
             "max_results": 20,
             "recency_days": 7,
@@ -583,10 +583,8 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
     """Generate sources.yaml for llm_decide profile: agent-readable discovery policy."""
     lang = profile.output_language.split("-")[0] if "-" in profile.output_language else profile.output_language
 
-    # Build enabled_providers: always include manual; add web_search if Tavily enabled
-    enabled_providers = ["manual"]
-    if profile.tavily_enabled:
-        enabled_providers.append("web_search")
+    # Build enabled_providers: always include manual and web_search
+    enabled_providers = ["manual", "web_search"]
 
     return {
         "source_strategy": {
@@ -666,7 +664,7 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
             }
             if profile.tavily_enabled
             else {
-                "enabled": False,
+                "enabled": True,
                 "backend": "",
                 "max_results": 20,
                 "recency_days": 7,

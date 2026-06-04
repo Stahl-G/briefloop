@@ -195,17 +195,12 @@ def normalize_source_profile(text: str) -> str:
 
 _SEARCH_BACKEND_MAP: dict[str, str] = {
     "tavily": "tavily",
-    "exa": "exa",
-    "brave": "brave",
-    "firecrawl": "firecrawl",
-    "serper": "serper",
-    "serpapi": "serpapi",
     "none": "none",
     "无": "none",
     "不启用": "none",
 }
 
-_DEFAULT_SEARCH_BACKEND = "tavily"
+_DEFAULT_SEARCH_BACKEND = ""
 
 
 def normalize_search_backend(text: str) -> str:
@@ -367,20 +362,20 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     if hasattr(result, "source_age_days") and result.source_age_days:
         profile.max_source_age_days = result.source_age_days
 
-    # Web search: enable if user opted in during onboarding
+    # Web search: only enable if user explicitly requested Tavily
     if getattr(result, "tavily_enabled", False):
         profile.tavily_enabled = True
 
     # Handle search backend selection
-    # Only enable tavily if explicitly requested via search_backend_plain or tavily_enabled
-    search_backend = getattr(result, "search_backend_plain", "")
+    # Only enable tavily when search_backend_plain explicitly contains "tavily"
+    search_backend = getattr(result, "search_backend_plain", "").strip()
     if search_backend:
         search_backend = normalize_search_backend(search_backend)
         if search_backend == "tavily":
             profile.tavily_enabled = True
         elif search_backend == "none":
             profile.tavily_enabled = False
-        # For other backends, don't enable tavily by default
+        # Unrecognised / empty / choose-later backends: leave tavily disabled
     # Also check the legacy tavily_enabled field
     if getattr(result, "tavily_enabled", False):
         profile.tavily_enabled = True

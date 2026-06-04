@@ -29,7 +29,7 @@ class OnboardingResult:
 
     # New fields for extended onboarding
     focus_areas_plain: str = ""  # user description of focus areas
-    search_backend_plain: str = "tavily"  # tavily/exa/brave/firecrawl/serper/serpapi
+    search_backend_plain: str = ""  # only set when user explicitly chooses a backend
     max_items_per_brief: int = 8  # max items per brief
     source_age_days: int = 14  # max source age in days
     audit_strictness: str = "standard"  # standard/strict/lenient
