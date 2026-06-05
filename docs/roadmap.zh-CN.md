@@ -3,10 +3,10 @@
 ## 近期
 
 * 智能语气调节：根据管理层、研究员、IR、法务合规、投资等不同读者自动调整表达方式。
-* 自动文档命名：根据公司、主题、日期、频率、语言和报告类型生成输出文件名。
+* ✅ 自动文档命名：根据公司、主题、日期、频率、语言和报告类型生成输出文件名。
 * 多种 DOCX 模板：支持管理层简报、研究笔记、正式内部报告等不同版式。
-* 智能市场和竞对策略：根据 `user.md` 自动判断应该跟踪哪些市场、公司、政策和竞争对手。
-* 更灵活的搜索策略：支持官方来源、行业媒体、filings、RSS 和 Web Search 的分层配置。
+* ✅ 智能市场和竞对策略：可插拔 Market & Competitor Intelligence Module，支持竞对发现、确认、定向搜集、实体标注、事件归并、跨期追踪、专项审计。见 [docs/modules/market-competitor.zh-CN.md](modules/market-competitor.zh-CN.md)。
+* ✅ 更灵活的搜索策略：支持 5 个搜索后端（Tavily/Exa/Brave/Firecrawl/Serper）、SEC filing resolver、MinerU 文档解析、飞书集成。
 
 ## 中期
 

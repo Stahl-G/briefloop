@@ -19,6 +19,9 @@
 - `draft-audit-harness.toml` — Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks.
 - `final-quality-harness.toml` — Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target.
 - `rendered-output-harness.toml` — Reviews rendered output gates for DOCX/PDF/Markdown rendering fidelity.
+- `market-competitor-planner.toml` — Recommends competitor candidates for a workspace based on user.md context (company, industry, market_scope, focus_areas).
+- `market-competitor-analyst.toml` — Generates AnalysisCards from evidence_pack.json and writes competitor sections for the final brief.
+- `market-competitor-auditor.toml` — Runs 6 specialist audits on competitor analysis output: comparison evidence, capacity status, metric basis, market trends, single-source confidence, and coverage gaps.
 
         Each agent TOML file includes:
 

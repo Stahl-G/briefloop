@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-05
+
+### Added
+
+- **Market & Competitor Intelligence Analysis Module** — 首个可插拔 AnalysisModule
+  - `competitor_universe.yaml` 配置合同 + `competitor_candidates.yaml` 审核流程
+  - CLI: `multi-agent-brief competitors propose | list | merge`
+  - 竞对感知 Source Planning: 为每个 primary 竞对 × 维度自动生成定向搜索任务
+  - `EntityEventEnricher`: 确定性实体/事件类型/地理/维度标注，接入 Scout 与 Screener 之间
+  - `build_events`: 归并 entity-tagged Claim 为 MarketEvent，推测事件状态
+  - 5 个中间产物: `events.json` / `competitor_matrix.json` / `coverage_report.json` / `watchlist.json` / `evidence_pack.json`
+  - 跨期状态追踪: `event_history.jsonl` + change_status (new/changed/unchanged/cancelled/resolved)
+  - 6 种专项审计: comparison_missing_entity_evidence / capacity_status_missing / metric_basis_missing / unsupported_market_trend / single_source_interpretation / competitor_coverage_gap
+  - 3 个新 subagent: `market-competitor-planner` / `market-competitor-analyst` / `market-competitor-auditor`
+  - 通用 `AnalysisModule` 接口 + Registry: 未来 earnings/policy/patent 模块可复用
+  - 模块禁用时零影响 — 现有 589 tests 全过（73 新增）
+- Onboarding 扩展: `market_scope` 和 `competitor_preferences` 字段
+
+### Changed
+
+- 移除 README update check CI job（`.githooks/pre-push` 同步清理）
+
 ## [0.2.0] — 2026-06-05
 
 ### Added

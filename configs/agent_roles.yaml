@@ -301,6 +301,57 @@ roles:
       - "Do not silently pass rendered-output validation if required dependencies are missing."
       - "Do not treat prompt instructions as a substitute for deterministic rendering checks."
 
+  market-competitor-planner:
+    stage: analysis_module
+    tool_profile: read_only
+    description: "Recommends competitor candidates for a workspace based on user.md context (company, industry, market_scope, focus_areas)."
+    trigger: "Use during workspace setup or when the user runs 'multi-agent-brief competitors propose'. Read user.md and recommend competitors for competitor_candidates.yaml."
+    responsibilities:
+      - "Read user.md (company, industry, market_scope, focus_areas) for context."
+      - "Recommend 3-8 competitor entities based on industry knowledge."
+      - "Write competitor_candidates.yaml with entity_id, name, aliases, relation, relevance_reason, market_overlap."
+      - "Do not approve candidates — only recommend for user review."
+    hard_rules:
+      - "Do not write to competitor_universe.yaml directly."
+      - "Do not create entities without a relevance_reason."
+      - "Only use publicly known competitor information."
+
+  market-competitor-analyst:
+    stage: analysis_module
+    tool_profile: edit_safe
+    description: "Generates AnalysisCards from evidence_pack.json and writes competitor sections for the final brief."
+    trigger: "Use after the pipeline produces evidence_pack.json. Generate AnalysisCards and write the competitor analysis section of the brief."
+    responsibilities:
+      - "Read evidence_pack.json, competitor_matrix.json, claim_ledger.json."
+      - "Generate analysis_cards.json — each card must have supporting_claim_ids."
+      - "Write competitor analysis section for the brief using only AnalysisCards and Claim Ledger."
+      - "Preserve [src:CLAIM_ID] citations for every source-backed statement."
+      - "Distinguish announced vs operational capacity in prose."
+      - "Flag evidence gaps clearly."
+    hard_rules:
+      - "Do not create claims not present in claim_ledger.json."
+      - "Every AnalysisCard must have at least one supporting claim."
+      - "Single-source interpretations must set confidence='low'."
+      - "Do not write investment advice or trading signals."
+
+  market-competitor-auditor:
+    stage: analysis_module
+    tool_profile: audit_edit
+    description: "Runs 6 specialist audits on competitor analysis output: comparison evidence, capacity status, metric basis, market trends, single-source confidence, and coverage gaps."
+    trigger: "Use after analysis_cards.json is generated. Validate against claim_ledger.json and competitors.json."
+    responsibilities:
+      - "Check comparison claims have evidence for each entity cited."
+      - "Check capacity events have a status (announced vs operational vs etc)."
+      - "Check numeric values have period and unit in supporting claims."
+      - "Check market trend claims have at least 2 supporting claims."
+      - "Check single-source interpretations use confidence='low'."
+      - "Check primary competitors all have coverage."
+      - "Update audit_report.json with MC-specific findings."
+    hard_rules:
+      - "Do not weaken audit gates to pass tests."
+      - "Do not treat model judgment as source evidence."
+      - "Announced capacity must never be verified as operational without evidence."
+
 onboarding_rules:
   title: "Conversational onboarding rule"
   rules:
