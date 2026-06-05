@@ -48,9 +48,16 @@ class BriefPipeline:
         module_outputs = self._run_analysis_modules(context, ledger)
         outputs.extend(module_outputs)
 
-        # Step 3-6: Analyst → Editor → Auditor → Formatter
-        for agent in self.agents[2:]:
-            outputs.append(agent.run(context, ledger))
+        # Step 3-4: Analyst → Editor
+        outputs.append(self.agents[2].run(context, ledger))  # Analyst
+        outputs.append(self.agents[3].run(context, ledger))  # Editor
+
+        # Step 5: Auditor — may include specialist audit if MC module ran
+        auditor_output = self._run_auditor(context, ledger)
+        outputs.append(auditor_output)
+
+        # Step 6: Formatter
+        outputs.append(self.agents[5].run(context, ledger))
         return outputs
 
     def _collect_sources(self, context: PipelineContext) -> AgentOutput | None:
@@ -209,6 +216,44 @@ class BriefPipeline:
             except Exception:
                 pass
         return outputs
+
+    def _run_auditor(
+        self,
+        context: PipelineContext,
+        ledger: "ClaimLedger",
+    ) -> AgentOutput:
+        """Run auditor, injecting specialist auditor if MC module ran."""
+        # Check if market_competitor module produced output
+        analysis_packs = context.metadata.get("analysis_packs", {})
+        has_mc = "market_competitor" in analysis_packs
+
+        if has_mc:
+            try:
+                from multi_agent_brief.analysis_modules.market_competitor.auditor import (
+                    MarketCompetitorAuditor,
+                )
+                mc_auditor = MarketCompetitorAuditor()
+                # Create composite: deterministic + quality harness + MC specialist
+                from multi_agent_brief.audit.deterministic import DeterministicAuditAgent
+                from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
+                from multi_agent_brief.audit.interfaces import CompositeAuditAgent
+                composite = CompositeAuditAgent(
+                    DeterministicAuditAgent(),
+                    additional_agents=[QualityHarnessAuditAgent(), mc_auditor],
+                )
+                report = composite.run_audit(
+                    context.report_state.prepared_markdown, ledger, context,
+                )
+                context.report_state.audit_report = report
+                return AgentOutput(
+                    agent_name="auditor",
+                    summary=f"Audit status: {report.audit_status}; findings: {len(report.findings)} (incl. MC specialist).",
+                    artifacts={"audit_status": report.audit_status, "finding_count": len(report.findings)},
+                )
+            except Exception:
+                pass
+
+        return self.agents[4].run(context, ledger)
 
 
 # ── Module-level helpers ────────────────────────────────────────────────────
