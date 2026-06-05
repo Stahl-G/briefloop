@@ -616,33 +616,31 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 * [Windows PowerShell 支持](docs/windows-powershell.md)
 * [飞书集成](docs/feishu-integration.md)
 * [路线图](docs/roadmap.zh-CN.md)
+* [v2.0 MAS Runtime 重构评估](docs/mas-v2-evaluation.zh-CN.md)
 
 ---
 
 ## 路线图
 
-### 近期
+项目当前路线图从“继续扩张功能”切换为“先冻结 v1.0 可信参考实现，再探索 v2.0 MAS Runtime”。
 
-* 智能语气调节：根据管理层、研究员、IR、法务合规、投资等不同读者自动调整表达方式。
-* ✅ 自动文档命名：根据公司、主题、日期、频率、语言和报告类型生成输出文件名。
-* 多种 DOCX 模板：支持管理层简报、研究笔记、正式内部报告等不同版式。
-* ✅ 智能市场和竞对策略：可插拔 Market & Competitor Intelligence Module，支持竞对发现、确认、定向搜集、跨期追踪和专项审计。见 [文档](docs/modules/market-competitor.zh-CN.md)。
-* ✅ 更灵活的搜索策略：5 个搜索后端（Tavily/Exa/Brave/Firecrawl/Serper）+ SEC filing resolver + MinerU + 飞书。
+### v0.4：Knowledge & Governance Contracts
 
-### 中期
+优先修正 Claim 知识模型、Evidence Relation、核心 schema / contract、`run_manifest.json`、语义审计状态、Audit Finding 分类和 Rule Packs。
 
-* Effort 设置：使用 `low` / `medium` / `high` / `xhigh` 控制搜索深度、模型强度、审计严格度、输出长度和成本。
-* 模型路由：为来源规划、信息提取、分析写作、编辑、审计和格式输出配置不同模型。
-* RAG 支持：接入历史简报、公司记忆、行业背景和重复事项识别。
-* 更多搜索后端：支持更多搜索引擎、新闻搜索 API 和高级搜索策略。
-* 可插拔专题模块：支持财报季、竞对跟踪、政策风险、专利/诉讼、市场价格和专题深度报告等模块。
+### v0.5：Production Reference Workflow
 
-### 长期
+冻结一条正式主路径，补齐 Audience Profiles、DOCX 模板与渲染验证、Final Clean、Policy & Regulatory Risk Module、HistoryStore 基础接口和 effort budgets。
 
-* 每日或每周定时采集和草稿生成。
-* 飞书、Telegram、邮件、SMS 等发送集成，并加入审计门控。
-* PPT 输出和管理层汇报 deck 生成。
-* 更完整的企业部署能力，包括私有来源连接器、团队级模板和多模型工作流配置。
+### v1.0：Stable Baseline
+
+建立 Golden Dataset、Benchmark Metrics、Contract Compliance Tests、Release Consistency Gate 和正式支持矩阵。v1.0 将作为未来 MAS Runtime 的参考引擎、回退引擎和质量对照组。
+
+### v2.0：MAS Runtime 候选方向
+
+v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
+
+完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
 
 ---
 

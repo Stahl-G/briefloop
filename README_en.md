@@ -772,12 +772,14 @@ See [docs/claude-code-workflow.md](docs/claude-code-workflow.md) and [docs/claud
 
 ## Roadmap
 
-- MVP: local inputs, Claim Ledger, deterministic audit, Markdown output, source map, and quality harness checks.
-- Near-term: PDF output, SEC/RSS connectors, semantic audit adapters, richer synthetic examples, and stronger documentation.
-- Mid-term: industry modules, role-specific brief templates, external analysis plugins, local corpus retrieval, and source-tier policies.
-- Long-term: opt-in internal message ingestion, database and semantic layer integration, multi-model routing, and enterprise deployment patterns.
+The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime work.
 
-See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
+- **v0.4: Knowledge & Governance Contracts** — Claim epistemic types, evidence relations, schema contracts, `run_manifest.json`, semantic audit states, finding taxonomy, and rule packs.
+- **v0.5: Production Reference Workflow** — one official path, Audience Profiles, DOCX templates and validation, Final Clean, Policy & Regulatory Risk Module, HistoryStore, and effort budgets.
+- **v1.0: Stable Baseline** — golden datasets, benchmark metrics, contract compliance tests, release consistency checks, and a formal support matrix.
+- **v2.0: MAS Runtime Candidate** — after v1.0, explore Shared World, Event Store, TaskBoard, AgentMessage, ClaimProposal / ClaimReducer, replay, and minimal coordination protocols.
+
+See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
 
 ## Safety And Non-Investment-Advice Disclaimer
 
