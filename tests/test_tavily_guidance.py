@@ -203,7 +203,7 @@ class TestRunTavilyGuidance:
         exit_code = main(["run", "--config", str(ws / "config.yaml")])
         captured = capsys.readouterr()
         assert exit_code == 1
-        assert "does not produce real briefs" in captured.out
+        assert "has been replaced by" in captured.out
         assert "/generate-brief" in captured.out
 
     def test_run_surfaces_exa_missing_key_error(self, tmp_path, monkeypatch, capsys):
@@ -242,5 +242,5 @@ class TestRunTavilyGuidance:
         exit_code = main(["run", "--config", str(ws / "config.yaml")])
         captured = capsys.readouterr()
         assert exit_code == 1
-        assert "does not produce real briefs" in captured.out
+        assert "has been replaced by" in captured.out
         assert "subagent" in captured.out.lower() or "/generate-brief" in captured.out

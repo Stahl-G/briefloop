@@ -135,5 +135,5 @@ def test_cli_run_command_prints_error_and_redirects(capsys):
     exit_code = main(["run", "--config", str(config)])
     captured = capsys.readouterr()
     assert exit_code == 1
-    assert "does not produce real briefs" in captured.out
+    assert "has been replaced by" in captured.out
     assert "/generate-brief" in captured.out

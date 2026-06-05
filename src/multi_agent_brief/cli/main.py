@@ -42,15 +42,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="multi-agent-brief")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Replaced by subagent workflow. Use /generate-brief in Claude Code instead.")
-    run_parser.add_argument("input_dir", nargs="?", help="Directory containing .md, .txt, or .json input files.")
-    run_parser.add_argument("--config", help="YAML config file. Provides input/output/project settings.")
-    run_parser.add_argument("--output", help="Output directory.")
-    run_parser.add_argument("--name", help="Brief title.")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Deprecated — use 'prepare' instead. Prints migration guidance.",
+    )
+    run_parser.add_argument("input_dir", nargs="?", help="[ignored]")
+    run_parser.add_argument("--config", help="[ignored]")
+    run_parser.add_argument("--output", help="[ignored]")
+    run_parser.add_argument("--name", help="[ignored]")
     run_parser.add_argument("--language")
     run_parser.add_argument("--audience")
-    run_parser.add_argument("--industry", help="Industry for source planning, e.g. manufacturing.")
-    run_parser.add_argument("--days", type=int, help="Source recency in days.")
+    run_parser.add_argument("--industry", help="[ignored]")
+    run_parser.add_argument("--days", type=int, help="[ignored]")
+
+    prepare_parser = subparsers.add_parser("prepare", help="Run deterministic pipeline: source collection → Scout → Screener → Claim Ledger → draft artifacts.")
+    prepare_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
+    prepare_parser.add_argument("--input", help="Override input directory.")
+    prepare_parser.add_argument("--output", help="Override output directory.")
 
     audit_parser = subparsers.add_parser("audit", help="Run deterministic audit on an existing Markdown brief.")
     audit_parser.add_argument("brief", help="Markdown brief to audit.")
@@ -100,8 +108,8 @@ def build_parser() -> argparse.ArgumentParser:
     comp_parser = subparsers.add_parser("competitors", help="Market & competitor universe management.")
     comp_sub = comp_parser.add_subparsers(dest="competitors_action", required=True)
 
-    comp_propose = comp_sub.add_parser("propose", help="Generate competitor_candidates.yaml from user.md context.")
-    comp_propose.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
+    comp_init = comp_sub.add_parser("init", help="Create empty competitor_candidates.yaml template.")
+    comp_init.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
 
     comp_list = comp_sub.add_parser("list", help="List pending competitor candidates.")
     comp_list.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
@@ -126,12 +134,36 @@ def _print_tavily_guidance() -> None:
 
 
 def run_pipeline_from_args(args: argparse.Namespace) -> int:
-    print("[error] multi-agent-brief run does not produce real briefs.")
-    print("        The deterministic Python pipeline only exists for internal development and testing.")
-    print("        To generate a real brief, use a Claude Code or Codex session:")
-    print("          /generate-brief workspace/")
-    print("        See docs/claude-code-workflow.md for the full subagent workflow.")
+    print("[notice] 'multi-agent-brief run' has been replaced by 'multi-agent-brief prepare'.")
+    print("         'prepare' runs the same deterministic pipeline (source collection → Scout →")
+    print("         Screener → Claim Ledger → draft artifacts) and is used by /generate-brief.")
+    print("")
+    print("  Instead of: multi-agent-brief run --config workspace/config.yaml")
+    print("  Use:        multi-agent-brief prepare --config workspace/config.yaml")
     return 1
+
+
+def run_prepare_from_args(args: argparse.Namespace) -> int:
+    """Run the deterministic pipeline (source collection → Scout → Screener →
+    Claim Ledger → draft artifacts).  Used by /generate-brief as step 3."""
+    config_path = Path(args.config)
+    config = load_config(str(config_path))
+
+    input_dir = args.input
+    output_dir = args.output
+
+    settings = build_run_settings(
+        config=config,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        name=None,
+        language=None,
+        audience=None,
+    )
+    context = PipelineContext(**settings)
+    outputs = BriefPipeline().run(context)
+    print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
+    return 0
 
 
 def run_audit_from_args(args: argparse.Namespace) -> int:
@@ -380,11 +412,12 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_competitors_propose_from_args(args: argparse.Namespace) -> int:
-    """Generate competitor_candidates.yaml from user context.
+def run_competitors_init_from_args(args: argparse.Namespace) -> int:
+    """Create competitor_candidates.yaml template.
 
-    Currently writes an empty template — LLM-driven proposal will be added
-    in a future PR via the market-competitor-planner subagent.
+    Writes an empty template for manual editing.  LLM-assisted competitor
+    discovery is available via slash command ``/propose-competitors <workspace>``
+    in Claude Code / Codex.
     """
     config_path = Path(args.config)
     workspace = config_path.parent
@@ -399,10 +432,10 @@ def run_competitors_propose_from_args(args: argparse.Namespace) -> int:
 
     template = generate_candidates_template()
     save_competitor_candidates(template["candidates"], candidates_path)
-    print(f"[competitors] Generated empty competitor_candidates.yaml at {candidates_path}")
+    print(f"[competitors] Created empty competitor_candidates.yaml at {candidates_path}")
     print("[competitors] Add candidate competitors to this file, then run:")
     print(f"  multi-agent-brief competitors merge --config {args.config}")
-    print("[hint] LLM-driven competitor discovery will be added in a future release.")
+    print("[hint] For LLM-assisted discovery, use /propose-competitors <workspace> in Claude Code.")
     return 0
 
 
@@ -414,7 +447,7 @@ def run_competitors_list_from_args(args: argparse.Namespace) -> int:
 
     candidates = load_competitor_candidates(candidates_path)
     if not candidates:
-        print("[competitors] No pending candidates. Run 'competitors propose' first.")
+        print("[competitors] No pending candidates. Run 'competitors init' first.")
         return 0
 
     pending = [c for c in candidates if not c.get("approved", False)]
@@ -468,6 +501,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         return run_pipeline_from_args(args)
+    if args.command == "prepare":
+        return run_prepare_from_args(args)
     if args.command == "audit":
         return run_audit_from_args(args)
     if args.command == "init":
@@ -478,8 +513,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.sources_action == "decide":
             return run_sources_decide_from_args(args)
     if args.command == "competitors":
-        if args.competitors_action == "propose":
-            return run_competitors_propose_from_args(args)
+        if args.competitors_action == "init":
+            return run_competitors_init_from_args(args)
         if args.competitors_action == "list":
             return run_competitors_list_from_args(args)
         if args.competitors_action == "merge":

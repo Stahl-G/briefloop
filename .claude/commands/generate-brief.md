@@ -21,11 +21,12 @@ Follow this sequence exactly:
    - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml --merge`
    - Only proceed after sources are resolved, OR if the user explicitly chooses local input-only mode.
 
-3. **Prepare intermediate artifacts:**
+3. **Prepare deterministic pipeline artifacts:**
    - Run: `multi-agent-brief doctor --config $ARGUMENTS/config.yaml`
    - Fix any issues before proceeding.
-   - Run: `multi-agent-brief run --config $ARGUMENTS/config.yaml`
-   - This produces `output/brief.md` for readers and `output/intermediate/` audit artifacts.
+   - Run: `multi-agent-brief prepare --config $ARGUMENTS/config.yaml`
+   - This runs the full deterministic pipeline: source collection → Scout → Screener →
+     Claim Ledger → draft artifacts (brief.md, claim_ledger.json, audit_report.json, source_map.md).
 
 3.5 **Market & Competitor Module (if enabled):**
    - Check if `$ARGUMENTS/competitor_universe.yaml` has non-empty entities.

@@ -19,8 +19,8 @@
 ```text
 Onboarding: 用户填写市场范围和竞对偏好
        ↓
-competitors propose: LLM 推荐候选竞对 → competitor_candidates.yaml
-       ↓
+competitors init: 创建空白候选模板
+  /propose-competitors: LLM subagent 推荐候选竞对 → competitor_candidates.yaml
 competitors merge: 用户确认 → competitor_universe.yaml
        ↓
 每期运行:
@@ -30,8 +30,9 @@ competitors merge: 用户确认 → competitor_universe.yaml
   Screener: 根据竞对优先级和覆盖约束筛选
   MarketCompetitorModule: 构建 MarketEvent + 5 个中间产物
   Analyst: 读取 analysis_cards.json 撰写竞对章节
-  Auditor: 6 种专项审计
-  Editor → Formatter: 最终输出
+  Editor: 润色管理层表达
+  Auditor: 通用审计 + 6 种竞对专项审计
+  Formatter: 最终输出
 ```
 
 ## 配置
@@ -71,8 +72,15 @@ modules:
 ## CLI 命令
 
 ```bash
-# 推荐候选竞对（调用 market-competitor-planner subagent）
-multi-agent-brief competitors propose --config workspace/config.yaml
+# 创建空白候选模板
+multi-agent-brief competitors init --config workspace/config.yaml
+
+# 在 Claude Code 中让 LLM subagent 推荐竞对：
+# /propose-competitors workspace/
+
+# 审核后：编辑 competitor_candidates.yaml，将确认的条目改为 approved: true
+
+# 合并已确认竞对
 
 # 查看待审核候选
 multi-agent-brief competitors list --config workspace/config.yaml

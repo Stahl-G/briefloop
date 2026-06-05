@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-06-05
+
+### Added
+
+- **`multi-agent-brief prepare`** command: runs the full deterministic pipeline
+  (source collection → Scout → Screener → Claim Ledger → draft artifacts).
+  Replaces the disabled `run` command in `/generate-brief` workflow.
+
+### Fixed
+
+- **`/generate-brief` main path restored**: Step 3 now calls `multi-agent-brief prepare`
+  instead of the disabled `run` command.  First-time users can now generate a brief
+  without hitting a broken pipeline gate.
+- **`competitors propose` renamed to `competitors init`**: CLI only creates an empty
+  template — LLM-assisted discovery uses the `/propose-competitors` slash command.
+  Removed deceptive "LLM recommendation" claim from CLI help text.
+- **Version unified**: `pyproject.toml`, `__init__.py`, and `CHANGELOG` all read `0.3.1`.
+- **Pipeline order corrected** in market-competitor module docs (Analyst → Editor → Auditor → Formatter).
+- **`multi-agent-brief run`** now prints a migration message pointing to `prepare` instead
+  of a generic error.
+- **AGENTS.md** references updated from `run` to `prepare`.
+
 ## [0.3.0] — 2026-06-05
 
 ### Added

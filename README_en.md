@@ -333,7 +333,7 @@ If `python-docx` is not installed, the pipeline continues without interruption b
 
 New in v0.3.0 — the first pluggable AnalysisModule. Runs between Screener and Analyst, transforming scattered competitor information into structured analysis.
 
-- **Competitor Discovery & Confirmation**: `competitors propose | list | merge` CLI — LLM recommends → user reviews → merge into `competitor_universe.yaml`.
+- **Competitor Discovery & Confirmation**: `competitors init | list | merge` CLI — create candidate template, then `/propose-competitors` slash command (LLM-assisted) or manual editing → user reviews → merge into `competitor_universe.yaml`.
 - **Targeted Search**: Auto-generates per-competitor × dimension search tasks (capacity / technology / customers / financials).
 - **Entity Tagging**: Deterministic EntityEventEnricher tags Claims with entity_ids, event_type, geography, and dimension — between Scout and Screener.
 - **Event Aggregation**: Merge same-entity same-type Claims into MarketEvents, infer event status (announced → under_construction → operational).
