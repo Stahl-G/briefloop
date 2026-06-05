@@ -585,10 +585,10 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 ### 近期
 
 * 智能语气调节：根据管理层、研究员、IR、法务合规、投资等不同读者自动调整表达方式。
-* 自动文档命名：根据公司、主题、日期、频率、语言和报告类型生成输出文件名。
+* ✅ 自动文档命名：根据公司、主题、日期、频率、语言和报告类型生成输出文件名。
 * 多种 DOCX 模板：支持管理层简报、研究笔记、正式内部报告等不同版式。
-* 智能市场和竞对策略：根据 `user.md` 自动判断应该跟踪哪些市场、公司、政策和竞争对手。
-* 更灵活的搜索策略：支持官方来源、行业媒体、filings、RSS 和 Web Search 的分层配置。
+* ✅ 智能市场和竞对策略：可插拔 Market & Competitor Intelligence Module，支持竞对发现、确认、定向搜集、跨期追踪和专项审计。见 [文档](docs/modules/market-competitor.zh-CN.md)。
+* ✅ 更灵活的搜索策略：5 个搜索后端（Tavily/Exa/Brave/Firecrawl/Serper）+ SEC filing resolver + MinerU + 飞书。
 
 ### 中期
 
@@ -692,15 +692,15 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.2.0** — SEC Filing 解析集成 + MinerU 远程 API
+当前版本：**v0.3.0** — 市场与竞争情报分析模块
 
-通过 [lark-cli](https://github.com/larksuite/cli) 实现双向飞书通道。
-既可以从飞书文档、会议妙记、多维表格、电子表格、日程、审批采集数据，
-也可以把生成的简报发送到飞书聊天、创建飞书文档、上传云空间。
+新增首个可插拔 AnalysisModule：竞对发现与确认链路、竞对感知定向搜索、EntityEventEnricher
+确定性实体标注、MarketEvent 事件归并、跨期状态追踪、6 种专项审计。通用 AnalysisModule
+接口 + Registry 架构，未来财报/政策/专利模块可复用。
 
-此前 v0.1.1 已补齐 4 个 Source Provider（NewsAPI / SEC EDGAR / MCP / CLI），
-Agent 引导加固也已完成：所有 onboarding 字段改为自由文本输入，不再强制编号选择；
-Agent 指令中 "choose sensible defaults" 已全部删除。
+此前 v0.2.0 已集成 SEC Filing 解析、MinerU 远程 API、飞书双向通道；
+v0.1.1 已补齐 4 个 Source Provider（NewsAPI / SEC EDGAR / MCP / CLI），
+Agent 引导加固：所有 onboarding 字段改为自由文本输入。
 
 [查看完整变更日志 →](CHANGELOG.md)
 

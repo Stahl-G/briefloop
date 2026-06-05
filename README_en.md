@@ -329,6 +329,24 @@ The DOCX uses a professional investment-bank-style layout with heading hierarchy
 
 If `python-docx` is not installed, the pipeline continues without interruption but records `docx_generation: skipped_missing_dependency` in `output/intermediate/audit_report.json`.
 
+## Market & Competitor Intelligence Module
+
+New in v0.3.0 — the first pluggable AnalysisModule. Runs between Screener and Analyst, transforming scattered competitor information into structured analysis.
+
+- **Competitor Discovery & Confirmation**: `competitors propose | list | merge` CLI — LLM recommends → user reviews → merge into `competitor_universe.yaml`.
+- **Targeted Search**: Auto-generates per-competitor × dimension search tasks (capacity / technology / customers / financials).
+- **Entity Tagging**: Deterministic EntityEventEnricher tags Claims with entity_ids, event_type, geography, and dimension — between Scout and Screener.
+- **Event Aggregation**: Merge same-entity same-type Claims into MarketEvents, infer event status (announced → under_construction → operational).
+- **5 Intermediate Artifacts**: `events.json` / `competitor_matrix.json` / `coverage_report.json` / `watchlist.json` / `evidence_pack.json`.
+- **Cross-Period Tracking**: `event_history.jsonl` — marks each event as new/changed/unchanged/cancelled/resolved.
+- **6 Specialist Audits**: comparison_evidence, capacity_status, metric_basis, market_trend, single_source_confidence, coverage_gap.
+- **Generic Interface**: AnalysisModule + Registry — reusable for future earnings/policy/patent modules.
+
+See [Market & Competitor Module docs](docs/modules/market-competitor.zh-CN.md) for details.
+
+All specialist audit checks integrate into the CompositeAuditAgent when the module is enabled.
+Modules not enabled in `config.yaml` have zero impact on pipeline behavior.
+
 ## Feishu / Lark Integration
 
 Bidirectional Feishu integration via the official [lark-cli](https://github.com/larksuite/cli) tool. Pull data from Feishu Docs, meeting minutes, Base tables, sheets, calendar, and approval tasks as source inputs — or deliver generated briefs to Feishu chats, docs, and Drive.
@@ -730,14 +748,17 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.2.0** — SEC Filing Resolution Integration + MinerU Remote API
+Current version: **v0.3.0** — Market & Competitor Intelligence Analysis Module
 
-Bidirectional Feishu support via [lark-cli](https://github.com/larksuite/cli):
-pull data from Feishu Docs, meeting minutes, Base tables, sheets, calendar,
-and approval tasks — or deliver generated briefs to Feishu chats, docs, and Drive.
+First pluggable AnalysisModule: competitor discovery & confirmation workflow,
+competitor-aware targeted search, EntityEventEnricher deterministic entity tagging,
+MarketEvent aggregation, cross-period state tracking, 6 specialist audit checks.
+Generic AnalysisModule interface + Registry architecture reusable for future
+earnings/policy/patent modules.
 
-v0.1.1 previously filled 4 stub providers (NewsAPI / SEC EDGAR / MCP / CLI)
-and hardened agent onboarding (free-text input, no more "choose sensible defaults").
+Previously v0.2.0 integrated SEC Filing Resolution, MinerU Remote API, and
+bidirectional Feishu support; v0.1.1 filled 4 Source Providers (NewsAPI / SEC EDGAR /
+MCP / CLI) and hardened agent onboarding (free-text input).
 
 [View full changelog →](CHANGELOG.md)
 - `multi-agent-brief init --from-onboarding` now validates company/industry/title are
