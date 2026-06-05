@@ -416,6 +416,104 @@ FeishuDeliveryConnector().deliver(
 
 See [docs/feishu-integration.md](docs/feishu-integration.md) for full details.
 
+## SEC Filing Resolution (disclosure-filing-resolver)
+
+Integrate with [disclosure-filing-resolver](https://github.com/Stahl-G/disclosure-filing-resolver) for automatic SEC EDGAR filing acquisition and XBRL financial data extraction. Ideal for tracking publicly listed companies (e.g. TOYO, TSLA, CSIQ — foreign private issuers, ADRs, or US-listed companies).
+
+### What It Does
+
+| Capability | Description |
+|------------|-------------|
+| SEC filing download | Automatically downloads 10-K, 10-Q, 8-K, 6-K filing HTML documents |
+| 6-K exhibit expansion | Detects 6-K filings and expands Exhibit 99.x files (financial statements, operating reviews) |
+| XBRL extraction | Extracts revenue, net income, assets, EPS from SEC companyfacts API |
+| iXBRL parsing | Extracts Inline XBRL facts from filing HTML documents |
+| Source traceability | Every financial fact carries a SEC source URL for Claim Ledger integration |
+
+### Install
+
+```bash
+pip install disclosure-filing-resolver
+```
+
+### Configure
+
+Add `filing_resolver` to your workspace `sources.yaml`:
+
+```yaml
+filing_resolver:
+  enabled: true
+  tickers:
+    - TOYO      # company ticker
+    - CSIQ
+  filing_types:
+    - 10-K      # annual report
+    - 10-Q      # quarterly report
+    - 8-K       # material events
+  xbrl: true    # enable XBRL financial data extraction
+```
+
+### Auto-Configure via Source Discovery
+
+With `llm_decide` source mode, `sources decide` automatically generates SEC filing candidates:
+
+```bash
+# 1. Generate candidate sources (includes SEC EDGAR filing suggestions)
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+
+# 2. Review candidates
+cat ../mabw-workspace/source_candidates.yaml
+# The filing_sources section lists suggested SEC filing sources
+
+# 3. Edit source_candidates.yaml to set the correct ticker(s)
+
+# 4. Merge into sources.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+```
+
+After merging, `sources.yaml` automatically:
+- Adds `filing_resolver` to `enabled_providers`
+- Configures `filing_resolver` tickers and filing_types
+
+### Set SEC User-Agent
+
+SEC EDGAR requires a declared User-Agent:
+
+```bash
+export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
+```
+
+### Typical Workflow
+
+```bash
+# 1. Install disclosure-filing-resolver
+pip install disclosure-filing-resolver
+
+# 2. Set environment variable
+export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
+
+# 3. Init workspace
+multi-agent-brief init ../mabw-workspace
+
+# 4. Discover sources (auto-generates SEC filing candidates)
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+
+# 5. Edit source_candidates.yaml to confirm ticker
+# 6. Merge
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+
+# 7. Generate brief in Claude Code
+# /generate-brief ../mabw-workspace
+```
+
+The brief will automatically include SEC-sourced financial data:
+
+```markdown
+- TOYO reported revenue of $150.0M for Q1 2026, up 12% year-over-year. [src:FILING_TOYO_10Q]
+```
+
+See [disclosure-filing-resolver docs](https://github.com/Stahl-G/disclosure-filing-resolver) for full details.
+
 ## CLI
 
 ### Enable Tavily Live Search

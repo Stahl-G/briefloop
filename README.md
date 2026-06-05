@@ -432,6 +432,106 @@ FeishuDeliveryConnector().deliver(
 
 ---
 
+## 可选：启用 SEC Filing 解析（disclosure-filing-resolver）
+
+通过 [disclosure-filing-resolver](https://github.com/Stahl-G/disclosure-filing-resolver) 集成 SEC EDGAR 公开披露文件自动获取和 XBRL 财务数据提取。适用于跟踪上市公司（如 TOYO、TSLA、CSIQ 等美国上市的中概股、外资股或美国本土公司）的季度报告、年度报告和重大事件披露。
+
+### 它能做什么
+
+| 能力 | 说明 |
+|------|------|
+| SEC 文件获取 | 自动下载 10-K、10-Q、8-K、6-K 等 SEC 文件的 HTML 原文 |
+| 6-K 展开 | 自动识别 6-K 文件并展开附录（Exhibit 99.x），提取财务报表、运营回顾等 |
+| XBRL 数据提取 | 从 SEC companyfacts API 提取收入、净利润、资产、EPS 等结构化财务数据 |
+| iXBRL 解析 | 从 HTML 文件中的 Inline XBRL 标签提取财务事实 |
+| 来源可追溯 | 每条财务数据都带 SEC 原文链接，可直接写入 Claim Ledger |
+
+### 安装
+
+```bash
+pip install disclosure-filing-resolver
+```
+
+### 配置
+
+在工作区的 `sources.yaml` 中添加 `filing_resolver` 配置：
+
+```yaml
+filing_resolver:
+  enabled: true
+  tickers:
+    - TOYO      # 公司 ticker
+    - CSIQ
+  filing_types:
+    - 10-K      # 年报
+    - 10-Q      # 季报
+    - 8-K       # 重大事件
+  xbrl: true    # 启用 XBRL 财务数据提取
+```
+
+### 通过来源发现自动配置
+
+如果你使用 `llm_decide` 来源模式，运行 `sources decide` 时会自动生成 SEC filing 候选来源：
+
+```bash
+# 1. 生成候选来源（会包含 SEC EDGAR filing 建议）
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+
+# 2. 查看候选来源
+cat ../mabw-workspace/source_candidates.yaml
+# filing_sources 部分会列出建议的 SEC filing 来源
+
+# 3. 编辑 source_candidates.yaml，修改 ticker 为你实际的公司代码
+
+# 4. 合并到 sources.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+```
+
+合并后，`sources.yaml` 会自动：
+- 添加 `filing_resolver` 到 `enabled_providers`
+- 配置 `filing_resolver` 的 tickers 和 filing_types
+
+### 设置 SEC User-Agent
+
+SEC EDGAR 要求声明 User-Agent：
+
+```bash
+export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
+```
+
+### 典型工作流
+
+```bash
+# 1. 安装 disclosure-filing-resolver
+pip install disclosure-filing-resolver
+
+# 2. 设置环境变量
+export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
+
+# 3. 初始化工作区
+multi-agent-brief init ../mabw-workspace
+
+# 4. 发现来源（自动生成 SEC filing 候选）
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+
+# 5. 编辑 source_candidates.yaml，确认 ticker
+# 6. 合并
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+
+# 7. 在 Claude Code 中生成简报
+# /generate-brief ../mabw-workspace
+```
+
+简报中会自动包含来自 SEC 文件的财务数据，例如：
+
+```markdown
+- TOYO reported revenue of $150.0M for Q1 2026, up 12% year-over-year. [src:FILING_TOYO_10Q]
+```
+
+详细说明见 [disclosure-filing-resolver 文档](https://github.com/Stahl-G/disclosure-filing-resolver)。
+
+---
+
 ## 输出示例
 
 审计版 Markdown 中的重要表述会带有来源引用：
