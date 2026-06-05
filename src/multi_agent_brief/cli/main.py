@@ -35,6 +35,7 @@ from multi_agent_brief.sources.registry import load_sources_config
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.core.pipeline import BriefPipeline
+from multi_agent_brief.core.manifest import build_manifest, save_manifest
 from multi_agent_brief.core.schemas import PipelineContext
 from multi_agent_brief.sources.registry import load_sources_config
 
@@ -559,6 +560,34 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
 
     outputs = BriefPipeline().run(context)
     print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
+
+    # Generate run_manifest.json
+    try:
+        formatter_output = next((o for o in outputs if o.agent_name == "formatter"), None)
+        artifact_paths = formatter_output.artifacts if formatter_output else {}
+        stage_dicts = [o.to_dict() for o in outputs]
+
+        audit_report = context.report_state.audit_report
+        manifest = build_manifest(
+            config_path=str(config_path),
+            workspace=str(workspace),
+            enabled_providers=source_config.enabled_providers if source_config else [],
+            output_formats=context.output_formats,
+            language=context.language,
+            report_date=context.report_date,
+            source_count=len(context.sources),
+            claim_count=len(context.candidates),
+            audit_status=audit_report.audit_status if audit_report else "not_run",
+            audit_score=audit_report.audit_score if audit_report else None,
+            audit_finding_count=len(audit_report.findings) if audit_report else 0,
+            artifact_paths=artifact_paths,
+            stage_outputs=stage_dicts,
+        )
+        manifest_path = save_manifest(manifest, context.output_dir)
+        print(f"[prepare] Run manifest: {manifest_path}")
+    except Exception as exc:
+        print(f"[prepare] Warning: could not generate run manifest: {exc}")
+
     return 0
 
 

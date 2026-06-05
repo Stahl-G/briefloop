@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Epistemic audit gates**: deterministic auditor now checks hypothesis-high-confidence misuse, action-without-basis, analogy-without-limitations, and analogy-direct-relation.
 - **Contracts package**: new `src/multi_agent_brief/contracts/` with `Contract` base class, `SchemaRegistry`, and contracts for `SourceItem`, `CandidateItem`, `Claim` (v1+v2), `AuditReport`, `MarketEvent`, `AnalysisCard`. Includes `FieldViolation`, `ContractError`, and claim v1→v2 migration.
 - **Backward-compatible migration**: `Claim.from_dict()` auto-fills v2 fields from `claim_type` for v1 ledger data.
+- **Run Manifest**: every `prepare` run now writes `output/intermediate/run_manifest.json` with run_id, config_hash, provider/module status, source/claim counts, audit status, artifact paths and SHA-256 hashes, and pipeline stage results.
 
 ## [0.3.5] — 2026-06-05
 
