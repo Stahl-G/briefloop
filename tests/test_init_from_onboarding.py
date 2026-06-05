@@ -105,3 +105,28 @@ def test_sources_decide_search_no_mock_residual(capsys, tmp_path: Path):
     captured = capsys.readouterr()
     assert "mock" not in captured.out.lower()
     assert "backend" in captured.out.lower() or "search" in captured.out.lower()
+
+
+def test_init_from_onboarding_aliases_accepted(tmp_path: Path):
+    """Agent-generated onboarding.json with short field names must work."""
+    onboarding = {
+        "company": "Canadian Solar",
+        "industry": "光伏",
+        "title": "美国光储市场周报",
+        "audience": "总裁办",
+        "language": "zh-CN",
+        "cadence": "weekly",
+        "source_style": "reliable research",
+        "output_style": "executive brief",
+        "focus_areas": ["政策", "诉讼", "法规变化"],
+        "forbidden_sources": [],
+        "tavily_enabled": False,
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding), encoding="utf-8")
+    ws = tmp_path / "ws"
+
+    rc = main(["init", str(ws), "--from-onboarding", str(ob_path)])
+    assert rc == 0, f"init should succeed even with aliased field names, got rc={rc}"
+    assert (ws / "config.yaml").exists()
+    assert (ws / "user.md").exists()

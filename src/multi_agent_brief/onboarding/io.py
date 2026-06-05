@@ -13,6 +13,23 @@ _LIST_FIELDS = {"forbidden_sources", "must_watch", "missing"}
 _INT_FIELDS = {"max_items_per_brief", "source_age_days"}
 _BOOL_FIELDS = {"tavily_enabled"}
 
+# Agent-generated onboarding.json often uses simplified field names.
+# Map them to canonical OnboardingResult field names.
+_FIELD_ALIASES: dict[str, str] = {
+    "company": "company_or_org",
+    "industry": "industry_or_theme",
+    "title": "task_objective",
+    "brief_title": "task_objective",
+    "audience": "audience_plain",
+    "language": "language_plain",
+    "output_language": "language_plain",
+    "cadence": "cadence_plain",
+    "source_style": "source_style_plain",
+    "output_style": "output_style_plain",
+    "focus_areas": "must_watch",
+    "monitoring_scope": "must_watch",
+}
+
 
 def load_onboarding_result(path: str | Path) -> OnboardingResult:
     """Load an OnboardingResult from a JSON file.
@@ -26,8 +43,16 @@ def load_onboarding_result(path: str | Path) -> OnboardingResult:
         raise ValueError(
             f"Onboarding JSON must be a JSON object, got {type(data).__name__}."
         )
+    # Apply field aliases (agent-generated JSON often uses short names)
+    aliased: dict[str, Any] = {}
+    for k, v in data.items():
+        canonical = _FIELD_ALIASES.get(k, k)
+        if canonical in aliased:
+            continue  # first write wins
+        aliased[canonical] = v
+
     # Keep only known fields; ignore unknown keys.
-    known = {k: _normalize_field(k, v) for k, v in data.items() if k in _DATACLASS_FIELDS}
+    known = {k: _normalize_field(k, v) for k, v in aliased.items() if k in _DATACLASS_FIELDS}
     return OnboardingResult(**known)
 
 
