@@ -22,6 +22,10 @@ from generate_agent_configs import (
     render_skill,
     render_claude_agent,
     render_docs,
+    render_opencode_agent,
+    render_opencode_agents,
+    render_opencode_command_generate_brief,
+    render_opencode_jsonc,
     write_or_check,
     _sensitive_check,
     PIPELINE_TEXT,
@@ -185,6 +189,9 @@ def test_no_sensitive_content_in_generated_files(manifest):
         _check_no_sensitive(render_codex_agent(name, role, manifest), f"codex/{name}.toml")
         _check_no_sensitive(render_skill(name, role, manifest), f"skills/{name}/SKILL.md")
         _check_no_sensitive(render_claude_agent(name, role, manifest), f"claude/{name}.md")
+        _check_no_sensitive(render_opencode_agent(name, role, manifest), f"opencode/{name}.md")
+    _check_no_sensitive(render_opencode_command_generate_brief(manifest), "opencode/generate-brief.md")
+    _check_no_sensitive(render_opencode_jsonc(), "opencode.jsonc")
     for key, content in render_docs(manifest).items():
         _check_no_sensitive(content, key)
 
@@ -244,3 +251,56 @@ def test_generate_target_codex_only():
     )
     assert result.returncode == 0
     assert "Generated" in result.stdout
+
+
+# --- OpenCode ---
+
+def test_opencode_agent_has_frontmatter(manifest):
+    for name, role in manifest["roles"].items():
+        content = render_opencode_agent(name, role, manifest)
+        assert content.startswith("---")
+        assert "description:" in content
+        assert "mode:" in content
+        assert "permission:" in content
+
+
+def test_opencode_orchestrator_is_primary(manifest):
+    role = manifest["roles"]["orchestrator"]
+    content = render_opencode_agent("orchestrator", role, manifest)
+    assert "mode: primary" in content
+
+
+def test_opencode_agents_all_have_brief_prefix(manifest):
+    agents = render_opencode_agents(manifest)
+    for rel_path in agents:
+        assert "brief-" in rel_path, f"Missing brief- prefix: {rel_path}"
+
+
+def test_opencode_command_has_correct_agent(manifest):
+    content = render_opencode_command_generate_brief(manifest)
+    assert "agent: brief-orchestrator" in content
+    assert "subtask: false" in content
+    assert "$ARGUMENTS" in content
+
+
+def test_opencode_jsonc_is_valid(manifest):
+    content = render_opencode_jsonc()
+    assert "agentPaths" in content
+    assert "commandPaths" in content
+
+
+def test_generate_target_opencode_only():
+    result = subprocess.run(
+        [sys.executable, str(GENERATOR), "--write", "--target", "opencode"],
+        capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert result.returncode == 0
+    assert "Generated" in result.stdout
+
+
+def test_opencode_agents_have_permission_block(manifest):
+    for name, role in manifest["roles"].items():
+        content = render_opencode_agent(name, role, manifest)
+        assert "permission:" in content, f"OpenCode agent '{name}' missing permission block"
+        if name == "orchestrator":
+            assert "brief-*" in content, "Orchestrator should allow brief-* tasks"
