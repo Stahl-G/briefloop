@@ -1,0 +1,8 @@
+source_strategy:
+  profile: "conservative"
+  enabled_providers:
+    - "manual"
+
+manual:
+  enabled: true
+  sources: []
