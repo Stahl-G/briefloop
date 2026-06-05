@@ -45,6 +45,17 @@ RULE_PACK: dict[str, tuple[BlockingLevel, RepairOwner, str]] = {
     "possible_eia_unit_inflation":("analyst_blocking",   "analyst",     "EIA generation value may be unit-inflated"),
     "repeat_claim_in_summary":    ("editor_fixable",     "editor",      "Repeated claim appears in executive summary"),
     "stale_filler_language":      ("editor_fixable",     "editor",      "Multiple stale/no-update filler phrases"),
+
+    # ── Market Competitor specialist findings ──
+    "comparison_missing_entity_evidence": ("source_blocking",    "source",      "Competitor comparison lacks entity evidence"),
+    "capacity_status_missing":            ("source_blocking",    "source",      "Capacity status claim missing evidence"),
+    "metric_basis_missing":               ("analyst_blocking",   "analyst",     "Metric claim missing basis or unit"),
+    "unsupported_market_trend":            ("analyst_blocking",   "analyst",     "Market trend claim unsupported by evidence"),
+    "single_source_interpretation":        ("analyst_blocking",   "analyst",     "Interpretation based on single source"),
+    "competitor_coverage_gap":             ("source_blocking",    "source",      "Competitor coverage gap in analysis"),
+
+    # ── Semantic audit findings ──
+    "semantic_source_support":             ("analyst_blocking",   "analyst",     "Semantic audit: claim not supported by cited evidence"),
 }
 
 

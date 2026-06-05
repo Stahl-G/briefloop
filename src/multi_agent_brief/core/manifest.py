@@ -17,7 +17,7 @@ def _file_hash(path: Path) -> str:
         return ""
     h = hashlib.sha256()
     h.update(path.read_bytes())
-    return h.hexdigest()[:16]
+    return h.hexdigest()
 
 
 def _config_hash(config_path: Path) -> str:
@@ -145,18 +145,55 @@ def build_manifest(
                 "hash": _file_hash(p),
             }
 
-    # Stage statuses
+    # Stage statuses — detect failures from artifacts or summary
     if stage_outputs:
         for output in stage_outputs:
             if isinstance(output, dict):
                 agent_name = output.get("agent_name", "unknown")
-                manifest.stages[agent_name] = {
-                    "status": "ok",
-                    "summary": output.get("summary", ""),
+                artifacts = output.get("artifacts", {})
+                summary = output.get("summary", "")
+
+                # Determine status from artifacts or summary
+                if isinstance(artifacts, dict) and artifacts.get("status") == "failed":
+                    stage_status = "failed"
+                elif "FAILED" in summary.upper() or "ERROR" in summary.upper():
+                    stage_status = "failed"
+                else:
+                    stage_status = "ok"
+
+                stage_entry: dict[str, str] = {
+                    "status": stage_status,
+                    "summary": summary,
                 }
 
+                # Propagate error details from artifacts
+                if stage_status == "failed":
+                    if isinstance(artifacts, dict):
+                        if artifacts.get("error_type"):
+                            stage_entry["error_type"] = artifacts["error_type"]
+                        if artifacts.get("error"):
+                            stage_entry["error"] = str(artifacts["error"])[:500]
+                    manifest.errors.append({
+                        "stage": agent_name,
+                        "error_type": stage_entry.get("error_type", "unknown"),
+                        "error": stage_entry.get("error", summary),
+                    })
+
+                # Propagate collection_errors from source-collection
+                if agent_name == "source-collection" and isinstance(artifacts, dict):
+                    coll_errors = artifacts.get("collection_errors", [])
+                    if isinstance(coll_errors, list):
+                        for ce in coll_errors:
+                            manifest.errors.append({
+                                "stage": agent_name,
+                                "error_type": ce.get("error_type", "collection_error"),
+                                "error": ce.get("message", str(ce)),
+                            })
+
+                manifest.stages[agent_name] = stage_entry
+
     if errors:
-        manifest.errors = errors
+        manifest.errors.extend(errors)
 
     return manifest
 

@@ -51,8 +51,8 @@ class Claim:
     created_by: str = "scout"
     used_in_sections: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-    # v2 epistemic fields
-    schema_version: SchemaVersion = "v1"
+    # v2 epistemic fields — new Claims default to v2
+    schema_version: SchemaVersion = "v2"
     epistemic_type: EpistemicType = "observed"
     evidence_relation: EvidenceRelation = "direct"
     applicability_reason: str = ""

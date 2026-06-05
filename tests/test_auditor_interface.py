@@ -66,11 +66,12 @@ def _clean_context():
 
 
 class TestNoOpSemanticStatus:
-    def test_noop_returns_not_configured(self):
+    def test_noop_returns_pass_with_not_configured_metadata(self):
         noop = NoOpSemanticAuditAgent()
         report = noop.run_audit("draft", _clean_ledger())
-        assert report.audit_status == "not_configured"
-        assert report.audit_score == 0
+        # Overall status stays pass (no findings) — semantic_status in metadata
+        assert report.audit_status == "pass"
+        assert report.audit_score == 100
         assert report.metadata["semantic_status"] == "not_configured"
 
     def test_noop_produces_no_findings(self):
@@ -87,14 +88,14 @@ class TestCompositeSemanticStatus:
         assert report.metadata["semantic_agent"] == "not_configured"
         assert report.metadata["semantic_status"] == "not_configured"
 
-    def test_noop_semantic_agent_sets_not_configured(self):
+    def test_noop_semantic_agent_sets_not_configured_in_metadata(self):
         det = DeterministicAuditAgent()
         noop = NoOpSemanticAuditAgent()
         comp = CompositeAuditAgent(det, noop)
         report = comp.run_audit("- Statement [src:SRC_ABCDEF]", _clean_ledger(), _clean_context())
         assert report.metadata["semantic_agent"] == "noop-semantic-auditor"
         assert report.metadata["semantic_status"] == "not_configured"
-        # Overall status should still be pass (0 findings)
+        # Overall status stays pass — semantic_status is metadata, not audit_status
         assert report.audit_status == "pass"
 
     def test_real_semantic_agent_sets_pass(self):

@@ -78,6 +78,16 @@ class ClaimContract(Contract):
                 error=f"invalid confidence '{confidence}', must be one of {sorted(VALID_CONFIDENCE)}",
             ))
 
+        # v2 required fields: when schema_version is "v2", epistemic fields must be present
+        schema_version = data.get("schema_version", "v1")
+        if schema_version == "v2":
+            for fld in ("epistemic_type", "evidence_relation"):
+                if fld not in data:
+                    violations.append(FieldViolation(
+                        field=fld,
+                        error=f"required in v2 claim but missing",
+                    ))
+
         epistemic = data.get("epistemic_type")
         if epistemic is not None and epistemic not in VALID_EPISTEMIC:
             violations.append(FieldViolation(

@@ -214,3 +214,29 @@ class TestContractErrors:
         assert "[error]" in s
         assert "claim_type" in s
         assert "invalid value" in s
+
+
+class TestAuditReportContractConsistency:
+    """Verify that all audit agents produce AuditReport data that passes the contract."""
+
+    def test_noop_semantic_passes_contract(self):
+        from multi_agent_brief.audit.semantic import NoOpSemanticAuditAgent
+        from multi_agent_brief.core.claim_ledger import ClaimLedger
+        from multi_agent_brief.core.schemas import Claim
+
+        ledger = ClaimLedger([Claim("X", "s", "S", "e")])
+        report = NoOpSemanticAuditAgent().run_audit("draft", ledger)
+        violations = AuditReportContract.validate(report.to_dict())
+        errors = [v for v in violations if v.severity == "error"]
+        assert errors == [], f"NoOp violates AuditReport contract: {errors}"
+
+    def test_deterministic_passes_contract(self):
+        from multi_agent_brief.audit.deterministic import DeterministicAuditAgent
+        from multi_agent_brief.core.claim_ledger import ClaimLedger
+        from multi_agent_brief.core.schemas import Claim
+
+        ledger = ClaimLedger([Claim("X", "s", "S", "e")])
+        report = DeterministicAuditAgent().run_audit("- s [src:X]", ledger)
+        violations = AuditReportContract.validate(report.to_dict())
+        errors = [v for v in violations if v.severity == "error"]
+        assert errors == [], f"Deterministic audit violates contract: {errors}"

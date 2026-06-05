@@ -229,3 +229,39 @@ class TestEdgeCases:
         c = Claim.from_dict(old_data)
         assert c.claim_type == "forecast"
         assert c.epistemic_type == "hypothesis"
+
+
+class TestNewClaimDefaults:
+    def test_new_claim_defaults_to_v2(self):
+        c = Claim(
+            claim_id="X", statement="s", source_id="S",
+            evidence_text="e", claim_type="forecast",
+        )
+        assert c.schema_version == "v2"
+        # epistemic_type defaults to "observed" — inference happens in Scout
+        assert c.epistemic_type == "observed"
+
+    def test_scout_infers_epistemic_from_claim_type(self):
+        """Scout's _infer_epistemic maps claim_type → epistemic_type."""
+        from multi_agent_brief.agents.scout import _infer_epistemic
+        assert _infer_epistemic("forecast") == "hypothesis"
+        assert _infer_epistemic("risk") == "hypothesis"
+        assert _infer_epistemic("interpretation") == "interpreted"
+        assert _infer_epistemic("fact") == "observed"
+        assert _infer_epistemic("number") == "observed"
+
+    def test_all_claim_types_default_to_v2(self):
+        for ct in ("fact", "number", "date", "interpretation", "forecast", "risk"):
+            c = Claim(
+                claim_id="X", statement="s", source_id="S",
+                evidence_text="e", claim_type=ct,
+            )
+            assert c.schema_version == "v2", f"claim_type={ct} should default to v2"
+
+    def test_old_v1_loaded_keeps_v1(self):
+        c = Claim.from_dict({
+            "claim_id": "X", "statement": "s", "source_id": "S",
+            "evidence_text": "e", "claim_type": "fact",
+            # no schema_version → migration sets v1
+        })
+        assert c.schema_version == "v1"

@@ -38,6 +38,20 @@ class TestRulePackCompleteness:
         missing = list_uncovered_types(epic_types)
         assert missing == [], f"Uncovered epistemic types: {missing}"
 
+    def test_all_mc_specialist_types_covered(self):
+        mc_types = {
+            "comparison_missing_entity_evidence", "capacity_status_missing",
+            "metric_basis_missing", "unsupported_market_trend",
+            "single_source_interpretation", "competitor_coverage_gap",
+        }
+        missing = list_uncovered_types(mc_types)
+        assert missing == [], f"Uncovered MC types: {missing}"
+
+    def test_all_semantic_types_covered(self):
+        semantic_types = {"semantic_source_support"}
+        missing = list_uncovered_types(semantic_types)
+        assert missing == [], f"Uncovered semantic types: {missing}"
+
 
 class TestGetTaxonomy:
     def test_known_type(self):
@@ -128,5 +142,5 @@ class TestRulePackEntries:
         for ft, (level, owner, desc) in RULE_PACK.items():
             assert desc, f"{ft}: missing description"
 
-    def test_rule_pack_has_at_least_20_entries(self):
-        assert len(RULE_PACK) >= 20, f"Rule pack too small: {len(RULE_PACK)} entries"
+    def test_rule_pack_has_at_least_30_entries(self):
+        assert len(RULE_PACK) >= 30, f"Rule pack too small: {len(RULE_PACK)} entries"

@@ -82,7 +82,7 @@ class TestBuildManifest:
             f.flush()
             m = build_manifest(config_path=f.name)
             assert m.config_hash != ""
-            assert len(m.config_hash) == 16
+            assert len(m.config_hash) == 64  # full SHA-256 hex digest
 
     def test_stage_outputs(self):
         stages = [
@@ -123,6 +123,52 @@ class TestSaveManifest:
             assert path.exists()
 
 
+class TestManifestFailureDetection:
+    def test_failed_stage_detected_from_artifacts(self):
+        stages = [
+            {"agent_name": "analysis-module-market_competitor",
+             "summary": "Module 'market_competitor' FAILED: ValueError",
+             "artifacts": {"status": "failed", "error_type": "ValueError", "error": "bad data"}},
+        ]
+        m = build_manifest(stage_outputs=stages)
+        assert m.stages["analysis-module-market_competitor"]["status"] == "failed"
+        assert len(m.errors) == 1
+        assert m.errors[0]["stage"] == "analysis-module-market_competitor"
+        assert m.errors[0]["error_type"] == "ValueError"
+
+    def test_failed_stage_detected_from_summary(self):
+        stages = [
+            {"agent_name": "source-collection",
+             "summary": "Collected 0 sources. FAILED: No API key",
+             "artifacts": {}},
+        ]
+        m = build_manifest(stage_outputs=stages)
+        assert m.stages["source-collection"]["status"] == "failed"
+
+    def test_ok_stage_no_errors(self):
+        stages = [
+            {"agent_name": "scout", "summary": "Loaded 5 sources", "artifacts": {}},
+        ]
+        m = build_manifest(stage_outputs=stages)
+        assert m.stages["scout"]["status"] == "ok"
+        assert len(m.errors) == 0
+
+    def test_collection_errors_copied_to_manifest(self):
+        stages = [
+            {"agent_name": "source-collection",
+             "summary": "Collected 0 sources",
+             "artifacts": {
+                 "collection_errors": [
+                     {"provider": "web_search", "error_type": "NoSearchTasks",
+                      "message": "No search_tasks defined"},
+                 ],
+             }},
+        ]
+        m = build_manifest(stage_outputs=stages)
+        assert len(m.errors) == 1
+        assert m.errors[0]["error_type"] == "NoSearchTasks"
+
+
 class TestFileHash:
     def test_hash_matches(self):
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
@@ -131,7 +177,7 @@ class TestFileHash:
             h1 = _file_hash(Path(f.name))
             h2 = _file_hash(Path(f.name))
             assert h1 == h2
-            assert len(h1) == 16
+            assert len(h1) == 64  # full SHA-256 hex digest
 
     def test_different_content_different_hash(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".a", delete=False) as f1, \
