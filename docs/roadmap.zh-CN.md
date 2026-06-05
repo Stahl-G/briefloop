@@ -79,6 +79,8 @@ v0.5 之后的候选扩展：
 
 目标：形成一个真实可用、可审计、可复现的高质量参考工作流。
 
+详细执行拆分见 [v0.5.0 Implementation Plan](impl-plan-v0.5.0.md)。
+
 范围：
 
 - 冻结单一正式主路径：交互初始化 → 来源发现与确认 → doctor → prepare → Analyst → Editor → Final Auditor → Markdown / DOCX → Human Review。
