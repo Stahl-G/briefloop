@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-06-05
+
+### Added
+
+- **`/propose-competitors` slash command** (`.claude/commands/propose-competitors.md`):
+  invokes `market-competitor-planner` subagent to recommend competitor candidates
+  based on `user.md` context.  Writes `competitor_candidates.yaml` for user review.
+- **`prepare` CLI integration test**: verifies end-to-end output of `brief.md`,
+  `claim_ledger.json`, and `audit_report.json` via real CLI invocation.
+
+### Fixed
+
+- **Analysis module failures are no longer silently swallowed**: `_run_analysis_modules`
+  now records failures as `AgentOutput` with `status: failed` and error details.
+  Specialist auditor failures are logged with `logger.warning` and recorded in
+  `analysis_packs` metadata — the system no longer silently falls back to default
+  audit without indication.
+- **README**: `run` command wording changed from "已移除" to "已弃用，仅保留迁移提示"
+  to match actual CLI behaviour.
+- **`docs/claude-code-workflow.md`**: CLI command list updated to include
+  `prepare` and `competitors init/list/merge`.
+
 ## [0.3.1] — 2026-06-05
 
 ### Added
