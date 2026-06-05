@@ -243,15 +243,19 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
         # Validate required fields — agent must not pass empty/sentinel values
         missing_onboarding: list[str] = []
         if not profile.company:
-            missing_onboarding.append("company_or_subject")
+            missing_onboarding.append("company_or_org")
         if not profile.industry_text:
             missing_onboarding.append("industry_or_theme")
         if not profile.task_objective and not profile.brief_title:
-            missing_onboarding.append("brief_objective")
+            missing_onboarding.append("task_objective")
         if missing_onboarding:
             print("[error] Onboarding data is incomplete. Required fields are missing or empty:")
             for f in missing_onboarding:
                 print(f"  - {f}")
+            print("        Supported field names: company_or_org, industry_or_theme, task_objective,")
+            print("        audience_plain, language_plain, cadence_plain, source_style_plain,")
+            print("        output_style_plain, must_watch, forbidden_sources, tavily_enabled")
+            print("        Aliases accepted: company, industry, title, audience, language, cadence, etc.")
             print("        Run the interactive onboarding wizard: multi-agent-brief init <workspace>")
             print("        Or provide all required fields in onboarding.json before using --from-onboarding.")
             return 1
