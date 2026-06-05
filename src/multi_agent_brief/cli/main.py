@@ -699,7 +699,60 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
     if profile.tavily_enabled:
         _print_tavily_guidance()
 
+    # Auto-recommend capabilities based on profile
+    _print_capability_recommendations(target, profile)
+
     return 0
+
+
+def _print_capability_recommendations(target: Path, profile) -> None:
+    """Recommend capabilities based on workspace profile and print suggestions."""
+    from multi_agent_brief.capabilities.recommend import recommend_from_text, recommend_from_input_dir
+
+    # Build text from profile
+    text_parts = []
+    if getattr(profile, "company", None):
+        text_parts.append(profile.company)
+    if getattr(profile, "industry_text", None):
+        text_parts.append(profile.industry_text)
+    if getattr(profile, "brief_title", None):
+        text_parts.append(profile.brief_title)
+    if getattr(profile, "task_objective", None):
+        text_parts.append(profile.task_objective)
+    focus = getattr(profile, "focus_areas", None)
+    if focus:
+        text_parts.extend(focus if isinstance(focus, list) else [focus])
+
+    combined_text = " ".join(text_parts)
+    if not combined_text:
+        return
+
+    # Get enabled providers from the workspace we just created
+    enabled_providers = set()
+    sources_path = target / "sources.yaml"
+    if sources_path.exists():
+        try:
+            from multi_agent_brief.sources.registry import load_sources_config
+            sc = load_sources_config(sources_path)
+            enabled_providers = set(sc.enabled_providers)
+        except Exception:
+            pass
+
+    # Run text + input recommendations
+    recs = recommend_from_text(combined_text, enabled_providers)
+    recs += recommend_from_input_dir(target / "input", enabled_providers)
+
+    if not recs:
+        return
+
+    print()
+    print(f"Recommended capabilities for your workspace:")
+    for rec in recs:
+        print(f"  → {rec.capability_id}: {rec.reason}")
+    print()
+    print(f"To enable recommended features:")
+    print(f"  multi-agent-brief setup {target}")
+    print()
 
 
 def run_doctor_from_args(args: argparse.Namespace) -> int:

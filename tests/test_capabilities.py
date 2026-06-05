@@ -310,3 +310,65 @@ class TestSetupCommand:
     def test_setup_nonexistent_workspace(self, capsys):
         from multi_agent_brief.cli.main import main
         assert main(["setup", "/nonexistent/path"]) == 1
+
+
+class TestInitIntegration:
+    """Init should show capability recommendations after workspace creation."""
+
+    def test_init_shows_recommendations(self, tmp_path, capsys):
+        from multi_agent_brief.cli.main import main
+        ws = tmp_path / "ws"
+        main([
+            "init", str(ws),
+            "--language", "en-US",
+            "--company", "Tesla",
+            "--industry", "automotive",
+            "--title", "Competitor Analysis",
+            "--audience", "mgmt",
+            "--cadence", "weekly",
+            "--source-profile", "research",
+        ])
+        out = capsys.readouterr().out
+        assert "Recommended capabilities" in out
+        assert "market_competitor" in out
+        assert "multi-agent-brief setup" in out
+
+    def test_init_focus_areas_trigger_recommendations(self, tmp_path, capsys):
+        from multi_agent_brief.cli.main import main
+        ws = tmp_path / "ws"
+        # Default focus_areas include "competitor" and "market" which trigger market_competitor
+        main([
+            "init", str(ws),
+            "--language", "en-US",
+            "--company", "Test Corp",
+            "--industry", "textiles",
+            "--title", "Weekly Report",
+            "--audience", "mgmt",
+            "--cadence", "weekly",
+            "--source-profile", "conservative",
+        ])
+        out = capsys.readouterr().out
+        # Default focus_areas ["policy", "competitor", "market", "customer_demand"] trigger recommendations
+        assert "Recommended capabilities" in out
+        assert "market_competitor" in out
+
+    def test_init_from_onboarding_shows_recommendations(self, tmp_path, capsys):
+        import json
+        from multi_agent_brief.cli.main import main
+        ws = tmp_path / "ws"
+        ob = {
+            "target": str(ws),
+            "company_or_org": "Apple",
+            "industry_or_theme": "technology",
+            "task_objective": "Track SEC filings and competitor movements",
+            "audience_plain": "management team",
+            "source_style_plain": "reliable research",
+            "language_plain": "English",
+            "cadence_plain": "weekly",
+        }
+        ob_path = tmp_path / "onboarding.json"
+        ob_path.write_text(json.dumps(ob), encoding="utf-8")
+        main(["init", "--from-onboarding", str(ob_path)])
+        out = capsys.readouterr().out
+        assert "Recommended capabilities" in out
+        assert "filing_resolver" in out
