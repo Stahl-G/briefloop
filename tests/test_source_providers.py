@@ -15,6 +15,7 @@ from multi_agent_brief.sources.api_filings import FilingsProvider
 from multi_agent_brief.sources.mcp_provider import McpProvider
 from multi_agent_brief.sources.cli_provider import CliProvider
 from multi_agent_brief.sources.feishu_provider import FeishuProvider
+from multi_agent_brief.sources.mineru_provider import MineruProvider
 from multi_agent_brief.sources.normalizer import normalize_source_item, dedupe_sources, filter_by_recency
 from multi_agent_brief.sources.registry import load_sources_config, collect_all_sources, validate_all_providers
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
@@ -500,6 +501,67 @@ def test_feishu_delivery_no_lark_cli(monkeypatch):
     result = connector.deliver(artifact, target)
     assert not result.delivered
     assert "lark-cli" in result.message or "not found" in result.message
+
+
+# --- MinerU Provider ---
+
+def test_mineru_disabled_returns_empty():
+    provider = MineruProvider()
+    config = {"enabled": False}
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_mineru_no_paths_returns_empty():
+    provider = MineruProvider()
+    config = {"enabled": True, "paths": []}
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_mineru_validate_no_paths():
+    provider = MineruProvider()
+    errors = provider.validate_config({"enabled": True, "paths": []})
+    assert any("no paths configured" in e for e in errors)
+
+
+def test_mineru_validate_nonexistent_path():
+    provider = MineruProvider()
+    errors = provider.validate_config({
+        "enabled": True,
+        "paths": [{"name": "bad", "path": "/nonexistent/file.pdf"}],
+    })
+    assert any("path does not exist" in e for e in errors)
+
+
+def test_mineru_validate_no_mineru_binary(monkeypatch):
+    monkeypatch.setattr("multi_agent_brief.sources.mineru_provider.shutil.which", lambda cmd: None)
+    provider = MineruProvider()
+    errors = provider.validate_config({
+        "enabled": True,
+        "paths": [{"name": "test", "path": "."}],
+    })
+    assert any("mineru.*not found" in e or "not found" in e for e in errors)
+
+
+def test_mineru_collect_no_binary_returns_empty(monkeypatch):
+    monkeypatch.setattr("multi_agent_brief.sources.mineru_provider.shutil.which", lambda cmd: None)
+    provider = MineruProvider()
+    config = {"enabled": True, "paths": [{"name": "test", "path": "."}]}
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_mineru_registered_in_provider_classes():
+    from multi_agent_brief.sources.registry import PROVIDER_CLASSES
+    assert "mineru" in PROVIDER_CLASSES
+    assert PROVIDER_CLASSES["mineru"] is MineruProvider
+
+
+def test_mineru_source_config_has_mineru_field():
+    config = SourceConfig()
+    assert hasattr(config, "mineru")
+    assert config.mineru == {}
 
 
 # --- Normalizer ---

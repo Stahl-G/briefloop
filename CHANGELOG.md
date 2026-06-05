@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Added
+
+- **MineruProvider** (`sources/mineru_provider.py`): New source provider that uses mineru CLI to parse PDF, DOCX, PPTX, XLSX, and image files into structured Markdown/JSON source items. Supports `pipeline`, `hybrid`, and `vlm` backends.
+- **SourceConfig**: Added `mineru` field to `SourceConfig` and `from_dict()`.
+- **Registry**: `mineru` provider registered in `PROVIDER_CLASSES` and `config_map`.
+- **Tests**: 7 new tests covering MineruProvider (disabled, no paths, validate, no binary, registration).
+- **Documentation**: `docs/mineru-integration.md` covers setup, configuration, backends.
 
 ## [0.1.2] — 2026-06-04
 

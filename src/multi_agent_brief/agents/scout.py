@@ -43,6 +43,22 @@ class ScoutAgent(BaseAgent):
                     )
                     candidates.append(candidate)
                     ledger.add_claim(claim)
+            elif source.source_type == "filing_resolver":
+                # Filing resolver: one claim per SourceItem (artifact or XBRL observation)
+                claim = _extract_filing_claim(source, ledger, self.name)
+                if claim is not None:
+                    item_id = f"{source.source_id}_ITEM_001"
+                    candidate = CandidateItem(
+                        item_id=item_id,
+                        title=source.title[:80] if source.title else claim.statement[:80],
+                        summary=claim.statement,
+                        source_id=source.source_id,
+                        topic=infer_topic(claim.statement),
+                        importance=infer_importance(claim.statement),
+                        reason_for_inclusion="SEC filing or XBRL data with reportable signal.",
+                    )
+                    candidates.append(candidate)
+                    ledger.add_claim(claim)
             else:
                 for index, statement in enumerate(extract_candidate_lines(source.content), start=1):
                     item_id = f"{source.source_id}_ITEM_{index:03d}"
@@ -151,7 +167,38 @@ def _extract_web_search_claim(source: SourceItem, ledger: ClaimLedger, agent_nam
     )
 
 
+def _extract_filing_claim(source: SourceItem, ledger: ClaimLedger, agent_name: str) -> Claim | None:
+    """Extract one claim from a filing_resolver SourceItem.
+
+    Filing items have pre-structured content (artifact text or XBRL observation).
+    Returns None if content is empty.
+    """
+    content = (source.content or "").strip()
+    if not content or len(content) < 10:
+        return None
+
+    claim_id = ledger.build_claim_id(content, source.source_id)
+    return Claim(
+        claim_id=claim_id,
+        statement=content,
+        source_id=source.source_id,
+        evidence_text=content,
+        source_url=source.url,
+        source_type=source.source_type,
+        claim_type=source.metadata.get("claim_type") or infer_claim_type(content),
+        confidence="high",  # SEC official data
+        created_by=agent_name,
+        metadata={
+            "published_at": source.published_at,
+            "retrieved_at": source.retrieved_at,
+            "source_name": source.source_name,
+            "source_tier": source.metadata.get("source_tier", "T1"),
+        },
+    )
+
+
 def load_local_sources(input_dir: Path) -> list[SourceItem]:
+
     if not input_dir.exists():
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
 
