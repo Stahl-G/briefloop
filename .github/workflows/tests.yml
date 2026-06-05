@@ -65,18 +65,7 @@ jobs:
       - name: CLI smoke
         run: |
           multi-agent-brief version
-          python -c "
-from multi_agent_brief.core.config import build_run_settings, load_config
-from multi_agent_brief.core.pipeline import BriefPipeline
-from multi_agent_brief.core.schemas import PipelineContext
-import json
-settings = build_run_settings(config=None, input_dir='examples/basic_market_brief', output_dir='output/basic_market_brief', name=None, language=None, audience=None)
-context = PipelineContext(**settings)
-BriefPipeline().run(context)
-d = json.load(open('output/basic_market_brief/intermediate/claim_ledger.json'))
-print(f'claim_ledger has {len(d)} entries')
-print('SMOKE PASSED')
-"
+          python scripts/ci/smoke_pipeline.py "" examples/basic_market_brief output/basic_market_brief output/basic_market_brief/intermediate/claim_ledger.json
 
   non-dev-smoke:
     name: Non-dev install smoke
@@ -107,17 +96,7 @@ print('SMOKE PASSED')
           echo "- Manufacturing output improved as supply chain disruption eased in the latest reporting period." > /tmp/mabw-ci-smoke/input/smoke.md
 
       - name: Run pipeline
-        run: |
-          python -c "
-from multi_agent_brief.core.config import build_run_settings, load_config
-from multi_agent_brief.core.pipeline import BriefPipeline
-from multi_agent_brief.core.schemas import PipelineContext
-import json
-config = load_config('/tmp/mabw-ci-smoke/config.yaml')
-settings = build_run_settings(config=config, input_dir='/tmp/mabw-ci-smoke/input', output_dir=None, name=None, language=None, audience=None)
-context = PipelineContext(**settings)
-BriefPipeline().run(context)
-"
+        run: python scripts/ci/smoke_pipeline.py /tmp/mabw-ci-smoke/config.yaml /tmp/mabw-ci-smoke/input
 
       - name: Assert output quality
         shell: bash
@@ -163,18 +142,7 @@ BriefPipeline().run(context)
         run: |
           cd /tmp/mabw-llm
           echo "- Manufacturing sector grew 5 percent." > input/smoke.md
-          python -c "
-from multi_agent_brief.core.config import build_run_settings, load_config
-from multi_agent_brief.core.pipeline import BriefPipeline
-from multi_agent_brief.core.schemas import PipelineContext
-import json
-config = load_config('config.yaml')
-settings = build_run_settings(config=config, input_dir='input', output_dir=None, name=None, language=None, audience=None)
-context = PipelineContext(**settings)
-BriefPipeline().run(context)
-d = json.load(open('output/intermediate/claim_ledger.json'))
-print(f'claim_ledger has {len(d)} entries')
-"
+          python $GITHUB_WORKSPACE/scripts/ci/smoke_pipeline.py config.yaml input
 
       - name: Assert output
         run: |
@@ -221,18 +189,7 @@ print(f'claim_ledger has {len(d)} entries')
         run: |
           cd /tmp/mabw-onboarding
           echo "- Manufacturing output improved." > input/smoke.md
-          python -c "
-from multi_agent_brief.core.config import build_run_settings, load_config
-from multi_agent_brief.core.pipeline import BriefPipeline
-from multi_agent_brief.core.schemas import PipelineContext
-import json
-config = load_config('config.yaml')
-settings = build_run_settings(config=config, input_dir='input', output_dir=None, name=None, language=None, audience=None)
-context = PipelineContext(**settings)
-BriefPipeline().run(context)
-d = json.load(open('output/intermediate/claim_ledger.json'))
-print(f'claim_ledger has {len(d)} entries')
-"
+          python $GITHUB_WORKSPACE/scripts/ci/smoke_pipeline.py config.yaml input
 
       - name: Assert output
         run: |
