@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Backward-compatible migration**: `Claim.from_dict()` auto-fills v2 fields from `claim_type` for v1 ledger data.
 - **Run Manifest**: every `prepare` run now writes `output/intermediate/run_manifest.json` with run_id, config_hash, provider/module status, source/claim counts, audit status, artifact paths and SHA-256 hashes, and pipeline stage results.
 - **Semantic audit status**: `NoOpSemanticAuditAgent` now returns `not_configured` instead of faking a pass. `CompositeAuditAgent` tracks `semantic_status` in metadata. Manifest includes `semantic_status` field.
+- **Audit Finding Taxonomy**: `AuditFinding` gains `blocking_level` (editor_fixable/analyst_blocking/source_blocking/configuration_error/rendering_error/safety_blocking) and `repair_owner` (editor/analyst/source/configuration/rendering/safety). All 25+ finding types tagged via `rule_packs.py`.
 
 ## [0.3.5] — 2026-06-05
 

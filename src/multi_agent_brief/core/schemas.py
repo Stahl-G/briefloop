@@ -93,6 +93,18 @@ class BriefSection:
         return asdict(self)
 
 
+BlockingLevel = Literal[
+    "editor_fixable",       # editor can fix in-place (residue, filler, labels)
+    "analyst_blocking",     # must return to analyst (unsupported certainty, hypothesis misuse)
+    "source_blocking",      # must return to source collection (missing sources, stale, needs_recrawl)
+    "configuration_error",  # user must fix config (no API key, missing search_tasks)
+    "rendering_error",      # docx/markdown rendering issue
+    "safety_blocking",      # investment advice, redaction risk — cannot ship
+]
+
+RepairOwner = Literal["editor", "analyst", "source", "configuration", "rendering", "safety"]
+
+
 @dataclass
 class AuditFinding:
     finding_id: str
@@ -103,6 +115,8 @@ class AuditFinding:
     related_claim_id: str = ""
     line_number: int | None = None
     evidence: str = ""
+    blocking_level: BlockingLevel = "editor_fixable"
+    repair_owner: RepairOwner = "editor"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
