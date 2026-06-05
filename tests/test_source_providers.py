@@ -1,12 +1,9 @@
 """Tests for the Source Provider system."""
 from __future__ import annotations
 
-import io
 import json
-from pathlib import Path
-from zipfile import ZipFile
+from io import BytesIO
 
-import pytest
 
 from multi_agent_brief.sources.base import SourceConfig, SourceItem, SourceQuery, SOURCE_PROFILES
 from multi_agent_brief.sources.search_backends.base import SearchResult
@@ -93,7 +90,6 @@ def test_manual_provider_loads_local_files(tmp_path):
 def test_manual_provider_loads_json(tmp_path):
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    import json
     (input_dir / "data.json").write_text(json.dumps({
         "source_url": "https://example.com",
         "published_at": "2026-06-01",
@@ -644,6 +640,67 @@ def test_mineru_remote_premium_url_poll_mocked(monkeypatch):
     assert items[0].metadata["backend"] == "mineru_premium_api"
 
 
+def test_mineru_http_put_file_no_content_type(monkeypatch, tmp_path):
+    """_http_put_file must not send Content-Type (breaks pre-signed OSS URLs)."""
+    from multi_agent_brief.sources.mineru_provider import _http_put_file
+    import urllib.request
+
+    captured_req = {}
+
+    def mock_open(self, req, *args, **kwargs):
+        captured_req["method"] = req.get_method()
+        captured_req["headers"] = dict(req.headers)
+        captured_req["has_data"] = req.data is not None
+        # Simulate success
+        from unittest.mock import MagicMock
+        resp = MagicMock()
+        resp.status = 200
+        resp.read.return_value = b""
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        return resp
+
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", mock_open)
+
+    test_file = tmp_path / "test.pdf"
+    test_file.write_bytes(b"fake pdf content")
+
+    result = _http_put_file("https://example.com/signed-url", str(test_file))
+
+    assert result is True
+    assert captured_req["method"] == "PUT"
+    assert captured_req["has_data"] is True
+    # Content-Type header must be empty string, not 'application/x-www-form-urlencoded'
+    ct = captured_req["headers"].get("Content-type", captured_req["headers"].get("Content-Type", ""))
+    assert ct == "", f"Expected empty Content-Type, got: {ct!r}"
+
+
+def test_mineru_http_put_file_error_prints_body(monkeypatch, tmp_path, capsys):
+    """_http_put_file should print OSS error body on HTTP error."""
+    from multi_agent_brief.sources.mineru_provider import _http_put_file
+    import urllib.request
+    import urllib.error
+
+    def mock_open(self, req, *args, **kwargs):
+        error_body = b'<?xml version="1.0"?>\n<Error><Code>SignatureDoesNotMatch</Code><Message>The signature ...</Message></Error>'
+        raise urllib.error.HTTPError(
+            url=req.full_url, code=403, msg="Forbidden",
+            hdrs=None, fp=BytesIO(error_body),
+        )
+
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", mock_open)
+
+    test_file = tmp_path / "test.pdf"
+    test_file.write_bytes(b"fake pdf content")
+
+    result = _http_put_file("https://example.com/signed-url", str(test_file))
+
+    assert result is False
+    captured = capsys.readouterr()
+    assert "HTTP 403" in captured.err
+    assert "SignatureDoesNotMatch" in captured.err
+
+
 # --- Normalizer ---
 
 def test_normalize_source_item():
@@ -901,7 +958,7 @@ def test_merge_does_not_auto_enable_web_search(tmp_path):
 
 def test_collect_all_sources_captures_provider_errors(tmp_path):
     """Failed providers should be recorded, not silently swallowed."""
-    from multi_agent_brief.sources.base import SourceProvider, SourceQuery
+    from multi_agent_brief.sources.base import SourceProvider
     from multi_agent_brief.sources.registry import collect_all_sources
 
     class FailingProvider(SourceProvider):

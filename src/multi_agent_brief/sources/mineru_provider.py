@@ -13,7 +13,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 import urllib.request
 from hashlib import sha1
@@ -54,13 +53,34 @@ def _http_get_json(url: str, headers: dict[str, str] | None = None) -> dict[str,
 
 
 def _http_put_file(url: str, file_path: str) -> bool:
-    """PUT a file to a signed URL. Returns True on success."""
+    """PUT a file to a signed URL. Returns True on success.
+
+    Pre-signed OSS URLs encode the expected Content-Type in the signature.
+    urllib.request.Request auto-adds 'Content-Type: application/x-www-form-urlencoded'
+    when data is provided, which breaks the signature. We must explicitly set
+    Content-Type to empty to match what the pre-signed URL expects.
+    """
     try:
         with open(file_path, "rb") as f:
             data = f.read()
         req = urllib.request.Request(url, data=data, method="PUT")
+        # Must NOT send Content-Type — pre-signed URL signature expects none.
+        # urllib auto-adds 'application/x-www-form-urlencoded' when data is set.
+        req.add_header("Content-Type", "")
         with urllib.request.urlopen(req, timeout=120) as resp:
             return resp.status in (200, 201)
+    except urllib.error.HTTPError as exc:
+        # Read and log the OSS error body for diagnostics (e.g. SignatureDoesNotMatch)
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        import sys
+        print(
+            f"[mineru] PUT {Path(file_path).name} failed: HTTP {exc.code} — {body[:500]}",
+            file=sys.stderr,
+        )
+        return False
     except Exception:
         return False
 
