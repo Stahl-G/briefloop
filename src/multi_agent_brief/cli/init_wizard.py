@@ -196,6 +196,10 @@ def create_workspace(target: Path, profile: InitProfile, *, force: bool = False)
     }
     _write_files(files, force=force)
 
+    # Create state directory for cross-period tracking (runtime, not committed)
+    state_dir = target / "state" / "market_competitor"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
 
 def _is_interactive() -> bool:
     """Check if stdin is connected to a real terminal (not a pipe or agent Bash tool)."""
