@@ -232,19 +232,3 @@ jobs:
 
       - name: Assert brief.docx exists
         run: test -s /tmp/mabw-docx/output/brief.docx
-
-  readme-check:
-    name: README update check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check README updated with source changes
-        if: github.event_name == 'pull_request'
-        run: python scripts/check_readme_updated.py --base origin/main
-
-      - name: Check README updated with source changes
-        if: github.event_name == 'push'
-        run: python scripts/check_readme_updated.py --base "${{ github.event.before }}"

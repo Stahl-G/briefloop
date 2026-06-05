@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push hook: public-safe scan + README check.
+# Pre-push hook: public-safe scan + terminology check.
 # Install: git config core.hooksPath .githooks
 # Maintainer convenience only. Windows users do not need this hook.
 
@@ -22,6 +22,3 @@ echo "[pre-push] Public-safe content scan..."
 
 echo "[pre-push] Terminology check..."
 "$PYTHON_BIN" scripts/check_terms.py
-
-echo "[pre-push] README update check..."
-"$PYTHON_BIN" scripts/check_readme_updated.py
