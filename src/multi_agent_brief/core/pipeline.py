@@ -36,12 +36,21 @@ class BriefPipeline:
         outputs: list[AgentOutput] = []
 
         # Step 0: Source Collection — always via provider system
-        source_output = self._collect_sources(context)
+        source_output, collection_fatal = self._collect_sources(context)
         if source_output:
             outputs.append(source_output)
+        if collection_fatal:
+            return outputs  # abort — no Analyst/Editor/Auditor run
 
         # Step 1: Scout
         outputs.append(self.agents[0].run(context, ledger))
+
+        # Source collection gate: if we expected sources but got 0 claims,
+        # it's a quiet-week (pass, but flag it) — not a failure.
+        # Only fail if source collection itself produced errors.
+        if len(ledger) == 0 and context.sources:
+            # Quiet week: sources collected, but no reportable claims extracted.
+            pass  # Continue to Screener → Analyst (which will emit "No Reportable Signals")
 
         # Step 1.5: Entity & Event Enrichment (market-competitor only)
         _enrich_entities_if_configured(context, ledger)
@@ -65,10 +74,16 @@ class BriefPipeline:
         outputs.append(self.agents[5].run(context, ledger))
         return outputs
 
-    def _collect_sources(self, context: PipelineContext) -> AgentOutput | None:
-        """Collect sources via the provider system, populate context.sources."""
+    def _collect_sources(
+        self, context: PipelineContext,
+    ) -> tuple[AgentOutput | None, bool]:
+        """Collect sources via the provider system, populate context.sources.
+
+        Returns (output, fatal) — when fatal=True the caller must abort the
+        pipeline (no sources collected despite being enabled).
+        """
         if context.sources:
-            return None
+            return None, False
 
         # Build SourceConfig from context if not already set
         source_config = context.metadata.get("source_config")
@@ -165,11 +180,52 @@ class BriefPipeline:
         if collection_errors:
             artifacts["collection_errors"] = collection_errors
 
+        # Failure gate: if web_search is enabled, fail loudly when no usable
+        # sources are collected instead of silently continuing with an empty
+        # Claim Ledger.  Only manual-only setups are allowed to proceed with
+        # 0 sources (quiet-week).
+        fatal = False
+        web_search_cfg = source_config.web_search
+        if (
+            "web_search" in source_config.enabled_providers
+            and web_search_cfg.get("enabled", False)
+            and web_search_cfg.get("backend", "")
+        ):
+            # web_search is truly enabled with a configured backend.
+            # Must have search_tasks and must produce usable sources.
+            search_tasks = web_search_cfg.get("search_tasks", [])
+            if not search_tasks:
+                artifacts["collection_errors"] = artifacts.get("collection_errors", [])
+                if isinstance(artifacts["collection_errors"], list):
+                    artifacts["collection_errors"].append({
+                        "provider": "web_search",
+                        "error_type": "NoSearchTasks",
+                        "message": (
+                            "web_search is enabled and has a backend configured, "
+                            "but no search_tasks are defined. "
+                            "Add search_tasks in sources.yaml or run sources decide first."
+                        ),
+                    })
+                fatal = True
+            elif len(items) == 0:
+                artifacts["collection_errors"] = artifacts.get("collection_errors", [])
+                if isinstance(artifacts["collection_errors"], list):
+                    artifacts["collection_errors"].append({
+                        "provider": "web_search",
+                        "error_type": "ZeroUsableSources",
+                        "message": (
+                            f"web_search executed {len(search_tasks)} task(s) but collected "
+                            f"0 usable sources.  Check search backend configuration "
+                            f"(TAVILY_API_KEY, EXA_API_KEY, etc.) or search task queries."
+                        ),
+                    })
+                fatal = True
+
         return AgentOutput(
             agent_name="source-collection",
             summary=f"Collected {len(items)} sources from {len(source_config.enabled_providers)} providers.",
             artifacts=artifacts,
-        )
+        ), fatal
 
     def _build_default_config(self, context: PipelineContext) -> SourceConfig:
         """Build a default SourceConfig when none is provided."""

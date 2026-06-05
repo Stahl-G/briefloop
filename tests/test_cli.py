@@ -142,7 +142,8 @@ def test_cli_run_command_prints_error_and_redirects(capsys):
 def test_cli_prepare_end_to_end(tmp_path: Path):
     """prepares must produce brief.md, claim_ledger.json, audit_report.json."""
     ws = tmp_path / "ws"
-    assert main(complete_init_args(ws)) == 0
+    # Use conservative profile to avoid web_search failure gate (no search_tasks)
+    assert main(complete_init_args(ws, extra=["--source-profile", "conservative"])) == 0
 
     (ws / "input" / "news.md").write_text(
         "- Manufacturing output improved as supply chain disruption eased.\n",

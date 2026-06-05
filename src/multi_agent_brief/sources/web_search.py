@@ -133,9 +133,19 @@ class WebSearchProvider(SourceProvider):
                 if kw.strip():
                     queries.append((kw.strip(), None))
 
-        # Fallback: generic query
+        # No queries at all → fail explicitly.  The old "latest news" silent
+        # fallback is removed — set `allow_generic_fallback: true` in
+        # sources.yaml web_search section to re-enable the generic catch-all.
         if not queries:
-            queries.append(("latest news", None))
+            if config.get("allow_generic_fallback"):
+                queries.append(("latest news", None))
+            else:
+                raise RuntimeError(
+                    "web_search has no search_tasks configured and no "
+                    "keywords provided.  Run 'multi-agent-brief sources decide "
+                    "--config <workspace>/config.yaml' to discover sources, or "
+                    "add search_tasks manually in sources.yaml."
+                )
 
         return queries
 

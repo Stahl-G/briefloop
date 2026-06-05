@@ -36,6 +36,7 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.core.pipeline import BriefPipeline
 from multi_agent_brief.core.schemas import PipelineContext
+from multi_agent_brief.sources.registry import load_sources_config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -145,22 +146,45 @@ def run_pipeline_from_args(args: argparse.Namespace) -> int:
 
 def run_prepare_from_args(args: argparse.Namespace) -> int:
     """Run the deterministic pipeline (source collection → Scout → Screener →
-    Claim Ledger → draft artifacts).  Used by /generate-brief as step 3."""
+    Claim Ledger → draft artifacts).  Used by /generate-brief as step 3.
+
+    Loads config.yaml for project settings AND sources.yaml for source
+    providers, search_tasks, and source_discovery policy — both are required
+    for a working prepare run.
+    """
     config_path = Path(args.config)
+    workspace = config_path.parent
     config = load_config(str(config_path))
 
-    input_dir = args.input
-    output_dir = args.output
+    # Load sources.yaml — required for provider config, search tasks, filing resolver, etc.
+    sources_path = workspace / "sources.yaml"
+    source_config = None
+    source_discovery = None
+    if sources_path.exists():
+        source_config = load_sources_config(sources_path)
+        try:
+            from multi_agent_brief.sources.decider import load_source_discovery
+            source_discovery = load_source_discovery(sources_path)
+        except Exception:
+            source_discovery = None
 
     settings = build_run_settings(
         config=config,
-        input_dir=input_dir,
-        output_dir=output_dir,
+        input_dir=args.input,
+        output_dir=args.output,
         name=None,
         language=None,
         audience=None,
     )
     context = PipelineContext(**settings)
+
+    # Inject sources.yaml data into metadata so _collect_sources can use it
+    if source_config is not None:
+        context.metadata["source_config"] = source_config
+    if source_discovery is not None:
+        context.metadata["source_discovery"] = source_discovery
+    context.metadata["_config_dir"] = str(workspace)
+
     outputs = BriefPipeline().run(context)
     print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
     return 0

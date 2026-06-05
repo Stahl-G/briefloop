@@ -166,7 +166,7 @@ def test_rss_provider_skips_disabled():
 def test_web_search_with_injected_fake_backend_returns_results():
     provider = WebSearchProvider(backend=FakeSearchBackend())
     config = {"enabled": True}
-    items = provider.collect(SourceQuery(), config)
+    items = provider.collect(SourceQuery(keywords=["manufacturing"]), config)
     assert len(items) > 0
     assert items[0].source_type == "web_search"
 
@@ -1010,7 +1010,7 @@ def test_web_search_backend_error_captured_by_registry():
 
     config = SourceConfig(
         enabled_providers=["web_search"],
-        web_search={"enabled": True},
+        web_search={"enabled": True, "allow_generic_fallback": True},
     )
     try:
         items, errors = collect_all_sources(config)
