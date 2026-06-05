@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multi-agent-brief-workflow"
-version = "0.1.2"
+version = "0.2.0"
 description = "Source-grounded, audit-ready multi-agent workflow for business and research briefs."
 readme = "README.md"
 requires-python = ">=3.9"

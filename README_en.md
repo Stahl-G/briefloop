@@ -730,7 +730,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.1.2** — Feishu bidirectional integration
+Current version: **v0.2.0** — SEC Filing Resolution Integration + MinerU Remote API
 
 Bidirectional Feishu support via [lark-cli](https://github.com/larksuite/cli):
 pull data from Feishu Docs, meeting minutes, Base tables, sheets, calendar,

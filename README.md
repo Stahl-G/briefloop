@@ -692,7 +692,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.1.2** — 飞书双向集成
+当前版本：**v0.2.0** — SEC Filing 解析集成 + MinerU 远程 API
 
 通过 [lark-cli](https://github.com/larksuite/cli) 实现双向飞书通道。
 既可以从飞书文档、会议妙记、多维表格、电子表格、日程、审批采集数据，
