@@ -9,11 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **MineruProvider** (`sources/mineru_provider.py`): New source provider that uses mineru CLI to parse PDF, DOCX, PPTX, XLSX, and image files into structured Markdown/JSON source items. Supports `pipeline`, `hybrid`, and `vlm` backends.
-- **SourceConfig**: Added `mineru` field to `SourceConfig` and `from_dict()`.
-- **Registry**: `mineru` provider registered in `PROVIDER_CLASSES` and `config_map`.
-- **Tests**: 7 new tests covering MineruProvider (disabled, no paths, validate, no binary, registration).
-- **Documentation**: `docs/mineru-integration.md` covers setup, configuration, backends.
+- **MineruProvider remote API mode**: Two new modes alongside local CLI. "Agent" mode uses MinerU's lightweight cloud API (no token needed, `https://mineru.net/api/v1/agent/parse`). "Premium" mode uses the full API with Bearer token (`https://mineru.net/api/v4/extract`). Both support URL and local file upload paths. All HTTP calls via `urllib.request` — zero extra dependencies.
+- **docs/mineru-integration.md**: New section covering remote API setup, agent vs. premium comparison table, configuration examples.
+- **Tests**: 6 new remote-mode tests (disabled, no files, validate, agent URL mock, premium URL mock).
 
 ## [0.1.2] — 2026-06-04
 

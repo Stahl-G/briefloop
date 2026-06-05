@@ -1,7 +1,10 @@
 """Tests for the Source Provider system."""
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 
@@ -562,6 +565,83 @@ def test_mineru_source_config_has_mineru_field():
     config = SourceConfig()
     assert hasattr(config, "mineru")
     assert config.mineru == {}
+
+
+# --- MinerU remote API ---
+
+def test_mineru_remote_disabled_returns_empty():
+    provider = MineruProvider()
+    config = {"enabled": False, "mode": "remote", "files": [{"name": "t", "url": "x"}]}
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_mineru_remote_no_files_returns_empty():
+    provider = MineruProvider()
+    config = {"enabled": True, "mode": "remote", "files": []}
+    items = provider.collect(SourceQuery(), config)
+    assert items == []
+
+
+def test_mineru_remote_validate_no_files():
+    provider = MineruProvider()
+    errors = provider.validate_config({"enabled": True, "mode": "remote", "files": []})
+    assert any("no files configured" in e for e in errors)
+
+
+def test_mineru_remote_validate_premium_no_token():
+    provider = MineruProvider()
+    errors = provider.validate_config({
+        "enabled": True,
+        "mode": "remote",
+        "api_type": "premium",
+        "files": [{"name": "t", "url": "x"}],
+    })
+    assert any("api_token" in e.lower() for e in errors)
+
+
+def test_mineru_remote_agent_url_poll_mocked(monkeypatch):
+    """Mock agent URL parse at method level: submit → poll done → download markdown."""
+    provider = MineruProvider()
+
+    def mock_agent_parse_url(_self, name, file_url, language, enable_table, enable_formula, is_ocr, poll_timeout, poll_interval_val):
+        return _self._md_to_items(name, "# Hello\n\nThis is parsed markdown from MinerU", "agent_api", url=file_url)
+
+    monkeypatch.setattr(MineruProvider, "_agent_parse_url", mock_agent_parse_url)
+
+    config = {
+        "enabled": True,
+        "mode": "remote",
+        "api_type": "agent",
+        "files": [{"name": "Test Doc", "url": "https://cdn-mineru.openxlab.org.cn/demo/example.pdf"}],
+    }
+    items = provider.collect(SourceQuery(), config)
+    assert len(items) == 1
+    assert "Hello" in items[0].content
+    assert items[0].metadata["backend"] == "mineru_agent_api"
+
+
+def test_mineru_remote_premium_url_poll_mocked(monkeypatch):
+    """Mock premium URL parse at method level: submit → poll done → download zip → extract full.md."""
+    provider = MineruProvider()
+
+    def mock_premium_parse_url(_self, name, file_url, token, model, language, timeout, interval, headers):
+        return _self._md_to_items(name, "# Premium Parse\n\nPremium quality content.", "premium_api", url=file_url)
+
+    monkeypatch.setattr(MineruProvider, "_premium_parse_url", mock_premium_parse_url)
+
+    config = {
+        "enabled": True,
+        "mode": "remote",
+        "api_type": "premium",
+        "api_token": "test-token-123",
+        "model_version": "vlm",
+        "files": [{"name": "Premium Doc", "url": "https://example.com/doc.pdf"}],
+    }
+    items = provider.collect(SourceQuery(), config)
+    assert len(items) == 1
+    assert "Premium Parse" in items[0].content
+    assert items[0].metadata["backend"] == "mineru_premium_api"
 
 
 # --- Normalizer ---
