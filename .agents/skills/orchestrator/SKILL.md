@@ -1,13 +1,13 @@
 ---
 name: orchestrator
-description: Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents. Use for multi-step feature planning, cross-role integration, pipeline changes, or agent config generation.
+description: Coordinates Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, Formatter, and harness-specific review agents. Use for multi-step feature planning, cross-role integration, pipeline changes, or agent config generation.
 ---
 
 # Orchestrator Skill
 
 ## Purpose
 
-Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents.
+Coordinates Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, Formatter, and harness-specific review agents.
 
 ## When To Use
 

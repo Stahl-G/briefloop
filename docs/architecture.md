@@ -10,8 +10,8 @@ flowchart LR
   B --> C["Screener"]
   C --> D["Claim Ledger"]
   D --> E["Analyst"]
-  E --> F["Auditor"]
-  F --> G["Editor"]
+  E --> F["Editor"]
+  F --> G["Auditor"]
   G --> H["Formatter"]
   H --> I["Outputs<br/>Brief, Claim Ledger, Audit Report, Source Map"]
 ```
@@ -40,6 +40,10 @@ Analyst drafts the brief using only Claim Ledger claims. In the MVP, this step i
 
 Future model-backed analysts should keep the same rule: if a statement matters, it needs a claim ID.
 
+### Editor
+
+Editor improves structure, readability, and distribution polish. Editor must not invent new facts, add unsupported numbers, or hide audit failures.
+
 ### Auditor
 
 Auditor checks references and source support. The MVP includes deterministic audit and a public-safe quality harness. A future semantic audit adapter can compare the draft against source evidence using an LLM or local model.
@@ -66,10 +70,6 @@ AuditorAgent
 ```
 
 This separation lets the pipeline keep one stable agent step while swapping audit implementations.
-
-### Editor
-
-Editor improves structure, readability, and distribution polish. Editor must not invent new facts, add unsupported numbers, or hide audit failures.
 
 ### Formatter
 

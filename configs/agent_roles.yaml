@@ -49,7 +49,7 @@ roles:
   orchestrator:
     stage: coordination
     tool_profile: edit_safe
-    description: "Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents."
+    description: "Coordinates Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, Formatter, and harness-specific review agents."
     trigger: "Use for multi-step feature planning, cross-role integration, pipeline changes, or agent config generation."
     responsibilities:
       - "Preserve the full pipeline order."
@@ -163,7 +163,7 @@ roles:
     stage: pipeline
     tool_profile: edit_safe
     description: "Drafts executive-readable brief sections using only Claim Ledger entries."
-    trigger: "Use after multi-agent-brief run whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis."
+    trigger: "Use after the Python preparation pipeline whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis."
     responsibilities:
       - "Read claim_ledger.json and user.md to understand context and available evidence."
       - "Draft management-ready sections using only Claim Ledger material."

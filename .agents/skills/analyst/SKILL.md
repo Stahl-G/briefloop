@@ -1,6 +1,6 @@
 ---
 name: analyst
-description: Drafts executive-readable brief sections using only Claim Ledger entries. Use after multi-agent-brief run whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis.
+description: Drafts executive-readable brief sections using only Claim Ledger entries. Use after the Python preparation pipeline whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis.
 ---
 
 # Analyst Skill
@@ -11,7 +11,7 @@ Drafts executive-readable brief sections using only Claim Ledger entries.
 
 ## When To Use
 
-Use after multi-agent-brief run whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis.
+Use after the Python preparation pipeline whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis.
 
 ## Responsibilities
 

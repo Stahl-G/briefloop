@@ -4,28 +4,28 @@
 
 This repository has two distinct layers:
 
-### Layer 1: Python CLI (Deterministic Execution/Audit/Output)
+### Layer 1: Python CLI (Deterministic Preparation)
 
-The Python CLI provides deterministic, testable, API-key-optional pipeline execution:
+The Python CLI provides deterministic, testable, API-key-optional preparation tools:
 
 ```text
 multi-agent-brief init → /generate-brief (Claude Code) → output artifacts
 ```
 
-- **Deterministic pipeline**: Scout → Screener → Claim Ledger → Analyst → Auditor → Editor → Formatter
+- **Deterministic pipeline**: Scout → Screener → Claim Ledger → Analyst → Editor → Auditor → Formatter
 - **Audit harness**: DeterministicAuditAgent, QualityHarnessAuditAgent, CompositeAuditAgent
 - **Output contract**: `brief.md` for readers, plus `output/intermediate/audited_brief.md`, `claim_ledger.json`, `audit_report.json`, and `source_map.md` for audit/review
 - **No API keys required**: runs entirely with local Python
 - **Testable**: `python -m pytest -q` covers all pipeline stages
 
-The Python CLI is the source of truth for pipeline logic, audit gates, and output formatting.
+The Python CLI produces intermediate artifacts (draft brief, claim ledger, audit report). The final user-facing brief is written by Claude Code / Codex subagents using these artifacts.
 
 ### Layer 2: Claude Code Subagent Orchestration
 
 Claude Code subagents provide interactive, model-assisted workflow orchestration:
 
 ```text
-source-planner → scout → analyst → editor → auditor
+source-planner → scout → analyst → editor → auditor → formatter
 ```
 
 - **Subagent definitions**: `.claude/agents/*.md` (Markdown + YAML frontmatter)

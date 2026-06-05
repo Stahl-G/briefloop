@@ -6,7 +6,7 @@
 
         Located in `.claude/agents/`:
 
-        - `orchestrator.md` — Coordinates Scout, Screener, Claim Ledger, Analyst, Auditor, Editor, Formatter, and harness-specific review agents.
+        - `orchestrator.md` — Coordinates Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, Formatter, and harness-specific review agents.
 - `source-provider.md` — Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
 - `source-planner.md` — Reads user.md, config.yaml, and sources.yaml to generate or refine source_candidates.yaml and search_tasks. Ensures all sources are public, citable, and timestamped.
 - `scout.md` — Extracts candidate reportable items from local markdown, text, JSON, and future connector sources.

@@ -15,7 +15,7 @@ bash scripts/setup.sh && source .venv/bin/activate
 | Task | Command |
 |------|---------|
 | Init workspace | `multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json` |
-| Run pipeline | `multi-agent-brief run --config ../mabw-workspace/config.yaml` |
+| Generate brief | `/generate-brief ../mabw-workspace` (in Claude Code) |
 | Doctor check | `multi-agent-brief doctor --config ../mabw-workspace/config.yaml` |
 | Source decide | `multi-agent-brief sources decide --config ../mabw-workspace/config.yaml` |
 | Merge sources | `multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge` |
@@ -50,7 +50,7 @@ Known issue: AskUserQuestion "Other" free-text input may be dismissed by Claude 
 The Python CLI runs deterministic preparation tools:
 
 ```text
-Scout → Screener → Claim Ledger → Auditor → Editor → Formatter
+Scout → Screener → Claim Ledger → Analyst → Editor → Auditor → Formatter
 ```
 
 This produces **intermediate artifacts** (`draft_brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md`) — not a final brief. The Python Auditor checks draft facts.
@@ -58,10 +58,10 @@ This produces **intermediate artifacts** (`draft_brief.md`, `claim_ledger.json`,
 For real user-facing delivery, Claude Code must orchestrate subagents after the preparation:
 
 ```text
-analyst → editor → final auditor → formatter
+analyst → editor → auditor → formatter
 ```
 
-The Claude final auditor checks the polished text — distinct from the Python draft-level audit.
+The Claude auditor checks the polished text — distinct from the Python draft-level audit.
 
 **Hard rule:** Do not silently deliver the deterministic Python draft as the final brief. The final brief must be written by Claude Code / Codex / external LLM agents using Claim Ledger and audit outputs.
 
@@ -79,7 +79,7 @@ The Claude final auditor checks the polished text — distinct from the Python d
 src/multi_agent_brief/
   cli/         main.py, init_wizard.py
   core/        pipeline, config, schemas, claim ledger
-  agents/      Scout, Screener, Analyst, Auditor, Editor, Formatter
+  agents/      Scout, Screener, Analyst, Editor, Auditor, Formatter
   audit/       deterministic, quality harness, final quality
   sources/     providers, registry, doctor
 configs/       agent_roles.yaml (source of truth)
