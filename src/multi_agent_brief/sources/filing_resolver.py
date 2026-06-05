@@ -266,12 +266,14 @@ class FilingResolverProvider(SourceProvider):
                     "instant": instant.group(1) if instant else "",
                 }
 
-            # Extract ix:nonFraction tags
+            # Extract ix:nonFraction tags (opening tag + value + closing tag)
             for tag_match in re.finditer(
-                r'<ix:nonFraction\s+([^>]+)/>',
+                r'<ix:nonFraction\s+([^>]+)>([^<]*)</ix:nonFraction>',
                 html_text, re.IGNORECASE,
             ):
                 attrs_str = tag_match.group(1)
+                val_text = tag_match.group(2).strip()
+
                 name_m = re.search(r'name="([^"]+)"', attrs_str)
                 ctx_m = re.search(r'contextRef="([^"]+)"', attrs_str)
                 scale_m = re.search(r'scale="([^"]+)"', attrs_str)
@@ -281,21 +283,12 @@ class FilingResolverProvider(SourceProvider):
                 if not name_m or not ctx_m:
                     continue
 
-                tag_name = name_m.group(1).lower()
-                if tag_name not in _KEY_XBRL_TAGS:
+                raw_name = name_m.group(1)
+                tag_name_lower = raw_name.lower()
+                if tag_name_lower not in _KEY_XBRL_TAGS:
                     continue
 
                 ctx_ref = ctx_m.group(1)
-                # Get the text value between open and close tags
-                # For self-closing tags, value is empty; try the text content pattern
-                val_match = re.search(
-                    r'<ix:nonFraction\s+' + re.escape(attrs_str) + r'>([^<]*)</ix:nonFraction>',
-                    html_text, re.IGNORECASE,
-                )
-                if val_match:
-                    val_text = val_match.group(1).strip()
-                else:
-                    continue
 
                 if not val_text:
                     continue
@@ -311,11 +304,11 @@ class FilingResolverProvider(SourceProvider):
                 if sign_m and sign_m.group(1) == "-":
                     value = -value
 
-                fact_key = f"{tag_name}|{ctx_ref}"
+                fact_key = f"{tag_name_lower}|{ctx_ref}"
                 if fact_key not in facts:
                     facts[fact_key] = {
-                        "tag": tag_name,
-                        "category": _KEY_XBRL_TAGS[tag_name],
+                        "tag": raw_name,
+                        "category": _KEY_XBRL_TAGS[tag_name_lower],
                         "value": value,
                         "unit": unit_m.group(1) if unit_m else "",
                         "context_ref": ctx_ref,
