@@ -626,11 +626,11 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 ### v0.4：Knowledge & Governance Contracts
 
-优先修正 Claim 知识模型、Evidence Relation、核心 schema / contract、`run_manifest.json`、语义审计状态、Audit Finding 分类和 Rule Packs。
+优先修正 Claim 知识模型、Evidence Relation、核心 schema / contract、`run_manifest.json`、语义审计状态、Audit Finding 分类、Rule Packs，并预留事件/字段级治理钩子。
 
 ### v0.5：Production Reference Workflow
 
-冻结一条正式主路径，补齐 Audience Profiles、DOCX 模板与渲染验证、Final Clean、Policy & Regulatory Risk Module、HistoryStore 基础接口和 effort budgets。
+冻结一条正式主路径，补齐 Audience Profiles、DOCX 模板与渲染验证、Final Clean、Editorial Governance、Policy & Regulatory Risk Module、HistoryStore 基础接口和 effort budgets。Editorial Governance 覆盖反馈污染、meta 内容泄漏、事实密度、可比案例适用性、研究缺口分离和来源覆盖。
 
 ### v1.0：Stable Baseline
 

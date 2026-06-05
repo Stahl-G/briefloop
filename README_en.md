@@ -774,8 +774,8 @@ See [docs/claude-code-workflow.md](docs/claude-code-workflow.md) and [docs/claud
 
 The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime work.
 
-- **v0.4: Knowledge & Governance Contracts** — Claim epistemic types, evidence relations, schema contracts, `run_manifest.json`, semantic audit states, finding taxonomy, and rule packs.
-- **v0.5: Production Reference Workflow** — one official path, Audience Profiles, DOCX templates and validation, Final Clean, Policy & Regulatory Risk Module, HistoryStore, and effort budgets.
+- **v0.4: Knowledge & Governance Contracts** — Claim epistemic types, evidence relations, schema contracts, `run_manifest.json`, semantic audit states, finding taxonomy, rule packs, and event/field governance hooks.
+- **v0.5: Production Reference Workflow** — one official path, Audience Profiles, DOCX templates and validation, Final Clean, Editorial Governance, Policy & Regulatory Risk Module, HistoryStore, and effort budgets. Editorial Governance covers feedback contamination, meta-content leakage, factual density, comparable-case applicability, research-gap separation, and source coverage.
 - **v1.0: Stable Baseline** — golden datasets, benchmark metrics, contract compliance tests, release consistency checks, and a formal support matrix.
 - **v2.0: MAS Runtime Candidate** — after v1.0, explore Shared World, Event Store, TaskBoard, AgentMessage, ClaimProposal / ClaimReducer, replay, and minimal coordination protocols.
 
