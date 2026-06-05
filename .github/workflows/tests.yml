@@ -228,21 +228,7 @@ jobs:
           p.write_text(s, encoding="utf-8")
 
       - name: Run pipeline
-        run: |
-          python -c "
-import sys, json
-from pathlib import Path
-p = Path('/tmp/mabw-docx')
-from multi_agent_brief.core.config import build_run_settings, load_config
-from multi_agent_brief.core.pipeline import BriefPipeline
-from multi_agent_brief.core.schemas import PipelineContext
-config = load_config(str(p / 'config.yaml'))
-settings = build_run_settings(config=config, input_dir=str(p / 'input'), output_dir=str(p / 'output'), name=None, language=None, audience=None)
-context = PipelineContext(**settings)
-BriefPipeline().run(context)
-d = json.loads((p / 'output' / 'intermediate' / 'claim_ledger.json').read_text())
-print(f'claim_ledger has {len(d)} entries')
-"
+        run: python scripts/ci/smoke_pipeline.py /tmp/mabw-docx/config.yaml /tmp/mabw-docx/input /tmp/mabw-docx/output
 
       - name: Assert brief.docx exists
         run: test -s /tmp/mabw-docx/output/brief.docx
