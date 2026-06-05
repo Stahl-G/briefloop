@@ -170,6 +170,57 @@ def run_deterministic_audit(
             )
         )
 
+    # Epistemic gate checks (Claim Schema v2)
+    for claim in ledger:
+        if claim.epistemic_type == "hypothesis" and claim.confidence == "high":
+            findings.append(
+                AuditFinding(
+                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    severity="high",
+                    finding_type="hypothesis_high_confidence",
+                    related_claim_id=claim.claim_id,
+                    description="Hypothesis claim is presented with high confidence — hypotheses should not be treated as certain facts.",
+                    recommendation="Lower confidence to medium/low or reclassify as observed.",
+                    evidence=claim.statement,
+                )
+            )
+        if claim.epistemic_type == "action" and not claim.applicability_reason.strip():
+            findings.append(
+                AuditFinding(
+                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    severity="high",
+                    finding_type="action_without_basis",
+                    related_claim_id=claim.claim_id,
+                    description="Action claim lacks applicability rationale — actions must justify why they apply here.",
+                    recommendation="Add applicability_reason explaining why this action is relevant.",
+                    evidence=claim.statement,
+                )
+            )
+        if claim.epistemic_type == "analogy" and not claim.limitations:
+            findings.append(
+                AuditFinding(
+                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    severity="medium",
+                    finding_type="analogy_without_limitations",
+                    related_claim_id=claim.claim_id,
+                    description="Analogy claim has no stated limitations — analogies must declare where they break down.",
+                    recommendation="Add limitations describing where the analogy does not hold.",
+                    evidence=claim.statement,
+                )
+            )
+        if claim.epistemic_type == "analogy" and claim.evidence_relation == "direct":
+            findings.append(
+                AuditFinding(
+                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    severity="high",
+                    finding_type="analogy_direct_relation",
+                    related_claim_id=claim.claim_id,
+                    description="Analogy claim uses 'direct' evidence relation — analogies should use indirect or analogous relation.",
+                    recommendation="Change evidence_relation to 'indirect' or 'analogous'.",
+                    evidence=claim.statement,
+                )
+            )
+
     unused_claims = [claim.claim_id for claim in ledger if claim.claim_id not in referenced_ids]
     metadata = {
         "refs_extracted": len(refs),

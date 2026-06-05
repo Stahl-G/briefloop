@@ -13,6 +13,11 @@ Confidence = Literal["low", "medium", "high"]
 AuditSeverity = Literal["low", "medium", "high"]
 AuditStatus = Literal["pass", "warning", "fail"]
 
+# v2 epistemic types
+SchemaVersion = Literal["v1", "v2"]
+EpistemicType = Literal["observed", "interpreted", "hypothesis", "action", "analogy"]
+EvidenceRelation = Literal["direct", "indirect", "inferred", "analogous"]
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -46,13 +51,36 @@ class Claim:
     created_by: str = "scout"
     used_in_sections: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # v2 epistemic fields
+    schema_version: SchemaVersion = "v1"
+    epistemic_type: EpistemicType = "observed"
+    evidence_relation: EvidenceRelation = "direct"
+    applicability_reason: str = ""
+    limitations: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Claim":
-        return cls(**data)
+        known = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in known}
+        claim = cls(**filtered)
+        # v1→v2 migration: fill missing epistemic fields from claim_type
+        if "epistemic_type" not in data:
+            claim.epistemic_type = cls._migrate_epistemic(claim.claim_type)
+        if "schema_version" not in data:
+            claim.schema_version = "v1"
+        return claim
+
+    @staticmethod
+    def _migrate_epistemic(claim_type: str) -> EpistemicType:
+        mapping: dict[str, EpistemicType] = {
+            "interpretation": "interpreted",
+            "forecast": "hypothesis",
+            "risk": "hypothesis",
+        }
+        return mapping.get(claim_type, "observed")
 
 
 @dataclass

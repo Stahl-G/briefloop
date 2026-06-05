@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-05
+
 ### Added
 
-- User install entry points: `scripts/install.sh` for curl-based macOS/Linux/WSL installation, `scripts/install.ps1` for Windows PowerShell installation, and a Homebrew formula for the core CLI.
-- README install guidance now separates end-user CLI installation from contributor source checkout setup.
-- Roadmap refresh: public v0.4/v0.5/v1.0 plan, sanitized agent reference roadmap, and v2.0 MAS Runtime evaluation.
+- **Claim Schema v2**: new epistemic fields on `Claim` — `schema_version`, `epistemic_type` (observed/interpreted/hypothesis/action/analogy), `evidence_relation` (direct/indirect/inferred/analogous), `applicability_reason`, `limitations`.
+- **Epistemic audit gates**: deterministic auditor now checks hypothesis-high-confidence misuse, action-without-basis, analogy-without-limitations, and analogy-direct-relation.
+- **Backward-compatible migration**: `Claim.from_dict()` auto-fills v2 fields from `claim_type` for v1 ledger data.
+
+## [0.3.5] — 2026-06-05
+
+### Added
+
+- Init wizard auto-recommends capabilities based on focus areas after workspace creation.
 
 ## [0.3.4] — 2026-06-05
 
