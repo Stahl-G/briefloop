@@ -111,6 +111,14 @@ def render_coverage_report(
 
     missing = [eid for eid in primary_ids if eid not in entities_with_evidence]
 
+    # absence_of_evidence: entities present in history but with no NEW events
+    # resolved events (change_status=resolved, materiality=low) count as absence
+    resolved_entities = {
+        eid for ev in events
+        if ev.change_status == "resolved"
+        for eid in ev.entity_ids
+    }
+
     all_dims: list[Dimension] = [
         "capacity", "technology", "customers_partnerships",
         "financials", "policy_compliance", "market_demand",
@@ -124,6 +132,7 @@ def render_coverage_report(
         ),
         missing_entities=missing,
         undercovered_dimensions=undercovered,
+        absence_of_evidence_entities=sorted(resolved_entities),
         generated_at=utc_now_iso(),
     )
 

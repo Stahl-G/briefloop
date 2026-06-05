@@ -168,3 +168,76 @@ def test_render_all(tmp_path: Path):
     for key in ("events", "competitor_matrix", "coverage_report", "watchlist", "evidence_pack"):
         assert key in paths
         assert Path(paths[key]).exists()
+
+
+# ── Cross-period state tracking ─────────────────────────────────────────────
+
+def test_build_events_first_run_all_new(tmp_path: Path):
+    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
+    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
+    state_dir = str(tmp_path / "state")
+    events = build_events(_make_ledger(c1), u, state_dir=state_dir)
+    assert len(events) == 1
+    assert events[0].change_status == "new"
+    # History file should exist
+    history = tmp_path / "state" / "market_competitor" / "event_history.jsonl"
+    assert history.exists()
+
+
+def test_build_events_second_run_unchanged(tmp_path: Path):
+    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
+    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
+    state_dir = str(tmp_path / "state")
+
+    # First run
+    events1 = build_events(_make_ledger(c1), u, state_dir=state_dir)
+    assert events1[0].change_status == "new"
+
+    # Second run — same claim, same status
+    events2 = build_events(_make_ledger(c1), u, state_dir=state_dir)
+    assert events2[0].change_status == "unchanged"
+
+
+def test_build_events_status_changed(tmp_path: Path):
+    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
+    state_dir = str(tmp_path / "state")
+
+    # First run: announced
+    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
+    build_events(_make_ledger(c1), u, state_dir=state_dir)
+
+    # Second run: under construction (status progressed)
+    c2 = _make_claim("C2", "Comp A factory under construction.", ["comp_a"], "capacity_expansion", "capacity")
+    events2 = build_events(_make_ledger(c2), u, state_dir=state_dir)
+    assert events2[0].change_status == "changed"
+    assert events2[0].status == "under_construction"
+
+
+def test_build_events_cancelled_tracking(tmp_path: Path):
+    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
+    state_dir = str(tmp_path / "state")
+
+    # First run
+    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
+    build_events(_make_ledger(c1), u, state_dir=state_dir)
+
+    # Second run: cancelled
+    c2 = _make_claim("C2", "Comp A cancelled factory project.", ["comp_a"], "capacity_expansion", "capacity")
+    events2 = build_events(_make_ledger(c2), u, state_dir=state_dir)
+    assert events2[0].change_status == "cancelled"
+    assert events2[0].status == "cancelled"
+
+
+def test_build_events_resolved_previous_events(tmp_path: Path):
+    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
+    state_dir = str(tmp_path / "state")
+
+    # First run: has an event
+    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
+    build_events(_make_ledger(c1), u, state_dir=state_dir)
+
+    # Second run: no events at all
+    events2 = build_events(_make_ledger(), u, state_dir=state_dir)
+    # Should include resolved placeholder
+    resolved = [ev for ev in events2 if ev.change_status == "resolved"]
+    assert len(resolved) >= 1

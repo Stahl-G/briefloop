@@ -52,7 +52,8 @@ class MarketCompetitorModule(AnalysisModule):
             )
 
         # Build events from entity-tagged claims
-        events = build_events(ledger, universe)
+        state_dir = str(Path(config_dir).parent / "state") if config_dir else None
+        events = build_events(ledger, universe, state_dir=state_dir)
 
         # Render artifacts
         artifact_paths = render_all(events, ledger, universe, output_dir)
