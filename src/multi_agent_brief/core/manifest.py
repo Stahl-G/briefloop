@@ -54,6 +54,7 @@ class RunManifest:
     audit_status: str = ""  # pass / warning / fail / not_run
     audit_score: int | None = None
     audit_finding_count: int = 0
+    semantic_status: str = ""  # not_configured / not_run / pass / warning / fail / error
 
     # Artifacts: name → {path, hash}
     artifacts: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -93,6 +94,7 @@ def build_manifest(
     audit_status: str = "",
     audit_score: int | None = None,
     audit_finding_count: int = 0,
+    semantic_status: str = "",
     artifact_paths: dict[str, str | Path] | None = None,
     stage_outputs: list[dict[str, Any]] | None = None,
     errors: list[dict[str, str]] | None = None,
@@ -131,6 +133,7 @@ def build_manifest(
         audit_status=audit_status or "not_run",
         audit_score=audit_score,
         audit_finding_count=audit_finding_count,
+        semantic_status=semantic_status or "not_run",
     )
 
     # Artifact hashes

@@ -6,7 +6,11 @@ from multi_agent_brief.core.schemas import AuditFinding, AuditReport, PipelineCo
 
 
 class NoOpSemanticAuditAgent(AuditAgentInterface):
-    """Semantic audit placeholder for model-backed implementations."""
+    """Semantic audit placeholder for model-backed implementations.
+
+    Returns a distinct status so downstream consumers can tell this
+    is NOT a real audit pass — it's an unconfigured placeholder.
+    """
 
     name = "noop-semantic-auditor"
 
@@ -17,11 +21,12 @@ class NoOpSemanticAuditAgent(AuditAgentInterface):
         context: PipelineContext | None = None,
     ) -> AuditReport:
         return AuditReport(
-            audit_status="pass",
-            audit_score=100,
+            audit_status="not_configured",
+            audit_score=0,
             findings=[],
             metadata={
                 "note": "Semantic audit adapter is configured but no model provider is attached.",
+                "semantic_status": "not_configured",
                 "ledger_claims": len(ledger),
             },
         )

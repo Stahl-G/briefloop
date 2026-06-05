@@ -57,12 +57,18 @@ class CompositeAuditAgent(AuditAgentInterface):
 
         if self.semantic_agent is None:
             report.metadata["semantic_agent"] = "not_configured"
+            report.metadata["semantic_status"] = "not_configured"
             return recompute_report_status(report)
 
         semantic_report = self.semantic_agent.run_audit(markdown, ledger, context)
         report.findings.extend(semantic_report.findings)
         report.metadata["semantic_agent"] = self.semantic_agent.name
         report.metadata["semantic_findings"] = len(semantic_report.findings)
+        # Propagate semantic_status from the semantic agent's report
+        report.metadata["semantic_status"] = semantic_report.metadata.get(
+            "semantic_status",
+            "pass" if semantic_report.audit_status == "pass" else semantic_report.audit_status,
+        )
         return recompute_report_status(report)
 
 

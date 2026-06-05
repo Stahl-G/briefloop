@@ -580,6 +580,7 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
             audit_status=audit_report.audit_status if audit_report else "not_run",
             audit_score=audit_report.audit_score if audit_report else None,
             audit_finding_count=len(audit_report.findings) if audit_report else 0,
+            semantic_status=(audit_report.metadata.get("semantic_status", "") if audit_report else ""),
             artifact_paths=artifact_paths,
             stage_outputs=stage_dicts,
         )
