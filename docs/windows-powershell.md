@@ -171,10 +171,4 @@ WSL/Git Bash 可以使用 macOS/Linux 文档里的 Bash 命令，但 Windows 用
 
 ### Git Hook Is Optional
 
-`.githooks/pre-push` 是维护者可选 hook，用于推送前检查 README 是否更新。普通 Windows 用户不需要安装这个 hook。
-
-需要手动运行同一检查时：
-
-```powershell
-python scripts/check_readme_updated.py
-```
+`.githooks/pre-push` 是维护者可选 hook，普通 Windows 用户不需要安装。
