@@ -33,6 +33,7 @@ class BriefPipeline:
 
     def run(self, context: PipelineContext) -> list[AgentOutput]:
         ledger = ClaimLedger()
+        context.metadata["_ledger"] = ledger  # expose for manifest/build_manifest
         outputs: list[AgentOutput] = []
 
         # Step 0: Source Collection — always via provider system

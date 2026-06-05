@@ -30,6 +30,7 @@ brief-workspace/
 # IDE and personal settings
 .codegraph/
 .reasonix/
+reasonix.toml
 .idea/
 .vscode/
 *.swp

@@ -8,6 +8,19 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AgentOutput, CandidateItem, Claim, PipelineContext, SourceItem
 from multi_agent_brief.sources.content_quality import is_low_quality_snippet, sanitize_snippet
 
+# Maps claim_type → epistemic_type for Claim construction.
+# Same logic as Claim._migrate_epistemic but applied eagerly at build time.
+_CLAIM_TYPE_TO_EPISTEMIC: dict[str, str] = {
+    "interpretation": "interpreted",
+    "forecast": "hypothesis",
+    "risk": "hypothesis",
+}
+
+
+def _infer_epistemic(claim_type: str) -> str:
+    """Derive epistemic_type from claim_type at construction time."""
+    return _CLAIM_TYPE_TO_EPISTEMIC.get(claim_type, "observed")
+
 
 class ScoutAgent(BaseAgent):
     name = "scout"
@@ -72,6 +85,7 @@ class ScoutAgent(BaseAgent):
                         importance=infer_importance(statement),
                         reason_for_inclusion="Contains a reportable business, market, policy, or risk signal.",
                     )
+                    claim_type_val = source.metadata.get("claim_type") or infer_claim_type(statement)
                     claim = Claim(
                         claim_id=claim_id,
                         statement=statement,
@@ -79,7 +93,8 @@ class ScoutAgent(BaseAgent):
                         evidence_text=statement,
                         source_url=source.url,
                         source_type=source.source_type,
-                        claim_type=source.metadata.get("claim_type") or infer_claim_type(statement),
+                        claim_type=claim_type_val,
+                        epistemic_type=_infer_epistemic(claim_type_val),
                         confidence="medium",
                         created_by=self.name,
                         metadata={
@@ -146,6 +161,7 @@ def _extract_web_search_claim(source: SourceItem, ledger: ClaimLedger, agent_nam
         return None
 
     claim_id = ledger.build_claim_id(statement, source.source_id)
+    claim_type_val = infer_claim_type(statement)
     return Claim(
         claim_id=claim_id,
         statement=statement,
@@ -153,7 +169,8 @@ def _extract_web_search_claim(source: SourceItem, ledger: ClaimLedger, agent_nam
         evidence_text=sanitized,
         source_url=source.url,
         source_type=source.source_type,
-        claim_type=infer_claim_type(statement),
+        claim_type=claim_type_val,
+        epistemic_type=_infer_epistemic(claim_type_val),
         confidence="medium",
         created_by=agent_name,
         metadata={
@@ -178,6 +195,7 @@ def _extract_filing_claim(source: SourceItem, ledger: ClaimLedger, agent_name: s
         return None
 
     claim_id = ledger.build_claim_id(content, source.source_id)
+    claim_type_val = source.metadata.get("claim_type") or infer_claim_type(content)
     return Claim(
         claim_id=claim_id,
         statement=content,
@@ -185,7 +203,8 @@ def _extract_filing_claim(source: SourceItem, ledger: ClaimLedger, agent_name: s
         evidence_text=content,
         source_url=source.url,
         source_type=source.source_type,
-        claim_type=source.metadata.get("claim_type") or infer_claim_type(content),
+        claim_type=claim_type_val,
+        epistemic_type=_infer_epistemic(claim_type_val),
         confidence="high",  # SEC official data
         created_by=agent_name,
         metadata={

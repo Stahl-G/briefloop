@@ -4,6 +4,7 @@ import re
 
 from multi_agent_brief.audit.deterministic import SRC_REF_PATTERN
 from multi_agent_brief.audit.interfaces import AuditAgentInterface
+from multi_agent_brief.audit.rule_packs import tag_finding
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AuditFinding, AuditReport, PipelineContext
 
@@ -50,6 +51,17 @@ QUALITY_RULES: list[tuple[str, str, str, str]] = [
 NUMBER_PATTERN = re.compile(r"(?<!\[src:)(?<!\[)(?<!\w)(\$[\d,.]+|[\d.]+%(?!\w)|[\d.]+ ?(?:GW|GWh|MW|MWh|bps))")
 
 
+def _tag(finding_type: str, **kwargs) -> AuditFinding:
+    """Create an AuditFinding with taxonomy tags from the rule pack."""
+    tax = tag_finding(finding_type)
+    return AuditFinding(
+        finding_type=finding_type,
+        blocking_level=tax["blocking_level"],
+        repair_owner=tax["repair_owner"],
+        **kwargs,
+    )
+
+
 class QualityHarnessAuditAgent(AuditAgentInterface):
     """Generic quality harness ported from local workflow prototypes."""
 
@@ -86,10 +98,10 @@ def _empty_report_findings(
     if "No candidate claims were found." not in markdown and markdown.strip():
         return []
     return [
-        AuditFinding(
+        _tag(
+            "no_reportable_claims",
             finding_id="EMPTY_001",
             severity="high",
-            finding_type="no_reportable_claims",
             description="Pipeline produced a brief with zero reportable claims.",
             recommendation="Add usable source inputs or explicitly mark this as an allowed empty quiet-week run.",
         )
@@ -101,10 +113,10 @@ def _regex_rule_findings(markdown: str) -> list[AuditFinding]:
     for pattern, finding_type, description, recommendation in QUALITY_RULES:
         for match in re.finditer(pattern, markdown, re.IGNORECASE | re.MULTILINE):
             findings.append(
-                AuditFinding(
+                _tag(
+                    finding_type,
                     finding_id=f"HARNESS_{len(findings)+1:03d}",
                     severity="high" if finding_type in {"placeholder_text", "investment_advice_language"} else "medium",
-                    finding_type=finding_type,
                     description=description,
                     recommendation=recommendation,
                     evidence=match.group(0),
@@ -124,10 +136,10 @@ def _claim_gate_findings(markdown: str, ledger: ClaimLedger) -> list[AuditFindin
         source_tier = str(claim.metadata.get("source_tier", "") or "")
         if claim_type == "needs_recrawl":
             findings.append(
-                AuditFinding(
+                _tag(
+                    "needs_recrawl_claim_used",
                     finding_id=f"RECRAWL_{len(findings)+1:03d}",
                     severity="high",
-                    finding_type="needs_recrawl_claim_used",
                     related_claim_id=claim_id,
                     description="A needs_recrawl claim is cited in the brief.",
                     recommendation="Remove the claim and recrawl the source before using it.",
@@ -136,10 +148,10 @@ def _claim_gate_findings(markdown: str, ledger: ClaimLedger) -> list[AuditFindin
             )
         if source_tier == "T5":
             findings.append(
-                AuditFinding(
+                _tag(
+                    "low_confidence_source_used",
                     finding_id=f"TIER_{len(findings)+1:03d}",
                     severity="high",
-                    finding_type="low_confidence_source_used",
                     related_claim_id=claim_id,
                     description="A T5 or low-confidence source is cited in the brief.",
                     recommendation="Replace it with a higher-tier source or remove the item.",
@@ -154,10 +166,10 @@ def _source_density_findings(markdown: str) -> list[AuditFinding]:
     refs = SRC_REF_PATTERN.findall(markdown)
     if numbers and len(refs) < len(numbers) * 0.5:
         return [
-            AuditFinding(
+            _tag(
+                "low_source_density",
                 finding_id="DENSITY_001",
                 severity="high",
-                finding_type="low_source_density",
                 description=f"Many number-like values lack source coverage: {len(numbers)} numbers, {len(refs)} source references.",
                 recommendation="Attach source references to key numbers or remove unsupported figures.",
                 evidence=", ".join(numbers[:10]),
@@ -172,10 +184,10 @@ def _unit_guard_findings(markdown: str) -> list[AuditFinding]:
         value = float(match.group(1).replace(",", ""))
         if value > 1000:
             findings.append(
-                AuditFinding(
+                _tag(
+                    "possible_eia_unit_inflation",
                     finding_id=f"UNIT_{len(findings)+1:03d}",
                     severity="high",
-                    finding_type="possible_eia_unit_inflation",
                     description="EIA generation value may have been inflated from thousand MWh into GWh.",
                     recommendation="Check whether the source unit is thousand MWh; write the equivalent GWh correctly.",
                     evidence=match.group(0),
@@ -193,10 +205,10 @@ def _repeat_summary_findings(markdown: str, ledger: ClaimLedger) -> list[AuditFi
         claim = ledger.get_claim(match.group(1))
         if claim and claim.metadata.get("repeat") is True:
             findings.append(
-                AuditFinding(
+                _tag(
+                    "repeat_claim_in_summary",
                     finding_id=f"REPEAT_{len(findings)+1:03d}",
                     severity="medium",
-                    finding_type="repeat_claim_in_summary",
                     related_claim_id=claim.claim_id,
                     description="A repeated/background claim appears in the executive summary.",
                     recommendation="Keep executive summary focused on fresh report-window changes.",
@@ -210,10 +222,10 @@ def _stale_filler_findings(markdown: str) -> list[AuditFinding]:
     hits = re.findall(r"本期无新增|暂无新增|无新增可核验|上期已覆盖|previously covered|no material update", markdown, re.IGNORECASE)
     if len(hits) >= 3:
         return [
-            AuditFinding(
+            _tag(
+                "stale_filler_language",
                 finding_id="FILLER_001",
                 severity="medium",
-                finding_type="stale_filler_language",
                 description=f"Brief contains {len(hits)} stale/no-update filler phrases.",
                 recommendation="Remove no-update filler sections unless they carry a specific decision impact.",
                 evidence=", ".join(hits[:10]),
