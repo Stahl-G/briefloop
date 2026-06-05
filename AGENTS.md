@@ -16,7 +16,7 @@ This repository has two modes:
    - In this mode, `user.md` is user context, and only `input/` contains source evidence.
    - Do not treat repository README, examples, agent docs, or generated config files as source evidence.
 
-Before running `multi-agent-brief run`, identify which mode you are in.
+Before running `multi-agent-brief prepare`, identify which mode you are in.
 
 ## Quick Start (for agents)
 
@@ -82,7 +82,7 @@ Fix any issues before proceeding.
 ### Step 5: Run deterministic pipeline
 
 ```bash
-multi-agent-brief run --config ../mabw-workspace/config.yaml
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml
 ```
 
 Output files will be in `../mabw-workspace/output/`.
@@ -90,7 +90,7 @@ This produces a deterministic draft — it is NOT the final brief.
 
 ### Step 6: Analyst subagent
 
-Use the `analyst` subagent to rewrite `output/brief.md` from `claim_ledger.json` and `user.md`.
+Use the `analyst` subagent to rewrite `output/intermediate/audited_brief.md` from `claim_ledger.json` and `user.md`.
 - Write in the workspace output language.
 - Use only claims in `claim_ledger.json`.
 - Preserve all valid `[src:CLAIM_ID]` citations.
@@ -178,7 +178,7 @@ Run demo:
 
 ```bash
 multi-agent-brief init ../mabw-workspace --demo
-multi-agent-brief run --config ../mabw-workspace/config.yaml
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml
 ```
 
 Generate agent configs:

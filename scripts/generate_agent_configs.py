@@ -163,7 +163,7 @@ def render_agents_md(manifest: dict) -> str:
         "   - In this mode, `user.md` is user context, and only `input/` contains source evidence.\n"
         "   - Do not treat repository README, examples, agent docs, or generated config files as source evidence.\n"
         "\n"
-        "Before running `multi-agent-brief run`, identify which mode you are in.\n"
+        "Before running `multi-agent-brief prepare`, identify which mode you are in.\n"
     )
 
     return (
@@ -237,7 +237,7 @@ def render_agents_md(manifest: dict) -> str:
         f"### Step 5: Run deterministic pipeline\n"
         f"\n"
         f"```bash\n"
-        f"multi-agent-brief run --config ../mabw-workspace/config.yaml\n"
+        f"multi-agent-brief prepare --config ../mabw-workspace/config.yaml\n"
         f"```\n"
         f"\n"
         f"Output files will be in `../mabw-workspace/output/`.\n"
@@ -245,7 +245,7 @@ def render_agents_md(manifest: dict) -> str:
         f"\n"
         f"### Step 6: Analyst subagent\n"
         f"\n"
-        f"Use the `analyst` subagent to rewrite `output/brief.md` from `claim_ledger.json` and `user.md`.\n"
+        f"Use the `analyst` subagent to rewrite `output/intermediate/audited_brief.md` from `claim_ledger.json` and `user.md`.\n"
         f"- Write in the workspace output language.\n"
         f"- Use only claims in `claim_ledger.json`.\n"
         f"- Preserve all valid `[src:CLAIM_ID]` citations.\n"
@@ -328,7 +328,7 @@ def render_agents_md(manifest: dict) -> str:
         f"\n"
         f"```bash\n"
         f"multi-agent-brief init ../mabw-workspace --demo\n"
-        f"multi-agent-brief run --config ../mabw-workspace/config.yaml\n"
+        f"multi-agent-brief prepare --config ../mabw-workspace/config.yaml\n"
         f"```\n"
         f"\n"
         f"Generate agent configs:\n"
