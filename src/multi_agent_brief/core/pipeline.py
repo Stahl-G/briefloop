@@ -35,7 +35,14 @@ class BriefPipeline:
         if source_output:
             outputs.append(source_output)
 
-        for agent in self.agents:
+        # Step 1: Scout
+        outputs.append(self.agents[0].run(context, ledger))
+
+        # Step 1.5: Entity & Event Enrichment (market-competitor only)
+        _enrich_entities_if_configured(context, ledger)
+
+        # Step 2-6: Screener → Analyst → Editor → Auditor → Formatter
+        for agent in self.agents[1:]:
             outputs.append(agent.run(context, ledger))
         return outputs
 
@@ -99,6 +106,11 @@ class BriefPipeline:
                 source_config.rss["feeds"] = plan.rss_feeds
                 source_config.rss["enabled"] = True
 
+        # Competitor-aware search tasks — inject queries for each
+        # primary competitor × dimension when competitor_universe.yaml
+        # has non-empty entities and web_search is enabled.
+        _inject_competitor_search_tasks(source_config, context)
+
         # Always include manual provider for local input/ directory
         if "manual" not in source_config.enabled_providers:
             source_config.enabled_providers.append("manual")
@@ -154,3 +166,83 @@ class BriefPipeline:
             rss={"enabled": False, "feeds": []},
             web_search={"enabled": False},
         )
+
+
+# ── Module-level helpers ────────────────────────────────────────────────────
+
+
+def _inject_competitor_search_tasks(
+    source_config: SourceConfig,
+    context: PipelineContext,
+) -> None:
+    """If competitor_universe.yaml has entities and web_search is enabled,
+    inject competitor × dimension search tasks into the web_search config.
+    """
+    if "web_search" not in source_config.enabled_providers:
+        return
+
+    config_dir = context.metadata.get("_config_dir", "")
+    if not config_dir:
+        return
+
+    universe_path = Path(config_dir) / "competitor_universe.yaml"
+    if not universe_path.exists():
+        return
+
+    try:
+        from multi_agent_brief.analysis_modules.market_competitor.config import (
+            load_competitor_universe,
+        )
+        from multi_agent_brief.analysis_modules.market_competitor.enricher import (
+            generate_competitor_search_tasks,
+        )
+        universe = load_competitor_universe(universe_path)
+        if not universe.enabled or not universe.entities:
+            return
+
+        tasks = generate_competitor_search_tasks(universe)
+        if not tasks:
+            return
+
+        existing_tasks = source_config.web_search.get("search_tasks", [])
+        existing_q = {t.get("query") for t in existing_tasks}
+        for task in tasks:
+            if task["query"] not in existing_q:
+                existing_tasks.append(task)
+                existing_q.add(task["query"])
+        source_config.web_search["search_tasks"] = existing_tasks
+    except Exception:
+        # If competitor_universe.yaml is malformed or dependencies missing,
+        # silently skip — competitor search is an enhancement, not a requirement.
+        pass
+
+
+def _enrich_entities_if_configured(
+    context: PipelineContext,
+    ledger: "ClaimLedger",
+) -> None:
+    """Tag claims with entity/event metadata if competitor_universe.yaml exists."""
+    config_dir = context.metadata.get("_config_dir", "")
+    if not config_dir:
+        return
+
+    universe_path = Path(config_dir) / "competitor_universe.yaml"
+    if not universe_path.exists():
+        return
+
+    try:
+        from multi_agent_brief.analysis_modules.market_competitor.config import (
+            load_competitor_universe,
+        )
+        from multi_agent_brief.analysis_modules.market_competitor.enricher import (
+            EntityEventEnricher,
+        )
+        universe = load_competitor_universe(universe_path)
+        if not universe.enabled or not universe.entities:
+            return
+
+        enricher = EntityEventEnricher(universe)
+        claims = list(ledger)
+        enricher.enrich(claims)
+    except Exception:
+        pass
