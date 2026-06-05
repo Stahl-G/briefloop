@@ -23,6 +23,13 @@ from multi_agent_brief.sources.decider import (
     generate_source_candidates,
     merge_candidates_to_sources,
 )
+from multi_agent_brief.analysis_modules.market_competitor.config import (
+    load_competitor_candidates,
+    save_competitor_candidates,
+    merge_candidates_to_universe,
+    load_competitor_universe,
+    generate_candidates_template,
+)
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 from multi_agent_brief.sources.registry import load_sources_config
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -88,6 +95,21 @@ def build_parser() -> argparse.ArgumentParser:
     decide_parser.add_argument("--candidates", help="Path to source_candidates.yaml (for --merge).")
 
     subparsers.add_parser("version", help="Print package version.")
+
+    # competitors subcommand group
+    comp_parser = subparsers.add_parser("competitors", help="Market & competitor universe management.")
+    comp_sub = comp_parser.add_subparsers(dest="competitors_action", required=True)
+
+    comp_propose = comp_sub.add_parser("propose", help="Generate competitor_candidates.yaml from user.md context.")
+    comp_propose.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
+
+    comp_list = comp_sub.add_parser("list", help="List pending competitor candidates.")
+    comp_list.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
+
+    comp_merge = comp_sub.add_parser("merge", help="Merge approved candidates into competitor_universe.yaml.")
+    comp_merge.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
+    comp_merge.add_argument("--candidates", help="Path to competitor_candidates.yaml.")
+
     return parser
 
 
@@ -358,6 +380,88 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_competitors_propose_from_args(args: argparse.Namespace) -> int:
+    """Generate competitor_candidates.yaml from user context.
+
+    Currently writes an empty template — LLM-driven proposal will be added
+    in a future PR via the market-competitor-planner subagent.
+    """
+    config_path = Path(args.config)
+    workspace = config_path.parent
+    candidates_path = workspace / "competitor_candidates.yaml"
+
+    if candidates_path.exists():
+        candidates = load_competitor_candidates(candidates_path)
+        if candidates:
+            print("[competitors] competitor_candidates.yaml already exists with candidates.")
+            print("              Run 'competitors list' to review, then 'competitors merge' to confirm.")
+            return 0
+
+    template = generate_candidates_template()
+    save_competitor_candidates(template["candidates"], candidates_path)
+    print(f"[competitors] Generated empty competitor_candidates.yaml at {candidates_path}")
+    print("[competitors] Add candidate competitors to this file, then run:")
+    print(f"  multi-agent-brief competitors merge --config {args.config}")
+    print("[hint] LLM-driven competitor discovery will be added in a future release.")
+    return 0
+
+
+def run_competitors_list_from_args(args: argparse.Namespace) -> int:
+    """List pending competitor candidates."""
+    config_path = Path(args.config)
+    workspace = config_path.parent
+    candidates_path = workspace / "competitor_candidates.yaml"
+
+    candidates = load_competitor_candidates(candidates_path)
+    if not candidates:
+        print("[competitors] No pending candidates. Run 'competitors propose' first.")
+        return 0
+
+    pending = [c for c in candidates if not c.get("approved", False)]
+    approved = [c for c in candidates if c.get("approved", False)]
+
+    if pending:
+        print(f"Pending ({len(pending)}):")
+        for c in pending:
+            print(f"  [{c.get('entity_id', '?')}] {c.get('name', '?')}  "
+                  f"relation={c.get('relation', '?')}  "
+                  f"suggested_by={c.get('suggested_by', '?')}")
+    if approved:
+        print(f"Approved ({len(approved)}):")
+        for c in approved:
+            print(f"  [{c.get('entity_id', '?')}] {c.get('name', '?')}")
+    if not pending and not approved:
+        print("[competitors] Candidate list is empty.")
+
+    return 0
+
+
+def run_competitors_merge_from_args(args: argparse.Namespace) -> int:
+    """Merge approved candidates into competitor_universe.yaml."""
+    config_path = Path(args.config)
+    workspace = config_path.parent
+    candidates_path = Path(args.candidates) if args.candidates else workspace / "competitor_candidates.yaml"
+    universe_path = workspace / "competitor_universe.yaml"
+
+    if not candidates_path.exists():
+        print(f"[error] competitor_candidates.yaml not found: {candidates_path}")
+        return 1
+
+    if not universe_path.exists():
+        print(f"[error] competitor_universe.yaml not found: {universe_path}")
+        print("[hint] Re-run 'multi-agent-brief init' to regenerate workspace files.")
+        return 1
+
+    added = merge_candidates_to_universe(candidates_path, universe_path)
+    print(f"[competitors] Merged {added} entities into competitor_universe.yaml")
+
+    universe = load_competitor_universe(universe_path)
+    if universe.entities:
+        print(f"[competitors] Tracking {len(universe.entities)} entities: "
+              f"{', '.join(e.name for e in universe.entities)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -373,6 +477,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "sources":
         if args.sources_action == "decide":
             return run_sources_decide_from_args(args)
+    if args.command == "competitors":
+        if args.competitors_action == "propose":
+            return run_competitors_propose_from_args(args)
+        if args.competitors_action == "list":
+            return run_competitors_list_from_args(args)
+        if args.competitors_action == "merge":
+            return run_competitors_merge_from_args(args)
     if args.command == "version":
         print(__version__)
         return 0

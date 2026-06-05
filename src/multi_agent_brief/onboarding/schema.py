@@ -36,5 +36,9 @@ class OnboardingResult:
 
     tavily_enabled: bool = False
 
+    # Market & Competitor Intelligence
+    market_scope: dict = field(default_factory=dict)
+    competitor_preferences: dict = field(default_factory=dict)
+
     confidence: str = "medium"
     missing: list[str] = field(default_factory=list)

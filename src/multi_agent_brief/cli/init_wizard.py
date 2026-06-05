@@ -188,6 +188,7 @@ def create_workspace(target: Path, profile: InitProfile, *, force: bool = False)
         target / "config.yaml": to_yaml(build_config(profile)),
         target / "profile.yaml": to_yaml(build_profile(profile)),
         target / "sources.yaml": to_yaml(build_sources(profile)),
+        target / "competitor_universe.yaml": to_yaml(_build_competitor_universe(profile)),
         target / "user.md": build_user_md(profile),
         target / ".gitignore": WORKSPACE_GITIGNORE,
         target / ".env.example": _build_env_example(),
@@ -864,6 +865,30 @@ def format_scalar(value: Any) -> str:
     if text == "auto" or not text or any(char in text for char in [":", "#", "[", "]", "{", "}", ","]):
         return json.dumps(text, ensure_ascii=False)
     return json.dumps(text, ensure_ascii=False)
+
+
+def _build_competitor_universe(profile: InitProfile) -> dict:
+    """Generate default competitor_universe.yaml content."""
+    return {
+        "target": {
+            "entity_id": "",
+            "name": profile.company or "",
+            "aliases": [],
+            "relation": "direct_competitor",
+            "priority": "primary",
+            "geographies": [],
+            "technologies": [],
+        },
+        "market_scope": {
+            "geographies": [],
+            "products": [],
+            "customer_segments": [],
+            "value_chain_positions": [],
+        },
+        "entities": [],
+        "mode": "weekly_monitor",
+        "enabled": False,
+    }
 
 
 def _build_env_example() -> str:
