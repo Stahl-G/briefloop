@@ -33,20 +33,26 @@ def main() -> None:
     context = PipelineContext(**settings)
     BriefPipeline().run(context)
 
-    # Verify claim_ledger if path given
-    if ledger_path:
-        d = json.load(open(ledger_path))
-        print(f"claim_ledger has {len(d)} entries")
-    else:
-        # Try default location
-        for candidate in [
-            Path(output_dir or "") / "intermediate" / "claim_ledger.json",
-            Path(output_dir or "") / "claim_ledger.json",
-        ]:
-            if candidate.exists():
-                d = json.loads(candidate.read_text())
-                print(f"claim_ledger has {len(d)} entries")
-                break
+    # Verify claim_ledger — resolve against actual output dir from context
+    actual_output = Path(context.output_dir)
+    candidates = [ledger_path] if ledger_path else [
+        str(actual_output / "intermediate" / "claim_ledger.json"),
+        str(actual_output / "claim_ledger.json"),
+    ]
+
+    found = False
+    for cand in candidates:
+        if cand and Path(cand).exists():
+            d = json.loads(Path(cand).read_text())
+            print(f"claim_ledger has {len(d)} entries")
+            if len(d) == 0:
+                print("ERROR: claim_ledger is empty — pipeline produced no claims")
+                sys.exit(1)
+            found = True
+            break
+
+    if not found:
+        print("WARNING: claim_ledger.json not found — skipping ledger check")
 
     print("SMOKE PASSED")
 
