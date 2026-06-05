@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-06-05
+
+### Added
+
+- **Capability Center**: new `src/multi_agent_brief/capabilities/` package with registry, readiness detection, and recommendation engine.
+- **`multi-agent-brief features`**: categorized feature catalog with status symbols (✓/!/○/—). Supports `--info <id>`, `--json`, and `<workspace>` arguments.
+- **`multi-agent-brief recommend`**: deterministic keyword→capability recommendation rules. Supports `--text`, `--json`, and `<workspace>` arguments.
+- **`multi-agent-brief setup`**: apply capability recommendations to a workspace with safe YAML merge. Supports `--dry-run` and `--from-plan` arguments.
+- **Doctor enhancements**: now shows capability status summary and input-based recommendations.
+- **`.env.example` updated**: lists all 7 API keys (Tavily, Exa, Brave, Firecrawl, Serper, NewsAPI, MinerU) with section headers and provider URLs.
+- **Auto-generated feature docs**: `docs/features.md` and `docs/features.zh-CN.md` generated from capability catalog.
+- **CI gate**: `scripts/check_capabilities.py` ensures every user-facing provider has a CapabilitySpec registered.
+
+### Changed
+
+- **Root `.env.example`** replaced legacy model-provider keys with current API key list matching wizard-generated output.
+
 ## [0.3.2] — 2026-06-05
 
 ### Added

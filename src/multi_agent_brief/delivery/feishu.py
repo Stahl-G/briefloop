@@ -1,15 +1,16 @@
 """Feishu/Lark delivery connector using lark-cli.
 
 Sends briefs to Feishu via:
-  - IM message (lark-cli im +messages-send)
+  - IM message (lark-cli im +messages-send --as bot)
   - Document creation (lark-cli docs +create)
-  - File upload (lark-cli drive upload)
+  - File upload (lark-cli drive +upload)
 
 Requires lark-cli to be installed and authenticated.
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -90,11 +91,32 @@ class FeishuDeliveryConnector(DeliveryConnector):
             return f"feishu: unable to check auth: {e}"
 
     def _run_lark_cli(self, args: list[str]) -> subprocess.CompletedProcess | None:
-        """Run lark-cli and return result."""
+        """Run lark-cli and return result.
+
+        Disables proxy (LARK_CLI_NO_PROXY=1) so lark-cli does not route
+        credentials through HTTPS_PROXY.  Also resolves any file path
+        arguments to absolute paths to avoid lark-cli's cwd-traversal guard.
+        """
+        env = {**os.environ, "LARK_CLI_NO_PROXY": "1"}
+        # Resolve --file paths to absolute to avoid lark-cli rejecting ".."
+        resolved_args: list[str] = []
+        skip_next = False
+        for i, arg in enumerate(args):
+            if skip_next:
+                resolved_args.append(arg)
+                skip_next = False
+                continue
+            if arg == "--file" and i + 1 < len(args):
+                resolved_args.append("--file")
+                resolved_args.append(str(Path(args[i + 1]).resolve()))
+                skip_next = True
+            else:
+                resolved_args.append(arg)
+
         try:
             return subprocess.run(
-                ["lark-cli"] + args,
-                capture_output=True, text=True, timeout=60,
+                ["lark-cli"] + resolved_args,
+                capture_output=True, text=True, timeout=60, env=env,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
@@ -118,6 +140,7 @@ class FeishuDeliveryConnector(DeliveryConnector):
         result = self._run_lark_cli([
             "im", "+messages-send",
             "--chat-id", chat_id,
+            "--as", "bot",
             "--text", content,
         ])
         if result is None or result.returncode != 0:
@@ -169,7 +192,7 @@ class FeishuDeliveryConnector(DeliveryConnector):
             return DeliveryResult(self.name, False, auth_err)
 
         folder_token = target.recipient or ""
-        args = ["drive", "upload", "--file", str(path)]
+        args = ["drive", "+upload", "--file", str(path)]
         if folder_token:
             args.extend(["--folder-token", folder_token])
 
