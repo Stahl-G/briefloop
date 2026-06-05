@@ -19,6 +19,9 @@
 - `draft-audit-harness.md` — Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks.
 - `final-quality-harness.md` — Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target.
 - `rendered-output-harness.md` — Reviews rendered output gates for DOCX/PDF/Markdown rendering fidelity.
+- `market-competitor-planner.md` — Recommends competitor candidates for a workspace based on user.md context (company, industry, market_scope, focus_areas).
+- `market-competitor-analyst.md` — Generates AnalysisCards from evidence_pack.json and writes competitor sections for the final brief.
+- `market-competitor-auditor.md` — Runs 6 specialist audits on competitor analysis output: comparison evidence, capacity status, metric basis, market trends, single-source confidence, and coverage gaps.
 
         Each subagent Markdown file has YAML frontmatter with:
 

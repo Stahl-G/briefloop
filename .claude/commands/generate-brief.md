@@ -27,6 +27,16 @@ Follow this sequence exactly:
    - Run: `multi-agent-brief run --config $ARGUMENTS/config.yaml`
    - This produces `output/brief.md` for readers and `output/intermediate/` audit artifacts.
 
+3.5 **Market & Competitor Module (if enabled):**
+   - Check if `$ARGUMENTS/competitor_universe.yaml` has non-empty entities.
+   - If yes and the module is enabled in config.yaml:
+     - Read `$ARGUMENTS/output/intermediate/market_competitor/evidence_pack.json`
+     - Invoke the **market-competitor-analyst** subagent to generate
+       `$ARGUMENTS/output/intermediate/market_competitor/analysis_cards.json`.
+     - Invoke the **market-competitor-auditor** subagent to run 6 specialist
+       audits and update `$ARGUMENTS/output/intermediate/audit_report.json`.
+   - If no entities or module is disabled, skip this step.
+
 4. Read:
    - $ARGUMENTS/output/intermediate/claim_ledger.json
    - $ARGUMENTS/output/intermediate/audited_brief.md
@@ -37,6 +47,9 @@ Follow this sequence exactly:
    - Use only claim_ledger.json as source evidence.
    - Preserve all valid [src:CLAIM_ID] citations.
    - Include dates for news items.
+   - If `$ARGUMENTS/output/intermediate/market_competitor/analysis_cards.json` exists,
+     read it and merge competitive analysis into the competitor section using
+     supporting_claim_ids from AnalysisCards for [src:CLAIM_ID] citations.
    - Target a real weekly brief, not a thin bullet list.
    - Write the auditable brief to $ARGUMENTS/output/intermediate/audited_brief.md.
 

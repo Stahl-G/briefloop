@@ -279,6 +279,9 @@ Correct facts are necessary but not sufficient for final delivery.
 - **draft-audit-harness** (harness): Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks.
 - **final-quality-harness** (harness): Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target.
 - **rendered-output-harness** (harness): Reviews rendered output gates for DOCX/PDF/Markdown rendering fidelity.
+- **market-competitor-planner** (analysis_module): Recommends competitor candidates for a workspace based on user.md context (company, industry, market_scope, focus_areas).
+- **market-competitor-analyst** (analysis_module): Generates AnalysisCards from evidence_pack.json and writes competitor sections for the final brief.
+- **market-competitor-auditor** (analysis_module): Runs 6 specialist audits on competitor analysis output: comparison evidence, capacity status, metric basis, market trends, single-source confidence, and coverage gaps.
 
 Full role details (responsibilities, hard rules, tool profiles) are in:
 - `.claude/agents/*.md` — Claude Code subagents
