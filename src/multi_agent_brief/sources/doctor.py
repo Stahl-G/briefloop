@@ -153,7 +153,36 @@ def run_doctor(
     else:
         results.append(CheckResult("OK", "Output directory does not exist yet (will be created)"))
 
+    # 12. Available but unconfigured providers
+    _add_available_info(results, source_config)
+
     return results
+
+
+def _add_available_info(results: list[CheckResult], source_config: SourceConfig) -> None:
+    """Add INFO hints for providers that exist but are disabled."""
+    enabled = set(source_config.enabled_providers)
+
+    provider_hints = {
+        "web_search": "web_search.enabled: true + set API key in .env",
+        "rss": "rss.enabled: true + add rss.feeds",
+        "api": "api.enabled: true + set NEWSAPI_API_KEY in .env",
+        "filing_resolver": "filing_resolver.enabled: true + add tickers",
+        "feishu": "feishu.enabled: true (requires lark-cli)",
+        "mineru": "mineru.enabled: true (local CLI or remote API)",
+        "mcp": "mcp.enabled: true + configure mcp.servers",
+    }
+
+    unconfigured = []
+    for provider, hint in provider_hints.items():
+        if provider not in enabled:
+            unconfigured.append((provider, hint))
+
+    if unconfigured:
+        results.append(CheckResult("OK", ""))
+        results.append(CheckResult("OK", "Available but not enabled (enable in sources.yaml):"))
+        for provider, hint in unconfigured:
+            results.append(CheckResult("OK", f"  {provider}: {hint}"))
 
 
 def format_doctor_report(results: list[CheckResult]) -> str:
