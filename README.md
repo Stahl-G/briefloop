@@ -640,7 +640,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
+完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.5 详细执行计划见 [docs/impl-plan-v0.5.0.md](docs/impl-plan-v0.5.0.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
 
 ---
 
