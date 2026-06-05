@@ -47,3 +47,19 @@ def load_enabled_modules(config: dict[str, Any] | None) -> list[AnalysisModule]:
         enabled_modules.append(instance)
 
     return enabled_modules
+
+
+# ── Auto-registration ───────────────────────────────────────────────────────
+
+def _auto_register() -> None:
+    """Register built-in analysis modules."""
+    try:
+        from multi_agent_brief.analysis_modules.market_competitor import (
+            MarketCompetitorModule,
+        )
+        register_module("market_competitor", MarketCompetitorModule)
+    except ImportError:
+        pass
+
+
+_auto_register()

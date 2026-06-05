@@ -41,8 +41,15 @@ class BriefPipeline:
         # Step 1.5: Entity & Event Enrichment (market-competitor only)
         _enrich_entities_if_configured(context, ledger)
 
-        # Step 2-6: Screener → Analyst → Editor → Auditor → Formatter
-        for agent in self.agents[1:]:
+        # Step 2: Screener
+        outputs.append(self.agents[1].run(context, ledger))
+
+        # Step 2.5: Analysis Modules (market-competitor, future earnings/policy/patent)
+        module_outputs = self._run_analysis_modules(context, ledger)
+        outputs.extend(module_outputs)
+
+        # Step 3-6: Analyst → Editor → Auditor → Formatter
+        for agent in self.agents[2:]:
             outputs.append(agent.run(context, ledger))
         return outputs
 
@@ -166,6 +173,42 @@ class BriefPipeline:
             rss={"enabled": False, "feeds": []},
             web_search={"enabled": False},
         )
+
+    def _run_analysis_modules(
+        self,
+        context: PipelineContext,
+        ledger: "ClaimLedger",
+    ) -> list[AgentOutput]:
+        """Run enabled analysis modules between Screener and Analyst."""
+        from multi_agent_brief.analysis_modules.registry import load_enabled_modules
+
+        # Load config from metadata
+        config_dir = context.metadata.get("_config_dir", "")
+        config: dict[str, Any] = {}
+        if config_dir:
+            config_path = Path(config_dir) / "config.yaml"
+            if config_path.exists():
+                try:
+                    from multi_agent_brief.core.config import load_config
+                    config = load_config(str(config_path))
+                except Exception:
+                    pass
+
+        modules = load_enabled_modules(config)
+        outputs: list[AgentOutput] = []
+        for module in modules:
+            try:
+                result = module.analyze(context, ledger)
+                context.metadata.setdefault("analysis_packs", {})
+                context.metadata["analysis_packs"][module.name] = result
+                outputs.append(AgentOutput(
+                    agent_name=f"analysis-module-{module.name}",
+                    summary=f"Module '{module.name}' completed with {len(result.artifacts)} artifacts.",
+                    artifacts=result.to_dict(),
+                ))
+            except Exception:
+                pass
+        return outputs
 
 
 # ── Module-level helpers ────────────────────────────────────────────────────
