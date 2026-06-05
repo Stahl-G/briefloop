@@ -256,7 +256,7 @@ multi-agent-brief sources decide --config ../mabw-workspace\config.yaml
 multi-agent-brief sources decide --config ../mabw-workspace\config.yaml --merge
 ```
 
-> 注意：`multi-agent-brief run` 命令已移除。正式简报应通过 Claude Code / Codex 的 `/generate-brief` 工作流生成，详见 [Claude Code 工作流](docs/claude-code-workflow.md)。
+> 注意：`multi-agent-brief run` 已弃用，仅保留迁移提示。请使用 `prepare` 或 `/generate-brief`。
 
 ---
 

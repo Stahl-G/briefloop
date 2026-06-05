@@ -1,6 +1,9 @@
+"""BriefPipeline — deterministic core pipeline."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Any
 
 from multi_agent_brief.agents.analyst import AnalystAgent
 from multi_agent_brief.agents.auditor import AuditorAgent
@@ -13,6 +16,8 @@ from multi_agent_brief.core.schemas import AgentOutput, PipelineContext
 from multi_agent_brief.sources.base import SourceConfig, SourceQuery
 from multi_agent_brief.sources.planner import create_source_plan
 from multi_agent_brief.sources.registry import collect_all_sources
+
+logger = logging.getLogger(__name__)
 
 
 class BriefPipeline:
@@ -213,8 +218,16 @@ class BriefPipeline:
                     summary=f"Module '{module.name}' completed with {len(result.artifacts)} artifacts.",
                     artifacts=result.to_dict(),
                 ))
-            except Exception:
-                pass
+            except Exception as exc:
+                outputs.append(AgentOutput(
+                    agent_name=f"analysis-module-{module.name}",
+                    summary=f"Module '{module.name}' FAILED: {type(exc).__name__}: {exc}",
+                    artifacts={
+                        "status": "failed",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:500],
+                    },
+                ))
         return outputs
 
     def _run_auditor(
@@ -250,8 +263,19 @@ class BriefPipeline:
                     summary=f"Audit status: {report.audit_status}; findings: {len(report.findings)} (incl. MC specialist).",
                     artifacts={"audit_status": report.audit_status, "finding_count": len(report.findings)},
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # Specialist auditor failed — log and fall back to default.
+                logger.warning(
+                    "MarketCompetitorAuditor failed (%s: %s). "
+                    "Falling back to default audit.",
+                    type(exc).__name__, exc,
+                )
+                # Still record the failure in metadata
+                context.metadata.setdefault("analysis_packs", {})
+                context.metadata["analysis_packs"].setdefault("market_competitor", {})
+                context.metadata["analysis_packs"]["market_competitor"].setdefault(
+                    "metadata", {},
+                )["auditor_status"] = f"failed: {type(exc).__name__}"
 
         return self.agents[4].run(context, ledger)
 

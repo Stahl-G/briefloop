@@ -117,7 +117,7 @@ Claude Code subagents complement the Python CLI — they do not replace it.
 - Output file formatting and validation
 - Source provider configuration and collection
 - Claim Ledger data structure
-- CLI commands (init, run, doctor, audit, sources decide)
+- CLI commands (init, prepare, doctor, audit, sources decide, competitors init/list/merge)
 
 ### What Stays in Subagents
 
