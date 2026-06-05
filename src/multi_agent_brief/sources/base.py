@@ -60,6 +60,7 @@ class SourceConfig:
     feishu: dict[str, Any] = field(default_factory=dict)
     mineru: dict[str, Any] = field(default_factory=dict)
     cached_package: dict[str, Any] = field(default_factory=dict)
+    filing_resolver: dict[str, Any] = field(default_factory=dict)
     config_dir: str = ""
 
     @classmethod
@@ -77,6 +78,7 @@ class SourceConfig:
             feishu=data.get("feishu", {}),
             mineru=data.get("mineru", {}),
             cached_package=data.get("cached_package", {}),
+            filing_resolver=data.get("filing_resolver", {}),
         )
 
 
@@ -84,17 +86,17 @@ class SourceConfig:
 SOURCE_PROFILES: dict[str, dict[str, Any]] = {
     "conservative": {
         "description": "Official and approved sources only",
-        "allowed_types": ["manual", "local_file"],
+        "allowed_types": ["manual", "local_file", "filing_resolver"],
         "web_search": False,
     },
     "research": {
         "description": "Official + industry media + web search",
-        "allowed_types": ["manual", "rss", "local_file", "web_search"],
+        "allowed_types": ["manual", "rss", "local_file", "web_search", "filing_resolver"],
         "web_search": True,
     },
     "aggressive_signal": {
         "description": "Includes forums, social media, GitHub, blogs",
-        "allowed_types": ["manual", "rss", "web_search", "mcp", "cli"],
+        "allowed_types": ["manual", "rss", "web_search", "mcp", "cli", "filing_resolver"],
         "web_search": True,
     },
 }
