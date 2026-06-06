@@ -45,7 +45,11 @@ def load_source_discovery(sources_path: Path) -> dict[str, Any]:
 
 
 def build_search_queries(discovery: dict[str, Any]) -> list[str]:
-    """Build web search queries from source_discovery fields."""
+    """Build standard web search queries from source_discovery fields.
+
+    Does NOT include local signal queries — those are handled by
+    build_search_tasks_with_metadata() which adds platform/market metadata.
+    """
     company = discovery.get("company", "")
     industry = discovery.get("industry", "")
     focus_areas = discovery.get("focus_areas", [])
@@ -69,12 +73,6 @@ def build_search_queries(discovery: dict[str, Any]) -> list[str]:
         elif industry:
             queries.append(f"{industry} {area}")
 
-    # Local signal queries — append local-language queries from local_signal_planner
-    local_tasks = build_local_signal_tasks(discovery)
-    for task in local_tasks:
-        if task.query and task.query not in queries:
-            queries.append(task.query)
-
     return queries
 
 
@@ -86,22 +84,9 @@ def build_search_tasks_with_metadata(discovery: dict[str, Any]) -> list[dict[str
     """
     tasks: list[dict[str, Any]] = []
 
-    # Standard queries (without local signal — those get metadata below)
-    company = discovery.get("company", "")
-    industry = discovery.get("industry", "")
-    focus_areas = discovery.get("focus_areas", [])
-
-    if industry:
-        tasks.append({"query": f"{industry} industry news recent", "domains": None})
-    if company:
-        tasks.append({"query": f"{company} official announcements news", "domains": None})
-    if isinstance(focus_areas, str):
-        focus_areas = [a.strip() for a in focus_areas.split(",") if a.strip()]
-    for area in focus_areas[:5]:
-        if company:
-            tasks.append({"query": f"{company} {area}", "domains": None})
-        elif industry:
-            tasks.append({"query": f"{industry} {area}", "domains": None})
+    # Standard queries — delegate to build_search_queries
+    for q in build_search_queries(discovery):
+        tasks.append({"query": q, "domains": None})
 
     # Local signal tasks with metadata
     local_tasks = build_local_signal_tasks(discovery)
@@ -401,6 +386,7 @@ def merge_candidates_to_sources(
         "added_manual": added_manual,
         "added_rss": added_rss,
         "added_filing": added_filing,
+        "added_local": added_local,
         "total_enabled": len(enabled),
         "total_disabled": len(recommended) - len(enabled),
     }

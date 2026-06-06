@@ -312,7 +312,7 @@ def build_local_signal_tasks(discovery: dict[str, Any]) -> list[LocalSignalTask]
                     query = queries[0] if queries else f"{company} {industry}"
 
                     signal_type = GOAL_TO_SIGNAL_TYPE.get(goal, "consumer_discussion")
-                    expected = GOAL_TO_EXPECTED_FINDINGS.get(goal, [goal])
+                    expected = list(GOAL_TO_EXPECTED_FINDINGS.get(goal, [goal]))
 
                     tasks.append(LocalSignalTask(
                         task_id=f"LS_{market_key[:2].upper()}_{seq:03d}",
@@ -410,6 +410,22 @@ def generate_collector_tasks(discovery: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def write_collector_tasks_json(
+    discovery: dict[str, Any],
+    output_path: Path,
+) -> dict[str, Any] | None:
+    """Generate and write collector_tasks.json. Returns tasks dict or None."""
+    tasks = generate_collector_tasks(discovery)
+    if not tasks.get("tasks"):
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(tasks, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return tasks
+
+
 # ── Local Signal Samples Parser ──────────────────────────────────────
 
 SAMPLE_REQUIRED_FIELDS = {
@@ -428,10 +444,17 @@ def parse_local_signal_samples(samples_path: Path) -> list[dict[str, Any]]:
     if not samples_path.exists():
         return []
 
+    try:
+        text = samples_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        text = samples_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
     records: list[dict[str, Any]] = []
     warnings: list[str] = []
 
-    for line_num, line in enumerate(samples_path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_num, line in enumerate(text.splitlines(), start=1):
         line = line.strip()
         if not line:
             continue

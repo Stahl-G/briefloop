@@ -473,6 +473,7 @@ class TestLocalSignalAudit:
         context = PipelineContext(
             project_name="test", input_dir="/tmp/in", output_dir="/tmp/out",
             report_date="2026-06-06",
+            metadata={"source_discovery": {"local_signal_discovery": {"enabled": True}}},
         )
         agent = DeterministicAuditAgent()
         report = agent.run_audit(markdown, ledger, context)
@@ -509,6 +510,7 @@ class TestLocalSignalAudit:
         context = PipelineContext(
             project_name="test", input_dir="/tmp/in", output_dir="/tmp/out",
             report_date="2026-06-06",
+            metadata={"source_discovery": {"local_signal_discovery": {"enabled": True}}},
         )
         agent = DeterministicAuditAgent()
         report = agent.run_audit(markdown, ledger, context)
@@ -539,6 +541,7 @@ class TestLocalSignalAudit:
         context = PipelineContext(
             project_name="test", input_dir="/tmp/in", output_dir="/tmp/out",
             report_date="2026-06-06",
+            metadata={"source_discovery": {"local_signal_discovery": {"enabled": True}}},
         )
         agent = DeterministicAuditAgent()
         report = agent.run_audit(markdown, ledger, context)
@@ -569,6 +572,7 @@ class TestLocalSignalAudit:
         context = PipelineContext(
             project_name="test", input_dir="/tmp/in", output_dir="/tmp/out",
             report_date="2026-06-06",
+            metadata={"source_discovery": {"local_signal_discovery": {"enabled": True}}},
         )
         agent = DeterministicAuditAgent()
         report = agent.run_audit(markdown, ledger, context)

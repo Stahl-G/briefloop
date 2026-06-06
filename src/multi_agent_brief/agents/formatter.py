@@ -91,12 +91,15 @@ class FormatterAgent(BaseAgent):
         # Local signal report — produced by pipeline, persisted here
         local_signal_report = context.metadata.get("local_signal_report")
         if local_signal_report:
-            local_signal_path = intermediate_dir / "local_signal_report.json"
-            local_signal_path.write_text(
-                json.dumps(local_signal_report, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            artifacts["local_signal_report"] = str(local_signal_path)
+            try:
+                local_signal_path = intermediate_dir / "local_signal_report.json"
+                local_signal_path.write_text(
+                    json.dumps(local_signal_report, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                artifacts["local_signal_report"] = str(local_signal_path)
+            except Exception:
+                logger.warning("Failed to write local_signal_report.json", exc_info=True)
 
         # DOCX output — only if "docx" is in output_formats.
         # Must run BEFORE writing audit_report.json so docx_generation

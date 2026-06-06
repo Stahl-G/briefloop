@@ -886,7 +886,9 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
             print(f"[error] source_candidates.yaml not found: {candidates_path}")
             return 1
         result = merge_candidates_to_sources(sources_path, candidates_path)
-        print(f"[sources] Merged {result['added_manual']} manual + {result['added_rss']} RSS sources into sources.yaml")
+        added_local = result.get('added_local', 0)
+        local_part = f" + {added_local} local signal tasks" if added_local else ""
+        print(f"[sources] Merged {result['added_manual']} manual + {result['added_rss']} RSS{local_part} into sources.yaml")
         return 0
 
     # Default: generate source_candidates.yaml
@@ -963,16 +965,10 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
     print(f"[sources] Generated source_candidates.yaml at {candidates_path}")
 
     # Generate collector_tasks.json if local signal tasks exist
-    from multi_agent_brief.sources.local_signal_planner import generate_collector_tasks
-    collector_tasks = generate_collector_tasks(discovery)
-    if collector_tasks.get("tasks"):
-        import json
-        collector_path = workspace / "output" / "intermediate" / "collector_tasks.json"
-        collector_path.parent.mkdir(parents=True, exist_ok=True)
-        collector_path.write_text(
-            json.dumps(collector_tasks, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+    from multi_agent_brief.sources.local_signal_planner import write_collector_tasks_json
+    collector_path = workspace / "output" / "intermediate" / "collector_tasks.json"
+    collector_tasks = write_collector_tasks_json(discovery, collector_path)
+    if collector_tasks:
         print(f"[sources] Generated collector_tasks.json at {collector_path}")
         print(f"[sources] {len(collector_tasks['tasks'])} local signal collection tasks ready")
 

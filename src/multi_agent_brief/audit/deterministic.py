@@ -273,13 +273,20 @@ class DeterministicAuditAgent(AuditAgentInterface):
             fail_on_stale_source=context.fail_on_stale_source if context else False,
         )
 
-        # Local signal audit checks
+        # Local signal audit checks — only when local signal discovery is configured
         if context:
-            local_findings = _check_local_signal_claims(markdown, ledger, context)
-            report.findings.extend(local_findings)
-            if local_findings:
-                from multi_agent_brief.audit.interfaces import recompute_report_status
-                recompute_report_status(report)
+            local_signal_report = context.metadata.get("local_signal_report")
+            discovery = context.metadata.get("source_discovery", {})
+            has_local_signal = bool(
+                local_signal_report
+                or discovery.get("local_signal_discovery", {}).get("enabled", False)
+            )
+            if has_local_signal:
+                local_findings = _check_local_signal_claims(markdown, ledger, context)
+                report.findings.extend(local_findings)
+                if local_findings:
+                    from multi_agent_brief.audit.interfaces import recompute_report_status
+                    recompute_report_status(report)
 
         return report
 
@@ -287,16 +294,23 @@ class DeterministicAuditAgent(AuditAgentInterface):
 # ── Local Signal Audit Checks ────────────────────────────────────────
 
 # Patterns that indicate consumer pain-point claims
-_CONSUMER_PAIN_PATTERNS = [
-    re.compile(r"消费者(?:认为|抱怨|普遍|反馈|觉得|表示)", re.IGNORECASE),
-    re.compile(r"用户(?:抱怨|觉得|认为|反馈|评价|普遍)", re.IGNORECASE),
-    re.compile(r"市场反馈(?:显示|表明|指出)", re.IGNORECASE),
-    re.compile(r"用户评价(?:显示|表明)", re.IGNORECASE),
+# Chinese patterns — no case distinction
+_CONSUMER_PAIN_PATTERNS_ZH = [
+    re.compile(r"消费者(?:认为|抱怨|普遍|反馈|觉得|表示)"),
+    re.compile(r"用户(?:抱怨|觉得|认为|反馈|评价|普遍)"),
+    re.compile(r"市场反馈(?:显示|表明|指出)"),
+    re.compile(r"用户评价(?:显示|表明)"),
+]
+
+# English patterns — case insensitive
+_CONSUMER_PAIN_PATTERNS_EN = [
     re.compile(r"consumers?\s+\w*\s*(?:report|complain|believe|feel|say|indicate)", re.IGNORECASE),
     re.compile(r"users?\s+\w*\s*(?:complain|report|feel|believe|commonly)", re.IGNORECASE),
     re.compile(r"market\s+feedback\s+(?:shows|indicates|suggests)", re.IGNORECASE),
     re.compile(r"customer\s+(?:complaints?|feedback|reviews?)\s+(?:show|indicate|suggest)", re.IGNORECASE),
 ]
+
+_CONSUMER_PAIN_PATTERNS = _CONSUMER_PAIN_PATTERNS_ZH + _CONSUMER_PAIN_PATTERNS_EN
 
 # Source types that count as consumer-level evidence
 _CONSUMER_SOURCE_TYPES = {"local_signal", "consumer_discussion", "platform_data"}
@@ -314,7 +328,6 @@ def _check_local_signal_claims(
     LOCAL_SIGNAL_PRIVACY_001: Personal data must not enter final brief.
     """
     findings: list[AuditFinding] = []
-    local_signal_report = context.metadata.get("local_signal_report")
 
     # LOCAL_SIGNAL_CLAIM_001: Check for consumer pain-point claims without consumer sources
     for line_num, line in enumerate(markdown.splitlines(), start=1):
@@ -379,7 +392,11 @@ def _check_local_signal_claims(
 
     # LOCAL_SIGNAL_PRIVACY_001: Check for personal data in local signal claims
     for claim in ledger:
-        if claim.metadata.get("contains_personal_data", False):
+        is_local_signal = (
+            claim.source_type == "local_signal"
+            or claim.metadata.get("source_family") == "local_signal"
+        )
+        if is_local_signal and claim.metadata.get("contains_personal_data", False):
             findings.append(
                 _tag(
                     "local_signal_privacy_violation",

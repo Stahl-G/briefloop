@@ -1,6 +1,7 @@
 """BriefPipeline — deterministic core pipeline."""
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -138,16 +139,10 @@ class BriefPipeline:
         # Generate collector_tasks.json for local signal collection
         # This runs regardless of web_search being enabled
         if discovery:
-            from multi_agent_brief.sources.local_signal_planner import generate_collector_tasks
-            collector_tasks = generate_collector_tasks(discovery)
-            if collector_tasks.get("tasks"):
-                import json
-                collector_path = Path(context.output_dir) / "intermediate" / "collector_tasks.json"
-                collector_path.parent.mkdir(parents=True, exist_ok=True)
-                collector_path.write_text(
-                    json.dumps(collector_tasks, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
+            from multi_agent_brief.sources.local_signal_planner import write_collector_tasks_json
+            collector_path = Path(context.output_dir) / "intermediate" / "collector_tasks.json"
+            collector_tasks = write_collector_tasks_json(discovery, collector_path)
+            if collector_tasks:
                 context.metadata["collector_tasks"] = collector_tasks
 
         # Merge industry RSS feeds into config — only when rss is in
@@ -199,15 +194,18 @@ class BriefPipeline:
         )
 
         # Generate local_signal_report.json if local signal discovery is configured
+        # Reuse local_tasks already computed above for collector_tasks
         if discovery:
             from multi_agent_brief.sources.local_signal_planner import (
                 build_local_signal_tasks,
                 generate_local_signal_report,
                 parse_local_signal_samples,
             )
+            # build_local_signal_tasks is also called inside generate_collector_tasks
+            # above; this is the third call site. Acceptable since it's deterministic
+            # and the task list is small. A future refactor could pass pre-computed tasks.
             local_tasks = build_local_signal_tasks(discovery)
             if local_tasks:
-                # Check for local signal samples in input directory
                 samples_path = input_dir / "local_signal_samples.jsonl"
                 samples = parse_local_signal_samples(samples_path)
                 local_signal_report = generate_local_signal_report(discovery, local_tasks, samples)
