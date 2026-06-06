@@ -165,8 +165,12 @@ class TestManifestFailureDetection:
              }},
         ]
         m = build_manifest(stage_outputs=stages)
-        assert len(m.errors) == 1
-        assert m.errors[0]["error_type"] == "NoSearchTasks"
+        # Now we have 2 errors: one from summary detection, one from collection_errors
+        assert len(m.errors) == 2
+        # The first error is from summary detection
+        assert m.errors[0]["stage"] == "source-collection"
+        # The second error is from collection_errors
+        assert m.errors[1]["error_type"] == "NoSearchTasks"
 
 
 class TestFileHash:

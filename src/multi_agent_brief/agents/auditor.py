@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from multi_agent_brief.agents.base import BaseAgent
 from multi_agent_brief.audit.deterministic import DeterministicAuditAgent
+from multi_agent_brief.audit.final_quality import FinalQualityAuditAgent
 from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.audit.interfaces import AuditAgentInterface, CompositeAuditAgent
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -14,14 +15,35 @@ class AuditorAgent(BaseAgent):
     def __init__(self, audit_agent: AuditAgentInterface | None = None) -> None:
         self.audit_agent = audit_agent or CompositeAuditAgent(
             DeterministicAuditAgent(),
-            additional_agents=[QualityHarnessAuditAgent()],
+            additional_agents=[
+                QualityHarnessAuditAgent(),
+                FinalQualityAuditAgent(),
+            ],
         )
 
     def run(self, context: PipelineContext, ledger: ClaimLedger) -> AgentOutput:
         report = self.audit_agent.run_audit(context.report_state.prepared_markdown, ledger, context)
         context.report_state.audit_report = report
+
+        # Store final quality report in metadata
+        final_quality_report = None
+        for finding in report.findings:
+            if finding.finding_type == "final_quality":
+                final_quality_report = {
+                    "audit_status": report.audit_status,
+                    "findings_count": len([f for f in report.findings if f.finding_type == "final_quality"]),
+                }
+                break
+
+        if final_quality_report:
+            context.metadata["final_quality_report"] = final_quality_report
+
         return AgentOutput(
             agent_name=self.name,
             summary=f"Audit status: {report.audit_status}; findings: {len(report.findings)}.",
-            artifacts={"audit_status": report.audit_status, "finding_count": len(report.findings)},
+            artifacts={
+                "audit_status": report.audit_status,
+                "finding_count": len(report.findings),
+                "final_quality_status": final_quality_report.get("audit_status") if final_quality_report else "not_run",
+            },
         )

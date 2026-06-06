@@ -570,7 +570,6 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
     context.metadata["_config_dir"] = str(workspace)
 
     outputs = BriefPipeline().run(context)
-    print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
 
     # Generate run_manifest.json
     try:
@@ -605,6 +604,56 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
         print(f"[prepare] Run manifest: {manifest_path}")
     except Exception as exc:
         print(f"[prepare] Warning: could not generate run manifest: {exc}")
+
+    # Determine exit code based on pipeline results
+    exit_code = _determine_pipeline_exit_code(outputs, context)
+
+    if exit_code == 0:
+        print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
+    else:
+        print(f"[prepare] Pipeline failed — {len(outputs)} stages run. Exit code: {exit_code}")
+
+    return exit_code
+
+
+def _determine_pipeline_exit_code(outputs: list, context) -> int:
+    """Determine pipeline exit code based on outputs and context.
+
+    Exit codes:
+    - 0: pipeline completed and delivery gates passed/warning-accepted
+    - 1: runtime/config/source fatal
+    - 2: blocking quality/final-clean/rendered-output gate failed
+    """
+    # Check for source collection fatal errors
+    source_output = next((o for o in outputs if o.agent_name == "source-collection"), None)
+    if source_output:
+        artifacts = source_output.artifacts or {}
+        collection_errors = artifacts.get("collection_errors", [])
+        if collection_errors:
+            # Check for fatal errors (ConfigValidationError, ZeroUsableSources)
+            fatal_errors = [
+                e for e in collection_errors
+                if e.get("error_type") in ("ConfigValidationError", "ZeroUsableSources", "NoSearchTasks")
+            ]
+            if fatal_errors:
+                return 1  # runtime/config/source fatal
+
+    # Check for Final Clean failures
+    final_clean_report = context.report_state.final_clean_report
+    if final_clean_report and final_clean_report.get("audit_status") == "fail":
+        return 2  # blocking quality gate failed
+
+    # Check for Audit failures
+    audit_report = context.report_state.audit_report
+    if audit_report and audit_report.audit_status == "fail":
+        return 2  # blocking quality gate failed
+
+    # Check for Rendered Output failures
+    rendered_output_report = context.metadata.get("rendered_output_report")
+    if rendered_output_report:
+        rendered_status = getattr(rendered_output_report, "audit_status", None)
+        if rendered_status == "fail":
+            return 2  # blocking quality gate failed
 
     return 0
 
