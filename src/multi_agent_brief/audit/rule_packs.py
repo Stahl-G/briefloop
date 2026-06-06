@@ -56,6 +56,16 @@ RULE_PACK: dict[str, tuple[BlockingLevel, RepairOwner, str]] = {
 
     # ── Semantic audit findings ──
     "semantic_source_support":             ("analyst_blocking",   "analyst",     "Semantic audit: claim not supported by cited evidence"),
+
+    # ── Final Clean findings ──
+    "template_variable_residue":           ("editor_fixable",     "editor",      "Template variable {{{{...}}}} or ${{...}} found in text"),
+    "internal_path_leak":                  ("safety_blocking",    "safety",      "Internal file path exposed in reader-facing text"),
+    "model_phrase_residue":                ("editor_fixable",     "editor",      "Model/AI process phrase found in text"),
+    "feedback_as_fact":                    ("safety_blocking",    "safety",      "User feedback presented as market fact"),
+    "editorial_comment_as_conclusion":     ("editor_fixable",     "editor",      "Editorial comment found in report body"),
+    "investment_recommendation":           ("safety_blocking",    "safety",      "Investment recommendation language found"),
+    "invalid_claim_id":                    ("safety_blocking",    "safety",      "Invalid or malformed claim ID reference"),
+    "empty_source_marker":                 ("editor_fixable",     "editor",      "Empty source marker found in text"),
 }
 
 

@@ -128,6 +128,14 @@ def build_run_settings(
     project_name = name or project.get("name") or "Weekly Intelligence Brief"
     resolved_language = language or language_config.get("output") or project.get("language") or "zh-CN"
     resolved_audience = audience or project.get("audience") or "management"
+
+    # Resolve audience profile from config or map from audience text
+    audience_profile_config = config.get("audience_profile", {}) or {}
+    resolved_audience_profile = audience_profile_config.get("id", "")
+    if not resolved_audience_profile:
+        from multi_agent_brief.audience.profiles import map_audience_to_profile
+        resolved_audience_profile = map_audience_to_profile(resolved_audience)
+
     output_filename_template = (
         output_config.get("filename_template")
         or output_config.get("file_name_template")
@@ -153,6 +161,7 @@ def build_run_settings(
         "output_dir": str(output_path),
         "language": resolved_language,
         "audience": resolved_audience,
+        "audience_profile": resolved_audience_profile,
         "report_date": str(raw_date),
         "max_source_age_days": int(report["max_source_age_days"]) if "max_source_age_days" in report else None,
         "fail_on_stale_source": _as_bool(report.get("fail_on_stale_source"), False),
