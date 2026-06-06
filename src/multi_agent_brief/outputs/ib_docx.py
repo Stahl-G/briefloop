@@ -733,6 +733,7 @@ def convert(
     subtitle: str | None = None,
     footer: str | None = None,
     font: str | None = None,
+    template: str = "default",
 ) -> Path:
     """Convert a Markdown file to a styled DOCX document.
 
@@ -743,12 +744,20 @@ def convert(
         subtitle: Optional subtitle/date line below the title.
         footer: Footer text. Defaults to ``"Generated Brief"``.
         font: East-Asian font name. Defaults to ``宋体``.
+        template: Template ID (executive_brief, research_note, formal_internal_report).
+                  Defaults to "default" which uses the standard style.
 
     Returns:
         The *docx_path* as a :class:`~pathlib.Path`.
     """
     md_text = Path(md_path).read_text(encoding="utf-8")
     _check_input_quality(md_text)
+
+    # Load template configuration if not default
+    template_config = None
+    if template and template != "default":
+        from multi_agent_brief.outputs.templates import get_template
+        template_config = get_template(template)
 
     if title is None:
         m = re.search(r"^#\s+(.+)$", md_text, re.MULTILINE)
@@ -767,7 +776,18 @@ def convert(
         font = EAST_ASIA_FONT
 
     doc = Document()
-    _setup_document_styles(doc, font)
+
+    # Apply template-specific styles if configured
+    if template_config:
+        _setup_document_styles_with_template(doc, font, template_config)
+    else:
+        _setup_document_styles(doc, font)
+
+    # Cover page - use template footer if configured
+    effective_footer = footer
+    if template_config and not footer:
+        effective_footer = template_config.footer_text
+
     _add_cover(doc, title, subtitle, font)
 
     # Remove the title line from body to avoid duplication with cover
@@ -810,9 +830,58 @@ def convert(
         elif btype == "hr":
             _render_hr(doc)
 
-    _add_footer(doc, footer, font)
+    # Add disclaimer if template requires it
+    if template_config and template_config.show_disclaimer and template_config.disclaimer_text:
+        doc.add_paragraph()  # spacing
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(12)
+        _set_paragraph_left_border(p, COLORS["neutral"])
+        run = p.add_run(template_config.disclaimer_text)
+        run.font.size = Pt(8)
+        run.font.italic = True
+        run.font.color.rgb = _hex_to_rgb(COLORS["neutral"])
+        run.font.name = LATIN_FONT
+        _set_run_eastasia_font(run, font)
+
+    _add_footer(doc, effective_footer, font)
 
     out = Path(docx_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out))
     return out
+
+
+def _setup_document_styles_with_template(doc, font_name: str, template_config) -> None:
+    """Set up document styles with template-specific overrides."""
+    section = doc.sections[0]
+    section.page_width = Cm(21)
+    section.page_height = Cm(29.7)
+    section.left_margin = Cm(3.17)
+    section.right_margin = Cm(3.17)
+    section.top_margin = Cm(2.54)
+    section.bottom_margin = Cm(2.54)
+
+    normal = doc.styles["Normal"]
+    normal.font.name = LATIN_FONT
+    normal.font.size = Pt(template_config.body_font_size)
+    normal.font.color.rgb = _hex_to_rgb(COLORS["neutral"])
+    normal.paragraph_format.space_after = Pt(6)
+    normal.paragraph_format.line_spacing = template_config.line_spacing
+    _set_style_eastasia_font(normal, font_name)
+
+    heading_specs = [
+        (1, template_config.heading_font_size_h1, "dark", 14, 8),
+        (2, template_config.heading_font_size_h2, "primary", 12, 6),
+        (3, 12, "primary", 10, 4),
+        (4, 11, "dark", 8, 4),
+    ]
+    for level, size, color_key, before, after in heading_specs:
+        h = doc.styles[f"Heading {level}"]
+        h.font.name = LATIN_FONT
+        h.font.size = Pt(size)
+        h.font.bold = True
+        h.font.color.rgb = _hex_to_rgb(COLORS[color_key])
+        h.paragraph_format.space_before = Pt(before)
+        h.paragraph_format.space_after = Pt(after)
+        h.paragraph_format.keep_with_next = True
+        _set_style_eastasia_font(h, font_name)

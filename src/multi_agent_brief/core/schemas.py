@@ -152,6 +152,7 @@ class ReportState:
     prepared_markdown: str = ""
     sections: list[BriefSection] = field(default_factory=list)
     audit_report: AuditReport | None = None
+    final_clean_report: dict[str, Any] | None = None
 
 
 @dataclass
@@ -161,6 +162,7 @@ class PipelineContext:
     output_dir: str
     language: str = "en-US"
     audience: str = "management"
+    audience_profile: str = ""  # mapped profile ID (management, research, ir, legal_compliance, default)
     report_date: str = ""
     max_source_age_days: int | None = None
     fail_on_stale_source: bool = False

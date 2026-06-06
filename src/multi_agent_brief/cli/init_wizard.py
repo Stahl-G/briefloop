@@ -198,6 +198,7 @@ class InitProfile:
     industry_text: str = ""  # raw user description, preserved in user.md
     brief_title: str = "Weekly Industry Brief"
     audience: str = "management"
+    audience_profile: str = ""  # mapped profile ID (management, research, ir, legal_compliance, default)
     focus_areas: list[str] = field(default_factory=lambda: ["policy", "competitor", "market", "customer_demand"])
     task_objective: str = ""  # free-text task description
     forbidden_sources: list[str] = field(default_factory=list)
@@ -521,6 +522,9 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
             "industry": profile.industry,
             "role": profile.role,
             "audience": profile.audience,
+        },
+        "audience_profile": {
+            "id": profile.audience_profile or "default",
         },
         "language": {
             "interface": profile.interface_language,

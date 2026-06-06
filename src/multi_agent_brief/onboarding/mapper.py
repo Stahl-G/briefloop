@@ -15,6 +15,7 @@ from __future__ import annotations
 from multi_agent_brief.cli.init_wizard import InitProfile
 from multi_agent_brief.onboarding.schema import OnboardingResult
 from multi_agent_brief.sources.industry_packs import INDUSTRY_PACKS
+from multi_agent_brief.audience.profiles import map_audience_to_profile
 
 
 # ── language mapping ────────────────────────────────────────────────
@@ -362,6 +363,7 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     profile.optional_seed_pack = profile.industry  # same as industry if matched
 
     profile.audience = normalize_audience(result.audience_plain)
+    profile.audience_profile = map_audience_to_profile(result.audience_plain)
     profile.cadence = normalize_cadence(result.cadence_plain)
     profile.source_profile = normalize_source_profile(result.source_style_plain)
     profile.selector_max_items = _SELECTOR_MAP.get(profile.source_profile, 12)
