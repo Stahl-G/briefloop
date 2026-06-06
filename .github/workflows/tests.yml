@@ -74,7 +74,7 @@ jobs:
       - name: CLI smoke
         run: |
           multi-agent-brief version
-          python scripts/ci/smoke_pipeline.py "" examples/basic_market_brief output/basic_market_brief output/basic_market_brief/intermediate/claim_ledger.json
+          python scripts/ci/smoke_pipeline.py examples/basic_market_brief/config.yaml examples/basic_market_brief/input output/basic_market_brief
 
   non-dev-smoke:
     name: Non-dev install smoke
