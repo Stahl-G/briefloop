@@ -32,6 +32,13 @@ from multi_agent_brief.analysis_modules.market_competitor.config import (
 )
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 from multi_agent_brief.sources.registry import load_sources_config
+from multi_agent_brief.hermes import (
+    build_hermes_cron_plan,
+    render_hermes_cron_commands,
+    render_hermes_cron_markdown,
+    render_hermes_skill,
+)
+from multi_agent_brief.hermes.adapter import sync_cached_package_source, write_json
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
@@ -163,6 +170,34 @@ def build_parser() -> argparse.ArgumentParser:
     lh_parser = subparsers.add_parser("limitation-hygiene", help="Audit limitation hygiene from a claim ledger.")
     lh_parser.add_argument("--ledger", required=True, help="Path to claim_ledger.json.")
     lh_parser.add_argument("--output", help="Output path for limitation_hygiene_report.json (default: same dir as ledger).")
+
+    # hermes subcommand group
+    hermes_parser = subparsers.add_parser("hermes", help="Generate Hermes Agent skill and cron plans for scheduled briefs.")
+    hermes_sub = hermes_parser.add_subparsers(dest="hermes_action", required=True)
+
+    hermes_skill = hermes_sub.add_parser("skill", help="Write the Hermes SKILL.md for MABW cron jobs.")
+    hermes_skill.add_argument("--output", help="Output SKILL.md path (default: .agents/hermes-skills/multi-agent-brief-hermes/SKILL.md).")
+
+    hermes_plan = hermes_sub.add_parser("cron-plan", help="Generate a Hermes cron plan JSON/Markdown for a workspace.")
+    hermes_plan.add_argument("--config", required=True, help="Path to workspace config.yaml.")
+    hermes_plan.add_argument("--repo-workdir", help="Repository workdir for Hermes cron --workdir (default: current directory).")
+    hermes_plan.add_argument("--cadence", help="Comma-separated cadences: weekly,monthly,daily. Defaults to config cadence or weekly.")
+    hermes_plan.add_argument("--deliver", default="local", help="Hermes delivery target, e.g. local, feishu, telegram.")
+    hermes_plan.add_argument("--profile", default="", help="Optional existing Hermes profile name.")
+    hermes_plan.add_argument("--output", help="Output JSON path (default: workspace/output/intermediate/hermes_cron_plan.json).")
+    hermes_plan.add_argument("--markdown", help="Optional Markdown output path.")
+
+    hermes_commands = hermes_sub.add_parser("cron-commands", help="Print Hermes cron create commands for a workspace.")
+    hermes_commands.add_argument("--config", required=True, help="Path to workspace config.yaml.")
+    hermes_commands.add_argument("--repo-workdir", help="Repository workdir for Hermes cron --workdir (default: current directory).")
+    hermes_commands.add_argument("--cadence", help="Comma-separated cadences: weekly,monthly,daily. Defaults to config cadence or weekly.")
+    hermes_commands.add_argument("--deliver", default="local", help="Hermes delivery target, e.g. local, feishu, telegram.")
+    hermes_commands.add_argument("--profile", default="", help="Optional existing Hermes profile name.")
+
+    hermes_sync = hermes_sub.add_parser("sync-sources", help="Enable cached_package input/hermes_cache in workspace sources.yaml.")
+    hermes_sync.add_argument("--config", required=True, help="Path to workspace config.yaml.")
+    hermes_sync.add_argument("--cache-dir", default="input/hermes_cache", help="Cache path written into sources.yaml.")
+    hermes_sync.add_argument("--dry-run", action="store_true", help="Show changes without writing.")
 
     return parser
 
@@ -665,8 +700,8 @@ def run_finalize_from_args(args: argparse.Namespace) -> int:
     """Regenerate final reader-facing artifacts from audited internal markdown.
 
     This is a deterministic delivery gate for agent-assisted workflows where
-    analyst/editor/auditor subagents may update output/intermediate/audited_brief.md
-    after the initial prepare run.
+    analyst/editor/auditor subagents write output/intermediate/audited_brief.md
+    before reader-facing artifacts are rendered.
     """
     config_path = Path(args.config).resolve()
     config = load_config(str(config_path))
@@ -1152,6 +1187,79 @@ def run_limitation_hygiene_from_args(args: argparse.Namespace) -> int:
     return 1 if fails else 0
 
 
+def _build_hermes_plan_from_args(args: argparse.Namespace):
+    config_path = Path(args.config).resolve()
+    if not config_path.exists():
+        print(f"[error] config.yaml not found: {config_path}")
+        return None
+    config = load_config(config_path)
+    cadences = None
+    if getattr(args, "cadence", None):
+        cadences = [c.strip() for c in args.cadence.split(",") if c.strip()]
+    repo_workdir = Path(args.repo_workdir).resolve() if getattr(args, "repo_workdir", None) else Path.cwd().resolve()
+    return build_hermes_cron_plan(
+        config=config,
+        workspace=config_path.parent,
+        repo_workdir=repo_workdir,
+        cadences=cadences,
+        deliver=getattr(args, "deliver", "local"),
+        profile=getattr(args, "profile", ""),
+    )
+
+
+def run_hermes_from_args(args: argparse.Namespace) -> int:
+    if args.hermes_action == "skill":
+        output = Path(args.output) if args.output else Path(".agents/hermes-skills/multi-agent-brief-hermes/SKILL.md")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(render_hermes_skill(), encoding="utf-8")
+        print(f"[hermes] Wrote Hermes skill: {output}")
+        print("[hint] Install/copy this skill into ~/.hermes/skills/ or configure Hermes skills.external_dirs.")
+        return 0
+
+    if args.hermes_action == "cron-plan":
+        plan = _build_hermes_plan_from_args(args)
+        if plan is None:
+            return 1
+        workspace = Path(plan.workspace)
+        output = Path(args.output) if args.output else workspace / "output" / "intermediate" / "hermes_cron_plan.json"
+        write_json(output, plan.to_dict())
+        print(f"[hermes] Wrote cron plan: {output}")
+        if args.markdown:
+            md_path = Path(args.markdown)
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            md_path.write_text(render_hermes_cron_markdown(plan), encoding="utf-8")
+            print(f"[hermes] Wrote cron plan Markdown: {md_path}")
+        print("[hint] Run 'multi-agent-brief hermes cron-commands --config <workspace>/config.yaml' to print install commands.")
+        return 0
+
+    if args.hermes_action == "cron-commands":
+        plan = _build_hermes_plan_from_args(args)
+        if plan is None:
+            return 1
+        print(render_hermes_cron_commands(plan), end="")
+        return 0
+
+    if args.hermes_action == "sync-sources":
+        config_path = Path(args.config).resolve()
+        sources_path = config_path.parent / "sources.yaml"
+        try:
+            result = sync_cached_package_source(
+                sources_path=sources_path,
+                cache_dir=args.cache_dir,
+                dry_run=args.dry_run,
+            )
+        except Exception as exc:
+            print(f"[error] {exc}")
+            return 1
+        action = "would update" if args.dry_run and result["changed"] else "updated" if result["changed"] else "already configured"
+        print(f"[hermes] sources.yaml {action}: {sources_path}")
+        print(f"[hermes] cached_package path: {result['cache_dir']}")
+        print(f"[hermes] enabled providers: {', '.join(result['enabled_providers'])}")
+        return 0
+
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1191,6 +1299,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_analysis_blocks_from_args(args)
     if args.command == "limitation-hygiene":
         return run_limitation_hygiene_from_args(args)
+    if args.command == "hermes":
+        return run_hermes_from_args(args)
     return 1
 
 

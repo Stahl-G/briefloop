@@ -641,6 +641,10 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 冻结一条正式主路径，补齐 Audience Profiles、DOCX 模板与渲染验证、Final Clean、Editorial Governance、Policy & Regulatory Risk Module、HistoryStore 基础接口和 effort budgets。Editorial Governance 覆盖反馈污染、meta 内容泄漏、事实密度、可比案例适用性、研究缺口分离和来源覆盖。
 
+### v0.5.5：Hermes Adapter Layer
+
+新增 Hermes 专属适配层：生成 `multi-agent-brief-hermes` skill、daily scout / weekly brief / monthly brief cron plan、可复制的 `hermes cron create` 命令，并通过 `cached_package` provider 消费 Hermes 日更 cache。
+
 ### v1.0：Stable Baseline
 
 建立 Golden Dataset、Benchmark Metrics、Contract Compliance Tests、Release Consistency Gate 和正式支持矩阵。v1.0 将作为未来 MAS Runtime 的参考引擎、回退引擎和质量对照组。
@@ -649,7 +653,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.5 详细执行计划见 [docs/impl-plan-v0.5.0.md](docs/impl-plan-v0.5.0.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
+完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.5 详细执行计划见 [docs/impl-plan-v0.5.0.md](docs/impl-plan-v0.5.0.md)，v0.5.5 Hermes 适配计划见 [docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md](docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
 
 ---
 

@@ -102,6 +102,26 @@ v0.5 之后的候选扩展：
 - 至少两个性质不同的 Analysis Module 使用同一 Registry。
 - 历史信息进入新报告时不会伪装成当期事实。
 
+## v0.5.5：Hermes Adapter Layer
+
+目标：把 Hermes 作为定时触发、日更采集和消息交付层接入 MABW，但不替代现有 source-grounded pipeline。
+
+详细执行计划见 [v0.5.5 Hermes Adapter Plan](impl-plan-v0.5.5-hermes-adapter.zh-CN.md)。
+
+范围：
+
+- Hermes Skill：提供 `multi-agent-brief-hermes` skill，说明 daily scout、weekly/monthly prepare/finalize、质量门和 reader-facing 规则。
+- Hermes Cron Plan：根据 workspace config 生成 daily scout、weekly brief、monthly brief 的 cron plan。
+- Daily Cache Contract：日报 job 将公开、可引用信号写入 `input/hermes_cache/YYYY-MM-DD.json`。
+- Cached Package 接线：`hermes sync-sources` 将 `cached_package` provider 接到 Hermes daily cache。
+- CLI 安装辅助：生成 Hermes skill、JSON/Markdown cron plan 和可复制的 `hermes cron create` 命令。
+
+完成标准：
+
+- 周报 + 月报需求会生成 daily scout + weekly brief + monthly brief 三段计划。
+- 每个 cron job 都显式附加 Hermes skill，并设置绝对 `--workdir`。
+- Hermes 输出必须经过 MABW doctor、prepare、audit/final gates 和 finalize，不能把 daily scout 直接当最终报告。
+
 ## v1.0：Stable Baseline
 
 目标：冻结现有顺序型 Pipeline，作为长期维护版本和 v2.0 MAS Runtime 的质量基线。
