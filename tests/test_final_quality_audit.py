@@ -1,5 +1,5 @@
 from multi_agent_brief.audit.final_quality import FinalQualityAuditAgent, FinalQualityConfig
-from multi_agent_brief.agents.draft_cleanup import strip_claim_citations
+from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim, PipelineContext
 

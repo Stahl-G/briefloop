@@ -59,7 +59,8 @@ def collect_scan_files() -> list[Path]:
         if not d.exists():
             continue
         for p in d.rglob("*"):
-            if any(part in EXCLUDE for part in p.parts):
+            rel_parts = p.relative_to(ROOT).parts
+            if any(part in EXCLUDE for part in rel_parts):
                 continue
             if p.is_file() and p.suffix in (".md", ".py", ".yaml", ".yml", ".toml", ".txt"):
                 result.append(p)
@@ -110,7 +111,9 @@ def check_cli_commands_in_docs(files: list[Path], commands: list[dict]) -> list[
     errors: list[str] = []
     doc_files = [
         f for f in files
-        if f.suffix in (".md", ".txt") and ".agents" not in str(f) and ".claude" not in str(f)
+        if f.suffix in (".md", ".txt")
+        and ".agents" not in str(f.relative_to(ROOT))
+        and ".claude" not in str(f.relative_to(ROOT))
     ]
     for cmd in commands:
         for required in cmd.get("docs_should_contain", []):

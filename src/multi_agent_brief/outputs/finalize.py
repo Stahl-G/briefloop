@@ -7,7 +7,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.agents.draft_cleanup import strip_claim_citations
+from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
 from multi_agent_brief.outputs.naming import render_output_stem
 
 _SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")

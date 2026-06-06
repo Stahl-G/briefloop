@@ -191,7 +191,7 @@ Create a non-UTF-8 `.jsonl` file → `parse_local_signal_samples` should return 
 
 ## Fix 5 — Missing error handling on file write
 
-**File:** `src/multi_agent_brief/agents/formatter.py`  
+**File:** `removed Python runtime formatter module`
 **Line:** 94–99  
 **Severity:** 🟡 MEDIUM
 

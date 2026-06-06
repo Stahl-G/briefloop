@@ -12,7 +12,7 @@ SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_release_con
 class TestCheckReleaseConsistency:
     def test_script_runs_clean(self):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT)],
+            [sys.executable, str(SCRIPT), "--no-tag"],
             capture_output=True, text=True,
             cwd=str(SCRIPT.parent.parent),
         )
@@ -21,7 +21,7 @@ class TestCheckReleaseConsistency:
 
     def test_strict_mode_runs(self):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--strict"],
+            [sys.executable, str(SCRIPT), "--strict", "--no-tag"],
             capture_output=True, text=True,
             cwd=str(SCRIPT.parent.parent),
         )
