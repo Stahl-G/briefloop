@@ -465,4 +465,12 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
         if not profile.search_backend:
             profile.search_backend = "tavily"
 
+    # Competitor monitoring
+    comp_prefs = getattr(result, "competitor_preferences", None) or {}
+    if comp_prefs.get("enabled"):
+        profile.competitor_module_enabled = True
+        names = comp_prefs.get("names", [])
+        if isinstance(names, list):
+            profile.competitor_names = [n.strip() for n in names if isinstance(n, str) and n.strip()]
+
     return profile

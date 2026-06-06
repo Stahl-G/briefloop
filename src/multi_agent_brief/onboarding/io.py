@@ -12,6 +12,7 @@ _DATACLASS_FIELDS = {f.name for f in fields(OnboardingResult)}
 _LIST_FIELDS = {"forbidden_sources", "must_watch", "missing"}
 _INT_FIELDS = {"max_items_per_brief", "source_age_days"}
 _BOOL_FIELDS = {"tavily_enabled"}
+_DICT_FIELDS = {"market_scope", "competitor_preferences"}
 
 # Agent-generated onboarding.json often uses simplified field names.
 # Map them to canonical OnboardingResult field names.
@@ -78,6 +79,12 @@ def _normalize_field(name: str, value: Any) -> Any:
         if isinstance(value, str):
             return value.strip().lower() in {"1", "true", "yes", "y", "on"}
         return bool(value)
+    if name in _DICT_FIELDS:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        raise ValueError(f"onboarding.{name} must be a JSON object")
     if isinstance(value, (str, int, float, bool)) or value is None:
         return "" if value is None else str(value) if not isinstance(value, bool) else value
     raise ValueError(f"onboarding.{name} must be a scalar value")
