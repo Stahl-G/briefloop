@@ -176,7 +176,11 @@ def generate_setup_plan(
 
         # Add config hints based on capability
         if rec.capability_id == "web_search":
-            entry["config_hint"] = "Set TAVILY_API_KEY in .env and enable web_search in sources.yaml"
+            entry["config_hint"] = (
+                "Choose one search backend: tavily/TAVILY_API_KEY, exa/EXA_API_KEY, "
+                "brave/BRAVE_SEARCH_API_KEY, firecrawl/FIRECRAWL_API_KEY, or serper/SERPER_API_KEY; "
+                "then enable web_search in sources.yaml"
+            )
         elif rec.capability_id == "mineru":
             entry["config_hint"] = "Set MINERU_API_TOKEN in .env and enable mineru in sources.yaml"
         elif rec.capability_id == "filing_resolver":

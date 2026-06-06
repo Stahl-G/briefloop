@@ -88,7 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--retrieval-provider", choices=["ollama", "gemini"], help="Retrieval provider.")
     init_parser.add_argument("--output-formats", help="Comma-separated output formats.")
     init_parser.add_argument("--source-profile", choices=["conservative", "research", "aggressive_signal", "custom", "llm_decide"], help="Source collection profile.")
-    init_parser.add_argument("--tavily", action="store_true", help="Enable Tavily live web search backend.")
+    init_parser.add_argument("--tavily", action="store_true", help="Legacy alias: enable Tavily live web search backend.")
+    init_parser.add_argument("--web-search-mode", choices=["disabled", "runtime_tool", "external_api", "configure_later"], help="How web search is provided.")
+    init_parser.add_argument("--search-backend", choices=["tavily", "exa", "brave", "firecrawl", "serper"], help="Search backend for --web-search-mode external_api.")
     init_parser.add_argument("--from-onboarding", help="Path to onboarding.json for conversational init.")
 
     doctor_parser = subparsers.add_parser("doctor", help="Check source configuration health.")
@@ -111,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
     features_parser.add_argument("workspace", nargs="?", help="Optional workspace path to check provider status.")
     features_parser.add_argument("--info", metavar="ID", help="Show details for a specific capability.")
     features_parser.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON.")
+
+    # capability alias — user-facing synonym for features
+    capability_parser = subparsers.add_parser("capability", help="Alias for 'features': show capabilities and setup status.")
+    capability_parser.add_argument("workspace", nargs="?", help="Optional workspace path to check provider status.")
+    capability_parser.add_argument("--info", metavar="ID", help="Show details for a specific capability.")
+    capability_parser.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON.")
 
     # recommend subcommand
     rec_parser = subparsers.add_parser("recommend", help="Recommend capabilities based on task description.")
@@ -151,6 +159,38 @@ def _print_tavily_guidance() -> None:
     print("  Keys should be stored in environment variables only.")
     print()
     print("  Check configuration: multi-agent-brief doctor --config <workspace>/config.yaml")
+
+
+def _print_search_backend_guidance(profile) -> None:
+    """Print safe, backend-agnostic web-search setup guidance."""
+    backend = getattr(profile, "search_backend", "") or ("tavily" if getattr(profile, "tavily_enabled", False) else "")
+    mode = getattr(profile, "web_search_mode", "disabled")
+    backend_env = {
+        "tavily": "TAVILY_API_KEY",
+        "exa": "EXA_API_KEY",
+        "brave": "BRAVE_SEARCH_API_KEY",
+        "firecrawl": "FIRECRAWL_API_KEY",
+        "serper": "SERPER_API_KEY",
+    }
+    if mode == "runtime_tool":
+        print()
+        print("Runtime web search is enabled. Make sure your execution runtime provides a web-search tool.")
+        print("  Check configuration: multi-agent-brief doctor --config <workspace>/config.yaml")
+        return
+    if mode == "configure_later":
+        print()
+        print("Web search is marked for later configuration.")
+        print("  Supported backends: tavily, exa, brave, firecrawl, serper")
+        print("  Set one API key in .env or export it in your shell, then set web_search.backend in sources.yaml.")
+        print("  Do not paste API keys into chat, config files, README, or GitHub.")
+        return
+    if mode == "external_api" and backend:
+        env_var = backend_env.get(backend, "the backend API key env var")
+        print()
+        print(f"Web search backend '{backend}' is enabled. Set {env_var} in .env or your shell before running the pipeline.")
+        print("  Supported backends: tavily, exa, brave, firecrawl, serper")
+        print("  Do not paste API keys into chat, config files, README, or GitHub.")
+        print("  Check configuration: multi-agent-brief doctor --config <workspace>/config.yaml")
 
 
 def run_features_from_args(args: argparse.Namespace) -> int:
@@ -428,10 +468,12 @@ def run_setup_from_args(args: argparse.Namespace) -> int:
             ws = sources_data.setdefault("web_search", {})
             if not ws.get("enabled"):
                 ws["enabled"] = True
+                # Keep legacy setup behavior deterministic, but surface that users may
+                # switch backend to exa/brave/firecrawl/serper and the matching env var.
                 ws.setdefault("backend", "tavily")
                 ws.setdefault("api_key_env", "TAVILY_API_KEY")
                 changes_made += 1
-                print(f"  ✓ Enabled web_search in sources.yaml")
+                print("  ✓ Enabled web_search in sources.yaml (default backend: tavily; alternatives: exa, brave, firecrawl, serper)")
         elif cap_id == "mineru":
             mu = sources_data.setdefault("mineru", {})
             if not mu.get("enabled"):
@@ -719,8 +761,19 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
         profile.output_formats = formats
     if getattr(args, "source_profile", None):
         profile.source_profile = args.source_profile
+    if getattr(args, "web_search_mode", None):
+        profile.web_search_mode = args.web_search_mode
+        profile.web_search_enabled = args.web_search_mode != "disabled"
+    if getattr(args, "search_backend", None):
+        profile.search_backend = args.search_backend
+        profile.web_search_mode = "external_api"
+        profile.web_search_enabled = True
+        profile.tavily_enabled = args.search_backend == "tavily"
     if getattr(args, "tavily", False):
         profile.tavily_enabled = True
+        profile.web_search_enabled = True
+        profile.web_search_mode = "external_api"
+        profile.search_backend = "tavily"
 
 
 def init_workspace_from_args(args: argparse.Namespace) -> int:
@@ -796,9 +849,9 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
     print(f"Created brief workspace: {target}")
     print(f"Run: /generate-brief {target} in Claude Code to generate a real brief.")
 
-    # Print Tavily setup guidance if enabled
-    if profile.tavily_enabled:
-        _print_tavily_guidance()
+    # Print web-search setup guidance if enabled
+    if getattr(profile, "web_search_enabled", False) or getattr(profile, "tavily_enabled", False):
+        _print_search_backend_guidance(profile)
 
     # Auto-recommend capabilities based on profile
     _print_capability_recommendations(target, profile)
@@ -886,7 +939,9 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
             print(f"[error] source_candidates.yaml not found: {candidates_path}")
             return 1
         result = merge_candidates_to_sources(sources_path, candidates_path)
-        print(f"[sources] Merged {result['added_manual']} manual + {result['added_rss']} RSS sources into sources.yaml")
+        added_local = result.get('added_local', 0)
+        local_part = f" + {added_local} local signal tasks" if added_local else ""
+        print(f"[sources] Merged {result['added_manual']} manual + {result['added_rss']} RSS{local_part} into sources.yaml")
         return 0
 
     # Default: generate source_candidates.yaml
@@ -907,7 +962,8 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
             and ws_config.web_search.get("backend") != "mock"
         )
         if not has_backend:
-            print("[error] --search requires a configured search backend (e.g. Tavily).")
+            print("[error] --search requires a configured search backend.")
+            print("        Supported backends: tavily, exa, brave, firecrawl, serper.")
             print("        Enable web_search in sources.yaml with a real backend and API key,")
             print("        or run without --search to generate template candidates.")
             return 1
@@ -961,6 +1017,15 @@ def run_sources_decide_from_args(args: argparse.Namespace) -> int:
         return 1
 
     print(f"[sources] Generated source_candidates.yaml at {candidates_path}")
+
+    # Generate collector_tasks.json if local signal tasks exist
+    from multi_agent_brief.sources.local_signal_planner import write_collector_tasks_json
+    collector_path = workspace / "output" / "intermediate" / "collector_tasks.json"
+    collector_tasks = write_collector_tasks_json(discovery, collector_path)
+    if collector_tasks:
+        print(f"[sources] Generated collector_tasks.json at {collector_path}")
+        print(f"[sources] {len(collector_tasks['tasks'])} local signal collection tasks ready")
+
     print("[sources] Review and enable/disable sources, then run:")
     print(f"  multi-agent-brief sources decide --config {args.config} --merge")
     return 0
@@ -1076,7 +1141,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "version":
         print(__version__)
         return 0
-    if args.command == "features":
+    if args.command in ("features", "capability"):
         return run_features_from_args(args)
     if args.command == "recommend":
         return run_recommend_from_args(args)

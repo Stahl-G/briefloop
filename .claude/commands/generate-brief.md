@@ -15,7 +15,8 @@ Follow this sequence exactly:
    - $ARGUMENTS/sources.yaml
 
 2. **Source discovery gate (llm_decide only):**
-   If `sources.yaml` has `source.mode: llm_decide` and `source_candidates.yaml` does not exist or has not been merged, you MUST resolve sources before running the pipeline:
+   If `sources.yaml` has `source_strategy.profile: llm_decide` and `source_candidates.yaml` does not exist or `metadata.status` is not `merged`, you MUST resolve sources before running the pipeline:
+   - If web search is enabled but unconfigured, explain supported options first: Tavily, Exa, Brave, Firecrawl, Serper, runtime_websearch, or configure_later. Do not recommend Tavily as the only option.
    - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml`
    - Review the generated `$ARGUMENTS/source_candidates.yaml`.
    - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml --merge`

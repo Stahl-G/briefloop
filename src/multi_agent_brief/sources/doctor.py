@@ -170,7 +170,7 @@ def _add_available_info(results: list[CheckResult], source_config: SourceConfig)
     enabled = set(source_config.enabled_providers)
 
     provider_hints = {
-        "web_search": "web_search.enabled: true + set API key in .env",
+        "web_search": "web_search.enabled: true + choose backend (tavily/exa/brave/firecrawl/serper) + set matching API key in .env",
         "rss": "rss.enabled: true + add rss.feeds",
         "api": "api.enabled: true + set NEWSAPI_API_KEY in .env",
         "filing_resolver": "filing_resolver.enabled: true + add tickers",

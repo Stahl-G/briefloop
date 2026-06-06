@@ -265,10 +265,151 @@ class DeterministicAuditAgent(AuditAgentInterface):
         ledger: ClaimLedger,
         context: PipelineContext | None = None,
     ) -> AuditReport:
-        return run_deterministic_audit(
+        report = run_deterministic_audit(
             markdown,
             ledger,
             report_date=context.report_date if context else "",
             max_source_age_days=context.max_source_age_days if context else None,
             fail_on_stale_source=context.fail_on_stale_source if context else False,
         )
+
+        # Local signal audit checks — only when local signal discovery is configured
+        if context:
+            local_signal_report = context.metadata.get("local_signal_report")
+            discovery = context.metadata.get("source_discovery", {})
+            has_local_signal = bool(
+                local_signal_report
+                or discovery.get("local_signal_discovery", {}).get("enabled", False)
+            )
+            if has_local_signal:
+                local_findings = _check_local_signal_claims(markdown, ledger, context)
+                report.findings.extend(local_findings)
+                if local_findings:
+                    from multi_agent_brief.audit.interfaces import recompute_report_status
+                    recompute_report_status(report)
+
+        return report
+
+
+# ── Local Signal Audit Checks ────────────────────────────────────────
+
+# Patterns that indicate consumer pain-point claims
+# Chinese patterns — no case distinction
+_CONSUMER_PAIN_PATTERNS_ZH = [
+    re.compile(r"消费者(?:认为|抱怨|普遍|反馈|觉得|表示)"),
+    re.compile(r"用户(?:抱怨|觉得|认为|反馈|评价|普遍)"),
+    re.compile(r"市场反馈(?:显示|表明|指出)"),
+    re.compile(r"用户评价(?:显示|表明)"),
+]
+
+# English patterns — case insensitive
+_CONSUMER_PAIN_PATTERNS_EN = [
+    re.compile(r"consumers?\s+\w*\s*(?:report|complain|believe|feel|say|indicate)", re.IGNORECASE),
+    re.compile(r"users?\s+\w*\s*(?:complain|report|feel|believe|commonly)", re.IGNORECASE),
+    re.compile(r"market\s+feedback\s+(?:shows|indicates|suggests)", re.IGNORECASE),
+    re.compile(r"customer\s+(?:complaints?|feedback|reviews?)\s+(?:show|indicate|suggest)", re.IGNORECASE),
+]
+
+_CONSUMER_PAIN_PATTERNS = _CONSUMER_PAIN_PATTERNS_ZH + _CONSUMER_PAIN_PATTERNS_EN
+
+# Source types that count as consumer-level evidence
+_CONSUMER_SOURCE_TYPES = {"local_signal", "consumer_discussion", "platform_data"}
+
+
+def _check_local_signal_claims(
+    markdown: str,
+    ledger: ClaimLedger,
+    context: PipelineContext,
+) -> list[AuditFinding]:
+    """Check local signal audit rules.
+
+    LOCAL_SIGNAL_CLAIM_001: Consumer pain-point claims require consumer-level sources.
+    LOCAL_SIGNAL_PROVENANCE_001: Local signal claims require sample metadata.
+    LOCAL_SIGNAL_PRIVACY_001: Personal data must not enter final brief.
+    """
+    findings: list[AuditFinding] = []
+
+    # LOCAL_SIGNAL_CLAIM_001: Check for consumer pain-point claims without consumer sources
+    for line_num, line in enumerate(markdown.splitlines(), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        for pattern in _CONSUMER_PAIN_PATTERNS:
+            if pattern.search(line):
+                # Check if this line has a source reference to a consumer-level claim
+                src_refs = SRC_REF_PATTERN.findall(line)
+                has_consumer_source = False
+                for claim_id in src_refs:
+                    claim = ledger.get_claim(claim_id)
+                    if claim and claim.source_type in _CONSUMER_SOURCE_TYPES:
+                        has_consumer_source = True
+                        break
+                    # Also check metadata for source_family
+                    if claim and claim.metadata.get("source_family") == "local_signal":
+                        has_consumer_source = True
+                        break
+
+                if not has_consumer_source:
+                    findings.append(
+                        _tag(
+                            "local_signal_unsupported_claim",
+                            finding_id=f"LOCAL_SIGNAL_CLAIM_{len(findings)+1:03d}",
+                            severity="high",
+                            line_number=line_num,
+                            description=(
+                                "Consumer pain-point claim appears without consumer-level "
+                                "or platform-data source support. External trend articles "
+                                "cannot support specific consumer sentiment claims."
+                            ),
+                            recommendation=(
+                                "Add consumer-discussion or platform-data sources, "
+                                "or reframe as external trend observation."
+                            ),
+                            evidence=line.strip(),
+                        )
+                    )
+                break  # Only one finding per line
+
+    # LOCAL_SIGNAL_PROVENANCE_001: Check local signal claims have required metadata
+    for claim in ledger:
+        if claim.source_type == "local_signal" or claim.metadata.get("source_family") == "local_signal":
+            required_meta = ["platform", "market", "collected_at", "access_level", "sample_type", "collector"]
+            missing = [k for k in required_meta if not claim.metadata.get(k)]
+            if missing:
+                findings.append(
+                    _tag(
+                        "local_signal_missing_provenance",
+                        finding_id=f"LOCAL_SIGNAL_PROV_{len(findings)+1:03d}",
+                        severity="medium",
+                        related_claim_id=claim.claim_id,
+                        description=(
+                            f"Local signal claim {claim.claim_id} is missing required "
+                            f"sample metadata: {', '.join(missing)}"
+                        ),
+                        recommendation="Add sample metadata (platform, market, collected_at, etc.) to the claim.",
+                        evidence=claim.statement,
+                    )
+                )
+
+    # LOCAL_SIGNAL_PRIVACY_001: Check for personal data in local signal claims
+    for claim in ledger:
+        is_local_signal = (
+            claim.source_type == "local_signal"
+            or claim.metadata.get("source_family") == "local_signal"
+        )
+        if is_local_signal and claim.metadata.get("contains_personal_data", False):
+            findings.append(
+                _tag(
+                    "local_signal_privacy_violation",
+                    finding_id=f"LOCAL_SIGNAL_PRIV_{len(findings)+1:03d}",
+                    severity="high",
+                    related_claim_id=claim.claim_id,
+                    description=(
+                        f"Claim {claim.claim_id} is marked as containing personal data "
+                        f"and must not appear in the final brief."
+                    ),
+                    recommendation="Remove this claim or redact personal data before including in brief.",
+                    evidence=claim.statement,
+                )
+            )
+
+    return findings

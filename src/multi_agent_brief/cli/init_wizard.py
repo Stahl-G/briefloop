@@ -54,13 +54,15 @@ def _build_search_backend_choices(
     choices: dict[str, str] = {}
     idx = 1
 
-    # Add configured backends
-    for backend_key in configured:
-        info = _SEARCH_BACKENDS[backend_key]
+    # Add all supported external backends. Mark configured ones, but do not hide
+    # alternatives; otherwise users think Tavily is the only supported choice.
+    configured_set = set(configured)
+    for backend_key, info in _SEARCH_BACKENDS.items():
+        status = "configured" if backend_key in configured_set else "needs API key"
         if language == "zh-CN":
-            choices[str(idx)] = f"{backend_key} ({info['name']} - {info['desc']})"
+            choices[str(idx)] = f"{backend_key} ({info['name']} - {info['desc']}；{status})"
         else:
-            choices[str(idx)] = f"{backend_key} ({info['desc']})"
+            choices[str(idx)] = f"{backend_key} ({info['desc']}; {status})"
         idx += 1
 
     # Add runtime-provided websearch
@@ -370,7 +372,19 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
         apply_rag_args(profile, args.rag, args.retrieval_provider)
         profile.output_formats = parse_list_arg(args.output_formats) or profile.output_formats
         profile.source_profile = getattr(args, "source_profile", None) or profile.source_profile
-        profile.tavily_enabled = getattr(args, "tavily", False) or profile.tavily_enabled
+        if getattr(args, "web_search_mode", None):
+            profile.web_search_mode = args.web_search_mode
+            profile.web_search_enabled = args.web_search_mode != "disabled"
+        if getattr(args, "search_backend", None):
+            profile.search_backend = args.search_backend
+            profile.web_search_mode = "external_api"
+            profile.web_search_enabled = True
+            profile.tavily_enabled = args.search_backend == "tavily"
+        if getattr(args, "tavily", False):
+            profile.tavily_enabled = True
+            profile.web_search_enabled = True
+            profile.web_search_mode = "external_api"
+            profile.search_backend = "tavily"
         return profile
     # No CLI args → try interactive prompt
     if _is_interactive():
@@ -401,6 +415,8 @@ def has_direct_init_args(args: Any) -> bool:
         "selector_max_items",
         "output_formats",
         "source_profile",
+        "web_search_mode",
+        "search_backend",
     ]
     # Check string/list fields for non-None
     if any(getattr(args, field, None) is not None for field in fields):

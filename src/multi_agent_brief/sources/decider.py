@@ -13,6 +13,11 @@ try:
 except ModuleNotFoundError:
     yaml = None  # type: ignore[assignment]
 
+from multi_agent_brief.sources.local_signal_planner import (
+    build_local_signal_tasks,
+    generate_collector_tasks,
+)
+
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -40,7 +45,11 @@ def load_source_discovery(sources_path: Path) -> dict[str, Any]:
 
 
 def build_search_queries(discovery: dict[str, Any]) -> list[str]:
-    """Build web search queries from source_discovery fields."""
+    """Build standard web search queries from source_discovery fields.
+
+    Does NOT include local signal queries — those are handled by
+    build_search_tasks_with_metadata() which adds platform/market metadata.
+    """
     company = discovery.get("company", "")
     industry = discovery.get("industry", "")
     focus_areas = discovery.get("focus_areas", [])
@@ -65,6 +74,37 @@ def build_search_queries(discovery: dict[str, Any]) -> list[str]:
             queries.append(f"{industry} {area}")
 
     return queries
+
+
+def build_search_tasks_with_metadata(discovery: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build search tasks as dicts with metadata for pipeline injection.
+
+    Returns list of dicts with 'query' plus optional metadata keys:
+    topic, market, language, platform_group, signal_type.
+    """
+    tasks: list[dict[str, Any]] = []
+
+    # Standard queries — delegate to build_search_queries
+    for q in build_search_queries(discovery):
+        tasks.append({"query": q, "domains": None})
+
+    # Local signal tasks with metadata
+    local_tasks = build_local_signal_tasks(discovery)
+    existing_q = {t.get("query") for t in tasks}
+    for task in local_tasks:
+        if task.query and task.query not in existing_q:
+            tasks.append({
+                "query": task.query,
+                "domains": None,
+                "topic": "consumer_signal",
+                "market": task.market,
+                "language": task.language,
+                "platform_group": task.platform_group,
+                "signal_type": task.signal_type,
+            })
+            existing_q.add(task.query)
+
+    return tasks
 
 
 def generate_source_candidates(
@@ -128,6 +168,13 @@ def generate_source_candidates(
     filing_sources = _get_filing_sources(discovery)
     if filing_sources:
         candidates["filing_sources"] = filing_sources
+
+    # Add local social listening tasks from local signal planner
+    local_tasks = build_local_signal_tasks(discovery)
+    if local_tasks:
+        candidates["local_social_listening_tasks"] = [
+            task.to_dict() for task in local_tasks
+        ]
 
     return candidates
 
@@ -306,6 +353,32 @@ def merge_candidates_to_sources(
     candidates["metadata"]["merged_rss"] = added_rss
     candidates["metadata"]["merged_filing"] = added_filing
 
+    # Inject local social listening tasks into web_search search_tasks
+    local_tasks = [
+        t for t in candidates.get("local_social_listening_tasks", [])
+        if t.get("enabled", True)
+    ]
+    added_local = 0
+    if local_tasks and sources.get("web_search", {}).get("enabled"):
+        if "search_tasks" not in sources["web_search"]:
+            sources["web_search"]["search_tasks"] = []
+        existing_search_q = {t.get("query") for t in sources["web_search"]["search_tasks"]}
+        for task in local_tasks:
+            query = task.get("query", "")
+            if query and query not in existing_search_q:
+                sources["web_search"]["search_tasks"].append({
+                    "query": query,
+                    "domains": None,
+                    "topic": "consumer_signal",
+                    "market": task.get("market", ""),
+                    "language": task.get("language", ""),
+                    "platform_group": task.get("platform_group", ""),
+                    "signal_type": task.get("signal_type", "consumer_discussion"),
+                })
+                existing_search_q.add(query)
+                added_local += 1
+    candidates["metadata"]["merged_local_tasks"] = added_local
+
     _save_yaml(sources_path, sources)
     _save_yaml(candidates_path, candidates)
 
@@ -313,6 +386,7 @@ def merge_candidates_to_sources(
         "added_manual": added_manual,
         "added_rss": added_rss,
         "added_filing": added_filing,
+        "added_local": added_local,
         "total_enabled": len(enabled),
         "total_disabled": len(recommended) - len(enabled),
     }

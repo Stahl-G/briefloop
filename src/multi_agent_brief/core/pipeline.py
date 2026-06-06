@@ -1,6 +1,7 @@
 """BriefPipeline — deterministic core pipeline."""
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -121,17 +122,28 @@ class BriefPipeline:
                 ]
 
         # Enhance search tasks with source_discovery queries if available
+        # Uses build_search_tasks_with_metadata to preserve local signal metadata
         discovery = context.metadata.get("source_discovery")
         if discovery and "web_search" in source_config.enabled_providers:
-            from multi_agent_brief.sources.decider import build_search_queries
-            discovery_queries = build_search_queries(discovery)
-            if discovery_queries:
+            from multi_agent_brief.sources.decider import build_search_tasks_with_metadata
+            discovery_tasks = build_search_tasks_with_metadata(discovery)
+            if discovery_tasks:
                 existing_tasks = source_config.web_search.get("search_tasks", [])
                 existing_q = {t.get("query") for t in existing_tasks}
-                for q in discovery_queries:
-                    if q not in existing_q:
-                        existing_tasks.append({"query": q, "domains": None})
+                for task in discovery_tasks:
+                    if task.get("query") not in existing_q:
+                        existing_tasks.append(task)
+                        existing_q.add(task.get("query"))
                 source_config.web_search["search_tasks"] = existing_tasks
+
+        # Generate collector_tasks.json for local signal collection
+        # This runs regardless of web_search being enabled
+        if discovery:
+            from multi_agent_brief.sources.local_signal_planner import write_collector_tasks_json
+            collector_path = Path(context.output_dir) / "intermediate" / "collector_tasks.json"
+            collector_tasks = write_collector_tasks_json(discovery, collector_path)
+            if collector_tasks:
+                context.metadata["collector_tasks"] = collector_tasks
 
         # Merge industry RSS feeds into config — only when rss is in
         # enabled_providers (B06): Industry Pack must not bypass user's
@@ -180,6 +192,24 @@ class BriefPipeline:
             config=coverage_config,
             report_date=context.report_date,
         )
+
+        # Generate local_signal_report.json if local signal discovery is configured
+        # Reuse local_tasks already computed above for collector_tasks
+        if discovery:
+            from multi_agent_brief.sources.local_signal_planner import (
+                build_local_signal_tasks,
+                generate_local_signal_report,
+                parse_local_signal_samples,
+            )
+            # build_local_signal_tasks is also called inside generate_collector_tasks
+            # above; this is the third call site. Acceptable since it's deterministic
+            # and the task list is small. A future refactor could pass pre-computed tasks.
+            local_tasks = build_local_signal_tasks(discovery)
+            if local_tasks:
+                samples_path = input_dir / "local_signal_samples.jsonl"
+                samples = parse_local_signal_samples(samples_path)
+                local_signal_report = generate_local_signal_report(discovery, local_tasks, samples)
+                context.metadata["local_signal_report"] = local_signal_report
 
         artifacts: dict = {
             "source_count": len(items),

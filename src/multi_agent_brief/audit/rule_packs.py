@@ -57,6 +57,11 @@ RULE_PACK: dict[str, tuple[BlockingLevel, RepairOwner, str]] = {
     # ── Semantic audit findings ──
     "semantic_source_support":             ("analyst_blocking",   "analyst",     "Semantic audit: claim not supported by cited evidence"),
 
+    # ── Local signal audit findings ──
+    "local_signal_unsupported_claim":      ("analyst_blocking",   "analyst",     "Consumer pain-point claim without consumer-level source support"),
+    "local_signal_missing_provenance":     ("source_blocking",    "source",      "Local signal claim missing sample metadata"),
+    "local_signal_privacy_violation":      ("safety_blocking",    "safety",      "Personal data from local signal sample entered final brief"),
+
     # ── Final Clean findings ──
     "template_variable_residue":           ("editor_fixable",     "editor",      "Template variable {{{{...}}}} or ${{...}} found in text"),
     "internal_path_leak":                  ("safety_blocking",    "safety",      "Internal file path exposed in reader-facing text"),
