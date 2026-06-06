@@ -21,16 +21,16 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 
 
-# Boilerplate phrases that add no information and should be consolidated
+# Boilerplate phrases that add no information and should be consolidated.
+# Each pattern must be specific enough to avoid false positives on legitimate
+# limitations.  Prefer multi-word phrases over single words / short substrings.
 _BOILERPLATE_PATTERNS: list[str] = [
     "not local data",
-    "not local",
     "for reference only",
     "仅供参考",
     "does not constitute",
-    "不构成",
-    "not investment advice",
     "不构成投资建议",
+    "not investment advice",
     "for informational purposes",
     "仅供参考，不构成",
     "may not be applicable",

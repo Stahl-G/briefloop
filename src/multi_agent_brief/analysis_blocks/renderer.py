@@ -89,17 +89,15 @@ def _render_block(
 ) -> str:
     lines: list[str] = [f"## {block.title}", ""]
 
-    # Fact section
-    fact_lines = _render_claim_list(block.fact_claim_ids, ledger)
-    if fact_lines:
+    # Fact section — conditional like all other sections
+    if block.fact_claim_ids:
         lines.append(f"### {headings['fact']}")
         lines.append("")
-        lines.extend(fact_lines)
-        lines.append("")
-    else:
-        lines.append(f"### {headings['fact']}")
-        lines.append("")
-        lines.append(_no_fact_message(is_zh))
+        fact_lines = _render_claim_list(block.fact_claim_ids, ledger)
+        if fact_lines:
+            lines.extend(fact_lines)
+        else:
+            lines.append(_no_fact_message(is_zh))
         lines.append("")
 
     # Case / Comparison section
@@ -187,9 +185,6 @@ def _render_limitations(block: AnalysisBlock, ledger: ClaimLedger, is_zh: bool) 
             if normalized not in seen:
                 seen.add(normalized)
                 lines.append(f"- {lim}")
-    # Add verification path if present
-    if block.verification_path and not any("验证" in l or "verify" in l.lower() for l in lines):
-        lines.append(f"- {block.verification_path}")
     return lines
 
 

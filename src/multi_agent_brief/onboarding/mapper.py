@@ -334,9 +334,9 @@ def normalize_industry(text: str) -> str:
 # ── selector_max_items ─────────────────────────────────────────────
 
 _SELECTOR_MAP: dict[str, int] = {
-    "conservative": 20,
+    "conservative": 12,
     "research": 20,
-    "aggressive_signal": 24,
+    "aggressive_signal": 28,
     "llm_decide": 20,
 }
 
@@ -374,7 +374,7 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     profile.audience_profile = map_audience_to_profile(result.audience_plain)
     profile.cadence = normalize_cadence(result.cadence_plain)
     profile.source_profile = normalize_source_profile(result.source_style_plain)
-    profile.selector_max_items = _SELECTOR_MAP.get(profile.source_profile, 12)
+    profile.selector_max_items = _SELECTOR_MAP.get(profile.source_profile, 20)
 
     # Brief title: use raw industry text, not a slug
     industry_display = industry_raw or "Industry"

@@ -18,16 +18,45 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 
 
+def _infer_section(statement: str) -> str:
+    """Infer a topic from claim statement keywords.
+
+    Kept in sync with AnalystAgent.infer_section to avoid topic drift
+    between analysis_blocks (governance artifact) and legacy brief.md.
+    """
+    lowered = statement.lower()
+    if any(word in lowered for word in ["policy", "tariff", "regulation"]):
+        return "policy"
+    if any(word in lowered for word in ["compliance", "uflpa", "forced labor"]):
+        return "compliance"
+    if any(word in lowered for word in ["revenue", "margin", "earnings"]):
+        return "earnings"
+    if any(word in lowered for word in ["competitor", "capacity", "launch"]):
+        return "competitor"
+    if any(word in lowered for word in ["market", "price", "demand"]):
+        return "market"
+    if any(word in lowered for word in ["installation", "generation", "ppa"]):
+        return "demand"
+    if any(word in lowered for word in ["treasury", "yield", "sofr", "fed", "rate"]):
+        return "rates"
+    if any(word in lowered for word in ["acquisition", "investment", "fund", "capital"]):
+        return "capital"
+    if any(word in lowered for word in ["topcon", "hjt", "technology", "efficiency"]):
+        return "technology"
+    return "general"
+
+
 def build_analysis_blocks(ledger: ClaimLedger) -> list[AnalysisBlock]:
     """Group ledger claims into AnalysisBlocks by topic.
 
     Each topic becomes one block. Claims are classified into epistemic
     buckets based on their epistemic_type and evidence_relation.
     """
-    # Group claims by topic
+    # Group claims by topic — fall back to keyword inference for topicless claims,
+    # keeping parity with AnalystAgent.infer_section.
     by_topic: dict[str, list[Claim]] = defaultdict(list)
     for claim in ledger:
-        topic = claim.metadata.get("topic") or "general"
+        topic = claim.metadata.get("topic") or _infer_section(claim.statement)
         by_topic[topic].append(claim)
 
     blocks: list[AnalysisBlock] = []
@@ -63,11 +92,14 @@ def _classify_claim(block: AnalysisBlock, claim: Claim) -> None:
             block.limitation_claim_ids.append(claim.claim_id)
         return
 
-    # 2. analogous → Case
+    # 2. analogous → Case (but hypothesis still goes to To Verify)
     if ev_rel == "analogous":
         block.case_claim_ids.append(claim.claim_id)
         # Populate case_applicability from claim metadata if available
         _populate_case_applicability(block, claim)
+        # hypothesis+analogous: must also be tracked for verification
+        if ep_type == "hypothesis":
+            block.to_verify_claim_ids.append(claim.claim_id)
         if has_limitations:
             block.limitation_claim_ids.append(claim.claim_id)
         return
@@ -137,24 +169,36 @@ def _populate_case_applicability(block: AnalysisBlock, claim: Claim) -> None:
             block.case_applicability.price_band_or_audience_fit = audience_fit
         if needs_local:
             block.case_applicability.local_verification_needed = True
-        if applicability and not block.applicability_note:
-            block.applicability_note = applicability
+        if applicability:
+            if not block.applicability_note:
+                block.applicability_note = applicability
+            elif applicability not in block.applicability_note:
+                block.applicability_note += "; " + applicability
 
 
 def _compute_confidence(block: AnalysisBlock, claims: list[Claim]) -> float:
-    """Compute block confidence from claim evidence quality."""
+    """Compute block confidence from claim evidence quality.
+
+    Epistemic hierarchy (strongest → weakest):
+      observed+direct (1.0) > interpreted (0.5) > analogous (0.4) > hypothesis (0.2)
+    Action claims with direct evidence score 1.0 (equivalent to observed+direct).
+    """
     if not claims:
         return 0.0
 
     score = 0.0
     for claim in claims:
-        if claim.epistemic_type == "observed" and claim.evidence_relation == "direct":
+        ep_type = claim.epistemic_type
+        ev_rel = claim.evidence_relation
+        if ep_type == "observed" and ev_rel == "direct":
             score += 1.0
-        elif claim.evidence_relation == "analogous":
+        elif ep_type == "action" and ev_rel == "direct":
+            score += 1.0
+        elif ev_rel == "analogous":
             score += 0.4
-        elif claim.epistemic_type == "hypothesis":
+        elif ep_type == "hypothesis":
             score += 0.2
-        elif claim.epistemic_type == "interpreted":
+        elif ep_type == "interpreted":
             score += 0.5
         else:
             score += 0.3

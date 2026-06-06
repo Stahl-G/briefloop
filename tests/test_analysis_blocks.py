@@ -196,12 +196,15 @@ class TestRenderer:
         md = render_analysis_blocks(blocks, ledger, language="zh-CN")
         assert "事实" in md or "Fact" in md  # heading depends on audience
 
-    def test_renderer_shows_no_fact_message_when_empty(self):
+    def test_renderer_hides_fact_section_when_empty(self):
+        """When there are no fact claims, the Fact section is omitted (consistent with other sections)."""
         claim = _make_claim("R005", epistemic_type="hypothesis", evidence_relation="inferred")
         ledger = ClaimLedger([claim])
         blocks = build_analysis_blocks(ledger)
         md = render_analysis_blocks(blocks, ledger)
-        assert "No current-period direct fact found" in md
+        assert "No current-period direct fact found" not in md
+        assert "### Fact" not in md
+        assert "### Interpretation" in md
 
     def test_renderer_shows_empty_message_for_no_claims(self):
         md = render_analysis_blocks([], ClaimLedger())

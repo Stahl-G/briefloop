@@ -56,7 +56,7 @@ RULES: list[tuple[list[str], str, str, str]] = [
     (
         [
             "搜索", "新闻", "search", "news", "market data", "市场数据", "舆情",
-            "周报", "日报", "月报", "行业动态", "industry", "weekly", "brief",
+            "周报", "日报", "月报", "行业动态",
             "趋势", "trend", "动态", "快讯", "速报",
             "OpenAI", "Anthropic", "Agent", "AI", "大模型", "LLM",
         ],

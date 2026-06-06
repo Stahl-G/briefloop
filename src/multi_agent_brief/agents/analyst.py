@@ -5,6 +5,7 @@ from collections import defaultdict
 from multi_agent_brief.agents.base import BaseAgent
 from multi_agent_brief.analysis_blocks.builder import build_analysis_blocks
 from multi_agent_brief.analysis_blocks.renderer import render_analysis_blocks
+from multi_agent_brief.audit.case_applicability import audit_case_applicability
 from multi_agent_brief.audit.limitation_hygiene import audit_limitation_hygiene
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AgentOutput, BriefSection, PipelineContext
@@ -38,6 +39,15 @@ class AnalystAgent(BaseAgent):
         # Run limitation hygiene audit (v0.5.3 PR 4)
         lh_report = audit_limitation_hygiene(analysis_blocks, ledger)
         context.metadata["limitation_hygiene_report"] = lh_report.to_dict()
+
+        # Run case applicability audit (v0.5.3 PR 3)
+        ca_findings = audit_case_applicability(analysis_blocks, ledger)
+        context.metadata["case_applicability_findings"] = [
+            {"finding_type": f.finding_type, "severity": f.severity,
+             "block_id": f.block_id, "claim_id": f.claim_id,
+             "description": f.description, "recommendation": f.recommendation}
+            for f in ca_findings
+        ]
 
         # Render structured draft using AnalysisBlocks
         structured_draft = render_analysis_blocks(
@@ -77,7 +87,8 @@ class AnalystAgent(BaseAgent):
             sections.append(BriefSection(title="No Reportable Signals", body="No candidate claims were found."))
 
         # Epistemic blocks are intermediate governance artifacts, NOT reader-facing.
-        # Store in metadata for analysis_blocks.json export and MAS shared-world use.
+        # Stored in metadata for analysis_blocks.json export, MAS shared-world use,
+        # and downstream debugging/audit tooling that reads PipelineContext.metadata.
         context.metadata["epistemic_draft"] = structured_draft
 
         # The reader-facing brief uses the legacy prose format with executive summary.

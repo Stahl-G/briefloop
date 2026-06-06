@@ -179,4 +179,4 @@ class TestReportFormat:
         report = format_case_applicability_report(findings)
         assert "missing_applicability_reason" in report
         assert "WARNING" in report
-        assert "1 fail(s), 1 warning(s)" in report or "0 fail(s), 1 warning(s)" in report
+        assert "0 fail(s), 1 warning(s)" in report
