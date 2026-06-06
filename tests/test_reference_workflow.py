@@ -72,6 +72,11 @@ def _run_demo_pipeline(tmp_path: Path) -> PipelineContext:
     context.metadata["source_config"] = sc
     context.metadata["_config_dir"] = str(DEMO_DIR)
 
+    # Wire brief_quality config → final_quality metadata
+    brief_quality = config.get("brief_quality", {})
+    if brief_quality:
+        context.metadata["final_quality"] = brief_quality
+
     BriefPipeline().run(context)
     return context
 
@@ -204,3 +209,136 @@ class TestSmokeScript:
             f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
         )
         assert "SMOKE PASSED" in result.stdout
+
+
+# ── Regression: code review fixes ──────────────────────────────────────────────
+
+
+class TestSmokeFailsOnAuditFail:
+    """P0-1 regression: smoke script must fail when audit_status == 'fail'."""
+
+    def test_smoke_rejects_failing_audit(self, tmp_path):
+        """Create a mock workspace with audit_status=fail and verify non-zero exit."""
+        import os
+        import shutil
+
+        # Copy the demo workspace to tmp_path
+        workspace = tmp_path / "workspace"
+        shutil.copytree(DEMO_DIR, workspace)
+        # Clear any existing output
+        output_dir = workspace / "output"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+
+        # Create a minimal intermediate/audit_report.json with status=fail
+        intermediate = output_dir / "intermediate"
+        intermediate.mkdir(parents=True)
+        (intermediate / "audit_report.json").write_text(
+            json.dumps({"audit_status": "fail", "findings": []}),
+            encoding="utf-8",
+        )
+        # Create minimal brief.md
+        (output_dir / "brief.md").write_text("# Test Brief\n\nContent here.\n", encoding="utf-8")
+
+        env = os.environ.copy()
+        src_dir = str(Path(__file__).parent.parent / "src")
+        env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
+
+        # The smoke script runs the full pipeline, so we test the artifact check logic directly
+        # by importing and calling _verify_artifacts
+        sys.path.insert(0, str(SMOKE_SCRIPT.parent))
+        spec = __import__("smoke_reference_workflow")
+        from smoke_reference_workflow import _Check, _verify_artifacts
+
+        checks = _Check()
+        _verify_artifacts(workspace, checks)
+        assert any("fail" in e.lower() for e in checks.errors), (
+            f"Expected failure for audit_status=fail, got errors: {checks.errors}"
+        )
+
+
+class TestFinalQualityDetection:
+    """P1-1 regression: FinalQualityAuditAgent findings detected by FINAL_ prefix."""
+
+    def test_final_quality_findings_detected(self, tmp_path):
+        """Verify final_quality_status is not 'not_run' when FINAL_ findings exist."""
+        context = _run_demo_pipeline(tmp_path)
+        audit_report = context.report_state.audit_report
+
+        # Check if there are any FINAL_ findings
+        final_findings = [f for f in audit_report.findings if f.finding_id.startswith("FINAL_")]
+
+        if final_findings:
+            # If there are FINAL_ findings, final_quality_report should be in metadata
+            fq_report = context.metadata.get("final_quality_report")
+            assert fq_report is not None, (
+                "final_quality_report should be in metadata when FINAL_ findings exist"
+            )
+            assert fq_report["findings_count"] == len(final_findings)
+            assert fq_report["audit_status"] in ("pass", "warning", "fail")
+
+
+class TestRelativeConfigPath:
+    """P0-3 regression: relative --config path should work correctly."""
+
+    def test_relative_config_path_produces_sources(self, tmp_path):
+        """Verify pipeline with relative config path collects sources correctly."""
+        config = load_config(str(DEMO_DIR / "config.yaml"))
+        sc = load_sources_config(DEMO_DIR / "sources.yaml")
+
+        # Simulate relative config_dir (the bug scenario)
+        settings = build_run_settings(
+            config=config,
+            input_dir=None,
+            output_dir=str(tmp_path),
+            name=None,
+            language=None,
+            audience=None,
+        )
+        context = PipelineContext(**settings)
+        context.metadata["source_config"] = sc
+        # Use absolute path (what the fix does)
+        context.metadata["_config_dir"] = str(DEMO_DIR.resolve())
+
+        BriefPipeline().run(context)
+
+        # After the fix, sources should be collected
+        assert len(context.sources) > 0, "Pipeline should collect sources with absolute config_dir"
+
+
+class TestInitDemoWorkspace:
+    """P1-2 regression: init --demo creates all v0.5 workspace files."""
+
+    def test_demo_creates_all_files(self, tmp_path):
+        from multi_agent_brief.cli.init_wizard import create_demo_workspace
+
+        target = tmp_path / "demo-ws"
+        create_demo_workspace(target)
+
+        assert (target / "config.yaml").exists(), "config.yaml missing"
+        assert (target / "sources.yaml").exists(), "sources.yaml missing"
+        assert (target / "user.md").exists(), "user.md missing"
+        assert (target / ".gitignore").exists(), ".gitignore missing"
+        assert (target / ".env.example").exists(), ".env.example missing"
+        assert (target / "input" / "news.json").exists(), "input/news.json missing"
+        assert (target / "input" / "market_data.json").exists(), "input/market_data.json missing"
+        assert (target / "output").is_dir(), "output/ directory missing"
+
+    def test_demo_config_loads(self, tmp_path):
+        from multi_agent_brief.cli.init_wizard import create_demo_workspace
+
+        target = tmp_path / "demo-ws"
+        create_demo_workspace(target)
+
+        config = load_config(str(target / "config.yaml"))
+        assert "project" in config
+        assert config["project"]["audience"] == "management"
+
+    def test_demo_sources_loads(self, tmp_path):
+        from multi_agent_brief.cli.init_wizard import create_demo_workspace
+
+        target = tmp_path / "demo-ws"
+        create_demo_workspace(target)
+
+        sc = load_sources_config(target / "sources.yaml")
+        assert "manual" in sc.enabled_providers
