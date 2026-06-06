@@ -224,9 +224,9 @@ Primary files:
 
 - `src/multi_agent_brief/audit/final_quality.py`
 - `src/multi_agent_brief/audit/rule_packs.py`
-- `src/multi_agent_brief/agents/editor.py`
-- `src/multi_agent_brief/agents/auditor.py`
-- `src/multi_agent_brief/agents/formatter.py`
+- `removed Python runtime editor module`
+- `removed Python runtime auditor module`
+- `removed Python runtime formatter module`
 - `src/multi_agent_brief/core/schemas.py`
 - `tests/test_final_quality_audit.py`
 - `tests/test_editor_cleanup.py`
@@ -352,7 +352,7 @@ Primary files:
 - `src/multi_agent_brief/outputs/ib_docx.py`
 - `src/multi_agent_brief/outputs/docx.py`
 - new `src/multi_agent_brief/outputs/templates/`
-- `src/multi_agent_brief/agents/formatter.py`
+- `removed Python runtime formatter module`
 - `src/multi_agent_brief/audit/final_quality.py`
 - `docs/harness_matrix.md`
 - `tests/test_docx_output.py`
@@ -464,7 +464,7 @@ Primary files:
 
 - new `src/multi_agent_brief/sources/coverage.py`
 - `src/multi_agent_brief/core/pipeline.py`
-- `src/multi_agent_brief/agents/formatter.py`
+- `removed Python runtime formatter module`
 - `src/multi_agent_brief/core/manifest.py`
 - `src/multi_agent_brief/sources/base.py`
 - `tests/test_source_collection.py`

@@ -1,7 +1,7 @@
-"""Tests for the draft_cleanup module and EditorAgent cleanup behavior."""
+"""Tests for the draft_cleanup module and text cleanup behavior."""
 from __future__ import annotations
 
-from multi_agent_brief.agents.draft_cleanup import (
+from multi_agent_brief.tools.draft_cleanup import (
     clean_process_residue,
     validate_citations_intact,
 )

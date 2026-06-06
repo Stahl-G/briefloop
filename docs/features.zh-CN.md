@@ -64,4 +64,4 @@ multi-agent-brief setup <workspace>
 | `setup <workspace>` | 将推荐应用到工作区 |
 | `doctor` | 检查配置健康状态 |
 | `init` | 创建新工作区 |
-| `prepare` | 运行确定性管线 |
+| `prepare` | 已废弃；请使用 `/generate-brief <workspace>` |

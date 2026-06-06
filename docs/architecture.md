@@ -59,10 +59,10 @@ report:
 
 Sources older than the configured window are flagged as `stale_source`; in strict mode they become high-severity findings.
 
-The pipeline-level `AuditorAgent` delegates to an `AuditAgentInterface` backend:
+The deterministic audit tool delegates to an `AuditAgentInterface` backend:
 
 ```text
-AuditorAgent
+audit tool
   -> CompositeAuditAgent
        -> DeterministicAuditAgent
        -> QualityHarnessAuditAgent

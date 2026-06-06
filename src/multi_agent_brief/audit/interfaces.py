@@ -7,7 +7,7 @@ from multi_agent_brief.core.schemas import AuditReport, PipelineContext
 
 
 class AuditAgentInterface(ABC):
-    """Backend interface used by the pipeline AuditorAgent."""
+    """Backend interface used by the pipeline audit tool."""
 
     name = "audit-agent"
 

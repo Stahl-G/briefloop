@@ -9,7 +9,7 @@ This project has two harness layers.
 Purpose:
 
 ```text
-AuditorAgent -> CompositeAuditAgent -> DeterministicAuditAgent -> QualityHarnessAuditAgent -> optional semantic audit adapter
+audit tool -> CompositeAuditAgent -> DeterministicAuditAgent -> QualityHarnessAuditAgent -> optional semantic audit adapter
 ```
 
 Responsible subagent:

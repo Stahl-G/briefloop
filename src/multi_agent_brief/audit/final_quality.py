@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
-from multi_agent_brief.agents.draft_cleanup import strip_claim_citations
+from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
 from multi_agent_brief.audit.deterministic import parse_date
 from multi_agent_brief.audit.interfaces import AuditAgentInterface, recompute_report_status
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -502,7 +502,7 @@ def _final_clean_pattern_findings(
     config: FinalCleanConfig,
 ) -> list[AuditFinding]:
     """Run pattern-based Final Clean checks from draft_cleanup."""
-    from multi_agent_brief.agents.draft_cleanup import detect_final_clean_issues
+    from multi_agent_brief.tools.draft_cleanup import detect_final_clean_issues
 
     # Build filter based on config
     enabled_types: set[str] = set()
@@ -552,7 +552,7 @@ def _final_clean_invalid_citations(
     if not config.check_invalid_citations:
         return []
 
-    from multi_agent_brief.agents.draft_cleanup import detect_invalid_citations
+    from multi_agent_brief.tools.draft_cleanup import detect_invalid_citations
 
     valid_ids = {claim.claim_id for claim in ledger}
     issues = detect_invalid_citations(markdown, valid_ids)

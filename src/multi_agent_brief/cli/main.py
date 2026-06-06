@@ -34,10 +34,7 @@ from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 from multi_agent_brief.sources.registry import load_sources_config
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
-from multi_agent_brief.core.pipeline import BriefPipeline
-from multi_agent_brief.core.manifest import build_manifest, save_manifest
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
-from multi_agent_brief.core.schemas import PipelineContext
 from multi_agent_brief.sources.registry import load_sources_config
 
 
@@ -47,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser(
         "run",
-        help="Deprecated — use 'prepare' instead. Prints migration guidance.",
+        help="Deprecated — use the subagent-first /generate-brief workflow instead.",
     )
     run_parser.add_argument("input_dir", nargs="?", help="[ignored]")
     run_parser.add_argument("--config", help="[ignored]")
@@ -58,7 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--industry", help="[ignored]")
     run_parser.add_argument("--days", type=int, help="[ignored]")
 
-    prepare_parser = subparsers.add_parser("prepare", help="Run deterministic pipeline: source collection → Scout → Screener → Claim Ledger → draft artifacts.")
+    prepare_parser = subparsers.add_parser(
+        "prepare",
+        help="Deprecated — Python no longer runs the brief workflow. Use /generate-brief <workspace>.",
+    )
     prepare_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
     prepare_parser.add_argument("--input", help="Override input directory.")
     prepare_parser.add_argument("--output", help="Override output directory.")
@@ -568,117 +568,35 @@ def run_setup_from_args(args: argparse.Namespace) -> int:
 
 
 def run_pipeline_from_args(args: argparse.Namespace) -> int:
-    print("[notice] 'multi-agent-brief run' has been replaced by 'multi-agent-brief prepare'.")
-    print("         'prepare' runs the same deterministic pipeline (source collection → Scout →")
-    print("         Screener → Claim Ledger → draft artifacts) and is used by /generate-brief.")
+    print("[deprecated] multi-agent-brief run no longer runs the brief workflow.")
+    print("MABW is subagent-first. Use /generate-brief <workspace> so external")
+    print("Scout/Screener/Claim Ledger/Analyst/Editor/Auditor/Formatter subagents")
+    print("execute the workflow.")
     print("")
-    print("  Instead of: multi-agent-brief run --config workspace/config.yaml")
-    print("  Use:        multi-agent-brief prepare --config workspace/config.yaml")
+    print("Python CLI commands remain available for tools such as:")
+    print("  multi-agent-brief init")
+    print("  multi-agent-brief doctor --config <workspace>/config.yaml")
+    print("  multi-agent-brief sources decide --config <workspace>/config.yaml")
+    print("  multi-agent-brief audit <brief.md> --ledger <claim_ledger.json>")
+    print("  multi-agent-brief finalize --config <workspace>/config.yaml")
     return 1
 
 
 def run_prepare_from_args(args: argparse.Namespace) -> int:
-    """Run the deterministic pipeline (source collection → Scout → Screener →
-    Claim Ledger → draft artifacts).  Used by /generate-brief as step 3.
-
-    Loads config.yaml for project settings AND sources.yaml for source
-    providers, search_tasks, and source_discovery policy — both are required
-    for a working prepare run.
-    """
-    config_path = Path(args.config).resolve()
-    workspace = config_path.parent
-    config = load_config(str(config_path))
-
-    # Load sources.yaml — required for provider config, search tasks, filing resolver, etc.
-    sources_path = workspace / "sources.yaml"
-    source_config = None
-    source_discovery = None
-    coverage_config = None
-    if sources_path.exists():
-        source_config = load_sources_config(sources_path)
-        try:
-            from multi_agent_brief.sources.decider import load_source_discovery
-            source_discovery = load_source_discovery(sources_path)
-        except Exception:
-            source_discovery = None
-        # Load coverage config from sources.yaml
-        try:
-            import yaml as _yaml
-            with open(sources_path, encoding="utf-8") as f:
-                sources_raw = _yaml.safe_load(f) or {}
-            coverage_config = sources_raw.get("coverage", None)
-        except Exception:
-            coverage_config = None
-
-    settings = build_run_settings(
-        config=config,
-        input_dir=args.input,
-        output_dir=args.output,
-        name=None,
-        language=None,
-        audience=None,
-    )
-    context = PipelineContext(**settings)
-
-    # Inject sources.yaml data into metadata so _collect_sources can use it
-    if source_config is not None:
-        context.metadata["source_config"] = source_config
-    if source_discovery is not None:
-        context.metadata["source_discovery"] = source_discovery
-    if coverage_config is not None:
-        context.metadata["coverage_config"] = coverage_config
-    context.metadata["_config_dir"] = str(workspace)
-
-    # Wire brief_quality config → final_quality metadata for FinalQualityAuditAgent
-    brief_quality = config.get("brief_quality", {})
-    if brief_quality:
-        context.metadata["final_quality"] = brief_quality
-
-    outputs = BriefPipeline().run(context)
-
-    # Generate run_manifest.json
-    try:
-        formatter_output = next((o for o in outputs if o.agent_name == "formatter"), None)
-        artifact_paths = formatter_output.artifacts if formatter_output else {}
-        stage_dicts = [o.to_dict() for o in outputs]
-
-        audit_report = context.report_state.audit_report
-        # Build source coverage summary for manifest
-        coverage_report = context.metadata.get("source_coverage")
-        source_coverage_summary = coverage_report.to_dict() if hasattr(coverage_report, "to_dict") else {}
-
-        manifest = build_manifest(
-            config_path=str(config_path),
-            workspace=str(workspace),
-            enabled_providers=source_config.enabled_providers if source_config else [],
-            output_formats=context.output_formats,
-            language=context.language,
-            report_date=context.report_date,
-            source_count=len(context.sources),
-            claim_count=len(context.metadata.get("_ledger", [])),
-            candidate_count=len(context.candidates),
-            audit_status=audit_report.audit_status if audit_report else "not_run",
-            audit_score=audit_report.audit_score if audit_report else None,
-            audit_finding_count=len(audit_report.findings) if audit_report else 0,
-            semantic_status=(audit_report.metadata.get("semantic_status", "") if audit_report else ""),
-            artifact_paths=artifact_paths,
-            stage_outputs=stage_dicts,
-            source_coverage=source_coverage_summary,
-        )
-        manifest_path = save_manifest(manifest, context.output_dir)
-        print(f"[prepare] Run manifest: {manifest_path}")
-    except Exception as exc:
-        print(f"[prepare] Warning: could not generate run manifest: {exc}")
-
-    # Determine exit code based on pipeline results
-    exit_code = _determine_pipeline_exit_code(outputs, context)
-
-    if exit_code == 0:
-        print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
-    else:
-        print(f"[prepare] Pipeline failed — {len(outputs)} stages run. Exit code: {exit_code}")
-
-    return exit_code
+    """Deprecated wrapper for the removed Python brief-generation pipeline."""
+    print("[deprecated] prepare no longer runs the brief workflow.")
+    print("MABW is subagent-first. Python does not orchestrate Scout/Screener/")
+    print("Analyst/Editor/Auditor/Formatter as a runtime pipeline.")
+    print("")
+    print("Use /generate-brief <workspace> so external subagents execute:")
+    print("  Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter")
+    print("")
+    print("Python CLI commands remain available as deterministic tools:")
+    print("  multi-agent-brief doctor --config <workspace>/config.yaml")
+    print("  multi-agent-brief sources decide --config <workspace>/config.yaml")
+    print("  multi-agent-brief audit <brief.md> --ledger <claim_ledger.json>")
+    print("  multi-agent-brief finalize --config <workspace>/config.yaml")
+    return 1
 
 
 def _determine_pipeline_exit_code(outputs: list, context) -> int:
