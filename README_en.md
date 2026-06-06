@@ -847,42 +847,18 @@ MIT
 
 ## Interactive Onboarding Questions
 
-The initialization wizard asks the following 10 questions:
+The initialization wizard asks the following 13 questions (with conditional follow-ups):
 
-1. **Monitor Content** - What should this brief monitor?
-   - Default: company + industry + policy + competitors + risk events
-
-2. **Target Audience** - Who will read this brief?
-   - Default: management / leadership team
-
-3. **Source Breadth** - How broad should sources be?
-   - Default: reliable public sources + industry media
-
-4. **Language and Cadence** - What language and frequency?
-   - Default: English, weekly
-
-5. **Focus Areas** - What specific areas are most important?
-   - Examples: sales data, autonomous driving, policy, supply chain, product launches
-
-6. **Search Backend** ⭐ - Choose web search provider
-   - tavily (default, fast AI search)
-   - exa (deep research)
-   - brave (independent web index)
-   - firecrawl (search + scrape)
-   - serper (Google SERP)
-   - serpapi (broad SERP)
-   - none (local files only)
-
-7. **Items Per Brief** - How many items per brief?
-   - Default: 8 items
-
-8. **Source Age Limit** - Maximum age for source materials (days)?
-   - Default: 14 days
-
-9. **Audit Strictness** - How strict should the audit be?
-   - standard (default)
-   - strict (fail on any issue)
-   - lenient (allow minor issues)
-
-10. **Forbidden Sources** - Any sources or topics to avoid?
-    - Default: none
+1. **Company** — target company or organization
+2. **Role** — strategy/IR/research/policy/management support/other
+3. **Industry** — manufacturing/banking/fund/internet/general research
+4. **Brief Title** — custom brief name
+5. **Audience** — management, strategy, research, IR, marketing, etc.
+6. **Focus Areas** — comma-separated, e.g. sales data, autonomous driving, policy, supply chain
+7. **Cadence** — weekly, biweekly, monthly, ad hoc
+8. **Items Per Brief** — default 8
+9. **Historical Retrieval / RAG** — enable or not (default off). If enabled, choose provider: Ollama local / Gemini API
+10. **Output Formats** — comma-separated, e.g. markdown, docx
+11. **Max Source Age** — default 14 days
+12. **Source Profile** — conservative / research / aggressive signal / custom / LLM decide
+13. **Live Web Search** — enable or not (default off). If enabled, choose backend: tavily / exa / brave / firecrawl / serper
