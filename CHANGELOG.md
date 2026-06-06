@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-06-06
+
+### Fixed
+
+- **Selector/quality gate conflict**: `selector.max_items` default raised from 8 to 20, matching `min_selected_claims` in audience profiles. Mapper defaults also aligned.
+- **Epistemic blocks no longer replace reader-facing brief**: `analysis_blocks.json` and `epistemic_draft` are now intermediate governance artifacts. The reader-facing `brief.md` / `brief.docx` uses the legacy prose format with Executive Summary.
+- **Confidence label**: changed from `100%` percentage (triggered audit `number_without_source` false positive) to qualitative `高/中/低` (High/Medium/Low).
+
+### Added
+
+- **Epistemic Presentation Layer** (PR ac0cefa): AnalysisBlock builder, renderer, limitation hygiene audit, case applicability check. Intermediate artifacts: `analysis_blocks.json`, `limitation_hygiene_report.json`.
+- **Version bump to 0.5.3**: pyproject.toml, __init__.py, README, CHANGELOG.
+
 ## [0.5.2] — 2026-06-06
 
 ### Fixed

@@ -54,10 +54,15 @@ RULES: list[tuple[list[str], str, str, str]] = [
     ),
     # Web search
     (
-        ["搜索", "新闻", "search", "news", "market data", "市场数据", "舆情"],
+        [
+            "搜索", "新闻", "search", "news", "market data", "市场数据", "舆情",
+            "周报", "日报", "月报", "行业动态", "industry", "weekly", "brief",
+            "趋势", "trend", "动态", "快讯", "速报",
+            "OpenAI", "Anthropic", "Agent", "AI", "大模型", "LLM",
+        ],
         "web_search",
-        "Task requires web search for news or market data",
-        "keywords: search/news",
+        "Task requires web search for news, industry intelligence, or market data",
+        "keywords: search/news/industry/AI",
     ),
     # News API
     (

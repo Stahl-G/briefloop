@@ -334,10 +334,10 @@ def normalize_industry(text: str) -> str:
 # ── selector_max_items ─────────────────────────────────────────────
 
 _SELECTOR_MAP: dict[str, int] = {
-    "conservative": 8,
-    "research": 12,
-    "aggressive_signal": 20,
-    "llm_decide": 12,
+    "conservative": 20,
+    "research": 20,
+    "aggressive_signal": 24,
+    "llm_decide": 20,
 }
 
 

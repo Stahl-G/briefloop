@@ -277,7 +277,7 @@ class InitProfile:
     forbidden_sources: list[str] = field(default_factory=list)
     cadence: str = "weekly"
     max_source_age_days: int = 14
-    selector_max_items: int = 8
+    selector_max_items: int = 20
     retrieval_enabled: bool = False
     retrieval_provider: str = "ollama"
     retrieval_model: str = "nomic-embed-text"
@@ -550,7 +550,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "focus": "Focus areas, comma-separated: ",
             "cadence": "Reporting cadence:\n1. Weekly\n2. Biweekly\n3. Monthly\n4. Ad hoc\nDefault [1]: ",
             "cadence_options": {"1": "weekly", "2": "biweekly", "3": "monthly", "4": "ad_hoc"},
-            "selector_max_items": "How many news items should be selected for each brief? Default [8]: ",
+            "selector_max_items": "How many items should be selected for each brief? Default [20]: ",
             "rag": "Enable historical retrieval / RAG? [y/N]: ",
             "retrieval_provider": "Choose retrieval provider:\n1. Ollama local\n2. Gemini API\nDefault [1]: ",
             "outputs": "Output formats, comma-separated: ",
@@ -573,7 +573,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "audience": "Audience / 阅读对象 (e.g. management/管理层, strategy/战略, research/研究, IR/投关, marketing/市场, etc.): ",
                 "focus": "Focus areas / 关注领域，comma-separated / 逗号分隔: ",
                 "cadence": "Reporting cadence / 简报频率:\n1. Weekly / 每周\n2. Biweekly / 双周\n3. Monthly / 每月\n4. Ad hoc / 不定期\nDefault [1]: ",
-                "selector_max_items": "How many news items / 每期筛选多少条新闻？Default [8]: ",
+                "selector_max_items": "How many items / 每期筛选多少条？Default [20]: ",
                 "rag": "Enable historical retrieval / RAG? 是否启用历史检索？[y/N]: ",
                 "outputs": "Output formats / 输出格式，comma-separated / 逗号分隔: ",
                 "max_age": "Maximum source age in days / 最大来源天数: ",
@@ -610,7 +610,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "focus": "请输入关注领域，逗号分隔：",
         "cadence": "请选择简报频率：\n1. 每周\n2. 双周\n3. 每月\n4. 不定期\n默认 [1]：",
         "cadence_options": {"1": "weekly", "2": "biweekly", "3": "monthly", "4": "ad_hoc"},
-        "selector_max_items": "每期筛选多少条新闻？默认 [8]：",
+        "selector_max_items": "每期筛选多少条？默认 [20]：",
         "rag": "是否启用历史检索 / RAG？[y/N]：",
         "retrieval_provider": "请选择检索 provider：\n1. Ollama 本地\n2. Gemini API\n默认 [1]：",
         "outputs": "请输入输出格式，逗号分隔：",

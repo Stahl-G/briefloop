@@ -740,7 +740,7 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.5.2** — Reference Workflow Stabilization（参考工作流稳定化、动态日期、DOCX 默认启用、golden smoke）
+当前版本：**v0.5.3** — Epistemic Presentation Layer（认知分层、analysis blocks、limitation hygiene、置信度定性标签）
 
 v0.5.1 引入了本地信号发现能力：系统可以根据目标市场自动生成本地语言搜索任务，产出 `collector_tasks.json` 供人工/OpenCLI 采集，解析 `local_signal_samples.jsonl` 样本，生成 `local_signal_report.json` 记录信号发现和数据缺口，并通过 3 条审计规则阻止无来源支撑的消费者痛点 claim。支持 9 个市场（越南、日本、中国、印尼、泰国、巴西、墨西哥、德国、韩国）。
 
