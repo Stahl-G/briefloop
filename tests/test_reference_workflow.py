@@ -186,11 +186,18 @@ class TestSmokeScript:
     """Run the CI smoke script as a subprocess."""
 
     def test_smoke_script_passes(self):
+        # Set PYTHONPATH to include src directory for subprocess
+        import os
+        env = os.environ.copy()
+        src_dir = str(Path(__file__).parent.parent / "src")
+        env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
+
         result = subprocess.run(
             [sys.executable, str(SMOKE_SCRIPT), str(DEMO_DIR)],
             capture_output=True,
             text=True,
             timeout=120,
+            env=env,
         )
         assert result.returncode == 0, (
             f"Smoke script failed (exit {result.returncode}):\n"
