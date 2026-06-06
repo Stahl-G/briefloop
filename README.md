@@ -729,9 +729,9 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.5.0** — Claim Schema v2（认知类型、证据关系、适用性约束）
+当前版本：**v0.5.0** — Production Reference Workflow（官方工作流、受众配置、DOCX 模板、质量门禁）
 
-近期版本加入了 Capability Center、`setup` / `recommend` 命令、完整搜索 API key 占位和来源工作流修复。此前 v0.3.0 引入了市场与竞争情报分析模块。
+v0.5.0 引入了官方参考工作流、受众配置、DOCX 模板与验证、Final Clean 门禁、Editorial Governance、Policy & Regulatory 风险模块、HistoryStore 和 Effort Budgets。此前 v0.4.0 引入了 Claim Schema v2（认知类型、证据关系、适用性约束）。
 
 此前 v0.2.0 已集成 SEC Filing 解析、MinerU 远程 API、飞书双向通道；
 v0.1.1 已补齐 4 个 Source Provider（NewsAPI / SEC EDGAR / MCP / CLI），

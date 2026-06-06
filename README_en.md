@@ -791,11 +791,9 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.5.0** — Claim Schema v2 (epistemic types, evidence relations, applicability constraints)
+Current version: **v0.5.0** — Production Reference Workflow (official workflow, audience profiles, DOCX templates, quality gates)
 
-Recent releases added the Capability Center, setup/recommend commands, all configured
-search API key placeholders, and source workflow fixes. Earlier v0.3.0 introduced the
-Market & Competitor Intelligence Analysis Module.
+v0.5.0 introduces the official reference workflow, audience profiles, DOCX templates and validation, Final Clean gates, Editorial Governance, Policy & Regulatory Risk Module, HistoryStore, and Effort Budgets. Earlier v0.4.0 introduced Claim Schema v2 (epistemic types, evidence relations, applicability constraints).
 
 Previously v0.2.0 integrated SEC Filing Resolution, MinerU Remote API, and
 bidirectional Feishu support; v0.1.1 filled 4 Source Providers (NewsAPI / SEC EDGAR /
