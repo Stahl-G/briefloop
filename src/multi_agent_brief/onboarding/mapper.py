@@ -376,16 +376,26 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     profile.source_profile = normalize_source_profile(result.source_style_plain)
     profile.selector_max_items = _SELECTOR_MAP.get(profile.source_profile, 20)
 
-    # Brief title: use raw industry text, not a slug
-    industry_display = industry_raw or "Industry"
-    company = profile.company
-    cadence_word = profile.cadence.capitalize()
-    if language == "zh-CN" and company and company != "Sample Company":
-        profile.brief_title = f"{company} {industry_display}周报"
-    elif company and company != "Sample Company":
-        profile.brief_title = f"{company} {cadence_word} Brief"
+    # Brief title: user-specified overrides auto-generation.
+    # Check brief_title (canonical), then task_objective (legacy alias for old onboarding files).
+    user_title = ""
+    if hasattr(result, "brief_title") and result.brief_title.strip():
+        user_title = result.brief_title.strip()
+    elif hasattr(result, "task_objective") and result.task_objective.strip() and result.task_objective.strip() != "executive brief, conclusion-first":
+        user_title = result.task_objective.strip()
+
+    if user_title:
+        profile.brief_title = user_title
     else:
-        profile.brief_title = "Multi-Agent Brief"
+        industry_display = industry_raw or "Industry"
+        company = profile.company
+        cadence_word = profile.cadence.capitalize()
+        if language == "zh-CN" and company and company != "Sample Company":
+            profile.brief_title = f"{company} {industry_display}周报"
+        elif company and company != "Sample Company":
+            profile.brief_title = f"{company} {cadence_word} Brief"
+        else:
+            profile.brief_title = "Multi-Agent Brief"
 
     # Focus areas: preserve raw must_watch items
     base_focus = ["company", "industry", "policy", "competitors", "risk_events"]

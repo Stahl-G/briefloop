@@ -19,6 +19,10 @@ Do not expose:
 
 Ask at most 14 questions:
 
+0. What should this brief be called?
+   Required field. Examples: "Canadian Solar Photovoltaic Weekly", "阿特斯光伏行业周报", "Global Macro Strategy Monthly".
+   Recommended default: "{Company} {Industry} Weekly" (auto-generated if skipped).
+
 1. What is your company or organization name?
    Required field. Do not use defaults.
 
@@ -68,6 +72,7 @@ Accept natural-language answers. If incomplete, infer defaults.
 
 Then create `onboarding.json` with:
 - target
+- brief_title
 - company_or_org
 - industry_or_theme
 - role_plain
@@ -93,6 +98,7 @@ multi-agent-brief init --from-onboarding onboarding.json
 
 Finally summarize:
 
+* brief title (user-specified or auto-generated)
 * workspace created
 * brief audience
 * monitor scope

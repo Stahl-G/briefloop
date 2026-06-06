@@ -20,7 +20,6 @@ _FIELD_ALIASES: dict[str, str] = {
     "company": "company_or_org",
     "industry": "industry_or_theme",
     "title": "task_objective",
-    "brief_title": "task_objective",
     "audience": "audience_plain",
     "language": "language_plain",
     "output_language": "language_plain",
