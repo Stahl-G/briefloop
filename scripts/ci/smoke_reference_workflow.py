@@ -88,6 +88,11 @@ def _run_pipeline(workspace: Path) -> None:
         context.metadata["source_config"] = source_config
     context.metadata["_config_dir"] = str(workspace)
 
+    # Wire brief_quality config → final_quality metadata
+    brief_quality = config.get("brief_quality", {})
+    if brief_quality:
+        context.metadata["final_quality"] = brief_quality
+
     outputs = BriefPipeline().run(context)
 
     # Generate run_manifest.json (mirrors CLI prepare behavior)
@@ -206,17 +211,23 @@ def _verify_artifacts(workspace: Path, checks: _Check) -> None:
         try:
             audit_report = json.loads(audit_report_path.read_text(encoding="utf-8"))
             audit_status = audit_report.get("audit_status", "")
-            if audit_status in ("pass", "warning", "fail"):
+            if audit_status in ("pass", "warning"):
                 checks.ok(f"audit_report.json status: {audit_status}")
+            elif audit_status == "fail":
+                checks.fail(f"audit_report.json status: fail — quality gate did not pass")
             else:
                 checks.fail(f"audit_report.json has invalid status: {audit_status}")
 
             # Check for final quality metadata
             metadata = audit_report.get("metadata", {})
-            if "final_quality_status" in metadata:
-                checks.ok(f"audit_report.json has final_quality_status: {metadata['final_quality_status']}")
+            fq_status = metadata.get("final_quality_status", "")
+            if fq_status:
+                if fq_status == "fail":
+                    checks.fail(f"audit_report.json final_quality_status: fail")
+                else:
+                    checks.ok(f"audit_report.json final_quality_status: {fq_status}")
             else:
-                checks.ok("audit_report.json missing final_quality_status (may not be wired yet)")
+                checks.fail("audit_report.json missing final_quality_status")
         except json.JSONDecodeError:
             checks.fail("audit_report.json is not valid JSON")
 
