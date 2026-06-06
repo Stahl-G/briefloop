@@ -65,6 +65,9 @@ class RunManifest:
     # Errors encountered during pipeline
     errors: list[dict[str, str]] = field(default_factory=list)
 
+    # Source coverage summary
+    source_coverage: dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -98,6 +101,7 @@ def build_manifest(
     artifact_paths: dict[str, str | Path] | None = None,
     stage_outputs: list[dict[str, Any]] | None = None,
     errors: list[dict[str, str]] | None = None,
+    source_coverage: dict[str, Any] | None = None,
 ) -> RunManifest:
     """Build a RunManifest from pipeline state.
 
@@ -134,6 +138,7 @@ def build_manifest(
         audit_score=audit_score,
         audit_finding_count=audit_finding_count,
         semantic_status=semantic_status or "not_run",
+        source_coverage=source_coverage or {},
     )
 
     # Artifact hashes

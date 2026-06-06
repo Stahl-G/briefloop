@@ -533,6 +533,7 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
     sources_path = workspace / "sources.yaml"
     source_config = None
     source_discovery = None
+    coverage_config = None
     if sources_path.exists():
         source_config = load_sources_config(sources_path)
         try:
@@ -540,6 +541,14 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
             source_discovery = load_source_discovery(sources_path)
         except Exception:
             source_discovery = None
+        # Load coverage config from sources.yaml
+        try:
+            import yaml as _yaml
+            with open(sources_path, encoding="utf-8") as f:
+                sources_raw = _yaml.safe_load(f) or {}
+            coverage_config = sources_raw.get("coverage", None)
+        except Exception:
+            coverage_config = None
 
     settings = build_run_settings(
         config=config,
@@ -556,6 +565,8 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
         context.metadata["source_config"] = source_config
     if source_discovery is not None:
         context.metadata["source_discovery"] = source_discovery
+    if coverage_config is not None:
+        context.metadata["coverage_config"] = coverage_config
     context.metadata["_config_dir"] = str(workspace)
 
     outputs = BriefPipeline().run(context)
@@ -568,6 +579,10 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
         stage_dicts = [o.to_dict() for o in outputs]
 
         audit_report = context.report_state.audit_report
+        # Build source coverage summary for manifest
+        coverage_report = context.metadata.get("source_coverage")
+        source_coverage_summary = coverage_report.to_dict() if hasattr(coverage_report, "to_dict") else {}
+
         manifest = build_manifest(
             config_path=str(config_path),
             workspace=str(workspace),
@@ -584,6 +599,7 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
             semantic_status=(audit_report.metadata.get("semantic_status", "") if audit_report else ""),
             artifact_paths=artifact_paths,
             stage_outputs=stage_dicts,
+            source_coverage=source_coverage_summary,
         )
         manifest_path = save_manifest(manifest, context.output_dir)
         print(f"[prepare] Run manifest: {manifest_path}")

@@ -35,6 +35,8 @@ class FormatterAgent(BaseAgent):
         ledger_path = intermediate_dir / "claim_ledger.json"
         audit_path = intermediate_dir / "audit_report.json"
         source_map_path = intermediate_dir / "source_map.md"
+        coverage_path = intermediate_dir / "source_coverage_report.json"
+        gaps_path = intermediate_dir / "research_gaps.md"
 
         audited_markdown = context.report_state.prepared_markdown
         reader_markdown = strip_claim_citations(audited_markdown)
@@ -49,6 +51,21 @@ class FormatterAgent(BaseAgent):
         ledger.export_json(ledger_path)
         source_map_path.write_text(render_source_map(ledger), encoding="utf-8")
 
+        # Source coverage report and research gaps
+        coverage_report = context.metadata.get("source_coverage")
+        if coverage_report:
+            coverage_report.export_json(coverage_path)
+            artifacts_cov: dict[str, str] = {"source_coverage_report": str(coverage_path)}
+            # Write research_gaps.md only when gaps exist
+            if coverage_report.required_gaps or coverage_report.preferred_gaps:
+                from multi_agent_brief.sources.coverage import render_research_gaps
+                gaps_path.write_text(
+                    render_research_gaps(coverage_report), encoding="utf-8",
+                )
+                artifacts_cov["research_gaps"] = str(gaps_path)
+        else:
+            artifacts_cov = {}
+
         artifacts: dict[str, str] = {
             "brief": str(brief_path),
             "audited_brief": str(audited_path),
@@ -58,6 +75,7 @@ class FormatterAgent(BaseAgent):
         }
         if named_brief_path and named_brief_path != brief_path:
             artifacts["brief_named"] = str(named_brief_path)
+        artifacts.update(artifacts_cov)
 
         # DOCX output — only if "docx" is in output_formats.
         # Must run BEFORE writing audit_report.json so docx_generation

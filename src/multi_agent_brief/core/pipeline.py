@@ -172,6 +172,14 @@ class BriefPipeline:
         # Populate context
         context.sources = items
 
+        # Calculate source coverage report
+        from multi_agent_brief.sources.coverage import calculate_coverage
+        coverage_config = context.metadata.get("coverage_config", {})
+        context.metadata["source_coverage"] = calculate_coverage(
+            sources=items,
+            config=coverage_config,
+        )
+
         artifacts: dict = {
             "source_count": len(items),
             "providers": source_config.enabled_providers,
