@@ -305,6 +305,17 @@ multi-agent-brief prepare --config ../mabw-workspace\config.yaml
 > - `multi-agent-brief prepare --config <workspace>/config.yaml` — Python 确定性管线（来源采集 → scout → screener → claim ledger → audit → formatter）
 >
 > `multi-agent-brief run` 已弃用，请使用 `prepare`。
+>
+> **finalize 交付门禁（可选后处理）：**
+> `multi-agent-brief finalize --config <workspace>/config.yaml` 用于 agent 辅助工作流的最终交付。
+> 当 subagent 在 `prepare` 之后改写了 `audited_brief.md`，`finalize` 会重新生成读者版本：
+> - 从 `audited_brief.md` 去掉内部 `[src:CLAIM_ID]` 标记，写入 `brief.md`
+> - 重新生成 DOCX（如果启用）
+> - 验证输出不含内部标记
+> - 生成 `finalize_report.json`
+>
+> 确定性管线（`prepare`）的 FormatterAgent 已内置此逻辑，不需要单独调用 `finalize`。
+> `finalize` 仅在 subagent 改写了 `audited_brief.md` 后需要重新生成读者版本时使用。
 
 ---
 
@@ -741,7 +752,7 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.5.1** — Local Signal Discovery（本地信号发现、消费者痛点任务、审计门禁）
+当前版本：**v0.5.2** — Reference Workflow Stabilization（参考工作流稳定化、动态日期、DOCX 默认启用、golden smoke）
 
 v0.5.1 引入了本地信号发现能力：系统可以根据目标市场自动生成本地语言搜索任务，产出 `collector_tasks.json` 供人工/OpenCLI 采集，解析 `local_signal_samples.jsonl` 样本，生成 `local_signal_report.json` 记录信号发现和数据缺口，并通过 3 条审计规则阻止无来源支撑的消费者痛点 claim。支持 9 个市场（越南、日本、中国、印尼、泰国、巴西、墨西哥、德国、韩国）。
 

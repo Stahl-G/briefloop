@@ -36,6 +36,7 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.core.pipeline import BriefPipeline
 from multi_agent_brief.core.manifest import build_manifest, save_manifest
+from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from multi_agent_brief.core.schemas import PipelineContext
 from multi_agent_brief.sources.registry import load_sources_config
 
@@ -69,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     audit_parser.add_argument("--report-date", default="", help="Report date for stale-source checks, e.g. 2026-06-02.")
     audit_parser.add_argument("--max-source-age-days", type=int, help="Maximum allowed source age.")
     audit_parser.add_argument("--fail-on-stale-source", action="store_true", help="Treat stale sources as high-severity findings.")
+
+    finalize_parser = subparsers.add_parser("finalize", help="Regenerate reader-facing Markdown/DOCX from output/intermediate/audited_brief.md.")
+    finalize_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
+    finalize_parser.add_argument("--output", help="Override output directory.")
 
     init_parser = subparsers.add_parser("init", help="Create a reusable brief workspace.")
     init_parser.add_argument("target", nargs="?", default="brief-workspace", help="Target workspace directory.")
@@ -725,6 +730,46 @@ def run_audit_from_args(args: argparse.Namespace) -> int:
     return 0 if report.audit_status != "fail" else 2
 
 
+def run_finalize_from_args(args: argparse.Namespace) -> int:
+    """Regenerate final reader-facing artifacts from audited internal markdown.
+
+    This is a deterministic delivery gate for agent-assisted workflows where
+    analyst/editor/auditor subagents may update output/intermediate/audited_brief.md
+    after the initial prepare run.
+    """
+    config_path = Path(args.config).resolve()
+    config = load_config(str(config_path))
+    settings = build_run_settings(
+        config=config,
+        input_dir=None,
+        output_dir=args.output,
+        name=None,
+        language=None,
+        audience=None,
+    )
+
+    result = finalize_reader_outputs(
+        output_dir=settings["output_dir"],
+        project_name=settings["project_name"],
+        output_formats=settings.get("output_formats", ["markdown"]),
+        output_footer=settings.get("output_footer", ""),
+        output_named_outputs=bool(settings.get("output_named_outputs", True)),
+        output_filename_template=settings.get("output_filename_template", ""),
+        output_filename_tokens=settings.get("output_filename_tokens", {}),
+        docx_template=(config.get("output", {}) or {}).get("docx_template", "default"),
+    )
+
+    print(f"[finalize] Reader brief: {result.reader_brief}")
+    if result.named_reader_brief:
+        print(f"[finalize] Named reader brief: {result.named_reader_brief}")
+    if result.reader_docx:
+        print(f"[finalize] Reader DOCX: {result.reader_docx}")
+    elif result.docx_generation != "not_requested":
+        print(f"[finalize] DOCX generation: {result.docx_generation}")
+    print("[finalize] Internal [src:CLAIM_ID] markers stripped from reader-facing artifacts.")
+    return 0
+
+
 def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
     """Apply explicit CLI args onto a profile built from onboarding.
 
@@ -1124,6 +1169,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_prepare_from_args(args)
     if args.command == "audit":
         return run_audit_from_args(args)
+    if args.command == "finalize":
+        return run_finalize_from_args(args)
     if args.command == "init":
         return init_workspace_from_args(args)
     if args.command == "doctor":

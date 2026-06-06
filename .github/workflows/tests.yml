@@ -71,10 +71,22 @@ jobs:
           python -m pip list --format=columns || true
           echo "=== end diagnostics ==="
 
+      - name: Refresh example input dates
+        shell: python
+        run: |
+          import json
+          from datetime import date, timedelta
+          from pathlib import Path
+          yesterday = (date.today() - timedelta(days=1)).isoformat()
+          for p in Path("examples/basic_market_brief/input").glob("*.json"):
+              data = json.loads(p.read_text(encoding="utf-8"))
+              data["published_at"] = yesterday
+              p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
       - name: CLI smoke
         run: |
           multi-agent-brief version
-          python scripts/ci/smoke_pipeline.py "" examples/basic_market_brief output/basic_market_brief output/basic_market_brief/intermediate/claim_ledger.json
+          python scripts/ci/smoke_pipeline.py examples/basic_market_brief/config.yaml examples/basic_market_brief/input output/basic_market_brief
 
   non-dev-smoke:
     name: Non-dev install smoke
@@ -227,17 +239,117 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import yaml
           p = Path("/tmp/mabw-docx/config.yaml")
-          s = p.read_text(encoding="utf-8")
-          if "formats" not in s:
-              # Demo config has no formats section; add it
-              s = s.rstrip() + '\n  formats:\n    - "markdown"\n    - "docx"\n'
-          elif "docx" not in s:
-              s = s.replace('    - "markdown"\n', '    - "markdown"\n    - "docx"\n')
-          p.write_text(s, encoding="utf-8")
+          cfg = yaml.safe_load(p.read_text(encoding="utf-8"))
+          output = cfg.setdefault("output", {})
+          fmts = output.get("formats", ["markdown"])
+          if "docx" not in fmts:
+              fmts.append("docx")
+              output["formats"] = fmts
+              p.write_text(yaml.dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
       - name: Run pipeline
         run: python scripts/ci/smoke_pipeline.py /tmp/mabw-docx/config.yaml /tmp/mabw-docx/input /tmp/mabw-docx/output
 
       - name: Assert brief.docx exists
         run: test -s /tmp/mabw-docx/output/brief.docx
+
+  golden-smoke:
+    name: Golden smoke (all demos non-empty, auditable, renderable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install with docx extra
+        run: python -m pip install -e ".[dev,docx]"
+
+      # --- Reference demo (init --demo) ---
+      - name: Init demo workspace
+        run: multi-agent-brief init /tmp/golden-demo --demo --force
+
+      - name: Run reference demo pipeline
+        run: python scripts/ci/smoke_pipeline.py /tmp/golden-demo/config.yaml /tmp/golden-demo/input /tmp/golden-demo/output
+
+      - name: Assert reference demo output
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/golden-demo/output
+          # non-empty reader brief
+          test -s "$OUT/brief.md"
+          # no [src:] in reader brief
+          ! grep -q '\[src:' "$OUT/brief.md"
+          # audited brief retains [src:]
+          grep -q '\[src:' "$OUT/intermediate/audited_brief.md"
+          # claim_ledger has claims
+          python3 -c "import json; d=json.load(open('$OUT/intermediate/claim_ledger.json')); assert len(d)>=1, f'expected >=1 claims, got {len(d)}'"
+          # audit_report exists
+          test -s "$OUT/intermediate/audit_report.json"
+          # docx generated
+          test -s "$OUT/brief.docx"
+
+      # --- Basic example demo ---
+      - name: Refresh example input dates
+        shell: python
+        run: |
+          import json
+          from datetime import date, timedelta
+          from pathlib import Path
+          yesterday = (date.today() - timedelta(days=1)).isoformat()
+          for p in Path("examples/basic_market_brief/input").glob("*.json"):
+              data = json.loads(p.read_text(encoding="utf-8"))
+              data["published_at"] = yesterday
+              p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+      - name: Run basic example pipeline
+        run: python scripts/ci/smoke_pipeline.py examples/basic_market_brief/config.yaml examples/basic_market_brief/input /tmp/golden-basic/output
+
+      - name: Assert basic example output
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/golden-basic/output
+          test -s "$OUT/brief.md"
+          ! grep -q '\[src:' "$OUT/brief.md"
+          python3 -c "import json; d=json.load(open('$OUT/intermediate/claim_ledger.json')); assert len(d)>=1, f'expected >=1 claims, got {len(d)}'"
+          test -s "$OUT/intermediate/audit_report.json"
+
+      # --- Onboarding demo ---
+      - name: Create onboarding.json
+        run: |
+          cat > /tmp/golden-onboarding.json << 'JSON'
+          {
+            "target": "/tmp/golden-onboarding",
+            "company_or_org": "Golden Test Corp",
+            "industry_or_theme": "manufacturing",
+            "audience_plain": "management team",
+            "source_style_plain": "reliable research",
+            "language_plain": "English",
+            "cadence_plain": "weekly",
+            "must_watch": ["policy", "competitors", "market"]
+          }
+          JSON
+
+      - name: Init from onboarding
+        run: |
+          multi-agent-brief init --from-onboarding /tmp/golden-onboarding.json
+          echo "- Manufacturing output improved with new automation line deployment." > /tmp/golden-onboarding/input/smoke.md
+
+      - name: Run onboarding pipeline
+        run: python scripts/ci/smoke_pipeline.py /tmp/golden-onboarding/config.yaml /tmp/golden-onboarding/input /tmp/golden-onboarding/output
+
+      - name: Assert onboarding output
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/golden-onboarding/output
+          test -s "$OUT/brief.md"
+          ! grep -q '\[src:' "$OUT/brief.md"
+          python3 -c "import json; d=json.load(open('$OUT/intermediate/claim_ledger.json')); assert len(d)>=1, f'expected >=1 claims, got {len(d)}'"
+          test -s "$OUT/intermediate/audit_report.json"
+          test -s "$OUT/intermediate/source_map.md"

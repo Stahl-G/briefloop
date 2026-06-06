@@ -4,7 +4,7 @@ project:
   audience: "management"
 
 report:
-  date: "2026-06-02"
+  date: "auto"
   max_source_age_days: 14
   fail_on_stale_source: true
 
@@ -13,5 +13,8 @@ input:
 
 output:
   path: "output"
+  formats:
+    - "markdown"
+    - "docx"
   filename_template: "{project_name}_{report_date}"
   named_outputs: true

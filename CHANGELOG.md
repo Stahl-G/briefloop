@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-06-06
+
+### Fixed
+
+- **Dynamic dates in demo config**: `report.date` changed from hardcoded `"2026-06-02"` to `"auto"` in demo workspace and `examples/basic_market_brief`. Demo input files now use dynamic dates (`_demo_published_at()`) so sources never become stale.
+- **DOCX default in demo**: demo config now includes `docx` in `output.formats` by default. No more CI patching needed for DOCX smoke.
+
+### Added
+
+- **Finalize delivery gate** (PR #48): deterministic `finalize_reader_outputs()` strips `[src:CLAIM_ID]` from `audited_brief.md` before writing reader-facing `brief.md` / named md / docx. CLI subcommand: `multi-agent-brief finalize --config <workspace>/config.yaml`.
+- **Golden smoke test** (CI): new `golden-smoke` job verifies all demos (reference, basic, onboarding) produce non-empty, auditable, renderable output with at least 1 claim.
+- **Finalize workflow documentation** in README: clarifies finalize is an optional post-pipeline step for agent-assisted workflows, not part of the core deterministic pipeline.
+
+### Changed
+
+- **CI: CLI smoke input date refresh**: example input dates are dynamically patched to yesterday before running CLI smoke test.
+- **`init_wizard.py`**: `DEMO_NEWS` and `DEMO_MARKET_DATA` converted from constants to functions (`_build_demo_news()`, `_build_demo_market_data()`) with dynamic `published_at` dates.
+
 ## [0.5.1] — 2026-06-06
 
 ### Added

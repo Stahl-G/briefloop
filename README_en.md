@@ -246,6 +246,17 @@ cat ../mabw-workspace/output/intermediate/audited_brief.md
 > - `multi-agent-brief prepare --config <workspace>/config.yaml` — deterministic Python pipeline (source collection → scout → screener → claim ledger → audit → formatter)
 >
 > `multi-agent-brief run` is deprecated; use `prepare` instead.
+>
+> **Finalize delivery gate (optional post-pipeline step):**
+> `multi-agent-brief finalize --config <workspace>/config.yaml` is for agent-assisted workflows.
+> When subagents rewrite `audited_brief.md` after `prepare`, `finalize` regenerates reader-facing outputs:
+> - Strips internal `[src:CLAIM_ID]` markers from `audited_brief.md`, writes `brief.md`
+> - Regenerates DOCX (if enabled)
+> - Verifies outputs contain no internal markers
+> - Generates `finalize_report.json`
+>
+> The deterministic pipeline (`prepare`) already handles this internally via FormatterAgent.
+> Only use `finalize` when subagents have rewritten `audited_brief.md` and you need to regenerate reader-facing outputs.
 
 Windows 10/11 should use native PowerShell 5.1 or PowerShell 7. WSL/Git Bash is optional, not required. CMD is not the primary support target.
 
@@ -799,7 +810,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.5.1** — Local Signal Discovery (local signal tasks, consumer pain-point discovery, audit gates)
+Current version: **v0.5.2** — Reference Workflow Stabilization (dynamic dates, DOCX default, golden smoke, finalize gate)
 
 v0.5.1 introduces local signal discovery: the system can generate local-language search tasks for target markets, produce `collector_tasks.json` for manual/OpenCLI collection, parse `local_signal_samples.jsonl` samples, generate `local_signal_report.json` with signals found and data gaps, and enforce 3 audit rules to prevent unsupported consumer pain-point claims. Supports 9 markets (Vietnam, Japan, China, Indonesia, Thailand, Brazil, Mexico, Germany, Korea).
 
