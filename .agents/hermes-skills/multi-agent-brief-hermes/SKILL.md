@@ -26,8 +26,6 @@ Use this skill when a Hermes cron job needs to collect daily signals for a MABW 
 - Do not invent internal company facts. Use only public or user-provided source evidence.
 - Do not paste API keys, tokens, raw private logs, or credentials into files or messages.
 - Daily scout jobs collect source packages only. They must not write final management briefs.
-- Weekly/monthly jobs must run `doctor` before `prepare`.
-- If `prepare`, final quality, rendered output, or audit gates fail, report the blocking findings and do not mark the output delivery-ready.
 - Reader-facing artifacts must not contain `[src:CLAIM_ID]`; internal audited markdown may retain citations.
 
 ## Daily Scout Workflow
@@ -58,22 +56,30 @@ Use this skill when a Hermes cron job needs to collect daily signals for a MABW 
 
 ## Weekly / Monthly Brief Workflow
 
-1. Confirm the workspace has `config.yaml` and `sources.yaml`.
-2. Ensure `sources.yaml` enables `cached_package` with `input/hermes_cache`.
-3. Run:
+1. Confirm the workspace has `config.yaml`, `sources.yaml`, and `user.md`.
+2. Ensure `sources.yaml` enables any required source providers, including `cached_package` for `input/hermes_cache` when daily Hermes scout cache is used.
+3. Run doctor:
 
 ```bash
 multi-agent-brief doctor --config <workspace>/config.yaml
-multi-agent-brief prepare --config <workspace>/config.yaml
 ```
 
-4. If prepare succeeds, run:
+4. Generate the brief through the subagent workflow:
+   - If Claude Code is available, the recommended path is `/generate-brief <workspace>`.
+   - Otherwise invoke subagents in order: scout → screener → claim-ledger → analyst → editor → auditor.
+5. After `audited_brief.md` exists, run finalize:
 
 ```bash
 multi-agent-brief finalize --config <workspace>/config.yaml
 ```
 
-5. Report artifact paths for `brief.md`, named Markdown, DOCX if generated, `claim_ledger.json`, `audit_report.json`, and `run_manifest.json`.
+6. Report artifact paths for:
+   - `output/brief.md`
+   - named Markdown if configured
+   - `output/brief.docx` if configured
+   - `output/intermediate/audited_brief.md`
+   - `output/intermediate/claim_ledger.json`
+   - `output/intermediate/audit_report.json`
 
 ## Source Cache Contract
 
