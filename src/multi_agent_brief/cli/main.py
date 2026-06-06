@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from multi_agent_brief import __version__
@@ -34,11 +35,20 @@ from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 from multi_agent_brief.sources.registry import load_sources_config
 from multi_agent_brief.hermes import (
     build_hermes_cron_plan,
+    install_hermes_skill,
     render_hermes_cron_commands,
     render_hermes_cron_markdown,
+    render_hermes_prompt,
+    render_hermes_setup_success,
     render_hermes_skill,
 )
 from multi_agent_brief.hermes.adapter import sync_cached_package_source, write_json
+from multi_agent_brief.cli.start_commands import (
+    VALID_RUNTIMES,
+    build_handoff,
+    render_handoff_cli,
+    write_handoff_artifacts,
+)
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
@@ -198,6 +208,32 @@ def build_parser() -> argparse.ArgumentParser:
     hermes_sync.add_argument("--config", required=True, help="Path to workspace config.yaml.")
     hermes_sync.add_argument("--cache-dir", default="input/hermes_cache", help="Cache path written into sources.yaml.")
     hermes_sync.add_argument("--dry-run", action="store_true", help="Show changes without writing.")
+
+    hermes_install = hermes_sub.add_parser("install-skill", help="Install the MABW Hermes skill to a Hermes-discoverable directory.")
+    hermes_install.add_argument("--target", help="Target skill directory (auto-detected if omitted).")
+
+    hermes_prompt = hermes_sub.add_parser("prompt", help="Generate a Hermes run prompt for a workspace.")
+    hermes_prompt.add_argument("--config", required=True, help="Path to workspace config.yaml.")
+    hermes_prompt.add_argument("--repo-workdir", help="Repository workdir (default: current directory).")
+    hermes_prompt.add_argument("--venv", help="Virtual env path (default: <repo>/.venv/{bin,Scripts}/activate).")
+
+    # start — unified launcher (never generates brief)
+    start_parser = subparsers.add_parser("start", help="Unified launcher: init, doctor, and runtime handoff. Never generates a brief.")
+    start_parser.add_argument("--workspace", help="Path to workspace directory.")
+    start_parser.add_argument("--runtime", default="hermes", choices=list(VALID_RUNTIMES),
+                              help="Target runtime for handoff (default: hermes).")
+    start_parser.add_argument("--repo-workdir", help="Repository workdir (default: current directory).")
+    start_parser.add_argument("--venv", help="Virtual env path (default: auto-detect).")
+    start_parser.add_argument("--skip-doctor", action="store_true", help="Skip doctor check.")
+
+    # handoff — generate handoff artifact directly
+    handoff_parser = subparsers.add_parser("handoff", help="Generate a runtime handoff artifact from a workspace config.")
+    handoff_parser.add_argument("--config", required=True, help="Path to workspace config.yaml.")
+    handoff_parser.add_argument("--runtime", default="hermes", choices=list(VALID_RUNTIMES),
+                                help="Target runtime for handoff (default: hermes).")
+    handoff_parser.add_argument("--repo-workdir", help="Repository workdir (default: current directory).")
+    handoff_parser.add_argument("--venv", help="Virtual env path (default: auto-detect).")
+    handoff_parser.add_argument("--skip-doctor", action="store_true", help="Skip doctor check.")
 
     return parser
 
@@ -793,7 +829,8 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
         target = Path(args.target)
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
-        print(f"Run: /generate-brief {target} in Claude Code to generate a real brief.")
+        print(f"Next: multi-agent-brief start --workspace {target}")
+        print(f"  or: multi-agent-brief hermes prompt --config {target}/config.yaml")
         return 0
 
     from_onboarding = getattr(args, "from_onboarding", None)
@@ -858,7 +895,8 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
 
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
-    print(f"Run: /generate-brief {target} in Claude Code to generate a real brief.")
+    print(f"Next: multi-agent-brief start --workspace {target}")
+    print(f"  or: multi-agent-brief hermes prompt --config {target}/config.yaml")
 
     # Print web-search setup guidance if enabled
     if getattr(profile, "web_search_enabled", False) or getattr(profile, "tavily_enabled", False):
@@ -1213,7 +1251,7 @@ def run_hermes_from_args(args: argparse.Namespace) -> int:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(render_hermes_skill(), encoding="utf-8")
         print(f"[hermes] Wrote Hermes skill: {output}")
-        print("[hint] Install/copy this skill into ~/.hermes/skills/ or configure Hermes skills.external_dirs.")
+        print("[hint] Run 'multi-agent-brief hermes install-skill' to install to a Hermes-discoverable directory.")
         return 0
 
     if args.hermes_action == "cron-plan":
@@ -1257,7 +1295,100 @@ def run_hermes_from_args(args: argparse.Namespace) -> int:
         print(f"[hermes] enabled providers: {', '.join(result['enabled_providers'])}")
         return 0
 
+    if args.hermes_action == "install-skill":
+        result = install_hermes_skill(target_dir=args.target)
+        print(f"[hermes] Installed skill: {result['skill_path']}")
+        if result["auto_detected"]:
+            print(f"[hermes] Auto-detected Hermes skill directory: {result['skill_dir']}")
+        if result["hint"]:
+            print(f"[hint] {result['hint']}")
+        print()
+        print("[hermes] Next: generate a run prompt for your workspace:")
+        print("  multi-agent-brief hermes prompt --config <workspace>/config.yaml")
+        print("[hermes] Then paste the prompt into Hermes to start the delegated brief workflow.")
+        return 0
+
+    if args.hermes_action == "prompt":
+        config_path = Path(args.config).resolve()
+        workspace = config_path.parent
+        repo_workdir = Path(args.repo_workdir).resolve() if getattr(args, "repo_workdir", None) else Path.cwd().resolve()
+        if args.venv:
+            venv_activate = str(Path(args.venv).resolve())
+        else:
+            venv = repo_workdir / ".venv"
+            if sys.platform == "win32":
+                venv_activate = str(venv / "Scripts" / "activate")
+            else:
+                venv_activate = str(venv / "bin" / "activate")
+        prompt = render_hermes_prompt(
+            workspace=workspace,
+            repo_workdir=repo_workdir,
+            venv_path=venv_activate,
+        )
+        print(prompt, end="")
+        return 0
+
     return 1
+
+
+def run_start_from_args(args: argparse.Namespace) -> int:
+    """start — unified launcher. Never generates a brief."""
+    repo_workdir = Path(args.repo_workdir).resolve() if getattr(args, "repo_workdir", None) else Path.cwd().resolve()
+
+    workspace = getattr(args, "workspace", None)
+    if not workspace:
+        cwd = Path.cwd()
+        if (cwd / "config.yaml").exists() and (cwd / "user.md").exists():
+            workspace = str(cwd)
+        else:
+            print("[start] No workspace found.")
+            print("[start] Create one with: multi-agent-brief init <path>")
+            print("[start] Or pass --workspace <path> to use an existing workspace.")
+            return 1
+
+    workspace_path = Path(workspace).resolve()
+    if not (workspace_path / "config.yaml").exists():
+        print(f"[start] Not a workspace (no config.yaml): {workspace_path}")
+        print("[start] Create one with: multi-agent-brief init <path>")
+        return 1
+
+    handoff = build_handoff(
+        workspace=workspace_path,
+        repo_workdir=repo_workdir,
+        runtime=args.runtime,
+        venv=getattr(args, "venv", None),
+        run_doctor=not getattr(args, "skip_doctor", False),
+    )
+
+    md_path, json_path = write_handoff_artifacts(handoff, workspace_path)
+    print(render_handoff_cli(handoff))
+    print(f"[start] Handoff written: {md_path}")
+    print(f"[start] Handoff JSON:  {json_path}")
+    return 0
+
+
+def run_handoff_from_args(args: argparse.Namespace) -> int:
+    """handoff — generate runtime handoff from workspace config."""
+    config_path = Path(args.config).resolve()
+    if not config_path.exists():
+        print(f"[error] config.yaml not found: {config_path}")
+        return 1
+    workspace = config_path.parent
+    repo_workdir = Path(args.repo_workdir).resolve() if getattr(args, "repo_workdir", None) else Path.cwd().resolve()
+
+    handoff = build_handoff(
+        workspace=workspace,
+        repo_workdir=repo_workdir,
+        runtime=args.runtime,
+        venv=getattr(args, "venv", None),
+        run_doctor=not getattr(args, "skip_doctor", False),
+    )
+
+    md_path, json_path = write_handoff_artifacts(handoff, workspace)
+    print(render_handoff_cli(handoff))
+    print(f"[handoff] Written: {md_path}")
+    print(f"[handoff] JSON:   {json_path}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1301,6 +1432,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_limitation_hygiene_from_args(args)
     if args.command == "hermes":
         return run_hermes_from_args(args)
+    if args.command == "start":
+        return run_start_from_args(args)
+    if args.command == "handoff":
+        return run_handoff_from_args(args)
     return 1
 
 

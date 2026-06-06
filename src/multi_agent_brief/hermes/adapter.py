@@ -549,6 +549,148 @@ def render_hermes_skill() -> str:
     return _SKILL_MD_TEMPLATE
 
 
+def render_hermes_setup_success(
+    *,
+    repo: str | Path,
+    venv: str | Path,
+    workspace: str | Path,
+    version: str = "v0.5.5",
+    doctor_status: str = "passed",
+) -> str:
+    return f"""Project is cloned and ready.
+
+Repository: {repo}
+Virtual environment: {venv}
+Workspace: {workspace}
+Version: {version}
+Doctor: {doctor_status}
+
+I can continue generating the brief inside Hermes. Recommended next steps:
+
+  multi-agent-brief hermes install-skill
+  multi-agent-brief hermes prompt --config {workspace}/config.yaml
+
+Then use the generated prompt in Hermes to run the delegated brief workflow.
+"""
+
+
+def render_hermes_prompt(
+    *,
+    workspace: str | Path,
+    repo_workdir: str | Path,
+    venv_path: str | Path,
+) -> str:
+    workspace = str(Path(workspace).resolve())
+    repo = str(Path(repo_workdir).resolve())
+    venv = str(Path(venv_path).resolve())
+    return f"""Use the multi-agent-brief-hermes skill to run a Hermes-native delegated brief workflow for this workspace.
+
+Repository: {repo}
+Workspace: {workspace}
+Venv activate: source {venv}
+
+As the Hermes parent orchestrator, execute:
+
+1. Run doctor:
+   multi-agent-brief doctor --config {workspace}/config.yaml
+
+2. If source discovery is configured:
+   multi-agent-brief sources decide --config {workspace}/config.yaml
+
+3. If input governance is available:
+   multi-agent-brief inputs classify --config {workspace}/config.yaml
+
+4. Create output/intermediate/ if it does not exist.
+
+5. Delegate scout child via delegate_task:
+   Goal: "Extract candidate reportable items for a MABW brief"
+   Write: output/intermediate/candidate_claims.json
+   toolsets: ["file", "terminal", "web"]
+
+6. After candidate_claims.json exists and is non-empty, delegate screener child:
+   Goal: "Screen and rank MABW candidate claims"
+   Input: output/intermediate/candidate_claims.json
+   Write: output/intermediate/screened_candidates.json
+   toolsets: ["file", "terminal"]
+
+7. After screened_candidates.json exists, delegate claim-ledger child:
+   Goal: "Build the MABW Claim Ledger"
+   Input: output/intermediate/screened_candidates.json
+   Write: output/intermediate/claim_ledger.json
+   toolsets: ["file", "terminal"]
+
+8. After claim_ledger.json exists, delegate analyst child:
+   Goal: "Draft the audited MABW brief"
+   Inputs: user.md and output/intermediate/claim_ledger.json
+   Write: output/intermediate/audited_brief.md
+   toolsets: ["file", "terminal"]
+
+9. After audited_brief.md exists, delegate editor child:
+   Goal: "Polish the audited MABW brief"
+   Input and output: output/intermediate/audited_brief.md
+   toolsets: ["file", "terminal"]
+
+10. After editor completes, delegate auditor child:
+    Goal: "Audit the MABW brief against the Claim Ledger"
+    Inputs: output/intermediate/audited_brief.md and output/intermediate/claim_ledger.json
+    Write: output/intermediate/audit_report.json
+    toolsets: ["file", "terminal"]
+
+11. After audit_report.json exists, run finalize:
+    multi-agent-brief finalize --config {workspace}/config.yaml
+
+12. Report artifact paths and audit status.
+
+For each delegate_task call, write complete goal and context with the workspace path, input paths, and output paths fully specified. After each child returns, verify the expected artifact exists and is non-empty before continuing to the next child.
+
+Expected artifacts:
+- {workspace}/output/intermediate/candidate_claims.json
+- {workspace}/output/intermediate/screened_candidates.json
+- {workspace}/output/intermediate/claim_ledger.json
+- {workspace}/output/intermediate/audited_brief.md
+- {workspace}/output/intermediate/audit_report.json
+- {workspace}/output/brief.md
+"""
+
+
+def _find_hermes_skill_dirs() -> list[Path]:
+    home = Path.home()
+    candidates = [
+        home / ".hermes" / "skills",
+        home / ".config" / "hermes" / "skills",
+        home / "hermes" / "skills",
+    ]
+    return [d for d in candidates if d.exists()]
+
+
+def install_hermes_skill(target_dir: str | Path | None = None) -> dict[str, Any]:
+    skill_content = render_hermes_skill()
+    target = Path(target_dir) if target_dir else None
+
+    if target is None:
+        dirs = _find_hermes_skill_dirs()
+        if dirs:
+            target = dirs[0] / "multi-agent-brief-hermes"
+        else:
+            target = Path(".agents/hermes-skills/multi-agent-brief-hermes")
+
+    target.mkdir(parents=True, exist_ok=True)
+    skill_path = target / "SKILL.md"
+    skill_path.write_text(skill_content, encoding="utf-8")
+
+    return {
+        "installed": True,
+        "skill_path": str(skill_path.resolve()),
+        "skill_dir": str(target.resolve()),
+        "auto_detected": target_dir is None and bool(_find_hermes_skill_dirs()),
+        "hint": (
+            "Copy this skill into ~/.hermes/skills/ or configure Hermes skills.external_dirs"
+            if target_dir is None and not _find_hermes_skill_dirs()
+            else ""
+        ),
+    }
+
+
 def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

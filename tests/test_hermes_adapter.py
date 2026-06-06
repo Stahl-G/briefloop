@@ -6,7 +6,12 @@ from pathlib import Path
 import yaml
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.hermes import build_hermes_cron_plan, render_hermes_skill
+from multi_agent_brief.hermes import (
+    build_hermes_cron_plan,
+    render_hermes_prompt,
+    render_hermes_setup_success,
+    render_hermes_skill,
+)
 
 
 def _write_workspace(tmp_path: Path) -> Path:
@@ -152,6 +157,69 @@ def test_hermes_skill_no_prepare_reference():
 
 
 # ---------------------------------------------------------------------------
+# Prompt and setup success tests
+# ---------------------------------------------------------------------------
+
+def test_hermes_prompt_keeps_user_inside_hermes():
+    prompt = render_hermes_prompt(
+        workspace="/tmp/test-ws",
+        repo_workdir="/tmp/test-repo",
+        venv_path="/tmp/test-repo/.venv/bin/activate",
+    )
+    assert "delegate_task" in prompt
+    assert "Hermes" in prompt
+    assert "scout" in prompt
+    assert "screener" in prompt
+    assert "claim-ledger" in prompt
+    assert "analyst" in prompt
+    assert "editor" in prompt
+    assert "auditor" in prompt
+    assert "multi-agent-brief finalize" in prompt
+    assert "/generate-brief" not in prompt
+    assert "Claude Code" not in prompt
+
+
+def test_hermes_setup_next_step_is_hermes_native():
+    text = render_hermes_setup_success(
+        repo="/tmp/test-repo",
+        venv="/tmp/test-repo/.venv",
+        workspace="/tmp/test-ws",
+        version="v0.5.5",
+        doctor_status="passed",
+    )
+    assert "multi-agent-brief hermes prompt" in text
+    assert "multi-agent-brief hermes install-skill" in text
+    assert "delegate" in text.lower()
+    assert "/generate-brief" not in text
+    assert "Claude Code" not in text
+
+
+def test_hermes_prompt_contains_artifact_paths():
+    prompt = render_hermes_prompt(
+        workspace="/tmp/test-ws",
+        repo_workdir="/tmp/test-repo",
+        venv_path="/tmp/test-repo/.venv/bin/activate",
+    )
+    assert "candidate_claims.json" in prompt
+    assert "screened_candidates.json" in prompt
+    assert "claim_ledger.json" in prompt
+    assert "audited_brief.md" in prompt
+    assert "audit_report.json" in prompt
+    assert "output/brief.md" in prompt
+
+
+def test_hermes_prompt_contains_doctor_and_sources():
+    prompt = render_hermes_prompt(
+        workspace="/tmp/test-ws",
+        repo_workdir="/tmp/test-repo",
+        venv_path="/tmp/test-repo/.venv/bin/activate",
+    )
+    assert "multi-agent-brief doctor" in prompt
+    assert "multi-agent-brief sources decide" in prompt
+    assert "multi-agent-brief inputs classify" in prompt
+
+
+# ---------------------------------------------------------------------------
 # CLI tests
 # ---------------------------------------------------------------------------
 
@@ -204,3 +272,41 @@ def test_cli_hermes_sync_sources_enables_cached_package(tmp_path: Path):
     assert "cached_package" in data["source_strategy"]["enabled_providers"]
     assert data["cached_package"]["enabled"] is True
     assert "input/hermes_cache" in data["cached_package"]["paths"]
+
+
+def test_cli_hermes_install_skill(tmp_path: Path):
+    target = tmp_path / "multi-agent-brief-hermes"
+    result = main(["hermes", "install-skill", "--target", str(target)])
+    assert result == 0
+    assert (target / "SKILL.md").exists()
+    content = (target / "SKILL.md").read_text(encoding="utf-8")
+    assert "delegate_task" in content
+    assert "multi-agent-brief-hermes" in content
+
+
+def test_cli_hermes_prompt_generates_output(tmp_path: Path):
+    ws = _write_workspace(tmp_path)
+    result = main([
+        "hermes", "prompt",
+        "--config", str(ws / "config.yaml"),
+        "--repo-workdir", str(tmp_path),
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert result == 0
+
+
+def test_cli_hermes_prompt_output_contains_workflow_steps(capsys, tmp_path: Path):
+    ws = _write_workspace(tmp_path)
+    result = main([
+        "hermes", "prompt",
+        "--config", str(ws / "config.yaml"),
+        "--repo-workdir", str(tmp_path),
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert result == 0
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "delegate_task" in output
+    assert "scout" in output
+    assert "multi-agent-brief finalize" in output
+    assert "/generate-brief" not in output
