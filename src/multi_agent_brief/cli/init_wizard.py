@@ -291,6 +291,8 @@ class InitProfile:
     web_search_enabled: bool = False
     web_search_mode: str = "disabled"  # disabled, runtime_tool, external_api, configure_later
     search_backend: str = ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
+    competitor_module_enabled: bool = False
+    competitor_names: list[str] = field(default_factory=list)
 
 
 class InitOnboardingRequired(RuntimeError):
@@ -511,6 +513,14 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
         profile.search_backend = ""
         profile.tavily_enabled = False
 
+    # Competitor monitoring
+    competitor_enabled = ask_yes_no(input_func, prompts["competitor_module"], default=False)
+    profile.competitor_module_enabled = competitor_enabled
+    if competitor_enabled:
+        names_raw = ask_text(input_func, prompts["competitor_names"], "")
+        if names_raw.strip():
+            profile.competitor_names = [n.strip() for n in names_raw.split(",") if n.strip()]
+
     return profile
 
 
@@ -549,6 +559,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
             "web_search": "Enable live web search? [y/N]: ",
             "search_backend": "How should live web search be provided? ",
+            "competitor_module": "Enable competitor monitoring? [y/N]: ",
+            "competitor_names": "Enter competitor names, comma-separated (e.g. Acme Corp, Globex Inc): ",
         }
     if language == "bilingual":
         labels = prompt_labels("en-US")
@@ -569,6 +581,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
                 "web_search": "Enable live web search? / 启用实时网络搜索？[y/N]: ",
                 "search_backend": "How should live web search be provided? / 如何提供实时网络搜索？ ",
+                "competitor_module": "Enable competitor monitoring? / 启用竞对监测？[y/N]: ",
+                "competitor_names": "Enter competitor names / 输入竞对公司名称，comma-separated / 逗号分隔: ",
             }
         )
         return labels
@@ -605,11 +619,13 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
         "web_search": "是否启用实时网络搜索？[y/N]：",
         "search_backend": "如何提供实时网络搜索？ ",
+        "competitor_module": "是否启用竞对监测？[y/N]：",
+        "competitor_names": "请输入竞对公司名称，逗号分隔（如：XX科技、YY集团）：",
     }
 
 
 def build_config(profile: InitProfile) -> dict[str, Any]:
-    return {
+    cfg: dict[str, Any] = {
         "project": {
             "name": profile.brief_title,
             "company": profile.company,
@@ -687,6 +703,17 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
             "require_human_review": True,
         },
     }
+    if profile.competitor_module_enabled:
+        cfg["modules"] = {
+            "market_competitor": {
+                "enabled": True,
+                "mode": "weekly_monitor",
+                "max_events": 20,
+                "max_events_per_entity": 4,
+                "universe_path": "competitor_universe.yaml",
+            },
+        }
+    return cfg
 
 
 def build_profile(profile: InitProfile) -> dict[str, Any]:
@@ -1129,6 +1156,17 @@ def format_scalar(value: Any) -> str:
 
 def _build_competitor_universe(profile: InitProfile) -> dict:
     """Generate default competitor_universe.yaml content."""
+    entities = []
+    for name in profile.competitor_names:
+        entities.append({
+            "entity_id": name.lower().replace(" ", "_"),
+            "name": name,
+            "aliases": [],
+            "relation": "direct_competitor",
+            "priority": "secondary",
+            "geographies": [],
+            "technologies": [],
+        })
     return {
         "target": {
             "entity_id": "",
@@ -1145,9 +1183,9 @@ def _build_competitor_universe(profile: InitProfile) -> dict:
             "customer_segments": [],
             "value_chain_positions": [],
         },
-        "entities": [],
+        "entities": entities,
         "mode": "weekly_monitor",
-        "enabled": False,
+        "enabled": profile.competitor_module_enabled,
     }
 
 

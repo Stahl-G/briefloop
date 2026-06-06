@@ -17,7 +17,7 @@ Do not expose:
 - retrieval_provider
 - output_formats
 
-Ask at most 12 questions:
+Ask at most 14 questions:
 
 1. What is your company or organization name?
    Required field. Do not use defaults.
@@ -29,34 +29,39 @@ Ask at most 12 questions:
 3. What should this brief monitor?
    Recommended default: company + industry + policy + competitors + risk events.
 
-4. Who will read it?
-   Recommended default: management / leadership team/marketing/investment team /Research.
+4. Do you want to enable competitor monitoring?
+   If yes, ask which specific competitors to track (company names).
+   Examples: "Yes — track Acme Corp and Globex Inc" or "No, not now".
+   Recommended default: yes if the user mentioned competitors in question 3.
 
-5. How broad should sources be?
+5. Who will read it?
+   Recommended default: management / leadership team / marketing / investment team / research.
+
+6. How broad should sources be?
    Recommended default: reliable public sources + industry media.
 
-6. What language and cadence?
+7. What language and cadence?
    Recommended default: Chinese, weekly.
 
-7. What specific focus areas are most important?
+8. What specific focus areas are most important?
    Recommended default: based on industry (e.g., for automotive: sales data, AI, policy, supply chain, product launches).
 
-8. Enable live web search?
+9. Enable live web search?
    Options: yes (then select from available backends), no (local files only).
    If yes, show configured backends (based on API keys in .env) plus runtime-provided web search option.
    Recommended default: configure later.
 
-9. How many items should each brief contain?
-   Recommended default: 20 items.
+10. How many items should each brief contain?
+    Recommended default: 20 items.
 
-10. What is the maximum age for source materials (in days)?
+11. What is the maximum age for source materials (in days)?
     Recommended default: 14 days.
 
-11. How strict should the audit be?
+12. How strict should the audit be?
     Options: standard (default), strict (fail on any issue), lenient (allow minor issues).
     Recommended default: standard.
 
-12. Are there any sources or topics that should be avoided?
+13. Are there any sources or topics that should be avoided?
     Recommended default: none.
 
 Accept natural-language answers. If incomplete, infer defaults.
@@ -78,6 +83,7 @@ Then create `onboarding.json` with:
 - source_age_days
 - audit_strictness
 - forbidden_sources
+- competitor_preferences (object with `enabled: true/false` and `names: [list of competitor names]`)
 
 Then run:
 
@@ -90,6 +96,7 @@ Finally summarize:
 * workspace created
 * brief audience
 * monitor scope
+* competitor monitoring status (enabled/disabled, which competitors)
 * source style
 * search backend
 * max items per brief
