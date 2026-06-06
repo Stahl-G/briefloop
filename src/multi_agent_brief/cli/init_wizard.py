@@ -86,9 +86,16 @@ DEMO_NEWS = {
     "source_url": "https://example.com/synthetic-market-news",
     "published_at": "2026-06-01",
     "items": [
-        "A public market tracker reported that manufacturing output continued to expand in selected regions during May 2026.",
-        "A policy update indicated that new trade regulations may affect import timelines for selected industrial products.",
-        "A competitor announced a major manufacturing capacity expansion plan, with commercial production expected in 2027.",
+        "A public market tracker reported that manufacturing output continued to expand in selected regions during May 2026, with production indices rising 3.2% month-over-month.",
+        "A policy update indicated that new trade regulations may affect import timelines for selected industrial products, with tariff adjustments expected in Q3 2026.",
+        "A competitor announced a major manufacturing capacity expansion plan, with commercial production expected in 2027. The expansion represents a $350 million capital investment.",
+        "Industry analysts noted that supply chain constraints for key raw materials have eased compared to Q1 2026, with spot prices declining 6% month-over-month.",
+        "A regional utility signed a long-term supply agreement with a preferred vendor, marking the largest single procurement in the sector this quarter.",
+        "The Department of Commerce released updated guidance on domestic content requirements for manufactured goods, effective Q3 2026.",
+        "Automation adoption in manufacturing facilities reached a record 42% penetration rate in Q1 2026, driven by labor cost pressures and quality requirements.",
+        "A major logistics provider announced plans to add 15 new distribution centers across North America by 2029, with priority given to industrial zones.",
+        "A leading manufacturer reported a 18% year-over-year increase in order backlog, citing strong demand from construction and infrastructure sectors.",
+        "Cross-border trade volumes increased 12% in Q1 2026 compared to the prior year, reflecting improved supply chain normalization.",
     ],
 }
 
@@ -96,8 +103,11 @@ DEMO_MARKET_DATA = {
     "source_url": "https://example.com/synthetic-market-data",
     "published_at": "2026-06-01",
     "items": [
-        "Synthetic commodity price checks showed a 3.5% week-over-week decline in selected spot-market channels.",
-        "Synthetic industrial supply quotes remained broadly stable at benchmark levels for project assumptions.",
+        "Synthetic commodity price checks showed a 3.5% week-over-week decline in selected spot-market channels, bringing benchmark prices to $1.42 per unit.",
+        "Synthetic industrial supply quotes remained broadly stable at benchmark levels for project assumptions, with steel plate at $890 per ton.",
+        "Copper futures for July delivery traded at $4.15/lb, up 1.8% week-over-week, reflecting tight mine supply and strong industrial demand.",
+        "Industrial equipment lead times averaged 14 weeks in May 2026, down from 18 weeks in January, indicating improving supply conditions.",
+        "Freight index for domestic trucking rose 2.3% month-over-month to 142.5, driven by seasonal demand and fuel cost pass-through.",
     ],
 }
 
@@ -159,6 +169,14 @@ output:
   path: "output"
   filename_template: "{project_name}_{report_date}"
   named_outputs: true
+
+# Relaxed quality thresholds for synthetic demo workspace.
+# Production weekly briefs should NOT set these overrides.
+brief_quality:
+  quiet_week: true
+  allow_quiet_week_exception: true
+  expected_summary_bullets: null
+  required_metadata_labels: []
 """
 
 WORKSPACE_GITIGNORE = """.env
