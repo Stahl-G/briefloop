@@ -43,8 +43,8 @@ def finalize_reader_outputs(
 ) -> FinalizeResult:
     """Regenerate reader-facing artifacts from internal audited markdown.
 
-    Agent-assisted workflows may rewrite ``output/intermediate/audited_brief.md``
-    after the deterministic pipeline has already produced ``output/brief.md``.
+    Agent-assisted workflows write or rewrite ``output/intermediate/audited_brief.md``
+    before reader-facing delivery artifacts are rendered.
     This function is the final delivery gate: it preserves the cited audited
     artifact for auditability, then writes reader-facing Markdown/DOCX outputs as
     deterministic ``strip_claim_citations(audited_brief)`` derivatives.

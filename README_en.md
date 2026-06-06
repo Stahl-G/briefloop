@@ -825,10 +825,11 @@ The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime w
 
 - **v0.4: Knowledge & Governance Contracts** — Claim epistemic types, evidence relations, schema contracts, `run_manifest.json`, semantic audit states, finding taxonomy, rule packs, and event/field governance hooks.
 - **v0.5: Production Reference Workflow** — one official path, Audience Profiles, DOCX templates and validation, Final Clean, Editorial Governance, Policy & Regulatory Risk Module, HistoryStore, and effort budgets. Editorial Governance covers feedback contamination, meta-content leakage, factual density, comparable-case applicability, research-gap separation, and source coverage.
+- **v0.5.5: Hermes Adapter Layer** — generate a `multi-agent-brief-hermes` skill, daily scout / weekly brief / monthly brief cron plans, copyable `hermes cron create` commands, and `cached_package` wiring for Hermes daily cache.
 - **v1.0: Stable Baseline** — golden datasets, benchmark metrics, contract compliance tests, release consistency checks, and a formal support matrix.
 - **v2.0: MAS Runtime Candidate** — after v1.0, explore Shared World, Event Store, TaskBoard, AgentMessage, ClaimProposal / ClaimReducer, replay, and minimal coordination protocols.
 
-See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap, [docs/impl-plan-v0.5.0.md](docs/impl-plan-v0.5.0.md) for the detailed v0.5 implementation plan, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
+See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap, [docs/impl-plan-v0.5.0.md](docs/impl-plan-v0.5.0.md) for the detailed v0.5 implementation plan, [docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md](docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md) for the Hermes adapter plan, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
 
 ## Safety And Non-Investment-Advice Disclaimer
 

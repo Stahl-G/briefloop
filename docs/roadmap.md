@@ -102,6 +102,26 @@ Done when:
 - Two meaningfully different Analysis Modules use the same registry.
 - Historical context cannot silently become current-period fact.
 
+## v0.5.5: Hermes Adapter Layer
+
+Goal: connect Hermes as the scheduled trigger, daily collection, and message delivery layer without replacing the existing source-grounded MABW pipeline.
+
+See the Chinese implementation plan: [v0.5.5 Hermes Adapter Plan](impl-plan-v0.5.5-hermes-adapter.zh-CN.md).
+
+Scope:
+
+- Hermes Skill: ship `multi-agent-brief-hermes` instructions for daily scout, weekly/monthly prepare/finalize, quality gates, and reader-facing rules.
+- Hermes Cron Plan: generate daily scout, weekly brief, and monthly brief cron plans from workspace config.
+- Daily Cache Contract: daily jobs write public, citable signals to `input/hermes_cache/YYYY-MM-DD.json`.
+- Cached Package wiring: `hermes sync-sources` connects the `cached_package` provider to the Hermes daily cache.
+- CLI helpers: generate the Hermes skill, JSON/Markdown cron plans, and copyable `hermes cron create` commands.
+
+Done when:
+
+- Weekly + monthly demand generates a daily scout plus weekly and monthly brief jobs.
+- Every cron job explicitly attaches the Hermes skill and sets an absolute `--workdir`.
+- Hermes output still flows through MABW doctor, prepare, audit/final gates, and finalize; daily scout output is never treated as a final brief.
+
 ## v1.0: Stable Baseline
 
 Goal: freeze the current sequential pipeline as the long-term maintained baseline and v2.0 benchmark.
