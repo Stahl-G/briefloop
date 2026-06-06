@@ -227,14 +227,15 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import yaml
           p = Path("/tmp/mabw-docx/config.yaml")
-          s = p.read_text(encoding="utf-8")
-          if "formats" not in s:
-              # Demo config has no formats section; add it
-              s = s.rstrip() + '\n  formats:\n    - "markdown"\n    - "docx"\n'
-          elif "docx" not in s:
-              s = s.replace('    - "markdown"\n', '    - "markdown"\n    - "docx"\n')
-          p.write_text(s, encoding="utf-8")
+          cfg = yaml.safe_load(p.read_text(encoding="utf-8"))
+          output = cfg.setdefault("output", {})
+          fmts = output.get("formats", ["markdown"])
+          if "docx" not in fmts:
+              fmts.append("docx")
+              output["formats"] = fmts
+              p.write_text(yaml.dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
       - name: Run pipeline
         run: python scripts/ci/smoke_pipeline.py /tmp/mabw-docx/config.yaml /tmp/mabw-docx/input /tmp/mabw-docx/output
