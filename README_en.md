@@ -791,7 +791,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.4.0** — Claim Schema v2 (epistemic types, evidence relations, applicability constraints)
+Current version: **v0.5.0** — Claim Schema v2 (epistemic types, evidence relations, applicability constraints)
 
 Recent releases added the Capability Center, setup/recommend commands, all configured
 search API key placeholders, and source workflow fixes. Earlier v0.3.0 introduced the

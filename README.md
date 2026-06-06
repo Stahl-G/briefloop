@@ -729,7 +729,7 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.4.0** — Claim Schema v2（认知类型、证据关系、适用性约束）
+当前版本：**v0.5.0** — Claim Schema v2（认知类型、证据关系、适用性约束）
 
 近期版本加入了 Capability Center、`setup` / `recommend` 命令、完整搜索 API key 占位和来源工作流修复。此前 v0.3.0 引入了市场与竞争情报分析模块。
 
