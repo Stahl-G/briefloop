@@ -105,7 +105,7 @@ class TestComparableCases:
             source_id="S1",
             evidence_text="Evidence",
             claim_type="interpretation",
-            epistemic_type="analogous",
+            epistemic_type="analogy",
             applicability_reason="Both operate in same market",
             limitations=["Different scale"],
         )
@@ -122,7 +122,7 @@ class TestComparableCases:
             source_id="S1",
             evidence_text="Evidence",
             claim_type="interpretation",
-            epistemic_type="analogous",
+            epistemic_type="analogy",
         )
 
         findings = check_comparable_cases([claim], config)
@@ -140,7 +140,7 @@ class TestComparableCases:
             source_id="S1",
             evidence_text="Evidence",
             claim_type="interpretation",
-            epistemic_type="analogous",
+            epistemic_type="analogy",
             applicability_reason="Both operate in same market",
         )
 
