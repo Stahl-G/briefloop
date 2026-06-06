@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-06-06
+
+### Added
+
+- **Local Signal Discovery** (Issue #44): deterministic support for non-English market and local consumer signal discovery. The system can now generate local-language search tasks, produce `collector_tasks.json` for manual/OpenCLI collection, parse `local_signal_samples.jsonl`, and generate `local_signal_report.json` with signals found and data gaps.
+- **`local_signal_planner.py`**: core module with `MARKET_PLATFORM_HINTS` (9 markets: Vietnam, Japan, China, Indonesia, Thailand, Brazil, Mexico, Germany, Korea), `build_local_signal_tasks()`, `parse_local_signal_samples()`, `generate_local_signal_report()`.
+- **`opencli_local_signal_adapter.py`**: local evidence processor for screenshots, audio, and text exports. OpenCLI is optional — pipeline works without it.
+- **`collector_tasks.json`**: execution plan for manual/browser/OpenCLI collection with privacy rules and instructions.
+- **`local_signal_report.json`**: intermediate artifact recording signals found and data gaps per market/language/platform.
+- **`build_search_tasks_with_metadata()`**: new function in `decider.py` that preserves search task metadata (topic, market, language, platform_group, signal_type) through pipeline injection.
+- **3 new audit rules**:
+  - `LOCAL_SIGNAL_CLAIM_001`: consumer pain-point claims require consumer-discussion or platform-data evidence.
+  - `LOCAL_SIGNAL_PROVENANCE_001`: local signal claims require sample metadata (platform, market, collected_at, access_level, sample_type, collector).
+  - `LOCAL_SIGNAL_PRIVACY_001`: personal data from local signal samples must not enter final brief.
+- **47 new tests** covering task generation, market hints, collector tasks, source candidates, search queries, sample parsing, report generation, and audit rules.
+
+### Changed
+
+- **`sources/decider.py`**: `build_search_queries()` now appends local-language queries from `local_signal_planner`. `generate_source_candidates()` includes `local_social_listening_tasks`. `merge_candidates_to_sources()` injects local tasks into `web_search.search_tasks` with metadata.
+- **`core/pipeline.py`**: search task injection uses `build_search_tasks_with_metadata()` for metadata preservation. Generates `collector_tasks.json` and `local_signal_report.json` when `local_signal_discovery` is enabled.
+- **`agents/formatter.py`**: persists `local_signal_report.json` to `output/intermediate/`.
+- **`audit/rule_packs.py`**: registered 3 new local signal finding types.
+
+### Non-goals (explicitly excluded)
+
+- No RAG / vector database / embedding-based retrieval.
+- No browser automation or platform crawling.
+- No login-wall bypass or unauthorized scraping.
+- No OpenCLI MCP server integration — OpenCLI is treated as local evidence processor only.
+
 ## [0.5.0] — 2026-06-06
 
 ### Added
