@@ -153,24 +153,65 @@ The audit report records whether the draft is distribution-ready:
 }
 ```
 
-## Getting Started (for Humans)
+## Getting Started
 
-Install the CLI first.
+### Option 1: Clone the repository (recommended · full agent workflow)
 
-macOS users can install with Homebrew:
+This is the **only method that supports the full agent workflow**. `/generate-brief`, OpenCode multi-agent, capability board, skills, and other capabilities depend on `.claude/`, `.opencode/`, `.agents/skills/`, `docs/`, `examples/` and other assets in the repo root — these are **not** distributed with the Python package.
 
-```bash
-brew tap Stahl-G/multi-agent-brief-workflow https://github.com/Stahl-G/multi-agent-brief-workflow
-brew install Stahl-G/multi-agent-brief-workflow/multi-agent-brief
-```
-
-To install the latest code from `main`:
+**macOS / Linux / WSL:**
 
 ```bash
-brew install --HEAD Stahl-G/multi-agent-brief-workflow/multi-agent-brief
+git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
+cd multi-agent-brief-workflow
+bash scripts/setup.sh
+source .venv/bin/activate
+
+multi-agent-brief init ../mabw-workspace
 ```
 
-macOS / Linux / WSL users can also use the curl installer without cloning the repository:
+Then open Claude Code or Codex and run `/generate-brief ../mabw-workspace` — the agent will complete source discovery, drafting, audit, and output formatting.
+
+Or run step by step:
+
+```bash
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml
+```
+
+**Windows PowerShell:**
+
+```powershell
+git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
+cd multi-agent-brief-workflow
+.\scripts\setup.ps1
+.\.venv\Scripts\Activate.ps1
+
+multi-agent-brief init ../mabw-workspace
+# Then in Claude Code: /generate-brief ../mabw-workspace
+```
+
+### Option 2: Ask Claude Code or Codex to help
+
+Open Claude Code, Codex, or another coding agent and type:
+
+```text
+Clone https://github.com/Stahl-G/multi-agent-brief-workflow and start the interactive onboarding initialization
+```
+
+The agent will read the project instructions, ask plain-language onboarding questions, create a workspace, configure sources, and generate the first auditable draft.
+
+Always review sources, content, and audit results before distribution.
+
+### Option 3: CLI-only install (experimental)
+
+> ⚠️ **CLI-only mode**: Works for `init`, `doctor`, `prepare`, `audit`, `finalize`, and other deterministic CLI commands.
+> **Does not guarantee** Claude Code `/generate-brief`, Codex agent roles, OpenCode skills, capability board, or other full agent workflow features.
+> For the full agent workflow, use [Option 1: Clone the repository](#option-1-clone-the-repository-recommended--full-agent-workflow).
+
+macOS / Linux / WSL with curl:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.sh | bash
@@ -182,23 +223,22 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
 ```
 
-Then start interactive onboarding:
+After installation you can use the CLI:
 
 ```bash
 multi-agent-brief init my-workspace
+multi-agent-brief doctor --config my-workspace/config.yaml
+multi-agent-brief prepare --config my-workspace/config.yaml
 ```
 
-Open Claude Code or Codex and run `/generate-brief my-workspace` to complete source discovery, drafting, audit, and output formatting.
-
-You can also ask an agent to clone and initialize the project for you:
-
-Open your Claude Code or Codex, and type:
-
-```text
-Clone https://github.com/Stahl-G/multi-agent-brief-workflow and start the interactive onboarding initialization
-```
-
-Then follow the prompts. The agent must ask plain-language onboarding questions before creating a workspace.
+> **Homebrew:** The current Homebrew stable formula is v0.3.4, which is behind the latest release. To use Homebrew, install the HEAD version:
+>
+> ```bash
+> brew tap Stahl-G/multi-agent-brief-workflow https://github.com/Stahl-G/multi-agent-brief-workflow
+> brew install --HEAD Stahl-G/multi-agent-brief-workflow/multi-agent-brief
+> ```
+>
+> Homebrew install is also CLI-only mode.
 
 For web search, register at [tavily.com](https://tavily.com) to get a Tavily API key, then set it:
 

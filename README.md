@@ -203,56 +203,11 @@ Notes：初步测试Hermes也可以调用本项目，但不保证质量和所有
 
 ## 快速开始
 
-### 方式一：安装 CLI 后开始使用
+### 方式一：Clone 仓库（推荐 · 完整 Agent 工作流）
 
-macOS 推荐 Homebrew：
+这是**唯一支持完整 agent 工作流**的安装方式。`/generate-brief`、OpenCode multi-agent、capability board、skills 等能力依赖仓库根目录下的 `.claude/`、`.opencode/`、`.agents/skills/`、`docs/`、`examples/` 等资产，这些不会随 Python 包分发。
 
-```bash
-brew tap Stahl-G/multi-agent-brief-workflow https://github.com/Stahl-G/multi-agent-brief-workflow
-brew install Stahl-G/multi-agent-brief-workflow/multi-agent-brief
-```
-
-如果想安装当前 `main` 分支的最新代码：
-
-```bash
-brew install --HEAD Stahl-G/multi-agent-brief-workflow/multi-agent-brief
-```
-
-macOS / Linux / WSL 也可以用 curl 安装。这个入口不要求先 clone 仓库：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.sh | bash
-```
-
-Windows PowerShell：
-
-```powershell
-irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
-```
-
-安装完成后启动交互问答初始化：
-
-```bash
-multi-agent-brief init my-workspace
-```
-
-然后打开 Claude Code 或 Codex，输入 `/generate-brief my-workspace`，agent 会完成来源发现、简报生成、审计和输出格式化的完整流程。
-
-### 方式二：让 Claude Code 或 Codex 协助运行
-
-打开 Claude Code、Codex 或其他 coding agent，输入：
-
-```text
-克隆 https://github.com/Stahl-G/multi-agent-brief-workflow， 并启动交互问答初始化
-```
-
-Agent 会读取项目说明，先用自然语言询问简报对象、行业主题、读者、语言、频率和来源偏好，再创建工作区、配置来源、运行示例和生成第一份可审计草稿。
-
-正式分发前仍需要人工确认来源、内容和审计结果。
-
-### 方式三：贡献者从源码运行
-
-macOS / Linux / WSL:
+**macOS / Linux / WSL：**
 
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -263,20 +218,18 @@ source .venv/bin/activate
 multi-agent-brief init ../mabw-workspace
 ```
 
-`scripts/setup.sh` 是开发者入口，会在源码仓库里创建 `.venv` 并安装测试依赖。普通用户优先使用 Homebrew、curl 或 PowerShell 安装。
-
 然后打开 Claude Code 或 Codex，输入 `/generate-brief ../mabw-workspace`，agent 会完成来源发现、简报生成、审计和输出格式化的完整流程。
 
-或者你也可以手动分步执行：
+或者手动分步执行：
 
 ```bash
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml   # 发现来源
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml           # 检查配置
-multi-agent-brief prepare --config ../mabw-workspace/config.yaml          # 运行确定性管线
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml
 ```
 
-PowerShell:
+**Windows PowerShell：**
 
 ```powershell
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -285,19 +238,7 @@ cd multi-agent-brief-workflow
 .\.venv\Scripts\Activate.ps1
 
 multi-agent-brief init ../mabw-workspace
-```
-
-`scripts/setup.ps1` 是 Windows 开发者入口，会在源码仓库里创建 `.venv` 并安装测试依赖。普通用户优先使用 PowerShell 安装脚本。
-
-然后打开 Claude Code 或 Codex，输入 `/generate-brief ../mabw-workspace`，agent 会完成来源发现、简报生成、审计和输出格式化的完整流程。
-
-或者你也可以手动分步执行：
-
-```powershell
-multi-agent-brief sources decide --config ../mabw-workspace\config.yaml
-multi-agent-brief sources decide --config ../mabw-workspace\config.yaml --merge
-multi-agent-brief doctor --config ../mabw-workspace\config.yaml
-multi-agent-brief prepare --config ../mabw-workspace\config.yaml
+# 然后在 Claude Code 中: /generate-brief ../mabw-workspace
 ```
 
 > **两种生成简报的方式：**
@@ -316,6 +257,53 @@ multi-agent-brief prepare --config ../mabw-workspace\config.yaml
 >
 > 确定性管线（`prepare`）的 FormatterAgent 已内置此逻辑，不需要单独调用 `finalize`。
 > `finalize` 仅在 subagent 改写了 `audited_brief.md` 后需要重新生成读者版本时使用。
+
+### 方式二：让 Claude Code 或 Codex 协助运行
+
+打开 Claude Code、Codex 或其他 coding agent，输入：
+
+```text
+克隆 https://github.com/Stahl-G/multi-agent-brief-workflow， 并启动交互问答初始化
+```
+
+Agent 会读取项目说明，先用自然语言询问简报对象、行业主题、读者、语言、频率和来源偏好，再创建工作区、配置来源、运行示例和生成第一份可审计草稿。
+
+正式分发前仍需要人工确认来源、内容和审计结果。
+
+### 方式三：CLI-only 安装（实验性）
+
+> ⚠️ **CLI-only 模式**：适用于 `init`、`doctor`、`prepare`、`audit`、`finalize` 等确定性 CLI 命令。
+> **不保证** Claude Code `/generate-brief`、Codex agent roles、OpenCode skills、capability board 等完整 agent 工作流可用。
+> 完整 agent workflow 请使用 [方式一：Clone 仓库](#方式一clone-仓库推荐--完整-agent-工作流)。
+
+macOS / Linux / WSL 用 curl 安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.sh | bash
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
+```
+
+安装完成后可以使用 CLI：
+
+```bash
+multi-agent-brief init my-workspace
+multi-agent-brief doctor --config my-workspace/config.yaml
+multi-agent-brief prepare --config my-workspace/config.yaml
+```
+
+> **Homebrew：** 目前 Homebrew formula stable 版本为 v0.3.4，落后于当前版本。如需使用 Homebrew，请用 `--HEAD` 安装最新开发版：
+>
+> ```bash
+> brew tap Stahl-G/multi-agent-brief-workflow https://github.com/Stahl-G/multi-agent-brief-workflow
+> brew install --HEAD Stahl-G/multi-agent-brief-workflow/multi-agent-brief
+> ```
+>
+> Homebrew 安装同样为 CLI-only 模式。
 
 ---
 
