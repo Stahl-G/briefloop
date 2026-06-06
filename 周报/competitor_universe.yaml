@@ -1,0 +1,22 @@
+target:
+  entity_id: ""
+  name: "兴业证券"
+  aliases:
+
+  relation: "direct_competitor"
+  priority: "primary"
+  geographies:
+
+  technologies:
+market_scope:
+  geographies:
+
+  products:
+
+  customer_segments:
+
+  value_chain_positions:
+entities:
+
+mode: "weekly_monitor"
+enabled: false

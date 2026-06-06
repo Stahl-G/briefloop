@@ -1,0 +1,25 @@
+project:
+  name: "Reference Workflow Demo"
+  language: "en-US"
+  audience: "management"
+
+report:
+  date: "2026-06-02"
+  max_source_age_days: 14
+  fail_on_stale_source: true
+
+input:
+  path: "input"
+
+output:
+  path: "output"
+  filename_template: "{project_name}_{report_date}"
+  named_outputs: true
+
+# Relaxed quality thresholds for synthetic demo workspace.
+# Production weekly briefs should NOT set these overrides.
+brief_quality:
+  quiet_week: true
+  allow_quiet_week_exception: true
+  expected_summary_bullets: null
+  required_metadata_labels: []

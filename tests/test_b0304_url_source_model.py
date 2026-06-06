@@ -223,7 +223,7 @@ class TestB04RssFeedMisclassification:
 class TestB05LocalInputPreserved:
     """Local input/ directory must be loaded even when URL sources are present."""
 
-    def test_local_input_loaded_alongside_url_sources(self, tmp_path):
+    def test_local_input_loaded_alongside_url_sources(self, tmp_path, monkeypatch):
         """When manual.sources has both Local Input Directory and URL entries,
         the pipeline must still read local input files."""
         input_dir = tmp_path / "input"
@@ -234,6 +234,28 @@ class TestB05LocalInputPreserved:
         (input_dir / "local_news.md").write_text(
             "- Local competitor announced expansion.\n",
             encoding="utf-8",
+        )
+
+        # Mock HTTP requests to avoid ResourceWarning
+        class FakeHeaders:
+            def get_content_charset(self):
+                return "utf-8"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self, max_bytes):
+                return b"<html><body><p>Fetched content.</p></body></html>"
+
+        monkeypatch.setattr(
+            "multi_agent_brief.sources.manual.urlopen",
+            lambda req, timeout=10: FakeResponse(),
         )
 
         # Build a pipeline context with a SourceConfig that has BOTH
@@ -281,7 +303,7 @@ class TestB05LocalInputPreserved:
             "local input/ was not loaded when URL sources were present"
         )
 
-    def test_pipeline_always_adds_local_input_if_missing(self, tmp_path):
+    def test_pipeline_always_adds_local_input_if_missing(self, tmp_path, monkeypatch):
         """If manual.sources lacks a Local Input Directory entry,
         the pipeline must add one automatically."""
         input_dir = tmp_path / "input"
@@ -290,6 +312,28 @@ class TestB05LocalInputPreserved:
         (input_dir / "news.md").write_text(
             "- Important local competitive signal detected in the market.\n",
             encoding="utf-8",
+        )
+
+        # Mock HTTP requests to avoid ResourceWarning
+        class FakeHeaders:
+            def get_content_charset(self):
+                return "utf-8"
+
+        class FakeResponse:
+            headers = FakeHeaders()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self, max_bytes):
+                return b"<html><body><p>Fetched content.</p></body></html>"
+
+        monkeypatch.setattr(
+            "multi_agent_brief.sources.manual.urlopen",
+            lambda req, timeout=10: FakeResponse(),
         )
 
         # SourceConfig with ONLY a URL, no Local Input Directory

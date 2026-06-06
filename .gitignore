@@ -46,3 +46,4 @@ reasonix.toml
 # Personal notes
 notes/
 TODO.md
+.cache/

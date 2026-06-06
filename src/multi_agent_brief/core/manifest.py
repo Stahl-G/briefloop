@@ -65,6 +65,9 @@ class RunManifest:
     # Errors encountered during pipeline
     errors: list[dict[str, str]] = field(default_factory=list)
 
+    # Source coverage summary
+    source_coverage: dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -98,6 +101,7 @@ def build_manifest(
     artifact_paths: dict[str, str | Path] | None = None,
     stage_outputs: list[dict[str, Any]] | None = None,
     errors: list[dict[str, str]] | None = None,
+    source_coverage: dict[str, Any] | None = None,
 ) -> RunManifest:
     """Build a RunManifest from pipeline state.
 
@@ -134,6 +138,7 @@ def build_manifest(
         audit_score=audit_score,
         audit_finding_count=audit_finding_count,
         semantic_status=semantic_status or "not_run",
+        source_coverage=source_coverage or {},
     )
 
     # Artifact hashes
@@ -154,12 +159,36 @@ def build_manifest(
                 summary = output.get("summary", "")
 
                 # Determine status from artifacts or summary
-                if isinstance(artifacts, dict) and artifacts.get("status") == "failed":
-                    stage_status = "failed"
-                elif "FAILED" in summary.upper() or "ERROR" in summary.upper():
-                    stage_status = "failed"
-                else:
-                    stage_status = "ok"
+                stage_status = "ok"
+
+                # Check for explicit failed status in artifacts
+                if isinstance(artifacts, dict):
+                    if artifacts.get("status") == "failed":
+                        stage_status = "failed"
+                    # Check for fatal collection errors
+                    elif agent_name == "source-collection":
+                        coll_errors = artifacts.get("collection_errors", [])
+                        if isinstance(coll_errors, list):
+                            fatal_errors = [
+                                e for e in coll_errors
+                                if e.get("error_type") in (
+                                    "ConfigValidationError",
+                                    "ZeroUsableSources",
+                                    "NoSearchTasks",
+                                )
+                            ]
+                            if fatal_errors:
+                                stage_status = "failed"
+
+                # Check summary for failure indicators
+                if stage_status == "ok":
+                    summary_upper = summary.upper()
+                    if any(indicator in summary_upper for indicator in [
+                        "FAILED", "ERROR", "FATAL", "BLOCKED",
+                        "FINAL CLEAN: FAIL", "AUDIT STATUS: FAIL",
+                        "RENDERED_OUTPUT_STATUS: FAIL",
+                    ]):
+                        stage_status = "failed"
 
                 stage_entry: dict[str, str] = {
                     "status": stage_status,

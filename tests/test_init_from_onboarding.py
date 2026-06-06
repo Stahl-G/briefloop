@@ -36,8 +36,9 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path):
     assert sources["source_strategy"]["profile"] == "llm_decide"
     # Industry is preserved in source_discovery for llm_decide mode
     assert "manufacturing" in sources.get("source_discovery", {}).get("industry", "")
-    # web_search is enabled by default (without backend)
-    assert sources["web_search"]["enabled"] is True
+    # web_search is disabled by default (user must explicitly enable it)
+    assert sources["web_search"]["enabled"] is False
+    assert sources["web_search"]["mode"] == "disabled"
 
 
 def test_init_from_onboarding_cli_workspace_overrides_target(tmp_path: Path):

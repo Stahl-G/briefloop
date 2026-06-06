@@ -525,7 +525,7 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
     providers, search_tasks, and source_discovery policy — both are required
     for a working prepare run.
     """
-    config_path = Path(args.config)
+    config_path = Path(args.config).resolve()
     workspace = config_path.parent
     config = load_config(str(config_path))
 
@@ -533,6 +533,7 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
     sources_path = workspace / "sources.yaml"
     source_config = None
     source_discovery = None
+    coverage_config = None
     if sources_path.exists():
         source_config = load_sources_config(sources_path)
         try:
@@ -540,6 +541,14 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
             source_discovery = load_source_discovery(sources_path)
         except Exception:
             source_discovery = None
+        # Load coverage config from sources.yaml
+        try:
+            import yaml as _yaml
+            with open(sources_path, encoding="utf-8") as f:
+                sources_raw = _yaml.safe_load(f) or {}
+            coverage_config = sources_raw.get("coverage", None)
+        except Exception:
+            coverage_config = None
 
     settings = build_run_settings(
         config=config,
@@ -556,10 +565,16 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
         context.metadata["source_config"] = source_config
     if source_discovery is not None:
         context.metadata["source_discovery"] = source_discovery
+    if coverage_config is not None:
+        context.metadata["coverage_config"] = coverage_config
     context.metadata["_config_dir"] = str(workspace)
 
+    # Wire brief_quality config → final_quality metadata for FinalQualityAuditAgent
+    brief_quality = config.get("brief_quality", {})
+    if brief_quality:
+        context.metadata["final_quality"] = brief_quality
+
     outputs = BriefPipeline().run(context)
-    print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
 
     # Generate run_manifest.json
     try:
@@ -568,6 +583,10 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
         stage_dicts = [o.to_dict() for o in outputs]
 
         audit_report = context.report_state.audit_report
+        # Build source coverage summary for manifest
+        coverage_report = context.metadata.get("source_coverage")
+        source_coverage_summary = coverage_report.to_dict() if hasattr(coverage_report, "to_dict") else {}
+
         manifest = build_manifest(
             config_path=str(config_path),
             workspace=str(workspace),
@@ -584,11 +603,62 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
             semantic_status=(audit_report.metadata.get("semantic_status", "") if audit_report else ""),
             artifact_paths=artifact_paths,
             stage_outputs=stage_dicts,
+            source_coverage=source_coverage_summary,
         )
         manifest_path = save_manifest(manifest, context.output_dir)
         print(f"[prepare] Run manifest: {manifest_path}")
     except Exception as exc:
         print(f"[prepare] Warning: could not generate run manifest: {exc}")
+
+    # Determine exit code based on pipeline results
+    exit_code = _determine_pipeline_exit_code(outputs, context)
+
+    if exit_code == 0:
+        print(f"[prepare] Pipeline complete — {len(outputs)} stages run.")
+    else:
+        print(f"[prepare] Pipeline failed — {len(outputs)} stages run. Exit code: {exit_code}")
+
+    return exit_code
+
+
+def _determine_pipeline_exit_code(outputs: list, context) -> int:
+    """Determine pipeline exit code based on outputs and context.
+
+    Exit codes:
+    - 0: pipeline completed and delivery gates passed/warning-accepted
+    - 1: runtime/config/source fatal
+    - 2: blocking quality/final-clean/rendered-output gate failed
+    """
+    # Check for source collection fatal errors
+    source_output = next((o for o in outputs if o.agent_name == "source-collection"), None)
+    if source_output:
+        artifacts = source_output.artifacts or {}
+        collection_errors = artifacts.get("collection_errors", [])
+        if collection_errors:
+            # Check for fatal errors (ConfigValidationError, ZeroUsableSources)
+            fatal_errors = [
+                e for e in collection_errors
+                if e.get("error_type") in ("ConfigValidationError", "ZeroUsableSources", "NoSearchTasks")
+            ]
+            if fatal_errors:
+                return 1  # runtime/config/source fatal
+
+    # Check for Final Clean failures
+    final_clean_report = context.report_state.final_clean_report
+    if final_clean_report and final_clean_report.get("audit_status") == "fail":
+        return 2  # blocking quality gate failed
+
+    # Check for Audit failures
+    audit_report = context.report_state.audit_report
+    if audit_report and audit_report.audit_status == "fail":
+        return 2  # blocking quality gate failed
+
+    # Check for Rendered Output failures
+    rendered_output_report = context.metadata.get("rendered_output_report")
+    if rendered_output_report:
+        rendered_status = getattr(rendered_output_report, "audit_status", None)
+        if rendered_status == "fail":
+            return 2  # blocking quality gate failed
 
     return 0
 

@@ -1,10 +1,12 @@
 """Tests for FilingResolverProvider."""
 from __future__ import annotations
 
+import os
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
+import pytest
 
 from multi_agent_brief.sources.base import SourceConfig, SourceQuery
 from multi_agent_brief.sources.filing_resolver import FilingResolverProvider
@@ -12,6 +14,12 @@ from multi_agent_brief.sources.registry import (
     PROVIDER_CLASSES,
     collect_all_sources,
 )
+
+
+@pytest.fixture(autouse=True)
+def _set_sec_user_agent(monkeypatch):
+    """Set SEC_USER_AGENT to avoid warnings from disclosure_filing_resolver."""
+    monkeypatch.setenv("SEC_USER_AGENT", "test@example.com multi-agent-brief-workflow")
 
 
 def _make_mock_dfr(evidence: MagicMock | None = None, sources: list | None = None):
@@ -206,10 +214,25 @@ def test_collect_multiple_tickers():
         _unpatch_dfr(prev)
 
 
-def test_collect_import_error():
+def test_collect_import_error(monkeypatch):
     """When disclosure_filing_resolver is not installed, returns error item."""
     # Ensure module is NOT in sys.modules
     prev = sys.modules.pop("disclosure_filing_resolver", None)
+    # Also remove from import cache to force re-import
+    import importlib
+    if "disclosure_filing_resolver" in sys.modules:
+        del sys.modules["disclosure_filing_resolver"]
+
+    # Mock import to raise ImportError
+    original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+    def mock_import(name, *args, **kwargs):
+        if name == "disclosure_filing_resolver":
+            raise ImportError("No module named 'disclosure_filing_resolver'")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", mock_import)
+
     try:
         provider = FilingResolverProvider()
         items = provider.collect(SourceQuery(), {

@@ -52,6 +52,15 @@ jobs:
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
 
+      - name: Release consistency check
+        run: python scripts/check_release_consistency.py
+
+      - name: Capabilities check
+        run: python scripts/check_capabilities.py
+
+      - name: Reference workflow smoke
+        run: python scripts/ci/smoke_reference_workflow.py
+
       - name: Failure diagnostics
         if: failure()
         run: |

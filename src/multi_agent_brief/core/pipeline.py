@@ -163,7 +163,7 @@ class BriefPipeline:
             source_config.manual["enabled"] = True
             source_config.manual.setdefault("sources", [])
             source_config.manual["sources"].append(
-                {"name": "Local Input Directory", "path": str(input_dir), "category": "local_files", "enabled": True}
+                {"name": "Local Input Directory", "path": str(input_dir.resolve()), "category": "local_files", "enabled": True}
             )
 
         # Collect from all providers
@@ -171,6 +171,15 @@ class BriefPipeline:
 
         # Populate context
         context.sources = items
+
+        # Calculate source coverage report
+        from multi_agent_brief.sources.coverage import calculate_coverage
+        coverage_config = context.metadata.get("coverage_config", {})
+        context.metadata["source_coverage"] = calculate_coverage(
+            sources=items,
+            config=coverage_config,
+            report_date=context.report_date,
+        )
 
         artifacts: dict = {
             "source_count": len(items),

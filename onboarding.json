@@ -1,0 +1,18 @@
+{
+  "target": "周报",
+  "company_or_org": "兴业证券",
+  "industry_or_theme": "证券",
+  "audience_plain": "市场部",
+  "source_style_plain": "新闻，官方来源",
+  "output_style_plain": "executive brief, conclusion-first",
+  "language_plain": "中文",
+  "cadence_plain": "每周",
+  "must_watch": ["公司动态", "行业趋势", "政策变化", "竞争对手", "风险事件"],
+  "focus_areas_plain": "销售数据、产品发布、市场活动等",
+  "search_backend_plain": "tavily",
+  "max_items_per_brief": 8,
+  "source_age_days": 10,
+  "audit_strictness": "lenient",
+  "forbidden_sources": [],
+  "title": "中国证券市场行情动态"
+}

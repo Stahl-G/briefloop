@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-06
+
+### Added
+
+- **Official Workflow Harness**: reference workflow demo with synthetic data, smoke tests, and artifact contract.
+- **Final Clean Gate**: clears internal markers from reader-facing output.
+- **Audience Profiles**: different brief structures and audit thresholds for management, research, IR, policy, support audiences.
+- **DOCX Templates**: executive_brief, research_note, formal_internal_report templates with rendered-output validation.
+- **Source Coverage Report**: configurable coverage dimensions with research gaps separation.
+- **Policy & Regulatory Risk Module**: second analysis module with policy events, risk register, applicability questions.
+- **Minimal HistoryStore**: file-backed storage for previous briefs and claim ledgers with repeat/novelty tracking.
+- **Editorial Governance Rule Packs**: quality checks for factual density, business advice, comparable cases, historical analogies, must-preserve facts.
+- **Effort Budgets**: deterministic runtime limits with budget levels (low, medium, high, xhigh).
+- **Pipeline Exit Codes**: structured exit codes (0/1/2) for runtime/config fatal and quality gate failures.
+- **Manifest Stage Status**: trustworthy stage status detection from artifacts and summary text.
+- **Final Quality Gate**: FinalQualityAuditAgent wired into production pipeline with audience profile thresholds.
+- **CI Gate Scripts**: release consistency, capabilities, and reference workflow smoke checks integrated into CI.
+
+### Fixed
+
+- **Test Warnings**: resolved ResourceWarning and UserWarning in test suite.
+- **Search Backend Selection**: improved multi-backend support with proper state machine (disabled/runtime_tool/external_api/configure_later).
+- **Source Coverage Recency**: use report date instead of current time for recency calculation.
+- **SourceConfig Validation**: validate enabled_providers must be list[str].
+- **0 Sources Coverage**: return 0% coverage instead of 100% when no sources collected.
+- **Final Clean Metadata**: write final_clean_status to audit_report.metadata.
+
 ## [0.4.0] — 2026-06-05
 
 ### Added

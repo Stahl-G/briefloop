@@ -271,6 +271,8 @@ multi-agent-brief init ../mabw-workspace
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml   # 发现来源
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml           # 检查配置
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml          # 运行确定性管线
 ```
 
 PowerShell:
@@ -293,9 +295,15 @@ multi-agent-brief init ../mabw-workspace
 ```powershell
 multi-agent-brief sources decide --config ../mabw-workspace\config.yaml
 multi-agent-brief sources decide --config ../mabw-workspace\config.yaml --merge
+multi-agent-brief doctor --config ../mabw-workspace\config.yaml
+multi-agent-brief prepare --config ../mabw-workspace\config.yaml
 ```
 
-> 注意：`multi-agent-brief run` 已弃用，仅保留迁移提示。请使用 `prepare` 或 `/generate-brief`。
+> **两种生成简报的方式：**
+> - `/generate-brief <workspace>` — Claude Code agent 编排完整流程（analyst → editor → auditor → formatter）
+> - `multi-agent-brief prepare --config <workspace>/config.yaml` — Python 确定性管线（来源采集 → scout → screener → claim ledger → audit → formatter）
+>
+> `multi-agent-brief run` 已弃用，请使用 `prepare`。
 
 ---
 
@@ -325,7 +333,10 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml
 ```
+
+产物位于 `output/` 目录：`brief.md`、`audited_brief.md`、`claim_ledger.json`、`audit_report.json`、`source_map.md`、`run_manifest.json`。
 
 ---
 
@@ -729,9 +740,9 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.4.0** — Claim Schema v2（认知类型、证据关系、适用性约束）
+当前版本：**v0.5.0** — Production Reference Workflow（官方工作流、受众配置、DOCX 模板、质量门禁）
 
-近期版本加入了 Capability Center、`setup` / `recommend` 命令、完整搜索 API key 占位和来源工作流修复。此前 v0.3.0 引入了市场与竞争情报分析模块。
+v0.5.0 引入了官方参考工作流、受众配置、DOCX 模板与验证、Final Clean 门禁、Editorial Governance、Policy & Regulatory 风险模块、HistoryStore 和 Effort Budgets。此前 v0.4.0 引入了 Claim Schema v2（认知类型、证据关系、适用性约束）。
 
 此前 v0.2.0 已集成 SEC Filing 解析、MinerU 远程 API、飞书双向通道；
 v0.1.1 已补齐 4 个 Source Provider（NewsAPI / SEC EDGAR / MCP / CLI），

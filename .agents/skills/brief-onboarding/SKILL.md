@@ -17,38 +17,46 @@ Do not expose:
 - retrieval_provider
 - output_formats
 
-Ask at most 10 questions:
+Ask at most 12 questions:
 
-1. What should this brief monitor?
+1. What is your company or organization name?
+   Required field. Do not use defaults.
+
+2. What is your role or department?
+   Examples: Strategy, Research, Marketing, Investor Relations, Policy, Management.
+   Recommended default: Strategy.
+
+3. What should this brief monitor?
    Recommended default: company + industry + policy + competitors + risk events.
 
-2. Who will read it?
+4. Who will read it?
    Recommended default: management / leadership team.
 
-3. How broad should sources be?
+5. How broad should sources be?
    Recommended default: reliable public sources + industry media.
 
-4. What language and cadence?
+6. What language and cadence?
    Recommended default: English, weekly.
 
-5. What specific focus areas are most important?
+7. What specific focus areas are most important?
    Recommended default: based on industry (e.g., for automotive: sales data, autonomous driving, policy, supply chain, product launches).
 
-6. Which search backend should be used for web search?
-   Options: tavily (AI-powered web search, requires API key), none (local files only), choose later (web search capability enabled but no backend configured).
-   Recommended default: choose later.
+8. Enable live web search?
+   Options: yes (then select from available backends), no (local files only).
+   If yes, show configured backends (based on API keys in .env) plus runtime-provided web search option.
+   Recommended default: configure later.
 
-7. How many items should each brief contain?
+9. How many items should each brief contain?
    Recommended default: 8 items.
 
-8. What is the maximum age for source materials (in days)?
-   Recommended default: 14 days.
+10. What is the maximum age for source materials (in days)?
+    Recommended default: 14 days.
 
-9. How strict should the audit be?
-   Options: standard (default), strict (fail on any issue), lenient (allow minor issues).
-   Recommended default: standard.
+11. How strict should the audit be?
+    Options: standard (default), strict (fail on any issue), lenient (allow minor issues).
+    Recommended default: standard.
 
-10. Are there any sources or topics that should be avoided?
+12. Are there any sources or topics that should be avoided?
     Recommended default: none.
 
 Accept natural-language answers. If incomplete, infer defaults.
@@ -57,6 +65,7 @@ Then create `onboarding.json` with:
 - target
 - company_or_org
 - industry_or_theme
+- role_plain
 - audience_plain
 - source_style_plain
 - output_style_plain

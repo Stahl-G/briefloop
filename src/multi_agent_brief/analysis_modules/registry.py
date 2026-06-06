@@ -61,5 +61,13 @@ def _auto_register() -> None:
     except ImportError:
         pass
 
+    try:
+        from multi_agent_brief.analysis_modules.policy_regulatory import (
+            PolicyRegulatoryModule,
+        )
+        register_module("policy_regulatory", PolicyRegulatoryModule)
+    except ImportError:
+        pass
+
 
 _auto_register()

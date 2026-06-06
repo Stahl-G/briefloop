@@ -1,18 +1,101 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    # dotenv is optional; fall back to os.environ only
+    def load_dotenv(*args: Any, **kwargs: Any) -> None:
+        pass
+
+
+# Search backend configuration
+_SEARCH_BACKENDS = {
+    "tavily": {"env_key": "TAVILY_API_KEY", "name": "Tavily", "desc": "AI-powered web search"},
+    "exa": {"env_key": "EXA_API_KEY", "name": "Exa", "desc": "Deep research, papers, filings"},
+    "brave": {"env_key": "BRAVE_SEARCH_API_KEY", "name": "Brave", "desc": "Independent web index"},
+    "firecrawl": {"env_key": "FIRECRAWL_API_KEY", "name": "Firecrawl", "desc": "Search + full-text crawl"},
+    "serper": {"env_key": "SERPER_API_KEY", "name": "Serper", "desc": "Google SERP"},
+}
+
+
+def _get_configured_backends(workspace_path: Path | None = None) -> list[str]:
+    """Check .env and environment for configured search backend keys."""
+    # Try to load .env from workspace or current directory
+    if workspace_path:
+        env_file = workspace_path / ".env"
+        if env_file.exists():
+            load_dotenv(env_file)
+    else:
+        load_dotenv()
+
+    configured = []
+    for backend_key, info in _SEARCH_BACKENDS.items():
+        if os.environ.get(info["env_key"]):
+            configured.append(backend_key)
+    return configured
+
+
+def _build_search_backend_choices(
+    language: str, workspace_path: Path | None = None
+) -> tuple[dict[str, str], str]:
+    """Build search backend choices and return (choices_dict, default_key).
+
+    Returns:
+        choices: mapping of choice_key -> backend_value
+        default_key: the key to use as default (semantic, not positional)
+    """
+    configured = _get_configured_backends(workspace_path)
+    choices: dict[str, str] = {}
+    idx = 1
+
+    # Add configured backends
+    for backend_key in configured:
+        info = _SEARCH_BACKENDS[backend_key]
+        if language == "zh-CN":
+            choices[str(idx)] = f"{backend_key} ({info['name']} - {info['desc']})"
+        else:
+            choices[str(idx)] = f"{backend_key} ({info['desc']})"
+        idx += 1
+
+    # Add runtime-provided websearch
+    runtime_key = str(idx)
+    if language == "zh-CN":
+        choices[runtime_key] = "runtime_websearch (运行时提供的网络搜索工具)"
+    else:
+        choices[runtime_key] = "runtime_websearch (Runtime-provided web search tool)"
+    idx += 1
+
+    # Add "add API key later" option
+    later_key = str(idx)
+    if language == "zh-CN":
+        choices[later_key] = "configure_later (稍后配置 API key)"
+    else:
+        choices[later_key] = "configure_later (Add API key later)"
+
+    # Default to "configure_later" (semantic default, not positional)
+    return choices, later_key
 
 
 DEMO_NEWS = {
     "source_url": "https://example.com/synthetic-market-news",
     "published_at": "2026-06-01",
     "items": [
-        "A public market tracker reported that manufacturing output continued to expand in selected regions during May 2026.",
-        "A policy update indicated that new trade regulations may affect import timelines for selected industrial products.",
-        "A competitor announced a major manufacturing capacity expansion plan, with commercial production expected in 2027.",
+        "A public market tracker reported that manufacturing output continued to expand in selected regions during May 2026, with production indices rising 3.2% month-over-month.",
+        "A policy update indicated that new trade regulations may affect import timelines for selected industrial products, with tariff adjustments expected in Q3 2026.",
+        "A competitor announced a major manufacturing capacity expansion plan, with commercial production expected in 2027. The expansion represents a $350 million capital investment.",
+        "Industry analysts noted that supply chain constraints for key raw materials have eased compared to Q1 2026, with spot prices declining 6% month-over-month.",
+        "A regional utility signed a long-term supply agreement with a preferred vendor, marking the largest single procurement in the sector this quarter.",
+        "The Department of Commerce released updated guidance on domestic content requirements for manufactured goods, effective Q3 2026.",
+        "Automation adoption in manufacturing facilities reached a record 42% penetration rate in Q1 2026, driven by labor cost pressures and quality requirements.",
+        "A major logistics provider announced plans to add 15 new distribution centers across North America by 2029, with priority given to industrial zones.",
+        "A leading manufacturer reported a 18% year-over-year increase in order backlog, citing strong demand from construction and infrastructure sectors.",
+        "Cross-border trade volumes increased 12% in Q1 2026 compared to the prior year, reflecting improved supply chain normalization.",
     ],
 }
 
@@ -20,10 +103,54 @@ DEMO_MARKET_DATA = {
     "source_url": "https://example.com/synthetic-market-data",
     "published_at": "2026-06-01",
     "items": [
-        "Synthetic commodity price checks showed a 3.5% week-over-week decline in selected spot-market channels.",
-        "Synthetic industrial supply quotes remained broadly stable at benchmark levels for project assumptions.",
+        "Synthetic commodity price checks showed a 3.5% week-over-week decline in selected spot-market channels, bringing benchmark prices to $1.42 per unit.",
+        "Synthetic industrial supply quotes remained broadly stable at benchmark levels for project assumptions, with steel plate at $890 per ton.",
+        "Copper futures for July delivery traded at $4.15/lb, up 1.8% week-over-week, reflecting tight mine supply and strong industrial demand.",
+        "Industrial equipment lead times averaged 14 weeks in May 2026, down from 18 weeks in January, indicating improving supply conditions.",
+        "Freight index for domestic trucking rose 2.3% month-over-month to 142.5, driven by seasonal demand and fuel cost pass-through.",
     ],
 }
+
+DEMO_SOURCES = """source_strategy:
+  profile: "conservative"
+  enabled_providers:
+    - "manual"
+
+manual:
+  enabled: true
+  sources: []
+"""
+
+DEMO_USER_MD = """# User Context
+
+## Company
+
+Synthetic Corp
+
+## Industry
+
+Manufacturing & Industrial
+
+## Role
+
+Strategy Office
+
+## Focus Areas
+
+- Manufacturing output and capacity trends
+- Trade regulation and policy impacts
+- Competitor capacity announcements
+- Commodity pricing and supply chain conditions
+
+## Cadence
+
+Weekly
+
+## Notes
+
+This is a synthetic demo workspace for validating the reference workflow.
+All data is public-safe and fabricated for testing purposes.
+"""
 
 DEMO_CONFIG = """project:
   name: "Synthetic Market Brief Demo"
@@ -42,6 +169,14 @@ output:
   path: "output"
   filename_template: "{project_name}_{report_date}"
   named_outputs: true
+
+# Relaxed quality thresholds for synthetic demo workspace.
+# Production weekly briefs should NOT set these overrides.
+brief_quality:
+  quiet_week: true
+  allow_quiet_week_exception: true
+  expected_summary_bullets: null
+  required_metadata_labels: []
 """
 
 WORKSPACE_GITIGNORE = """.env
@@ -122,6 +257,7 @@ class InitProfile:
     industry_text: str = ""  # raw user description, preserved in user.md
     brief_title: str = "Weekly Industry Brief"
     audience: str = "management"
+    audience_profile: str = ""  # mapped profile ID (management, research, ir, legal_compliance, default)
     focus_areas: list[str] = field(default_factory=lambda: ["policy", "competitor", "market", "customer_demand"])
     task_objective: str = ""  # free-text task description
     forbidden_sources: list[str] = field(default_factory=list)
@@ -137,7 +273,10 @@ class InitProfile:
     source_profile: str = "llm_decide"
     source_decision_mode: str = "agent_decide"
     optional_seed_pack: str = ""  # registered pack key or empty
-    tavily_enabled: bool = False
+    tavily_enabled: bool = False  # legacy flag, kept for backward compatibility
+    web_search_enabled: bool = False
+    web_search_mode: str = "disabled"  # disabled, runtime_tool, external_api, configure_later
+    search_backend: str = ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
 
 
 class InitOnboardingRequired(RuntimeError):
@@ -166,8 +305,15 @@ def missing_required_direct_init_args(args: Any) -> list[str]:
 
 def create_demo_workspace(target: Path, *, force: bool = False) -> None:
     input_dir = target / "input"
+    output_dir = target / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    input_dir.mkdir(parents=True, exist_ok=True)
     files = {
         target / "config.yaml": DEMO_CONFIG,
+        target / "sources.yaml": DEMO_SOURCES,
+        target / "user.md": DEMO_USER_MD,
+        target / ".gitignore": WORKSPACE_GITIGNORE,
+        target / ".env.example": _build_env_example(),
         input_dir / "news.json": json.dumps(DEMO_NEWS, indent=2),
         input_dir / "market_data.json": json.dumps(DEMO_MARKET_DATA, indent=2),
     }
@@ -293,7 +439,50 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
     profile.output_formats = parse_list_arg(ask_text(input_func, prompts["outputs"], ",".join(profile.output_formats)))
     profile.max_source_age_days = parse_int(ask_text(input_func, prompts["max_age"], str(profile.max_source_age_days)), 14)
     profile.source_profile = ask_choice(input_func, prompts["source_profile"], prompts["source_profile_options"], "2")
-    profile.tavily_enabled = ask_yes_no(input_func, prompts["tavily"], default=False)
+
+    # Web search backend selection
+    web_search_enabled = ask_yes_no(input_func, prompts["web_search"], default=False)
+    if web_search_enabled:
+        search_choices, default_key = _build_search_backend_choices(language_choice)
+        selected_display = ask_choice(
+            input_func, prompts["search_backend"], search_choices, default_key
+        )
+
+        # Parse the backend value from the display string
+        # Format: "backend_key (description)" or "backend_key (中文描述)"
+        if "(" in selected_display:
+            selected_backend = selected_display.split("(")[0].strip()
+        else:
+            selected_backend = selected_display.strip()
+
+        # Map backend value to mode and set profile fields
+        if selected_backend == "runtime_websearch":
+            profile.web_search_enabled = True
+            profile.web_search_mode = "runtime_tool"
+            profile.search_backend = ""
+            profile.tavily_enabled = False
+        elif selected_backend == "configure_later":
+            profile.web_search_enabled = True
+            profile.web_search_mode = "configure_later"
+            profile.search_backend = ""
+            profile.tavily_enabled = False
+        elif selected_backend in _SEARCH_BACKENDS:
+            profile.web_search_enabled = True
+            profile.web_search_mode = "external_api"
+            profile.search_backend = selected_backend
+            profile.tavily_enabled = selected_backend == "tavily"
+        else:
+            # Unknown backend, treat as configure_later
+            profile.web_search_enabled = True
+            profile.web_search_mode = "configure_later"
+            profile.search_backend = ""
+            profile.tavily_enabled = False
+    else:
+        profile.web_search_enabled = False
+        profile.web_search_mode = "disabled"
+        profile.search_backend = ""
+        profile.tavily_enabled = False
+
     return profile
 
 
@@ -330,7 +519,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "max_age": "Maximum source age in days: ",
             "source_profile": "Source profile:\n1. Conservative: official and high-confidence sources only\n2. Research: balanced official, industry, market, and research sources\n3. Aggressive signal: broader signal discovery, more noise allowed\n4. Custom: user will manually edit sources.yaml\n5. Let LLM decide: generate an agent-readable source discovery policy\nDefault [2]: ",
             "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
-            "tavily": "Enable live web search with Tavily? [y/N]: ",
+            "web_search": "Enable live web search? [y/N]: ",
+            "search_backend": "How should live web search be provided? ",
         }
     if language == "bilingual":
         labels = prompt_labels("en-US")
@@ -349,7 +539,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "max_age": "Maximum source age in days / 最大来源天数: ",
                 "source_profile": "Source profile / 信息来源策略:\n1. Conservative / 保守：仅官方和高置信来源\n2. Research / 研究：官方、行业、市场、研究来源平衡\n3. Aggressive signal / 激进信号：扩大发现范围\n4. Custom / 自定义\n5. Let LLM decide / 让 LLM 自动决定来源\nDefault [2]: ",
                 "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
-                "tavily": "Enable live web search with Tavily? / 启用 Tavily 实时搜索？[y/N]: ",
+                "web_search": "Enable live web search? / 启用实时网络搜索？[y/N]: ",
+                "search_backend": "How should live web search be provided? / 如何提供实时网络搜索？ ",
             }
         )
         return labels
@@ -384,7 +575,8 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "max_age": "请输入最大来源天数：",
         "source_profile": "请选择信息来源策略：\n1. 保守：只使用官方和高置信来源\n2. 研究：官方、行业媒体、市场数据、研究来源平衡\n3. 激进信号：扩大信号发现范围，允许更多噪音\n4. 自定义：用户后续手动编辑 sources.yaml\n5. 让 LLM 自动决定：生成 agent 可读的来源发现策略\n默认 [2]：",
         "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
-        "tavily": "是否启用 Tavily 实时搜索？[y/N]：",
+        "web_search": "是否启用实时网络搜索？[y/N]：",
+        "search_backend": "如何提供实时网络搜索？ ",
     }
 
 
@@ -396,6 +588,9 @@ def build_config(profile: InitProfile) -> dict[str, Any]:
             "industry": profile.industry,
             "role": profile.role,
             "audience": profile.audience,
+        },
+        "audience_profile": {
+            "id": profile.audience_profile or "default",
         },
         "language": {
             "interface": profile.interface_language,
@@ -519,29 +714,18 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
         if pack:
             seed_tasks = pack.get("search_tasks", [])
 
-    # web_search: always enabled as a capability; backend may be unconfigured
-    if "web_search" not in enabled:
-        enabled.append("web_search")
-    if profile.tavily_enabled:
-        web_search_config: dict[str, Any] = {
-            "enabled": True,
-            "backend": "tavily",
-            "api_key_env": "TAVILY_API_KEY",
-            "topic": "news",
-            "search_depth": "basic",
-            "max_results": 5,
-            "recency_days": 7,
-        }
-        if seed_tasks:
-            web_search_config["search_tasks"] = seed_tasks
-    else:
-        web_search_config = {
-            "enabled": True,
-            "backend": "",
-            "max_results": 20,
-            "recency_days": 7,
-            "note": "No search backend configured. Set TAVILY_API_KEY and run init with --tavily to enable live search.",
-        }
+    # web_search: add to enabled_providers if web search is enabled
+    web_search_mode = getattr(profile, "web_search_mode", "disabled")
+    if web_search_mode != "disabled":
+        if "web_search" not in enabled:
+            enabled.append("web_search")
+
+    # Build web_search config using the unified function
+    web_search_config = _build_web_search_config(profile)
+
+    # Add seed_tasks if available and backend is configured
+    if seed_tasks and web_search_config.get("mode") == "external_api":
+        web_search_config["search_tasks"] = seed_tasks
 
     return {
         "source_strategy": {
@@ -574,6 +758,68 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             "note": "Disabled by default. Set enabled: true and add tickers to activate SEC filing resolution.",
         },
     }
+
+
+def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
+    """Build web_search config based on web_search_mode and backend.
+
+    Three distinct states:
+    - disabled: user chose not to enable web search
+    - runtime_tool: use runtime-provided search (e.g., Claude Code, Codex)
+    - external_api: use configured backend (tavily, exa, brave, etc.)
+    - configure_later: enabled but no backend configured yet
+    """
+    # Get mode and backend from profile, with fallback to legacy tavily_enabled
+    mode = getattr(profile, "web_search_mode", "disabled")
+    backend = getattr(profile, "search_backend", "")
+
+    # Legacy compatibility: if tavily_enabled is True but mode is still disabled,
+    # override to external_api with tavily backend
+    if mode == "disabled" and getattr(profile, "tavily_enabled", False):
+        mode = "external_api"
+        if not backend:
+            backend = "tavily"
+
+    if mode == "disabled":
+        return {
+            "enabled": False,
+            "mode": "disabled",
+        }
+    elif mode == "runtime_tool":
+        return {
+            "enabled": True,
+            "mode": "runtime_tool",
+            "required_capability": "web_search",
+            "max_results": 10,
+            "recency_days": 7,
+            "note": "Requires the execution runtime to provide a web search tool.",
+        }
+    elif mode == "external_api" and backend:
+        # Configured backend (tavily, exa, brave, firecrawl, serper)
+        backend_info = _SEARCH_BACKENDS.get(backend, {})
+        config: dict[str, Any] = {
+            "enabled": True,
+            "mode": "external_api",
+            "backend": backend,
+            "api_key_env": backend_info.get("env_key", ""),
+            "max_results": 5,
+            "recency_days": 7,
+        }
+        # Add backend-specific options (only Tavily supports these)
+        if backend == "tavily":
+            config["topic"] = "news"
+            config["search_depth"] = "basic"
+        return config
+    else:
+        # configure_later: enabled but no backend configured
+        return {
+            "enabled": True,
+            "mode": "configure_later",
+            "status": "unconfigured",
+            "max_results": 20,
+            "recency_days": 7,
+            "note": "Configure a search backend before running live retrieval.",
+        }
 
 
 def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
@@ -650,25 +896,7 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
             ],
         },
         "rss": {"enabled": False, "feeds": []},
-        "web_search": (
-            {
-                "enabled": True,
-                "backend": "tavily",
-                "api_key_env": "TAVILY_API_KEY",
-                "topic": "news",
-                "search_depth": "basic",
-                "max_results": 5,
-                "recency_days": 7,
-            }
-            if profile.tavily_enabled
-            else {
-                "enabled": True,
-                "backend": "",
-                "max_results": 20,
-                "recency_days": 7,
-                "note": "No search backend configured. Set TAVILY_API_KEY and run init with --tavily to enable live search.",
-            }
-        ),
+        "web_search": _build_web_search_config(profile),
         "api": {"enabled": False, "providers": []},
         "mcp": {"enabled": False, "servers": []},
         "filing_resolver": {

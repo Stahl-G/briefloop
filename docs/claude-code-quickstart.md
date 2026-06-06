@@ -21,6 +21,41 @@ multi-agent-brief init ../mabw-workspace
 
 Answer the interactive onboarding questions before running the pipeline. In an agent workflow, create `onboarding.json` from natural-language answers and run `multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json`.
 
+## Reference Workflow Demo
+
+The `examples/reference_workflow_demo/` workspace exercises the full official path without API keys. It uses synthetic public-safe data and a conservative (manual-only) source profile.
+
+```bash
+# Run the CI smoke test
+python scripts/ci/smoke_reference_workflow.py examples/reference_workflow_demo
+
+# Or run the pipeline directly
+multi-agent-brief prepare --config examples/reference_workflow_demo/config.yaml
+```
+
+PowerShell:
+
+```powershell
+python scripts\ci\smoke_reference_workflow.py examples\reference_workflow_demo
+
+multi-agent-brief prepare --config examples\reference_workflow_demo\config.yaml
+```
+
+Expected artifacts after a successful run:
+
+```text
+examples/reference_workflow_demo/output/
+  brief.md                              # reader-facing, no [src:] markers
+  intermediate/
+    audited_brief.md                    # internal, retains [src:CLAIM_ID] citations
+    claim_ledger.json                   # source-grounded claims
+    audit_report.json                   # audit findings
+    source_map.md                       # source mapping
+    run_manifest.json                   # run metadata and artifact hashes
+```
+
+The smoke script (`scripts/ci/smoke_reference_workflow.py`) validates the artifact contract and exits non-zero on any failure.
+
 ## Sample Prompts
 
 ### 1. Source Planning
@@ -62,7 +97,7 @@ Run the deterministic Python pipeline:
 # Then use /generate-brief in Claude Code
 ```
 
-Or in PowerShell:
+PowerShell:
 
 ```powershell
 # Then use /generate-brief in Claude Code
@@ -135,6 +170,12 @@ Check source configuration health:
 multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 ```
 
+PowerShell:
+
+```powershell
+multi-agent-brief doctor --config ..\mabw-workspace\config.yaml
+```
+
 ### 8. Source Discovery (llm_decide profile)
 
 ```bash
@@ -146,6 +187,16 @@ cat ../mabw-workspace/source_candidates.yaml
 
 # Merge into sources
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+```
+
+PowerShell:
+
+```powershell
+multi-agent-brief sources decide --config ..\mabw-workspace\config.yaml
+
+Get-Content ..\mabw-workspace\source_candidates.yaml
+
+multi-agent-brief sources decide --config ..\mabw-workspace\config.yaml --merge
 ```
 
 ## Complete Workflow Example
@@ -161,6 +212,18 @@ Claude Code:
   5. Uses editor to polish the prose
   6. Uses auditor to verify the audited brief
   7. Regenerates and shows the user the final brief.md
+```
+
+To validate the workflow end-to-end without API keys, use the reference demo:
+
+```bash
+python scripts/ci/smoke_reference_workflow.py
+```
+
+PowerShell:
+
+```powershell
+python scripts\ci\smoke_reference_workflow.py
 ```
 
 ## Subagent Reference

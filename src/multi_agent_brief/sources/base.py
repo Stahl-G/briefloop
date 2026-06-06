@@ -66,10 +66,29 @@ class SourceConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SourceConfig:
         strategy = data.get("source_strategy", {})
+
+        # Validate and normalize enabled_providers
+        enabled_providers = strategy.get("enabled_providers", ["manual"])
+        if isinstance(enabled_providers, str):
+            # Handle case where YAML has "enabled_providers: web_search" instead of list
+            enabled_providers = [enabled_providers]
+        elif not isinstance(enabled_providers, list):
+            raise ValueError(
+                f"enabled_providers must be a list of strings, got {type(enabled_providers).__name__}"
+            )
+
+        # Validate provider sections are dicts
+        for section_name in ["manual", "rss", "web_search", "api", "mcp", "feishu", "mineru", "cached_package", "filing_resolver"]:
+            section = data.get(section_name, {})
+            if not isinstance(section, dict):
+                raise ValueError(
+                    f"Provider section '{section_name}' must be a mapping, got {type(section).__name__}"
+                )
+
         return cls(
             profile=strategy.get("profile", "research"),
             industry=strategy.get("industry", ""),
-            enabled_providers=strategy.get("enabled_providers", ["manual"]),
+            enabled_providers=enabled_providers,
             manual=data.get("manual", {}),
             rss=data.get("rss", {}),
             web_search=data.get("web_search", {}),

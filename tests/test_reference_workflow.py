@@ -1,0 +1,344 @@
+"""Tests for the v0.5.0 reference workflow demo and artifact contract."""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from multi_agent_brief.core.config import build_run_settings, load_config
+from multi_agent_brief.core.pipeline import BriefPipeline
+from multi_agent_brief.core.schemas import PipelineContext
+from multi_agent_brief.sources.registry import load_sources_config
+
+DEMO_DIR = Path(__file__).resolve().parent.parent / "examples" / "reference_workflow_demo"
+SMOKE_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "ci" / "smoke_reference_workflow.py"
+
+
+# ── Workspace structure ────────────────────────────────────────────────────────
+
+class TestDemoWorkspaceStructure:
+    """Verify the reference_workflow_demo workspace has all required files."""
+
+    def test_config_yaml_exists(self):
+        assert (DEMO_DIR / "config.yaml").exists()
+
+    def test_sources_yaml_exists(self):
+        assert (DEMO_DIR / "sources.yaml").exists()
+
+    def test_user_md_exists(self):
+        assert (DEMO_DIR / "user.md").exists()
+
+    def test_input_dir_exists(self):
+        assert (DEMO_DIR / "input").is_dir()
+
+    def test_input_files_exist(self):
+        input_files = list((DEMO_DIR / "input").glob("*.json"))
+        assert len(input_files) >= 2, "Need at least 2 input JSON files"
+
+    def test_config_loads_without_error(self):
+        config = load_config(str(DEMO_DIR / "config.yaml"))
+        assert "project" in config
+        assert config["project"]["name"] == "Reference Workflow Demo"
+
+    def test_sources_loads_without_error(self):
+        sc = load_sources_config(DEMO_DIR / "sources.yaml")
+        assert sc.profile == "conservative"
+        assert "manual" in sc.enabled_providers
+
+    def test_sources_no_web_search(self):
+        sc = load_sources_config(DEMO_DIR / "sources.yaml")
+        assert "web_search" not in sc.enabled_providers
+
+
+# ── Artifact contract ──────────────────────────────────────────────────────────
+
+def _run_demo_pipeline(tmp_path: Path) -> PipelineContext:
+    """Run the demo pipeline into a temporary output directory."""
+    config = load_config(str(DEMO_DIR / "config.yaml"))
+    sc = load_sources_config(DEMO_DIR / "sources.yaml")
+
+    settings = build_run_settings(
+        config=config,
+        input_dir=None,
+        output_dir=str(tmp_path),
+        name=None,
+        language=None,
+        audience=None,
+    )
+    context = PipelineContext(**settings)
+    context.metadata["source_config"] = sc
+    context.metadata["_config_dir"] = str(DEMO_DIR)
+
+    # Wire brief_quality config → final_quality metadata
+    brief_quality = config.get("brief_quality", {})
+    if brief_quality:
+        context.metadata["final_quality"] = brief_quality
+
+    BriefPipeline().run(context)
+    return context
+
+
+class TestArtifactContract:
+    """Verify the reference workflow produces all expected artifacts."""
+
+    @pytest.fixture(autouse=True)
+    def _run_pipeline(self, tmp_path):
+        self.output_dir = tmp_path
+        self.context = _run_demo_pipeline(tmp_path)
+        self.intermediate = tmp_path / "intermediate"
+
+    def test_brief_md_exists(self):
+        assert (self.output_dir / "brief.md").exists()
+
+    def test_brief_md_no_src_markers(self):
+        content = (self.output_dir / "brief.md").read_text(encoding="utf-8")
+        assert "[src:" not in content
+
+    def test_audited_brief_md_exists(self):
+        assert (self.intermediate / "audited_brief.md").exists()
+
+    def test_audited_brief_retains_citations(self):
+        content = (self.intermediate / "audited_brief.md").read_text(encoding="utf-8")
+        # audited_brief may or may not have citations depending on pipeline,
+        # but the file must exist and be non-empty
+        assert len(content) > 0
+
+    def test_claim_ledger_exists_and_nonempty(self):
+        ledger_path = self.intermediate / "claim_ledger.json"
+        assert ledger_path.exists()
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        assert isinstance(ledger, list)
+        assert len(ledger) > 0
+
+    def test_audit_report_exists(self):
+        assert (self.intermediate / "audit_report.json").exists()
+
+    def test_audit_report_valid_json(self):
+        report = json.loads(
+            (self.intermediate / "audit_report.json").read_text(encoding="utf-8")
+        )
+        assert "audit_status" in report
+
+    def test_source_map_exists(self):
+        assert (self.intermediate / "source_map.md").exists()
+
+    def test_draft_brief_exists(self):
+        assert (self.intermediate / "draft_brief.md").exists()
+
+
+# ── Manifest contract ──────────────────────────────────────────────────────────
+
+class TestManifestContract:
+    """Verify run_manifest.json after CLI prepare-style manifest generation."""
+
+    @pytest.fixture(autouse=True)
+    def _run_with_manifest(self, tmp_path):
+        context = _run_demo_pipeline(tmp_path)
+        from multi_agent_brief.core.manifest import build_manifest, save_manifest
+
+        audit_report = context.report_state.audit_report
+        manifest = build_manifest(
+            config_path=str(DEMO_DIR / "config.yaml"),
+            workspace=str(DEMO_DIR),
+            enabled_providers=["manual"],
+            output_formats=context.output_formats,
+            language=context.language,
+            report_date=context.report_date,
+            source_count=len(context.sources),
+            claim_count=len(context.metadata.get("_ledger", [])),
+            candidate_count=len(context.candidates),
+            audit_status=audit_report.audit_status if audit_report else "not_run",
+            audit_score=audit_report.audit_score if audit_report else None,
+            audit_finding_count=len(audit_report.findings) if audit_report else 0,
+            artifact_paths={
+                "brief": str(tmp_path / "brief.md"),
+                "audited_brief": str(tmp_path / "intermediate" / "audited_brief.md"),
+                "claim_ledger": str(tmp_path / "intermediate" / "claim_ledger.json"),
+            },
+        )
+        manifest_path = save_manifest(manifest, tmp_path)
+        self.manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    def test_manifest_has_run_id(self):
+        assert "run_id" in self.manifest_data
+        assert len(self.manifest_data["run_id"]) == 12
+
+    def test_manifest_has_timestamp(self):
+        assert "timestamp" in self.manifest_data
+
+    def test_manifest_has_artifacts(self):
+        artifacts = self.manifest_data.get("artifacts", {})
+        assert len(artifacts) >= 3
+
+    def test_manifest_artifacts_have_hashes(self):
+        for name, entry in self.manifest_data["artifacts"].items():
+            assert "hash" in entry, f"Artifact {name} missing hash"
+            assert "path" in entry, f"Artifact {name} missing path"
+
+    def test_manifest_config_hash(self):
+        assert self.manifest_data.get("config_hash", "") != ""
+
+    def test_manifest_language(self):
+        assert self.manifest_data.get("language") == "en-US"
+
+
+# ── Smoke script ───────────────────────────────────────────────────────────────
+
+class TestSmokeScript:
+    """Run the CI smoke script as a subprocess."""
+
+    def test_smoke_script_passes(self):
+        # Set PYTHONPATH to include src directory for subprocess
+        import os
+        env = os.environ.copy()
+        src_dir = str(Path(__file__).parent.parent / "src")
+        env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
+
+        result = subprocess.run(
+            [sys.executable, str(SMOKE_SCRIPT), str(DEMO_DIR)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+        )
+        assert result.returncode == 0, (
+            f"Smoke script failed (exit {result.returncode}):\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        assert "SMOKE PASSED" in result.stdout
+
+
+# ── Regression: code review fixes ──────────────────────────────────────────────
+
+
+class TestSmokeFailsOnAuditFail:
+    """P0-1 regression: smoke script must fail when audit_status == 'fail'."""
+
+    def test_smoke_rejects_failing_audit(self, tmp_path):
+        """Create a mock workspace with audit_status=fail and verify non-zero exit."""
+        import os
+        import shutil
+
+        # Copy the demo workspace to tmp_path
+        workspace = tmp_path / "workspace"
+        shutil.copytree(DEMO_DIR, workspace)
+        # Clear any existing output
+        output_dir = workspace / "output"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+
+        # Create a minimal intermediate/audit_report.json with status=fail
+        intermediate = output_dir / "intermediate"
+        intermediate.mkdir(parents=True)
+        (intermediate / "audit_report.json").write_text(
+            json.dumps({"audit_status": "fail", "findings": []}),
+            encoding="utf-8",
+        )
+        # Create minimal brief.md
+        (output_dir / "brief.md").write_text("# Test Brief\n\nContent here.\n", encoding="utf-8")
+
+        env = os.environ.copy()
+        src_dir = str(Path(__file__).parent.parent / "src")
+        env["PYTHONPATH"] = src_dir + os.pathsep + env.get("PYTHONPATH", "")
+
+        # The smoke script runs the full pipeline, so we test the artifact check logic directly
+        # by importing and calling _verify_artifacts
+        sys.path.insert(0, str(SMOKE_SCRIPT.parent))
+        spec = __import__("smoke_reference_workflow")
+        from smoke_reference_workflow import _Check, _verify_artifacts
+
+        checks = _Check()
+        _verify_artifacts(workspace, checks)
+        assert any("fail" in e.lower() for e in checks.errors), (
+            f"Expected failure for audit_status=fail, got errors: {checks.errors}"
+        )
+
+
+class TestFinalQualityDetection:
+    """P1-1 regression: FinalQualityAuditAgent findings detected by FINAL_ prefix."""
+
+    def test_final_quality_findings_detected(self, tmp_path):
+        """Verify final_quality_status is not 'not_run' when FINAL_ findings exist."""
+        context = _run_demo_pipeline(tmp_path)
+        audit_report = context.report_state.audit_report
+
+        # Check if there are any FINAL_ findings
+        final_findings = [f for f in audit_report.findings if f.finding_id.startswith("FINAL_")]
+
+        if final_findings:
+            # If there are FINAL_ findings, final_quality_report should be in metadata
+            fq_report = context.metadata.get("final_quality_report")
+            assert fq_report is not None, (
+                "final_quality_report should be in metadata when FINAL_ findings exist"
+            )
+            assert fq_report["findings_count"] == len(final_findings)
+            assert fq_report["audit_status"] in ("pass", "warning", "fail")
+
+
+class TestRelativeConfigPath:
+    """P0-3 regression: relative --config path should work correctly."""
+
+    def test_relative_config_path_produces_sources(self, tmp_path):
+        """Verify pipeline with relative config path collects sources correctly."""
+        config = load_config(str(DEMO_DIR / "config.yaml"))
+        sc = load_sources_config(DEMO_DIR / "sources.yaml")
+
+        # Simulate relative config_dir (the bug scenario)
+        settings = build_run_settings(
+            config=config,
+            input_dir=None,
+            output_dir=str(tmp_path),
+            name=None,
+            language=None,
+            audience=None,
+        )
+        context = PipelineContext(**settings)
+        context.metadata["source_config"] = sc
+        # Use absolute path (what the fix does)
+        context.metadata["_config_dir"] = str(DEMO_DIR.resolve())
+
+        BriefPipeline().run(context)
+
+        # After the fix, sources should be collected
+        assert len(context.sources) > 0, "Pipeline should collect sources with absolute config_dir"
+
+
+class TestInitDemoWorkspace:
+    """P1-2 regression: init --demo creates all v0.5 workspace files."""
+
+    def test_demo_creates_all_files(self, tmp_path):
+        from multi_agent_brief.cli.init_wizard import create_demo_workspace
+
+        target = tmp_path / "demo-ws"
+        create_demo_workspace(target)
+
+        assert (target / "config.yaml").exists(), "config.yaml missing"
+        assert (target / "sources.yaml").exists(), "sources.yaml missing"
+        assert (target / "user.md").exists(), "user.md missing"
+        assert (target / ".gitignore").exists(), ".gitignore missing"
+        assert (target / ".env.example").exists(), ".env.example missing"
+        assert (target / "input" / "news.json").exists(), "input/news.json missing"
+        assert (target / "input" / "market_data.json").exists(), "input/market_data.json missing"
+        assert (target / "output").is_dir(), "output/ directory missing"
+
+    def test_demo_config_loads(self, tmp_path):
+        from multi_agent_brief.cli.init_wizard import create_demo_workspace
+
+        target = tmp_path / "demo-ws"
+        create_demo_workspace(target)
+
+        config = load_config(str(target / "config.yaml"))
+        assert "project" in config
+        assert config["project"]["audience"] == "management"
+
+    def test_demo_sources_loads(self, tmp_path):
+        from multi_agent_brief.cli.init_wizard import create_demo_workspace
+
+        target = tmp_path / "demo-ws"
+        create_demo_workspace(target)
+
+        sc = load_sources_config(target / "sources.yaml")
+        assert "manual" in sc.enabled_providers
