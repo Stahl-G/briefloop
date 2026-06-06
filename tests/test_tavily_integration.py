@@ -175,7 +175,7 @@ class TestWebSearchProviderTavily:
                 {"query": "tariff regulation"},
             ]
         }
-        queries = provider._build_queries(query, config)
+        queries, _task_meta = provider._build_queries(query, config)
         assert len(queries) == 3
         assert queries[0] == ("manufacturing policy update", ["gov-policy.org"])
         assert queries[1] == ("manufacturing capacity", ["trade-journal.com"])
@@ -186,7 +186,7 @@ class TestWebSearchProviderTavily:
         provider = WebSearchProvider()
         query = SourceQuery(keywords=["manufacturing", "tariff", "manufacturing"])
         config = {}
-        queries = provider._build_queries(query, config)
+        queries, _task_meta = provider._build_queries(query, config)
         assert len(queries) == 3
         assert queries[0] == ("manufacturing", None)
         assert queries[1] == ("tariff", None)

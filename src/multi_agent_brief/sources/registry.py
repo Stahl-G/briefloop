@@ -21,6 +21,7 @@ from multi_agent_brief.sources.cached_package import CachedPackageProvider
 from multi_agent_brief.sources.feishu_provider import FeishuProvider
 from multi_agent_brief.sources.mineru_provider import MineruProvider
 from multi_agent_brief.sources.filing_resolver import FilingResolverProvider
+from multi_agent_brief.sources.local_signal import LocalSignalProvider
 from multi_agent_brief.sources.normalizer import normalize_source_item, dedupe_sources, filter_by_recency
 
 
@@ -37,6 +38,7 @@ PROVIDER_CLASSES: dict[str, type[SourceProvider]] = {
     "feishu": FeishuProvider,
     "mineru": MineruProvider,
     "filing_resolver": FilingResolverProvider,
+    "local_signal": LocalSignalProvider,
 }
 
 
@@ -138,6 +140,7 @@ def collect_all_sources(
         "feishu": source_config.feishu,
         "mineru": source_config.mineru,
         "filing_resolver": source_config.filing_resolver,
+        "local_signal": source_config.local_signal,
     }
 
     # Run provider config validation before collecting (B08)
@@ -227,7 +230,10 @@ def validate_all_providers(source_config: SourceConfig) -> list[str]:
         "mcp": source_config.mcp,
         "cli": source_config.mcp,
         "cached_package": cached_package_config,
+        "feishu": source_config.feishu,
+        "mineru": source_config.mineru,
         "filing_resolver": source_config.filing_resolver,
+        "local_signal": source_config.local_signal,
     }
 
     for name, provider in providers.items():

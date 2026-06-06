@@ -162,6 +162,20 @@ class BriefPipeline:
         if "manual" not in source_config.enabled_providers:
             source_config.enabled_providers.append("manual")
         input_dir = Path(context.input_dir)
+
+        # Wire LocalSignalProvider if local signal discovery is configured
+        local_tasks = []
+        if discovery:
+            from multi_agent_brief.sources.local_signal_planner import build_local_signal_tasks
+            local_tasks = build_local_signal_tasks(discovery)
+            if local_tasks:
+                samples_path = input_dir / "local_signal_samples.jsonl"
+                if "local_signal" not in source_config.enabled_providers:
+                    source_config.enabled_providers.append("local_signal")
+                source_config.local_signal = {
+                    "enabled": True,
+                    "samples_path": str(samples_path),
+                }
         # Ensure Local Input Directory is present in manual sources.
         # Check by path/category, not by list emptiness — the list may already
         # contain URL entries from source discovery without a local input entry.
@@ -193,23 +207,18 @@ class BriefPipeline:
             report_date=context.report_date,
         )
 
-        # Generate local_signal_report.json if local signal discovery is configured
-        # Reuse local_tasks already computed above for collector_tasks
-        if discovery:
+        # Generate local_signal_report.json if local signal discovery is configured.
+        # LocalSignalProvider already converted samples to SourceItems in context.sources;
+        # here we generate the report for metadata/audit purposes.
+        if discovery and local_tasks:
             from multi_agent_brief.sources.local_signal_planner import (
-                build_local_signal_tasks,
                 generate_local_signal_report,
                 parse_local_signal_samples,
             )
-            # build_local_signal_tasks is also called inside generate_collector_tasks
-            # above; this is the third call site. Acceptable since it's deterministic
-            # and the task list is small. A future refactor could pass pre-computed tasks.
-            local_tasks = build_local_signal_tasks(discovery)
-            if local_tasks:
-                samples_path = input_dir / "local_signal_samples.jsonl"
-                samples = parse_local_signal_samples(samples_path)
-                local_signal_report = generate_local_signal_report(discovery, local_tasks, samples)
-                context.metadata["local_signal_report"] = local_signal_report
+            samples_path = input_dir / "local_signal_samples.jsonl"
+            samples = parse_local_signal_samples(samples_path)
+            local_signal_report = generate_local_signal_report(discovery, local_tasks, samples)
+            context.metadata["local_signal_report"] = local_signal_report
 
         artifacts: dict = {
             "source_count": len(items),

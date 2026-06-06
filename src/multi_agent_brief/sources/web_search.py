@@ -102,23 +102,30 @@ class WebSearchProvider(SourceProvider):
         recency_days = config.get("recency_days")
 
         # Build search queries from query keywords or config
-        queries = self._build_queries(query, config)
+        queries, task_meta = self._build_queries(query, config)
 
         for q, domains in queries:
             results = backend.search(q, max_results=max_results, domains=domains, days=recency_days)
+            task_metadata = task_meta.get(q)
             for r in results:
-                item = self._result_to_source_item(r, q, backend_name)
+                item = self._result_to_source_item(r, q, backend_name, task_metadata=task_metadata)
                 all_items.append(item)
 
         return all_items
 
-    def _build_queries(self, query: SourceQuery, config: dict[str, Any]) -> list[tuple[str, list[str] | None]]:
+    def _build_queries(
+        self, query: SourceQuery, config: dict[str, Any]
+    ) -> tuple[list[tuple[str, list[str] | None]], dict[str, dict[str, Any]]]:
         """Build search queries from the query object and config.
 
-        Returns list of (query_string, domains_or_none) tuples.
-        Preserves individual search_tasks — does NOT collapse into one giant query.
+        Returns:
+            (queries, task_metadata_by_query) where queries is a list of
+            (query_string, domains_or_none) tuples, and task_metadata_by_query
+            maps each query string to its extra task metadata (topic, market,
+            language, platform_group, signal_type) when present.
         """
         queries: list[tuple[str, list[str] | None]] = []
+        task_meta: dict[str, dict[str, Any]] = {}
 
         # Prefer config search_tasks — each task is a separate query with its own domains
         for task in config.get("search_tasks", []):
@@ -126,6 +133,10 @@ class WebSearchProvider(SourceProvider):
             if q:
                 domains = task.get("domains") or None
                 queries.append((q, domains))
+                # Preserve task metadata for propagation to SourceItems
+                extra = {k: v for k, v in task.items() if k not in ("query", "domains")}
+                if extra:
+                    task_meta[q] = extra
 
         # If no search_tasks, use query.keywords as individual queries
         if not queries and query.keywords:
@@ -147,9 +158,15 @@ class WebSearchProvider(SourceProvider):
                     "add search_tasks manually in sources.yaml."
                 )
 
-        return queries
+        return queries, task_meta
 
-    def _result_to_source_item(self, result: SearchResult, query: str, backend_name: str) -> SourceItem:
+    def _result_to_source_item(
+        self,
+        result: SearchResult,
+        query: str,
+        backend_name: str,
+        task_metadata: dict[str, Any] | None = None,
+    ) -> SourceItem:
         """Convert a SearchResult to a SourceItem."""
         from multi_agent_brief.sources.base import _utc_now_iso
 
@@ -165,6 +182,10 @@ class WebSearchProvider(SourceProvider):
             "source_temporality": result.metadata.get("source_temporality", "retrieved_only"),
         }
         metadata.update(result.metadata)
+        # Propagate task metadata (topic, market, language, etc.) to SourceItem
+        if task_metadata:
+            for key, value in task_metadata.items():
+                metadata[f"task_{key}"] = value
         return SourceItem(
             source_id=source_id,
             source_name=result.source_name or "web_search",
