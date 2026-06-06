@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-06-07
+
+### Changed
+
+- **Subagent-first runtime**: Python `BriefPipeline` and `multi-agent-brief prepare` removed. Brief generation is now exclusively the external subagent workflow: scout → screener → claim-ledger → analyst → editor → auditor → finalize.
+- **Prompt hygiene**: all agent role Hard Rules converted to positive Guardrails language in `configs/agent_roles.yaml` and all generated agent configs.
+- **Hermes delegate_task native workflow**: Hermes adapter rewritten to use `delegate_task` subagents as the native runtime. Parent agent orchestrates; children run scout, screener, claim-ledger, analyst, editor, and auditor tasks. Cron handles scheduling; `delegate_task` handles per-run child dispatch. No longer routes users to Claude Code.
+- **Init wizard layout**: new workspaces create `input/sources/README.md` instead of `input/README.md`.
+
+### Added
+
+- `tests/test_subagent_first_contract.py`: anti-regression tests enforcing no `prepare` in user-facing docs, no `ScoutAgent`/`AnalystAgent` class names in source, and Python-commands-are-support-tools contract.
+
+### Removed
+
+- `src/multi_agent_brief/agents/` directory (Python fake agent runtime).
+- `src/multi_agent_brief/inputs/` directory (stale empty package).
+
 ## [0.5.3] — 2026-06-06
 
 ### Fixed

@@ -814,7 +814,7 @@ The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime w
 
 - **v0.4: Knowledge & Governance Contracts** — Claim epistemic types, evidence relations, schema contracts, `run_manifest.json`, semantic audit states, finding taxonomy, rule packs, and event/field governance hooks.
 - **v0.5: Production Reference Workflow** — one official path, Audience Profiles, DOCX templates and validation, Final Clean, Editorial Governance, Policy & Regulatory Risk Module, HistoryStore, and effort budgets. Editorial Governance covers feedback contamination, meta-content leakage, factual density, comparable-case applicability, research-gap separation, and source coverage.
-- **v0.5.5: Hermes Adapter Layer** — generate a `multi-agent-brief-hermes` skill, daily scout / weekly brief / monthly brief cron plans, copyable `hermes cron create` commands, and `cached_package` wiring for Hermes daily cache.
+- **v0.5.5: Hermes Adapter Layer** — Hermes adapter provides a native Hermes workflow using `delegate_task` subagents for scheduled source collection and brief generation. Includes daily source cache, weekly/monthly cron plans, and `cached_package` provider wiring.
 - **v1.0: Stable Baseline** — golden datasets, benchmark metrics, contract compliance tests, release consistency checks, and a formal support matrix.
 - **v2.0: MAS Runtime Candidate** — after v1.0, explore Shared World, Event Store, TaskBoard, AgentMessage, ClaimProposal / ClaimReducer, replay, and minimal coordination protocols.
 

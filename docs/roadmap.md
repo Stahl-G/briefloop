@@ -104,23 +104,26 @@ Done when:
 
 ## v0.5.5: Hermes Adapter Layer
 
-Goal: connect Hermes as the scheduled trigger, daily collection, and message delivery layer without replacing the existing source-grounded MABW pipeline.
+Goal: Hermes as a native MABW runtime using `delegate_task` subagents for brief generation, plus cron scheduling and daily source cache collection.
 
 See the Chinese implementation plan: [v0.5.5 Hermes Adapter Plan](impl-plan-v0.5.5-hermes-adapter.zh-CN.md).
 
 Scope:
 
-- Hermes Skill: ship `multi-agent-brief-hermes` instructions for daily scout, weekly/monthly prepare/finalize, quality gates, and reader-facing rules.
-- Hermes Cron Plan: generate daily scout, weekly brief, and monthly brief cron plans from workspace config.
+- Hermes Skill: ship `multi-agent-brief-hermes` with native `delegate_task` child workflows for scout, screener, claim-ledger, analyst, editor, and auditor.
+- Hermes parent agent: orchestration, artifact handoff, and gate checks; `delegate_task` children run isolated subagent tasks.
+- Hermes Cron Plan: generate daily source cache, weekly brief, and monthly brief cron jobs from workspace config.
 - Daily Cache Contract: daily jobs write public, citable signals to `input/hermes_cache/YYYY-MM-DD.json`.
 - Cached Package wiring: `hermes sync-sources` connects the `cached_package` provider to the Hermes daily cache.
 - CLI helpers: generate the Hermes skill, JSON/Markdown cron plans, and copyable `hermes cron create` commands.
 
 Done when:
 
-- Weekly + monthly demand generates a daily scout plus weekly and monthly brief jobs.
+- Weekly + monthly demand generates a daily cache job plus weekly and monthly brief jobs.
 - Every cron job explicitly attaches the Hermes skill and sets an absolute `--workdir`.
-- Hermes output still flows through MABW doctor, prepare, audit/final gates, and finalize; daily scout output is never treated as a final brief.
+- Hermes brief generation uses `delegate_task` children; cron handles scheduling, `delegate_task` handles per-run child dispatch.
+- The Hermes primary path does not route users to Claude Code or rely on the Python brief-generation pipeline.
+- Daily cache output is never treated as a final brief.
 
 ## v1.0: Stable Baseline
 

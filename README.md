@@ -181,7 +181,7 @@ output:
 ### 8. Claude Code / Codex 工作流适配
 
 项目提供 Claude Code 和 Codex ，Opencode的 agent 配置，使不同 AI 编程工具可以理解项目角色和边界。
-Notes：初步测试Hermes也可以调用本项目，但不保证质量和所有功能适配，如想使用Hermes，建议向Hermes强调调用Claude Code运行。
+Hermes Adapter 提供原生 Hermes 工作流：使用 `delegate_task` 子代理运行 scout → screener → claim-ledger → analyst → editor → auditor 管线，以及 cron 调度和 daily source cache 收集。用户也可以选择在 Claude Code、Codex 或 OpenCode 中运行同一工作区。
 
 这些配置可以帮助 agent 明确：
 
@@ -643,7 +643,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 ### v0.5.5：Hermes Adapter Layer
 
-新增 Hermes 专属适配层：生成 `multi-agent-brief-hermes` skill、daily scout / weekly brief / monthly brief cron plan、可复制的 `hermes cron create` 命令，并通过 `cached_package` provider 消费 Hermes 日更 cache。
+Hermes 适配层提供原生 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor）、daily source cache 收集、weekly/monthly cron 调度和 `cached_package` provider 对接。
 
 ### v1.0：Stable Baseline
 
