@@ -163,7 +163,7 @@ class BriefPipeline:
             source_config.manual["enabled"] = True
             source_config.manual.setdefault("sources", [])
             source_config.manual["sources"].append(
-                {"name": "Local Input Directory", "path": str(input_dir), "category": "local_files", "enabled": True}
+                {"name": "Local Input Directory", "path": str(input_dir.resolve()), "category": "local_files", "enabled": True}
             )
 
         # Collect from all providers

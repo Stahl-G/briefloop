@@ -525,7 +525,7 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
     providers, search_tasks, and source_discovery policy — both are required
     for a working prepare run.
     """
-    config_path = Path(args.config)
+    config_path = Path(args.config).resolve()
     workspace = config_path.parent
     config = load_config(str(config_path))
 
@@ -568,6 +568,11 @@ def run_prepare_from_args(args: argparse.Namespace) -> int:
     if coverage_config is not None:
         context.metadata["coverage_config"] = coverage_config
     context.metadata["_config_dir"] = str(workspace)
+
+    # Wire brief_quality config → final_quality metadata for FinalQualityAuditAgent
+    brief_quality = config.get("brief_quality", {})
+    if brief_quality:
+        context.metadata["final_quality"] = brief_quality
 
     outputs = BriefPipeline().run(context)
 
