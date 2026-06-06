@@ -26,17 +26,24 @@ class AuditorAgent(BaseAgent):
         context.report_state.audit_report = report
 
         # Store final quality report in metadata
-        final_quality_report = None
-        for finding in report.findings:
-            if finding.finding_type == "final_quality":
-                final_quality_report = {
-                    "audit_status": report.audit_status,
-                    "findings_count": len([f for f in report.findings if f.finding_type == "final_quality"]),
-                }
-                break
+        final_quality_findings = [f for f in report.findings if f.finding_id.startswith("FINAL_")]
+        if final_quality_findings:
+            from multi_agent_brief.audit.interfaces import AuditReport, recompute_report_status
+            fq_report = AuditReport(audit_status="pass", audit_score=100)
+            fq_report.findings = final_quality_findings
+            recompute_report_status(fq_report)
+            fq_status = fq_report.audit_status
+        else:
+            fq_status = "pass"
+        final_quality_report = {
+            "audit_status": fq_status,
+            "findings_count": len(final_quality_findings),
+        }
+        context.metadata["final_quality_report"] = final_quality_report
 
-        if final_quality_report:
-            context.metadata["final_quality_report"] = final_quality_report
+        # Persist final_quality_status into audit report metadata for audit_report.json
+        report.metadata["final_quality_status"] = fq_status
+        report.metadata["final_quality_findings_count"] = len(final_quality_findings)
 
         return AgentOutput(
             agent_name=self.name,
@@ -44,6 +51,6 @@ class AuditorAgent(BaseAgent):
             artifacts={
                 "audit_status": report.audit_status,
                 "finding_count": len(report.findings),
-                "final_quality_status": final_quality_report.get("audit_status") if final_quality_report else "not_run",
+                "final_quality_status": final_quality_report["audit_status"],
             },
         )
