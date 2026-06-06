@@ -181,7 +181,7 @@ def check_comparable_cases(
     for claim in claims:
         # Check if claim is an analogy or comparable case
         epistemic_type = getattr(claim, "epistemic_type", "observed")
-        if epistemic_type != "analogous":
+        if epistemic_type != "analogy":
             continue
 
         # Check for applicability reason

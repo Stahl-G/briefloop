@@ -271,6 +271,8 @@ multi-agent-brief init ../mabw-workspace
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml   # 发现来源
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml           # 检查配置
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml          # 运行确定性管线
 ```
 
 PowerShell:
@@ -293,9 +295,15 @@ multi-agent-brief init ../mabw-workspace
 ```powershell
 multi-agent-brief sources decide --config ../mabw-workspace\config.yaml
 multi-agent-brief sources decide --config ../mabw-workspace\config.yaml --merge
+multi-agent-brief doctor --config ../mabw-workspace\config.yaml
+multi-agent-brief prepare --config ../mabw-workspace\config.yaml
 ```
 
-> 注意：`multi-agent-brief run` 已弃用，仅保留迁移提示。请使用 `prepare` 或 `/generate-brief`。
+> **两种生成简报的方式：**
+> - `/generate-brief <workspace>` — Claude Code agent 编排完整流程（analyst → editor → auditor → formatter）
+> - `multi-agent-brief prepare --config <workspace>/config.yaml` — Python 确定性管线（来源采集 → scout → screener → claim ledger → audit → formatter）
+>
+> `multi-agent-brief run` 已弃用，请使用 `prepare`。
 
 ---
 
@@ -325,7 +333,10 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml
 ```
+
+产物位于 `output/` 目录：`brief.md`、`audited_brief.md`、`claim_ledger.json`、`audit_report.json`、`source_map.md`、`run_manifest.json`。
 
 ---
 

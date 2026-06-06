@@ -241,7 +241,11 @@ cat ../mabw-workspace/output/intermediate/audited_brief.md
 
 `scripts/setup.sh` is the contributor entry point. It creates a repository-local `.venv` and installs development/test dependencies. End users should prefer Homebrew, curl, or the PowerShell installer.
 
-> **Note:** Use `/generate-brief <workspace>` in Claude Code for the full subagent workflow (analyst → editor → auditor → formatter). The Python CLI no longer runs the brief generation pipeline. See [docs/claude-code-workflow.md](docs/claude-code-workflow.md).
+> **Note:** Two ways to generate a brief:
+> - `/generate-brief <workspace>` in Claude Code — full agent-orchestrated workflow (analyst → editor → auditor → formatter)
+> - `multi-agent-brief prepare --config <workspace>/config.yaml` — deterministic Python pipeline (source collection → scout → screener → claim ledger → audit → formatter)
+>
+> `multi-agent-brief run` is deprecated; use `prepare` instead.
 
 Windows 10/11 should use native PowerShell 5.1 or PowerShell 7. WSL/Git Bash is optional, not required. CMD is not the primary support target.
 
@@ -307,14 +311,18 @@ This demo uses only fictional peer names and synthetic source data. It is design
 macOS / Linux / WSL:
 
 ```bash
-PYTHONPATH=src python -m multi_agent_brief.cli.main run examples/basic_market_brief/input --output output/basic_market_brief
+PYTHONPATH=src python -m multi_agent_brief.cli.main prepare \
+  --config examples/reference_workflow_demo/config.yaml \
+  --output output/reference_workflow_demo
 ```
 
 PowerShell:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m multi_agent_brief.cli.main run examples/basic_market_brief/input --output output/basic_market_brief
+python -m multi_agent_brief.cli.main prepare `
+  --config examples/reference_workflow_demo/config.yaml `
+  --output output/reference_workflow_demo
 Remove-Item Env:PYTHONPATH
 ```
 
@@ -336,8 +344,8 @@ cat ../mabw-workspace/source_candidates.yaml
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 # 5. Run pipeline
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-# Then /generate-brief ../mabw-workspace in Claude Code
+multi-agent-brief prepare --config ../mabw-workspace/config.yaml
+# Or: /generate-brief ../mabw-workspace in Claude Code
 ```
 
 The llm_decide mode does not block pipeline execution — if you skip `sources decide`, the pipeline continues with local `input/` files and prints a warning.
