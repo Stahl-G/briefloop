@@ -1,0 +1,67 @@
+project:
+  name: "兴业证券 证券周报"
+  company: "兴业证券"
+  industry: ""
+  role: "strategy_office"
+  audience: "市场部"
+language:
+  interface: "zh-CN"
+  output: "zh-CN"
+  source_handling: "preserve_original"
+report:
+  cadence: "weekly"
+  date: "auto"
+  max_source_age_days: 10
+  fail_on_stale_source: true
+input:
+  path: "input"
+output:
+  path: "output"
+  formats:
+    - "markdown"
+    - "docx"
+    - "claim_ledger"
+    - "audit_report"
+    - "source_map"
+  filename_template: "{project_name}_{report_date}"
+  named_outputs: true
+  footer: "Confidential — Internal Use Only"
+source:
+  mode: "llm_decide"
+  optional_seed_pack: null
+pipeline:
+  steps:
+    - "source_collection"
+    - "scout"
+    - "screener"
+    - "analyst"
+    - "editor"
+    - "auditor"
+    - "formatter"
+brief_quality:
+  min_items: 20
+  min_zh_chars: 3000
+  require_dates: true
+  allow_quiet_week_exception: false
+selector:
+  enabled: true
+  max_items: 8
+  require_fresh_source: true
+  topic_diversity: true
+retrieval:
+  enabled: false
+  provider: "ollama"
+  model: "nomic-embed-text"
+  chroma_dir: ".rag/chroma"
+  top_k: 5
+  lookback_days: 365
+audit:
+  fail_on_missing_source: true
+  fail_on_stale_source: true
+  redaction_scan: true
+  require_claim_citations: true
+safety:
+  no_investment_advice: true
+  no_legal_advice: true
+  no_trading_signals: true
+  require_human_review: true

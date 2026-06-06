@@ -14,11 +14,10 @@ class TestInitTavilyGuidance:
     """Init wizard Tavily opt-in and setup guidance."""
 
     def test_init_tavily_generates_config(self, tmp_path, monkeypatch):
-        """Init with Tavily enabled should generate web_search config."""
+        """Init without tavily flag should generate web_search disabled."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        # Simulate answering 'y' to Tavily question
-        # Use CLI args to skip interactive prompts
+        # Use CLI args to skip interactive prompts (no --tavily flag)
         assert main([
             "init", str(ws),
             "--language", "zh-CN",
@@ -29,12 +28,12 @@ class TestInitTavilyGuidance:
             "--cadence", "weekly",
             "--source-profile", "research",
         ]) == 0
-        # Without tavily_enabled CLI arg, web_search should be enabled but without backend
+        # Without tavily_enabled CLI arg, web_search should be disabled
         import yaml
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
-        assert web_search["enabled"] is True
-        assert web_search["backend"] == ""
+        assert web_search["enabled"] is False
+        assert web_search["mode"] == "disabled"
 
     def test_init_tavily_creates_env_example(self, tmp_path, monkeypatch):
         """Init with Tavily enabled should create .env.example."""

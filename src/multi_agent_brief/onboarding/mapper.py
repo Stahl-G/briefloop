@@ -216,6 +216,52 @@ def normalize_search_backend(text: str) -> str:
     return _DEFAULT_SEARCH_BACKEND
 
 
+# ── role mapping ───────────────────────────────────────────────────
+
+_ROLE_MAP: dict[str, str] = {
+    "strategy": "strategy_office",
+    "strategy office": "strategy_office",
+    "president office": "strategy_office",
+    "总裁办": "strategy_office",
+    "战略": "strategy_office",
+    "战略研究": "strategy_office",
+    "research": "research_analyst",
+    "research analyst": "research_analyst",
+    "行业研究": "research_analyst",
+    "研究员": "research_analyst",
+    "ir": "investor_relations",
+    "investor relations": "investor_relations",
+    "投资者关系": "investor_relations",
+    "投关": "investor_relations",
+    "policy": "policy_analyst",
+    "policy analyst": "policy_analyst",
+    "政策研究": "policy_analyst",
+    "政策": "policy_analyst",
+    "management": "management_support",
+    "management support": "management_support",
+    "管理层支持": "management_support",
+    "管理": "management_support",
+    "marketing": "management_support",
+    "市场": "management_support",
+    "市场部": "management_support",
+}
+
+_DEFAULT_ROLE = "strategy_office"
+
+
+def normalize_role(text: str) -> str:
+    t = text.strip().lower()
+    if not t:
+        return _DEFAULT_ROLE
+    if t in _ROLE_MAP:
+        return _ROLE_MAP[t]
+    # Check for partial matches
+    for key, value in _ROLE_MAP.items():
+        if key in t:
+            return value
+    return _DEFAULT_ROLE
+
+
 # ── audit strictness mapping ───────────────────────────────────────
 
 _AUDIT_STRICTNESS_MAP: dict[str, str] = {
@@ -303,6 +349,11 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
 
     profile.company = result.company_or_org.strip()
 
+    # Role mapping
+    role_raw = getattr(result, "role_plain", "").strip()
+    if role_raw:
+        profile.role = normalize_role(role_raw)
+
     # Preserve raw industry text for user.md
     industry_raw = result.industry_or_theme.strip()
     profile.industry_text = industry_raw
@@ -364,22 +415,44 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     if hasattr(result, "source_age_days") and result.source_age_days:
         profile.max_source_age_days = result.source_age_days
 
-    # Web search: only enable if user explicitly requested Tavily
-    if getattr(result, "tavily_enabled", False):
-        profile.tavily_enabled = True
-
-    # Handle search backend selection
-    # Only enable tavily when search_backend_plain explicitly contains "tavily"
+    # Web search: handle search backend selection
     search_backend = getattr(result, "search_backend_plain", "").strip()
     if search_backend:
         search_backend = normalize_search_backend(search_backend)
         if search_backend == "tavily":
             profile.tavily_enabled = True
+            profile.web_search_enabled = True
+            profile.web_search_mode = "external_api"
+            profile.search_backend = "tavily"
         elif search_backend == "none":
             profile.tavily_enabled = False
-        # Unrecognised / empty / choose-later backends: leave tavily disabled
+            profile.web_search_enabled = False
+            profile.web_search_mode = "disabled"
+            profile.search_backend = ""
+        elif search_backend == "runtime_websearch":
+            profile.tavily_enabled = False
+            profile.web_search_enabled = True
+            profile.web_search_mode = "runtime_tool"
+            profile.search_backend = ""
+        elif search_backend == "configure_later":
+            profile.tavily_enabled = False
+            profile.web_search_enabled = True
+            profile.web_search_mode = "configure_later"
+            profile.search_backend = ""
+        else:
+            # Other backends (exa, brave, firecrawl, serper)
+            profile.tavily_enabled = False
+            profile.web_search_enabled = True
+            profile.web_search_mode = "external_api"
+            profile.search_backend = search_backend
+
     # Also check the legacy tavily_enabled field
     if getattr(result, "tavily_enabled", False):
         profile.tavily_enabled = True
+        profile.web_search_enabled = True
+        if not profile.web_search_mode or profile.web_search_mode == "disabled":
+            profile.web_search_mode = "external_api"
+        if not profile.search_backend:
+            profile.search_backend = "tavily"
 
     return profile

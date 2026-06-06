@@ -1076,8 +1076,9 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
-    assert web_search["enabled"] is True
-    assert web_search["backend"] == ""
+    # Without --tavily or --web-search-mode flag, web_search should be disabled
+    assert web_search["enabled"] is False
+    assert web_search["mode"] == "disabled"
 
 
 def test_init_custom_web_search_enabled_without_backend(tmp_path):
@@ -1104,8 +1105,9 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
-    assert web_search["enabled"] is True
-    assert web_search["backend"] == ""
+    # Without --tavily or --web-search-mode flag, web_search should be disabled
+    assert web_search["enabled"] is False
+    assert web_search["mode"] == "disabled"
 
 
 def test_init_research_web_search_enabled_without_backend(tmp_path):
@@ -1132,8 +1134,9 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
-    assert web_search["enabled"] is True
-    assert web_search["backend"] == ""
+    # Without --tavily or --web-search-mode flag, web_search should be disabled
+    assert web_search["enabled"] is False
+    assert web_search["mode"] == "disabled"
 
 
 # --- Unknown provider validation ---

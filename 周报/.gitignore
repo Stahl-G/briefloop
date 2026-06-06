@@ -1,0 +1,12 @@
+.env
+.env.*
+output/
+.rag/
+private_inputs/
+private_outputs/
+logs/
+user.md
+*.docx
+*.pdf
+*.xlsx
+.DS_Store
