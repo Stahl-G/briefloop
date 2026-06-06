@@ -30,7 +30,7 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path):
 
     for name in ("config.yaml", "profile.yaml", "sources.yaml", "user.md"):
         assert (ws / name).exists(), f"{name} missing"
-    assert (ws / "input" / "README.md").exists()
+    assert (ws / "input" / "sources" / "README.md").exists()
 
     sources = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     assert sources["source_strategy"]["profile"] == "llm_decide"
