@@ -101,6 +101,32 @@ class FormatterAgent(BaseAgent):
             except Exception:
                 logger.warning("Failed to write local_signal_report.json", exc_info=True)
 
+        # Analysis blocks — epistemic classification (v0.5.3 PR 1+2)
+        analysis_blocks = context.metadata.get("analysis_blocks")
+        if analysis_blocks:
+            try:
+                ab_path = intermediate_dir / "analysis_blocks.json"
+                ab_path.write_text(
+                    json.dumps(analysis_blocks, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                artifacts["analysis_blocks"] = str(ab_path)
+            except Exception:
+                logger.warning("Failed to write analysis_blocks.json", exc_info=True)
+
+        # Limitation hygiene report (v0.5.3 PR 4)
+        limitation_hygiene = context.metadata.get("limitation_hygiene_report")
+        if limitation_hygiene:
+            try:
+                lh_path = intermediate_dir / "limitation_hygiene_report.json"
+                lh_path.write_text(
+                    json.dumps(limitation_hygiene, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                artifacts["limitation_hygiene_report"] = str(lh_path)
+            except Exception:
+                logger.warning("Failed to write limitation_hygiene_report.json", exc_info=True)
+
         # DOCX output — only if "docx" is in output_formats.
         # Must run BEFORE writing audit_report.json so docx_generation
         # metadata is included in the persisted file.
