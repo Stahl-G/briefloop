@@ -12,10 +12,6 @@ canonical_terms:
   - OnboardingResult
   - InitProfile
   - AskUserQuestion
-  - BriefPipeline
-  - ScoutAgent
-  - ScreenerAgent
-  - AnalystAgent
 
 forbidden_terms:
   - llm_diside

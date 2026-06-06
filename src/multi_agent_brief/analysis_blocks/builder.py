@@ -21,7 +21,7 @@ from multi_agent_brief.core.schemas import Claim
 def _infer_section(statement: str) -> str:
     """Infer a topic from claim statement keywords.
 
-    Kept in sync with AnalystAgent.infer_section to avoid topic drift
+    Kept in sync with the analysis-block topic inference helper to avoid topic drift
     between analysis_blocks (governance artifact) and legacy brief.md.
     """
     lowered = statement.lower()
@@ -53,7 +53,7 @@ def build_analysis_blocks(ledger: ClaimLedger) -> list[AnalysisBlock]:
     buckets based on their epistemic_type and evidence_relation.
     """
     # Group claims by topic — fall back to keyword inference for topicless claims,
-    # keeping parity with AnalystAgent.infer_section.
+    # keeping parity with analysis-block topic inference.
     by_topic: dict[str, list[Claim]] = defaultdict(list)
     for claim in ledger:
         topic = claim.metadata.get("topic") or _infer_section(claim.statement)

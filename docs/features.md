@@ -64,4 +64,4 @@ Copy `.env.example` to `.env` in your workspace and fill in keys for enabled fea
 | `setup <workspace>` | Apply recommendations to a workspace |
 | `doctor` | Check configuration health |
 | `init` | Create a new workspace |
-| `prepare` | Run the deterministic pipeline |
+| `prepare` | Deprecated; use `/generate-brief <workspace>` |

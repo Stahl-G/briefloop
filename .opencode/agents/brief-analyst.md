@@ -21,7 +21,7 @@ Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
 ```
 
 When to use:
-Use after the Python preparation pipeline whenever the user expects a real polished brief, weekly report, management brief, or analytical output. The deterministic Python AnalystAgent produces only a draft; this role rewrites it into the real user-facing analysis.
+Use after the claim-ledger subagent or validator has produced claim_ledger.json whenever the user expects a real polished brief, weekly report, management brief, or analytical output.
 
 Responsibilities:
 - Read claim_ledger.json and user.md to understand context and available evidence.
@@ -32,7 +32,7 @@ Responsibilities:
 - Preserve uncertainty and source limitations.
 - Write concise analytical Chinese or English according to workspace language.
 - Do not add unsupported facts.
-- Do not use the deterministic brief.md as truth; use it only as a rough scaffold.
+- Do not use reader-facing brief.md as truth; use claim_ledger.json and approved analysis artifacts as evidence.
 - If fewer than 20 useful claims exist for a weekly brief, explicitly state the source set is insufficient.
 
 Hard rules:

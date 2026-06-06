@@ -59,10 +59,10 @@ report:
 
 超过窗口的来源会被标记为 `stale_source`；在严格模式下，它会成为高严重度问题。
 
-流水线层面的 `AuditorAgent` 会委托给 `AuditAgentInterface` 后端：
+确定性审计工具会委托给 `AuditAgentInterface` 后端：
 
 ```text
-AuditorAgent
+audit tool
   -> CompositeAuditAgent
        -> DeterministicAuditAgent
        -> QualityHarnessAuditAgent

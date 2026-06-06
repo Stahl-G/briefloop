@@ -105,7 +105,7 @@ def generate_en() -> str:
         "| `setup <workspace>` | Apply recommendations to a workspace |",
         "| `doctor` | Check configuration health |",
         "| `init` | Create a new workspace |",
-        "| `prepare` | Run the deterministic pipeline |",
+        "| `prepare` | Deprecated; use `/generate-brief <workspace>` |",
     ])
 
     return "\n".join(lines) + "\n"
@@ -189,7 +189,7 @@ def generate_zh() -> str:
         "| `setup <workspace>` | 将推荐应用到工作区 |",
         "| `doctor` | 检查配置健康状态 |",
         "| `init` | 创建新工作区 |",
-        "| `prepare` | 运行确定性管线 |",
+        "| `prepare` | 已废弃；请使用 `/generate-brief <workspace>` |",
     ])
 
     return "\n".join(lines) + "\n"

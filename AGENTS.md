@@ -2,6 +2,9 @@
 
 # AGENTS.md
 
+Python commands are tools, not the workflow runtime. There is no Python brief-generation pipeline.
+The runtime is the external subagent workflow: scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> formatter.
+
 ## Context Mode Rule
 
 This repository has two modes:
@@ -16,7 +19,7 @@ This repository has two modes:
    - In this mode, `user.md` is user context, and only `input/` contains source evidence.
    - Do not treat repository README, examples, agent docs, or generated config files as source evidence.
 
-Before running `multi-agent-brief prepare`, identify which mode you are in.
+Before running any source, validation, audit, or rendering command, identify which mode you are in.
 
 ## Quick Start (for agents)
 
@@ -57,7 +60,7 @@ Do NOT pass `--language`, `--company`, etc. directly — always use `--from-onbo
 
 ### Step 3: Source discovery (if llm_decide)
 
-If `sources.yaml` has `source.mode: llm_decide`, run source discovery BEFORE the pipeline:
+If `sources.yaml` has `source.mode: llm_decide`, run source discovery before invoking Scout:
 
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
@@ -79,39 +82,52 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
 Fix any issues before proceeding.
 
-### Step 5: Run deterministic pipeline
+### Step 5: Subagent runtime
 
-```bash
-multi-agent-brief prepare --config ../mabw-workspace/config.yaml
+There is no Python brief-generation pipeline. Do NOT run `multi-agent-brief prepare`.
+Use external subagents in this order:
+
+```text
+Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
 ```
 
-Output files will be in `../mabw-workspace/output/`.
-This produces a deterministic draft — it is NOT the final brief.
+### Step 6: Scout subagent
 
-### Step 6: Analyst subagent
+Use the `scout` subagent to read approved sources and write `output/intermediate/candidate_claims.json`.
 
-Use the `analyst` subagent to rewrite `output/intermediate/audited_brief.md` from `claim_ledger.json` and `user.md`.
+### Step 7: Screener subagent
+
+Use the `screener` subagent to rank, dedupe, freshness-check, and write `output/intermediate/screened_candidates.json`.
+
+### Step 8: Claim Ledger subagent / validator
+
+Use the `claim-ledger` subagent or validator to create `output/intermediate/claim_ledger.json`.
+Every claim must preserve source evidence and stable claim IDs.
+
+### Step 9: Analyst subagent
+
+Use the `analyst` subagent to write `output/intermediate/audited_brief.md` from `claim_ledger.json` and `user.md`.
 - Write in the workspace output language.
 - Use only claims in `claim_ledger.json`.
 - Preserve all valid `[src:CLAIM_ID]` citations.
 - Include source dates where available.
 
-### Step 7: Editor subagent
+### Step 10: Editor subagent
 
 Use the `editor` subagent to polish the final brief.
 - Remove process residue and invalid citation markers.
 - Preserve valid `[src:CLAIM_ID]`.
 
-### Step 8: Final auditor subagent
+### Step 11: Final auditor subagent
 
-Use the `auditor` subagent to audit the final `brief.md` against `claim_ledger.json`.
-This is the final delivery audit — distinct from the Python pipeline's draft-level audit.
+Use the `auditor` subagent to audit `output/intermediate/audited_brief.md` against `claim_ledger.json`.
+This is the final delivery audit; there is no Python draft-level audit pass.
 
-### Step 9: Formatter / DOCX refresh
+### Step 12: Formatter / finalize tool
 
-Re-run formatter or DOCX conversion so `brief.docx` reflects the edited final Markdown.
+Run `multi-agent-brief finalize --config ../mabw-workspace/config.yaml` so reader-facing Markdown/DOCX reflect the audited Markdown.
 
-### Step 10: Report artifacts
+### Step 13: Report artifacts
 
 Summarize final artifacts to the user. Do not claim success if audit failed.
 
@@ -121,9 +137,9 @@ Use `/generate-brief <workspace>` in Claude Code for the full subagent-assisted 
 
 ## Project Purpose
 
-This repository implements a source-grounded, audit-ready multi-agent workflow for producing business, research, market, policy, and management briefs.
+This repository implements a subagent-first, source-grounded, audit-ready workflow toolkit for producing business, research, market, policy, and management briefs.
 
-Pipeline:
+Subagent runtime order:
 
 ```text
 Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
@@ -174,12 +190,13 @@ Windows (PowerShell):
 python -m pytest -q
 ```
 
-Run demo:
+Run demo workspace setup:
 
 ```bash
 multi-agent-brief init ../mabw-workspace --demo
-multi-agent-brief prepare --config ../mabw-workspace/config.yaml
 ```
+
+Then use `/generate-brief ../mabw-workspace` in a subagent-capable runtime.
 
 Generate agent configs:
 

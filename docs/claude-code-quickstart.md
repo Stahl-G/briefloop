@@ -19,7 +19,7 @@ source .venv/bin/activate
 multi-agent-brief init ../mabw-workspace
 ```
 
-Answer the interactive onboarding questions before running the pipeline. In an agent workflow, create `onboarding.json` from natural-language answers and run `multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json`.
+Answer the interactive onboarding questions before invoking the subagent workflow. In an agent workflow, create `onboarding.json` from natural-language answers and run `multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json`.
 
 ## Reference Workflow Demo
 
@@ -29,8 +29,8 @@ The `examples/reference_workflow_demo/` workspace exercises the full official pa
 # Run the CI smoke test
 python scripts/ci/smoke_reference_workflow.py examples/reference_workflow_demo
 
-# Or run the pipeline directly
-multi-agent-brief prepare --config examples/reference_workflow_demo/config.yaml
+# Or generate through the subagent workflow
+# /generate-brief examples/reference_workflow_demo
 ```
 
 PowerShell:
@@ -38,10 +38,10 @@ PowerShell:
 ```powershell
 python scripts\ci\smoke_reference_workflow.py examples\reference_workflow_demo
 
-multi-agent-brief prepare --config examples\reference_workflow_demo\config.yaml
+# /generate-brief examples\reference_workflow_demo
 ```
 
-Expected artifacts after a successful run:
+Expected artifacts after a successful subagent run:
 
 ```text
 examples/reference_workflow_demo/output/
@@ -89,9 +89,9 @@ The subagent will:
 - Extract structured claims with full metadata
 - Mark vague or low-confidence items
 
-### 3. Run the Pipeline
+### 3. Run the Subagent Workflow
 
-Run the deterministic Python pipeline:
+Run the subagent workflow:
 
 ```bash
 # Then use /generate-brief in Claude Code

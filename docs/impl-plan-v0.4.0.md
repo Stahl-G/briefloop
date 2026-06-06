@@ -68,7 +68,7 @@ Primary files:
 - `src/multi_agent_brief/core/schemas.py`
 - `src/multi_agent_brief/core/claim_ledger.py`
 - `src/multi_agent_brief/core/selection.py`
-- `src/multi_agent_brief/agents/scout.py`
+- `removed Python runtime scout module`
 - `src/multi_agent_brief/audit/deterministic.py`
 - `src/multi_agent_brief/audit/harness.py`
 - `tests/test_claim_ledger.py`
@@ -332,7 +332,7 @@ Primary files:
 
 - new `src/multi_agent_brief/core/run_manifest.py`
 - `src/multi_agent_brief/core/pipeline.py`
-- `src/multi_agent_brief/agents/formatter.py`
+- `removed Python runtime formatter module`
 - `src/multi_agent_brief/cli/main.py`
 - `tests/test_pipeline.py`
 - `tests/test_formatter_docx_metadata.py`

@@ -172,13 +172,13 @@ multi-agent-brief init ../mabw-workspace
 
 Then open Claude Code or Codex and run `/generate-brief ../mabw-workspace` — the agent will complete source discovery, drafting, audit, and output formatting.
 
-Or run step by step:
+You can also run Python toolbox commands for preflight checks; actual brief generation still belongs to `/generate-brief` external subagents:
 
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-multi-agent-brief prepare --config ../mabw-workspace/config.yaml
+# Then in Claude Code / Codex / OpenCode: /generate-brief ../mabw-workspace
 ```
 
 **Windows PowerShell:**
@@ -207,7 +207,7 @@ Always review sources, content, and audit results before distribution.
 
 ### Option 3: CLI-only install (experimental)
 
-> ⚠️ **CLI-only mode**: Works for `init`, `doctor`, `prepare`, `audit`, `finalize`, and other deterministic CLI commands.
+> ⚠️ **CLI-only mode**: Works for `init`, `doctor`, `sources decide`, `audit`, `finalize`, and other deterministic tool commands; it does not generate complete briefs.
 > **Does not guarantee** Claude Code `/generate-brief`, Codex agent roles, OpenCode skills, capability board, or other full agent workflow features.
 > For the full agent workflow, use [Option 1: Clone the repository](#option-1-clone-the-repository-recommended--full-agent-workflow).
 
@@ -228,7 +228,7 @@ After installation you can use the CLI:
 ```bash
 multi-agent-brief init my-workspace
 multi-agent-brief doctor --config my-workspace/config.yaml
-multi-agent-brief prepare --config my-workspace/config.yaml
+# Generate the brief in a subagent runtime: /generate-brief my-workspace
 ```
 
 > **Homebrew:** The current Homebrew stable formula is v0.3.4, which is behind the latest release. To use Homebrew, install the HEAD version:
@@ -281,22 +281,17 @@ cat ../mabw-workspace/output/intermediate/audited_brief.md
 
 `scripts/setup.sh` is the contributor entry point. It creates a repository-local `.venv` and installs development/test dependencies. End users should prefer Homebrew, curl, or the PowerShell installer.
 
-> **Note:** Two ways to generate a brief:
-> - `/generate-brief <workspace>` in Claude Code — full agent-orchestrated workflow (analyst → editor → auditor → formatter)
-> - `multi-agent-brief prepare --config <workspace>/config.yaml` — deterministic Python pipeline (source collection → scout → screener → claim ledger → audit → formatter)
+> **Subagent-first generation rule:**
+> - `/generate-brief <workspace>` in Claude Code — full external subagent workflow (scout → screener → claim-ledger → analyst → editor → auditor → formatter).
+> - The Python CLI is a toolbox, not the workflow runtime; `prepare` is deprecated and does not generate briefs.
 >
-> `multi-agent-brief run` is deprecated; use `prepare` instead.
->
-> **Finalize delivery gate (optional post-pipeline step):**
-> `multi-agent-brief finalize --config <workspace>/config.yaml` is for agent-assisted workflows.
-> When subagents rewrite `audited_brief.md` after `prepare`, `finalize` regenerates reader-facing outputs:
+> **Finalize delivery gate:**
+> `multi-agent-brief finalize --config <workspace>/config.yaml` is for subagent-assisted workflows.
+> After subagents write `output/intermediate/audited_brief.md`, `finalize` regenerates reader-facing outputs:
 > - Strips internal `[src:CLAIM_ID]` markers from `audited_brief.md`, writes `brief.md`
 > - Regenerates DOCX (if enabled)
 > - Verifies outputs contain no internal markers
 > - Generates `finalize_report.json`
->
-> The deterministic pipeline (`prepare`) already handles this internally via FormatterAgent.
-> Only use `finalize` when subagents have rewritten `audited_brief.md` and you need to regenerate reader-facing outputs.
 
 Windows 10/11 should use native PowerShell 5.1 or PowerShell 7. WSL/Git Bash is optional, not required. CMD is not the primary support target.
 
@@ -362,19 +357,15 @@ This demo uses only fictional peer names and synthetic source data. It is design
 macOS / Linux / WSL:
 
 ```bash
-PYTHONPATH=src python -m multi_agent_brief.cli.main prepare \
-  --config examples/reference_workflow_demo/config.yaml \
-  --output output/reference_workflow_demo
+# Generate the demo in Claude Code / Codex / OpenCode:
+# /generate-brief examples/reference_workflow_demo
 ```
 
 PowerShell:
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m multi_agent_brief.cli.main prepare `
-  --config examples/reference_workflow_demo/config.yaml `
-  --output output/reference_workflow_demo
-Remove-Item Env:PYTHONPATH
+# Generate the demo in Claude Code / Codex / OpenCode:
+# /generate-brief examples/reference_workflow_demo
 ```
 
 ## llm_decide Source Discovery
@@ -394,9 +385,8 @@ cat ../mabw-workspace/source_candidates.yaml
 # 4. Merge into sources
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
-# 5. Run pipeline
-multi-agent-brief prepare --config ../mabw-workspace/config.yaml
-# Or: /generate-brief ../mabw-workspace in Claude Code
+# 5. Generate the brief in a subagent runtime
+# /generate-brief ../mabw-workspace in Claude Code / Codex / OpenCode
 ```
 
 The llm_decide mode does not block pipeline execution — if you skip `sources decide`, the pipeline continues with local `input/` files and prints a warning.
@@ -727,7 +717,7 @@ multi-agent-brief version
 
 ## Auditor Agent Interface
 
-The pipeline-level `AuditorAgent` delegates to an audit backend that implements `AuditAgentInterface`.
+The pipeline-level `audit tool` delegates to an audit backend that implements `AuditAgentInterface`.
 
 Current audit backends:
 

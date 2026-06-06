@@ -21,7 +21,7 @@ Deterministic Systems 负责 Claim、Audit、Rendering 等治理底线
 
 当前项目是高质量 multi-role agentic workflow，但还不是严格 MAS：
 
-- `BriefPipeline` 仍控制完整执行顺序。
+- 历史 Python 顺序流水线已从当前 runtime 移除；当前主路径应由外部 subagent 执行。
 - Agent 接口更像阶段函数，而不是具备身份、局部状态、目标、收件箱和自治决策的主体。
 - Agent 之间主要通过共享内存和顺序读写协作，而不是通过消息、事件和协议协作。
 - `ClaimLedger`、Formatter、Renderer、审计规则等更适合作为环境资源或确定性系统，不应被包装成自治 Agent。
