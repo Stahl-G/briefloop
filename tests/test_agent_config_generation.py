@@ -285,8 +285,8 @@ def test_opencode_command_has_correct_agent(manifest):
 
 def test_opencode_jsonc_is_valid(manifest):
     content = render_opencode_jsonc()
-    assert "agentPaths" in content
-    assert "commandPaths" in content
+    assert "$schema" in content
+    assert "opencode.ai/config.json" in content
 
 
 def test_generate_target_opencode_only():
