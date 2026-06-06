@@ -145,6 +145,8 @@ class FormatterAgent(BaseAgent):
                 encoding="utf-8",
             )
             artifacts["rendered_output_report"] = str(rendered_report_path)
+            # Store in context.metadata so _determine_pipeline_exit_code can detect failure
+            context.metadata["rendered_output_report"] = rendered_output_report
 
         # Record docx generation status in audit report metadata
         audit_report = context.report_state.audit_report
@@ -168,6 +170,16 @@ class FormatterAgent(BaseAgent):
                 encoding="utf-8",
             )
             artifacts["audit_report"] = str(audit_path)
+
+        # Persist final_quality_report.json for consistency with other gate artifacts
+        final_quality_report = context.metadata.get("final_quality_report")
+        if final_quality_report:
+            fq_path = intermediate_dir / "final_quality_report.json"
+            fq_path.write_text(
+                json.dumps(final_quality_report, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            artifacts["final_quality_report"] = str(fq_path)
 
         return AgentOutput(
             agent_name=self.name,
