@@ -61,3 +61,14 @@ def test_agents_md_states_python_commands_are_support_tools():
     text = _read("AGENTS.md")
     assert "Python CLI commands provide onboarding, workspace setup, runtime handoff" in text
     assert "subagent-first" in text
+
+
+def test_agents_md_stays_short():
+    assert len(Path("AGENTS.md").read_text(encoding="utf-8").splitlines()) <= 120
+
+
+def test_agents_md_uses_standard_entry_path():
+    text = Path("AGENTS.md").read_text(encoding="utf-8")
+    assert "multi-agent-brief onboard" in text
+    assert "multi-agent-brief init <workspace> --from-onboarding onboarding.json" in text
+    assert "multi-agent-brief run --workspace <workspace>" in text
