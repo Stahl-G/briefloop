@@ -581,6 +581,10 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 Hermes 适配层提供原生 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor）、daily source cache 收集、weekly/monthly cron 调度和 `cached_package` provider 对接。
 
+### v0.5.7：输入分类与反馈卫生
+
+新增 `multi-agent-brief inputs classify` CLI 命令，自动将 `input/` 下文件按角色分类（evidence / feedback / instruction / context）。Scout 技能合约收紧，限定只从 `input/sources/` 和根目录提取声明，`feedback/`、`instructions/`、`context/` 被显式排除。ManualProvider 写入 `metadata["input_subdir"]` 标记文件归属。
+
 ### v0.5.6：Anthropic Skills Convergence
 
 CLI 重构为 thin router（main.py 1512→134 行）。生成器收敛为纯平台适配器（codex/claude/docs/opencode），不再生成 AGENTS.md 或 .agents/skills。17 个 SKILL.md 重写为 Anthropic Skills 格式（Scope/Purpose/Use When/Inputs/Outputs/Work/Handoff）。Hermes skill 采用渐进式披露（references/ 目录）。Formatter 角色更新为 reader-facing finalize 语义。
@@ -682,7 +686,7 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.5.6** — Thin CLI Router + Anthropic Skills Contracts + Platform Adapters
+当前版本：**v0.5.7** — 输入分类与反馈卫生 + Scout 证据目录契约 + inputs classify CLI
 
 v0.5.1 引入了本地信号发现能力：系统可以根据目标市场自动生成本地语言搜索任务，产出 `collector_tasks.json` 供人工/OpenCLI 采集，解析 `local_signal_samples.jsonl` 样本，生成 `local_signal_report.json` 记录信号发现和数据缺口，并通过 3 条审计规则阻止无来源支撑的消费者痛点 claim。支持 9 个市场（越南、日本、中国、印尼、泰国、巴西、墨西哥、德国、韩国）。
 

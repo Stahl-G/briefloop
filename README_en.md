@@ -675,7 +675,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.5.6** — Thin CLI Router + Anthropic Skills Contracts + Platform Adapters
+Current version: **v0.5.7** — Input Classification & Feedback Hygiene + Scout Evidence-Only Contract + inputs classify CLI
 
 v0.5.1 introduces local signal discovery: the system can generate local-language search tasks for target markets, produce `collector_tasks.json` for manual/OpenCLI collection, parse `local_signal_samples.jsonl` samples, generate `local_signal_report.json` with signals found and data gaps, and enforce 3 audit rules to prevent unsupported consumer pain-point claims. Supports 9 markets (Vietnam, Japan, China, Indonesia, Thailand, Brazil, Mexico, Germany, Korea).
 
