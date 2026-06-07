@@ -82,7 +82,7 @@ jobs:
           from datetime import date, timedelta
           from pathlib import Path
           yesterday = (date.today() - timedelta(days=1)).isoformat()
-          for p in Path("examples/basic_market_brief/input").glob("*.json"):
+          for p in Path("tests/fixtures/basic_market_brief/input").glob("*.json"):
               data = json.loads(p.read_text(encoding="utf-8"))
               data["published_at"] = yesterday
               p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -90,7 +90,7 @@ jobs:
       - name: CLI smoke
         run: |
           multi-agent-brief version
-          python scripts/ci/smoke_pipeline.py examples/basic_market_brief/config.yaml examples/basic_market_brief/input output/basic_market_brief
+          python scripts/ci/smoke_pipeline.py tests/fixtures/basic_market_brief/config.yaml tests/fixtures/basic_market_brief/input output/basic_market_brief
 
   non-dev-smoke:
     name: Non-dev install smoke
@@ -281,13 +281,13 @@ jobs:
           from datetime import date, timedelta
           from pathlib import Path
           yesterday = (date.today() - timedelta(days=1)).isoformat()
-          for p in Path("examples/basic_market_brief/input").glob("*.json"):
+          for p in Path("tests/fixtures/basic_market_brief/input").glob("*.json"):
               data = json.loads(p.read_text(encoding="utf-8"))
               data["published_at"] = yesterday
               p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
       - name: Assert basic example prepare stays removed
-        run: python scripts/ci/smoke_pipeline.py examples/basic_market_brief/config.yaml examples/basic_market_brief/input /tmp/golden-basic/output
+        run: python scripts/ci/smoke_pipeline.py tests/fixtures/basic_market_brief/config.yaml tests/fixtures/basic_market_brief/input /tmp/golden-basic/output
 
       # --- Onboarding demo ---
       - name: Create onboarding.json

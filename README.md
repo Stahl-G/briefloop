@@ -210,7 +210,7 @@ output:
 
 ### 方式一：Clone 仓库（推荐 · 完整 Agent 工作流）
 
-这是**唯一支持完整 agent 工作流**的安装方式。Agent commands、multi-agent、skills 等能力依赖仓库根目录下的 `.claude/`、`.opencode/`、`.codex/`、`.agents/skills/`、`docs/`、`examples/` 等资产，这些不会随 Python 包分发。
+这是**唯一支持完整 agent 工作流**的安装方式。Agent commands、multi-agent、skills 等能力依赖仓库根目录下的 `.claude/`、`.opencode/`、`.codex/`、`.agents/skills/`、`docs/` 等资产，这些不会随 Python 包分发。
 
 **macOS / Linux / WSL：**
 

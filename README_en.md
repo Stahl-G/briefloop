@@ -160,7 +160,7 @@ The audit report records whether the draft is distribution-ready:
 
 ### Option 1: Clone the repository (recommended · full agent workflow)
 
-This is the **only method that supports the full agent workflow**. Agent commands, multi-agent, skills, and other capabilities depend on `.claude/`, `.opencode/`, `.codex/`, `.agents/skills/`, `docs/`, `examples/` and other assets in the repo root — these are **not** distributed with the Python package.
+This is the **only method that supports the full agent workflow**. Agent commands, multi-agent, skills, and other capabilities depend on `.claude/`, `.opencode/`, `.codex/`, `.agents/skills/`, `docs/` and other assets in the repo root — these are **not** distributed with the Python package.
 
 **macOS / Linux / WSL:**
 
@@ -323,7 +323,6 @@ multi-agent-brief run --workspace ../mabw-workspace
 You can also use the built-in example for a quick check:
 
 ```bash
-# Example: multi-agent-brief run --workspace examples/basic_market_brief in your agent runtime
 ```
 
 The example config enables a strict weekly reporting window:
@@ -368,7 +367,7 @@ multi-agent-brief init ../mabw-demo --demo
 multi-agent-brief run --workspace ../mabw-demo
 ```
 
-Or use `multi-agent-brief run --workspace examples/reference_workflow_demo` from a cloned repo.
+Or use `multi-agent-brief run --workspace <path>` from a cloned repo.
 
 ## llm_decide Source Discovery
 

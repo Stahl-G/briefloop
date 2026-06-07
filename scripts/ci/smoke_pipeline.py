@@ -13,7 +13,7 @@ from multi_agent_brief.cli.main import main
 
 
 def main_smoke() -> None:
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "examples/reference_workflow_demo/config.yaml"
+    config_path = sys.argv[1] if len(sys.argv) > 1 else "tests/fixtures/basic_market_brief/config.yaml"
     exit_code = main(["prepare", "--config", config_path])
     if exit_code == 0:
         raise SystemExit("prepare unexpectedly succeeded; Python brief pipeline must stay removed")
