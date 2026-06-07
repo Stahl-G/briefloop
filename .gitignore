@@ -12,7 +12,6 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
-.env
 output/
 dist/
 build/
@@ -39,7 +38,10 @@ reasonix.toml
 .claude/settings.local.json
 .codex/config.local.toml
 
-# Local environment overrides
+# Environment files (keep .env.example tracked)
+.env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 
@@ -47,6 +49,11 @@ reasonix.toml
 notes/
 TODO.md
 .cache/
+
+# Logs and backups
+*.log
+*.bak
+*.orig
 
 # Draft implementation plans
 docs/impl-plan-v0.5.1-*.md
