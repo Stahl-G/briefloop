@@ -1,4 +1,4 @@
-# multi-agent-brief-workflow
+# Multi-Agent-Brief-Workflow
 
 <p align="center">
   <a href="README_en.md">English</a> |
