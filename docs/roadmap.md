@@ -1,182 +1,195 @@
 # Roadmap
 
-This roadmap shifts the project from feature expansion to a stable, auditable v1.0 baseline before any v2.0 MAS Runtime work. The detailed agent-facing reference is kept in Chinese at [docs/agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md](agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md).
+This roadmap reflects the post-v0.5.7 baseline: subagent-first runtime handoff + Hermes primary path + input governance. See [v1 pre-MAS refactor roadmap](agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md) for the detailed Chinese agent reference.
+
+## Completed (v0.1 — v0.5.7)
+
+v0.5.7 moved the project from a Python pipeline to a subagent-first architecture:
+
+- **Subagent-first runtime handoff**: `multi-agent-brief run` is no longer a Python brief generator — it's a runtime handoff launcher. External subagent workflow: scout → screener → claim-ledger → analyst → editor → auditor → finalize.
+- **Hermes primary path**: Hermes adapter provides native `delegate_task` child pipelines, cron scheduling, daily source cache, and cached_package wiring.
+- **Thin CLI router**: `main.py` slimmed to a routing layer, command logic in 13 `cli/*_commands.py` modules.
+- **Platform adapters**: Claude Code, OpenCode, Codex subagent configs generated from `configs/agent_roles.yaml`.
+- **Input governance**: `inputs classify` CLI + Scout evidence-only contract + ManualProvider hard gate, preventing feedback/instruction/context contamination.
+- **Quality gates**: deterministic audit, editorial governance, final quality, limitation hygiene.
+- **Analysis modules**: market competitor and policy regulatory, both using the same registry.
 
 ## Strategy
 
-Before v1.0, the project should not replace the current pipeline or keep expanding providers, topic modules, and delivery channels without a stronger quality baseline. The priority order is:
+Before v1.0, do not keep expanding providers, topic modules, or delivery channels. Priority order:
 
 ```text
-Claim knowledge model
-→ Schemas / contracts / run manifest
-→ Audit and release gates
-→ Reference workflow
-→ Golden datasets
-→ v1.0 stable baseline
-→ v2.0 MAS Runtime
+Release & Runtime Contract Cleanup
+→ Runtime Artifact Contract
+→ Quality Mainline
+→ Golden Runs & Evaluation
+→ Packaging & Distribution
+→ v1.0 Stable Baseline
+→ v2.0 MAS Runtime (deferred)
 ```
 
-After v1.0, the current sequential pipeline should remain as the reference engine, fallback engine, and quality benchmark for any future MAS Runtime.
+---
 
-## v0.4: Knowledge & Governance Contracts
+## v0.5.8: Release And Runtime Contract Cleanup
 
-Goal: define the core data contracts that a future Shared World can reuse.
+**Goal**: make v0.5.7's architecture internally consistent.
 
-Scope:
+Must do:
 
-- Upgrade Claim modeling with `FACT`, `CASE`, `INTERPRETATION`, `HYPOTHESIS`, `ACTION`, and `TO_VERIFY`.
-- Add Evidence Relation semantics: `DIRECT`, `COMPARABLE`, `HISTORICAL_ANALOGY`, and `BACKGROUND`.
-- Version core contracts: `SourceItem`, `CandidateItem`, `Claim`, `AnalysisPack`, `AuditReport`, `OutputArtifact`, `RunManifest`.
-- Add `run_manifest.json` with run ID, config hash, provider/module status, audit status, errors, output artifacts, and hashes.
-- Fix semantic audit states so `not_configured` and `not_run` cannot be reported as `pass`.
-- Structure Audit Findings by repair owner and blocking level.
-- Move high-value harness rules toward configurable, tested rule packs.
-- Reserve event and field governance hooks: Claims may optionally link to `event_id`, `field_name`, and `fact_role`; `EventRecord` / `EventField` remain experimental contracts/interfaces rather than a full v0.4 event engine.
-
-Out of scope:
-
-- MAS Runtime.
-- Full RAG.
-- Complex model routing.
-- More search backends.
-- Large numbers of topic modules.
-- A full event-completeness engine, automatic missing-fact retrieval loops, or vertical operating-diagnostics modules.
+- **Fix Issue [#49](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/49)**: clarify clone/source install vs CLI-only install boundaries, or package Hermes plugin / agent assets.
+- **Update Homebrew formula**: currently points to an old version.
+- **Tag v0.5.7** or adjust release consistency rules so CI no longer fails.
+- **Rewrite `docs/roadmap.md` and `docs/architecture.md`**: remove `prepare` and old Python pipeline narratives.
+- **Establish Support Matrix**: `Supported / Experimental / Interface Only / CLI-only / Deprecated` for Hermes, OpenCLI, local_signal, delivery, PDF, Homebrew/curl.
 
 Done when:
 
-- Claims can express facts, interpretations, hypotheses, actions, comparable evidence, and historical context without blurring confidence boundaries.
-- Core contracts have schema/version/fixture/tests.
-- Runs can be traced and compared through manifests.
-- Audit reports no longer confuse skipped checks with passing checks.
+- CI is green, no tag drift errors.
+- README, AGENTS.md, CLAUDE.md match current entry points.
+- Support Matrix doc exists with clear status labels for every capability.
 
-## v0.4.x / v0.5 Bridge: Event Completeness & Editorial Governance
+---
 
-Positioning: capture real report-quality failures around event completeness, feedback contamination, factual density, and comparable-case handling without turning all of them into v0.4 scope.
+## v0.5.9: Runtime Artifact Contract
 
-v0.4 should only lay reusable foundations:
+**Goal**: make the subagent workflow verifiable, not just prompt-sequenced.
 
-- Claim Schema v2 reserves optional event, field, and fact-role links so future claims can support field-level traceability.
-- The contracts package may include experimental `EventRecord`, `EventField`, input content type, and source coverage summary schemas.
-- Audit Finding / Rule Packs may reserve issue types such as `feedback_contamination`, `instruction_leakage`, `editorial_comment_leakage`, `low_factual_density`, and `unsupported_business_advice`.
-- Run Manifest may record event counts, source coverage summaries, and future missing-fact retrieval counters as optional metadata in v0.4.
+Must do:
 
-v0.5 should consume those contracts in the official workflow:
-
-- Final Clean blocks user feedback, prompts, version notes, workspace configuration, and agent process notes from reader-facing briefs.
-- Audience Profiles define factual density, banned styles, and must-preserve facts for management, research, IR, and legal/compliance readers.
-- Comparable Case Contracts require specific case facts, comparable dimensions, non-comparable boundaries, applicability rationale, and local verification questions.
-- Source Coverage Report / `research_gaps.md` separates direct local sources, regional comparable sources, global background sources, official sources, and social discussion coverage. Coverage dimensions must be configurable instead of hard-coding Vietnam, TikTok, Shopee, Lazada, or any other scenario into core support.
-- Missing facts should be explicit as `not_found`, `not_disclosed`, `not_verified`, `conflicting`, or `not_applicable`; gap handling should rely on source status rather than general-knowledge filling.
-
-Post-v0.5 candidate extensions:
-
-- Event Family Registry and Event Completeness MVP for a small public-safe set of M&A, financing, IPO, major investment, technology release, patent/court, and regulatory events.
-- Missing-Fact Search Planner with one bounded retrieval round, no new search backends, and no infinite recrawl.
-- Field-Level Provenance & Conflict Handling for key numbers, dates, locations, patent numbers, amounts, capacity values, and regulatory status.
-- Operating Data Hypothesis Framework for cancellation, refund, payment failure, COD rejection, and similar operating questions, expressed as `hypothesis`, `required_data`, `test_method`, `possible_action`, and `confidence_level` rather than unsupported diagnosis.
-
-## v0.5: Production Reference Workflow
-
-Goal: produce one realistic, reproducible, audit-ready workflow.
-
-See [v0.5.0 Implementation Plan](impl-plan-v0.5.0.md) for the detailed PR split.
-
-Scope:
-
-- Freeze one official path: interactive init → source discovery/confirmation → doctor → scout → screener → claim-ledger → analyst → editor → auditor → finalize → Markdown / DOCX → Human Review.
-- Keep one maintainer-local reference workflow and one public-safe synthetic demo.
-- Add Audience Profiles for management, research, IR, and legal/compliance readers.
-- Add DOCX templates for Executive Brief, Research Note, and Formal Internal Report, with basic layout validation.
-- Add Final Clean gates for reader-facing output, including feedback contamination and meta-content leakage.
-- Add Editorial Governance gates for factual density, must-preserve facts, comparable-case applicability, research-gap separation, and source coverage.
-- Add a Policy & Regulatory Risk Module as a second Analysis Module to validate the module interface beyond competitor analysis.
-- Add a minimal HistoryStore for previous briefs, previous claims, entity history, and repeat/novelty checks.
-- Add `low` / `medium` / `high` / `xhigh` effort budgets without building full model routing.
+- **`run_manifest.json` reuse**: record each intermediate artifact's existence, hash, producer, and status across handoff/runtime stages.
+- **New artifact validators**: `validate-candidates`, `validate-screened`, `validate-ledger`, `validate-handoff` — auto-validated after each subagent output.
+- **`inputs classify` result enters `agent_handoff.json`**: Scout must execute against the evidence list, not freely scan all of `input/`.
+- **Runtime parity tests**: Hermes / Claude Code / OpenCode / Codex artifact contracts tested for consistency.
+- **RelevanceGate**: output `output/intermediate/relevance_report.json`, placed after claim-ledger and before analyst. Decides which claims enter body, summary, appendix, or are discarded.
 
 Done when:
 
-- A new user can complete the official workflow from the README.
-- The reference workflow and synthetic demo are reproducible.
-- Markdown and DOCX have publish-level quality gates.
-- Reader-facing briefs keep user feedback, agent process notes, source-gap notes, and next-research suggestions separate from formal business prose.
-- Two meaningfully different Analysis Modules use the same registry.
-- Historical context cannot silently become current-period fact.
+- Any runtime execution produces a complete `run_manifest.json`.
+- CI can run `validate-handoff` without LLM dependency.
+- Scout only sees evidence files.
 
-## v0.5.5: Hermes Adapter Layer
+---
 
-Goal: Hermes as a native MABW runtime using `delegate_task` subagents for brief generation, plus cron scheduling and daily source cache collection.
+## v0.6.0: Quality Mainline
 
-See the Chinese implementation plan: [v0.5.5 Hermes Adapter Plan](impl-plan-v0.5.5-hermes-adapter.zh-CN.md).
+**Goal**: address DOCX quality gaps. The mainline is quality, not feature expansion.
 
-Scope:
+Must do:
 
-- Hermes Skill: ship `multi-agent-brief-hermes` with native `delegate_task` child workflows for scout, screener, claim-ledger, analyst, editor, and auditor.
-- Hermes parent agent: orchestration, artifact handoff, and gate checks; `delegate_task` children run isolated subagent tasks.
-- Hermes Cron Plan: generate daily source cache, weekly brief, and monthly brief cron jobs from workspace config.
-- Daily Cache Contract: daily jobs write public, citable signals to `input/hermes_cache/YYYY-MM-DD.json`.
-- Cached Package wiring: `hermes sync-sources` connects the `cached_package` provider to the Hermes daily cache.
-- CLI helpers: generate the Hermes skill, JSON/Markdown cron plans, and copyable `hermes cron create` commands.
+- **Upgrade `analysis_blocks` from sidecar tools to formal writer contract**: analysts must follow structured analysis block templates, not free-form writing.
+- **Enforce Fact / Case / Interpretation / Limitation / Action / To Verify distinction**: Claim schema upgrade with epistemic type and evidence relation dual dimensions.
+- **Wire in Issues [#19](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/19), [#41](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/41), [#43](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/43)**.
+- **RelevanceGate formalized**: decides which claims go into body, summary, appendix, or discard.
+- **DeliveryGate**: checks language, audience match, topic relevance, entity relevance, section completeness, English leakage, template leakage.
 
 Done when:
 
-- Weekly + monthly demand generates a daily cache job plus weekly and monthly brief jobs.
-- Every cron job explicitly attaches the Hermes skill and sets an absolute `--workdir`.
-- Hermes brief generation uses `delegate_task` children; cron handles scheduling, `delegate_task` handles per-run child dispatch.
-- The Hermes primary path does not route users to Claude Code or rely on the Python brief-generation pipeline.
-- Daily cache output is never treated as a final brief.
+- Analyst outputs structured analysis blocks, not free-form full briefs.
+- Every reader-facing report passes RelevanceGate + DeliveryGate.
+- DOCX/Markdown output shows no section gaps or template leakage even with weaker models.
+- Weak/free models only perform constrained local tasks (extract claims, write single analysis paragraphs), never one-shot full weekly briefs.
+
+---
+
+## v0.6.1 — v0.6.2: Evaluation And Golden Runs
+
+**Goal**: objectively measure whether quality is improving.
+
+Must do:
+
+- **Build 5 golden workspace categories**: normal weekly, quiet week, sparse evidence, conflicting sources, feedback contamination.
+- **Save expected artifacts per category** (no real private materials).
+- **Quality metrics**: relevance, claim coverage, unsupported statements, language match, reader depth, DOCX render fidelity.
+- **`mabw eval` command or CI golden smoke**: no requirement for identical model output, but contracts and quality gates must pass.
+
+Done when:
+
+- `mabw eval --golden normal_weekly` runs in CI.
+- Every PR has quality regression signals, not just pytest pass/fail.
+
+---
+
+## v0.7: Packaging And Distribution
+
+**Prerequisite**: v0.5.8 package asset issues resolved.
+
+Must do:
+
+- **Formally support curl / PowerShell / Homebrew upgrade paths**.
+- **`multi-agent-brief assets install --profile hermes|claude|opencode|codex`**: one-command runtime adapter installation.
+- **`multi-agent-brief assets doctor`**: check installed asset completeness and version match.
+- **Package resources via `importlib.resources`**: no dependency on CWD being repo root.
+
+Done when:
+
+- `curl install.sh | bash` followed by `multi-agent-brief assets install --profile hermes` works.
+- `assets doctor` outputs completeness and version check report.
+- Homebrew formula points to latest version and installs correctly.
+
+---
 
 ## v1.0: Stable Baseline
 
-Goal: freeze the current sequential pipeline as the long-term maintained baseline and v2.0 benchmark.
+**v1.0 is not a MAS Runtime.** v1.0 freezes:
+
+- subagent-first handoff contract
+- Hermes primary path
+- input governance (inputs classify + hard gates)
+- RelevanceGate + DeliveryGate
+- golden eval baseline (5 workspace categories + quality metrics)
+- package/install story (curl / PowerShell / Homebrew / importlib.resources)
+- Support Matrix
 
 Scope:
 
-- Golden datasets for normal weekly, sparse market, conflicting sources, quiet week, and high-risk input.
-- Benchmark metrics for source counts, claim counts, citation coverage, unsupported statements, high-risk findings, audit status, runtime, cost, and artifact hashes.
-- Contract compliance tests for SourceProvider, AnalysisModule, AuditAgent, OutputRenderer, and DeliveryConnector.
-- Release consistency gate for package version, CHANGELOG, README, Git tag, agent configs, schema versions, and release notes.
-- Formal support matrix: Supported / Experimental / Interface Only / Deprecated.
-- Create a `v1-maintenance` branch for fixes, governance gaps, compatibility, and documentation.
+- Golden datasets: normal weekly, quiet week, sparse evidence, conflicting sources, feedback contamination.
+- Benchmark metrics: source count, claim count, citation coverage, unsupported statements, high-risk findings, audit status, runtime, cost, artifact hashes.
+- Contract compliance tests for SourceProvider, AnalysisModule, AuditAgent, OutputRenderer, DeliveryConnector.
+- Release consistency gate.
+- `v1-maintenance` branch: fixes, governance gaps, compatibility, and documentation only.
 
 Done when:
 
 - v1.0 runs all officially supported capabilities from a fresh install.
 - v1.0 has stable interfaces, public-safe benchmarks, and regression metrics.
-- v1.0 can serve as the comparison and fallback engine for future MAS Runtime work.
-- README, changelog, tags, schemas, and generated agent configs no longer drift.
+- v1.0 serves as the comparison and fallback engine for future MAS Runtime work.
 
-## v2.0: MAS Runtime Candidate
+---
 
-v2.0 should not become the main path before v1.0 is frozen. After v1.0, a `mas-runtime` / `v2` branch can explore a true MAS runtime.
+## v2.0: MAS Runtime (deferred)
+
+v2.0 should not become the main path before v1.0 is frozen.
 
 Recommended first scope: `mas-runtime-foundation`.
 
-- Shared World / SQLite Event Store.
-- Typed Event / AgentMessage envelope.
-- TaskBoard, leases, and a minimal Contract Net or bidding protocol.
-- AgentState, inbox cursors, and capability registry.
-- ClaimProposal state machine.
-- Deterministic ClaimReducer that turns proposals into the official Claim Ledger.
-- Run replay and v1-compatible Claim Ledger export.
+- Shared World / SQLite Event Store
+- Typed Event / AgentMessage envelope
+- TaskBoard, leases, minimal Contract Net
+- AgentState / inbox cursor / capability registry
+- ClaimProposal state machine
+- Deterministic ClaimReducer
+- Run replay and v1-compatible Claim Ledger export
 
-Not in the first scope:
+Not in first scope:
 
-- Full Analyst / Editor / Auditor / Formatter migration.
-- Multi-server deployment, Kafka, or Redis.
-- One-shot migration of every connector and analysis module.
-- Making v2 the README main path.
+- Full Analyst / Editor / Auditor / Formatter migration
+- Multi-server, Kafka, Redis
+- One-shot migration of all connectors and analysis modules
+- v2 as README main path
 
-See [v2.0 MAS Runtime Evaluation](mas-v2-evaluation.zh-CN.md) for the Chinese technical evaluation.
+See [v2.0 MAS Runtime Evaluation](mas-v2-evaluation.zh-CN.md).
+
+---
 
 ## Deferred
 
-The following should stay constrained before v1.0:
+Before v1.0, constrain:
 
-- More search backends and delivery channels.
-- Full model routing.
-- Full RAG or long-term memory system.
-- Many new topic modules.
-- Scheduling, multi-tenant permissions, and enterprise deployment.
-- Unfinished PDF / Email / Slack / Telegram support.
+- More search backends and delivery channels
+- Full model routing
+- Full RAG / long-term memory
+- Many new topic modules
+- Scheduling, multi-tenant, enterprise deployment
+- Unfinished PDF / Email / Slack / Telegram
 
-Unstable capabilities must be labeled as Experimental or Interface Only in README and CLI output.
+Unstable capabilities must be labeled Experimental or Interface Only.

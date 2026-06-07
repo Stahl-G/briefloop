@@ -1,179 +1,195 @@
 # 路线图
 
-本路线图从“继续扩张功能”切换为“先冻结 v1.0 可信参考实现，再启动 v2.0 MAS Runtime”。公开文档只保留可执行方向；完整 agent 参考见 [v1 前置收敛路线图](agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md)。
+本路线图反映 v0.5.7 后的新基线：subagent-first runtime handoff + Hermes primary path + input governance。完整 agent 参考见 [v1 前置收敛路线图](agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md)。
+
+## 已完成（v0.1 — v0.5.7）
+
+v0.5.7 已将项目从旧 Python pipeline 推到新基线：
+
+- **Subagent-first runtime handoff**：`multi-agent-brief run` 不再是 Python 生成 brief，而是 runtime handoff launcher。外部子智能体 workflow：scout → screener → claim-ledger → analyst → editor → auditor → finalize。
+- **Hermes primary path**：Hermes 适配层提供 `delegate_task` 原生子代理管线、cron 调度、daily source cache 和 cached_package 对接。
+- **Thin CLI router**：`main.py` 瘦化为路由层，命令逻辑分布在 13 个 `cli/*_commands.py` 模块。
+- **平台适配器**：Claude Code、OpenCode、Codex 三平台子智能体定义由 `configs/agent_roles.yaml` 统一生成。
+- **Input governance**：`inputs classify` CLI 命令 + Scout 证据目录契约 + ManualProvider 硬门禁，阻止反馈/指令/背景文件污染 Claim Ledger。
+- **Quality gates**：deterministic audit、editorial governance、final quality、limitation hygiene 四层质量门。
+- **Analysis modules**：market competitor 和 policy regulatory 两个性质不同的可插拔模块。
 
 ## 总原则
 
-v1.0 之前不应推倒现有 Pipeline，也不应继续无限增加搜索后端、专题模块或交付渠道。当前优先级是：
+v1.0 之前不应继续堆搜索后端、专题模块或交付渠道。当前优先级：
 
 ```text
-Claim 知识模型
-→ Schema / Contract / Run Manifest
-→ 审计与发布门控
-→ Reference Workflow
-→ Golden Dataset
+Release & Runtime Contract Cleanup
+→ Runtime Artifact Contract
+→ Quality Mainline（分析块正式化 + 质量门）
+→ Golden Runs & Evaluation
+→ Packaging & Distribution
 → v1.0 Stable Baseline
-→ v2.0 MAS Runtime
+→ v2.0 MAS Runtime（推迟）
 ```
 
-v1.0 发布后，现有顺序型 Pipeline 应成为未来 MAS Runtime 的参考引擎、回退引擎和质量对照组。
+---
 
-## v0.4：Knowledge & Governance Contracts
+## v0.5.8：Release And Runtime Contract Cleanup
 
-目标：先把未来 Shared World 中最重要的数据结构定义正确。
+**目标**：让 v0.5.7 的新架构不自相矛盾。
 
-范围：
+### 必须做
 
-- Claim 知识类型升级：区分 `FACT`、`CASE`、`INTERPRETATION`、`HYPOTHESIS`、`ACTION`、`TO_VERIFY`。
-- Evidence Relation：区分 `DIRECT`、`COMPARABLE`、`HISTORICAL_ANALOGY`、`BACKGROUND`。
-- 核心对象版本化：`SourceItem`、`CandidateItem`、`Claim`、`AnalysisPack`、`AuditReport`、`OutputArtifact`、`RunManifest` 等。
-- `run_manifest.json`：记录运行 ID、配置 hash、来源/claim 数、模块、审计状态、错误、输出 artifact 与 hash。
-- Semantic Audit 状态修正：未配置不得伪装成 `pass`，需要明确 `not_configured` / `not_run` / `pass` / `warning` / `fail` / `error`。
-- Audit Finding 结构化：区分 editor 可修复、analyst 阻断、source 阻断、配置错误、渲染错误和安全阻断。
-- Rule Packs：将关键 harness 规则从硬编码逐步迁移为可配置、可测试规则包。
-- 预留事件与字段级治理钩子：Claim 可选关联 `event_id`、`field_name`、`fact_role`；`EventRecord` / `EventField` 只作为实验性 contract/interface，不在 v0.4 实现完整事件引擎。
+- **修复 Issue [#49](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/49)**：明确 clone/source install 与 CLI-only install 的边界，或将 Hermes plugin / agent assets 打进 package。
+- **更新 Homebrew formula**：当前 `Formula/multi-agent-brief.rb` 仍指向旧版本。
+- **打 v0.5.7 tag** 或调整 release consistency 规则，否则 CI 继续卡。
+- **重写 `docs/roadmap.zh-CN.md` 和 `docs/architecture.zh-CN.md`**：删除主路径里的 `prepare` 和旧 Python pipeline 叙事。
+- **建立 Support Matrix**：明确 `Supported / Experimental / Interface Only / CLI-only / Deprecated`，覆盖 Hermes、OpenCLI、local_signal、delivery、PDF、Homebrew/curl 等。
 
-不做：
+### 验收标准
 
-- 不做 MAS Runtime。
-- 不做完整 RAG。
-- 不做复杂模型路由。
-- 不新增更多搜索后端。
-- 不新增大量专题模块。
-- 不做完整事件完整性引擎、自动补搜循环或垂直场景经营诊断模块。
+- CI 全绿，不再因为 tag 漂移报错。
+- README、AGENTS.md、CLAUDE.md 与当前实际入口一致。
+- Support Matrix 文档存在，每个能力有明确状态标签。
 
-完成标准：
+---
 
-- Claim 模型可以表达事实、解释、假设、动作、类比和历史背景的边界。
-- 所有核心合同有 schema/version/fixture/test。
-- 运行结果可以通过 manifest 追踪和对比。
-- 审计状态不会把“未运行”伪装成“通过”。
+## v0.5.9：Runtime Artifact Contract
 
-## v0.4.x / v0.5 桥接：Event Completeness & Editorial Governance
+**目标**：让 subagent workflow 可验收，而不是只靠 prompt 顺序。
 
-定位：把实际报告中暴露的事件完整性、反馈污染、事实密度和可比案例问题纳入路线图，但不把它们全部塞进 v0.4 主线。
+### 必须做
 
-v0.4 只沉淀可复用地基：
+- **`run_manifest.json` 复用**：由 handoff/runtime 阶段记录每个中间 artifact 的存在、hash、producer、status。Scout/screener/claim-ledger/analyst/editor/auditor 完成后更新。
+- **新增 artifact validators**：`validate-candidates`、`validate-screened`、`validate-ledger`、`validate-handoff`——每个子智能体输出后自动校验。
+- **`inputs classify` 结果进入 `agent_handoff.json`**：Scout 必须按 evidence list 执行，不可自由扫描全 `input/`。
+- **Runtime parity tests**：Hermes / Claude Code / OpenCode / Codex 的 artifact contract 做一致性测试。
+- **RelevanceGate**：输出 `output/intermediate/relevance_report.json`，放在 claim-ledger 之后、analyst 之前。决定哪些 claim 能进正文、摘要、附录或丢弃。
 
-- Claim Schema v2 预留事件、字段和事实角色关联，用于后续表达“某个字段来自哪个 Claim”。
-- Contracts Package 可以包含实验性的 `EventRecord`、`EventField`、输入内容类型和来源覆盖摘要 schema。
-- Audit Finding / Rule Packs 可以预留 `feedback_contamination`、`instruction_leakage`、`editorial_comment_leakage`、`low_factual_density`、`unsupported_business_advice` 等问题类型。
-- Run Manifest 可以记录事件数量、来源覆盖摘要和未来补搜统计字段，但这些字段在 v0.4 不得成为强制运行依赖。
+### 验收标准
 
-v0.5 正式消费这些契约：
+- 任意 runtime 执行后，`run_manifest.json` 完整记录 artifact 链。
+- CI 可以跑 `validate-handoff`，不依赖 LLM 判断。
+- Scout 拿不到非 evidence 文件列表。
 
-- Final Clean 阻断用户反馈、Prompt、版本说明、工作区配置和 Agent 过程信息进入 reader-facing 报告。
-- Audience Profiles 定义管理层、研究、IR、法务合规等读者需要的事实密度、禁用风格和 must-preserve facts。
-- Comparable Case Contract 要求可比案例说明具体事实、可比维度、不可比边界、适用性理由和本地待验证问题。
-- Source Coverage Report / `research_gaps.md` 区分直接本地来源、区域可比来源、全球背景来源、官方来源、社交讨论等覆盖情况。覆盖维度必须可配置，不能把越南、TikTok、Shopee、Lazada 等场景硬编码为核心能力。
-- 缺失事实必须显性化为 `not_found`、`not_disclosed`、`not_verified`、`conflicting` 或 `not_applicable`，不得由模型按常识补齐。
+---
 
-v0.5 之后的候选扩展：
+## v0.6.0：Quality Mainline
 
-- Event Family Registry 与 Event Completeness MVP：先覆盖 M&A、融资、IPO、重大投资、技术发布、专利/法院/法规事件等少量 public-safe 事件族。
-- Missing-Fact Search Planner：只允许一轮有预算上限的缺失字段补搜，不新增搜索后端，不做无限 recrawl。
-- Field-Level Provenance & Conflict Handling：关键数字、日期、地点、专利号、金额、产能和法规状态必须能追溯到字段级来源，并显式标记冲突。
-- Operating Data Hypothesis Framework：把订单取消、退款、支付失败、COD 拒收等经营问题表达为 `hypothesis`、`required_data`、`test_method`、`possible_action`、`confidence_level`，不能把缺数据的猜测写成已验证诊断。
+**目标**：解决 DOCX 质量差距暴露的问题。主线是质量，不是功能。
 
-## v0.5：Production Reference Workflow
+### 必须做
 
-目标：形成一个真实可用、可审计、可复现的高质量参考工作流。
+- **`analysis_blocks` 从旁路工具升级为正式 writer contract**：分析师写作时必须遵循结构化分析块模板，而不是自由写全文。
+- **强制区分 Fact / Case / Interpretation / Limitation / Action / To Verify**：Claim schema 升级 epistemic type 和 evidence relation 双维度。
+- **接入 Issue [#19](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/19)、[#41](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/41)、[#43](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/43)**。
+- **RelevanceGate 正式化**：决定哪些 claim 能进正文、摘要、附录或丢弃。
+- **DeliveryGate**：检查语言、读者匹配、主题相关性、实体相关性、章节完整性、英文泄漏、通用模板泄漏。
 
-详细执行拆分见 [v0.5.0 Implementation Plan](impl-plan-v0.5.0.md)。
+### 验收标准
 
-范围：
+- Analyst 不输出自由撰写全文，只输出结构化分析块。
+- 每份读者交付报告都经过 RelevanceGate + DeliveryGate。
+- DOCX/Markdown 输出在弱模型下不会出现章节空洞或模板泄漏。
+- 免费/弱模型只做局部受控任务（如提取 claim、写单段分析），不由单个 Prompt 一次写完整周报。
 
-- 冻结单一正式主路径：交互初始化 → 来源发现与确认 → doctor → scout → screener → claim-ledger → analyst → editor → auditor → finalize → Markdown / DOCX → Human Review。
-- Reference Workflow：一个维护者本地参考工作流，加一个 public-safe synthetic demo。
-- Audience Profiles：至少支持 management、research、IR、legal-compliance，并定义必需章节、禁用风格和审计要求。
-- DOCX 模板：支持 Executive Brief、Research Note、Formal Internal Report 三种模板，并做基础 layout validation。
-- Final Clean：最终交付文本必须清除内部过程残留、空引用、无效 Claim ID、模板变量、内部路径、不应出现的投资建议措辞、用户反馈污染和 meta 内容泄漏。
-- Editorial Governance：加入事实密度、must-preserve facts、可比案例适用性、研究缺口分离和来源覆盖质量门。
-- Policy & Regulatory Risk Module：作为第二个与竞对模块性质不同的 Analysis Module，用来验证模块接口通用性。
-- HistoryStore 基础接口：支持上一期 brief、上一期 claim ledger、entity history、repeat / novelty 检查；不引入复杂向量数据库。
-- Effort Budgets：`low` / `medium` / `high` / `xhigh` 只展开为搜索、来源、claim、语义审计、运行时间和模型调用预算。
+---
 
-完成标准：
+## v0.6.1 — v0.6.2：Evaluation And Golden Runs
 
-- 新用户可以按 README 跑通一次正式流程。
-- Reference Workflow 和 synthetic demo 都可复现。
-- Markdown 与 DOCX 都有发布级质量门。
-- Reader-facing 报告不会把用户反馈、Agent 过程说明、来源缺口说明或下期研究建议混入正式业务正文。
-- 至少两个性质不同的 Analysis Module 使用同一 Registry。
-- 历史信息进入新报告时不会伪装成当期事实。
+**目标**：能客观判断"质量有没有变好"。
 
-## v0.5.5：Hermes Adapter Layer
+### 必须做
 
-目标：把 Hermes 作为定时触发、日更采集和消息交付层接入 MABW，但不替代现有 source-grounded pipeline。
+- **建 5 类 golden workspace**：normal weekly、quiet week、sparse evidence、conflicting sources、feedback contamination。
+- **为每类保存 expected artifacts**（不包含真实私有材料）。
+- **质量指标**：relevance、claim coverage、unsupported statements、language match、reader depth、DOCX render fidelity。
+- **`mabw eval` 命令或 CI golden smoke**：不要求模型输出完全一致，但要求合同和质量门过线。
 
-详细执行计划见 [v0.5.5 Hermes Adapter Plan](impl-plan-v0.5.5-hermes-adapter.zh-CN.md)。
+### 验收标准
 
-范围：
+- `mabw eval --golden normal_weekly` 可以在 CI 跑。
+- 每次 PR 有质量回归信号，不是只看 pytest 通过。
 
-- Hermes Skill：提供 `multi-agent-brief-hermes` skill，说明 daily scout、weekly/monthly prepare/finalize、质量门和 reader-facing 规则。
-- Hermes Cron Plan：根据 workspace config 生成 daily scout、weekly brief、monthly brief 的 cron plan。
-- Daily Cache Contract：日报 job 将公开、可引用信号写入 `input/hermes_cache/YYYY-MM-DD.json`。
-- Cached Package 接线：`hermes sync-sources` 将 `cached_package` provider 接到 Hermes daily cache。
-- CLI 安装辅助：生成 Hermes skill、JSON/Markdown cron plan 和可复制的 `hermes cron create` 命令。
+---
 
-完成标准：
+## v0.7：Packaging And Distribution
 
-- 周报 + 月报需求会生成 daily scout + weekly brief + monthly brief 三段计划。
-- 每个 cron job 都显式附加 Hermes skill，并设置绝对 `--workdir`。
-- Hermes 输出必须经过 MABW doctor、prepare、audit/final gates 和 finalize，不能把 daily scout 直接当最终报告。
+**前提**：v0.5.8 的 package asset 问题已解决。
+
+### 必须做
+
+- **正式支持 curl / PowerShell / Homebrew 的升级路径**。
+- **`multi-agent-brief assets install --profile hermes|claude|opencode|codex`**：一键安装运行时适配器到目标平台。
+- **`multi-agent-brief assets doctor`**：检查已安装 assets 是否完整、版本是否匹配。
+- **Package resources 通过 `importlib.resources` 读取**：不依赖当前目录是 repo root。
+
+### 验收标准
+
+- `curl install.sh | bash` 安装后能 `multi-agent-brief assets install --profile hermes`。
+- `assets doctor` 输出完整性和版本检查报告。
+- Homebrew formula 指向最新版本且可正常安装。
+
+---
 
 ## v1.0：Stable Baseline
 
-目标：冻结现有顺序型 Pipeline，作为长期维护版本和 v2.0 MAS Runtime 的质量基线。
+**v1.0 不应是 MAS Runtime。** v1.0 应冻结以下基线：
 
-范围：
+- subagent-first handoff contract
+- Hermes primary path
+- input governance（inputs classify + hard gates）
+- RelevanceGate + DeliveryGate
+- golden eval baseline（5 类 workspace + 质量指标）
+- package/install story（curl / PowerShell / Homebrew / importlib.resources）
+- Support Matrix
 
-- Golden Dataset：至少包含 normal weekly、sparse market、conflicting sources、quiet week、high-risk input 五类 public-safe 数据集。
-- Benchmark Metrics：记录 source count、claim count、citation coverage、unsupported statements、high-risk findings、audit status、runtime、cost、artifact hashes。
-- Contract Compliance Tests：覆盖 SourceProvider、AnalysisModule、AuditAgent、OutputRenderer、DeliveryConnector。
-- Release Consistency Gate：检查 package version、CHANGELOG、README、Git tag、agent configs、schema versions 和 release notes。
-- Formal Support Matrix：明确 Supported / Experimental / Interface Only / Deprecated。
-- 建立 `v1-maintenance` 分支：只修 bug、治理漏洞、兼容性和文档，不做大架构重构。
+### 范围
 
-完成标准：
+- **Golden Dataset**：normal weekly、quiet week、sparse evidence、conflicting sources、feedback contamination 五类 public-safe 数据集。
+- **Benchmark Metrics**：source count、claim count、citation coverage、unsupported statements、high-risk findings、audit status、runtime、cost、artifact hashes。
+- **Contract Compliance Tests**：覆盖 SourceProvider、AnalysisModule、AuditAgent、OutputRenderer、DeliveryConnector。
+- **Release Consistency Gate**：package version、CHANGELOG、README、Git tag、agent configs、schema versions、release notes 一致。
+- **`v1-maintenance` 分支**：只修 bug、治理漏洞、兼容性和文档，不做大架构重构。
+
+### 完成标准
 
 - v1.0 可以从全新安装跑通正式支持能力。
 - v1.0 有稳定接口、基准数据和回归指标。
 - v1.0 可作为未来 MAS Runtime 的对照组和回退引擎。
-- README、Changelog、Git tag、schema version 和 agent configs 不再漂移。
 
-## v2.0：MAS Runtime 候选方向
+---
+
+## v2.0：MAS Runtime（推迟）
 
 v2.0 不应在 v1.0 前启动为主路径。v1.0 冻结后，可新建 `mas-runtime` / `v2` 分支探索真正 MAS。
 
-建议第一阶段只做 `mas-runtime-foundation`：
+建议第一阶段 `mas-runtime-foundation`：
 
-- Shared World / SQLite Event Store。
-- Typed Event / AgentMessage envelope。
-- TaskBoard、lease、task bidding 或最小 Contract Net。
-- AgentState / inbox cursor / capability registry。
-- ClaimProposal 状态机。
-- 确定性 ClaimReducer，将 proposal 转为正式 Claim Ledger。
-- Run replay 与 v1 Claim Ledger 兼容导出。
+- Shared World / SQLite Event Store
+- Typed Event / AgentMessage envelope
+- TaskBoard、lease、task bidding 或最小 Contract Net
+- AgentState / inbox cursor / capability registry
+- ClaimProposal 状态机
+- 确定性 ClaimReducer，将 proposal 转为正式 Claim Ledger
+- Run replay 与 v1 Claim Ledger 兼容导出
 
 暂不做：
 
-- 不迁移完整 Analyst / Editor / Auditor / Formatter。
-- 不做多服务器、Kafka、Redis 或复杂部署。
-- 不把所有 connector 和 analysis module 一次性迁移。
-- 不把 v2 作为 README 主路径。
+- 不迁移完整 Analyst / Editor / Auditor / Formatter
+- 不做多服务器、Kafka、Redis 或复杂部署
+- 不把所有 connector 和 analysis module 一次性迁移
+- 不把 v2 作为 README 主路径
 
 评估详见 [v2.0 MAS Runtime 重构评估](mas-v2-evaluation.zh-CN.md)。
 
+---
+
 ## 暂缓事项
 
-以下事项在 v1.0 前应谨慎控制范围，避免扩大重构成本：
+以下事项在 v1.0 前应谨慎控制范围：
 
-- 更多搜索后端和交付渠道。
-- 完整模型路由。
-- 完整 RAG / 长期记忆系统。
-- 大量专题模块。
-- 调度、多租户、团队权限和企业部署。
-- 未完成的 PDF / Email / Slack / Telegram 等能力。
+- 更多搜索后端和交付渠道
+- 完整模型路由
+- 完整 RAG / 长期记忆系统
+- 大量专题模块
+- 调度、多租户、团队权限和企业部署
+- 未完成的 PDF / Email / Slack / Telegram 等能力
 
 对于尚未稳定的能力，README 和 CLI 输出必须明确标记为 Experimental 或 Interface Only。

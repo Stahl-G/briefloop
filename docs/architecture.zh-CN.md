@@ -1,130 +1,116 @@
 # 架构说明
 
-这个项目可以理解成一个用于研究简报和管理层简报的小型编辑台。一个 prompt 可以生成文字，但可靠的 brief 需要把信息发现、证据记录、分析写作、事实审计、编辑和输出拆开。
+这个项目是一个 subagent-first 简报工作流：Python CLI 负责工作区管理、来源治理、质量门控和最终渲染；AI agent runtime 通过 handoff artifact 协调角色子智能体执行简报生成。
 
 ## 核心流程
 
 ```mermaid
 flowchart LR
-  A["输入<br/>Markdown、文本、JSON"] --> B["Scout<br/>信息侦察员"]
-  B --> C["Screener<br/>筛选师"]
-  C --> D["Claim Ledger<br/>事实账本"]
-  D --> E["Analyst<br/>分析员"]
-  E --> F["Editor<br/>编辑"]
-  F --> G["Auditor<br/>审计员"]
-  G --> H["Formatter<br/>格式转换器"]
-  H --> I["输出<br/>Brief、Claim Ledger、Audit Report、Source Map"]
+  A["用户需求<br/>onboarding + init"] --> B["来源治理<br/>sources decide + doctor + inputs classify"]
+  B --> C["Scout<br/>信息侦察员"]
+  C --> D["Screener<br/>筛选师"]
+  D --> E["Claim Ledger<br/>事实账本"]
+  E --> F["Analyst<br/>分析员"]
+  F --> G["Editor<br/>编辑"]
+  G --> H["Auditor<br/>审计员"]
+  H --> I["Formatter / finalize<br/>格式转换器"]
+  I --> J["输出<br/>brief.md, brief.docx,<br/>claim_ledger.json, audit_report.json"]
 ```
+
+灰底步骤（来源治理、finalize）由 Python CLI 执行；白底步骤（Scout → Auditor）由 runtime 子智能体按 handoff artifact 执行。
+
+## 运行时
+
+### Hermes（主路径）
+
+Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → claim-ledger → analyst → editor → auditor。Python CLI 提供 init、doctor、inputs classify、finalize 工具；cron 处理定时调度。
+
+### Claude Code / OpenCode / Codex
+
+通过 `multi-agent-brief run --workspace <path> --runtime claude|opencode|codex` 生成 `agent_handoff.md`，由对应平台的斜杠命令和子智能体配置执行。
+
+## 输入治理
+
+`input/` 下有四个约定子目录：
+
+| 目录 | 角色 | 是否进入 Claim Ledger |
+|---|---|---|
+| `input/sources/` | 证据文件 | ✅ |
+| `input/feedback/` | 编辑反馈 | ❌ |
+| `input/instructions/` | 任务要求 | ❌ |
+| `input/context/` | 背景参考 | ❌ |
+
+`multi-agent-brief inputs classify --config <path>` 自动分类并产出 `input_classification.json`。Scout 被约束只从 `input/sources/` 和 `input/` 根目录（向后兼容）提取声明。ManualProvider 代码层阻止非证据目录作为 source。
 
 ## 各角色职责
 
 ### Scout 信息侦察员
 
-Scout 负责读取来源、抽取候选事项，并把它们转成 claim。Scout 的职责是发现可用信号，不负责写最终分析。
-
-在 MVP 中，Scout 读取本地 `.md`、`.txt` 和 `.json` 文件。未来 SEC filing、RSS、API 或其他公开安全输入，都可以接入同一步。
+读取证据文件、来源包、搜索输出，抽取候选可报告事项，写入 `candidate_claims.json`。不负责分析写作。
 
 ### Screener 筛选师
 
-Screener 按新颖度、来源层级、主题容量和历史重复情况筛选候选 claim。它和 Scout、Claim Ledger 分离，因此筛选策略可以调整，而不影响来源读取或证据存储。
+按新颖度、来源层级、主题容量、历史重复筛选候选声明，写入 `screened_candidates.json`。
 
 ### Claim Ledger 事实账本
 
-Claim Ledger 是整个流程的控制点。简报中的重要事实、数字、日期、风险和判断，都应该能追溯到一个 claim。
-
-这也是本项目和普通总结器的区别：草稿不是单纯的文字，而是有证据记录支撑的文字。
+将筛选后候选转为稳定、可追溯的 claim，写入 `claim_ledger.json`。每个 claim 有唯一 ID、证据文本、来源引用。这是整个流程的控制点：重要表述必须能追溯到 claim。
 
 ### Analyst 分析员
 
-Analyst 只使用 Claim Ledger 中的 claim 来写草稿。在 MVP 中，这一步是确定性的，会生成带 `[src:CLAIM_ID]` 引用的 Markdown 章节。
-
-未来如果接入模型写作，也应保持同一条规则：重要表述必须有 claim ID。
+只使用 Claim Ledger 中的 claim 写草稿，生成带 `[src:CLAIM_ID]` 引用的 `audited_brief.md`。不写投资建议，不编造事实。
 
 ### Editor 编辑
 
-Editor 改善结构、可读性和分发前表达。Editor 不能发明新事实、添加无支撑数字，也不能掩盖审计失败。
+改善结构、可读性和管理层表达。不发明新事实、不添加无支撑数字。清除 `[SRC:]` 等过程残留，保留有效 `[src:CLAIM_ID]`。
 
 ### Auditor 审计员
 
-Auditor 检查引用和来源支撑。MVP 已经包含确定性审计和公开安全的质量门控。未来的语义审计适配器可以使用 LLM 或本地模型，把草稿和来源证据进行对照。
+检查引用支撑、来源新鲜度、数字准确性、投资建议措辞、敏感信息泄漏、过程残留。委托给 `CompositeAuditAgent`（`DeterministicAuditAgent` + `QualityHarnessAuditAgent` + 可选 `SemanticAuditAgent`），写入 `audit_report.json`。
 
-对于周报，确定性审计可以强制检查报告时间窗口：
+### Formatter / finalize
 
-```yaml
-report:
-  date: "2026-06-02"
-  max_source_age_days: 14
-  fail_on_stale_source: true
-```
+`multi-agent-brief finalize` 从 `audited_brief.md` 生成 reader-facing 输出，剥离 `[src:CLAIM_ID]`，渲染 Markdown/DOCX。
 
-超过窗口的来源会被标记为 `stale_source`；在严格模式下，它会成为高严重度问题。
+## 质量门控
 
-auditor subagent 会委托给 `AuditAgentInterface` 后端：
+| 门控 | 位置 | 简述 |
+|---|---|---|
+| Doctor | `sources/doctor.py` | 来源配置健康检查 |
+| Inputs Classify | `cli/input_commands.py` | 输入文件角色分类 |
+| Deterministic Audit | `audit/deterministic.py` | 引用完整性、来源新鲜度 |
+| Editorial Governance | `audit/editorial_governance.py` | 事实密度、必须保留事实、读者匹配 |
+| Final Quality | `audit/final_quality.py` | 发布前最终文本清理 |
+| Limitation Hygiene | `audit/limitation_hygiene.py` | 局限性声明的完整性和准确性 |
 
-```text
-auditor subagent
-  -> CompositeAuditAgent
-       -> DeterministicAuditAgent
-       -> QualityHarnessAuditAgent
-       -> optional SemanticAuditAgent
-```
+## 分析模块
 
-这样可以保持工作流中的审计步骤稳定，同时替换不同审计实现。
+| 模块 | 位置 |
+|---|---|
+| Market Competitor | `analysis_modules/market_competitor/` |
+| Policy & Regulatory | `analysis_modules/policy_regulatory/` |
 
-### Formatter 格式转换器
+两个模块通过同一 `analysis_modules/registry.py` 注册，验证模块接口通用性。
 
-Formatter 负责写出文件，不应改变简报实质内容。
+## 能力状态
 
-当前输出包括：
-
-- `brief.md`：给人阅读的 Markdown，已移除内部 claim ID
-- `{配置命名}.md`：可选的具名交付副本，由 `output.named_outputs` 启用
-- `intermediate/audited_brief.md`：带 `[src:CLAIM_ID]` 的审计版本
-- `intermediate/claim_ledger.json`
-- `intermediate/audit_report.json`
-- `intermediate/source_map.md`
-
-默认文件名模板是 `{project_name}_{report_date}`，也支持 `company`、`industry`、`cadence`、`language` 等项目和报告字段。
-
-## 迁移方向
-
-以下能力应作为 clean-room、public-safe 模块逐步实现：
-
-- DOCX 输出
-- PDF 输出
-- 飞书分发
-- Slack 分发
-- Email 分发
-- SEC filing 连接器
-- RSS 连接器
-- API 连接器
-
-每项迁移都应包含：
-
-- 公开接口
-- 合成或公开样例数据
-- 不包含凭据
-- 测试
-- 文档
-
-## 当前仅接口模块
-
-仓库中已经包含以下仅接口迁移轨道：
-
-```text
-connectors/
-  sec.py
-  rss.py
-  api.py
-
-delivery/
-  feishu.py
-  slack.py
-  email.py
-
-outputs/
-  docx.py
-  pdf.py
-```
-
-它们在 MVP 中刻意保持禁用或未实现状态。真实实现应只使用公开或合成示例。
+| 能力 | 状态 |
+|---|---|
+| Claude Code subagent workflow | Supported |
+| OpenCode subagent workflow | Supported |
+| Codex subagent workflow | Supported |
+| Hermes adapter | Supported |
+| Manual source (md/txt/json) | Supported |
+| Web search (Tavily/Exa/Brave/Firecrawl/Serper) | Supported |
+| RSS | Supported |
+| SEC Filing resolver | Supported |
+| MinerU document parsing | Experimental |
+| Local signal discovery | Experimental |
+| OpenCLI provider | CLI-only |
+| DOCX output | Supported |
+| PDF output | Experimental |
+| Feishu delivery | Experimental |
+| Slack delivery | Interface Only |
+| Email delivery | Interface Only |
+| Homebrew formula | CLI-only |
+| curl installer | CLI-only |

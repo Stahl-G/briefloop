@@ -1,130 +1,116 @@
 # Architecture
 
-This project is designed like a small editorial desk for research and management briefs. One prompt can produce text, but a reliable brief needs separate responsibilities for discovery, evidence logging, analysis, audit, editing, and output.
+A subagent-first briefing workflow. The Python CLI manages workspaces, source governance, quality gates, and final rendering. AI agent runtimes coordinate role-specific subagents through handoff artifacts.
 
-## Core Workflow
+## Core Pipeline
 
 ```mermaid
 flowchart LR
-  A["Inputs<br/>Markdown, text, JSON"] --> B["Scout"]
-  B --> C["Screener"]
-  C --> D["Claim Ledger"]
-  D --> E["Analyst"]
-  E --> F["Editor"]
-  F --> G["Auditor"]
-  G --> H["Formatter"]
-  H --> I["Outputs<br/>Brief, Claim Ledger, Audit Report, Source Map"]
+  A["User Requirements<br/>onboarding + init"] --> B["Source Governance<br/>sources decide + doctor + inputs classify"]
+  B --> C["Scout"]
+  C --> D["Screener"]
+  D --> E["Claim Ledger"]
+  E --> F["Analyst"]
+  F --> G["Editor"]
+  G --> H["Auditor"]
+  H --> I["Formatter / finalize"]
+  I --> J["Output<br/>brief.md, brief.docx,<br/>claim_ledger.json, audit_report.json"]
 ```
 
-## Agent Responsibilities
+Gray steps (source governance, finalize) run via Python CLI. White steps (Scout → Auditor) run via runtime subagents following the handoff artifact.
+
+## Runtimes
+
+### Hermes (Primary)
+
+Hermes uses `delegate_task` native child pipelines: scout → screener → claim-ledger → analyst → editor → auditor. Python CLI tools handle init, doctor, inputs classify, and finalize. Cron handles durable scheduling.
+
+### Claude Code / OpenCode / Codex
+
+`multi-agent-brief run --workspace <path> --runtime claude|opencode|codex` generates `agent_handoff.md`, executed by platform slash commands and subagent configs.
+
+## Input Governance
+
+Four convention directories under `input/`:
+
+| Directory | Role | Enters Claim Ledger? |
+|---|---|---|
+| `input/sources/` | Evidence files | ✅ |
+| `input/feedback/` | Editorial feedback | ❌ |
+| `input/instructions/` | Task requirements | ❌ |
+| `input/context/` | Background reference | ❌ |
+
+`multi-agent-brief inputs classify --config <path>` auto-classifies and produces `input_classification.json`. Scout is constrained to only extract claims from `input/sources/` and `input/` root (backward compatible). ManualProvider blocks non-evidence directories at the code level.
+
+## Role Responsibilities
 
 ### Scout
 
-Scout loads sources, extracts candidate reportable items, and turns them into claims. Scout is responsible for finding usable signals, not for writing the final narrative.
-
-In the MVP, Scout reads local `.md`, `.txt`, and `.json` files. Future connectors can feed the same step from SEC filings, RSS feeds, APIs, or other public-safe inputs.
+Reads evidence files, source packages, and search outputs. Extracts candidate reportable items into `candidate_claims.json`. Does not draft analysis.
 
 ### Screener
 
-Screener filters and ranks candidate claims by novelty, source tier, topic capacity, and previous-report duplication. It is separate from Scout and Claim Ledger so screening policy can change without changing source loading or evidence storage.
+Filters and ranks candidates by novelty, source tier, topic caps, and historical overlap. Writes `screened_candidates.json`.
 
 ### Claim Ledger
 
-The Claim Ledger is the control point of the workflow. Every material fact, number, date, risk, or interpretation that appears in the brief should be traceable to a claim.
-
-This keeps the project different from a generic summarizer: the draft is not just text, it is text backed by recorded evidence.
+Converts screened candidates into stable, traceable claims with unique IDs and evidence text. Writes `claim_ledger.json`. Every important statement must trace to a claim.
 
 ### Analyst
 
-Analyst drafts the brief using only Claim Ledger claims. In the MVP, this step is deterministic and writes Markdown sections with `[src:CLAIM_ID]` citations.
-
-Future model-backed analysts should keep the same rule: if a statement matters, it needs a claim ID.
+Drafts brief sections using only Claim Ledger claims. Writes `audited_brief.md` with `[src:CLAIM_ID]` citations. No investment advice, no invented facts.
 
 ### Editor
 
-Editor improves structure, readability, and distribution polish. Editor must not invent new facts, add unsupported numbers, or hide audit failures.
+Improves structure, readability, and executive tone. Removes process residue (`[SRC:]` etc.), preserves valid `[src:CLAIM_ID]` citations. No new facts.
 
 ### Auditor
 
-Auditor checks references and source support. The MVP includes deterministic audit and a public-safe quality harness. A future semantic audit adapter can compare the draft against source evidence using an LLM or local model.
+Checks citation support, source freshness, number accuracy, investment advice language, sensitive info leakage, and process residue. Delegates to `CompositeAuditAgent` (`DeterministicAuditAgent` + `QualityHarnessAuditAgent` + optional `SemanticAuditAgent`). Writes `audit_report.json`.
 
-For weekly briefs, deterministic audit can enforce a reporting window:
+### Formatter / finalize
 
-```yaml
-report:
-  date: "2026-06-02"
-  max_source_age_days: 14
-  fail_on_stale_source: true
-```
+`multi-agent-brief finalize` generates reader-facing output from `audited_brief.md`, stripping `[src:CLAIM_ID]` markers, rendering Markdown/DOCX.
 
-Sources older than the configured window are flagged as `stale_source`; in strict mode they become high-severity findings.
+## Quality Gates
 
-The auditor subagent delegates to an `AuditAgentInterface` backend:
+| Gate | Location |
+|---|---|
+| Doctor | `sources/doctor.py` |
+| Inputs Classify | `cli/input_commands.py` |
+| Deterministic Audit | `audit/deterministic.py` |
+| Editorial Governance | `audit/editorial_governance.py` |
+| Final Quality | `audit/final_quality.py` |
+| Limitation Hygiene | `audit/limitation_hygiene.py` |
 
-```text
-auditor subagent
-  -> CompositeAuditAgent
-       -> DeterministicAuditAgent
-       -> QualityHarnessAuditAgent
-       -> optional SemanticAuditAgent
-```
+## Analysis Modules
 
-This separation lets the workflow keep one stable audit step while swapping audit implementations.
+| Module | Location |
+|---|---|
+| Market Competitor | `analysis_modules/market_competitor/` |
+| Policy & Regulatory | `analysis_modules/policy_regulatory/` |
 
-### Formatter
+Both registered via `analysis_modules/registry.py`.
 
-Formatter writes output files. It should not change the substance of the brief.
+## Capability Status
 
-Current outputs:
-
-- `brief.md`: reader-facing Markdown with internal claim IDs removed
-- `{configured_name}.md`: optional named reader-facing copy, enabled by `output.named_outputs`
-- `intermediate/audited_brief.md`: audited Markdown with `[src:CLAIM_ID]` citations
-- `intermediate/claim_ledger.json`
-- `intermediate/audit_report.json`
-- `intermediate/source_map.md`
-
-The default filename template is `{project_name}_{report_date}` and supports project/report tokens such as `company`, `industry`, `cadence`, and `language`.
-
-## Migration Tracks
-
-The following capability tracks should be implemented as clean-room, public-safe modules:
-
-- DOCX output
-- PDF output
-- Feishu delivery
-- Slack delivery
-- Email delivery
-- SEC filing connector
-- RSS connector
-- API connector
-
-Each migration should include:
-
-- A public interface
-- Synthetic or public sample data
-- No credentials
-- Tests
-- Documentation
-
-## Current Interface-Only Modules
-
-The repo includes interface-only migration tracks:
-
-```text
-connectors/
-  sec.py
-  rss.py
-  api.py
-
-delivery/
-  feishu.py
-  slack.py
-  email.py
-
-outputs/
-  docx.py
-  pdf.py
-```
-
-They are deliberately disabled or non-operational in the MVP. Real implementations should be added with public or synthetic examples only.
+| Capability | Status |
+|---|---|
+| Claude Code subagent workflow | Supported |
+| OpenCode subagent workflow | Supported |
+| Codex subagent workflow | Supported |
+| Hermes adapter | Supported |
+| Manual source (md/txt/json) | Supported |
+| Web search (Tavily/Exa/Brave/Firecrawl/Serper) | Supported |
+| RSS | Supported |
+| SEC Filing resolver | Supported |
+| MinerU document parsing | Experimental |
+| Local signal discovery | Experimental |
+| OpenCLI provider | CLI-only |
+| DOCX output | Supported |
+| PDF output | Experimental |
+| Feishu delivery | Experimental |
+| Slack delivery | Interface Only |
+| Email delivery | Interface Only |
+| Homebrew formula | CLI-only |
+| curl installer | CLI-only |

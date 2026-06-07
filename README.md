@@ -589,9 +589,9 @@ Hermes 适配层提供原生 `delegate_task` 子代理管线（scout → screene
 
 CLI 重构为 thin router（main.py 1512→134 行）。生成器收敛为纯平台适配器（codex/claude/docs/opencode），不再生成 AGENTS.md 或 .agents/skills。17 个 SKILL.md 重写为 Anthropic Skills 格式（Scope/Purpose/Use When/Inputs/Outputs/Work/Handoff）。Hermes skill 采用渐进式披露（references/ 目录）。Formatter 角色更新为 reader-facing finalize 语义。
 
-### v1.0：Stable Baseline
+### 下一阶段
 
-建立 Golden Dataset、Benchmark Metrics、Contract Compliance Tests、Release Consistency Gate 和正式支持矩阵。v1.0 将作为未来 MAS Runtime 的参考引擎、回退引擎和质量对照组。
+v0.5.8 → 发布与运行时合同清理；v0.5.9 → 运行时 artifact contract 与 RelevanceGate；v0.6.0 → Quality Mainline（分析块正式化 + 质量门主线）；v0.6.x → Golden Runs 与评估基线；v0.7 → 打包与分发；v1.0 → 冻结 stable baseline。详见 [路线图](docs/roadmap.zh-CN.md)。
 
 ### v2.0：MAS Runtime 候选方向
 
