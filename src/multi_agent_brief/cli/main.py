@@ -59,22 +59,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="multi-agent-brief")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser(
-        "run",
-        help="Deprecated — use the subagent-first /generate-brief workflow instead.",
-    )
-    run_parser.add_argument("input_dir", nargs="?", help="[ignored]")
-    run_parser.add_argument("--config", help="[ignored]")
-    run_parser.add_argument("--output", help="[ignored]")
-    run_parser.add_argument("--name", help="[ignored]")
-    run_parser.add_argument("--language")
-    run_parser.add_argument("--audience")
-    run_parser.add_argument("--industry", help="[ignored]")
-    run_parser.add_argument("--days", type=int, help="[ignored]")
+    # run — standard runtime handoff launcher
+    run_parser = subparsers.add_parser("run", help="Run a workspace through the selected agent runtime handoff.")
+    run_parser.add_argument("--workspace", help="Path to workspace directory.")
+    run_parser.add_argument("--config", help="Path to workspace config.yaml (convenience alias for --workspace).")
+    run_parser.add_argument("--runtime", default="auto", choices=list(VALID_RUNTIMES),
+                            help="Target runtime for handoff (default: auto, resolves to hermes).")
+    run_parser.add_argument("--repo-workdir", help="Repository workdir (default: current directory).")
+    run_parser.add_argument("--venv", help="Virtual env path (default: auto-detect).")
+    run_parser.add_argument("--skip-doctor", action="store_true", help="Skip doctor check.")
 
+    # Legacy commands
     prepare_parser = subparsers.add_parser(
         "prepare",
-        help="Deprecated — Python no longer runs the brief workflow. Use /generate-brief <workspace>.",
+        help="[legacy] Replaced by 'multi-agent-brief run'.",
     )
     prepare_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
     prepare_parser.add_argument("--input", help="Override input directory.")
@@ -218,10 +216,10 @@ def build_parser() -> argparse.ArgumentParser:
     hermes_prompt.add_argument("--venv", help="Virtual env path (default: <repo>/.venv/{bin,Scripts}/activate).")
 
     # start — unified launcher (never generates brief)
-    start_parser = subparsers.add_parser("start", help="Unified launcher: init, doctor, and runtime handoff. Never generates a brief.")
+    start_parser = subparsers.add_parser("start", help="Alias for run: create runtime handoff for the current agent.")
     start_parser.add_argument("--workspace", help="Path to workspace directory.")
-    start_parser.add_argument("--runtime", default="hermes", choices=list(VALID_RUNTIMES),
-                              help="Target runtime for handoff (default: hermes).")
+    start_parser.add_argument("--runtime", default="auto", choices=list(VALID_RUNTIMES),
+                              help="Target runtime for handoff (default: auto, resolves to hermes).")
     start_parser.add_argument("--repo-workdir", help="Repository workdir (default: current directory).")
     start_parser.add_argument("--venv", help="Virtual env path (default: auto-detect).")
     start_parser.add_argument("--skip-doctor", action="store_true", help="Skip doctor check.")
@@ -229,8 +227,8 @@ def build_parser() -> argparse.ArgumentParser:
     # handoff — generate handoff artifact directly
     handoff_parser = subparsers.add_parser("handoff", help="Generate a runtime handoff artifact from a workspace config.")
     handoff_parser.add_argument("--config", required=True, help="Path to workspace config.yaml.")
-    handoff_parser.add_argument("--runtime", default="hermes", choices=list(VALID_RUNTIMES),
-                                help="Target runtime for handoff (default: hermes).")
+    handoff_parser.add_argument("--runtime", default="auto", choices=list(VALID_RUNTIMES),
+                                help="Target runtime for handoff (default: auto, resolves to hermes).")
     handoff_parser.add_argument("--repo-workdir", help="Repository workdir (default: current directory).")
     handoff_parser.add_argument("--venv", help="Virtual env path (default: auto-detect).")
     handoff_parser.add_argument("--skip-doctor", action="store_true", help="Skip doctor check.")
@@ -638,35 +636,62 @@ def run_setup_from_args(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_pipeline_from_args(args: argparse.Namespace) -> int:
-    print("[deprecated] multi-agent-brief run no longer runs the brief workflow.")
-    print("MABW is subagent-first. Use /generate-brief <workspace> so external")
-    print("Scout/Screener/Claim Ledger/Analyst/Editor/Auditor/Formatter subagents")
-    print("execute the workflow.")
-    print("")
-    print("Python CLI commands remain available for tools such as:")
-    print("  multi-agent-brief init")
-    print("  multi-agent-brief doctor --config <workspace>/config.yaml")
-    print("  multi-agent-brief sources decide --config <workspace>/config.yaml")
-    print("  multi-agent-brief audit <brief.md> --ledger <claim_ledger.json>")
-    print("  multi-agent-brief finalize --config <workspace>/config.yaml")
-    return 1
+def _resolve_workspace(args: argparse.Namespace) -> Path | None:
+    """Resolve workspace path from --workspace, --config, or CWD auto-detect."""
+    workspace = getattr(args, "workspace", None)
+    config_path = getattr(args, "config", None)
+
+    if config_path and not workspace:
+        cp = Path(config_path).resolve()
+        if cp.is_file():
+            workspace = str(cp.parent)
+        elif cp.is_dir():
+            workspace = str(cp)
+
+    if not workspace:
+        cwd = Path.cwd()
+        if (cwd / "config.yaml").exists() and (cwd / "user.md").exists():
+            workspace = str(cwd)
+
+    if not workspace:
+        return None
+
+    ws_path = Path(workspace).resolve()
+    if not (ws_path / "config.yaml").exists():
+        return None
+    return ws_path
+
+
+def run_launcher_from_args(args: argparse.Namespace) -> int:
+    """run — standard runtime handoff launcher."""
+    repo_workdir = Path(args.repo_workdir).resolve() if getattr(args, "repo_workdir", None) else Path.cwd().resolve()
+    prefix = "[start]" if getattr(args, "command", None) == "start" else "[run]"
+
+    workspace_path = _resolve_workspace(args)
+    if workspace_path is None:
+        print(f"{prefix} No workspace found.")
+        print(f"{prefix} Create one with: multi-agent-brief init <path>")
+        print(f"{prefix} Or pass --workspace <path> to use an existing workspace.")
+        return 1
+
+    handoff = build_handoff(
+        workspace=workspace_path,
+        repo_workdir=repo_workdir,
+        runtime=args.runtime,
+        venv=getattr(args, "venv", None),
+        run_doctor=not getattr(args, "skip_doctor", False),
+    )
+
+    md_path, json_path = write_handoff_artifacts(handoff, workspace_path)
+    print(render_handoff_cli(handoff))
+    print(f"{prefix} Handoff written: {md_path}")
+    print(f"{prefix} Handoff JSON:  {json_path}")
+    return 0
 
 
 def run_prepare_from_args(args: argparse.Namespace) -> int:
-    """Deprecated wrapper for the removed Python brief-generation pipeline."""
-    print("[deprecated] prepare no longer runs the brief workflow.")
-    print("MABW is subagent-first. Python does not orchestrate Scout/Screener/")
-    print("Analyst/Editor/Auditor/Formatter as a runtime pipeline.")
-    print("")
-    print("Use /generate-brief <workspace> so external subagents execute:")
-    print("  Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter")
-    print("")
-    print("Python CLI commands remain available as deterministic tools:")
-    print("  multi-agent-brief doctor --config <workspace>/config.yaml")
-    print("  multi-agent-brief sources decide --config <workspace>/config.yaml")
-    print("  multi-agent-brief audit <brief.md> --ledger <claim_ledger.json>")
-    print("  multi-agent-brief finalize --config <workspace>/config.yaml")
+    """[legacy] prepare — replaced by the runtime handoff launcher."""
+    print("[legacy] prepare has been replaced by: multi-agent-brief run --workspace <workspace>")
     return 1
 
 
@@ -829,8 +854,8 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
         target = Path(args.target)
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
-        print(f"Next: multi-agent-brief start --workspace {target}")
-        print(f"  or: multi-agent-brief hermes prompt --config {target}/config.yaml")
+        print(f"Next: multi-agent-brief run --workspace {target}")
+        print(f"Hermes prompt: multi-agent-brief hermes prompt --config {target}/config.yaml")
         return 0
 
     from_onboarding = getattr(args, "from_onboarding", None)
@@ -1332,39 +1357,8 @@ def run_hermes_from_args(args: argparse.Namespace) -> int:
 
 
 def run_start_from_args(args: argparse.Namespace) -> int:
-    """start — unified launcher. Never generates a brief."""
-    repo_workdir = Path(args.repo_workdir).resolve() if getattr(args, "repo_workdir", None) else Path.cwd().resolve()
-
-    workspace = getattr(args, "workspace", None)
-    if not workspace:
-        cwd = Path.cwd()
-        if (cwd / "config.yaml").exists() and (cwd / "user.md").exists():
-            workspace = str(cwd)
-        else:
-            print("[start] No workspace found.")
-            print("[start] Create one with: multi-agent-brief init <path>")
-            print("[start] Or pass --workspace <path> to use an existing workspace.")
-            return 1
-
-    workspace_path = Path(workspace).resolve()
-    if not (workspace_path / "config.yaml").exists():
-        print(f"[start] Not a workspace (no config.yaml): {workspace_path}")
-        print("[start] Create one with: multi-agent-brief init <path>")
-        return 1
-
-    handoff = build_handoff(
-        workspace=workspace_path,
-        repo_workdir=repo_workdir,
-        runtime=args.runtime,
-        venv=getattr(args, "venv", None),
-        run_doctor=not getattr(args, "skip_doctor", False),
-    )
-
-    md_path, json_path = write_handoff_artifacts(handoff, workspace_path)
-    print(render_handoff_cli(handoff))
-    print(f"[start] Handoff written: {md_path}")
-    print(f"[start] Handoff JSON:  {json_path}")
-    return 0
+    """start — alias for run."""
+    return run_launcher_from_args(args)
 
 
 def run_handoff_from_args(args: argparse.Namespace) -> int:
@@ -1396,7 +1390,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        return run_pipeline_from_args(args)
+        return run_launcher_from_args(args)
     if args.command == "prepare":
         return run_prepare_from_args(args)
     if args.command == "audit":

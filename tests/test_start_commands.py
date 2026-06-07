@@ -304,7 +304,11 @@ def test_build_handoff_all_runtimes_valid(tmp_path):
             runtime=runtime,
             run_doctor=False,
         )
-        assert handoff.runtime == runtime
+        # auto resolves to hermes in v0.5.5
+        if runtime == "auto":
+            assert handoff.runtime == "hermes"
+        else:
+            assert handoff.runtime == runtime
         assert len(handoff.expected_artifacts) >= 2
         assert len(handoff.prompt) > 50
 
@@ -344,3 +348,77 @@ def test_render_handoff_cli_contains_runtime(tmp_path):
     output = render_handoff_cli(handoff)
     assert "opencode" in output
     assert str(ws.resolve()) in output
+
+
+# ---------------------------------------------------------------------------
+# run command — launcher identity
+# ---------------------------------------------------------------------------
+
+def test_run_help_does_not_contain_deprecated(capsys):
+    """run --help must not contain deprecated/prepare/deterministic pipeline language."""
+    try:
+        main(["run", "--help"])
+    except SystemExit:
+        pass
+    output = capsys.readouterr().out
+    assert "deprecated" not in output.lower()
+    assert "deterministic pipeline" not in output.lower()
+    assert "never generates" not in output.lower()
+
+
+def test_run_default_auto_resolves_to_hermes(tmp_path):
+    """Default run (--runtime auto) must resolve to hermes handoff."""
+    ws = _write_workspace(tmp_path)
+    rc = main([
+        "run",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    assert data["runtime"] == "hermes"
+    assert "delegate_task" in data["prompt"]
+    assert "/generate-brief" not in data["prompt"]
+
+
+def test_run_claude_contains_generate_brief(tmp_path):
+    """run --runtime claude must contain /generate-brief."""
+    ws = _write_workspace(tmp_path)
+    rc = main([
+        "run",
+        "--workspace", str(ws),
+        "--runtime", "claude",
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    assert "/generate-brief" in data["prompt"]
+
+
+def test_run_does_not_generate_brief(tmp_path):
+    """run must NOT generate brief.md or claim_ledger.json."""
+    ws = _write_workspace(tmp_path)
+    rc = main([
+        "run",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+    assert not (ws / "output" / "brief.md").exists()
+    assert not (ws / "output" / "intermediate" / "claim_ledger.json").exists()
+
+
+def test_prepare_output_points_to_run(capsys):
+    """prepare must only point to multi-agent-brief run, nothing else."""
+    try:
+        main(["prepare", "--config", "/tmp/nonexistent/config.yaml"])
+    except SystemExit:
+        pass
+    output = capsys.readouterr().out + capsys.readouterr().err
+    assert "multi-agent-brief run --workspace <workspace>" in output
+    assert "/generate-brief" not in output
+    assert "Python pipeline" not in output
+    assert "deterministic pipeline" not in output

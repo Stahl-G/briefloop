@@ -199,14 +199,14 @@ class TestRunTavilyGuidance:
             "--tavily",
         ]) == 0
 
-        exit_code = main(["run", "--config", str(ws / "config.yaml")])
+        exit_code = main(["run", "--config", str(ws / "config.yaml"), "--skip-doctor"])
         captured = capsys.readouterr()
-        assert exit_code == 1
-        assert "no longer runs the brief workflow" in captured.out
-        assert "/generate-brief" in captured.out
+        assert exit_code == 0
+        assert "Runtime:" in captured.out
+        assert "delegate_task" in captured.out or "hermes" in captured.out.lower()
 
     def test_run_surfaces_exa_missing_key_error(self, tmp_path, monkeypatch, capsys):
-        """run command redirects to subagent workflow regardless of backend."""
+        """run command creates a handoff regardless of search backend."""
         import yaml
 
         monkeypatch.delenv("EXA_API_KEY", raising=False)
@@ -238,8 +238,8 @@ class TestRunTavilyGuidance:
         sources["web_search"] = {"enabled": True, "backend": "exa"}
         sources_path.write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
 
-        exit_code = main(["run", "--config", str(ws / "config.yaml")])
+        exit_code = main(["run", "--config", str(ws / "config.yaml"), "--skip-doctor"])
         captured = capsys.readouterr()
-        assert exit_code == 1
-        assert "no longer runs the brief workflow" in captured.out
-        assert "subagent" in captured.out.lower() or "/generate-brief" in captured.out
+        assert exit_code == 0
+        assert "Runtime:" in captured.out
+        assert "delegate_task" in captured.out or "hermes" in captured.out.lower()

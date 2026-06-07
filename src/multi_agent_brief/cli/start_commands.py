@@ -15,12 +15,14 @@ from pathlib import Path
 from typing import Any
 
 
+RUNTIME_AUTO = "auto"
 RUNTIME_HERMES = "hermes"
 RUNTIME_CLAUDE = "claude"
 RUNTIME_OPENCODE = "opencode"
 RUNTIME_CODEX = "codex"
 RUNTIME_MANUAL = "manual"
-VALID_RUNTIMES = (RUNTIME_HERMES, RUNTIME_CLAUDE, RUNTIME_OPENCODE, RUNTIME_CODEX, RUNTIME_MANUAL)
+VALID_RUNTIMES = (RUNTIME_AUTO, RUNTIME_HERMES, RUNTIME_CLAUDE, RUNTIME_OPENCODE, RUNTIME_CODEX, RUNTIME_MANUAL)
+RUNTIME_RESOLVED = {RUNTIME_AUTO: RUNTIME_HERMES}  # auto resolves to hermes in v0.5.5
 
 
 @dataclass
@@ -251,10 +253,13 @@ def build_handoff(
     repo = Path(repo_workdir).resolve()
     venv_activate = venv or _find_venv_activate(repo)
 
-    if runtime not in _HANDOFF_BUILDERS:
+    # resolve auto -> hermes in v0.5.5
+    resolved = RUNTIME_RESOLVED.get(runtime, runtime)
+
+    if resolved not in _HANDOFF_BUILDERS:
         raise ValueError(f"Unknown runtime '{runtime}'. Valid: {', '.join(VALID_RUNTIMES)}")
 
-    builder = _HANDOFF_BUILDERS[runtime]
+    builder = _HANDOFF_BUILDERS[resolved]
     handoff = builder(ws, repo, venv_activate)
 
     if run_doctor:

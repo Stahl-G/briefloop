@@ -87,17 +87,19 @@ def test_cli_version(capsys):
     assert captured.out.strip()
 
 
-def test_cli_run_command_prints_error_and_redirects(capsys):
-    """run command must reject calls and point users to subagent workflow."""
+def test_cli_run_command_creates_handoff(capsys):
+    """run command must create a runtime handoff when given a workspace with config.yaml."""
     import tempfile
-    d = tempfile.mkdtemp()
-    config = Path(d) / "config.yaml"
-    config.write_text("project:\n  name: test\n", encoding="utf-8")
-    exit_code = main(["run", "--config", str(config)])
+    d = Path(tempfile.mkdtemp())
+    config = d / "config.yaml"
+    config.write_text("project:\n  name: test\noutput:\n  path: output\n", encoding="utf-8")
+    (d / "user.md").write_text("# test\n", encoding="utf-8")
+    exit_code = main(["run", "--config", str(config), "--skip-doctor"])
     captured = capsys.readouterr()
-    assert exit_code == 1
-    assert "no longer runs the brief workflow" in captured.out
-    assert "/generate-brief" in captured.out
+    assert exit_code == 0
+    assert "Runtime:" in captured.out
+    assert (d / "output" / "intermediate" / "agent_handoff.md").exists()
+    assert "/generate-brief" not in captured.out
 
 
 def test_cli_prepare_is_deprecated_and_does_not_generate_outputs(tmp_path: Path, capsys):
@@ -109,8 +111,9 @@ def test_cli_prepare_is_deprecated_and_does_not_generate_outputs(tmp_path: Path,
     captured = capsys.readouterr()
 
     assert result == 1
-    assert "prepare no longer runs the brief workflow" in captured.out
-    assert "/generate-brief <workspace>" in captured.out
+    assert "prepare has been replaced by" in captured.out
+    assert "multi-agent-brief run --workspace <workspace>" in captured.out
+    assert "/generate-brief" not in captured.out
     assert not (ws / "output" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "claim_ledger.json").exists()
 
