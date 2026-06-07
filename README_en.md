@@ -9,7 +9,7 @@ A source-grounded, audit-ready agent-orchestrated workflow toolkit for producing
 
 > Let code do lookup. Let models do judgment. Keep every important claim traceable.
 
-This project provides workspace initialization, source discovery, source collection, Claim Ledger/audit utilities, document rendering, and Claude/Codex agent workflow support. The final brief is written by Claude Code / Codex / external LLM agents using Claim Ledger and audit outputs.
+This project provides workspace initialization, source discovery, source collection, Claim Ledger/audit utilities, document rendering, and multi-runtime agent workflow support. The final brief is written by agent runtime subagents (Hermes, Claude Code, Codex, OpenCode) using Claim Ledger and audit outputs.
 
 ```text
 Onboarding → Workspace Profile → Source Discovery → Source Collection → Claim Ledger/audit → Agent-assisted Drafting → Final Audit → Rendered Outputs
@@ -70,16 +70,16 @@ flowchart TB
     C --> D["Source Collection<br/>Manual/RSS/Web/API"]
   end
 
-  subgraph "Python Preparation Tools"
+  subgraph "Python Support Tools"
     D --> E["Scout<br/>Signal Extraction"]
     E --> F["Screener<br/>Filter & Dedup"]
     F --> G["Claim Ledger<br/>Evidence Tracking"]
     G --> H["Audit Utilities<br/>Deterministic + Quality Checks"]
   end
 
-  subgraph "Agent-Assisted (Claude Code / Codex)"
-    H --> I["Analyst Agent<br/>Draft from Claim Ledger"]
-    I --> J["Editor Agent<br/>Polish & Clean"]
+  subgraph "Agent Runtime (Hermes / Claude Code / Codex / OpenCode)"
+    H --> I["Analyst<br/>Draft from Claim Ledger"]
+    I --> J["Editor<br/>Polish & Clean"]
     J --> K["Final Auditor<br/>Delivery Check"]
   end
 
@@ -95,8 +95,9 @@ See [docs/architecture.md](docs/architecture.md) for the plain-language architec
 This project provides the following tools and capabilities:
 
 **Workspace & Onboarding:**
-- `multi-agent-brief init` creates a reusable brief workspace
-- `multi-agent-brief init --from-onboarding onboarding.json` supports conversational onboarding initialization
+- `multi-agent-brief onboard` runs conversational onboarding and writes `onboarding.json`
+- `multi-agent-brief init --from-onboarding onboarding.json` creates a brief workspace from onboarding
+- `multi-agent-brief run --workspace <path>` hands off to the agent runtime (default: Hermes delegate_task)
 - Onboarding mapper auto-translates Chinese role, industry, and audience labels into English config values
 
 **Source Discovery & Collection:**
@@ -111,12 +112,13 @@ This project provides the following tools and capabilities:
 - Analyst subagent drafts the brief from Claim Ledger entries
 - Editor subagent polishes readability
 - Auditor subagent checks unsupported facts, orphan citations, and process residue
-- `/generate-brief <workspace>` in Claude Code orchestrates the full workflow to produce `output/brief.md`, `claim_ledger.json`, `audit_report.json`, `source_map.md`
+- `multi-agent-brief run --workspace <workspace>` produces a runtime handoff; the agent runtime orchestrates scout → screener → claim-ledger → analyst → editor → auditor → finalize
 
-**Agent-Assisted (Claude Code / Codex):**
-- Claude Code subagents (analyst, editor, auditor) write the final brief from Claim Ledger
-- `/generate-brief` slash command orchestrates the full agent workflow
-- Codex agent and skill configs auto-generated
+**Multi-Runtime Support:**
+- Hermes (default): native `delegate_task` subagent workflow
+- Claude Code: `/generate-brief` command orchestrates subagent workflow
+- Codex / OpenCode: agent configs auto-generated in `.codex/` / `.opencode/`
+- `--runtime` flag selects the target runtime for `run` / `start` / `handoff`
 
 **Rendering & Output:**
 - DOCX renderer (enabled by default)
@@ -158,7 +160,7 @@ The audit report records whether the draft is distribution-ready:
 
 ### Option 1: Clone the repository (recommended · full agent workflow)
 
-This is the **only method that supports the full agent workflow**. `/generate-brief`, OpenCode multi-agent, capability board, skills, and other capabilities depend on `.claude/`, `.opencode/`, `.agents/skills/`, `docs/`, `examples/` and other assets in the repo root — these are **not** distributed with the Python package.
+This is the **only method that supports the full agent workflow**. Agent commands, multi-agent, skills, and other capabilities depend on `.claude/`, `.opencode/`, `.codex/`, `.agents/skills/`, `docs/`, `examples/` and other assets in the repo root — these are **not** distributed with the Python package.
 
 **macOS / Linux / WSL:**
 
@@ -168,20 +170,23 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-multi-agent-brief init ../mabw-workspace
+# 1. Interactive conversational onboarding → onboarding.json
+multi-agent-brief onboard
+
+# 2. Create the workspace
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+
+# 3. Hand off to the agent runtime (default: Hermes delegate_task)
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
-Then open Claude Code or Codex and run `/generate-brief ../mabw-workspace` — the agent will complete source discovery, drafting, audit, and output formatting.
-
-Or run source discovery and config check first:
+You can also run source discovery and config checks first:
 
 ```bash
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 ```
-
-Then run `/generate-brief ../mabw-workspace` in Claude Code for the full subagent workflow.
 
 **Windows PowerShell:**
 
@@ -191,13 +196,14 @@ cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief init ../mabw-workspace
-# Then in Claude Code: /generate-brief ../mabw-workspace
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
-### Option 2: Ask Claude Code or Codex to help
+### Option 2: Ask your agent runtime to help
 
-Open Claude Code, Codex, or another coding agent and type:
+Open your agent runtime (Claude Code, Codex, OpenCode) and type:
 
 ```text
 Clone https://github.com/Stahl-G/multi-agent-brief-workflow and start the interactive onboarding initialization
@@ -209,8 +215,8 @@ Always review sources, content, and audit results before distribution.
 
 ### Option 3: CLI-only install (experimental)
 
-> ⚠️ **CLI-only mode**: Works for `init`, `doctor`, `audit`, `finalize`, and other deterministic CLI commands.
-> **Does not guarantee** Claude Code `/generate-brief`, Codex agent roles, OpenCode skills, capability board, or other full agent workflow features.
+> ⚠️ **CLI-only mode**: Works for `onboard`, `init`, `doctor`, `audit`, `finalize`, `run`, `hermes`, and other deterministic CLI commands.
+> **Does not guarantee** agent commands, multi-agent, skills, capability board, or other full agent workflow features.
 > For the full agent workflow, use [Option 1: Clone the repository](#option-1-clone-the-repository-recommended--full-agent-workflow).
 
 macOS / Linux / WSL with curl:
@@ -228,11 +234,10 @@ irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/sc
 After installation you can use the CLI:
 
 ```bash
-multi-agent-brief init my-workspace
-multi-agent-brief doctor --config my-workspace/config.yaml
+multi-agent-brief onboard
+multi-agent-brief init my-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace my-workspace
 ```
-
-Then run `/generate-brief my-workspace` in Claude Code to generate the brief.
 
 > **Homebrew:** The current Homebrew stable formula is v0.3.4, which is behind the latest release. To use Homebrew, install the HEAD version:
 >
@@ -263,17 +268,20 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-# 1. Init workspace via interactive onboarding
-multi-agent-brief init ../mabw-workspace
+# 1. Conversational onboarding → onboarding.json
+multi-agent-brief onboard
 
-# 2. Add source files
+# 2. Create workspace from onboarding
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+
+# 3. Add source files
 echo "- Industry news summary" > ../mabw-workspace/input/news.md
 
-# 3. Check config
+# 4. Check config
 multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
-# 4. Generate brief via Claude Code:
-#    /generate-brief ../mabw-workspace
+# 5. Hand off to agent runtime (default: Hermes delegate_task)
+multi-agent-brief run --workspace ../mabw-workspace
 
 # View output
 cat ../mabw-workspace/output/brief.md
@@ -284,8 +292,9 @@ cat ../mabw-workspace/output/intermediate/audited_brief.md
 `scripts/setup.sh` is the contributor entry point. It creates a repository-local `.venv` and installs development/test dependencies. End users should prefer Homebrew, curl, or the PowerShell installer.
 
 > **Generate a brief:**
-> `/generate-brief <workspace>` in Claude Code orchestrates the full subagent workflow:
-> source discovery → doctor → scout → screener → claim-ledger → analyst → editor → auditor → finalize
+> `multi-agent-brief run --workspace <workspace>` hands off to the current agent runtime.
+> Default is Hermes with `delegate_task` children; also supports `--runtime claude/opencode/codex/manual`.
+> subagent workflow: doctor → source discovery → scout → screener → claim-ledger → analyst → editor → auditor → finalize
 >
 > **Finalize delivery gate:**
 > `multi-agent-brief finalize --config <workspace>/config.yaml` runs after subagents produce `audited_brief.md`:
@@ -302,10 +311,11 @@ cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief init ../mabw-workspace
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 echo "- Industry news summary" > ../mabw-workspace\input\news.md
 multi-agent-brief doctor --config ../mabw-workspace\config.yaml
-# Then: /generate-brief ../mabw-workspace in Claude Code
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 `scripts/setup.ps1` is the Windows contributor entry point. It creates a repository-local `.venv` and installs development/test dependencies. End users should prefer the PowerShell installer.
@@ -313,7 +323,7 @@ multi-agent-brief doctor --config ../mabw-workspace\config.yaml
 You can also use the built-in example for a quick check:
 
 ```bash
-# Example: /generate-brief examples/basic_market_brief in Claude Code
+# Example: multi-agent-brief run --workspace examples/basic_market_brief in your agent runtime
 ```
 
 The example config enables a strict weekly reporting window:
@@ -342,43 +352,49 @@ output/basic_market_brief/intermediate/source_map.md
 Run the synthetic earnings-season peer demo:
 
 ```bash
-# Use /generate-brief in Claude Code for the demo workspace
-```
+# 1. Create demo workspace (sample data only — for feature exploration)
+multi-agent-brief init ../mabw-demo --demo
 
-PowerShell:
-
-```powershell
-# Use /generate-brief in Claude Code for the demo workspace
+# 2. Hand off to agent runtime
+multi-agent-brief run --workspace ../mabw-demo
 ```
 
 This demo uses only fictional peer names and synthetic source data. It is designed to show how public-safe earnings, competitor, policy, and market signals flow through the Claim Ledger and audit report.
 
 ## Example Without Install
 
-Use `/generate-brief examples/reference_workflow_demo` in Claude Code, or clone the repo and follow the full agent workflow described above.
+```bash
+multi-agent-brief init ../mabw-demo --demo
+multi-agent-brief run --workspace ../mabw-demo
+```
+
+Or use `multi-agent-brief run --workspace examples/reference_workflow_demo` from a cloned repo.
 
 ## llm_decide Source Discovery
 
 The default `llm_decide` source mode lets the agent automatically generate search intents and candidate sources based on `user.md`:
 
 ```bash
-# 1. Init through interactive onboarding
-multi-agent-brief init ../mabw-workspace
+# 1. Onboarding
+multi-agent-brief onboard
 
-# 2. Generate candidate sources (template mode, no API key needed)
+# 2. Create workspace
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+
+# 3. Generate candidate sources (template mode, no API key needed)
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 
-# 3. Review candidates
+# 4. Review candidates
 cat ../mabw-workspace/source_candidates.yaml
 
-# 4. Merge into sources
+# 5. Merge into sources
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
-# 5. Generate brief
-# Use /generate-brief ../mabw-workspace in Claude Code for the full subagent workflow
+# 6. Hand off to agent runtime
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
-The llm_decide mode does not block pipeline execution — if you skip `sources decide`, the pipeline continues with local `input/` files and prints a warning.
+The llm_decide mode does not block the workflow — if you skip `sources decide`, the workflow continues with local `input/` files and prints a warning.
 
 ## DOCX Output
 
@@ -501,7 +517,7 @@ connector.deliver(
 ### Typical Workflow
 
 ```python
-# After /generate-brief my-workspace in Claude Code:
+# After multi-agent-brief run --workspace my-workspace:
 from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
 from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
 
@@ -589,8 +605,9 @@ pip install disclosure-filing-resolver
 # 2. Set environment variable
 export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
 
-# 3. Init workspace
-multi-agent-brief init ../mabw-workspace
+# 3. Onboard and init workspace
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 
 # 4. Discover sources (auto-generates SEC filing candidates)
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
@@ -599,8 +616,8 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 # 6. Merge
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
-# 7. Generate brief in Claude Code
-# /generate-brief ../mabw-workspace
+# 7. Hand off to agent runtime
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 The brief will automatically include SEC-sourced financial data:
@@ -639,7 +656,7 @@ web_search:
 ```bash
 export TAVILY_API_KEY=tvly-your-key-here
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-# Then /generate-brief ../mabw-workspace in Claude Code
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 PowerShell:
@@ -647,7 +664,7 @@ PowerShell:
 ```powershell
 $env:TAVILY_API_KEY = Read-Host "Enter your Tavily API key"
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-# Then /generate-brief ../mabw-workspace in Claude Code
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 3. Check configuration health:
@@ -666,20 +683,20 @@ Notes:
 - Web search ingestion includes boilerplate filtering (cookies, privacy policy, TOC, etc.) but is not perfect
 - Real-time search feature is not release-ready until live smoke passes
 
-Create a synthetic demo workspace:
+Create a synthetic demo workspace (sample data for feature exploration):
 
 ```bash
-multi-agent-brief init ../mabw-workspace --demo
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-# Then /generate-brief ../mabw-workspace in Claude Code
+multi-agent-brief init ../mabw-demo --demo
+multi-agent-brief sources decide --config ../mabw-demo/config.yaml
+multi-agent-brief run --workspace ../mabw-demo
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief init ../mabw-workspace --demo
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-# Then /generate-brief ../mabw-workspace in Claude Code
+multi-agent-brief init ../mabw-demo --demo
+multi-agent-brief sources decide --config ../mabw-demo/config.yaml
+multi-agent-brief run --workspace ../mabw-demo
 ```
 
 Audit an existing brief:
@@ -759,29 +776,35 @@ python scripts/generate_agent_configs.py --check
 
 See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows setup. WSL is optional, not required.
 
-## Claude Code Agent Mode
+## Multi-Runtime Agent Mode
 
-This repository supports a Claude Code subagent orchestration layer for interactive source planning, claim extraction, analysis, and editing.
+This repository supports multiple agent runtimes for interactive source planning, claim extraction, analysis, and editing:
 
-**Important:** The Python CLI does not automatically spawn Claude Code subagents. In Claude Code, use `/generate-brief <workspace>` or ask Claude Code to run the subagent-assisted workflow. The subagents are prompt-layer orchestration, not Python SDK calls.
+- **Hermes** (default): native `delegate_task` subagent workflow
+- **Claude Code**: `/generate-brief <workspace>` command orchestration
+- **Codex / OpenCode**: agent config in `.codex/` and `.opencode/` directories
+
+**Important:** The Python CLI does not automatically spawn subagents. Use `multi-agent-brief run --workspace <workspace>` to produce a runtime handoff, then paste the generated prompt into your agent runtime. Subagents are prompt-layer orchestration, not Python SDK calls.
 
 ### Two-Layer Architecture
 
 | Layer | Purpose | Characteristics |
 |-------|---------|-----------------|
-| Python CLI | Deterministic pipeline execution, audit, output | Testable, no API keys required |
-| Claude Code subagents | Interactive source planning, extraction, analysis, editing | Model-assisted judgment |
+| Python CLI | Deterministic tooling: init, doctor, sources, audit, finalize, handoff | Testable, no API keys required |
+| Agent subagents | Interactive source planning, extraction, analysis, editing | Model-assisted judgment |
 
-The two layers complement each other. The Python CLI is the source of truth for pipeline logic and audit gates.
+The two layers complement each other. The Python CLI is the source of truth for tooling logic and audit gates.
 
 ### Available Subagents
 
-Subagent definitions live in `.claude/agents/`:
+Subagent definitions live in `.claude/agents/`, `.codex/agents/`, `.opencode/agents/`, and `.agents/skills/`:
 
 | Subagent | Purpose |
 |----------|---------|
 | `source-planner` | Generate/refine source candidates and search tasks |
 | `scout` | Extract candidate reportable items from sources |
+| `screener` | Rank, dedupe, and capacity-cap candidates |
+| `claim-ledger` | Build source-grounded claim entries |
 | `analyst` | Draft management-ready brief sections |
 | `editor` | Improve readability without adding facts |
 | `auditor` | Review final brief against ledger and audit report |
@@ -795,9 +818,9 @@ Subagent definitions live in `.claude/agents/`:
 # Claim extraction
 "Use the scout subagent to extract claims from the latest search results."
 
-# Run pipeline
+# Source discovery + handoff
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-# Then /generate-brief ../mabw-workspace in Claude Code
+multi-agent-brief run --workspace ../mabw-workspace
 
 # Analyst improvement
 "Use the analyst subagent to improve the brief while preserving citations."

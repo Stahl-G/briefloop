@@ -70,5 +70,6 @@ def test_claude_policy_disallows_required_free_text_askuserquestion():
     claude_path = ROOT / "CLAUDE.md"
     assert claude_path.exists(), "CLAUDE.md not found"
     text = claude_path.read_text(encoding="utf-8")
-    assert "Ask plain-language questions directly in chat" in text
-    assert "Use AskUserQuestion for optional single-choice refinements" in text
+    assert "multi-agent-brief onboard" in text
+    assert "multi-agent-brief init" in text
+    assert "multi-agent-brief run" in text
