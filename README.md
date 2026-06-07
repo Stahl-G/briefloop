@@ -182,7 +182,7 @@ output:
 
 项目提供三种运行时：
 
-- **Hermes**（原生 delegate_task 工作流）：使用 `delegate_task` 子代理运行 scout → screener → claim-ledger → analyst → editor → auditor 管线，配合 cron 调度和 daily source cache 收集。
+- **Hermes**（原生 delegate_task 工作流 + Plugin）：安装 `integrations/hermes-plugin/mabw` 到 `~/.hermes/plugins/mabw`，用 `/mabw` + 三个工具（`mabw_create_onboarding` → `mabw_init_workspace` → `mabw_run_handoff`）完成工作区初始化，再走 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor），配合 cron 调度和 daily source cache 收集。
 - **Claude Code**（`/generate-brief`）：在 `.claude/` 目录下提供 agent 配置和 commands。
 - **Codex / OpenCode**：在 `.codex/`、`.opencode/` 目录下提供对应 agent 配置。
 

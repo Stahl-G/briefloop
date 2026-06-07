@@ -780,7 +780,7 @@ See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows 
 
 This repository supports multiple agent runtimes for interactive source planning, claim extraction, analysis, and editing:
 
-- **Hermes** (default): native `delegate_task` subagent workflow
+- **Hermes** (default): native `delegate_task` subagent workflow + plugin — install `integrations/hermes-plugin/mabw` to `~/.hermes/plugins/mabw`, use `/mabw` + three tools (`mabw_create_onboarding` → `mabw_init_workspace` → `mabw_run_handoff`) for workspace init, then `delegate_task` pipeline (scout → screener → claim-ledger → analyst → editor → auditor)
 - **Claude Code**: `/generate-brief <workspace>` command orchestration
 - **Codex / OpenCode**: agent config in `.codex/` and `.opencode/` directories
 

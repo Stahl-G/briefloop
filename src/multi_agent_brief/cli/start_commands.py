@@ -100,7 +100,8 @@ def _hermes_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             str(workspace.resolve() / "output" / "brief.md"),
         ],
         notes=[
-            "Ensure the multi-agent-brief-hermes skill is installed: multi-agent-brief hermes install-skill",
+            "Install the MABW Hermes plugin: cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw && hermes plugins enable mabw",
+            "Then in Hermes: /mabw <workspace> → mabw_create_onboarding → mabw_init_workspace → mabw_run_handoff → read agent_handoff.md → continue delegated workflow.",
             "Each delegate_task child needs complete goal, context, input paths, and output paths.",
             "Parent must verify each artifact before proceeding to the next child.",
         ],
