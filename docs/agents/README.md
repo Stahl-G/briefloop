@@ -2,17 +2,17 @@
 
         # Agent Configuration
 
-        This directory documents the cross-platform agent adaptation layer for `multi-agent-brief-workflow`.
+        This directory documents the cross-platform agent adapter layer for `multi-agent-brief-workflow`.
 
         ## Source of Truth
 
-        All agent configurations are generated from a single manifest:
+        Platform adapter files are generated from a single manifest:
 
         ```text
         configs/agent_roles.yaml
         ```
 
-        Edit the manifest and regenerate to update generated files.
+        Edit the manifest and regenerate to update platform adapter files.
 
         ## Generation
 
@@ -58,7 +58,7 @@
         | Platform | Location | Format |
         |----------|----------|--------|
         | Codex agents | `.codex/agents/*.toml` | TOML |
-        | Codex skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter |
+        | Skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter, hand-maintained by default |
         | Claude Code | `.claude/agents/*.md` | Markdown + YAML frontmatter |
         | OpenCode | `.opencode/agents/*.md` | Markdown + YAML frontmatter |
-        | Project instructions | `AGENTS.md` | Markdown |
+        | Project instructions | `AGENTS.md` | Markdown, hand-maintained by default |

@@ -31,9 +31,9 @@
 
         ## Skills
 
-        Located in `.agents/skills/*/SKILL.md`:
+        Located in `.agents/skills/*/SKILL.md`.
 
-        Each skill has YAML frontmatter with `name` and `description`, plus sections for purpose, responsibilities, guardrails, and expected I/O.
+        Skills are hand-maintained by default because they are runtime prompts. Use `--target skills --allow-prompt-overwrite` only when intentionally regenerating scaffolds.
 
         ## Config
 

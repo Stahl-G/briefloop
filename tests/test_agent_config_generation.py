@@ -95,18 +95,29 @@ def test_read_only_agents_no_edit_tools(manifest):
 
 def test_agents_md_contains_pipeline(manifest):
     content = render_agents_md(manifest)
-    assert PIPELINE_TEXT in content
+    assert "scout" in content
+    assert "screener" in content
+    assert "claim-ledger" in content
+    assert "analyst" in content
+    assert "auditor" in content
+    assert "finalize" in content
 
 
-def test_agents_md_contains_harness_contract(manifest):
+def test_agents_md_contains_artifact_contract(manifest):
     content = render_agents_md(manifest)
-    assert HARNESS_TEXT in content
+    assert "Artifact Contract" in content
+    assert "candidate_claims.json" in content
+    assert "claim_ledger.json" in content
+    assert "audit_report.json" in content
+    assert "brief.md" in content
 
 
 def test_agents_md_lists_all_roles(manifest):
     content = render_agents_md(manifest)
-    for name in ALL_ROLES:
-        assert f"**{name}**" in content
+    assert "Role Details" in content
+    assert ".agents/skills/" in content
+    assert ".claude/agents/" in content
+    assert ".codex/agents/" in content
 
 
 def test_codex_config_valid_toml(manifest):
