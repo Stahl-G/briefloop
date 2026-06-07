@@ -575,7 +575,7 @@ Hermes 适配层提供原生 `delegate_task` 子代理管线（scout → screene
 
 ### v0.5.8：发布清理 + 支持矩阵 + 旧叙事收敛
 
-移除 README 中尚不可用的 CLI-only curl 安装路径。旧 `prepare` 叙事在 impl-plan 文档中标记为遗留。新增 `docs/support-matrix.md`。`pyproject.toml` 打包 agent assets 进 wheel。
+移除 README 中尚不可用的 CLI-only curl 安装路径。移除六份遗留 impl-plan 文档和 v1 ref roadmap。新增 `docs/support-matrix.md`。
 
 ### v0.5.7：输入分类与反馈卫生
 
@@ -593,7 +593,7 @@ v0.5.8 → 发布与运行时合同清理；v0.5.9 → 运行时 artifact contra
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.5 详细执行计划见 [docs/impl-plan-v0.5.0.md](docs/impl-plan-v0.5.0.md)，v0.5.5 Hermes 适配计划见 [docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md](docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
+完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
 
 ---
 

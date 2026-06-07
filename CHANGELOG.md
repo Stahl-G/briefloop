@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **版本号 0.5.7 → 0.5.8**：上游 `check_release_consistency.py` 要求版号与 tag 一致；0.5.7 从未打 tag，本次统一发布。
 - **README 清理**：移除尚不可用的 CLI-only curl 安装路径和 Homebrew 引用（打包工作推迟到 v0.7）。
-- **旧 `prepare` 叙事收敛**：`docs/impl-plan-*.md`、`docs/agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md` 中的 `prepare` 引用标记为 `[遗留]`，主路径已统一为 `subagent-first runtime handoff → /generate-brief`。
+- **旧 `prepare` 叙事清理**：删除五份遗留 impl-plan 文档（`v0.4.0`、`v0.5.0`、`v0.5.1-*`、`v0.5.5-hermes-adapter`）和 `v1-pre-mas-refactor-roadmap.zh-CN.md`——旧执行计划和引用全部移除。最新路线图见 `docs/roadmap.zh-CN.md`。
 
 ### Added
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap reflects the post-v0.5.7 baseline: subagent-first runtime handoff + Hermes primary path + input governance. See [v1 pre-MAS refactor roadmap](agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md) for the detailed Chinese agent reference.
+This roadmap reflects the post-v0.5.8 baseline: subagent-first runtime handoff + Hermes primary path + input governance.
 
 ## Completed (v0.1 — v0.5.7)
 

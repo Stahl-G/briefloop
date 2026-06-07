@@ -1,6 +1,6 @@
 # 路线图
 
-本路线图反映 v0.5.7 后的新基线：subagent-first runtime handoff + Hermes primary path + input governance。完整 agent 参考见 [v1 前置收敛路线图](agents/reference/v1-pre-mas-refactor-roadmap.zh-CN.md)。
+本路线图反映 v0.5.8 后的新基线：subagent-first runtime handoff + Hermes primary path + input governance。
 
 ## 已完成（v0.1 — v0.5.7）
 

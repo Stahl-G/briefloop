@@ -657,7 +657,7 @@ The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime w
 - **v1.0: Stable Baseline** — golden datasets, benchmark metrics, contract compliance tests, release consistency checks, and a formal support matrix.
 - **v2.0: MAS Runtime Candidate** — after v1.0, explore Shared World, Event Store, TaskBoard, AgentMessage, ClaimProposal / ClaimReducer, replay, and minimal coordination protocols.
 
-See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap, [docs/impl-plan-v0.5.0.md](docs/impl-plan-v0.5.0.md) for the detailed v0.5 implementation plan, [docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md](docs/impl-plan-v0.5.5-hermes-adapter.zh-CN.md) for the Hermes adapter plan, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
+See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
 
 ## Safety And Non-Investment-Advice Disclaimer
 
