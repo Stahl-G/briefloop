@@ -220,20 +220,14 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-multi-agent-brief init ../mabw-workspace
-```
+# 1. 交互式需求采集 → 生成 onboarding.json
+multi-agent-brief onboard
 
-然后使用统一启动器将 workspace 交给 agent runtime：
+# 2. 创建工作区
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 
-```bash
-# Hermes（默认，delegate_task 子代理）
-multi-agent-brief start --workspace ../mabw-workspace
-
-# Claude Code
-multi-agent-brief start --workspace ../mabw-workspace --runtime claude
-
-# 或者直接生成 Hermes prompt
-multi-agent-brief hermes prompt --config ../mabw-workspace/config.yaml
+# 3. 将工作区交给 agent runtime（默认 Hermes delegate_task）
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 也可以手动分步执行 Python CLI 工具：
@@ -244,8 +238,6 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 ```
 
-然后在 agent runtime 中运行 `multi-agent-brief start --workspace ../mabw-workspace`，默认使用 Hermes `delegate_task` 子代理管线。其他 runtime 可通过 `--runtime` 切换（如 `--runtime claude`）。
-
 **Windows PowerShell：**
 
 ```powershell
@@ -254,12 +246,13 @@ cd multi-agent-brief-workflow
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief init ../mabw-workspace
-multi-agent-brief start --workspace ../mabw-workspace
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 > **生成简报的方式：**
-> `multi-agent-brief start --workspace <workspace>` 为当前 agent runtime 生成 handoff。
+> `multi-agent-brief run --workspace <workspace>` 为当前 agent runtime 生成 handoff。
 > 默认使用 Hermes `delegate_task` 子代理管线，也支持 `--runtime claude/opencode/codex/manual`。
 > subagent 流程：doctor → source discovery → scout → screener → claim-ledger → analyst → editor → auditor → finalize
 >
@@ -303,11 +296,10 @@ irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/sc
 安装完成后可以使用 CLI：
 
 ```bash
-multi-agent-brief init my-workspace
-multi-agent-brief doctor --config my-workspace/config.yaml
+multi-agent-brief onboard
+multi-agent-brief init my-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace my-workspace
 ```
-
-然后使用统一启动器：`multi-agent-brief start --workspace my-workspace` 或 `multi-agent-brief hermes prompt --config my-workspace/config.yaml`。
 
 > **Homebrew：** 目前 Homebrew formula stable 版本为 v0.3.4，落后于当前版本。如需使用 Homebrew，请用 `--HEAD` 安装最新开发版：
 >
@@ -342,7 +334,7 @@ multi-agent-brief doctor --config ../mabw-workspace/config.yaml
 
 生成简报：
 
-使用 `multi-agent-brief start --workspace ../mabw-workspace` 将任务交给 agent runtime（默认 Hermes `delegate_task` 子代理管线），也可通过 `--runtime` 切换。
+使用 `multi-agent-brief run --workspace ../mabw-workspace` 将任务交给 agent runtime（默认 Hermes `delegate_task` 子代理管线），也可通过 `--runtime` 切换。
 
 或者先完成来源发现和配置检查：
 
@@ -480,7 +472,7 @@ multi-agent-brief init my-workspace
 multi-agent-brief doctor --config my-workspace/config.yaml
 
 # 3. 将 workspace 交给 agent runtime 生成简报
-#    multi-agent-brief start --workspace my-workspace
+#    multi-agent-brief run --workspace my-workspace
 
 # 4. 简报生成完毕后，发送到飞书群
 python -c "
@@ -584,7 +576,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 # 7. 将 workspace 交给 agent runtime 生成简报
-# multi-agent-brief start --workspace ../mabw-workspace
+# multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 简报中会自动包含来自 SEC 文件的财务数据，例如：

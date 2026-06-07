@@ -422,3 +422,50 @@ def test_prepare_output_points_to_run(capsys):
     assert "/generate-brief" not in output
     assert "Python pipeline" not in output
     assert "deterministic pipeline" not in output
+
+
+# ---------------------------------------------------------------------------
+# onboard command discoverability
+# ---------------------------------------------------------------------------
+
+def test_onboard_help_exists(capsys):
+    """onboard --help must exist as a discoverable command."""
+    try:
+        main(["onboard", "--help"])
+    except SystemExit:
+        pass
+    output = capsys.readouterr().out
+    assert "onboard" in output
+    assert "onboarding" in output.lower()
+
+
+def test_init_help_mentions_onboard(capsys):
+    """init --help must reference onboard as the first step."""
+    try:
+        main(["init", "--help"])
+    except SystemExit:
+        pass
+    output = capsys.readouterr().out
+    assert "onboard" in output
+
+
+def test_run_no_workspace_mentions_onboard(tmp_path, capsys):
+    """run without a workspace must suggest onboard as the first path."""
+    rc = main(["run", "--workspace", str(tmp_path / "no-such-ws"), "--skip-doctor"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "multi-agent-brief onboard" in output
+    assert "multi-agent-brief init" in output
+    assert "--from-onboarding onboarding.json" in output
+
+
+def test_init_demo_mentions_onboard(tmp_path, capsys):
+    """init --demo must say it's a demo and point to onboard for real projects."""
+    ws = tmp_path / "demo-ws"
+    rc = main(["init", str(ws), "--demo", "--force"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    output = captured.out
+    assert "demo" in output.lower()
+    assert "multi-agent-brief onboard" in output

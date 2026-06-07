@@ -16,7 +16,7 @@ from multi_agent_brief.cli.init_wizard import (
     has_direct_init_args,
     missing_required_direct_init_args,
 )
-from multi_agent_brief.onboarding.io import load_onboarding_result
+from multi_agent_brief.onboarding.io import load_onboarding_result, save_onboarding_result
 from multi_agent_brief.onboarding.mapper import map_onboarding_to_profile
 from multi_agent_brief.sources.decider import (
     load_source_discovery,
@@ -90,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     finalize_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
     finalize_parser.add_argument("--output", help="Override output directory.")
 
-    init_parser = subparsers.add_parser("init", help="Create a reusable brief workspace.")
+    init_parser = subparsers.add_parser("init", help="Create a brief workspace from onboarding.json. Run 'multi-agent-brief onboard' first for conversational setup.")
     init_parser.add_argument("target", nargs="?", default="brief-workspace", help="Target workspace directory.")
     init_parser.add_argument("--demo", action="store_true", help="Create the existing synthetic demo workspace.")
     init_parser.add_argument("--force", action="store_true", help="Overwrite existing init files.")
@@ -112,6 +112,11 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--web-search-mode", choices=["disabled", "runtime_tool", "external_api", "configure_later"], help="How web search is provided.")
     init_parser.add_argument("--search-backend", choices=["tavily", "exa", "brave", "firecrawl", "serper"], help="Search backend for --web-search-mode external_api.")
     init_parser.add_argument("--from-onboarding", help="Path to onboarding.json for conversational init.")
+
+    # onboard — interactive conversational onboarding, outputs onboarding.json
+    onboard_parser = subparsers.add_parser("onboard", help="Start conversational onboarding: answer questions and generate onboarding.json.")
+    onboard_parser.add_argument("--output", default="onboarding.json", help="Output path for onboarding.json (default: onboarding.json).")
+    onboard_parser.add_argument("--language", choices=["en-US", "zh-CN", "bilingual"], help="Wizard/interface language.")
 
     doctor_parser = subparsers.add_parser("doctor", help="Check source configuration health.")
     doctor_parser.add_argument("--config", required=True, help="Path to config.yaml in the workspace.")
@@ -670,8 +675,13 @@ def run_launcher_from_args(args: argparse.Namespace) -> int:
     workspace_path = _resolve_workspace(args)
     if workspace_path is None:
         print(f"{prefix} No workspace found.")
-        print(f"{prefix} Create one with: multi-agent-brief init <path>")
-        print(f"{prefix} Or pass --workspace <path> to use an existing workspace.")
+        print()
+        print("For a real workspace:")
+        print("  multi-agent-brief onboard")
+        print("  multi-agent-brief init <workspace> --from-onboarding onboarding.json")
+        print()
+        print("For a demo only:")
+        print("  multi-agent-brief init <workspace> --demo")
         return 1
 
     handoff = build_handoff(
@@ -848,14 +858,68 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
         profile.search_backend = "tavily"
 
 
+def run_onboard_from_args(args: argparse.Namespace) -> int:
+    """onboard — interactive conversational onboarding, outputs onboarding.json."""
+    from multi_agent_brief.cli.init_wizard import prompt_for_profile
+    from multi_agent_brief.onboarding.schema import OnboardingResult
+
+    if not sys.stdin.isatty():
+        print("[error] onboard requires an interactive terminal.")
+        print("        For non-interactive onboarding, create onboarding.json directly:")
+        print("        https://github.com/Stahl-G/multi-agent-brief-workflow#readme")
+        return 1
+
+    print()
+    print("=== MABW Conversational Onboarding ===")
+    print("Answer a few questions to define your brief workspace.")
+    print("Press Ctrl-C to cancel at any time.")
+    print()
+
+    try:
+        profile = prompt_for_profile()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        print("[onboard] Onboarding cancelled.")
+        return 1
+
+    result = OnboardingResult(
+        company_or_org=profile.company,
+        industry_or_theme=profile.industry_text or profile.industry,
+        brief_title=profile.brief_title,
+        task_objective=profile.task_objective,
+        forbidden_sources=profile.forbidden_sources,
+        audience_plain=profile.audience,
+        source_style_plain=profile.source_profile,
+        output_style_plain=", ".join(profile.output_formats),
+        language_plain=profile.output_language,
+        cadence_plain=profile.cadence,
+        must_watch=profile.focus_areas,
+        search_backend_plain=profile.search_backend,
+        max_items_per_brief=profile.selector_max_items,
+        source_age_days=profile.max_source_age_days,
+        tavily_enabled=profile.tavily_enabled,
+    )
+
+    output_path = Path(args.output)
+    save_onboarding_result(result, output_path)
+
+    print()
+    print(f"[onboard] Onboarding complete. Saved to: {output_path}")
+    print(f"Next: multi-agent-brief init <workspace> --from-onboarding {output_path}")
+    print(f"Then: multi-agent-brief run --workspace <workspace>")
+    return 0
+
+
 def init_workspace_from_args(args: argparse.Namespace) -> int:
     # Priority: explicit CLI target > onboarding.target > default "brief-workspace"
     if args.demo:
         target = Path(args.target)
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
-        print(f"Next: multi-agent-brief run --workspace {target}")
-        print(f"Hermes prompt: multi-agent-brief hermes prompt --config {target}/config.yaml")
+        print(f"Demo only — sample data for feature exploration, not a real brief workspace.")
+        print(f"For a real brief workspace:")
+        print(f"  multi-agent-brief onboard")
+        print(f"  multi-agent-brief init <workspace> --from-onboarding onboarding.json")
         return 0
 
     from_onboarding = getattr(args, "from_onboarding", None)
@@ -920,8 +984,8 @@ def init_workspace_from_args(args: argparse.Namespace) -> int:
 
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
-    print(f"Next: multi-agent-brief start --workspace {target}")
-    print(f"  or: multi-agent-brief hermes prompt --config {target}/config.yaml")
+    print(f"Next: multi-agent-brief run --workspace {target}")
+    print(f"Hermes prompt: multi-agent-brief hermes prompt --config {target}/config.yaml")
 
     # Print web-search setup guidance if enabled
     if getattr(profile, "web_search_enabled", False) or getattr(profile, "tavily_enabled", False):
@@ -1397,6 +1461,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_audit_from_args(args)
     if args.command == "finalize":
         return run_finalize_from_args(args)
+    if args.command == "onboard":
+        return run_onboard_from_args(args)
     if args.command == "init":
         return init_workspace_from_args(args)
     if args.command == "doctor":
