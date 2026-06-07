@@ -838,6 +838,7 @@ The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime w
 - **v0.4: Knowledge & Governance Contracts** — Claim epistemic types, evidence relations, schema contracts, `run_manifest.json`, semantic audit states, finding taxonomy, rule packs, and event/field governance hooks.
 - **v0.5: Production Reference Workflow** — one official path, Audience Profiles, DOCX templates and validation, Final Clean, Editorial Governance, Policy & Regulatory Risk Module, HistoryStore, and effort budgets. Editorial Governance covers feedback contamination, meta-content leakage, factual density, comparable-case applicability, research-gap separation, and source coverage.
 - **v0.5.5: Hermes Adapter Layer** — Hermes adapter provides a native Hermes workflow using `delegate_task` subagents for scheduled source collection and brief generation. Includes daily source cache, weekly/monthly cron plans, and `cached_package` provider wiring.
+- **v0.5.6: Anthropic Skills Convergence** — Thin CLI router (main.py 1512→134 lines). Generator limited to platform adapters (codex/claude/docs/opencode). 17 SKILL.md rewritten as Anthropic Skills contracts (Scope/Purpose/Use When/Inputs/Outputs/Work/Handoff). Hermes progressive disclosure with references/. Formatter role updated to reader-facing finalize semantics.
 - **v1.0: Stable Baseline** — golden datasets, benchmark metrics, contract compliance tests, release consistency checks, and a formal support matrix.
 - **v2.0: MAS Runtime Candidate** — after v1.0, explore Shared World, Event Store, TaskBoard, AgentMessage, ClaimProposal / ClaimReducer, replay, and minimal coordination protocols.
 
@@ -853,7 +854,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.5.5** — Subagent-First Runtime + Hermes Adapter + Prompt Hygiene
+Current version: **v0.5.6** — Thin CLI Router + Anthropic Skills Contracts + Platform Adapters
 
 v0.5.1 introduces local signal discovery: the system can generate local-language search tasks for target markets, produce `collector_tasks.json` for manual/OpenCLI collection, parse `local_signal_samples.jsonl` samples, generate `local_signal_report.json` with signals found and data gaps, and enforce 3 audit rules to prevent unsupported consumer pain-point claims. Supports 9 markets (Vietnam, Japan, China, Indonesia, Thailand, Brazil, Mexico, Germany, Korea).
 

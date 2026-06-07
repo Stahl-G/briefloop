@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Hermes with delegate_task support plus terminal and file access to a workspace with the multi-agent-brief CLI installed.
 metadata:
   author: multi-agent-brief-workflow
-  version: 0.5.5
+  version: 0.5.6
   tags:
     - hermes
     - cron

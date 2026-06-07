@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-06-07
+
+### Changed
+
+- **Thin CLI router**: `main.py` reduced from 1512 to 134 lines. Every command group owns its subparser registration and handler in a dedicated `cli/*_commands.py` module. No user-visible behavior changes.
+- **Generator scope**: `scripts/generate_agent_configs.py` now generates only platform adapters (`codex`, `claude`, `docs`, `opencode`). `agents_md` and `skills` targets removed. `--allow-prompt-overwrite` flag removed.
+- **Anthropic Skills convergence**: All 17 `.agents/skills/*/SKILL.md` rewritten as short capability contracts with `Scope / Purpose / Use When / Inputs / Outputs / Work / Handoff` structure. Frontmatter descriptions are concrete routing instructions with artifact paths and pipeline ordering.
+- **Hermes progressive disclosure**: Hermes skill SKILL.md kept short (~60 lines). Detailed `delegate_task` templates, cron patterns, and source cache contract moved to `references/`.
+- **Formatter role updated**: `configs/agent_roles.yaml` output_contract replaced with actual pipeline artifacts. Formatter role description updated to reader-facing finalize semantics from the old "preparation artifacts" contract.
+- **Examples workspace**: `examples/workspaces/weekly-brief-zh/` added as a concrete MABW workspace reference.
+
+### Added
+
+- `.agents/AGENTS.md` — skill routing doc
+- `.agents/hermes-skills/multi-agent-brief-hermes/references/` — 3 progressive-disclosure reference files
+- `tests/test_skill_contracts.py` — validates SKILL.md structure
+- `tests/test_generator_boundaries.py` — confirms generator only touches platform adapters
+
 ## [0.5.5] — 2026-06-07
 
 ### Changed
