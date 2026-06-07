@@ -16,10 +16,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from generate_agent_configs import (
     load_manifest,
     validate_manifest,
-    render_agents_md,
     render_codex_config,
     render_codex_agent,
-    render_skill,
     render_claude_agent,
     render_docs,
     render_opencode_agent,
@@ -93,33 +91,6 @@ def test_read_only_agents_no_edit_tools(manifest):
 
 # --- Generated content checks ---
 
-def test_agents_md_contains_pipeline(manifest):
-    content = render_agents_md(manifest)
-    assert "scout" in content
-    assert "screener" in content
-    assert "claim-ledger" in content
-    assert "analyst" in content
-    assert "auditor" in content
-    assert "finalize" in content
-
-
-def test_agents_md_contains_artifact_contract(manifest):
-    content = render_agents_md(manifest)
-    assert "Artifact Contract" in content
-    assert "candidate_claims.json" in content
-    assert "claim_ledger.json" in content
-    assert "audit_report.json" in content
-    assert "brief.md" in content
-
-
-def test_agents_md_lists_all_roles(manifest):
-    content = render_agents_md(manifest)
-    assert "Role Details" in content
-    assert ".agents/skills/" in content
-    assert ".claude/agents/" in content
-    assert ".codex/agents/" in content
-
-
 def test_codex_config_valid_toml(manifest):
     content = render_codex_config(manifest)
     assert "max_threads" in content
@@ -132,14 +103,6 @@ def test_codex_agents_have_required_fields(manifest):
         assert f'name = "{name}"' in content
         assert "description =" in content
         assert "developer_instructions" in content
-
-
-def test_skills_have_frontmatter(manifest):
-    for name, role in manifest["roles"].items():
-        content = render_skill(name, role, manifest)
-        assert content.startswith("---")
-        assert f"name: {name}" in content
-        assert "description:" in content
 
 
 def test_claude_agents_have_frontmatter(manifest):
@@ -194,11 +157,9 @@ def _check_no_sensitive(text: str, context: str):
 
 
 def test_no_sensitive_content_in_generated_files(manifest):
-    _check_no_sensitive(render_agents_md(manifest), "AGENTS.md")
     _check_no_sensitive(render_codex_config(manifest), "codex config")
     for name, role in manifest["roles"].items():
         _check_no_sensitive(render_codex_agent(name, role, manifest), f"codex/{name}.toml")
-        _check_no_sensitive(render_skill(name, role, manifest), f"skills/{name}/SKILL.md")
         _check_no_sensitive(render_claude_agent(name, role, manifest), f"claude/{name}.md")
         _check_no_sensitive(render_opencode_agent(name, role, manifest), f"opencode/{name}.md")
     _check_no_sensitive(render_opencode_command_generate_brief(manifest), "opencode/generate-brief.md")

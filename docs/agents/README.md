@@ -58,7 +58,7 @@
         | Platform | Location | Format |
         |----------|----------|--------|
         | Codex agents | `.codex/agents/*.toml` | TOML |
-        | Skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter, hand-maintained by default |
+        | Skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter, hand-maintained |
         | Claude Code | `.claude/agents/*.md` | Markdown + YAML frontmatter |
         | OpenCode | `.opencode/agents/*.md` | Markdown + YAML frontmatter |
-        | Project instructions | `AGENTS.md` | Markdown, hand-maintained by default |
+        | Project instructions | `AGENTS.md` | Markdown, hand-maintained |

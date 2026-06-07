@@ -56,10 +56,10 @@ class TestInitTavilyGuidance:
     def test_init_tavily_prints_guidance(self, tmp_path, capsys, monkeypatch):
         """Init with Tavily enabled should print setup guidance."""
         from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
-        from multi_agent_brief.cli.main import _print_tavily_guidance
+        from multi_agent_brief.cli.init_commands import print_tavily_guidance
 
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-        _print_tavily_guidance()
+        print_tavily_guidance()
         captured = capsys.readouterr()
         assert "TAVILY_API_KEY" in captured.out
         assert "environment variable" in captured.out

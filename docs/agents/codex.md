@@ -33,7 +33,7 @@
 
         Located in `.agents/skills/*/SKILL.md`.
 
-        Skills are hand-maintained by default because they are runtime prompts. Use `--target skills --allow-prompt-overwrite` only when intentionally regenerating scaffolds.
+        Skills are hand-maintained because they are runtime prompts, not simple platform config projections.
 
         ## Config
 
