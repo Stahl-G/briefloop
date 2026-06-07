@@ -1,0 +1,7 @@
+name: mabw
+version: "0.1.0"
+description: Multi-Agent Brief Workflow adapter for Hermes
+provides_tools:
+  - mabw_create_onboarding
+  - mabw_init_workspace
+  - mabw_run_handoff
