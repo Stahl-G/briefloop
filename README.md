@@ -314,10 +314,11 @@ multi-agent-brief run --workspace my-workspace
 
 ## 使用自己的材料
 
-初始化一个工作区。请在交互问答里说明公司/组织、行业或主题、任务目标、读者、语言、频率和来源偏好：
+先通过交互式问答采集需求，再创建工作区：
 
 ```bash
-multi-agent-brief init ../mabw-workspace
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 ```
 
 把 `.md`、`.txt` 或 `.json` 文件放入：
@@ -374,7 +375,8 @@ $env:TAVILY_API_KEY = Read-Host "Enter your Tavily API key"
 初始化时可在交互问答中选择启用 Tavily：
 
 ```bash
-multi-agent-brief init ../mabw-workspace
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 ```
 
 详细配置和后端对比见 [docs/search-backends.md](docs/search-backends.md)。
@@ -465,8 +467,9 @@ connector.deliver(
 ### 典型工作流
 
 ```bash
-# 1. 初始化工作区
-multi-agent-brief init my-workspace
+# 1. 采集需求并初始化工作区
+multi-agent-brief onboard
+multi-agent-brief init my-workspace --from-onboarding onboarding.json
 
 # 2. 检查配置
 multi-agent-brief doctor --config my-workspace/config.yaml
@@ -565,8 +568,9 @@ pip install disclosure-filing-resolver
 # 2. 设置环境变量
 export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
 
-# 3. 初始化工作区
-multi-agent-brief init ../mabw-workspace
+# 3. 采集需求并初始化工作区
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 
 # 4. 发现来源（自动生成 SEC filing 候选）
 multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
