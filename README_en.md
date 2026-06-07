@@ -115,10 +115,9 @@ This project provides the following tools and capabilities:
 - `multi-agent-brief run --workspace <workspace>` produces a runtime handoff; the agent runtime orchestrates scout → screener → claim-ledger → analyst → editor → auditor → finalize
 
 **Multi-Runtime Support:**
-- Hermes (default): native `delegate_task` subagent workflow
-- Claude Code: `/generate-brief` command orchestrates subagent workflow
-- Codex / OpenCode: agent configs auto-generated in `.codex/` / `.opencode/`
-- `--runtime` flag selects the target runtime for `run` / `start` / `handoff`
+- Hermes (primary): `multi-agent-brief hermes install-plugin` + `/mabw new` in Hermes. Full `delegate_task` pipeline.
+- Claude Code: `/generate-brief <workspace>` command
+- Codex / OpenCode: agent configs in `.codex/` / `.opencode/`
 
 **Rendering & Output:**
 - DOCX renderer (enabled by default)
@@ -158,11 +157,7 @@ The audit report records whether the draft is distribution-ready:
 
 ## Getting Started
 
-### Option 1: Clone the repository (recommended · full agent workflow)
-
-This is the **only method that supports the full agent workflow**. Agent commands, multi-agent, skills, and other capabilities depend on `.claude/`, `.opencode/`, `.codex/`, `.agents/skills/`, `docs/` and other assets in the repo root — these are **not** distributed with the Python package.
-
-**macOS / Linux / WSL:**
+### Hermes (primary path)
 
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -170,199 +165,54 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-# 1. Interactive conversational onboarding → onboarding.json
-multi-agent-brief onboard
-
-# 2. Create the workspace
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-
-# 3. Hand off to the agent runtime (default: Hermes delegate_task)
-multi-agent-brief run --workspace ../mabw-workspace
+multi-agent-brief hermes install-plugin
+hermes plugins enable mabw
 ```
 
-You can also run source discovery and config checks first:
-
-```bash
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-```
-
-**Windows PowerShell:**
-
-```powershell
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
-.\scripts\setup.ps1
-.\.venv\Scripts\Activate.ps1
-
-multi-agent-brief onboard
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace ../mabw-workspace
-```
-
-### Option 2: Ask your agent runtime to help
-
-Open your agent runtime (Claude Code, Codex, OpenCode) and type:
+Then in Hermes:
 
 ```text
-Clone https://github.com/Stahl-G/multi-agent-brief-workflow and start the interactive onboarding initialization
+/mabw new
 ```
 
-The agent will read the project instructions, ask plain-language onboarding questions, create a workspace, configure sources, and generate the first auditable draft.
+Hermes checks the environment, collects your brief profile in chat, creates the workspace, and runs the full subagent pipeline: scout → screener → claim-ledger → analyst → editor → auditor. See [HERMES.md](HERMES.md) for the full protocol.
 
-Always review sources, content, and audit results before distribution.
+> **Finalize delivery gate:** after subagents produce `audited_brief.md`:
+> ```bash
+> multi-agent-brief finalize --config <workspace>/config.yaml
+> ```
+> Strips internal `[src:CLAIM_ID]` markers → writes `brief.md` / `brief.docx` → verifies outputs.
 
-### Option 3: CLI-only install (experimental)
+### Other runtimes
 
-> ⚠️ **CLI-only mode**: Works for `onboard`, `init`, `doctor`, `audit`, `finalize`, `run`, `hermes`, and other deterministic CLI commands.
-> **Does not guarantee** agent commands, multi-agent, skills, capability board, or other full agent workflow features.
-> For the full agent workflow, use [Option 1: Clone the repository](#option-1-clone-the-repository-recommended--full-agent-workflow).
+Claude Code (`/generate-brief <workspace>`), Codex, and OpenCode are also supported. After cloning the repo and `source .venv/bin/activate`:
 
-macOS / Linux / WSL with curl:
+```bash
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ../mabw-workspace --runtime claude
+```
+
+### CLI-only install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.sh | bash
 ```
 
-Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
-```
-
-After installation you can use the CLI:
-
-```bash
-multi-agent-brief onboard
-multi-agent-brief init my-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace my-workspace
-```
-
-> **Homebrew:** The current Homebrew stable formula is v0.3.4, which is behind the latest release. To use Homebrew, install the HEAD version:
->
-> ```bash
-> brew tap Stahl-G/multi-agent-brief-workflow https://github.com/Stahl-G/multi-agent-brief-workflow
-> brew install --HEAD Stahl-G/multi-agent-brief-workflow/multi-agent-brief
-> ```
->
-> Homebrew install is also CLI-only mode.
-
-For web search, register at [tavily.com](https://tavily.com) to get a Tavily API key, then set it:
-
-```bash
-export TAVILY_API_KEY=<your-key>
-```
-
-Other search backends (Exa, Brave, Firecrawl, Serper) are also supported. See [docs/search-backends.md](docs/search-backends.md) for details.
+Provides `init`, `doctor`, `audit`, `finalize` and other deterministic commands only — no agent workflow.
 
 ---
 
-## Quick Start (Contributors / Source Checkout)
-
-macOS / Linux / WSL:
+## Demo Workspace
 
 ```bash
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
-bash scripts/setup.sh
-source .venv/bin/activate
-
-# 1. Conversational onboarding → onboarding.json
-multi-agent-brief onboard
-
-# 2. Create workspace from onboarding
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-
-# 3. Add source files
-echo "- Industry news summary" > ../mabw-workspace/input/news.md
-
-# 4. Check config
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-
-# 5. Hand off to agent runtime (default: Hermes delegate_task)
-multi-agent-brief run --workspace ../mabw-workspace
-
-# View output
-cat ../mabw-workspace/output/brief.md
-# Audit-ready version with claim IDs:
-cat ../mabw-workspace/output/intermediate/audited_brief.md
-```
-
-`scripts/setup.sh` is the contributor entry point. It creates a repository-local `.venv` and installs development/test dependencies. End users should prefer Homebrew, curl, or the PowerShell installer.
-
-> **Generate a brief:**
-> `multi-agent-brief run --workspace <workspace>` hands off to the current agent runtime.
-> Default is Hermes with `delegate_task` children; also supports `--runtime claude/opencode/codex/manual`.
-> subagent workflow: doctor → source discovery → scout → screener → claim-ledger → analyst → editor → auditor → finalize
->
-> **Finalize delivery gate:**
-> `multi-agent-brief finalize --config <workspace>/config.yaml` runs after subagents produce `audited_brief.md`:
-> - Strips internal `[src:CLAIM_ID]` markers from `audited_brief.md`, writes `brief.md`
-> - Regenerates DOCX (if enabled)
-> - Verifies outputs contain no internal markers
-> - Generates `finalize_report.json`
-
-Windows 10/11 should use native PowerShell 5.1 or PowerShell 7. WSL/Git Bash is optional, not required. CMD is not the primary support target.
-
-```powershell
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
-.\scripts\setup.ps1
-.\.venv\Scripts\Activate.ps1
-
-multi-agent-brief onboard
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-echo "- Industry news summary" > ../mabw-workspace\input\news.md
-multi-agent-brief doctor --config ../mabw-workspace\config.yaml
-multi-agent-brief run --workspace ../mabw-workspace
-```
-
-`scripts/setup.ps1` is the Windows contributor entry point. It creates a repository-local `.venv` and installs development/test dependencies. End users should prefer the PowerShell installer.
-
-You can also use the built-in example for a quick check:
-
-```bash
-```
-
-The example config enables a strict weekly reporting window:
-
-```yaml
-report:
-  date: "2026-06-02"
-  max_source_age_days: 14
-  fail_on_stale_source: true
-```
-
-When this mode is enabled, a three-month-old source cannot pass as a weekly item.
-
-Open the generated files:
-
-```text
-output/basic_market_brief/brief.md
-output/basic_market_brief/intermediate/audited_brief.md
-output/basic_market_brief/intermediate/claim_ledger.json
-output/basic_market_brief/intermediate/audit_report.json
-output/basic_market_brief/intermediate/source_map.md
-```
-
-## More Examples
-
-Run the synthetic earnings-season peer demo:
-
-```bash
-# 1. Create demo workspace (sample data only — for feature exploration)
 multi-agent-brief init ../mabw-demo --demo
-
-# 2. Hand off to agent runtime
 multi-agent-brief run --workspace ../mabw-demo
 ```
 
-This demo uses only fictional peer names and synthetic source data. It is designed to show how public-safe earnings, competitor, policy, and market signals flow through the Claim Ledger and audit report.
+Synthetic data only — shows the full pipeline from source to audit report without real company information.
 
-## Example Without Install
-
-```bash
+## Development
 multi-agent-brief init ../mabw-demo --demo
 multi-agent-brief run --workspace ../mabw-demo
 ```
@@ -701,17 +551,17 @@ multi-agent-brief run --workspace ../mabw-demo
 Audit an existing brief:
 
 ```bash
-multi-agent-brief audit output/basic_market_brief/intermediate/audited_brief.md \
-  --ledger output/basic_market_brief/intermediate/claim_ledger.json \
-  --output output/basic_market_brief/intermediate/audit_report.json
+multi-agent-brief audit <workspace>/output/intermediate/audited_brief.md \
+  --ledger <workspace>/output/intermediate/claim_ledger.json \
+  --output <workspace>/output/intermediate/audit_report.json
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief audit output/basic_market_brief/intermediate/audited_brief.md `
-  --ledger output/basic_market_brief/intermediate/claim_ledger.json `
-  --output output/basic_market_brief/intermediate/audit_report.json
+multi-agent-brief audit <workspace>/output/intermediate/audited_brief.md `
+  --ledger <workspace>/output/intermediate/claim_ledger.json `
+  --output <workspace>/output/intermediate/audit_report.json
 ```
 
 Print the version:
@@ -777,13 +627,9 @@ See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows 
 
 ## Multi-Runtime Agent Mode
 
-This repository supports multiple agent runtimes for interactive source planning, claim extraction, analysis, and editing:
-
-- **Hermes** (default): native `delegate_task` subagent workflow + plugin — install `integrations/hermes-plugin/mabw` to `~/.hermes/plugins/mabw`, use `/mabw` + three tools (`mabw_create_onboarding` → `mabw_init_workspace` → `mabw_run_handoff`) for workspace init, then `delegate_task` pipeline (scout → screener → claim-ledger → analyst → editor → auditor)
-- **Claude Code**: `/generate-brief <workspace>` command orchestration
-- **Codex / OpenCode**: agent config in `.codex/` and `.opencode/` directories
-
-**Important:** The Python CLI does not automatically spawn subagents. Use `multi-agent-brief run --workspace <workspace>` to produce a runtime handoff, then paste the generated prompt into your agent runtime. Subagents are prompt-layer orchestration, not Python SDK calls.
+- **Hermes（主路径）**：`multi-agent-brief hermes install-plugin` then `/mabw new`. Full `delegate_task` subagent pipeline.
+- **Claude Code**：`/generate-brief <workspace>` command
+- **Codex / OpenCode**：agent configs in `.codex/` / `.opencode/`
 
 ### Two-Layer Architecture
 
@@ -792,11 +638,7 @@ This repository supports multiple agent runtimes for interactive source planning
 | Python CLI | Deterministic tooling: init, doctor, sources, audit, finalize, handoff | Testable, no API keys required |
 | Agent subagents | Interactive source planning, extraction, analysis, editing | Model-assisted judgment |
 
-The two layers complement each other. The Python CLI is the source of truth for tooling logic and audit gates.
-
 ### Available Subagents
-
-Subagent definitions live in `.claude/agents/`, `.codex/agents/`, `.opencode/agents/`, and `.agents/skills/`:
 
 | Subagent | Purpose |
 |----------|---------|
@@ -807,26 +649,6 @@ Subagent definitions live in `.claude/agents/`, `.codex/agents/`, `.opencode/age
 | `analyst` | Draft management-ready brief sections |
 | `editor` | Improve readability without adding facts |
 | `auditor` | Review final brief against ledger and audit report |
-
-### Usage Examples
-
-```text
-# Source planning
-"Use the source-planner subagent to create sources for the workspace at ../mabw-workspace."
-
-# Claim extraction
-"Use the scout subagent to extract claims from the latest search results."
-
-# Source discovery + handoff
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-multi-agent-brief run --workspace ../mabw-workspace
-
-# Analyst improvement
-"Use the analyst subagent to improve the brief while preserving citations."
-
-# Auditor review
-"Use the auditor subagent to verify the final output."
-```
 
 See [docs/claude-code-workflow.md](docs/claude-code-workflow.md) and [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md).
 

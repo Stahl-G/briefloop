@@ -180,23 +180,9 @@ output:
 
 ### 8. Hermes / Claude Code / Codex 多运行时适配
 
-项目提供三种运行时：
-
-- **Hermes**（原生 delegate_task 工作流 + Plugin）：安装 `integrations/hermes-plugin/mabw` 到 `~/.hermes/plugins/mabw`，用 `/mabw` + 三个工具（`mabw_create_onboarding` → `mabw_init_workspace` → `mabw_run_handoff`）完成工作区初始化，再走 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor），配合 cron 调度和 daily source cache 收集。
-- **Claude Code**（`/generate-brief`）：在 `.claude/` 目录下提供 agent 配置和 commands。
-- **Codex / OpenCode**：在 `.codex/`、`.opencode/` 目录下提供对应 agent 配置。
-
-用户也可以选择在 Claude Code、Codex 或 OpenCode 中运行同一工作区。
-
-这些配置可以帮助 agent 明确：
-
-* 谁负责找来源；
-* 谁负责整理事实；
-* 谁负责写作；
-* 谁负责编辑；
-* 谁负责审计；
-* 谁负责格式输出；
-* 哪些事情不能做。
+- **Hermes（主路径）**：`multi-agent-brief hermes install-plugin` 一键安装插件。在 Hermes 中用 `/mabw new` 开始新建简报，`/mabw run <workspace>` 运行已有工作区，`/mabw continue <workspace>` 恢复之前的管线。底层走 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor），配合 cron 调度。
+- **Claude Code**：`/generate-brief <workspace>` 命令。
+- **Codex / OpenCode**：`.codex/`、`.opencode/` 目录下提供 agent 配置。
 
 ### 9. 开源发布安全检查
 
@@ -208,11 +194,7 @@ output:
 
 ## 快速开始
 
-### 方式一：Clone 仓库（推荐 · 完整 Agent 工作流）
-
-这是**唯一支持完整 agent 工作流**的安装方式。Agent commands、multi-agent、skills 等能力依赖仓库根目录下的 `.claude/`、`.opencode/`、`.codex/`、`.agents/skills/`、`docs/` 等资产，这些不会随 Python 包分发。
-
-**macOS / Linux / WSL：**
+### Hermes（主路径）
 
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -220,131 +202,57 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-# 1. 交互式需求采集 → 生成 onboarding.json
-multi-agent-brief onboard
-
-# 2. 创建工作区
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-
-# 3. 将工作区交给 agent runtime（默认 Hermes delegate_task）
-multi-agent-brief run --workspace ../mabw-workspace
+multi-agent-brief hermes install-plugin
+hermes plugins enable mabw
 ```
 
-也可以手动分步执行 Python CLI 工具：
-
-```bash
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-```
-
-**Windows PowerShell：**
-
-```powershell
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
-.\scripts\setup.ps1
-.\.venv\Scripts\Activate.ps1
-
-multi-agent-brief onboard
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace ../mabw-workspace
-```
-
-> **生成简报的方式：**
-> `multi-agent-brief run --workspace <workspace>` 为当前 agent runtime 生成 handoff。
-> 默认使用 Hermes `delegate_task` 子代理管线，也支持 `--runtime claude/opencode/codex/manual`。
-> subagent 流程：doctor → source discovery → scout → screener → claim-ledger → analyst → editor → auditor → finalize
->
-> **finalize 交付门禁：**
-> `multi-agent-brief finalize --config <workspace>/config.yaml` 在 subagents 生成 `audited_brief.md` 后运行：
-> - 从 `audited_brief.md` 去掉内部 `[src:CLAIM_ID]` 标记，写入 `brief.md`
-> - 重新生成 DOCX（如果启用）
-> - 验证输出不含内部标记
-> - 生成 `finalize_report.json`
-
-### 方式二：让 Agent Runtime 协助运行
-
-打开你的 agent runtime（Claude Code、Codex、OpenCode），输入：
+然后在 Hermes 中输入：
 
 ```text
-克隆 https://github.com/Stahl-G/multi-agent-brief-workflow， 并启动交互问答初始化
+/mabw new
 ```
 
-Agent 会读取项目说明，先用自然语言询问简报对象、行业主题、读者、语言、频率和来源偏好，再创建工作区、配置来源、运行示例和生成第一份可审计草稿。
+Hermes 会先检查环境，再引导你填写简报需求，然后自动创建工作区并走完 scout → screener → claim-ledger → analyst → editor → auditor 子代理管线。详细流程见 [HERMES.md](HERMES.md)。
 
-正式分发前仍需要人工确认来源、内容和审计结果。
+> **finalize 交付门禁：** 子代理生成 `audited_brief.md` 后运行：
+> ```bash
+> multi-agent-brief finalize --config <workspace>/config.yaml
+> ```
+> 去掉内部 `[src:CLAIM_ID]` 标记 → 生成 `brief.md` / `brief.docx` → 验证输出。
 
-### 方式三：CLI-only 安装（实验性）
+### 其他运行时
 
-> ⚠️ **CLI-only 模式**：适用于 `init`、`doctor`、`audit`、`finalize`、`start`、`hermes` 等确定性 CLI 命令。
-> **不保证** agent commands、multi-agent、skills、capability board 等完整 agent 工作流可用。
-> 完整 agent workflow 请使用 [方式一：Clone 仓库](#方式一clone-仓库推荐--完整-agent-工作流)。
+也支持 Claude Code（`/generate-brief <workspace>`）、Codex、OpenCode。Clone 仓库并 `source .venv/bin/activate` 后：
 
-macOS / Linux / WSL 用 curl 安装：
+```bash
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ../mabw-workspace --runtime claude
+```
+
+### CLI-only 安装
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.sh | bash
 ```
 
-Windows PowerShell：
-
-```powershell
-irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
-```
-
-安装完成后可以使用 CLI：
-
-```bash
-multi-agent-brief onboard
-multi-agent-brief init my-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace my-workspace
-```
-
-> **Homebrew：** 目前 Homebrew formula stable 版本为 v0.3.4，落后于当前版本。如需使用 Homebrew，请用 `--HEAD` 安装最新开发版：
->
-> ```bash
-> brew tap Stahl-G/multi-agent-brief-workflow https://github.com/Stahl-G/multi-agent-brief-workflow
-> brew install --HEAD Stahl-G/multi-agent-brief-workflow/multi-agent-brief
-> ```
->
-> Homebrew 安装同样为 CLI-only 模式。
+仅提供 `init`、`doctor`、`audit`、`finalize` 等确定性命令，不含 agent 工作流。
 
 ---
 
 ## 使用自己的材料
 
-先通过交互式问答采集需求，再创建工作区：
+在 Hermes 中运行 `/mabw new`，按对话引导填写简报需求即可。Hermes 会自动创建工作区并走完完整管线。
+
+产物位于 `<workspace>/output/` 目录：`brief.md`、`brief.docx`、`claim_ledger.json`、`audit_report.json`、`source_map.md`。
+
+如果使用其他运行时，也可以手动操作：
 
 ```bash
 multi-agent-brief onboard
 multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```
-
-把 `.md`、`.txt` 或 `.json` 文件放入：
-
-```text
-../mabw-workspace/input/
-```
-
-检查来源配置：
-
-```bash
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-```
-
-生成简报：
-
-使用 `multi-agent-brief run --workspace ../mabw-workspace` 将任务交给 agent runtime（默认 Hermes `delegate_task` 子代理管线），也可通过 `--runtime` 切换。
-
-或者先完成来源发现和配置检查：
-
-```bash
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-```
-
-产物位于 `output/` 目录：`brief.md`、`audited_brief.md`、`claim_ledger.json`、`audit_report.json`、`source_map.md`、`run_manifest.json`。
 
 ---
 
