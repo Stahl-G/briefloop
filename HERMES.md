@@ -5,9 +5,8 @@ This repository is the MABW source repo, not a brief workspace.
 Primary Hermes path:
 
 1. Run `bash scripts/setup.sh` if `.venv/` is missing.
-2. Install/enable the Hermes plugin:
-   `cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw`
-   `hermes plugins enable mabw`
+2. Install the Hermes plugin:
+   `multi-agent-brief hermes install-plugin`
 3. For a real brief, do not use demo/example workspaces unless the user explicitly names one.
 4. If no workspace is provided, collect onboarding fields:
    company_or_org, industry_or_theme, task_objective, audience, language, cadence, source_style, output_style, must_watch, forbidden_sources, web_search_mode.

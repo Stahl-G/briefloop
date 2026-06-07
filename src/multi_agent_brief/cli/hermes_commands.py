@@ -129,6 +129,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Target skill directory (auto-detected if omitted).",
     )
 
+    hermes_plugin = hermes_sub.add_parser(
+        "install-plugin",
+        help="Install the MABW Hermes plugin to ~/.hermes/plugins/mabw.",
+    )
+
     hermes_prompt = hermes_sub.add_parser(
         "prompt",
         help="Generate a Hermes run prompt for a workspace.",
@@ -159,6 +164,8 @@ def handle(args: argparse.Namespace) -> int:
         return _hermes_sync_sources(args)
     if args.hermes_action == "install-skill":
         return _hermes_install_skill(args)
+    if args.hermes_action == "install-plugin":
+        return _hermes_install_plugin(args)
     if args.hermes_action == "prompt":
         return _hermes_prompt(args)
     return 1
@@ -293,6 +300,33 @@ def _hermes_install_skill(args: argparse.Namespace) -> int:
     print(
         "[hermes] Then paste the prompt into Hermes to start the delegated"
         " brief workflow."
+    )
+    return 0
+
+
+def _hermes_install_plugin(_args: argparse.Namespace) -> int:
+    import shutil
+
+    repo_root = Path.cwd().resolve()
+    source = repo_root / "integrations" / "hermes-plugin" / "mabw"
+    target = Path.home() / ".hermes" / "plugins" / "mabw"
+
+    if not source.exists():
+        print(
+            f"[error] Plugin source not found: {source}"
+        )
+        print(
+            "[hint] Run this command from the MABW source repo root."
+        )
+        return 1
+
+    if target.exists():
+        shutil.rmtree(target)
+
+    shutil.copytree(source, target)
+    print(f"Plugin installed: {target}")
+    print(
+        "Next: restart Hermes or run `hermes plugins enable mabw`"
     )
     return 0
 
