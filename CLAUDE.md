@@ -1,87 +1,132 @@
 # CLAUDE.md
 
-@AGENTS.md
+## Claude Code Role
 
-## Claude Code
+This file is for developing and running Multi-Agent Brief Workflow inside Claude Code.
 
-### Setup
+For runtime-neutral instructions, see `AGENTS.md`. For Claude Code execution, use the repository slash command and subagents.
+
+## Standard Claude Code Path
+
+For a real brief workspace:
 
 ```bash
-bash scripts/setup.sh && source .venv/bin/activate
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 ```
 
-### Commands
-
-| Task | Command |
-|------|---------|
-| Init workspace | `multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json` |
-| Generate brief | `/generate-brief ../mabw-workspace` |
-| Doctor check | `multi-agent-brief doctor --config ../mabw-workspace/config.yaml` |
-| Source decide | `multi-agent-brief sources decide --config ../mabw-workspace/config.yaml` |
-| Merge sources | `multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge` |
-| Finalize reader artifacts | `multi-agent-brief finalize --config ../mabw-workspace/config.yaml` |
-| Run tests | `python -m pytest -q` |
-| Agent config check | `python scripts/generate_agent_configs.py --check` |
-
-## Context Mode Rule
-
-When a user request or command provides a workspace path, classify that path as the workspace, even if the current working directory is the source repo.
-
-Example: if you are in `/path/to/repo/` and the user says "generate a brief for ../mabw-workspace", the workspace is `../mabw-workspace`.
-
-Workspace evidence comes from the workspace input/source configuration and collected provider outputs. Repo README, docs, examples, and agent files are development references.
-
-## Conversational Onboarding Policy
-
-When the user asks to initialize, start, or configure a brief workspace:
-
-1. Ask plain-language questions directly in chat.
-2. Cover all onboarding fields: company, industry, task, audience, language, cadence, source style, output style, must-watch topics, excluded sources/topics, and web-search configuration.
-3. Let the user answer naturally in one message.
-4. Confirm required fields and defaults explicitly.
-5. Convert answers internally to `onboarding.json`.
-6. Run `multi-agent-brief init <workspace> --from-onboarding onboarding.json`.
-7. Use AskUserQuestion for optional single-choice refinements.
-8. Keep YAML, schema, source_profile, selector_max_items, retrieval_provider, output_formats, and CLI flags in developer-facing explanations unless the user asks for them.
-
-## Subagent Runtime
-
-MABW uses the external subagent workflow for real brief generation:
+Then run in Claude Code:
 
 ```text
-source-planner → scout → screener → claim-ledger → analyst → editor → auditor → formatter
+/generate-brief ../mabw-workspace
 ```
 
-Python commands provide setup, source discovery, input governance, audit checks, and final rendering tools. The auditable brief is produced by subagents and rendered with `finalize`.
+For a demo workspace:
 
-## Source Profiles
+```bash
+multi-agent-brief init ../mabw-demo --demo
+```
 
-- `conservative` — official only
-- `research` — official + industry + RSS
-- `aggressive_signal` — broad signals, more noise
-- `custom` — user edits sources.yaml
-- `llm_decide` — agent-readable discovery policy, no LLM at init (default)
-
-## Layout
+Then run:
 
 ```text
-src/multi_agent_brief/
-  cli/         CLI commands and init wizard
-  core/        config, schemas, claim ledger
-  audit/       deterministic checks, harnesses, final quality
-  sources/     providers, registry, doctor
-  outputs/     finalize and rendering helpers
-configs/       agent_roles.yaml (source of truth)
-scripts/       setup.sh, setup.ps1, generate_agent_configs.py
-tests/         pytest suite
+/generate-brief ../mabw-demo
 ```
 
-## Development Guardrails
+## Repository Development Setup
 
-- Python 3.9+, type hints, dataclasses, ABC
-- Windows native path is PowerShell: `.\scripts\setup.ps1`, `.\.venv\Scripts\Activate.ps1`, `python -m pytest -q`
-- WSL is optional
-- Tests use deterministic fixtures
-- Generated files have `AUTO-GENERATED` header; edit `configs/agent_roles.yaml`
-- API keys use env var refs
-- `user.md` is agent context; source evidence lives in workspace input/source configuration
+```bash
+bash scripts/setup.sh
+source .venv/bin/activate
+python -m pytest -q
+```
+
+Windows PowerShell:
+
+```powershell
+.\scripts\setup.ps1
+.\.venv\Scripts\Activate.ps1
+python -m pytest -q
+```
+
+## Useful Commands
+
+```bash
+multi-agent-brief version
+multi-agent-brief onboard
+multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ../mabw-workspace --runtime claude
+multi-agent-brief doctor --config ../mabw-workspace/config.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
+multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+multi-agent-brief finalize --config ../mabw-workspace/config.yaml
+python scripts/generate_agent_configs.py --check
+```
+
+## Context Mode
+
+When the user provides a workspace path, treat that path as the workspace even if the current shell is inside the source repository.
+
+Workspace evidence comes from workspace input files, source configuration, collected provider outputs, and intermediate artifacts. Repository docs, examples, README files, and agent configs are development references.
+
+## Subagent Workflow
+
+Claude Code uses the external subagent workflow:
+
+```text
+source-planner
+→ scout
+→ screener
+→ claim-ledger
+→ analyst
+→ editor
+→ auditor
+→ formatter/finalize
+```
+
+Python CLI commands provide setup, source discovery, input governance, audit checks, runtime handoff, and final rendering tools. The auditable brief is written by subagents and rendered through `finalize`.
+
+## Generated Files
+
+Prefer editing generation sources:
+
+```text
+configs/agent_roles.yaml
+scripts/generate_agent_configs.py
+src/multi_agent_brief/hermes/
+```
+
+After editing generated content:
+
+```bash
+python scripts/generate_agent_configs.py
+python scripts/generate_agent_configs.py --check
+```
+
+## Focused Tests
+
+For launcher and runtime handoff changes:
+
+```bash
+python -m pytest tests/test_start_commands.py tests/test_hermes_adapter.py tests/test_agent_config_generation.py -q
+```
+
+For onboarding changes:
+
+```bash
+python -m pytest tests/test_onboarding*.py tests/test_init*.py -q
+```
+
+For final validation:
+
+```bash
+python -m pytest -q
+```
+
+## Implementation Style
+
+Keep user-facing prompts and skills short and positive.
+
+Use complete section rewrites for architecture language changes instead of partial line patches.
+
+When changing generated files, update the generator source and regenerate derived outputs.
