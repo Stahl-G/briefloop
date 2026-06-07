@@ -59,6 +59,9 @@ jobs:
       - name: Release consistency check
         run: python scripts/check_release_consistency.py
 
+      - name: Version consistency check
+        run: python scripts/check_version_consistency.py
+
       - name: Capabilities check
         run: python scripts/check_capabilities.py
 
