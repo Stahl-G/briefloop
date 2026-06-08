@@ -650,14 +650,16 @@ See [docs/claude-code-workflow.md](docs/claude-code-workflow.md) and [docs/claud
 
 The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime work.
 
-- **v0.4: Knowledge & Governance Contracts** — Claim epistemic types, evidence relations, schema contracts, `run_manifest.json`, semantic audit states, finding taxonomy, rule packs, and event/field governance hooks.
-- **v0.5: Production Reference Workflow** — one official path, Audience Profiles, DOCX templates and validation, Final Clean, Editorial Governance, Policy & Regulatory Risk Module, HistoryStore, and effort budgets. Editorial Governance covers feedback contamination, meta-content leakage, factual density, comparable-case applicability, research-gap separation, and source coverage.
-- **v0.5.5: Hermes Adapter Layer** — Hermes adapter provides a native Hermes workflow using `delegate_task` subagents for scheduled source collection and brief generation. Includes daily source cache, weekly/monthly cron plans, and `cached_package` provider wiring.
-- **v0.5.6: Anthropic Skills Convergence** — Thin CLI router (main.py 1512→134 lines). Generator limited to platform adapters (codex/claude/docs/opencode). 17 SKILL.md rewritten as Anthropic Skills contracts (Scope/Purpose/Use When/Inputs/Outputs/Work/Handoff). Hermes progressive disclosure with references/. Formatter role updated to reader-facing finalize semantics.
-- **v1.0: Stable Baseline** — golden datasets, benchmark metrics, contract compliance tests, release consistency checks, and a formal support matrix.
-- **v2.0: MAS Runtime Candidate** — after v1.0, explore Shared World, Event Store, TaskBoard, AgentMessage, ClaimProposal / ClaimReducer, replay, and minimal coordination protocols.
+Public direction:
 
-See [docs/roadmap.md](docs/roadmap.md) for the detailed roadmap, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics.
+- **v0.6: Orchestrator Contracts And Feedback Loop** — make the main agent explicit and demonstrate an output → feedback → bounded repair loop early.
+- **v0.7: FrictionStore And Improvement Proposals** — turn recurring failures, audit findings, and human feedback into controlled improvement proposals.
+- **v0.8: Policy Packs And Runtime Parity** — support different briefing contexts while keeping runtime artifact expectations aligned.
+- **v0.9: Distribution And Reference Workflows** — improve installation, setup diagnostics, and public-safe demos.
+- **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.
+- **v2.0: MAS Runtime Research Track** — after v1.0, explore richer runtime coordination concepts.
+
+See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
 
 ## Safety And Non-Investment-Advice Disclaimer
 

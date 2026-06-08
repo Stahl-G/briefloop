@@ -49,6 +49,10 @@ reasonix.toml
 notes/
 TODO.md
 .cache/
+private_planning/
+docs/internal/
+*.private.md
+*.internal.md
 
 # Logs and backups
 *.log
