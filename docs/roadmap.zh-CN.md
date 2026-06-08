@@ -1,195 +1,855 @@
 # 路线图
 
-本路线图反映 v0.5.8 后的新基线：subagent-first runtime handoff + Hermes primary path + input governance。
-
-## 已完成（v0.1 — v0.5.7）
-
-v0.5.7 已将项目从旧 Python pipeline 推到新基线：
-
-- **Subagent-first runtime handoff**：`multi-agent-brief run` 不再是 Python 生成 brief，而是 runtime handoff launcher。外部子智能体 workflow：scout → screener → claim-ledger → analyst → editor → auditor → finalize。
-- **Hermes primary path**：Hermes 适配层提供 `delegate_task` 原生子代理管线、cron 调度、daily source cache 和 cached_package 对接。
-- **Thin CLI router**：`main.py` 瘦化为路由层，命令逻辑分布在 13 个 `cli/*_commands.py` 模块。
-- **平台适配器**：Claude Code、OpenCode、Codex 三平台子智能体定义由 `configs/agent_roles.yaml` 统一生成。
-- **Input governance**：`inputs classify` CLI 命令 + Scout 证据目录契约 + ManualProvider 硬门禁，阻止反馈/指令/背景文件污染 Claim Ledger。
-- **Quality gates**：deterministic audit、editorial governance、final quality、limitation hygiene 四层质量门。
-- **Analysis modules**：market competitor 和 policy regulatory 两个性质不同的可插拔模块。
-
-## 总原则
-
-v1.0 之前不应继续堆搜索后端、专题模块或交付渠道。当前优先级：
+本路线图覆盖 v0.5.8 后的新基线。项目下一阶段不再把质量提升、provenance、FrictionStore 分散推进，而是统一收敛到一个主线：
 
 ```text
-Release & Runtime Contract Cleanup
-→ Runtime Artifact Contract
-→ Quality Mainline（分析块正式化 + 质量门）
-→ Golden Runs & Evaluation
-→ Packaging & Distribution
+Explicit Orchestrator Contract
+→ Runtime State
+→ Artifact Contract
+→ Evidence Provenance
+→ Execution Provenance
+→ Quality And Repair Loop
+→ Golden Evaluation And FrictionStore
+→ Distribution And Reference Workflows
 → v1.0 Stable Baseline
-→ v2.0 MAS Runtime（推迟）
 ```
 
----
+## 核心定义
 
-## v0.5.8：Release And Runtime Contract Cleanup
+### Orchestrator 是 main agent，不是 Python pipeline
 
-**目标**：让 v0.5.7 的新架构不自相矛盾。
+本项目的 Orchestrator 指 runtime main agent。它可以是 Hermes parent agent、Claude Code command context、Codex main agent、OpenCode primary agent，或 manual fallback 操作者。
 
-### 必须做
+Orchestrator 的职责是控制流程、委派子 agent、检查 artifact、记录决策、阻断失败和生成改进信号。Python 只提供工具、schema、validator、manifest、event log、renderer 和 audit harness。
 
-- **修复 Issue [#49](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/49)**：明确 clone/source install 与 CLI-only install 的边界，或将 Hermes plugin / agent assets 打进 package。
-- **更新 Homebrew formula**：当前 `Formula/multi-agent-brief.rb` 仍指向旧版本。
-- **打 v0.5.7 tag** 或调整 release consistency 规则，否则 CI 继续卡。
-- **重写 `docs/roadmap.zh-CN.md` 和 `docs/architecture.zh-CN.md`**：删除主路径里的 `prepare` 和旧 Python pipeline 叙事。
-- **建立 Support Matrix**：明确 `Supported / Experimental / Interface Only / CLI-only / Deprecated`，覆盖 Hermes、OpenCLI、local_signal、delivery、PDF、Homebrew/curl 等。
+```text
+Orchestrator main agent
+  reads contracts
+  selects policy pack
+  plans stages
+  delegates subagents
+  validates outputs
+  records decisions
+  blocks or repairs
+  finalizes only after gates pass
+```
 
-### 验收标准
+不得把 Orchestrator 实现成新的 `BriefPipeline.run()`。不得让 Python 自动执行 Scout、Screener、Analyst、Editor、Auditor 全链路生成 brief。
 
-- CI 全绿，不再因为 tag 漂移报错。
-- README、AGENTS.md、CLAUDE.md 与当前实际入口一致。
-- Support Matrix 文档存在，每个能力有明确状态标签。
+### 0.6 的目标
 
----
+0.6 的目标不是先提升 DOCX 文笔，而是让弱模型也能明确意识到：
 
-## v0.5.9：Runtime Artifact Contract
+```text
+I am the orchestrator.
+I manage stage state.
+I delegate specialist agents.
+I validate each artifact.
+I decide continue / retry / block / human review.
+I record provenance and improvement signals.
+```
 
-**目标**：让 subagent workflow 可验收，而不是只靠 prompt 顺序。
+换句话说，0.6 要把 main agent 从“照着 prompt 顺序跑”升级为“受 harness 管理的 workflow controller”。
 
-### 必须做
+## 已完成基线
 
-- **`run_manifest.json` 复用**：由 handoff/runtime 阶段记录每个中间 artifact 的存在、hash、producer、status。Scout/screener/claim-ledger/analyst/editor/auditor 完成后更新。
-- **新增 artifact validators**：`validate-candidates`、`validate-screened`、`validate-ledger`、`validate-handoff`——每个子智能体输出后自动校验。
-- **`inputs classify` 结果进入 `agent_handoff.json`**：Scout 必须按 evidence list 执行，不可自由扫描全 `input/`。
-- **Runtime parity tests**：Hermes / Claude Code / OpenCode / Codex 的 artifact contract 做一致性测试。
-- **RelevanceGate**：输出 `output/intermediate/relevance_report.json`，放在 claim-ledger 之后、analyst 之前。决定哪些 claim 能进正文、摘要、附录或丢弃。
+### v0.5.7
 
-### 验收标准
+- `multi-agent-brief run` 已从 Python brief generator 改成 runtime handoff launcher。
+- 主路径是 external subagent workflow：scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> formatter。
+- Hermes 成为 primary runtime path，支持 `delegate_task`、cron、daily source cache 和 cached_package。
+- Claude Code、OpenCode、Codex 平台适配器由 `configs/agent_roles.yaml` 生成。
+- `inputs classify` 与 ManualProvider hard gate 已阻止 feedback / instruction / context 污染 Claim Ledger。
+- deterministic audit、editorial governance、final quality、limitation hygiene 已形成质量门基础。
 
-- 任意 runtime 执行后，`run_manifest.json` 完整记录 artifact 链。
-- CI 可以跑 `validate-handoff`，不依赖 LLM 判断。
-- Scout 拿不到非 evidence 文件列表。
+### v0.5.8
 
----
+- 清理旧 `prepare` / Python pipeline 叙事。
+- 建立 support matrix。
+- 建立 `VERSION` 单一真源和 release consistency 脚本。
+- 明确 clone/source install 与 CLI-only install 边界。
 
-## v0.6.0：Quality Mainline
+## 工程分层
 
-**目标**：解决 DOCX 质量差距暴露的问题。主线是质量，不是功能。
+后续 agent 修改代码时，先按这一层级定位问题：
 
-### 必须做
+| 层 | 目的 | 主要文件 |
+|---|---|---|
+| Orchestrator Contract | 定义 main agent 应如何管理 workflow | `configs/orchestrator_contract.yaml`, `.agents/skills/orchestrator/SKILL.md`, `configs/agent_roles.yaml` |
+| Stage Spec | 定义 stage 依赖、输入、输出、validator、failure action | `configs/stage_specs.yaml`, `src/multi_agent_brief/orchestrator/stage_spec.py` |
+| Artifact Contract | 定义 artifact schema、producer、consumer、hash、status | `configs/artifact_contracts.yaml`, `src/multi_agent_brief/artifacts/` |
+| Runtime State | 记录当前 run 的状态、决策和 gate 结果 | `workflow_state.json`, `run_manifest.json`, `event_log.jsonl` |
+| Evidence Provenance | 记录 source -> evidence -> claim -> draft -> final | `source_registry.json`, `evidence_pack.json`, `claim_ledger.json`, `citation_audit.json` |
+| Execution Provenance | 记录 agent / tool / handoff / artifact lineage | `agent_task_log.jsonl`, `tool_call_log.jsonl`, `handoff_log.jsonl` |
+| Quality Harness | 记录 relevance、delivery、repair、rendering、eval 结果 | `relevance_report.json`, `delivery_report.json`, `quality_score.json` |
+| Improvement Loop | 把失败转成受控改进项 | `friction_store.jsonl`, `improvement_signals.json`, `improvement_proposal.md` |
 
-- **`analysis_blocks` 从旁路工具升级为正式 writer contract**：分析师写作时必须遵循结构化分析块模板，而不是自由写全文。
-- **强制区分 Fact / Case / Interpretation / Limitation / Action / To Verify**：Claim schema 升级 epistemic type 和 evidence relation 双维度。
-- **接入 Issue [#19](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/19)、[#41](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/41)、[#43](https://github.com/Stahl-G/multi-agent-brief-workflow/issues/43)**。
-- **RelevanceGate 正式化**：决定哪些 claim 能进正文、摘要、附录或丢弃。
-- **DeliveryGate**：检查语言、读者匹配、主题相关性、实体相关性、章节完整性、英文泄漏、通用模板泄漏。
+## v0.6.0: Explicit Orchestrator Contract
 
-### 验收标准
-
-- Analyst 不输出自由撰写全文，只输出结构化分析块。
-- 每份读者交付报告都经过 RelevanceGate + DeliveryGate。
-- DOCX/Markdown 输出在弱模型下不会出现章节空洞或模板泄漏。
-- 免费/弱模型只做局部受控任务（如提取 claim、写单段分析），不由单个 Prompt 一次写完整周报。
-
----
-
-## v0.6.1 — v0.6.2：Evaluation And Golden Runs
-
-**目标**：能客观判断"质量有没有变好"。
-
-### 必须做
-
-- **建 5 类 golden workspace**：normal weekly、quiet week、sparse evidence、conflicting sources、feedback contamination。
-- **为每类保存 expected artifacts**（不包含真实私有材料）。
-- **质量指标**：relevance、claim coverage、unsupported statements、language match、reader depth、DOCX render fidelity。
-- **`mabw eval` 命令或 CI golden smoke**：不要求模型输出完全一致，但要求合同和质量门过线。
-
-### 验收标准
-
-- `mabw eval --golden normal_weekly` 可以在 CI 跑。
-- 每次 PR 有质量回归信号，不是只看 pytest 通过。
-
----
-
-## v0.7：Packaging And Distribution
-
-**前提**：v0.5.8 的 package asset 问题已解决。
+目标：把 Orchestrator 从“普通协调 agent”改成 main agent 的正式工程契约。
 
 ### 必须做
 
-- **正式支持 curl / PowerShell / Homebrew 的升级路径**。
-- **`multi-agent-brief assets install --profile hermes|claude|opencode|codex`**：一键安装运行时适配器到目标平台。
-- **`multi-agent-brief assets doctor`**：检查已安装 assets 是否完整、版本是否匹配。
-- **Package resources 通过 `importlib.resources` 读取**：不依赖当前目录是 repo root。
+1. 新增 Orchestrator 架构文档：
 
-### 验收标准
+```text
+docs/orchestrator-architecture.zh-CN.md
+docs/orchestrator-architecture.md
+```
 
-- `curl install.sh | bash` 安装后能 `multi-agent-brief assets install --profile hermes`。
-- `assets doctor` 输出完整性和版本检查报告。
-- Homebrew formula 指向最新版本且可正常安装。
+文档必须说明：
 
----
+- Orchestrator 是 main agent，不是 Python pipeline。
+- Orchestrator 如何读取 workspace、policy、stage spec、artifact contract。
+- Orchestrator 如何委派 subagents。
+- Orchestrator 可以做哪些 decision。
+- Orchestrator 何时必须 block、retry、request human review。
+- Python CLI 在该架构中只提供 tools 和 validators。
 
-## v1.0：Stable Baseline
+2. 新增 contract 配置源：
 
-**v1.0 不应是 MAS Runtime。** v1.0 应冻结以下基线：
+```text
+configs/orchestrator_contract.yaml
+configs/stage_specs.yaml
+configs/artifact_contracts.yaml
+configs/policy_packs/default.yaml
+```
 
-- subagent-first handoff contract
-- Hermes primary path
-- input governance（inputs classify + hard gates）
-- RelevanceGate + DeliveryGate
-- golden eval baseline（5 类 workspace + 质量指标）
-- package/install story（curl / PowerShell / Homebrew / importlib.resources）
-- Support Matrix
+3. 重写 Orchestrator role source：
 
-### 范围
+```text
+configs/agent_roles.yaml
+.agents/skills/orchestrator/SKILL.md
+```
 
-- **Golden Dataset**：normal weekly、quiet week、sparse evidence、conflicting sources、feedback contamination 五类 public-safe 数据集。
-- **Benchmark Metrics**：source count、claim count、citation coverage、unsupported statements、high-risk findings、audit status、runtime、cost、artifact hashes。
-- **Contract Compliance Tests**：覆盖 SourceProvider、AnalysisModule、AuditAgent、OutputRenderer、DeliveryConnector。
-- **Release Consistency Gate**：package version、CHANGELOG、README、Git tag、agent configs、schema versions、release notes 一致。
-- **`v1-maintenance` 分支**：只修 bug、治理漏洞、兼容性和文档，不做大架构重构。
+然后运行：
+
+```bash
+python scripts/generate_agent_configs.py
+python scripts/check_agent_configs.py
+```
+
+生成文件包括：
+
+```text
+.claude/agents/orchestrator.md
+.codex/agents/orchestrator.toml
+.opencode/agents/brief-orchestrator.md
+docs/agents/
+```
+
+4. 改写 runtime command 主路径：
+
+```text
+.claude/commands/generate-brief.md
+.opencode/commands/generate-brief.md
+.agents/hermes-skills/multi-agent-brief-hermes/SKILL.md
+src/multi_agent_brief/hermes/adapter.py
+src/multi_agent_brief/cli/start_commands.py
+```
+
+这些入口必须明确：
+
+- 当前 main agent 是 Orchestrator。
+- Scout / Screener / Claim Ledger / Analyst / Editor / Auditor / Formatter 是被 Orchestrator 调度的 subagents。
+- 每个 stage 后 Orchestrator 必须验证 artifact 再进入下一步。
+
+### Orchestrator decision schema
+
+0.6.0 至少要在文档和 config 中定义这些 decision：
+
+```text
+continue
+retry_stage
+delegate_repair
+request_human_review
+block_run
+finalize
+```
+
+每个 decision 必须包含：
+
+```text
+decision_id
+stage_id
+decision
+reason_summary
+input_artifacts
+output_artifacts
+validation_result
+next_allowed_actions
+created_at
+```
+
+### 测试
+
+新增或更新：
+
+```text
+tests/test_orchestrator_contract_docs.py
+tests/test_agent_config_generation.py
+tests/test_start_commands.py
+tests/test_no_python_pipeline_regression.py
+```
+
+测试重点：
+
+- Orchestrator 角色文件包含 main agent / controller / decision / validation / block 语义。
+- Orchestrator 角色文件不把自己描述成普通 pipeline stage。
+- generate-brief command 不再只是线性步骤清单，必须要求 Orchestrator 验证每个 stage。
+- 不允许重新出现 `BriefPipeline().run` 或 Python fake agent 主路径。
 
 ### 完成标准
 
-- v1.0 可以从全新安装跑通正式支持能力。
-- v1.0 有稳定接口、基准数据和回归指标。
-- v1.0 可作为未来 MAS Runtime 的对照组和回退引擎。
+- 后续 agent 打开 roadmap 后知道先改 `configs/orchestrator_contract.yaml` 和 `configs/stage_specs.yaml`。
+- Hermes / Claude / Codex / OpenCode 的入口都能告诉 main agent 它是 Orchestrator。
+- 角色生成检查通过。
+- pytest 通过。
 
----
+## v0.6.1: Runtime State And Handoff Initialization
 
-## v2.0：MAS Runtime（推迟）
+目标：让 `multi-agent-brief run` 初始化 Orchestrator 可读的 run state，而不是只写 `agent_handoff.md/json`。
 
-v2.0 不应在 v1.0 前启动为主路径。v1.0 冻结后，可新建 `mas-runtime` / `v2` 分支探索真正 MAS。
+### 必须做
 
-建议第一阶段 `mas-runtime-foundation`：
+新增模块：
 
-- Shared World / SQLite Event Store
-- Typed Event / AgentMessage envelope
-- TaskBoard、lease、task bidding 或最小 Contract Net
-- AgentState / inbox cursor / capability registry
-- ClaimProposal 状态机
-- 确定性 ClaimReducer，将 proposal 转为正式 Claim Ledger
-- Run replay 与 v1 Claim Ledger 兼容导出
+```text
+src/multi_agent_brief/orchestrator/
+  __init__.py
+  workflow_state.py
+  stage_spec.py
+  decision.py
+  event_log.py
+  policy_loader.py
+```
 
-暂不做：
+复用并迁移旧能力：
 
-- 不迁移完整 Analyst / Editor / Auditor / Formatter
-- 不做多服务器、Kafka、Redis 或复杂部署
-- 不把所有 connector 和 analysis module 一次性迁移
-- 不把 v2 作为 README 主路径
+```text
+src/multi_agent_brief/core/manifest.py
+```
 
-评估详见 [v2.0 MAS Runtime 重构评估](mas-v2-evaluation.zh-CN.md)。
+不要平行创造第二套 manifest。应把现有 manifest 改造成 runtime handoff manifest，而不是 pipeline manifest。
 
----
+`multi-agent-brief run/start/handoff` 生成：
+
+```text
+output/intermediate/agent_handoff.md
+output/intermediate/agent_handoff.json
+output/intermediate/workflow_state.json
+output/intermediate/run_manifest.json
+output/intermediate/event_log.jsonl
+```
+
+### workflow_state.json 最小字段
+
+```json
+{
+  "schema_version": "workflow_state/v1",
+  "run_id": "RUN_...",
+  "workspace": "...",
+  "runtime": "hermes",
+  "orchestrator_role": "main_agent",
+  "policy_pack": "default",
+  "current_stage": "doctor",
+  "stages": [],
+  "decisions": [],
+  "blocked": false,
+  "block_reason": null
+}
+```
+
+### event_log.jsonl 最小事件
+
+```text
+run_initialized
+handoff_written
+stage_ready
+artifact_expected
+validation_result
+orchestrator_decision
+run_blocked
+run_finalized
+```
+
+不要记录原始 chain-of-thought。允许记录短 `reason_summary`、tool observation summary 和 validation summary。
+
+### CLI
+
+新增：
+
+```bash
+multi-agent-brief validate run --workspace <workspace>
+multi-agent-brief validate state --workspace <workspace>
+```
+
+`validate state` 先只检查 JSON 结构、stage id、runtime、required fields。
+
+### 测试
+
+```text
+tests/test_workflow_state.py
+tests/test_event_log.py
+tests/test_validate_commands.py
+tests/test_start_commands.py
+```
+
+完成标准：
+
+- `run --workspace` 不生成 brief，但生成 Orchestrator state。
+- `validate state` 可以在无 LLM 环境下运行。
+- event log 至少记录 run 初始化和 handoff 写入。
+
+## v0.6.2: Artifact Registry And Process Contract
+
+目标：防止 fake completion。Orchestrator 不能只相信子 agent 说“完成了”，必须检查 artifact。
+
+### 必须做
+
+新增：
+
+```text
+src/multi_agent_brief/artifacts/
+  __init__.py
+  models.py
+  registry.py
+  validators.py
+  hashing.py
+```
+
+生成：
+
+```text
+output/intermediate/artifact_registry.json
+```
+
+Artifact registry entry：
+
+```json
+{
+  "artifact_id": "claim_ledger",
+  "path": "output/intermediate/claim_ledger.json",
+  "producer_stage": "claim_ledger",
+  "consumer_stages": ["analyst", "auditor"],
+  "schema_id": "claim_ledger/v1",
+  "required": true,
+  "status": "missing|present|valid|invalid|stale",
+  "content_hash": "",
+  "created_at": "",
+  "validation_result": {}
+}
+```
+
+### Validators
+
+新增：
+
+```bash
+multi-agent-brief validate artifact --workspace <workspace> --artifact claim_ledger
+multi-agent-brief validate stage --workspace <workspace> --stage claim_ledger
+multi-agent-brief validate handoff --workspace <workspace>
+multi-agent-brief validate run --workspace <workspace>
+```
+
+Validator 必须检查：
+
+- required artifact 是否存在。
+- 文件是否非空。
+- JSON 是否可解析。
+- schema_version 是否匹配。
+- producer_stage 是否符合 stage spec。
+- 上游 artifact 是否满足依赖。
+
+### 与 Orchestrator 的关系
+
+Orchestrator 每次子 agent 返回后必须执行：
+
+```text
+validate stage
+update artifact_registry
+write event_log validation_result
+write orchestrator_decision
+continue or block
+```
+
+### 测试
+
+```text
+tests/test_artifact_registry.py
+tests/test_artifact_validators.py
+tests/test_validate_commands.py
+tests/test_runtime_parity_contract.py
+```
+
+完成标准：
+
+- 缺失 `claim_ledger.json` 时 Analyst stage 不能被判定为 ready。
+- 缺失 `audit_report.json` 时 finalize stage 不能被判定为 ready。
+- Hermes / Claude / Codex / OpenCode 的 expected artifacts 来自同一 artifact contract。
+
+## v0.6.3: Evidence Provenance Contract
+
+目标：把事实可信度从“文稿里有引用”升级为 source -> evidence -> claim 的结构化链路。
+
+### 必须做
+
+新增或升级：
+
+```text
+source_registry.json
+evidence_pack.json
+claim_ledger.json
+citation_audit.json
+```
+
+建议模块：
+
+```text
+src/multi_agent_brief/provenance/
+  __init__.py
+  source_registry.py
+  evidence_pack.py
+  citation_audit.py
+  evidence_graph.py
+```
+
+### Claim Ledger 升级
+
+Claim 必须逐步支持：
+
+```text
+atomic_statement
+support_status
+evidence_refs
+contradicting_evidence_refs
+source_quality_snapshot
+linked_entities
+usage
+limitations
+```
+
+兼容旧字段 `statement`、`source_id`、`evidence_text`，不要一次性破坏现有 tests。
+
+### Evidence unit
+
+```json
+{
+  "evidence_id": "EVD_001",
+  "source_id": "SRC_001",
+  "locator": {"type": "paragraph", "value": "section 2"},
+  "evidence_text": "short excerpt or paraphrase",
+  "evidence_hash": "...",
+  "extracted_by": "scout",
+  "language": "en"
+}
+```
+
+### Citation audit
+
+检查：
+
+- final cited draft 中的 `[src:CLAIM_ID]` 是否存在。
+- claim 是否有 evidence_refs。
+- evidence 是否能回到 source_registry。
+- unsupported / partially_supported / contradicted claim 是否被过度表述。
+- Editor 是否删除了 draft audit 所需引用。
+
+完成标准：
+
+- 重要正文 claim 不能只靠 URL 或裸 source_id。
+- claim 能追溯到 evidence，evidence 能追溯到 source。
+- citation audit 失败会阻止 finalize。
+
+## v0.6.4: Execution Provenance Contract
+
+目标：解释哪个 agent、哪个 tool、哪个 handoff、哪个 validation 产生了当前状态。
+
+### 必须做
+
+新增：
+
+```text
+agent_task_log.jsonl
+tool_call_log.jsonl
+handoff_log.jsonl
+orchestrator_report.json
+```
+
+建议模块：
+
+```text
+src/multi_agent_brief/provenance/
+  execution_log.py
+  agent_task_log.py
+  tool_call_log.py
+  handoff_log.py
+```
+
+### agent_task_log 事件
+
+```json
+{
+  "event_type": "agent_task_completed",
+  "run_id": "RUN_...",
+  "stage_id": "scout",
+  "agent_role": "scout",
+  "input_artifacts": ["source_registry"],
+  "output_artifacts": ["candidate_claims"],
+  "status": "completed|failed|blocked",
+  "summary": "short observable summary",
+  "created_at": "..."
+}
+```
+
+### tool_call_log 边界
+
+不要保存敏感原始日志、API key、完整 prompt 或原始 chain-of-thought。保存：
+
+```text
+tool_name
+purpose
+parameters_summary
+observation_summary
+artifact_updates
+status
+```
+
+完成标准：
+
+- 每个 required artifact 都有 producer。
+- 每个 stage 的成功、失败、阻断有可读事件。
+- Orchestrator report 能说明最终 brief 通过了哪些 gate，哪些 limitation 留存。
+
+## v0.6.5: Orchestrator Quality And Repair Loop
+
+目标：把质量提升纳入 Orchestrator control loop，而不是依赖强模型一次写好。
+
+### 必须做
+
+新增或正式化：
+
+```text
+output/intermediate/relevance_report.json
+output/intermediate/delivery_report.json
+output/intermediate/repair_plan.json
+```
+
+建议模块：
+
+```text
+src/multi_agent_brief/relevance/
+  schemas.py
+  scorer.py
+  report.py
+
+src/multi_agent_brief/delivery_gate/
+  schemas.py
+  checker.py
+  report.py
+
+src/multi_agent_brief/repair/
+  repair_plan.py
+  bounded_refine.py
+```
+
+### RelevanceGate
+
+每条 claim 进入正文前必须有：
+
+```text
+topic_relevance
+audience_relevance
+target_entity_relevance
+time_relevance
+actionability
+recommended_use: include | appendix | drop | to_verify
+reason
+```
+
+硬规则：
+
+- `recommended_use=drop` 的 claim 被正文引用，audit fail。
+- 不能解释“目标读者为什么要看”的 claim 不能进入 executive summary。
+- 缺少本期时间口径的 claim 默认只能作 background 或 appendix。
+
+### DeliveryGate
+
+检查：
+
+- 语言是否匹配。
+- 读者层级是否匹配。
+- 是否出现通用模板栏目泄漏。
+- 是否缺 executive summary。
+- 是否缺 risk / limitation / next watch。
+- 是否有英文泄漏。
+- reader-facing 输出是否残留 `[src:CLAIM_ID]`。
+
+### Bounded repair
+
+Orchestrator 允许有限修复：
+
+```text
+max_repair_rounds: 2
+repair_scope: structure | citation | wording | rendering
+fact_change_requires: claim-ledger update + citation audit
+```
+
+事实修复必须回到 source / evidence / claim 层，不能让 Editor 自行补事实。
+
+完成标准：
+
+- 弱模型只做局部受控任务。
+- Draft / final 的质量失败会生成 repair_plan，而不是直接交付。
+- reader-facing brief 不包含 `[src:CLAIM_ID]`，但 audited draft 保留引用供审计。
+
+## v0.7.0: Golden Evaluation Harness
+
+目标：把“质量有没有变好”变成可回归测试。
+
+### 必须做
+
+新增：
+
+```text
+golden_cases/
+  normal_weekly/
+  quiet_week/
+  sparse_evidence/
+  conflicting_sources/
+  feedback_contamination/
+  citation_removed_by_editor/
+  unsupported_recommendation/
+```
+
+新增模块：
+
+```text
+src/multi_agent_brief/eval/
+  rubric.py
+  golden_case.py
+  scorer.py
+  compare.py
+  report.py
+```
+
+CLI：
+
+```bash
+multi-agent-brief eval run --case golden_cases/normal_weekly
+multi-agent-brief eval score --workspace <workspace>
+multi-agent-brief eval compare --baseline runs/A --candidate runs/B
+```
+
+完成标准：
+
+- CI 可跑 public-safe golden smoke。
+- 评估不要求 LLM 输出完全一致，只要求 contract compliance 和 minimum quality。
+- 每个 PR 能看到 artifact、provenance、quality 的回归信号。
+
+## v0.7.1: FrictionStore And Improvement Proposals
+
+目标：把失败、人审反馈、audit findings 转成结构化改进项，不把原始反馈直接塞回 prompt。
+
+### 必须做
+
+新增：
+
+```text
+friction_store.jsonl
+improvement_signals.json
+improvement_proposal.md
+patch_plan.md
+regression_plan.json
+```
+
+建议模块：
+
+```text
+src/multi_agent_brief/improve/
+  friction_store.py
+  failure_miner.py
+  proposal.py
+  patch_plan.py
+  regression.py
+```
+
+Friction item：
+
+```json
+{
+  "friction_id": "FRIC_001",
+  "source_type": "human_feedback|audit_finding|regression_failure",
+  "failure_type": "unsupported_claim",
+  "severity": "high",
+  "bad_example": "short sanitized example",
+  "preferred_fix": "rewrite as evidence-bound observation",
+  "applies_to": ["analyst", "editor"],
+  "policy_scope": ["manufacturing_executive"],
+  "status": "active",
+  "expires_at": null
+}
+```
+
+完成标准：
+
+- Orchestrator 可以把失败写成 improvement signal。
+- FrictionStore 不保存敏感原始日志、完整 prompt 或私有材料。
+- 自改进只产生 proposal、patch plan、validator 或 golden case 建议，不自动改 main。
+
+## v0.8.0: Policy Packs And Runtime Parity
+
+目标：让 Orchestrator 根据行业、受众和任务类型选择不同 rule set。
+
+### 必须做
+
+新增 policy packs：
+
+```text
+configs/policy_packs/default.yaml
+configs/policy_packs/manufacturing_executive.yaml
+configs/policy_packs/finance_research.yaml
+configs/policy_packs/internet_pm.yaml
+```
+
+每个 policy pack 至少定义：
+
+```text
+stage_overrides
+source_rules
+claim_rules
+delivery_rules
+quality_weights
+human_review_gates
+repair_limits
+```
+
+Runtime parity：
+
+- Hermes parent prompt。
+- Claude `/generate-brief`。
+- Codex orchestrator agent。
+- OpenCode primary agent。
+- manual fallback。
+
+完成标准：
+
+- 同一 workspace 在不同 runtime 下产生同一套 expected artifact contract。
+- policy pack 不改变事实链 schema，只改变 gates、weights、stage options。
+- runtime adapter 差异不泄漏到业务 artifact schema。
+
+## v0.9.0: Distribution And Reference Workflows
+
+目标：让新用户不需要 clone repo 内部结构也能安装 runtime assets 并跑通 reference workflow。
+
+### 必须做
+
+```text
+multi-agent-brief assets install --profile hermes|claude|opencode|codex
+multi-agent-brief assets doctor
+scripts/install.sh
+scripts/install.ps1
+Homebrew formula
+importlib.resources package assets
+```
+
+Reference workflows：
+
+```text
+examples/reference_workflows/manufacturing_executive_weekly
+examples/reference_workflows/finance_research_brief
+examples/reference_workflows/internet_pm_competitor_scan
+```
+
+完成标准：
+
+- fresh install 后能安装 agent assets。
+- `assets doctor` 能发现版本不匹配、缺文件、runtime 未配置。
+- reference workflow 使用 public-safe 数据。
+
+## v1.0.0: Stable Orchestrated Brief Workflow
+
+v1.0 不是完整分布式 MAS runtime。v1.0 应冻结一个 local-first、file-state-driven、contract-governed、provenance-aware、self-improving 的 briefing workflow baseline。
+
+v1.0 必须包括：
+
+- Explicit Orchestrator Contract。
+- Runtime state、run manifest、event log。
+- Artifact registry 和 process validators。
+- Evidence provenance。
+- Execution provenance。
+- RelevanceGate、DeliveryGate、bounded repair。
+- Golden evaluation。
+- FrictionStore 和 improvement proposal。
+- Hermes / Claude / Codex / OpenCode / manual runtime parity。
+- package assets install 和 doctor。
+
+完成标准：
+
+- 从 fresh install 能跑通 supported reference workflow。
+- 所有正式输出都有 artifact、evidence、execution、audit 记录。
+- 弱模型不能绕过 Orchestrator contract 直接生成 reader-facing brief。
+- v1.0 可作为 v2 MAS Runtime 的对照组和回退基线。
+
+## v2.0: MAS Runtime Research Track
+
+v2.0 推迟到 v1.0 后。它可以探索真正的 runtime 层，而不是继续扩写 handoff contract。
+
+候选方向：
+
+```text
+Shared World / SQLite Event Store
+Typed AgentMessage envelope
+TaskBoard and leases
+Agent inbox cursor
+Capability registry
+ClaimProposal state machine
+Deterministic ClaimReducer
+Run replay
+Task tree / DAG control flow
+```
+
+不在 v2 初期做：
+
+- 多服务器、Kafka、Redis。
+- 企业多租户权限。
+- 完整 RAG memory。
+- 自动 main branch 自修改。
+- 一次性迁移所有 connector 和 analysis module。
+
+## Agent Implementation Guide
+
+后续 agent 接到任务时按这个顺序判断：
+
+1. 如果任务涉及主流程、runtime、handoff、subagent sequencing，先看 `docs/orchestrator-architecture.zh-CN.md` 和 `configs/orchestrator_contract.yaml`。
+2. 如果任务涉及某个 stage 的输入输出，先看 `configs/stage_specs.yaml`。
+3. 如果任务涉及文件是否存在、是否有效、谁生成，先看 `configs/artifact_contracts.yaml` 和 `src/multi_agent_brief/artifacts/`。
+4. 如果任务涉及事实支撑，先看 provenance 和 claim ledger，不要先改 prompt。
+5. 如果任务涉及文稿质量，先看 RelevanceGate、DeliveryGate、analysis_blocks 和 final quality harness。
+6. 如果任务涉及自改进，先写 improvement proposal 和 golden case，不要直接把反馈塞进 skill。
+
+每个 PR 应尽量只做一个 contract slice：
+
+```text
+one schema
+one validator
+one CLI surface
+one runtime adapter update
+one focused test group
+```
+
+避免把 Orchestrator、provenance、quality、packaging 混在一个 PR 里。
 
 ## 暂缓事项
 
-以下事项在 v1.0 前应谨慎控制范围：
+v1.0 前不要把重心放在：
 
-- 更多搜索后端和交付渠道
-- 完整模型路由
-- 完整 RAG / 长期记忆系统
-- 大量专题模块
-- 调度、多租户、团队权限和企业部署
-- 未完成的 PDF / Email / Slack / Telegram 等能力
+- 更多搜索后端。
+- 更多交付渠道。
+- 完整模型路由。
+- 完整 RAG / 长期记忆。
+- 企业多租户。
+- 分布式 MAS runtime。
+- 大量行业专题模块。
 
-对于尚未稳定的能力，README 和 CLI 输出必须明确标记为 Experimental 或 Interface Only。
+未稳定能力必须在 README、support matrix、CLI 输出中标为 Experimental、Interface Only 或 CLI-only。
