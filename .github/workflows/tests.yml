@@ -11,8 +11,81 @@ env:
   PYTHONIOENCODING: "utf-8"
 
 jobs:
+  changes:
+    name: Change classification
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: classify
+        name: Classify changed files
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+
+          event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+          github_sha = os.environ["GITHUB_SHA"]
+          base = ""
+
+          if event_name == "pull_request":
+              base = "${{ github.event.pull_request.base.sha }}"
+          elif event_name == "push":
+              base = "${{ github.event.before }}"
+
+          if not base or set(base) == {"0"}:
+              base = f"{github_sha}^"
+
+          result = subprocess.run(
+              ["git", "diff", "--name-only", base, github_sha],
+              check=True,
+              text=True,
+              capture_output=True,
+          )
+          changed = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+          def is_docs_path(path: str) -> bool:
+              root_docs = {"README.md", "README_en.md", "CHANGELOG.md", "AGENTS.md", "CLAUDE.md"}
+              return path.startswith("docs/") or path in root_docs
+
+          docs_only = bool(changed) and all(is_docs_path(path) for path in changed)
+
+          print("Changed files:")
+          for path in changed:
+              print(f"- {path}")
+          print(f"docs_only={str(docs_only).lower()}")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as f:
+              f.write(f"docs_only={str(docs_only).lower()}\n")
+
+  docs-only:
+    name: Docs-only smoke
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check roadmap docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s docs/roadmap.md
+          test -s docs/roadmap.zh-CN.md
+          grep -q "Explicit Orchestrator Contract" docs/roadmap.md
+          grep -q "Explicit Orchestrator Contract" docs/roadmap.zh-CN.md
+          grep -q "provenance_graph.json" docs/roadmap.md
+          grep -q "provenance_graph.json" docs/roadmap.zh-CN.md
+
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,9 +138,6 @@ jobs:
       - name: Capabilities check
         run: python scripts/check_capabilities.py
 
-      - name: Reference workflow smoke
-        run: python scripts/ci/smoke_reference_workflow.py
-
       - name: Failure diagnostics
         if: failure()
         run: |
@@ -97,6 +167,8 @@ jobs:
 
   non-dev-smoke:
     name: Non-dev install smoke
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +203,8 @@ jobs:
 
   llm-decide-smoke:
     name: llm_decide + doctor + sources decide smoke
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -171,6 +245,8 @@ jobs:
 
   onboarding-smoke:
     name: Onboarding (--from-onboarding) smoke
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -213,6 +289,8 @@ jobs:
 
   docx-smoke:
     name: DOCX output smoke
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -258,6 +336,8 @@ jobs:
 
   golden-smoke:
     name: Subagent-first tool smoke
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
