@@ -33,6 +33,13 @@ The project is not trying to rebuild a full distributed multi-agent runtime befo
 - The support matrix, release checks, and version consistency workflow were cleaned up.
 - Install and runtime support boundaries were clarified.
 
+### v0.6.0
+
+- Shared Orchestrator authority, decision vocabulary, contract references, and runtime role parity were established.
+- Runtime handoff artifacts now point every supported runtime to the same Orchestrator control model.
+- Contract references are packaged with the Python distribution so `run` works after non-editable installs.
+- Persisted runtime state, artifact registry execution, feedback repair, and provenance graph work remain later v0.6 milestones.
+
 ## Next Milestones
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -72,9 +79,8 @@ Public scope:
 - Add provenance once the feedback loop and quality gates are testable.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing:
+Public sequencing after v0.6.0:
 
-- v0.6.0: Orchestrator main-agent contract and runtime role parity.
 - v0.6.1: runtime state and minimum artifact registry.
 - v0.6.2: feedback issue handling and bounded repair MVP.
 - v0.6.3: material-fact, freshness, and target-relevance gates.

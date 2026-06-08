@@ -12,6 +12,7 @@ ORCHESTRATOR_CONTRACT = ROOT / "configs" / "orchestrator_contract.yaml"
 STAGE_SPECS = ROOT / "configs" / "stage_specs.yaml"
 ARTIFACT_CONTRACTS = ROOT / "configs" / "artifact_contracts.yaml"
 DEFAULT_POLICY_PACK = ROOT / "configs" / "policy_packs" / "default.yaml"
+PACKAGE_CONTRACT_BASE = ROOT / "src" / "multi_agent_brief"
 
 EXPECTED_DECISIONS = {
     "continue",
@@ -52,6 +53,19 @@ def test_orchestrator_contract_files_exist_and_parse():
         assert path.exists(), f"missing contract source: {path.relative_to(ROOT)}"
         data = _load_yaml(path)
         assert data["schema_version"].startswith("multi-agent-brief-")
+
+
+def test_packaged_contract_files_match_public_contracts():
+    for rel_path in (
+        "configs/orchestrator_contract.yaml",
+        "configs/stage_specs.yaml",
+        "configs/artifact_contracts.yaml",
+        "configs/policy_packs/default.yaml",
+    ):
+        public_path = ROOT / rel_path
+        package_path = PACKAGE_CONTRACT_BASE / rel_path
+        assert package_path.exists(), f"missing packaged contract: {rel_path}"
+        assert package_path.read_text(encoding="utf-8") == public_path.read_text(encoding="utf-8")
 
 
 def test_orchestrator_contract_defines_main_agent_and_decisions():

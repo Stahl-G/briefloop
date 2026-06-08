@@ -5,7 +5,6 @@ from pathlib import Path
 
 import yaml
 
-from multi_agent_brief import __version__
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.hermes import (
     build_hermes_cron_plan,
@@ -13,6 +12,10 @@ from multi_agent_brief.hermes import (
     render_hermes_setup_success,
     render_hermes_skill,
 )
+
+
+ROOT = Path(__file__).resolve().parent.parent
+SOURCE_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def _write_workspace(tmp_path: Path) -> Path:
@@ -68,7 +71,7 @@ def test_build_hermes_cron_plan_has_daily_weekly_monthly(tmp_path: Path):
         profile="default",
     )
 
-    assert plan.version == f"v{__version__}"
+    assert plan.version == f"v{SOURCE_VERSION}"
     assert plan.cadences == ["weekly", "monthly"]
     assert len(plan.jobs) == 3
 
@@ -205,7 +208,7 @@ def test_hermes_setup_next_step_is_hermes_native():
         repo="/tmp/test-repo",
         venv="/tmp/test-repo/.venv",
         workspace="/tmp/test-ws",
-        version=f"v{__version__}",
+        version=f"v{SOURCE_VERSION}",
         doctor_status="passed",
     )
     assert "multi-agent-brief hermes prompt" in text
@@ -269,7 +272,7 @@ def test_cli_hermes_cron_plan_writes_json_and_markdown(tmp_path: Path):
 
     assert result == 0
     data = json.loads(out.read_text(encoding="utf-8"))
-    assert data["version"] == f"v{__version__}"
+    assert data["version"] == f"v{SOURCE_VERSION}"
     assert data["cadences"] == ["weekly", "monthly"]
     assert len(data["jobs"]) == 3
     assert "Hermes Cron Plan" in md.read_text(encoding="utf-8")

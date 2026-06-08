@@ -15,6 +15,7 @@ from multi_agent_brief.cli.start_commands import (
     write_handoff_artifacts,
 )
 from multi_agent_brief.orchestrator_contract import contract_references_exist
+from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -75,6 +76,25 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert contract_references_exist(repo)
     for rel_path in data["contract_references"].values():
         assert (repo / str(rel_path)).exists()
+
+
+def _write_packaged_contract_base(tmp_path: Path) -> Path:
+    package_base = tmp_path / "multi_agent_brief"
+    for rel_path in CONTRACT_REFERENCES.values():
+        target = package_base / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("placeholder: true\n", encoding="utf-8")
+    (package_base / "__init__.py").write_text("", encoding="utf-8")
+    return package_base
+
+
+def test_resolve_repo_workdir_falls_back_to_packaged_contracts(tmp_path):
+    package_base = _write_packaged_contract_base(tmp_path)
+
+    resolved = resolve_repo_workdir(package_base)
+
+    assert resolved == package_base.resolve()
+    assert contract_references_exist(resolved)
 
 
 # ---------------------------------------------------------------------------

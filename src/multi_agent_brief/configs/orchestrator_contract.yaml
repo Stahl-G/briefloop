@@ -1,0 +1,73 @@
+schema_version: multi-agent-brief-orchestrator-contract/v1
+orchestrator:
+  role: main_agent
+  authority: runtime_controller
+  contract_references:
+    stage_specs: configs/stage_specs.yaml
+    artifact_contracts: configs/artifact_contracts.yaml
+    default_policy_pack: configs/policy_packs/default.yaml
+  responsibilities:
+    - read_workspace_context
+    - select_next_stage
+    - delegate_specialist_subagent
+    - check_expected_artifacts
+    - record_decision_summary
+    - block_unsafe_progress
+    - finalize_after_audit_readiness
+  python_layer:
+    role: tools_validators_renderers
+    examples:
+      - init
+      - sources_decide
+      - doctor
+      - inputs_classify
+      - audit
+      - finalize
+contracts:
+  behavior:
+    purpose: define orchestrator and specialist role boundaries
+    first_landing: v0.6.0
+  process_artifact:
+    purpose: define stage readiness and expected artifact categories
+    first_landing: v0.6.0_reference_only
+  fact_grounding_evidence:
+    purpose: keep material statements traceable to supported claims
+    first_landing: v0.6.0_reference_only
+  quality_audience:
+    purpose: keep delivery decisions aligned with reader context
+    first_landing: v0.6.0_reference_only
+decision_vocabulary:
+  - continue
+  - retry_stage
+  - delegate_repair
+  - request_human_review
+  - block_run
+  - finalize
+decision_record_fields:
+  - decision_id
+  - stage_id
+  - decision
+  - reason_summary
+  - input_artifacts
+  - output_artifacts
+  - validation_result
+  - next_allowed_actions
+  - created_at
+runtime_surfaces:
+  - hermes
+  - claude
+  - codex
+  - opencode
+  - manual
+v060_boundaries:
+  implements:
+    - shared_orchestrator_authority
+    - decision_vocabulary
+    - contract_references
+    - runtime_role_parity
+  deferred:
+    - persisted_workflow_state
+    - artifact_registry_execution
+    - feedback_repair_loop
+    - evidence_execution_graph
+    - public_golden_cases

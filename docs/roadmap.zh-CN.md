@@ -33,6 +33,13 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 - 支持矩阵、release checks 和版本一致性 workflow 已清理。
 - 安装方式和 runtime 支持边界已明确。
 
+### v0.6.0
+
+- 已建立共享 Orchestrator authority、decision vocabulary、contract references 和 runtime role parity。
+- Runtime handoff artifacts 已将所有支持的 runtime 指向同一套 Orchestrator control model。
+- Contract references 已随 Python distribution 打包，非 editable 安装后也能运行 `run`。
+- 持久化 runtime state、artifact registry 执行、feedback repair 和 provenance graph 仍属于后续 v0.6 milestone。
+
 ## 下一阶段
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -72,9 +79,8 @@ Non-goals:
 - 在反馈闭环和质量门可测试后，再加入 provenance。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
 
-公开顺序：
+v0.6.0 之后的公开顺序：
 
-- v0.6.0：Orchestrator main-agent contract and runtime role parity。
 - v0.6.1：runtime state and minimum artifact registry。
 - v0.6.2：feedback issue handling and bounded repair MVP。
 - v0.6.3：material-fact、freshness、target-relevance gates。

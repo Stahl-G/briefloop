@@ -28,12 +28,10 @@ class TestCheckReleaseConsistency:
         assert result.returncode == 0, f"Strict mode failed:\n{result.stdout}\n{result.stderr}"
 
     def test_version_consistency(self):
-        """pyproject.toml and __init__.py must agree.  __init__.py may use
-        importlib.metadata or a hardcoded literal."""
-        from multi_agent_brief import __version__
-
+        """pyproject.toml and VERSION must agree without importing installed packages."""
         import re
         repo = SCRIPT.parent.parent
         pyproject = (repo / "pyproject.toml").read_text()
         v1 = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.MULTILINE).group(1)
-        assert v1 == __version__, f"pyproject={v1}, __version__={__version__}"
+        v2 = (repo / "VERSION").read_text(encoding="utf-8").strip()
+        assert v1 == v2, f"pyproject={v1}, VERSION={v2}"

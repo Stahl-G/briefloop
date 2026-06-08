@@ -1,0 +1,33 @@
+schema_version: multi-agent-brief-policy-pack/v1
+policy_pack:
+  name: default
+  audience: workspace_default
+  language: workspace_default
+  cadence: workspace_default
+  contract_categories:
+    - behavior
+    - process_artifact
+    - fact_grounding_evidence
+    - quality_audience
+stage_overrides: {}
+source_rules:
+  source_style: workspace_default
+  freshness: workspace_default
+claim_rules:
+  material_facts_require_claim_ledger: true
+  preserve_uncertainty: true
+delivery_rules:
+  finalize_after_audit_readiness: true
+  reader_output_strips_internal_citations: true
+human_review_gates:
+  - doctor_failed
+  - missing_required_artifact
+  - audit_failed
+  - unsupported_material_fact
+repair_limits:
+  default_repair_mode: reference_only
+  fact_change_requires_claim_update: true
+v060_boundaries:
+  runtime_state: deferred
+  artifact_registry_execution: deferred
+  feedback_repair_loop: deferred

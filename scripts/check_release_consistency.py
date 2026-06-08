@@ -46,30 +46,15 @@ def extract_pyproject_version() -> str:
 
 
 def extract_init_version() -> str:
-    """Get __version__ from the installed package. Fall back to parsing __init__.py."""
-    try:
-        import importlib
-        return importlib.import_module("multi_agent_brief").__version__
-    except Exception:
-        pass
-    # Fallback: parse from file
+    """Get the source package version contract without importing ambient installs."""
     text = (REPO_ROOT / "src" / "multi_agent_brief" / "__init__.py").read_text(encoding="utf-8")
+    if "importlib.metadata" in text and 'version("multi-agent-brief-workflow")' in text:
+        return extract_pyproject_version()
+    if "from importlib.metadata import" in text and 'version("multi-agent-brief-workflow")' in text:
+        return extract_pyproject_version()
     m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
     if m:
         return m.group(1)
-    # Try importlib.metadata pattern
-    if "importlib.metadata" in text:
-        # Package is dynamic — try to get it from installed metadata
-        try:
-            import subprocess, sys
-            result = subprocess.run(
-                [sys.executable, "-c", "from multi_agent_brief import __version__; print(__version__)"],
-                capture_output=True, text=True,
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
-        except Exception:
-            pass
     return ""
 
 

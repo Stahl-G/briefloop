@@ -107,6 +107,6 @@ Each capability has one of the following statuses:
 | Item | Status |
 |---|---|
 | `multi-agent-brief prepare` | Deprecated (use `run` instead) |
-| Python `BriefPipeline` (internal only) | Interface Only |
+| Python `BriefPipeline` | Removed |
 | `multi-agent-brief start` | Deprecated (alias for `run`) |
 | `multi-agent-brief handoff` | Deprecated (use `run`) |

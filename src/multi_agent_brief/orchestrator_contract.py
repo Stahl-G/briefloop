@@ -46,6 +46,11 @@ def is_source_repo(repo_workdir: str | Path) -> bool:
     )
 
 
+def is_package_contract_base(contract_base: str | Path) -> bool:
+    base = Path(contract_base).expanduser().resolve()
+    return (base / "__init__.py").exists() and contract_references_exist(base)
+
+
 def _candidate_parents(start: Path) -> list[Path]:
     resolved = start.expanduser().resolve()
     return [resolved, *resolved.parents]
@@ -68,17 +73,24 @@ def resolve_repo_workdir(
         package_path = Path(__file__).resolve()
         starts.extend(package_path.parents)
 
+    candidates: list[Path] = []
     seen: set[Path] = set()
     for start in starts:
         for candidate in _candidate_parents(start):
             if candidate in seen:
                 continue
             seen.add(candidate)
+            candidates.append(candidate)
             if is_source_repo(candidate):
                 return candidate
 
+    for candidate in candidates:
+        if is_package_contract_base(candidate):
+            return candidate
+
     checked = ", ".join(str(path.expanduser().resolve()) for path in starts)
     raise ValueError(
-        "Could not resolve the MABW source repo with Orchestrator contract files. "
-        f"Checked: {checked}. Pass --repo-workdir pointing to the source repository root."
+        "Could not resolve MABW Orchestrator contract files. "
+        f"Checked: {checked}. Pass --repo-workdir pointing to the source repository root, "
+        "or install a package build that includes multi_agent_brief/configs/."
     )

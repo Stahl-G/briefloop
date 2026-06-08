@@ -1,0 +1,156 @@
+schema_version: multi-agent-brief-stage-specs/v1
+workflow:
+  orchestrator_role: main_agent
+  default_policy_pack: default
+  stages:
+    - stage_id: doctor
+      owner: python_tool
+      category: environment_readiness
+      command: multi-agent-brief doctor --config <workspace>/config.yaml
+      consumes:
+        - config
+        - sources_config
+      produces: []
+      expected_artifacts: []
+      allowed_decisions:
+        - continue
+        - request_human_review
+        - block_run
+    - stage_id: source-discovery
+      owner: python_tool_or_source_planner
+      category: source_governance
+      command: multi-agent-brief sources decide --config <workspace>/config.yaml
+      consumes:
+        - config
+        - sources_config
+        - user_profile
+      produces:
+        - source_candidates
+      expected_artifacts:
+        - source_candidates
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - request_human_review
+        - block_run
+    - stage_id: input-governance
+      owner: python_tool
+      category: input_governance
+      command: multi-agent-brief inputs classify --config <workspace>/config.yaml
+      consumes:
+        - workspace_input
+      produces:
+        - input_classification
+      expected_artifacts:
+        - input_classification
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - request_human_review
+        - block_run
+    - stage_id: scout
+      owner: scout
+      category: source_extraction
+      consumes:
+        - workspace_sources
+        - input_classification
+      produces:
+        - candidate_claims
+      expected_artifacts:
+        - candidate_claims
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - request_human_review
+        - block_run
+    - stage_id: screener
+      owner: screener
+      category: candidate_screening
+      consumes:
+        - candidate_claims
+      produces:
+        - screened_candidates
+      expected_artifacts:
+        - screened_candidates
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - request_human_review
+        - block_run
+    - stage_id: claim-ledger
+      owner: claim-ledger
+      category: claim_grounding
+      consumes:
+        - screened_candidates
+      produces:
+        - claim_ledger
+      expected_artifacts:
+        - claim_ledger
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - request_human_review
+        - block_run
+    - stage_id: analyst
+      owner: analyst
+      category: drafting
+      consumes:
+        - claim_ledger
+        - user_profile
+      produces:
+        - audited_brief
+      expected_artifacts:
+        - audited_brief
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - delegate_repair
+        - request_human_review
+        - block_run
+    - stage_id: editor
+      owner: editor
+      category: editorial_refinement
+      consumes:
+        - audited_brief
+        - claim_ledger
+      produces:
+        - audited_brief
+      expected_artifacts:
+        - audited_brief
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - delegate_repair
+        - request_human_review
+        - block_run
+    - stage_id: auditor
+      owner: auditor
+      category: audit
+      consumes:
+        - audited_brief
+        - claim_ledger
+      produces:
+        - audit_report
+      expected_artifacts:
+        - audit_report
+      allowed_decisions:
+        - continue
+        - retry_stage
+        - delegate_repair
+        - request_human_review
+        - block_run
+    - stage_id: finalize
+      owner: python_tool
+      category: reader_output
+      command: multi-agent-brief finalize --config <workspace>/config.yaml
+      consumes:
+        - audited_brief
+        - audit_report
+      produces:
+        - reader_brief
+      expected_artifacts:
+        - reader_brief
+      allowed_decisions:
+        - finalize
+        - request_human_review
+        - block_run

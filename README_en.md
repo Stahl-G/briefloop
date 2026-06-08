@@ -671,7 +671,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.5.8** — Release & Runtime Contract Cleanup + Support Matrix + old-narrative convergence
+Current version: **v0.6.0** — Orchestrator contract runtime + packaged contract references + runtime role parity
 
 v0.5.1 introduces local signal discovery: the system can generate local-language search tasks for target markets, produce `collector_tasks.json` for manual/OpenCLI collection, parse `local_signal_samples.jsonl` samples, generate `local_signal_report.json` with signals found and data gaps, and enforce 3 audit rules to prevent unsupported consumer pain-point claims. Supports 9 markets (Vietnam, Japan, China, Indonesia, Thailand, Brazil, Mexico, Germany, Korea).
 

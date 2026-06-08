@@ -5,6 +5,27 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-06-08
+
+### Added
+
+- **Explicit Orchestrator contract runtime**: added shared contract references for Orchestrator authority, stage order, artifact expectations, policy shell, and decision vocabulary.
+- **Runtime role parity**: Hermes, Claude Code, Codex, OpenCode, and manual handoff now identify the Orchestrator as the runtime main agent and use the same stage decision language.
+- **Orchestrator architecture docs**: added bilingual public architecture pages plus implementation notes for v0.5.9 prep and v0.6.0 contract scope.
+- **Packaged contract configs**: bundled Orchestrator contract YAML files inside the Python package so non-editable installs can run `multi-agent-brief run` without a source checkout.
+
+### Changed
+
+- **Runtime handoff artifacts**: `agent_handoff.json` and `agent_handoff.md` now include contract references and the shared Orchestrator control loop.
+- **Hermes plugin alignment**: Hermes plugin handoff now passes the detected repo workdir when available, and its delegated workflow reference matches `stage_specs.yaml`.
+- **README updates**: both Chinese and English README files now point to the v0.6 Orchestrator architecture and state the v0.6.0 boundary.
+- **Support matrix**: removed the remaining `BriefPipeline` interface wording; the old Python pipeline is marked removed.
+
+### Fixed
+
+- **Non-editable install handoff**: fixed `multi-agent-brief run --workspace ...` failing after non-editable archive/package installation because contract files were only available in the source repo.
+- **Release consistency script**: release checks no longer import an ambient installed package when validating source version consistency.
+
 ## [0.5.8] — 2026-06-07
 
 ### Changed
