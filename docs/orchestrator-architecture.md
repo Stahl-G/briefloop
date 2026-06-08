@@ -27,7 +27,7 @@ v0.6.0 introduces public-safe contract references:
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 adds minimum runtime state control files and artifact status checks, but it does not implement feedback repair or a provenance graph.
+These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 adds minimum feedback issue and repair-plan controls, but it does not automatically edit brief artifacts, execute repair, or build a provenance graph.
 
 ## Four Contract Categories
 
@@ -49,7 +49,7 @@ The Orchestrator uses a shared decision vocabulary:
 - `block_run`
 - `finalize`
 
-In v0.6.1 these decisions can also be recorded through the runtime state event log. The event log is a control trace, not a full provenance graph.
+In v0.6.1 these decisions can also be recorded through the runtime state event log. In v0.6.2 feedback issue and repair-plan events can also be recorded. The event log is a control trace, not a full provenance graph.
 
 ## Runtime Loop
 
@@ -60,8 +60,9 @@ Each runtime should communicate the same loop:
 3. Identify the current stage and expected artifact.
 4. Delegate the stage to the appropriate specialist role or Python tool.
 5. Check that the expected artifact is present and suitable for the next stage.
-6. Decide whether to continue, retry, delegate repair, request human review, block, or finalize.
-7. Finalize only after audit readiness.
+6. When audit findings or human feedback exist, structure issues and repair plans without executing repair.
+7. Decide whether to continue, retry, delegate repair, request human review, block, or finalize.
+8. Finalize only after audit readiness.
 
 Runtime mechanics may differ, but artifact expectations should stay aligned.
 
@@ -81,8 +82,6 @@ v0.6.0 does not build a provenance graph. It does keep the contract shape compat
 
 Later v0.6 milestones own:
 
-- feedback issue handling
-- bounded repair
 - material-fact and freshness gates
 - public-safe evaluation cases
 - evidence and execution provenance

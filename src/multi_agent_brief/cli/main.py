@@ -24,6 +24,7 @@ from multi_agent_brief.cli import (
     capability_commands,
     input_commands,
     state_commands,
+    feedback_commands,
 )
 
 
@@ -64,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Orchestrator runtime state
     state_commands.register(subparsers)
+
+    # Feedback and repair planning
+    feedback_commands.register(subparsers)
 
     # Hermes runtime
     hermes_commands.register(subparsers)
@@ -134,6 +138,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "state":
         return state_commands.handle(args)
+
+    if cmd == "feedback":
+        return feedback_commands.handle(args)
 
     return 1
 

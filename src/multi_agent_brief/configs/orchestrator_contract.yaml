@@ -82,3 +82,15 @@ v061_boundaries:
     - material_fact_freshness_target_relevance_gates
     - evidence_execution_graph
     - public_golden_cases
+v062_boundaries:
+  implements:
+    - feedback_issue_handling
+    - bounded_repair_planning
+    - feedback_event_trace
+    - current_stage_feedback_blocking
+  deferred:
+    - automatic_repair_execution
+    - semantic_repair_verification
+    - material_fact_freshness_target_relevance_gates
+    - evidence_execution_graph
+    - public_golden_cases

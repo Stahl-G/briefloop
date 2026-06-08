@@ -21,6 +21,14 @@
 - `output/intermediate/audited_brief.md`
 - `output/intermediate/audit_report.json`
 
+## Optional Feedback Control Files
+
+These files are created or updated only by `multi-agent-brief feedback ingest`, `feedback plan`, and `feedback resolve`.
+
+- `output/intermediate/feedback_issues.json`
+- `output/intermediate/repair_plan.json`
+- `output/intermediate/delta_audit_report.json`
+
 ## Final Outputs
 
 - `output/brief.md`

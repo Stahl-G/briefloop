@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Hermes with delegate_task support plus terminal and file access to a workspace with the multi-agent-brief CLI installed.
 metadata:
   author: multi-agent-brief-workflow
-  version: 0.6.1
+  version: 0.6.2
   tags:
     - hermes
     - cron
@@ -35,6 +35,8 @@ Runtime state files:
 - `output/intermediate/workflow_state.json`
 - `output/intermediate/artifact_registry.json`
 - `output/intermediate/event_log.jsonl`
+
+Optional feedback state files: `output/intermediate/feedback_issues.json`, `output/intermediate/repair_plan.json`, and `output/intermediate/delta_audit_report.json`.
 
 Orchestrator control loop:
 
@@ -81,7 +83,7 @@ When the plugin is not available, run onboarding as a chat-to-JSON workflow:
 3. Validate: `multi-agent-brief onboard --validate onboarding.json`
 4. Create the workspace: `multi-agent-brief init <workspace> --from-onboarding onboarding.json`
 5. Create runtime handoff: `multi-agent-brief run --workspace <workspace>`
-6. Read `agent_handoff.md`, `workflow_state.json`, and `artifact_registry.json`, then continue with the delegated workflow below.
+6. Read `agent_handoff.md`, `workflow_state.json`, `artifact_registry.json`, and optional feedback state references, then continue with the delegated workflow below.
 
 ## Existing Workspace Path
 
@@ -107,6 +109,8 @@ doctor
 → finalize
 ```
 
+Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.
+
 Read `references/delegate-task-sequence.md` before creating child tasks.
 
 ## Daily Source Cache
@@ -131,4 +135,6 @@ After a delegated run, report:
 - `output/intermediate/audited_brief.md`
 - `output/intermediate/claim_ledger.json`
 - `output/intermediate/audit_report.json`
+- `output/intermediate/feedback_issues.json` when feedback was ingested
+- `output/intermediate/repair_plan.json` when repair planning was created
 - audit status and remaining limitations

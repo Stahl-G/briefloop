@@ -5,6 +5,24 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-06-08
+
+### Added
+
+- **Feedback CLI**: added `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` for structured feedback issues, deterministic repair plans, and explicit resolution state.
+- **Feedback control artifacts**: added `feedback_issues.json`, `repair_plan.json`, and conditional `delta_audit_report.json` as optional Orchestrator control artifacts.
+- **Feedback event trace**: runtime event logs now record feedback issue creation, issue planning, and repair plan creation events.
+
+### Changed
+
+- **Stage-scoped feedback blocking**: blocking feedback only affects the current stage, so future-stage feedback does not block a fresh or earlier-stage workspace.
+- **Runtime handoff references**: handoff JSON/Markdown and Hermes surfaces now expose optional feedback state files separately from expected workflow artifacts.
+- **Bounded repair planning**: repair plans propose bounded Orchestrator decisions but do not execute repair or edit brief artifacts automatically.
+
+### Fixed
+
+- **Feedback/evidence separation**: feedback issue fields avoid claim-evidence naming and keep human feedback out of source evidence artifacts.
+
 ## [0.6.1] — 2026-06-08
 
 ### Added

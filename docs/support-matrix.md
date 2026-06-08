@@ -17,15 +17,19 @@ Each capability has one of the following statuses:
 | Subagent workflow (Scout → Screener → Claim Ledger → Analyst → Editor → Auditor) | Supported |
 | Runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Supported |
 | Runtime state control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Supported |
+| Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Finalize (Markdown + DOCX) | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
 | `multi-agent-brief state init/check/show/decide` | Supported |
+| `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
 | `multi-agent-brief inputs classify` | Supported |
 | `multi-agent-brief finalize` | Supported |
 | `multi-agent-brief audit` | Supported |
+
+Feedback commands structure issues and repair plans for the Orchestrator. They do not automatically edit brief artifacts or execute repair.
 
 ## Runtimes
 

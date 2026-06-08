@@ -159,6 +159,10 @@ def build_hermes_cron_plan(
                 "- output/intermediate/workflow_state.json\n"
                 "- output/intermediate/artifact_registry.json\n"
                 "- output/intermediate/event_log.jsonl\n\n"
+                "Optional feedback state files are created only by feedback commands:\n"
+                "- output/intermediate/feedback_issues.json\n"
+                "- output/intermediate/repair_plan.json\n"
+                "- output/intermediate/delta_audit_report.json\n\n"
                 f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n"
                 "Run doctor, then use Hermes delegate_task children for:\n"
                 "scout -> screener -> claim-ledger -> analyst -> editor -> auditor.\n"
@@ -181,6 +185,15 @@ def build_hermes_cron_plan(
                 "Use the multi-agent-brief-hermes skill.\n"
                 "Read contract references before delegation:\n"
                 f"{contract_reference_bullets()}\n\n"
+                "Read runtime state files before selecting the next stage:\n"
+                "- output/intermediate/runtime_manifest.json\n"
+                "- output/intermediate/workflow_state.json\n"
+                "- output/intermediate/artifact_registry.json\n"
+                "- output/intermediate/event_log.jsonl\n\n"
+                "Optional feedback state files are created only by feedback commands:\n"
+                "- output/intermediate/feedback_issues.json\n"
+                "- output/intermediate/repair_plan.json\n"
+                "- output/intermediate/delta_audit_report.json\n\n"
                 f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n"
                 "Favor month-level patterns over daily noise.\n"
                 "Run doctor, then use Hermes delegate_task children for:\n"
@@ -195,7 +208,7 @@ def build_hermes_cron_plan(
         "For low-cost frequent polling, convert the daily job to a wakeAgent/script gate in Hermes after the source pattern stabilizes.",
     ]
     return HermesCronPlan(
-        version="v0.6.1",
+        version="v0.6.2",
         workspace=str(workspace_path),
         project_name=summary["name"],
         cadences=resolved_cadences,
@@ -271,7 +284,7 @@ def render_hermes_cron_markdown(plan: HermesCronPlan) -> str:
 _SKILL_MD_TEMPLATE = '''---
 name: multi-agent-brief-hermes
 description: Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
-version: 0.6.1
+version: 0.6.2
 author: multi-agent-brief-workflow
 license: MIT
 platforms:
@@ -293,7 +306,7 @@ Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using 
 
 ## Operating Model
 
-Hermes is a native MABW runtime. The Hermes parent agent is the Orchestrator main agent: it reads shared contract references and runtime state files, manages artifact handoff, checks expected artifacts, and selects the next workflow decision. Hermes `delegate_task` children run scout, screener, claim-ledger, analyst, editor, and auditor tasks as isolated subagents. Python CLI tools handle init, doctor, sources decide, inputs classify, state checks, audit, finalize, and rendering support. Cron jobs provide durable scheduling; `delegate_task` provides child task dispatch within each run.
+Hermes is a native MABW runtime. The Hermes parent agent is the Orchestrator main agent: it reads shared contract references and runtime state files, manages artifact handoff, checks expected artifacts, and selects the next workflow decision. Hermes `delegate_task` children run scout, screener, claim-ledger, analyst, editor, and auditor tasks as isolated subagents. Python CLI tools handle init, doctor, sources decide, inputs classify, state checks, feedback ingest/plan/resolve/show/validate, audit, finalize, and rendering support. Cron jobs provide durable scheduling; `delegate_task` provides child task dispatch within each run.
 
 Contract references:
 
@@ -309,6 +322,12 @@ Runtime state files:
 - `output/intermediate/artifact_registry.json`
 - `output/intermediate/event_log.jsonl`
 
+Optional feedback state files:
+
+- `output/intermediate/feedback_issues.json`
+- `output/intermediate/repair_plan.json`
+- `output/intermediate/delta_audit_report.json`
+
 Orchestrator control loop:
 
 ```text
@@ -322,6 +341,30 @@ scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> finalize
 ```
 
 ## Setup Workflow
+
+### Preferred Path: Hermes Plugin
+
+Use the MABW Hermes plugin when it is installed:
+
+```text
+/mabw <workspace>
+→ mabw_create_onboarding (if workspace is new)
+→ mabw_init_workspace
+→ mabw_run_handoff
+→ read agent_handoff.md
+→ continue delegated workflow
+```
+
+Install from the repository:
+
+```bash
+cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw
+hermes plugins enable mabw
+```
+
+### Fallback: chat-to-JSON onboarding
+
+If the plugin is unavailable, use fallback onboarding: Collect brief profile in chat. Write `onboarding.json`, validate it with `multi-agent-brief onboard --validate onboarding.json`, initialize with `multi-agent-brief init <workspace> --from-onboarding onboarding.json`, then create the handoff with `multi-agent-brief run --workspace <workspace>`.
 
 1. Clone or open the repository.
 2. Create and activate the Python virtual environment.
@@ -423,15 +466,17 @@ multi-agent-brief inputs classify --config <workspace>/config.yaml
 
 8. After each child returns, verify the expected artifact exists and is non-empty before selecting the next decision.
 
-9. Decide `continue`, `retry_stage`, `delegate_repair`, `request_human_review`, `block_run`, or `finalize` according to artifact readiness and audit status.
+9. If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
 
-10. When all children have completed and `audited_brief.md` exists, finalize:
+10. Decide `continue`, `retry_stage`, `delegate_repair`, `request_human_review`, `block_run`, or `finalize` according to artifact readiness, feedback state, and audit status.
+
+11. When all children have completed and `audited_brief.md` exists, finalize:
 
 ```bash
 multi-agent-brief finalize --config <workspace>/config.yaml
 ```
 
-11. Report artifact paths and audit status.
+12. Report artifact paths and audit status.
 
 ### Delegation Sequence
 
@@ -595,7 +640,7 @@ def render_hermes_setup_success(
     repo: str | Path,
     venv: str | Path,
     workspace: str | Path,
-    version: str = "v0.6.1",
+    version: str = "v0.6.2",
     doctor_status: str = "passed",
 ) -> str:
     return f"""Project is cloned and ready.
@@ -641,6 +686,11 @@ Runtime state files:
 - output/intermediate/workflow_state.json
 - output/intermediate/artifact_registry.json
 - output/intermediate/event_log.jsonl
+
+Optional feedback state files:
+- output/intermediate/feedback_issues.json
+- output/intermediate/repair_plan.json
+- output/intermediate/delta_audit_report.json
 
 Orchestrator loop: {ORCHESTRATOR_LOOP}
 
@@ -703,44 +753,51 @@ As the Hermes Orchestrator main agent, execute:
 6. Refresh runtime state without running stages:
    multi-agent-brief state check --workspace {workspace}
 
-7. Delegate scout child via delegate_task:
+7. If audit findings or human feedback exist, structure them without running repair:
+   multi-agent-brief feedback ingest --workspace {workspace} --feedback <path> --source human|audit
+   multi-agent-brief feedback plan --workspace {workspace}
+   multi-agent-brief feedback resolve --workspace {workspace} --issue-id <id> --repair-plan-id <id> --reason <reason>
+   multi-agent-brief feedback show --workspace {workspace} --json
+   multi-agent-brief feedback validate --workspace {workspace}
+
+8. Delegate scout child via delegate_task:
    Goal: "Extract candidate reportable items for a MABW brief"
    Write: output/intermediate/candidate_claims.json
    toolsets: ["file", "terminal", "web"]
 
-8. After candidate_claims.json exists and is non-empty, delegate screener child:
+9. After candidate_claims.json exists and is non-empty, delegate screener child:
    Goal: "Screen and rank MABW candidate claims"
    Input: output/intermediate/candidate_claims.json
    Write: output/intermediate/screened_candidates.json
    toolsets: ["file", "terminal"]
 
-9. After screened_candidates.json exists, delegate claim-ledger child:
+10. After screened_candidates.json exists, delegate claim-ledger child:
    Goal: "Build the MABW Claim Ledger"
    Input: output/intermediate/screened_candidates.json
    Write: output/intermediate/claim_ledger.json
    toolsets: ["file", "terminal"]
 
-10. After claim_ledger.json exists, delegate analyst child:
+11. After claim_ledger.json exists, delegate analyst child:
    Goal: "Draft the audited MABW brief"
    Inputs: user.md and output/intermediate/claim_ledger.json
    Write: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-11. After audited_brief.md exists, delegate editor child:
+12. After audited_brief.md exists, delegate editor child:
    Goal: "Polish the audited MABW brief"
    Input and output: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-12. After editor completes, delegate auditor child:
+13. After editor completes, delegate auditor child:
     Goal: "Audit the MABW brief against the Claim Ledger"
     Inputs: output/intermediate/audited_brief.md and output/intermediate/claim_ledger.json
     Write: output/intermediate/audit_report.json
     toolsets: ["file", "terminal"]
 
-13. After audit_report.json exists, select the finalize decision and run:
+14. After audit_report.json exists, select the finalize decision and run:
     multi-agent-brief finalize --config {workspace}/config.yaml
 
-14. Report artifact paths and audit status.
+15. Report artifact paths and audit status.
 
 For each delegate_task call, write complete goal and context with the workspace path, input paths, and output paths fully specified. After each child returns, verify the expected artifact exists and is non-empty before selecting continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.
 

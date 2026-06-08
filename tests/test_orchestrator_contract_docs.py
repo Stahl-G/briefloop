@@ -88,6 +88,14 @@ def test_orchestrator_contract_defines_main_agent_and_decisions():
         "orchestrator_decision_event_entrypoint",
     ]
     assert "feedback_repair_loop" in contract["v061_boundaries"]["deferred"]
+    assert contract["v062_boundaries"]["implements"] == [
+        "feedback_issue_handling",
+        "bounded_repair_planning",
+        "feedback_event_trace",
+        "current_stage_feedback_blocking",
+    ]
+    assert "automatic_repair_execution" in contract["v062_boundaries"]["deferred"]
+    assert "semantic_repair_verification" in contract["v062_boundaries"]["deferred"]
 
     refs = contract["orchestrator"]["contract_references"]
     for rel_path in refs.values():

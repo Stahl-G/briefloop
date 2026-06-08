@@ -120,6 +120,21 @@ def test_plugin_skill_uses_orchestrator_contract():
         assert "block_run" in text
 
 
+def test_plugin_reference_mentions_feedback_controls():
+    reference = ROOT / "mabw" / "skills" / "mabw-workflow" / "references" / "delegated-workflow.md"
+    artifact_contract = ROOT / "mabw" / "skills" / "mabw-workflow" / "references" / "artifact-contract.md"
+
+    reference_text = reference.read_text(encoding="utf-8")
+    artifact_text = artifact_contract.read_text(encoding="utf-8")
+    assert "multi-agent-brief feedback ingest" in reference_text
+    assert "feedback resolve" in reference_text
+    assert "feedback show --json" in reference_text
+    assert "do not execute repair" in reference_text
+    assert "feedback_issues.json" in artifact_text
+    assert "repair_plan.json" in artifact_text
+    assert "delta_audit_report.json" in artifact_text
+
+
 def test_plugin_delegated_workflow_matches_stage_specs():
     stage_specs = yaml.safe_load((REPO_ROOT / "configs" / "stage_specs.yaml").read_text(encoding="utf-8"))
     expected = [stage["stage_id"] for stage in stage_specs["workflow"]["stages"]]

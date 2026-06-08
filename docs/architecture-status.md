@@ -7,6 +7,7 @@ This page separates current implementation state from roadmap goals. Use it befo
 - The standard user path is subagent-first.
 - `multi-agent-brief run` creates runtime handoff artifacts rather than generating a full brief by itself.
 - Runtime handoff now initializes minimum runtime state and artifact registry control files.
+- Feedback issues and bounded repair plans can be structured, validated, and recorded without executing repair.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance separates evidence from feedback, instructions, and background context.
@@ -17,7 +18,6 @@ This page separates current implementation state from roadmap goals. Use it befo
 The roadmap mentions concepts that are not necessarily implemented yet. Treat these as goals unless the code, tests, and support matrix show otherwise:
 
 - Orchestrator contracts
-- feedback issue handling and bounded repair
 - evidence and execution provenance
 - quality evaluation and feedback loops
 - policy packs

@@ -17,6 +17,7 @@ from multi_agent_brief.cli.start_commands import (
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
+from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -66,8 +67,12 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     )
     assert data["contract_references"] == CONTRACT_REFERENCES
     assert data["runtime_state_files"] == RUNTIME_STATE_FILES
+    assert data["feedback_state_files"] == FEEDBACK_STATE_FILES
     for rel_path in data["runtime_state_files"].values():
         assert not Path(str(rel_path)).is_absolute()
+    for rel_path in data["feedback_state_files"].values():
+        assert not Path(str(rel_path)).is_absolute()
+        assert rel_path not in data["expected_artifacts"]
     for rel_path in data["expected_artifacts"]:
         assert not Path(str(rel_path)).is_absolute()
     assert "Orchestrator main agent" in text or "Orchestrator main-agent" in text
@@ -77,6 +82,8 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "configs/policy_packs/default.yaml" in text
     assert "runtime_manifest.json" in text
     assert "workflow_state.json" in text
+    assert "feedback_issues.json" in text
+    assert "repair_plan.json" in text
     assert "retry_stage" in text
     assert "request_human_review" in text
     assert "block_run" in text
@@ -219,6 +226,9 @@ def test_start_does_not_generate_brief(tmp_path):
     assert not (ws / "output" / "intermediate" / "candidate_claims.json").exists()
     assert not (ws / "output" / "intermediate" / "screened_candidates.json").exists()
     assert not (ws / "output" / "intermediate" / "audit_report.json").exists()
+    assert not (ws / "output" / "intermediate" / "feedback_issues.json").exists()
+    assert not (ws / "output" / "intermediate" / "repair_plan.json").exists()
+    assert not (ws / "output" / "intermediate" / "delta_audit_report.json").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -409,8 +419,10 @@ def test_write_handoff_artifacts_writes_both_files(tmp_path):
     assert "# Agent Handoff" in md_content
     assert "## Contract References" in md_content
     assert "## Runtime State Files" in md_content
+    assert "## Feedback State Files" in md_content
     assert "`orchestrator_contract`: `configs/orchestrator_contract.yaml`" in md_content
     assert "`runtime_manifest`: `output/intermediate/runtime_manifest.json`" in md_content
+    assert "`feedback_issues`: `output/intermediate/feedback_issues.json`" in md_content
     assert "delegate_task" in md_content
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert data["runtime"] == "hermes"

@@ -317,6 +317,11 @@ def run_handoff(args: dict, **kwargs) -> str:
             "artifact_registry": workspace / "output" / "intermediate" / "artifact_registry.json",
             "event_log": workspace / "output" / "intermediate" / "event_log.jsonl",
         }
+        feedback_state_files = {
+            "feedback_issues": workspace / "output" / "intermediate" / "feedback_issues.json",
+            "repair_plan": workspace / "output" / "intermediate" / "repair_plan.json",
+            "delta_audit_report": workspace / "output" / "intermediate" / "delta_audit_report.json",
+        }
 
         result.update({
             "workspace": str(workspace),
@@ -328,11 +333,13 @@ def run_handoff(args: dict, **kwargs) -> str:
             "handoff_json_exists": handoff_json.exists(),
             "runtime_state_files": {key: str(path) for key, path in runtime_state_files.items()},
             "runtime_state_files_exist": {key: path.exists() for key, path in runtime_state_files.items()},
+            "feedback_state_files": {key: str(path) for key, path in feedback_state_files.items()},
+            "feedback_state_files_exist": {key: path.exists() for key, path in feedback_state_files.items()},
             "next": (
                 "Read agent_handoff.md and continue in Hermes as the Orchestrator main agent. "
                 "Read configs/orchestrator_contract.yaml, configs/stage_specs.yaml, "
                 "configs/artifact_contracts.yaml, configs/policy_packs/default.yaml, "
-                "workflow_state.json, and artifact_registry.json before delegation."
+                "workflow_state.json, artifact_registry.json, and optional feedback state references before delegation."
             ),
         })
 

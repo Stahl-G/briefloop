@@ -16,6 +16,10 @@ from typing import Any
 
 import yaml
 
+from multi_agent_brief.feedback.feedback_contract import (
+    current_stage_feedback_blocking_reasons,
+    optional_feedback_artifact_activated,
+)
 from multi_agent_brief import __version__
 from multi_agent_brief.orchestrator_contract import (
     CONTRACT_REFERENCES,
@@ -43,6 +47,11 @@ EVENT_TYPES = {
     "artifact_validated",
     "stage_status_changed",
     "decision_recorded",
+    "feedback_issue_created",
+    "feedback_issue_planned",
+    "feedback_issue_resolved",
+    "repair_plan_created",
+    "repair_plan_completed",
     "run_blocked",
     "run_reset",
 }
@@ -609,7 +618,15 @@ def _artifact_record(
     producer_stage = str(artifact.get("producer_stage") or "")
     status, validation_result = _validate_artifact(workspace / rel_path, fmt)
 
-    if status == ARTIFACT_EXPECTED and _stage_is_complete_or_skipped(workflow, producer_stage):
+    activated_optional = optional_feedback_artifact_activated(
+        workspace=workspace,
+        artifact_id=artifact_id,
+    )
+    if (
+        status == ARTIFACT_EXPECTED
+        and _stage_is_complete_or_skipped(workflow, producer_stage)
+        and (bool(artifact.get("required", False)) or activated_optional)
+    ):
         status = ARTIFACT_MISSING
         validation_result = "missing"
 
@@ -786,8 +803,59 @@ def _status_entry(status: str, reason: str, updated_at: str) -> dict[str, Any]:
     }
 
 
+def _completion_artifact_gate_reasons(
+    *,
+    workspace: Path,
+    stage: dict[str, Any],
+    artifacts_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    for artifact_id in stage.get("expected_artifacts") or []:
+        contract = artifacts_by_id.get(str(artifact_id))
+        if not contract:
+            continue
+        rel_path = str(contract.get("path") or "")
+        fmt = str(contract.get("format") or "")
+        status, validation_result = _validate_artifact(workspace / rel_path, fmt)
+        required = bool(contract.get("required", False))
+        if required and status != ARTIFACT_VALID:
+            reasons.append(
+                f"Required expected artifact '{artifact_id}' at '{rel_path}' is {status} ({validation_result})."
+            )
+        elif not required and status == ARTIFACT_INVALID:
+            reasons.append(
+                f"Optional expected artifact '{artifact_id}' at '{rel_path}' is invalid ({validation_result})."
+            )
+    return reasons
+
+
+def _completion_decision_gate_reasons(
+    *,
+    workspace: Path,
+    stage: dict[str, Any],
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
+    stage_id = str(stage.get("stage_id") or "")
+    reasons = _completion_artifact_gate_reasons(
+        workspace=workspace,
+        stage=stage,
+        artifacts_by_id=_artifact_map(artifacts),
+    )
+    reasons.extend(
+        current_stage_feedback_blocking_reasons(
+            workspace=workspace,
+            current_stage=stage_id,
+            stages=stages,
+            artifacts=artifacts,
+        )
+    )
+    return reasons
+
+
 def _recompute_stage_state(
     *,
+    workspace: Path,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
     registry: dict[str, Any],
@@ -848,6 +916,15 @@ def _recompute_stage_state(
                     f"Expected output artifact '{artifact_id}' is invalid."
                 )
 
+        reasons.extend(
+            current_stage_feedback_blocking_reasons(
+                workspace=workspace,
+                current_stage=stage_id,
+                stages=stages,
+                artifacts=artifacts,
+            )
+        )
+
         if reasons:
             current_stage = stage_id
             blocked = True
@@ -895,6 +972,7 @@ def check_runtime_state(
         updated_at=now,
     )
     refreshed_workflow = _recompute_stage_state(
+        workspace=ws,
         stages=stages,
         artifacts=artifacts,
         registry=registry,
@@ -941,6 +1019,7 @@ def record_decision(
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
+    artifacts = load_artifact_contracts(repo)
     stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
     if stage_id not in stage_by_id:
         raise RuntimeStateError(
@@ -973,6 +1052,24 @@ def record_decision(
                 "decision": decision,
             },
         )
+
+    if decision in {"continue", "finalize"}:
+        gate_reasons = _completion_decision_gate_reasons(
+            workspace=ws,
+            stage=stage_by_id[stage_id],
+            stages=stages,
+            artifacts=artifacts,
+        )
+        if gate_reasons:
+            action = "finalize" if decision == "finalize" else "continue"
+            raise RuntimeStateError(
+                f"Cannot {action} stage '{stage_id}': {' '.join(gate_reasons)}",
+                details={
+                    "stage_id": stage_id,
+                    "decision": decision,
+                    "blocking_reasons": gate_reasons,
+                },
+            )
 
     now = utc_now()
     statuses = dict(workflow.get("stage_statuses") or {})

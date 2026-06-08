@@ -66,6 +66,8 @@ def handle_mabw(ctx, argstr: str):
             "  configs/artifact_contracts.yaml, configs/policy_packs/default.yaml\n\n"
             "Decision vocabulary:\n"
             "  continue, retry_stage, delegate_repair, request_human_review, block_run, finalize\n\n"
+            "Optional feedback controls:\n"
+            "  multi-agent-brief feedback ingest/plan/resolve/show/validate structure feedback but do not run repair.\n\n"
             "Step 5 — Run: multi-agent-brief finalize --config <workspace>/config.yaml"
         )
 
@@ -102,6 +104,7 @@ def handle_mabw(ctx, argstr: str):
             lines.append("  configs/artifact_contracts.yaml, configs/policy_packs/default.yaml")
             lines.append("")
             lines.append("Decide: continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.")
+            lines.append("Use feedback ingest/plan/resolve/show/validate only when audit findings or human feedback exist; these commands do not execute repair.")
             lines.append("")
             lines.append("After pipeline, run:")
             lines.append(f"  multi-agent-brief finalize --config {ws_path}/config.yaml")
@@ -133,6 +136,7 @@ def handle_mabw(ctx, argstr: str):
             "  configs/artifact_contracts.yaml, configs/policy_packs/default.yaml",
             "",
             "Decide: continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.",
+            "Use feedback ingest/plan/resolve/show/validate only when audit findings or human feedback exist; these commands do not execute repair.",
             "",
             "After pipeline, run:",
             f"  multi-agent-brief finalize --config {ws_path}/config.yaml",

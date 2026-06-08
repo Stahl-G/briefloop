@@ -41,3 +41,5 @@ Each step should check the expected artifact path before selecting the next deci
 - editor updates `output/intermediate/audited_brief.md`
 - auditor writes `output/intermediate/audit_report.json`
 - finalize writes `output/brief.md` and configured rendered outputs
+
+If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` to structure issues and create a bounded repair plan. These commands do not execute repair or edit brief artifacts.

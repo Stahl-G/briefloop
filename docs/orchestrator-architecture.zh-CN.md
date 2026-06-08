@@ -27,7 +27,7 @@ v0.6.0 引入公开安全的 contract references：
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks，但不实现 feedback repair 或 provenance graph。
+这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks。v0.6.2 增加最小 feedback issue 和 repair-plan 控制面，但不实现 automatic repair execution、自动改 brief artifacts 或 provenance graph。
 
 ## 四类 Contract
 
@@ -49,7 +49,7 @@ Orchestrator 使用统一 decision vocabulary：
 - `block_run`
 - `finalize`
 
-在 v0.6.1 中，这些 decision 也可以通过 runtime state event log 记录。这个 event log 是 control trace，不是完整 provenance graph。
+在 v0.6.1 中，这些 decision 也可以通过 runtime state event log 记录。v0.6.2 也会记录 feedback issue 和 repair-plan events。这个 event log 是 control trace，不是完整 provenance graph。
 
 ## Runtime Loop
 
@@ -60,8 +60,9 @@ Orchestrator 使用统一 decision vocabulary：
 3. 判断当前 stage 和 expected artifact。
 4. 将 stage 委派给对应 specialist role 或 Python tool。
 5. 检查 expected artifact 是否存在，并是否适合进入下一 stage。
-6. 决定 continue、retry、delegate repair、request human review、block 或 finalize。
-7. 仅在 audit readiness 后 finalize。
+6. 如果存在 audit findings 或 human feedback，先结构化 issue 和 repair plan，但不执行 repair。
+7. 决定 continue、retry、delegate repair、request human review、block 或 finalize。
+8. 仅在 audit readiness 后 finalize。
 
 不同 runtime 的机制可以不同，但 artifact expectations 不应分叉。
 
@@ -81,8 +82,6 @@ v0.6.0 不构建 provenance graph。但 contract 形状要兼容后续 provenanc
 
 后续 v0.6 milestone 负责：
 
-- feedback issue handling
-- bounded repair
 - material-fact and freshness gates
 - public-safe evaluation cases
 - evidence and execution provenance

@@ -659,7 +659,7 @@ Public direction:
 - **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.
 - **v2.0: MAS Runtime Research Track** — after v1.0, explore richer runtime coordination concepts.
 
-See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.1 builds on shared Orchestrator authority, decision vocabulary, contract references, and runtime role parity with minimum runtime state, artifact registry status, and a decision event entrypoint. It does not mean feedback repair, material-fact gates, or a provenance graph is implemented. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
+See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.2 builds on shared Orchestrator authority, minimum runtime state, artifact registry status, and decision events with minimum feedback issue handling and bounded repair planning. It does not mean Python automatically edits briefs, executes repair, implements material-fact gates, or builds a provenance graph. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
 
 ## Safety And Non-Investment-Advice Disclaimer
 
@@ -671,7 +671,7 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.6.1** — minimum runtime state + artifact registry status + Orchestrator decision events
+Current version: **v0.6.2** — feedback issue handling + bounded repair planning controls
 
 v0.5.1 introduces local signal discovery: the system can generate local-language search tasks for target markets, produce `collector_tasks.json` for manual/OpenCLI collection, parse `local_signal_samples.jsonl` samples, generate `local_signal_report.json` with signals found and data gaps, and enforce 3 audit rules to prevent unsupported consumer pain-point claims. Supports 9 markets (Vietnam, Japan, China, Indonesia, Thailand, Brazil, Mexico, Germany, Korea).
 

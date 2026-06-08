@@ -124,6 +124,9 @@ def test_hermes_skill_uses_delegate_task_runtime():
     assert "retry_stage" in skill
     assert "request_human_review" in skill
     assert "block_run" in skill
+    assert "feedback ingest/plan/resolve/show/validate" in skill
+    assert "feedback_issues.json" in skill
+    assert "repair_plan.json" in skill
     assert "scout" in skill
     assert "screener" in skill
     assert "claim-ledger" in skill
@@ -192,6 +195,9 @@ def test_hermes_prompt_keeps_user_inside_hermes():
     assert "retry_stage" in prompt
     assert "request_human_review" in prompt
     assert "block_run" in prompt
+    assert "multi-agent-brief feedback ingest" in prompt
+    assert "feedback show" in prompt
+    assert "feedback_issues.json" in prompt
     assert "scout" in prompt
     assert "screener" in prompt
     assert "claim-ledger" in prompt

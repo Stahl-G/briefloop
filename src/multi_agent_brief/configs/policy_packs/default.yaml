@@ -35,3 +35,8 @@ v061_boundaries:
   runtime_state: minimum_control_files
   artifact_registry_execution: minimum_file_status_check
   feedback_repair_loop: deferred
+v062_boundaries:
+  feedback_issue_handling: minimum_control_files
+  bounded_repair_planning: deterministic_control_plan
+  automatic_repair_execution: deferred
+  semantic_repair_verification: deferred

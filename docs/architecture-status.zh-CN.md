@@ -7,6 +7,7 @@
 - 标准用户路径是 subagent-first。
 - `multi-agent-brief run` 生成 runtime handoff artifacts，而不是自己生成完整 brief。
 - Runtime handoff 会初始化最小 runtime state 和 artifact registry control files。
+- Feedback issues 和 bounded repair plans 可以被结构化、校验和记录，但不会自动执行 repair。
 - Python 命令负责 setup、source tooling、validation、audit support 和 rendering。
 - Hermes、Claude Code、Codex、OpenCode 和 manual fallback 都是 agent runtime surfaces。
 - Input governance 已区分 evidence、feedback、instructions 和 background context。
@@ -17,7 +18,6 @@
 roadmap 中提到的概念不一定已经实现。除非代码、测试和 support matrix 已确认，否则都按目标处理：
 
 - Orchestrator contracts
-- feedback issue handling and bounded repair
 - evidence and execution provenance
 - quality evaluation and feedback loops
 - policy packs

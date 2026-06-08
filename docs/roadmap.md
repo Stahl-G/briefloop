@@ -46,7 +46,15 @@ The project is not trying to rebuild a full distributed multi-agent runtime befo
 - The artifact registry now records minimum file status without executing workflow stages.
 - Stage-scoped blocking distinguishes pending downstream artifacts from artifacts that block the current stage.
 - `state init`, `state check`, `state show`, and `state decide` provide CLI entry points for runtime inspection and decision recording.
-- Feedback repair, material-fact gates, public-safe evaluation cases, and provenance graph work remain later v0.6 milestones.
+- Automated repair execution, material-fact gates, public-safe evaluation cases, and provenance graph work remain later v0.6 milestones.
+
+### v0.6.2
+
+- Feedback issue handling and bounded repair planning were added without turning Python into a repair executor.
+- `feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show`, and `feedback validate` provide CLI entry points for human feedback and audit findings.
+- `feedback_issues.json`, `repair_plan.json`, and conditional `delta_audit_report.json` are tracked as feedback control artifacts.
+- Feedback blocking is scoped to the current stage, and repair decisions still flow through the Orchestrator decision vocabulary.
+- Python does not automatically edit brief artifacts, execute repair, or judge semantic repair success.
 
 ## Next Milestones
 
@@ -87,9 +95,8 @@ Public scope:
 - Add provenance once the feedback loop and quality gates are testable.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing after v0.6.1:
+Public sequencing after v0.6.2:
 
-- v0.6.2: feedback issue handling and bounded repair MVP.
 - v0.6.3: material-fact, freshness, and target-relevance gates.
 - v0.6.4: public-safe evaluation cases from real failure patterns.
 - v0.6.5: evidence and execution provenance graph.

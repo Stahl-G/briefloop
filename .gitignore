@@ -51,6 +51,7 @@ TODO.md
 .cache/
 private_planning/
 docs/internal/
+docs/mabw-architecture-reference-v0.1.md
 *.private.md
 *.internal.md
 
