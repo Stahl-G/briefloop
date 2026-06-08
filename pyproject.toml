@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "multi-agent-brief-workflow"
-version = "0.6.3"
+version = "0.6.4"
 description = "Source-grounded, audit-ready multi-agent workflow for business and research briefs."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,6 +35,13 @@ where = ["src"]
 multi_agent_brief = [
   "configs/*.yaml",
   "configs/policy_packs/*.yaml",
+  "evaluation_cases/fixtures/*.yaml",
+  "evaluation_cases/fixtures/cases/*/workspace/*.yaml",
+  "evaluation_cases/fixtures/cases/*/workspace/*.md",
+  "evaluation_cases/fixtures/cases/*/workspace/input/*.md",
+  "evaluation_cases/fixtures/cases/*/workspace/output/*.md",
+  "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.json",
+  "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.md",
 ]
 
 [tool.pytest.ini_options]

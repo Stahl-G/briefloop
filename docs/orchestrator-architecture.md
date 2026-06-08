@@ -27,7 +27,7 @@ v0.6.0 introduces public-safe contract references:
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 adds deterministic material-fact, freshness, and target-relevance gate controls. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, or build a provenance graph.
+These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 added deterministic material-fact, freshness, and target-relevance gate controls. v0.6.4 adds packaged public-safe evaluation cases for developer/CI regression checks. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, score prose with an LLM judge, or build a provenance graph.
 
 ## Four Contract Categories
 
@@ -83,7 +83,8 @@ v0.6.0 does not build a provenance graph. It does keep the contract shape compat
 Later v0.6 milestones own:
 
 - material-fact and freshness gates
-- public-safe evaluation cases
+- private/commercial benchmark suites
+- LLM-as-judge prose scoring
 - evidence and execution provenance
 
 ## Related

@@ -52,7 +52,7 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 - Artifact registry 现在记录最小文件状态，但不执行 workflow stages。
 - Stage-scoped blocking 区分尚未轮到的下游 artifacts 和真正阻断当前 stage 的 artifacts。
 - `state init`、`state check`、`state show`、`state decide` 提供 runtime inspection 和 decision recording 入口。
-- 自动 repair execution、material-fact gates、public-safe evaluation cases 和 provenance graph 仍属于后续 v0.6 milestone。
+- 自动 repair execution 和 provenance graph 仍属于后续 v0.6 milestone。
 
 ### v0.6.2
 
@@ -68,6 +68,14 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 - `gates check`、`gates show` 和 `gates validate` 提供 `quality_gate_report.json` 的 CLI 入口。
 - Quality gate blocking 只作用于当前 stage，并以明确 blocking 语义为准，不把所有 high severity finding 默认当成 runtime stop。
 - Python 不会 live-fetch market data、自动 recrawl source、改稿、执行 repair 或做 semantic truth judgment。
+
+### v0.6.4
+
+- 已加入 packaged public-safe evaluation cases，用于开发和 CI 回归验证。
+- `eval-cases list`、`eval-cases validate`、`eval-cases run` 提供 gates、feedback、runtime blocker 和 Hermes static invariant cases 的 CLI 入口。
+- Evaluation cases 使用 structured allowlisted actions，不执行 shell 字符串。
+- Evaluation outputs 只属于 developer/CI results，不加入 workflow artifact contracts。
+- Python 不会在 eval cases 中给文章打分、调用 LLM judge、执行 repair、运行 subagents 或抓取来源。
 
 ## 下一阶段
 
@@ -109,10 +117,8 @@ Non-goals:
 - 在反馈闭环和质量门可测试后，再加入 provenance。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
 
-v0.6.3 之后的公开顺序：
+v0.6.4 之后的公开顺序：
 
-- v0.6.3：material-fact、freshness、target-relevance gates。
-- v0.6.4：real failure patterns 抽象出的 public-safe evaluation cases，并补充带 rationale 的 red-line / anti-pattern 文档。
 - v0.6.5：evidence and execution provenance graph。
 
 公开实施概览：

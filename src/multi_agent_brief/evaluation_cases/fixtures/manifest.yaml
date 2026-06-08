@@ -1,0 +1,138 @@
+schema_version: multi-agent-brief-evaluation-cases/v1
+synthetic: true
+public_url_allowlist:
+  - example.com
+cases:
+  - case_id: unsupported_material_fact
+    case_type: workspace
+    synthetic: true
+    description: Unsupported material number blocks the auditor gate.
+    initial_stage: auditor
+    commands:
+      - action: gates.check
+        args: {}
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifacts_exist:
+        - output/intermediate/quality_gate_report.json
+      findings_any:
+        - finding_type: number_without_source
+          blocking_level: blocking
+          gate_stage_id: auditor
+      workflow_state:
+        current_stage: auditor
+        blocked: true
+
+  - case_id: stale_current_claim
+    case_type: workspace
+    synthetic: true
+    description: Stale current-source metadata is deterministic and blocking in strict mode.
+    initial_stage: auditor
+    commands:
+      - action: gates.check
+        args:
+          report_date: "2026-06-08"
+          max_source_age_days: 14
+          strict: true
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifacts_exist:
+        - output/intermediate/quality_gate_report.json
+      findings_any:
+        - finding_type: stale_source
+          blocking_level: blocking
+          gate_stage_id: auditor
+      workflow_state:
+        current_stage: auditor
+        blocked: true
+
+  - case_id: reader_facing_target_relevance
+    case_type: workspace
+    synthetic: true
+    description: Reader-facing brief gates target relevance without requiring internal source refs.
+    initial_stage: finalize
+    commands:
+      - action: gates.check
+        args:
+          brief: output/brief.md
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifacts_exist:
+        - output/intermediate/quality_gate_report.json
+      findings_any:
+        - finding_type: target_relevance_gap
+          blocking_level: blocking
+          gate_stage_id: finalize
+      findings_absent:
+        - finding_type: target_priority_claim_missing_from_summary
+        - finding_type: number_without_source
+      workflow_state:
+        current_stage: finalize
+        blocked: true
+
+  - case_id: feedback_triage_required
+    case_type: workspace
+    synthetic: true
+    description: Human feedback without mappings becomes triage instead of guessed repair.
+    initial_stage: doctor
+    commands:
+      - action: feedback.ingest
+        args:
+          feedback: input/human_feedback.md
+          source: human
+      - action: feedback.validate
+        args: {}
+    expected:
+      exit_code: 0
+      artifacts_exist:
+        - output/intermediate/feedback_issues.json
+      issues_any:
+        - source: human
+          status: triage
+          severity: medium
+      workflow_state:
+        current_stage: doctor
+        blocked: false
+
+  - case_id: planned_blocking_issue_cannot_continue
+    case_type: workspace
+    synthetic: true
+    description: A planned blocking issue cannot be bypassed by state decide continue.
+    initial_stage: analyst
+    commands:
+      - action: state.check
+        args: {}
+      - action: state.decide
+        args:
+          stage: analyst
+          decision: continue
+          reason: Evaluation attempts to bypass planned blocking issue.
+    expected:
+      exit_code: 1
+      expected_actions:
+        - action: state.check
+          exit_code: 0
+        - action: state.decide
+          exit_code: 1
+      artifacts_exist:
+        - output/intermediate/feedback_issues.json
+        - output/intermediate/repair_plan.json
+      workflow_state:
+        current_stage: analyst
+        blocked: true
+
+  - case_id: static_hermes_no_skip_finalize
+    case_type: static_contract
+    synthetic: true
+    description: Hermes guidance keeps gates and state decisions before finalize.
+    commands:
+      - action: static.hermes_no_skip_finalize
+        args: {}
+    expected:
+      exit_code: 0

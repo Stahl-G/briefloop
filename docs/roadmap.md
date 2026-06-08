@@ -52,7 +52,7 @@ Two design principles guide the next phases:
 - The artifact registry now records minimum file status without executing workflow stages.
 - Stage-scoped blocking distinguishes pending downstream artifacts from artifacts that block the current stage.
 - `state init`, `state check`, `state show`, and `state decide` provide CLI entry points for runtime inspection and decision recording.
-- Automated repair execution, material-fact gates, public-safe evaluation cases, and provenance graph work remain later v0.6 milestones.
+- Automated repair execution and provenance graph work remain later v0.6 milestones.
 
 ### v0.6.2
 
@@ -68,6 +68,14 @@ Two design principles guide the next phases:
 - `gates check`, `gates show`, and `gates validate` provide CLI entry points for `quality_gate_report.json`.
 - Quality gate blocking is scoped to the current stage and uses explicit blocking semantics rather than treating every high-severity finding as a runtime stop.
 - Python does not live-fetch market data, recrawl sources, rewrite briefs, execute repair, or make semantic truth judgments.
+
+### v0.6.4
+
+- Packaged public-safe evaluation cases were added for developer and CI regression checks.
+- `eval-cases list`, `eval-cases validate`, and `eval-cases run` provide CLI entry points for gates, feedback, runtime blocker, and Hermes static invariant cases.
+- Evaluation cases use structured allowlisted actions rather than shell strings.
+- Evaluation outputs remain developer/CI results and are not added to workflow artifact contracts.
+- Python does not score prose, call an LLM judge, execute repair, run subagents, or fetch sources as part of eval cases.
 
 ## Next Milestones
 
@@ -109,10 +117,8 @@ Public scope:
 - Add provenance once the feedback loop and quality gates are testable.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing after v0.6.3:
+Public sequencing after v0.6.4:
 
-- v0.6.3: material-fact, freshness, and target-relevance gates.
-- v0.6.4: public-safe evaluation cases from real failure patterns, plus red-line and anti-pattern documentation with rationale.
 - v0.6.5: evidence and execution provenance graph.
 
 Public implementation overviews:

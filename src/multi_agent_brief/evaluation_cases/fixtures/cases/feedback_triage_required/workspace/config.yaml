@@ -1,0 +1,6 @@
+project:
+  name: "Synthetic TargetCo"
+output:
+  path: "output"
+input:
+  path: "input"

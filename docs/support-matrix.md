@@ -24,6 +24,7 @@ Each capability has one of the following statuses:
 | `multi-agent-brief state init/check/show/decide` | Supported |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
 | `multi-agent-brief gates check/show/validate` | Supported |
+| `multi-agent-brief eval-cases list/validate/run` | Supported |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -34,6 +35,8 @@ Each capability has one of the following statuses:
 Feedback commands structure issues and repair plans for the Orchestrator. They do not automatically edit brief artifacts or execute repair.
 
 Quality gate commands write deterministic gate reports and can block unsafe current-stage continue/finalize decisions. They do not fetch sources, rewrite briefs, execute repair, or create feedback issues automatically.
+
+Evaluation cases are developer/CI regression checks for control-surface behavior. They do not create workflow artifacts, run subagents, fetch sources, score prose, call an LLM judge, or execute repair.
 
 ## Runtimes
 
@@ -81,6 +84,14 @@ Quality gate commands write deterministic gate reports and can block unsafe curr
 | Draft Audit Harness | Supported |
 | Rendered Output Harness | Supported |
 | Material-Fact / Freshness / Target-Relevance Gates | Supported |
+
+## Evaluation & Regression Tooling
+
+| Tool | Status |
+|---|---|
+| Packaged public-safe evaluation cases (`eval-cases`) | Supported |
+| Private/commercial benchmark cases | Not shipped |
+| LLM-as-judge prose scoring | Not shipped |
 
 ## Delivery & Output
 

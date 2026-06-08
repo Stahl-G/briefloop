@@ -9,6 +9,7 @@ This page separates current implementation state from roadmap goals. Use it befo
 - Runtime handoff now initializes minimum runtime state and artifact registry control files.
 - Feedback issues and bounded repair plans can be structured, validated, and recorded without executing repair.
 - Deterministic material-fact, freshness, and target-relevance gates can write a quality gate report without fetching sources or rewriting briefs.
+- Packaged public-safe evaluation cases can validate known gates, feedback, runtime blocker, and Hermes path regressions for development and CI.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance separates evidence from feedback, instructions, and background context.
@@ -21,6 +22,7 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 - Orchestrator contracts
 - evidence and execution provenance
 - quality evaluation and feedback loops
+- private or commercial benchmark suites
 - policy packs
 - public-safe reference workflows
 
