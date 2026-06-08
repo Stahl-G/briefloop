@@ -16,8 +16,18 @@ multi-agent-brief init ..\mabw-workspace --demo
 
 ## 2. Generate the brief in Claude Code
 
+Run this slash command only inside Claude Code with this repository open, so
+`.claude/commands/generate-brief.md` is loaded:
+
 ```text
 /generate-brief ../mabw-workspace
+```
+
+If another client returns `Unknown command: /generate-brief`, it is not running
+the Claude Code command surface. Use the standard CLI handoff instead:
+
+```bash
+multi-agent-brief run --workspace ../mabw-workspace
 ```
 
 The command follows this workflow:
@@ -97,7 +107,7 @@ User: I need to create a weekly brief for my solar manufacturing company.
 Claude Code:
   1. Uses source-planner to resolve source discovery.
   2. Runs doctor.
-  3. Runs /generate-brief for the subagent workflow.
+  3. Runs /generate-brief inside Claude Code for the subagent workflow.
   4. Uses auditor findings to report artifact status and limitations.
 ```
 

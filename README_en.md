@@ -107,7 +107,7 @@ This project provides the following tools and capabilities:
 
 **Multi-Runtime Support:**
 - Hermes (primary): `multi-agent-brief hermes install-plugin` + `/mabw new` in Hermes. Full `delegate_task` pipeline.
-- Claude Code: `/generate-brief <workspace>` command
+- Claude Code: `/generate-brief <workspace>` inside a Claude Code repository session. This slash command is not a terminal command and is not registered in Gateway, ChatGPT, QQ, or other generic chat surfaces.
 - Codex / OpenCode: agent configs in `.codex/` / `.opencode/`
 
 **Rendering & Output:**
@@ -176,13 +176,15 @@ Hermes checks the environment, collects your brief profile in chat, creates the 
 
 ### Other runtimes
 
-Claude Code (`/generate-brief <workspace>`), Codex, and OpenCode are also supported. After cloning the repo and `source .venv/bin/activate`:
+Claude Code, Codex, and OpenCode are also supported. After cloning the repo and `source .venv/bin/activate`, use the CLI to create the runtime handoff first:
 
 ```bash
 multi-agent-brief onboard
 multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```
+
+If the client returns `Unknown command: /generate-brief`, you are not in the Claude Code command surface. Do not keep pasting the slash command there; use `multi-agent-brief run --workspace ../mabw-workspace` to create a handoff, or open the repository in Claude Code and run `/generate-brief` there.
 
 ---
 
@@ -613,7 +615,7 @@ See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows 
 ## Multi-Runtime Agent Mode
 
 - **Hermes（主路径）**：`multi-agent-brief hermes install-plugin` then `/mabw new`. Full `delegate_task` subagent pipeline.
-- **Claude Code**：`/generate-brief <workspace>` command
+- **Claude Code**: `/generate-brief <workspace>` inside a Claude Code repository session only; use `multi-agent-brief run --workspace <workspace>` for generic handoff creation.
 - **Codex / OpenCode**：agent configs in `.codex/` / `.opencode/`
 
 ### Two-Layer Architecture
