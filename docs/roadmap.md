@@ -58,7 +58,7 @@ Two design principles guide the next phases:
 
 - Feedback issue handling and bounded repair planning were added without turning Python into a repair executor.
 - `feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show`, and `feedback validate` provide CLI entry points for human feedback and audit findings.
-- `feedback_issues.json`, `repair_plan.json`, and conditional `delta_audit_report.json` are tracked as feedback control artifacts.
+- Feedback and repair control artifacts are tracked without exposing repair internals in the public roadmap.
 - Feedback blocking is scoped to the current stage, and repair decisions still flow through the Orchestrator decision vocabulary.
 - Python does not automatically edit brief artifacts, execute repair, or judge semantic repair success.
 

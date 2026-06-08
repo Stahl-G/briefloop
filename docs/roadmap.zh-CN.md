@@ -58,7 +58,7 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 
 - 已加入 feedback issue handling 和 bounded repair planning，但 Python 不变成 repair executor。
 - `feedback ingest`、`feedback plan`、`feedback resolve`、`feedback show`、`feedback validate` 提供 human feedback 和 audit findings 的 CLI 入口。
-- `feedback_issues.json`、`repair_plan.json` 和条件性的 `delta_audit_report.json` 作为 feedback control artifacts 被追踪。
+- Feedback 和 repair control artifacts 已被追踪，但公开 roadmap 不展开内部 repair artifact 名称。
 - Feedback blocking 只作用于当前 stage，repair decision 仍通过 Orchestrator decision vocabulary。
 - Python 不自动修改 brief artifacts、不执行 repair，也不判断语义修复是否已经完成。
 
