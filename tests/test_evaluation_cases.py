@@ -103,6 +103,7 @@ def test_eval_cases_reject_contains_text_absolute_and_traversal(tmp_path, capsys
     manifest["cases"][-1]["expected"]["contains_text"] = [
         {"scope": "repo", "file": "/etc/hosts", "text": "localhost"},
         {"scope": "cases", "file": "../manifest.yaml", "text": "schema_version"},
+        {"scope": "cases", "file": "C:\\Users\\example\\secret.txt", "text": "secret"},
     ]
     _write_manifest(custom_root, manifest)
 
@@ -119,6 +120,31 @@ def test_eval_cases_reject_contains_text_absolute_and_traversal(tmp_path, capsys
     errors = " ".join(result["errors"])
     assert "must be relative" in errors
     assert "must not contain path traversal" in errors
+
+
+def test_eval_cases_reject_feedback_ingest_absolute_and_traversal_paths(tmp_path, capsys):
+    custom_root, manifest = _copy_packaged_cases(tmp_path)
+    feedback_case = next(
+        item for item in manifest["cases"] if item["case_id"] == "feedback_triage_required"
+    )
+
+    for feedback_path in ("/etc/hosts", "../outside.md", "C:\\Users\\example\\secret.txt"):
+        feedback_case["commands"][0]["args"]["feedback"] = feedback_path
+        _write_manifest(custom_root, manifest)
+
+        rc = main([
+            "eval-cases",
+            "validate",
+            "--cases-dir",
+            str(custom_root),
+            "--json",
+        ])
+
+        assert rc == 1
+        result = json.loads(capsys.readouterr().out)
+        errors = " ".join(result["errors"])
+        assert "args.feedback" in errors
+        assert "must be relative" in errors or "must not contain path traversal" in errors
 
 
 def test_eval_cases_expected_actions_detect_wrong_failed_step(tmp_path, capsys):

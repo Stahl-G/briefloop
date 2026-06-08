@@ -203,6 +203,11 @@ jobs:
       - name: Version check
         run: multi-agent-brief version
 
+      - name: Evaluation cases smoke
+        run: |
+          multi-agent-brief eval-cases validate --json
+          multi-agent-brief eval-cases run --json
+
       - name: Init workspace
         run: |
           multi-agent-brief init /tmp/mabw-ci-smoke \

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 from urllib.parse import urlparse
 
@@ -96,6 +96,22 @@ def case_definitions(root: str | Path) -> list[dict[str, Any]]:
     return [case for case in cases if isinstance(case, dict)]
 
 
+def _path_is_absolute_any_platform(value: str) -> bool:
+    return (
+        Path(value).is_absolute()
+        or PurePosixPath(value).is_absolute()
+        or PureWindowsPath(value).is_absolute()
+    )
+
+
+def _path_has_traversal_any_platform(value: str) -> bool:
+    return (
+        ".." in Path(value).parts
+        or ".." in PurePosixPath(value).parts
+        or ".." in PureWindowsPath(value).parts
+    )
+
+
 def validate_case_contract(root: str | Path) -> dict[str, Any]:
     resolved = Path(root).expanduser().resolve()
     errors: list[str] = []
@@ -156,6 +172,8 @@ def validate_case_contract(root: str | Path) -> dict[str, Any]:
             args = command.get("args") or {}
             if not isinstance(args, dict):
                 errors.append(f"{command_prefix}.args must be an object.")
+                args = {}
+            errors.extend(_validate_command_args(prefix=command_prefix, action=action, args=args))
 
         expected = case.get("expected") or {}
         if not isinstance(expected, dict):
@@ -273,11 +291,23 @@ def _validate_expected_contract(*, prefix: str, expected: dict[str, Any]) -> lis
                 if not isinstance(rel_path, str) or not rel_path.strip():
                     errors.append(f"{item_prefix}.file is required.")
                     continue
-                path = Path(rel_path)
-                if path.is_absolute():
+                if _path_is_absolute_any_platform(rel_path):
                     errors.append(f"{item_prefix}.file must be relative, not absolute.")
-                if ".." in path.parts:
+                if _path_has_traversal_any_platform(rel_path):
                     errors.append(f"{item_prefix}.file must not contain path traversal.")
+    return errors
+
+
+def _validate_command_args(*, prefix: str, action: str, args: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if action == "feedback.ingest":
+        feedback = args.get("feedback")
+        if not isinstance(feedback, str) or not feedback.strip():
+            errors.append(f"{prefix}.args.feedback is required.")
+        elif _path_is_absolute_any_platform(feedback):
+            errors.append(f"{prefix}.args.feedback must be relative, not absolute.")
+        elif _path_has_traversal_any_platform(feedback):
+            errors.append(f"{prefix}.args.feedback must not contain path traversal.")
     return errors
 
 

@@ -12,6 +12,8 @@ from multi_agent_brief.evaluation_cases.contract import (
     STATIC_CONTRACT_CASE,
     WORKSPACE_CASE,
     EvaluationCaseContractError,
+    _path_has_traversal_any_platform,
+    _path_is_absolute_any_platform,
     case_definitions,
     validate_case_contract,
 )
@@ -518,13 +520,12 @@ def _assert_contains_text(*, root: Path, repo_workdir: Path, expected: dict[str,
 
 
 def _resolve_contained_path(*, base: Path, rel_path: str) -> Path:
-    path = Path(rel_path)
-    if path.is_absolute():
+    if _path_is_absolute_any_platform(rel_path):
         raise EvaluationCaseRunError(f"contains_text.file must be relative, not absolute: {rel_path}")
-    if ".." in path.parts:
+    if _path_has_traversal_any_platform(rel_path):
         raise EvaluationCaseRunError(f"contains_text.file must not contain path traversal: {rel_path}")
     resolved_base = base.resolve()
-    resolved = (resolved_base / path).resolve()
+    resolved = (resolved_base / rel_path).resolve()
     try:
         resolved.relative_to(resolved_base)
     except ValueError as exc:
@@ -620,7 +621,17 @@ def _require_workspace(workspace: Any) -> Path:
 
 
 def _workspace_path(workspace: Path, value: str) -> Path:
-    path = Path(value).expanduser()
-    if path.is_absolute():
-        return path.resolve()
-    return (workspace / path).resolve()
+    if _path_is_absolute_any_platform(value):
+        raise EvaluationCaseRunError(f"workspace fixture path must be relative, not absolute: {value}")
+    if _path_has_traversal_any_platform(value):
+        raise EvaluationCaseRunError(f"workspace fixture path must not contain path traversal: {value}")
+
+    resolved_workspace = workspace.resolve()
+    resolved = (resolved_workspace / value).resolve()
+    try:
+        resolved.relative_to(resolved_workspace)
+    except ValueError as exc:
+        raise EvaluationCaseRunError(
+            f"workspace fixture path resolves outside workspace: {value}"
+        ) from exc
+    return resolved
