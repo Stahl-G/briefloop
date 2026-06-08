@@ -546,6 +546,9 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 ## 文档导航
 
 * [架构设计](docs/architecture.zh-CN.md)
+* [当前架构状态](docs/architecture-status.zh-CN.md)
+* [迁移说明](docs/MIGRATION.zh-CN.md)
+* [Orchestrator Contract 模型](docs/orchestrator-contracts.zh-CN.md)
 * [Claude Code 工作流](docs/claude-code-workflow.md)
 * [Claude Code 快速开始](docs/claude-code-quickstart.md)
 * [Agent 协作设计](docs/agent-collaboration.md)
@@ -561,39 +564,19 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 项目当前路线图从“继续扩张功能”切换为“先冻结 v1.0 可信参考实现，再探索 v2.0 MAS Runtime”。
 
-### v0.4：Knowledge & Governance Contracts
+下一阶段公开方向：
 
-优先修正 Claim 知识模型、Evidence Relation、核心 schema / contract、`run_manifest.json`、语义审计状态、Audit Finding 分类、Rule Packs，并预留事件/字段级治理钩子。
-
-### v0.5：Production Reference Workflow
-
-冻结一条正式主路径，补齐 Audience Profiles、DOCX 模板与渲染验证、Final Clean、Editorial Governance、Policy & Regulatory Risk Module、HistoryStore 基础接口和 effort budgets。Editorial Governance 覆盖反馈污染、meta 内容泄漏、事实密度、可比案例适用性、研究缺口分离和来源覆盖。
-
-### v0.5.5：Hermes Adapter Layer
-
-Hermes 适配层提供原生 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor）、daily source cache 收集、weekly/monthly cron 调度和 `cached_package` provider 对接。
-
-### v0.5.8：发布清理 + 支持矩阵 + 旧叙事收敛 + 版本管理自动化
-
-移除 README 中尚不可用的 CLI-only curl 安装路径。移除六份遗留 impl-plan 文档和 v1 ref roadmap。新增 `docs/support-matrix.md`。`VERSION` 单一真源 + `bump_version.py`/`check_version_consistency.py`/`release.sh` 自动化脚本。`__init__.py` 改为 `importlib.metadata.version()` 动态读取。
-
-### v0.5.7：输入分类与反馈卫生
-
-新增 `multi-agent-brief inputs classify` CLI 命令，自动将 `input/` 下文件按角色分类（evidence / feedback / instruction / context）。Scout 技能合约收紧，限定只从 `input/sources/` 和根目录提取声明，`feedback/`、`instructions/`、`context/` 被显式排除。ManualProvider 写入 `metadata["input_subdir"]` 标记文件归属。
-
-### v0.5.6：Anthropic Skills Convergence
-
-CLI 重构为 thin router（main.py 1512→134 行）。生成器收敛为纯平台适配器（codex/claude/docs/opencode），不再生成 AGENTS.md 或 .agents/skills。17 个 SKILL.md 重写为 Anthropic Skills 格式（Scope/Purpose/Use When/Inputs/Outputs/Work/Handoff）。Hermes skill 采用渐进式披露（references/ 目录）。Formatter 角色更新为 reader-facing finalize 语义。
-
-### 下一阶段
-
-v0.5.8 → 发布与运行时合同清理；v0.5.9 → 运行时 artifact contract 与 RelevanceGate；v0.6.0 → Quality Mainline（分析块正式化 + 质量门主线）；v0.6.x → Golden Runs 与评估基线；v0.7 → 打包与分发；v1.0 → 冻结 stable baseline。详见 [路线图](docs/roadmap.zh-CN.md)。
+* v0.6：Orchestrator contracts，让 main agent 明确负责协调 subagents、验证 artifacts、阻断不安全流程。
+* v0.7：Evaluation and feedback loop，让质量回归可见，但不要求 LLM 输出逐字一致。
+* v0.8：Policy packs and runtime parity，支持不同简报场景，同时保持多 runtime 的一致 artifact 期望。
+* v0.9：Distribution and reference workflows，降低安装、配置和 public-safe demo 的门槛。
+* v1.0：Stable orchestrated brief workflow，冻结本地优先、可审计、contract-governed 的稳定基线。
 
 ### v2.0：MAS Runtime 候选方向
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-完整路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。
+公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
 
 ---
 
