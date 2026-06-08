@@ -9,8 +9,9 @@ Multi-Agent Brief Workflow 的下一阶段是一个由 Orchestrator 管理、由
 ```text
 subagent-first runtime
 → orchestrator contracts
+→ feedback and repair loop
+→ quality gates and evaluation
 → provenance-aware artifacts
-→ quality evaluation
 → policy packs and runtime parity
 → stable v1.0 baseline
 ```
@@ -52,9 +53,9 @@ Non-goals:
 - 不新增 source providers。
 - 不重写 prompt 或 agent role。
 
-### v0.6 — Orchestrator Contracts
+### v0.6 — Orchestrator Contracts And Feedback Loop
 
-目标：明确 main agent。Orchestrator 应负责协调 specialist subagents、验证 handoff artifacts，并在不安全时阻断流程。
+目标：先明确 main agent，再尽早展示“产出 -> 反馈 -> 有界修复”的闭环价值。Orchestrator 应负责协调 specialist subagents、验证 handoff artifacts、接收反馈、路由修复，并在不安全时阻断流程。
 
 公开范围：
 
@@ -64,7 +65,21 @@ Non-goals:
   - Process / Artifact
   - Fact-Grounding / Evidence
   - Quality / Audience
+- 建立最小 runtime state 和 artifact status 层。
+- 在扩展更深 provenance 前，先引入 feedback and repair loop。
+- 增加 material facts、source freshness 和 target relevance 相关质量门。
+- 从真实失败模式抽象 public-safe evaluation cases。
+- 在反馈闭环和质量门可测试后，再加入 provenance。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
+
+公开顺序：
+
+- v0.6.0：Orchestrator main-agent contract and runtime role parity。
+- v0.6.1：runtime state and minimum artifact registry。
+- v0.6.2：feedback issue handling and bounded repair MVP。
+- v0.6.3：material-fact、freshness、target-relevance gates。
+- v0.6.4：real failure patterns 抽象出的 public-safe evaluation cases。
+- v0.6.5：evidence and execution provenance graph。
 
 Non-goals:
 
@@ -73,15 +88,15 @@ Non-goals:
 - 不重做 final report rendering。
 - 不扩张新的 search providers。
 
-### v0.7 — Evaluation And Feedback Loop
+### v0.7 — FrictionStore And Improvement Proposals
 
-目标：让质量回归可见，但不要求 LLM 输出逐字一致。
+目标：把 recurring failures、audit findings 和 human feedback 转成受控 improvement proposals。
 
 公开范围：
 
-- 引入 public-safe evaluation cases。
-- 跟踪 contract compliance、citation retention、artifact presence 和 delivery readiness。
-- 将重复失败转成结构化 improvement signals。
+- 跨 run 跟踪 recurring failure patterns。
+- 生成 improvement signals、patch plans 和 regression-plan suggestions。
+- self-improvement 在人类或 maintainer 批准前只生成 proposal，不自动改代码。
 
 Non-goals:
 

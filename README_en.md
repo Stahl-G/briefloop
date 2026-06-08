@@ -652,8 +652,8 @@ The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime w
 
 Public direction:
 
-- **v0.6: Orchestrator Contracts** — make the main agent explicit and keep Python as support tooling.
-- **v0.7: Evaluation And Feedback Loop** — make quality regressions visible without requiring identical LLM prose.
+- **v0.6: Orchestrator Contracts And Feedback Loop** — make the main agent explicit and demonstrate an output → feedback → bounded repair loop early.
+- **v0.7: FrictionStore And Improvement Proposals** — turn recurring failures, audit findings, and human feedback into controlled improvement proposals.
 - **v0.8: Policy Packs And Runtime Parity** — support different briefing contexts while keeping runtime artifact expectations aligned.
 - **v0.9: Distribution And Reference Workflows** — improve installation, setup diagnostics, and public-safe demos.
 - **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.

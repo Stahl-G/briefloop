@@ -566,8 +566,8 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 下一阶段公开方向：
 
-* v0.6：Orchestrator contracts，让 main agent 明确负责协调 subagents、验证 artifacts、阻断不安全流程。
-* v0.7：Evaluation and feedback loop，让质量回归可见，但不要求 LLM 输出逐字一致。
+* v0.6：Orchestrator contracts and feedback loop，让 main agent 明确负责协调 subagents、验证 artifacts，并尽早展示“产出 -> 反馈 -> 有界修复”的闭环。
+* v0.7：FrictionStore and improvement proposals，把 recurring failures、audit findings 和 human feedback 转成受控改进建议。
 * v0.8：Policy packs and runtime parity，支持不同简报场景，同时保持多 runtime 的一致 artifact 期望。
 * v0.9：Distribution and reference workflows，降低安装、配置和 public-safe demo 的门槛。
 * v1.0：Stable orchestrated brief workflow，冻结本地优先、可审计、contract-governed 的稳定基线。

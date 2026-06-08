@@ -9,8 +9,9 @@ Multi-Agent Brief Workflow is moving toward an orchestrated, contract-governed b
 ```text
 subagent-first runtime
 → orchestrator contracts
+→ feedback and repair loop
+→ quality gates and evaluation
 → provenance-aware artifacts
-→ quality evaluation
 → policy packs and runtime parity
 → stable v1.0 baseline
 ```
@@ -52,9 +53,9 @@ Non-goals:
 - no new source providers
 - no prompt or agent role rewrites
 
-### v0.6 — Orchestrator Contracts
+### v0.6 — Orchestrator Contracts And Feedback Loop
 
-Goal: make the main agent explicit. The Orchestrator should coordinate specialist subagents, validate handoff artifacts, and block unsafe progress.
+Goal: make the main agent explicit, then quickly demonstrate a closed loop from output to feedback to bounded repair. The Orchestrator should coordinate specialist subagents, validate handoff artifacts, capture feedback, route repairs, and block unsafe progress.
 
 Public scope:
 
@@ -64,7 +65,21 @@ Public scope:
   - Process / Artifact
   - Fact-Grounding / Evidence
   - Quality / Audience
+- Establish a minimal runtime state and artifact status layer.
+- Introduce a feedback and repair loop before expanding deeper provenance work.
+- Add quality gates for material facts, source freshness, and target relevance.
+- Introduce public-safe failure-pattern evaluation cases.
+- Add provenance once the feedback loop and quality gates are testable.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
+
+Public sequencing:
+
+- v0.6.0: Orchestrator main-agent contract and runtime role parity.
+- v0.6.1: runtime state and minimum artifact registry.
+- v0.6.2: feedback issue handling and bounded repair MVP.
+- v0.6.3: material-fact, freshness, and target-relevance gates.
+- v0.6.4: public-safe evaluation cases from real failure patterns.
+- v0.6.5: evidence and execution provenance graph.
 
 Non-goals:
 
@@ -73,15 +88,15 @@ Non-goals:
 - no final report rendering redesign
 - no new search provider expansion
 
-### v0.7 — Evaluation And Feedback Loop
+### v0.7 — FrictionStore And Improvement Proposals
 
-Goal: make quality regression visible without requiring deterministic LLM prose.
+Goal: turn recurring failures, audit findings, and human feedback into controlled improvement proposals.
 
 Public scope:
 
-- Introduce public-safe evaluation cases.
-- Track contract compliance, citation retention, artifact presence, and delivery readiness.
-- Convert repeated failures into structured improvement signals.
+- Track recurring failure patterns across runs.
+- Generate improvement signals, patch plans, and regression-plan suggestions.
+- Keep self-improvement proposal-only until a human or maintainer approves code changes.
 
 Non-goals:
 
