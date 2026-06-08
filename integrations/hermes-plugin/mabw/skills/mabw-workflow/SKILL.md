@@ -50,8 +50,10 @@ Read workspace context -> read contract references -> identify the next stage ->
 ## Delegated Workflow
 
 ```text
-doctor → source discovery when configured → input governance when available → scout → screener → claim-ledger → analyst → editor → auditor → finalize
+doctor → source discovery when configured → input governance when available → scout → screener → claim-ledger → analyst → editor → auditor → gates check/state check/state decide → finalize
 ```
+
+Before `finalize`, run `multi-agent-brief gates check`, `state check --strict`, and `state decide --stage auditor --decision continue`. `finalize` only renders reader-facing outputs; it is not a quality-gate executor.
 
 ## References
 

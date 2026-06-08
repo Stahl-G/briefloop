@@ -673,7 +673,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 Current version: **v0.6.3** — deterministic material-fact, freshness, and target-relevance gate controls
 
-v0.6.3 adds `multi-agent-brief gates check/show/validate` and writes `output/intermediate/quality_gate_report.json` for deterministic material-fact, freshness, and target-relevance gates. Gate findings distinguish the current blocked stage from the stage/artifact that owns repair; `state check` and `state decide` prevent current-stage progress when blocking gate findings exist, but Python does not automatically edit briefs, execute repair, live-fetch market data, recrawl sources, or create feedback issues.
+v0.6.3 adds `multi-agent-brief gates check/show/validate` and writes `output/intermediate/quality_gate_report.json` for deterministic material-fact, freshness, and target-relevance gates. Gate findings distinguish the current blocked stage from the stage/artifact that owns repair; `state check` and `state decide` prevent current-stage progress when blocking gate findings exist. The Hermes main path explicitly runs gates/state before `finalize`; `finalize` itself is not a quality-gate executor, and Python does not automatically edit briefs, execute repair, live-fetch market data, recrawl sources, or create feedback issues.
 
 [View full changelog →](CHANGELOG.md)
 

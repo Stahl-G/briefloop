@@ -70,7 +70,12 @@ def handle_mabw(ctx, argstr: str):
             "  multi-agent-brief feedback ingest/plan/resolve/show/validate structure feedback but do not run repair.\n\n"
             "Optional quality gate controls:\n"
             "  multi-agent-brief gates check/show/validate writes quality_gate_report.json but does not fetch sources or repair.\n\n"
-            "Step 5 — Run: multi-agent-brief finalize --config <workspace>/config.yaml"
+            "Step 5 — Before finalize, run gates/state controls:\n"
+            "  multi-agent-brief gates check --workspace <workspace>\n"
+            "  multi-agent-brief state check --workspace <workspace> --strict\n"
+            "  multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason \"Audit and quality gates passed.\"\n\n"
+            "Step 6 — Run finalize only after gates/state pass; finalize alone is not a quality-gate executor:\n"
+            "  multi-agent-brief finalize --config <workspace>/config.yaml"
         )
 
     if sub == "run":
@@ -107,9 +112,14 @@ def handle_mabw(ctx, argstr: str):
             lines.append("")
             lines.append("Decide: continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.")
             lines.append("Use feedback ingest/plan/resolve/show/validate only when audit findings or human feedback exist; these commands do not execute repair.")
-            lines.append("Use gates check/show/validate only when material-fact, freshness, or target-relevance gates are required; these commands do not fetch sources or repair.")
+            lines.append("Use gates check/show/validate before finalize; these commands do not fetch sources or repair.")
             lines.append("")
-            lines.append("After pipeline, run:")
+            lines.append("Before finalize, run:")
+            lines.append(f"  multi-agent-brief gates check --workspace {ws_path}")
+            lines.append(f"  multi-agent-brief state check --workspace {ws_path} --strict")
+            lines.append(f"  multi-agent-brief state decide --workspace {ws_path} --stage auditor --decision continue --reason \"Audit and quality gates passed.\"")
+            lines.append("")
+            lines.append("Then run finalize. finalize alone is not a quality-gate executor:")
             lines.append(f"  multi-agent-brief finalize --config {ws_path}/config.yaml")
         else:
             lines.append("")
@@ -140,9 +150,14 @@ def handle_mabw(ctx, argstr: str):
             "",
             "Decide: continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.",
             "Use feedback ingest/plan/resolve/show/validate only when audit findings or human feedback exist; these commands do not execute repair.",
-            "Use gates check/show/validate only when material-fact, freshness, or target-relevance gates are required; these commands do not fetch sources or repair.",
+            "Use gates check/show/validate before finalize; these commands do not fetch sources or repair.",
             "",
-            "After pipeline, run:",
+            "Before finalize, run:",
+            f"  multi-agent-brief gates check --workspace {ws_path}",
+            f"  multi-agent-brief state check --workspace {ws_path} --strict",
+            f"  multi-agent-brief state decide --workspace {ws_path} --stage auditor --decision continue --reason \"Audit and quality gates passed.\"",
+            "",
+            "Then run finalize. finalize alone is not a quality-gate executor:",
             f"  multi-agent-brief finalize --config {ws_path}/config.yaml",
         ]
         return "\n".join(lines)

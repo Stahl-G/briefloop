@@ -15,6 +15,11 @@ Primary Hermes path:
 7. Read `<workspace>/output/intermediate/agent_handoff.md`.
 8. Continue with Hermes delegate_task:
    scout → screener → claim-ledger → analyst → editor → auditor.
-9. Run `multi-agent-brief finalize --config <workspace>/config.yaml`.
-10. Report `output/brief.md`, `brief.docx`, `claim_ledger.json`, and `audit_report.json`.
-11. Never treat README, docs, examples, or repo files as evidence for the brief.
+9. Before finalize, run:
+   `multi-agent-brief gates check --workspace <workspace>`
+   `multi-agent-brief state check --workspace <workspace> --strict`
+   `multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."`
+10. Then run `multi-agent-brief finalize --config <workspace>/config.yaml`.
+11. `finalize` alone is not a quality-gate executor; do not skip gates/state decisions when quality gates are required.
+12. Report `output/brief.md`, `brief.docx`, `claim_ledger.json`, `audit_report.json`, and `quality_gate_report.json`.
+13. Never treat README, docs, examples, or repo files as evidence for the brief.

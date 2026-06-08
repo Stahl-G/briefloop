@@ -118,6 +118,9 @@ def test_plugin_skill_uses_orchestrator_contract():
         assert "retry_stage" in text
         assert "request_human_review" in text
         assert "block_run" in text
+    skill_text = skill.read_text(encoding="utf-8")
+    assert "gates check/state check/state decide" in skill_text
+    assert "not a quality-gate executor" in skill_text
 
 
 def test_plugin_reference_mentions_feedback_controls():
@@ -131,6 +134,9 @@ def test_plugin_reference_mentions_feedback_controls():
     assert "feedback show --json" in reference_text
     assert "do not execute repair" in reference_text
     assert "multi-agent-brief gates check" in reference_text
+    assert "multi-agent-brief state check --workspace <workspace> --strict" in reference_text
+    assert "multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue" in reference_text
+    assert "finalize` only renders reader-facing outputs" in reference_text
     assert "gates show --json" in reference_text
     assert "do not live-fetch" in reference_text
     assert "feedback_issues.json" in artifact_text

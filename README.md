@@ -668,7 +668,7 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 当前版本：**v0.6.3** — deterministic material-fact, freshness, and target-relevance gate controls
 
-v0.6.3 增加 `multi-agent-brief gates check/show/validate`，生成 `output/intermediate/quality_gate_report.json`，用于 deterministic material-fact、freshness 和 target-relevance gate。Gate finding 会区分当前阻断 stage 和 repair 归属 stage；`state check` / `state decide` 会阻止带有 blocking gate finding 的当前 stage 继续，但不会自动改稿、执行 repair、live-fetch market data、recrawl sources 或自动创建 feedback issue。
+v0.6.3 增加 `multi-agent-brief gates check/show/validate`，生成 `output/intermediate/quality_gate_report.json`，用于 deterministic material-fact、freshness 和 target-relevance gate。Gate finding 会区分当前阻断 stage 和 repair 归属 stage；`state check` / `state decide` 会阻止带有 blocking gate finding 的当前 stage 继续。Hermes 主路径会在 `finalize` 前显式运行 gates/state；`finalize` 本身不是 quality-gate executor，也不会自动改稿、执行 repair、live-fetch market data、recrawl sources 或自动创建 feedback issue。
 
 [查看完整变更日志 →](CHANGELOG.md)
 

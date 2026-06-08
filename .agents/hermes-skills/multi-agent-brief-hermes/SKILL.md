@@ -106,9 +106,10 @@ doctor
 → delegate_task analyst
 → delegate_task editor
 → delegate_task auditor
-→ finalize
+→ gates check + state check/decide → finalize
 ```
 
+Before finalize, run `multi-agent-brief gates check --workspace <workspace>`, `state check --strict`, and `state decide --stage auditor --decision continue`; `finalize` is not a quality-gate executor.
 Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.
 
 Read `references/delegate-task-sequence.md` before creating child tasks.
