@@ -86,6 +86,8 @@ doctor
 
 Use these standards for every repository change, especially before opening, updating, or merging a PR.
 
+For architecture orientation before roadmap-driven work, read `docs/agent-dev-guide.zh-CN.md`, `docs/architecture-status.md`, `docs/MIGRATION.md`, `docs/orchestrator-contracts.md`, and `docs/support-matrix.md`.
+
 ### Version And Release Semantics
 
 - If a branch, PR, README, changelog, or commit title claims a released version such as `v0.6.0`, update the release source files together: `VERSION`, `pyproject.toml`, `README.md`, `README_en.md`, `CHANGELOG.md`, Hermes skill metadata, and any version defaults in code.

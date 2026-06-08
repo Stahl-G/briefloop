@@ -10,13 +10,19 @@ Multi-Agent Brief Workflow is moving toward an orchestrated, contract-governed b
 subagent-first runtime
 → orchestrator contracts
 → feedback and repair loop
-→ quality gates and evaluation
+→ checkpointed quality gates and evaluation
+→ workspace memory and mode registry
 → provenance-aware artifacts
 → policy packs and runtime parity
 → stable v1.0 baseline
 ```
 
 The project is not trying to rebuild a full distributed multi-agent runtime before v1.0. Python remains a toolkit for setup, source handling, validation, audit, and rendering. The workflow runtime is coordinated by an external main agent and delegated subagents.
+
+Two design principles guide the next phases:
+
+- Stage boundaries are contract boundaries. Some gates are machine-only, some require human semantic approval, and some combine machine findings with Orchestrator judgment.
+- Memory is workspace-local and human-governed. The project may add agent-proposed memory updates and frozen per-run snapshots, but it will not become a full long-term-memory or RAG platform before v1.0.
 
 ## Completed Baseline
 
@@ -91,6 +97,7 @@ Public scope:
 - Establish a minimal runtime state and artifact status layer.
 - Introduce a feedback and repair loop before expanding deeper provenance work.
 - Add quality gates for material facts, source freshness, and target relevance.
+- Classify stage gates as machine-only, human-in-the-loop, or mixed where that distinction affects Orchestrator decisions.
 - Introduce public-safe failure-pattern evaluation cases.
 - Add provenance once the feedback loop and quality gates are testable.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
@@ -98,7 +105,7 @@ Public scope:
 Public sequencing after v0.6.2:
 
 - v0.6.3: material-fact, freshness, and target-relevance gates.
-- v0.6.4: public-safe evaluation cases from real failure patterns.
+- v0.6.4: public-safe evaluation cases from real failure patterns, plus red-line and anti-pattern documentation with rationale.
 - v0.6.5: evidence and execution provenance graph.
 
 Public implementation overviews:
@@ -116,12 +123,15 @@ Non-goals:
 
 ### v0.7 — FrictionStore And Improvement Proposals
 
-Goal: turn recurring failures, audit findings, and human feedback into controlled improvement proposals.
+Goal: turn recurring failures, audit findings, human feedback, and workspace memory signals into controlled improvement proposals.
 
 Public scope:
 
 - Track recurring failure patterns across runs.
 - Generate improvement signals, patch plans, and regression-plan suggestions.
+- Add a lightweight workspace memory model for audience taste and recurring feedback patterns.
+- Treat memory updates as agent-proposed and human-approved.
+- Use frozen per-run memory snapshots so a run does not change behavior midway because of memory written during that same run.
 - Keep self-improvement proposal-only until a human or maintainer approves code changes.
 
 Non-goals:
@@ -129,21 +139,25 @@ Non-goals:
 - no public release of private golden examples
 - no automatic self-modification of the main branch
 - no raw prompt, raw log, or private feedback injection into public prompts
+- no full RAG platform or autonomous long-term-memory system
 
-### v0.8 — Policy Packs And Runtime Parity
+### v0.8 — Mode Registry, Policy Packs, And Runtime Parity
 
-Goal: support different brief contexts through configurable policy packs while keeping runtime behavior consistent.
+Goal: support different brief contexts and entry modes through configurable policy packs while keeping runtime behavior consistent.
 
 Public scope:
 
+- Introduce a mode registry so the same Orchestrator and specialist roles can support full runs, source-readiness checks, audit-only runs, repair-planning-only runs, audience-profile updates, and final-render-only flows.
 - Introduce policy-pack concepts for audience, industry, cadence, and delivery expectations.
 - Keep Hermes, Claude Code, Codex, OpenCode, and manual fallback aligned around the same artifact expectations.
+- Keep CLI, Hermes GUI/plugin, and other runtime entry points backed by the same Orchestrator contracts and state files.
 - Preserve a single public support matrix.
 
 Non-goals:
 
 - no disclosure of commercial policy-pack internals before they are stable
 - no runtime-specific artifact schema forks
+- no separate simplified pipeline for GUI or messaging entry points
 
 ### v0.9 — Distribution And Reference Workflows
 
@@ -164,6 +178,9 @@ v1.0 should provide:
 - a clear Orchestrator-first workflow
 - auditable artifacts
 - evidence-aware drafting and audit gates
+- checkpointed stage transitions with explicit machine, human, or mixed gate semantics
+- workspace-local memory that separates correctness contracts from taste preferences
+- a public-safe mode registry for common brief workflow entry points
 - runtime parity across supported agent surfaces
 - public-safe evaluation coverage
 - reliable rendered outputs

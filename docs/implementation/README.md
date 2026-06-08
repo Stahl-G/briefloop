@@ -13,11 +13,12 @@ Detailed schema drafts, private evaluation examples, prompt notes, failure taxon
 
 ## How To Use
 
-1. Read [Architecture Status](../architecture-status.md) first. Roadmap goals are not proof that code exists.
-2. Read [Migration Notes](../MIGRATION.md) before changing legacy Python-pipeline wording.
-3. Read [Orchestrator Contract Model](../orchestrator-contracts.md) before changing runtime handoff, agent role, or workflow-control language.
-4. Read [Orchestrator Architecture](../orchestrator-architecture.md) for the v0.6 main-agent control model.
-5. Use these implementation overviews to keep changes narrow and staged.
+1. Read [MABW Agent 开发指南](../agent-dev-guide.zh-CN.md) for the repository development model and architecture invariants.
+2. Read [Architecture Status](../architecture-status.md). Roadmap goals are not proof that code exists.
+3. Read [Migration Notes](../MIGRATION.md) before changing legacy Python-pipeline wording.
+4. Read [Orchestrator Contract Model](../orchestrator-contracts.md) before changing runtime handoff, agent role, or workflow-control language.
+5. Read [Orchestrator Architecture](../orchestrator-architecture.md) for the v0.6 main-agent control model.
+6. Use these implementation overviews to keep changes narrow and staged.
 
 Each implementation slice should answer:
 

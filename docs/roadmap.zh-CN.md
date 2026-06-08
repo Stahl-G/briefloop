@@ -10,13 +10,19 @@ Multi-Agent Brief Workflow 的下一阶段是一个由 Orchestrator 管理、由
 subagent-first runtime
 → orchestrator contracts
 → feedback and repair loop
-→ quality gates and evaluation
+→ checkpointed quality gates and evaluation
+→ workspace memory and mode registry
 → provenance-aware artifacts
 → policy packs and runtime parity
 → stable v1.0 baseline
 ```
 
 v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为 setup、source handling、validation、audit、rendering 工具箱；workflow runtime 由外部 main agent 和 delegated subagents 执行。
+
+后续阶段遵循两个设计原则：
+
+- Stage boundary 就是 contract boundary。部分 gate 只需要机器检查，部分 gate 需要人类语义确认，部分 gate 由机器 findings 加 Orchestrator 判断共同决定。
+- Memory 是 workspace-local 且 human-governed。项目可以加入 agent-proposed memory updates 和 frozen per-run snapshots，但 v1.0 前不做完整 long-term-memory 或 RAG platform。
 
 ## 已完成基线
 
@@ -91,6 +97,7 @@ Non-goals:
 - 建立最小 runtime state 和 artifact status 层。
 - 在扩展更深 provenance 前，先引入 feedback and repair loop。
 - 增加 material facts、source freshness 和 target relevance 相关质量门。
+- 在影响 Orchestrator 决策的地方，标明 stage gate 是 machine-only、human-in-the-loop 还是 mixed。
 - 从真实失败模式抽象 public-safe evaluation cases。
 - 在反馈闭环和质量门可测试后，再加入 provenance。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
@@ -98,7 +105,7 @@ Non-goals:
 v0.6.2 之后的公开顺序：
 
 - v0.6.3：material-fact、freshness、target-relevance gates。
-- v0.6.4：real failure patterns 抽象出的 public-safe evaluation cases。
+- v0.6.4：real failure patterns 抽象出的 public-safe evaluation cases，并补充带 rationale 的 red-line / anti-pattern 文档。
 - v0.6.5：evidence and execution provenance graph。
 
 公开实施概览：
@@ -116,12 +123,15 @@ Non-goals:
 
 ### v0.7 — FrictionStore And Improvement Proposals
 
-目标：把 recurring failures、audit findings 和 human feedback 转成受控 improvement proposals。
+目标：把 recurring failures、audit findings、human feedback 和 workspace memory signals 转成受控 improvement proposals。
 
 公开范围：
 
 - 跨 run 跟踪 recurring failure patterns。
 - 生成 improvement signals、patch plans 和 regression-plan suggestions。
+- 加入轻量 workspace memory model，用于 audience taste 和 recurring feedback patterns。
+- memory updates 只能是 agent-proposed、human-approved。
+- 使用 frozen per-run memory snapshots，避免同一次 run 因中途写入的新 memory 改变行为。
 - self-improvement 在人类或 maintainer 批准前只生成 proposal，不自动改代码。
 
 Non-goals:
@@ -129,21 +139,25 @@ Non-goals:
 - 不公开私有 golden examples。
 - 不允许自动修改 main branch。
 - 不把 raw prompt、raw log 或 private feedback 注入公开 prompts。
+- 不做完整 RAG platform 或 autonomous long-term-memory system。
 
-### v0.8 — Policy Packs And Runtime Parity
+### v0.8 — Mode Registry, Policy Packs, And Runtime Parity
 
-目标：用 configurable policy packs 支持不同简报场景，同时保持不同 runtime 的行为一致。
+目标：用 configurable policy packs 和 mode registry 支持不同简报场景与入口，同时保持不同 runtime 的行为一致。
 
 公开范围：
 
+- 引入 mode registry，让同一套 Orchestrator 和 specialist roles 支持 full run、source-readiness check、audit-only、repair-planning-only、audience-profile update 和 final-render-only 等入口。
 - 引入 audience、industry、cadence、delivery expectations 相关的 policy-pack 概念。
 - 让 Hermes、Claude Code、Codex、OpenCode 和 manual fallback 对齐到同一组 artifact expectations。
+- 保证 CLI、Hermes GUI/plugin 和其他 runtime 入口都基于同一套 Orchestrator contracts 和 state files。
 - 保持单一公开 support matrix。
 
 Non-goals:
 
 - 商业 policy-pack 内部规则稳定前不公开。
 - 不让 runtime-specific 细节分叉业务 artifact schema。
+- 不为 GUI 或 messaging 入口另写一套简化 pipeline。
 
 ### v0.9 — Distribution And Reference Workflows
 
@@ -164,6 +178,9 @@ v1.0 应包含：
 - 清晰的 Orchestrator-first workflow。
 - 可审计 artifacts。
 - evidence-aware drafting 和 audit gates。
+- 带明确 machine、human 或 mixed gate 语义的 checkpointed stage transitions。
+- 区分 correctness contracts 和 taste preferences 的 workspace-local memory。
+- 面向常见 brief workflow 入口的 public-safe mode registry。
 - supported agent surfaces 的 runtime parity。
 - public-safe evaluation coverage。
 - 可靠的 rendered outputs。
