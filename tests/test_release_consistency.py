@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +12,27 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_release_consistency.py"
 VERSION_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_version_consistency.py"
 RELEASE_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "release.sh"
+
+
+def _bash_executable() -> str:
+    if os.name == "nt":
+        candidates = [
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe",
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "bash.exe",
+        ]
+        program_files_x86 = os.environ.get("ProgramFiles(x86)")
+        if program_files_x86:
+            candidates.extend([
+                Path(program_files_x86) / "Git" / "bin" / "bash.exe",
+                Path(program_files_x86) / "Git" / "usr" / "bin" / "bash.exe",
+            ])
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            candidates.append(Path(local_app_data) / "Programs" / "Git" / "bin" / "bash.exe")
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+    return shutil.which("bash") or "bash"
 
 
 class TestCheckReleaseConsistency:
@@ -74,5 +97,9 @@ def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, mo
 
 
 def test_release_script_syntax():
-    result = subprocess.run(["bash", "-n", str(RELEASE_SCRIPT)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    result = subprocess.run(
+        [_bash_executable(), "-n", str(RELEASE_SCRIPT)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
