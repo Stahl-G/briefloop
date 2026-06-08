@@ -26,6 +26,7 @@ from multi_agent_brief.cli import (
     state_commands,
     feedback_commands,
     gates_commands,
+    eval_cases_commands,
 )
 
 
@@ -72,6 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Deterministic quality gate controls
     gates_commands.register(subparsers)
+
+    # Public-safe evaluation cases
+    eval_cases_commands.register(subparsers)
 
     # Hermes runtime
     hermes_commands.register(subparsers)
@@ -148,6 +152,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "gates":
         return gates_commands.handle(args)
+
+    if cmd == "eval-cases":
+        return eval_cases_commands.handle(args)
 
     return 1
 

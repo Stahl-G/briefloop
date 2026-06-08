@@ -79,7 +79,7 @@ def test_orchestrator_contract_defines_main_agent_and_decisions():
         "artifact_registry_execution",
         "feedback_repair_loop",
         "evidence_execution_graph",
-        "public_golden_cases",
+        "public_safe_evaluation_cases",
     ]
     assert contract["v061_boundaries"]["implements"] == [
         "persisted_runtime_state_control_files",
@@ -105,6 +105,14 @@ def test_orchestrator_contract_defines_main_agent_and_decisions():
     ]
     assert "live_market_quote_fetching" in contract["v063_boundaries"]["deferred"]
     assert "semantic_truth_judgment" in contract["v063_boundaries"]["deferred"]
+    assert contract["v064_boundaries"]["implements"] == [
+        "packaged_public_safe_evaluation_cases",
+        "structured_eval_case_action_dispatch",
+        "fixture_leakage_scanner",
+        "gates_feedback_runtime_static_regression_cases",
+    ]
+    assert "llm_as_judge_prose_scoring" in contract["v064_boundaries"]["deferred"]
+    assert "private_commercial_benchmark_suites" in contract["v064_boundaries"]["deferred"]
 
     refs = contract["orchestrator"]["contract_references"]
     for rel_path in refs.values():

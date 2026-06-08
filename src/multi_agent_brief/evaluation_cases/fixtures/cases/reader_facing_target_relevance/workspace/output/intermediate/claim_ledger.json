@@ -1,0 +1,13 @@
+[
+  {
+    "claim_id": "SYN_CLAIM_TARGET001",
+    "statement": "Synthetic TargetCo disclosed a target-specific operational milestone.",
+    "source_id": "SYN_SRC_TARGET001",
+    "evidence_text": "Synthetic TargetCo disclosed a target-specific operational milestone.",
+    "source_url": "https://example.com/synthetic-target-source",
+    "metadata": {
+      "published_at": "2026-06-01",
+      "importance": "high"
+    }
+  }
+]

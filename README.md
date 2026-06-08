@@ -577,7 +577,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.3 在共享 Orchestrator authority、minimum runtime state、artifact registry status、decision event 和 feedback/repair control plane 之上，增加 deterministic material-fact、freshness 和 target-relevance gates；这些 gates 可以按当前 stage 阻断 unsafe continue/finalize，并把 repair 归属留给 Orchestrator 显式处理。它不表示 Python 会自动改稿、执行 repair、live-fetch market data、recrawl sources、做 semantic truth judgment 或实现 provenance graph。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
+公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.4 在共享 Orchestrator authority、runtime state、feedback/repair control plane 和 deterministic quality gates 之上，增加 packaged public-safe evaluation cases，用于开发和 CI 回归验证已知控制面失败模式。它不表示 Python 会自动评分文章、调用 LLM judge、执行 repair、live-fetch market data、recrawl sources、做 semantic truth judgment 或实现 provenance graph。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
 
 ---
 
@@ -666,9 +666,9 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.6.3** — deterministic material-fact, freshness, and target-relevance gate controls
+当前版本：**v0.6.4** — packaged public-safe evaluation cases for control-surface regression
 
-v0.6.3 增加 `multi-agent-brief gates check/show/validate`，生成 `output/intermediate/quality_gate_report.json`，用于 deterministic material-fact、freshness 和 target-relevance gate。Gate finding 会区分当前阻断 stage 和 repair 归属 stage；`state check` / `state decide` 会阻止带有 blocking gate finding 的当前 stage 继续。Hermes 主路径会在 `finalize` 前显式运行 gates/state；`finalize` 本身不是 quality-gate executor，也不会自动改稿、执行 repair、live-fetch market data、recrawl sources 或自动创建 feedback issue。
+v0.6.4 增加 `multi-agent-brief eval-cases list/validate/run`，内置 5 个 public-safe workspace control cases 和 1 个 Hermes static invariant case。Eval cases 使用 structured allowlisted actions，不执行 shell 字符串；它们只验证 gates、feedback、runtime blocker 和 Hermes 主路径 invariant，不生成 workflow artifact，不自动改稿、不执行 repair、不抓取来源，也不调用 LLM judge。
 
 [查看完整变更日志 →](CHANGELOG.md)
 

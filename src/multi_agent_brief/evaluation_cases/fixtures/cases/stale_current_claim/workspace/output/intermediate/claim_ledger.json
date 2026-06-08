@@ -1,0 +1,13 @@
+[
+  {
+    "claim_id": "SYN_CLAIM_OLD001",
+    "statement": "Synthetic TargetCo announced a current operating update.",
+    "source_id": "SYN_SRC_OLD001",
+    "evidence_text": "Synthetic TargetCo announced a current operating update.",
+    "source_url": "https://example.com/synthetic-old-source",
+    "metadata": {
+      "published_at": "2026-05-01",
+      "importance": "high"
+    }
+  }
+]

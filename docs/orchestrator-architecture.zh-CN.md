@@ -27,7 +27,7 @@ v0.6.0 引入公开安全的 contract references：
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks。v0.6.2 增加最小 feedback issue 和 repair-plan 控制面。v0.6.3 增加 deterministic material-fact、freshness 和 target-relevance gate controls。Python 仍不自动改 brief artifacts、不执行 repair、不 live-fetch sources、不做 semantic truth judgment，也不实现 provenance graph。
+这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks。v0.6.2 增加最小 feedback issue 和 repair-plan 控制面。v0.6.3 增加 deterministic material-fact、freshness 和 target-relevance gate controls。v0.6.4 增加 packaged public-safe evaluation cases，用于开发和 CI 回归验证。Python 仍不自动改 brief artifacts、不执行 repair、不 live-fetch sources、不做 semantic truth judgment、不用 LLM judge 给文章打分，也不实现 provenance graph。
 
 ## 四类 Contract
 
@@ -83,7 +83,8 @@ v0.6.0 不构建 provenance graph。但 contract 形状要兼容后续 provenanc
 后续 v0.6 milestone 负责：
 
 - material-fact and freshness gates
-- public-safe evaluation cases
+- private/commercial benchmark suites
+- LLM-as-judge prose scoring
 - evidence and execution provenance
 
 ## Related

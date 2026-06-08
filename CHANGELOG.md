@@ -5,6 +5,24 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-06-08
+
+### Added
+
+- **Public-safe evaluation cases CLI**: added `multi-agent-brief eval-cases list`, `eval-cases validate`, and `eval-cases run` for deterministic developer/CI regression checks.
+- **Packaged eval fixtures**: bundled five public-safe workspace control cases plus one Hermes static invariant case so non-editable installs can run the default eval suite.
+- **Fixture leakage scanner**: eval-case validation rejects shell-string commands, non-synthetic manifests, local paths, unsafe URLs, email domains, token-shaped values, prompt labels, and non-synthetic claim/source IDs.
+
+### Changed
+
+- **Structured eval actions**: eval cases dispatch allowlisted actions such as `gates.check`, `feedback.ingest`, and `state.decide` instead of parsing or executing shell commands.
+- **Stage-explicit fixtures**: workspace cases declare `initial_stage` and prepare temporary runtime state explicitly, so cases validate control-surface behavior without executing workflow stages.
+- **Partial assertions**: eval results compare only stable control outputs such as exit codes, expected control artifacts, gate findings, feedback issues, workflow state, and static text invariants.
+
+### Boundaries
+
+- Evaluation cases are developer/CI regression tools, not workflow artifacts. They do not score prose, run subagents, execute repair, fetch sources, call an LLM judge, or add `evaluation_report.json` to runtime artifact contracts.
+
 ## [0.6.3] — 2026-06-08
 
 ### Added

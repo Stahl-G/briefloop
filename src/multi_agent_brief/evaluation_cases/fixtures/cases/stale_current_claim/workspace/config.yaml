@@ -1,0 +1,9 @@
+project:
+  name: "Synthetic TargetCo"
+report:
+  date: "2026-06-08"
+  max_source_age_days: 14
+output:
+  path: "output"
+input:
+  path: "input"

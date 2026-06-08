@@ -23,6 +23,8 @@ orchestrator:
       - inputs_classify
       - audit
       - finalize
+  developer_ci_tools:
+    - eval_cases
 contracts:
   behavior:
     purpose: define orchestrator and specialist role boundaries
@@ -70,7 +72,7 @@ v060_boundaries:
     - artifact_registry_execution
     - feedback_repair_loop
     - evidence_execution_graph
-    - public_golden_cases
+    - public_safe_evaluation_cases
 v061_boundaries:
   implements:
     - persisted_runtime_state_control_files
@@ -81,7 +83,7 @@ v061_boundaries:
     - feedback_repair_loop
     - material_fact_freshness_target_relevance_gates
     - evidence_execution_graph
-    - public_golden_cases
+    - public_safe_evaluation_cases
 v062_boundaries:
   implements:
     - feedback_issue_handling
@@ -93,7 +95,7 @@ v062_boundaries:
     - semantic_repair_verification
     - material_fact_freshness_target_relevance_gates
     - evidence_execution_graph
-    - public_golden_cases
+    - public_safe_evaluation_cases
 v063_boundaries:
   implements:
     - deterministic_material_fact_gate
@@ -107,4 +109,15 @@ v063_boundaries:
     - live_market_quote_fetching
     - automatic_source_recrawl
     - evidence_execution_graph
-    - public_golden_cases
+    - public_safe_evaluation_cases
+v064_boundaries:
+  implements:
+    - packaged_public_safe_evaluation_cases
+    - structured_eval_case_action_dispatch
+    - fixture_leakage_scanner
+    - gates_feedback_runtime_static_regression_cases
+  deferred:
+    - private_commercial_benchmark_suites
+    - llm_as_judge_prose_scoring
+    - automatic_repair_execution
+    - evidence_execution_graph
