@@ -120,7 +120,15 @@ def _resolve_path(workspace: Path, value: str | Path | None, default: str) -> Pa
     path = Path(value).expanduser()
     if path.is_absolute():
         return path.resolve()
-    return (workspace / path).resolve()
+    workspace_candidate = (workspace / path).resolve()
+    if workspace_candidate.exists():
+        return workspace_candidate
+
+    cwd_candidate = path.resolve()
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    return workspace_candidate
 
 
 def _read_text(path: Path, *, label: str) -> str:

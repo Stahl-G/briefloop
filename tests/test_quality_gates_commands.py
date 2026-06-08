@@ -393,6 +393,48 @@ def test_auditable_brief_hyphenated_target_claim_ref_counts_for_summary(tmp_path
     assert "number_without_source" not in finding_types
 
 
+def test_gates_check_accepts_cwd_relative_workspace_prefixed_paths(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    work = repo / "work"
+    work.mkdir(parents=True)
+    ws = _write_workspace(work)
+    _write_ledger(ws, [
+        {
+            "claim_id": "CLM-001",
+            "statement": "TargetCo revenue was $42 million.",
+            "source_id": "SRC",
+            "evidence_text": "TargetCo revenue was $42 million.",
+            "metadata": {"importance": "high"},
+        }
+    ])
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo revenue was $42 million. [src:CLM-001]\n",
+    )
+    monkeypatch.chdir(repo)
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws.relative_to(repo)),
+        "--brief",
+        str((ws / "output" / "intermediate" / "audited_brief.md").relative_to(repo)),
+        "--ledger",
+        str((ws / "output" / "intermediate" / "claim_ledger.json").relative_to(repo)),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    assert report["metadata"]["brief"] == "output/intermediate/audited_brief.md"
+    assert report["metadata"]["ledger"] == "output/intermediate/claim_ledger.json"
+    finding_types = {finding["finding_type"] for finding in report["findings"]}
+    assert "number_without_source" not in finding_types
+
+
 def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
