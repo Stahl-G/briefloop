@@ -8,6 +8,7 @@ Explicit Orchestrator Contract
 → Artifact Contract
 → Evidence Provenance
 → Execution Provenance
+→ Unified Provenance Graph
 → Quality And Repair Loop
 → Golden Evaluation And FrictionStore
 → Distribution And Reference Workflows
@@ -81,6 +82,7 @@ When modifying the repository, locate the work in this order:
 | Runtime State | Record run state, decisions, and gate results | `workflow_state.json`, `run_manifest.json`, `event_log.jsonl` |
 | Evidence Provenance | Track source -> evidence -> claim -> draft -> final | `source_registry.json`, `evidence_pack.json`, `claim_ledger.json`, `citation_audit.json` |
 | Execution Provenance | Track agent / tool / handoff / artifact lineage | `agent_task_log.jsonl`, `tool_call_log.jsonl`, `handoff_log.jsonl` |
+| Unified Provenance Graph | Connect factual chain, execution chain, audit, and improvement signals with typed relations | `provenance_graph.json`, `src/multi_agent_brief/provenance/graph.py` |
 | Quality Harness | Track relevance, delivery, repair, rendering, and eval results | `relevance_report.json`, `delivery_report.json`, `quality_score.json` |
 | Improvement Loop | Convert failures into controlled improvement items | `friction_store.jsonl`, `improvement_signals.json`, `improvement_proposal.md` |
 
@@ -455,6 +457,21 @@ Check:
 - unsupported / partially_supported / contradicted claims are not overstated.
 - Editor did not remove draft citations needed for audit.
 
+### Evidence Relation Types
+
+v0.6.3 should define factual relation types first so v0.6.4 can reuse them in the unified graph:
+
+```text
+DERIVED_FROM: evidence -> source
+SUPPORTS: evidence -> claim
+PARTIALLY_SUPPORTS: evidence -> claim
+CONTRADICTS: evidence -> claim
+USES_CLAIM: draft/final artifact -> claim
+INVALIDATES: citation_audit finding -> claim or citation marker
+```
+
+These relations are not display labels. Validators must be able to use them. For example, a `support_status=unsupported` claim should not have a `SUPPORTS` edge; a body claim connected through `CONTRADICTS` must carry limitation or uncertainty wording.
+
 Done when:
 
 - Important body claims cannot rely only on a URL or raw `source_id`.
@@ -474,6 +491,7 @@ agent_task_log.jsonl
 tool_call_log.jsonl
 handoff_log.jsonl
 orchestrator_report.json
+provenance_graph.json
 ```
 
 Recommended module:
@@ -484,6 +502,8 @@ src/multi_agent_brief/provenance/
   agent_task_log.py
   tool_call_log.py
   handoff_log.py
+  graph.py
+  relation_schema.py
 ```
 
 ### agent_task_log Event
@@ -515,11 +535,70 @@ artifact_updates
 status
 ```
 
+### Unified Provenance Graph
+
+v0.6.4 must explicitly introduce `provenance_graph.json`, connecting evidence provenance and execution provenance into one typed relation network.
+
+Graph node types:
+
+```text
+run
+stage
+agent_task
+tool_call
+artifact
+source
+evidence
+claim
+citation
+audit_finding
+orchestrator_decision
+repair_plan
+friction_item
+```
+
+Graph relation types:
+
+```text
+DERIVED_FROM
+DEPENDS_ON
+GENERATED_BY
+USED_BY
+VERIFIED_BY
+INVALIDATED_BY
+SUPPORTS
+PARTIALLY_SUPPORTS
+CONTRADICTS
+TRIGGERED
+UPDATED
+BLOCKED_BY
+PROPOSED_FIX_FOR
+```
+
+Minimal graph schema:
+
+```json
+{
+  "schema_version": "provenance_graph/v1",
+  "run_id": "RUN_...",
+  "nodes": [
+    {"id": "CLM_001", "type": "claim", "ref": "claim_ledger.json#CLM_001"}
+  ],
+  "edges": [
+    {"from": "EVD_001", "to": "CLM_001", "relation": "SUPPORTS"}
+  ]
+}
+```
+
+v0.6.4 does not need a full graph query engine, but it must generate the graph from existing artifacts and validate orphan nodes, unknown relations, and broken refs.
+
 Done when:
 
 - Every required artifact has a producer.
 - Every stage success, failure, or block has a readable event.
 - Orchestrator report explains which gates passed and which limitations remain.
+- `provenance_graph.json` connects source/evidence/claim with agent_task/tool_call/artifact.
+- Typed relation validators catch unknown relations, broken refs, and missing producers.
 
 ## v0.6.5: Orchestrator Quality And Repair Loop
 
@@ -691,11 +770,55 @@ Friction item:
 }
 ```
 
+### Friction Provenance
+
+Each friction item must trace back to the audit finding, claim, artifact, tool call, or orchestrator decision that triggered it.
+
+Add fields:
+
+```text
+source_refs
+related_claim_ids
+related_artifact_ids
+related_event_ids
+provenance_edges
+```
+
+Example:
+
+```json
+{
+  "friction_id": "FRIC_001",
+  "source_refs": ["audit_report.json#AUDIT_014"],
+  "related_claim_ids": ["CLM_023"],
+  "related_artifact_ids": ["audited_brief"],
+  "related_event_ids": ["EVT_20260608_001"],
+  "provenance_edges": [
+    {"from": "AUDIT_014", "to": "FRIC_001", "relation": "TRIGGERED"},
+    {"from": "FRIC_001", "to": "CLM_023", "relation": "PROPOSED_FIX_FOR"}
+  ]
+}
+```
+
+A friction item without provenance can only be a draft suggestion. It cannot enter future-run injection.
+
+### Self-Improvement Safety Rules
+
+Explicitly forbid:
+
+- automatic modification of the main branch
+- deleting or relaxing failing tests to improve scores
+- silently lowering quality thresholds
+- injecting raw user feedback, full prompts, or raw logs into skills or agent prompts
+- letting the model approve its own factual repairs
+- marking a friction item active without a regression plan
+
 Done when:
 
 - Orchestrator can write failures as improvement signals.
 - FrictionStore does not store sensitive raw logs, full prompts, or private materials.
 - Self-improvement only creates proposals, patch plans, validators, or golden case suggestions. It does not modify main automatically.
+- Every active friction item traces to an audit finding, event, artifact, or human-confirmed record.
 
 ## v0.8.0: Policy Packs And Runtime Parity
 
@@ -778,6 +901,7 @@ v1.0 must include:
 - Artifact registry and process validators
 - Evidence provenance
 - Execution provenance
+- Unified provenance graph and typed relation schema
 - RelevanceGate, DeliveryGate, bounded repair
 - Golden evaluation
 - FrictionStore and improvement proposals
@@ -818,6 +942,44 @@ Not in early v2:
 - one-shot migration of all connectors and analysis modules
 
 ## Agent Implementation Guide
+
+## Validation Coverage Strategy
+
+Every version task needs validation coverage. Do not add schemas or prompts without tests.
+
+| Layer | Minimum test coverage |
+|---|---|
+| Orchestrator Contract | docs grep, role config generation, runtime entry parity, Python pipeline regression ban |
+| Runtime State | state schema roundtrip, missing field failure, event log append, run id consistency |
+| Artifact Contract | missing artifact, empty artifact, malformed JSON, wrong producer, upstream dependency failure |
+| Evidence Provenance | source/evidence/claim ref integrity, support_status and relation consistency, citation audit failure |
+| Execution Provenance | required artifact producer, stage event order, tool_call summary redaction, handoff lineage |
+| Unified Graph | unknown relation, broken node ref, orphan artifact, claim without evidence edge, friction without trigger edge |
+| Quality Gates | relevance threshold, delivery leakage, bounded repair max rounds, reader-facing citation stripping |
+| FrictionStore | no raw prompt/log injection, expiry handling, scope filtering, proposal requires provenance |
+
+Recommended test files:
+
+```text
+tests/test_orchestrator_contract_docs.py
+tests/test_workflow_state.py
+tests/test_artifact_registry.py
+tests/test_provenance_graph.py
+tests/test_relation_schema.py
+tests/test_friction_store.py
+tests/test_validate_commands.py
+tests/test_runtime_parity_contract.py
+```
+
+Every PR should answer:
+
+```text
+What artifact/schema changed?
+What validator enforces it?
+What runtime entry reads it?
+What regression test prevents rollback?
+What failure mode becomes visible to the Orchestrator?
+```
 
 Future agents should use this order:
 

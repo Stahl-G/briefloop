@@ -8,6 +8,7 @@ Explicit Orchestrator Contract
 → Artifact Contract
 → Evidence Provenance
 → Execution Provenance
+→ Unified Provenance Graph
 → Quality And Repair Loop
 → Golden Evaluation And FrictionStore
 → Distribution And Reference Workflows
@@ -81,6 +82,7 @@ I record provenance and improvement signals.
 | Runtime State | 记录当前 run 的状态、决策和 gate 结果 | `workflow_state.json`, `run_manifest.json`, `event_log.jsonl` |
 | Evidence Provenance | 记录 source -> evidence -> claim -> draft -> final | `source_registry.json`, `evidence_pack.json`, `claim_ledger.json`, `citation_audit.json` |
 | Execution Provenance | 记录 agent / tool / handoff / artifact lineage | `agent_task_log.jsonl`, `tool_call_log.jsonl`, `handoff_log.jsonl` |
+| Unified Provenance Graph | 用 typed relations 连接事实链、执行链、审计和改进信号 | `provenance_graph.json`, `src/multi_agent_brief/provenance/graph.py` |
 | Quality Harness | 记录 relevance、delivery、repair、rendering、eval 结果 | `relevance_report.json`, `delivery_report.json`, `quality_score.json` |
 | Improvement Loop | 把失败转成受控改进项 | `friction_store.jsonl`, `improvement_signals.json`, `improvement_proposal.md` |
 
@@ -455,6 +457,21 @@ limitations
 - unsupported / partially_supported / contradicted claim 是否被过度表述。
 - Editor 是否删除了 draft audit 所需引用。
 
+### Evidence relation types
+
+v0.6.3 要先定义事实链 relation，供 v0.6.4 unified graph 复用：
+
+```text
+DERIVED_FROM: evidence -> source
+SUPPORTS: evidence -> claim
+PARTIALLY_SUPPORTS: evidence -> claim
+CONTRADICTS: evidence -> claim
+USES_CLAIM: draft/final artifact -> claim
+INVALIDATES: citation_audit finding -> claim or citation marker
+```
+
+这些 relation 不是展示用标签，必须能被 validator 使用。例如 `support_status=unsupported` 的 claim 不应有 `SUPPORTS` edge；正文中使用 `CONTRADICTS` 关系的 claim 必须带 limitation 或 uncertainty wording。
+
 完成标准：
 
 - 重要正文 claim 不能只靠 URL 或裸 source_id。
@@ -474,6 +491,7 @@ agent_task_log.jsonl
 tool_call_log.jsonl
 handoff_log.jsonl
 orchestrator_report.json
+provenance_graph.json
 ```
 
 建议模块：
@@ -484,6 +502,8 @@ src/multi_agent_brief/provenance/
   agent_task_log.py
   tool_call_log.py
   handoff_log.py
+  graph.py
+  relation_schema.py
 ```
 
 ### agent_task_log 事件
@@ -515,11 +535,70 @@ artifact_updates
 status
 ```
 
+### Unified provenance graph
+
+v0.6.4 必须显式引入 `provenance_graph.json`，把 evidence provenance 和 execution provenance 连成同一张 typed relation 网络。
+
+Graph node 类型：
+
+```text
+run
+stage
+agent_task
+tool_call
+artifact
+source
+evidence
+claim
+citation
+audit_finding
+orchestrator_decision
+repair_plan
+friction_item
+```
+
+Graph relation 类型：
+
+```text
+DERIVED_FROM
+DEPENDS_ON
+GENERATED_BY
+USED_BY
+VERIFIED_BY
+INVALIDATED_BY
+SUPPORTS
+PARTIALLY_SUPPORTS
+CONTRADICTS
+TRIGGERED
+UPDATED
+BLOCKED_BY
+PROPOSED_FIX_FOR
+```
+
+最小 graph schema：
+
+```json
+{
+  "schema_version": "provenance_graph/v1",
+  "run_id": "RUN_...",
+  "nodes": [
+    {"id": "CLM_001", "type": "claim", "ref": "claim_ledger.json#CLM_001"}
+  ],
+  "edges": [
+    {"from": "EVD_001", "to": "CLM_001", "relation": "SUPPORTS"}
+  ]
+}
+```
+
+v0.6.4 不需要完整图查询引擎，但必须能从现有 artifact 生成 graph，并能校验 orphan node、unknown relation、broken ref。
+
 完成标准：
 
 - 每个 required artifact 都有 producer。
 - 每个 stage 的成功、失败、阻断有可读事件。
 - Orchestrator report 能说明最终 brief 通过了哪些 gate，哪些 limitation 留存。
+- `provenance_graph.json` 能连接 source/evidence/claim 与 agent_task/tool_call/artifact。
+- typed relation validator 能发现 unknown relation、broken ref 和缺失 producer。
 
 ## v0.6.5: Orchestrator Quality And Repair Loop
 
@@ -691,11 +770,55 @@ Friction item：
 }
 ```
 
+### Friction provenance
+
+Friction item 必须能回溯到触发它的 audit finding、claim、artifact、tool call 或 orchestrator decision。
+
+新增字段：
+
+```text
+source_refs
+related_claim_ids
+related_artifact_ids
+related_event_ids
+provenance_edges
+```
+
+示例：
+
+```json
+{
+  "friction_id": "FRIC_001",
+  "source_refs": ["audit_report.json#AUDIT_014"],
+  "related_claim_ids": ["CLM_023"],
+  "related_artifact_ids": ["audited_brief"],
+  "related_event_ids": ["EVT_20260608_001"],
+  "provenance_edges": [
+    {"from": "AUDIT_014", "to": "FRIC_001", "relation": "TRIGGERED"},
+    {"from": "FRIC_001", "to": "CLM_023", "relation": "PROPOSED_FIX_FOR"}
+  ]
+}
+```
+
+没有 provenance 的 friction item 只能作为 draft suggestion，不能进入 future run injection。
+
+### Self-improvement safety rules
+
+必须明确禁止：
+
+- 自动修改 main branch。
+- 删除或放宽 failing tests 来提升分数。
+- 静默降低 quality threshold。
+- 把原始用户反馈、完整 prompt、原始日志直接注入 skill 或 agent prompt。
+- 让模型自行批准事实修复。
+- 在没有 regression plan 的情况下把 friction item 标为 active。
+
 完成标准：
 
 - Orchestrator 可以把失败写成 improvement signal。
 - FrictionStore 不保存敏感原始日志、完整 prompt 或私有材料。
 - 自改进只产生 proposal、patch plan、validator 或 golden case 建议，不自动改 main。
+- 每个 active friction item 都能追溯到 audit finding、event、artifact 或人工确认记录。
 
 ## v0.8.0: Policy Packs And Runtime Parity
 
@@ -778,6 +901,7 @@ v1.0 必须包括：
 - Artifact registry 和 process validators。
 - Evidence provenance。
 - Execution provenance。
+- Unified provenance graph 和 typed relation schema。
 - RelevanceGate、DeliveryGate、bounded repair。
 - Golden evaluation。
 - FrictionStore 和 improvement proposal。
@@ -818,6 +942,44 @@ Task tree / DAG control flow
 - 一次性迁移所有 connector 和 analysis module。
 
 ## Agent Implementation Guide
+
+## Validation Coverage Strategy
+
+每个版本任务都要配套验证覆盖，不能只写 schema 或 prompt。
+
+| 层 | 最低测试覆盖 |
+|---|---|
+| Orchestrator Contract | docs grep、role config generation、runtime entry parity、禁止 Python pipeline 回归 |
+| Runtime State | state schema roundtrip、missing field failure、event log append、run id consistency |
+| Artifact Contract | missing artifact、empty artifact、malformed JSON、wrong producer、upstream dependency failure |
+| Evidence Provenance | source/evidence/claim ref integrity、support_status 与 relation consistency、citation audit failure |
+| Execution Provenance | required artifact producer、stage event order、tool_call summary redaction、handoff lineage |
+| Unified Graph | unknown relation、broken node ref、orphan artifact、claim without evidence edge、friction without trigger edge |
+| Quality Gates | relevance threshold、delivery leakage、bounded repair max rounds、reader-facing citation stripping |
+| FrictionStore | no raw prompt/log injection、expiry handling、scope filtering、proposal requires provenance |
+
+建议测试文件：
+
+```text
+tests/test_orchestrator_contract_docs.py
+tests/test_workflow_state.py
+tests/test_artifact_registry.py
+tests/test_provenance_graph.py
+tests/test_relation_schema.py
+tests/test_friction_store.py
+tests/test_validate_commands.py
+tests/test_runtime_parity_contract.py
+```
+
+每个 PR 至少要回答：
+
+```text
+What artifact/schema changed?
+What validator enforces it?
+What runtime entry reads it?
+What regression test prevents rollback?
+What failure mode becomes visible to the Orchestrator?
+```
 
 后续 agent 接到任务时按这个顺序判断：
 
