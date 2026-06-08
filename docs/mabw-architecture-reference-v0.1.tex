@@ -1,0 +1,1148 @@
+%-------------------------------------------------------------------
+% MABW: A Contract-Governed Multi-Agent Workflow for Enterprise Briefing
+% Architecture Reference v0.1 — Technical Report
+%
+% Snapshot: v0.6.1 working state
+% Branch: 062  |  Commit: cd57d0e  |  Date: 2026-06-08
+%-------------------------------------------------------------------
+\documentclass[11pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{newtxtext}
+\usepackage{newtxmath}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{doi}
+\usepackage[style=ieee,backend=biber]{biblatex}
+
+% --- Hyperref setup ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    citecolor=blue!40!black,
+    urlcolor=blue!60!black,
+    pdfauthor={MABW Project},
+    pdftitle={MABW: A Contract-Governed Multi-Agent Workflow for Enterprise Briefing}
+}
+
+% --- Code listing style ---
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\lstdefinestyle{mabw}{
+    backgroundcolor=\color{codebg},
+    basicstyle=\footnotesize\ttfamily,
+    breaklines=true,
+    frame=single,
+    framerule=0.5pt,
+    rulecolor=\color{gray!40},
+    numbers=none,
+    xleftmargin=12pt,
+    xrightmargin=12pt,
+    aboveskip=8pt,
+    belowskip=8pt,
+}
+\lstset{style=mabw}
+
+% --- Page style ---
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small MABW Architecture Reference v0.1}
+\fancyhead[R]{\small \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Metadata ---
+\title{\textbf{MABW: A Contract-Governed Multi-Agent Workflow\\for Enterprise Briefing}\\[6pt]
+       \large Architecture Reference v0.1 --- Technical Report}
+\author{MABW Project\\
+        \texttt{Snapshot: v0.6.1 \,\textbar\, Branch: 062 \,\textbar\, Commit: cd57d0e}}
+\date{June 8, 2026}
+
+% --- Bibliography ---
+\addbibresource{mabw-architecture-v0.1.bib}
+
+\begin{document}
+\maketitle
+\thispagestyle{fancy}
+
+%-------------------------------------------------------------------
+% Abstract
+%-------------------------------------------------------------------
+\begin{abstract}
+\noindent
+Single-LLM-agent approaches to enterprise briefing suffer from three structural weaknesses: lack of auditability and repairability, brittle dependence on model-level anti-hallucination, and absence of a stable self-improvement loop. These weaknesses make briefing tools inaccessible to non-AI-native users, who need predictable, auditable outputs without deep prompt-engineering expertise. MABW (Multi-Agent Brief Workflow) addresses this gap through a contract-governed multi-agent workflow designed to combine human feedback and machine-scored quality gates into a controlled, auditable self-improvement mechanism (gates and self-improvement loop deferred to v0.6.2--v0.6.3; see \S\ref{sec:gates}--\ref{sec:self-improve}). This report documents the v0.6.1 architecture: a contract-backed control surface, a file-state blackboard coordination model, an Orchestrator control loop with a shared decision vocabulary, and five-runtime parity. Specialist roles are defined by contracts and executed via external runtime handoff; autonomous in-Python agent execution is intentionally deferred. The report also describes planned capabilities (quality gates, provenance graph, FrictionStore) and an evaluation framework for assessing agentic system behavior rather than model output quality.
+\end{abstract}
+
+%-------------------------------------------------------------------
+% About This Report
+%-------------------------------------------------------------------
+\vspace{6pt}
+\begin{quote}
+\small
+\textbf{About This Report.} This report describes the MABW v0.6.1 architecture as implemented. Sections~\ref{sec:gates} (Quality Gates) and~\ref{sec:self-improve} (Controlled Self-Improvement) describe capabilities deferred to v0.6.2--v0.6.3; each opens with an explicit status callout. Within Sections~\ref{sec:architecture}--\ref{sec:enforcement}, contract categories marked ``Reference-only'' or ``Deferred'' indicate design intent not yet enforced at runtime. Section~\ref{sec:snapshot} provides the authoritative implementation snapshot. Appendix schemas reflect the runtime state layer as implemented in v0.6.1 (\texttt{src/multi\_agent\_brief/orchestrator/runtime\_state.py}); the contract YAML files in \texttt{configs/} remain the authoritative specification for stage order, artifact expectations, and decision legality.
+\end{quote}
+
+%===================================================================
+% 1. MOTIVATION & PROBLEM STATEMENT
+%===================================================================
+\section{Motivation \& Problem Statement}
+\label{sec:motivation}
+
+\subsection{Enterprise Briefing as a High-Frequency, Audit-Sensitive Task}
+
+Enterprise briefing demands multi-source synthesis: policy documents, market data, entity profiles, and regulatory filings must be combined into a structured, actionable output. The stakes are high---a briefing with stale market data or misattributed policy language can misdirect executive decisions or trigger compliance exposure. Yet the tools available to most analysts fall into two unsatisfactory categories: manual workflows that are slow and inconsistent, or single-LLM generation that is unauditable and unpredictable.
+
+For compliance-sensitive use cases, an audit trail is not optional. Regulated enterprises need to know which source supported which claim, when that source was retrieved, and whether a human reviewer signed off on the final output. Frameworks such as the NIST AI Risk Management Framework~\cite{nist_airmf} and ISO/IEC~42001~\cite{iso42001} establish governance expectations---documentation, traceability, human oversight---that single-agent LLM tools are structurally unequipped to satisfy.
+
+\subsection{Three Structural Weaknesses of Single-Agent LLM Approaches}
+
+\textbf{Lack of auditability and repairability.} When output quality degrades in a single-agent system---a hallucinated figure, a misattributed quote, an outdated market statistic---there is no systematic mechanism to trace the failure to its source, diagnose the root cause, or repair the process that produced it. The failure mode is opaque to the operator, particularly a non-AI-native user who cannot inspect prompts or internal reasoning chains.
+
+\textbf{Brittle dependence on model-level anti-hallucination.} In a single-agent architecture, output quality relies almost entirely on the base model's intrinsic alignment and factual reliability. Model upgrades, downgrades, or even minor provider-side changes can unpredictably affect briefing quality. There is no architectural guarantee that claims are grounded in retrieved evidence or that output conforms to audience expectations---only the hope that the model ``behaves well.''
+
+\textbf{Absence of a stable self-improvement loop.} Single-agent systems cannot accumulate feedback-to-improvement cycles the way human analysts refine their craft. Each briefing run starts fresh. A corrected error in one run does not prevent the same class of error in the next. There is no persistent memory of past failures, no mechanism to translate recurring issues into process improvements.
+
+\subsection{The Accessibility Gap}
+
+Current AI briefing tools demand deep prompt-engineering expertise: users must craft system prompts, tune temperature, manage context windows, and debug output quality through trial and error. This excludes the enterprise analysts who need these tools most---subject-matter experts who understand policy, markets, and regulation, but have no interest in prompt craft.
+
+Amershi et al.~\cite{amershi2019} established that effective human-AI interaction requires system design that makes AI behavior observable, predictable, and correctable---not prompt-level tinkering. MABW takes this as an architectural constraint: non-AI-native users should interact with structured output and human-readable state files, not with model internals.
+
+\textbf{MABW's design proposition:} a contract-governed multi-agent workflow with controlled self-improvement. Governance is defined before agents are populated. All agent-to-agent coordination produces human-auditable artifacts. The system is designed to be understood, inspected, and repaired---not just prompted.
+
+%===================================================================
+% 2. DESIGN PHILOSOPHY & CORE CONTRIBUTIONS
+%===================================================================
+\section{Design Philosophy \& Core Contributions}
+\label{sec:design}
+
+\subsection{Contract-Backed Control Surface}
+
+The central design decision in MABW is that \textbf{contracts are not prompts, and they are not post-hoc documentation}. A contract is a multi-dimensional governance interface that defines what a stage must consume, what artifact it must produce, which decisions are legal at that stage, and what happens on violation.
+
+MABW defines four contract categories (per \texttt{configs/orchestrator\_contract.yaml}):
+
+\begin{table}[ht]
+\centering
+\caption{Four Contract Categories}
+\label{tab:contracts}
+\begin{tabular}{@{}p{3.2cm}p{5.5cm}p{4.5cm}@{}}
+\toprule
+\textbf{Category} & \textbf{Purpose} & \textbf{v0.6.1 Status} \\
+\midrule
+Behavior & Define Orchestrator and specialist role boundaries & Implemented (v0.6.0) \\
+Process/Artifact & Define stage readiness and expected artifact categories & Reference-only (v0.6.0); min.~registry checks in v0.6.1 \\
+Fact-Grounding/Evidence & Keep material statements traceable to supported claims & Reference-only; enforcement deferred to v0.6.3 \\
+Quality/Audience & Keep delivery decisions aligned with reader context & Reference-only; enforcement deferred to v0.6.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In v0.6.1, contracts function as a \textbf{reference/config + state CLI hybrid control layer}. The Orchestrator reads contract references, inspects runtime state files, validates artifact status, and applies the decision vocabulary---but enforcement is not yet a full runtime API ($\rightarrow$ v0.6.3+ for full contract enforcement). This is an honest boundary: contracts define the governance surface; the state layer provides the enforcement substrate; full programmatic enforcement grows incrementally across v0.6.x milestones.
+
+Contracts serve as the \textbf{precondition for subagent existence}. A specialist role cannot be defined without specifying its contract surface---what it consumes, what it produces, which decisions are legal after it runs. This is the inversion that distinguishes MABW from prompt-based multi-agent systems: governance exists before the agent fleet.
+
+\subsection{Workflow Control Before Agent Autonomy}
+
+MABW is closer to a workflow/control system than an autonomous-agent benchmark. Stage transition, blocking, retry, and human review handoff are workflow semantics---and in MABW, they belong to the Orchestrator, not to the agents.
+
+The Orchestrator's decision vocabulary (\texttt{continue}, \texttt{retry\_stage}, \texttt{delegate\_repair}, \texttt{request\_human\_review}, \texttt{block\_run}, \texttt{finalize}) directly instantiates workflow control primitives described in van~der~Aalst et al.'s Workflow Patterns~\cite{vanderaalst2003}. Each stage's \texttt{allowed\_decisions} (per \texttt{configs/stage\_specs.yaml}) constrains which decisions are legal at that point---the Orchestrator has authority, but not unbounded authority.
+
+Agent autonomy is deliberately constrained to \textbf{single-stage scope}. A specialist role executes its assigned stage, produces its expected artifact, and returns control to the Orchestrator. Cross-stage decisions---whether to proceed, retry, repair, escalate, or block---are Orchestrator decisions, not agent negotiations.
+
+This aligns with Anthropic's guidance in \textit{Building Effective Agents}~\cite{anthropic2024agents}: ``chaining steps where each has clear inputs and outputs'' is the workflow pattern most appropriate for tasks requiring predictability and auditability.
+
+\subsection{File-State as Blackboard, not Chat Memory}
+
+MABW's shared context is not agent chat history. It is a set of \textbf{verifiable state files}: \texttt{runtime\_manifest.json}, \texttt{workflow\_state.json}, \texttt{artifact\_registry.json}, and \texttt{event\_log.jsonl}. Each specialist role reads from and writes to these structured files---it does not participate in a free-form multi-agent conversation.
+
+This directly instantiates the \textbf{blackboard architecture} pattern~\cite{nii1986}: a shared data structure (state files), independent knowledge sources (specialist roles), and a control component (the Orchestrator) that decides which knowledge source to activate next based on the current state of the blackboard.
+
+The contrast with conversation-based multi-agent frameworks (AutoGen~\cite{wu2023autogen}, CAMEL~\cite{li2023camel}) is structural. In a conversation-based system, coordination happens through agent-to-agent messages---the shared context is the chat history. In MABW, coordination happens through structured state transitions---the shared context is the file-state blackboard. This means an operator can inspect the exact state of the system at any stage boundary without reading through agent dialogue.
+
+\subsection{Human-Auditable by Default}
+
+Handoff, state, and control artifacts in MABW are human-auditable at stage boundaries. When the Orchestrator delegates a stage to a specialist role, the handoff is a structured file, not an implicit prompt. When a role produces an artifact, it is written to \texttt{artifact\_registry.json} with producer stage, validation result, and consumer stages. When the Orchestrator makes a decision, it is recorded in \texttt{event\_log.jsonl} with timestamp, decision, reason summary, and affected artifacts. External runtime internals (the LLM's reasoning within a delegated stage) are not guaranteed to be fully materialized---the audit boundary is the stage boundary, not the runtime's internal process.
+
+This is not a UX preference---it is an architectural constraint derived from the accessibility requirement. Non-AI-native users interact with CLI summaries, state files, and structured output. They do not need to inspect prompts, model parameters, or internal reasoning chains. The system's behavior is observable through its artifacts, not through its internals.
+
+\subsection{Architecture Invariants}
+
+The following invariants define MABW's architectural boundary and should hold across v0.6.x milestones:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Python is tools/validators/renderers.} Python provides workspace setup, source handling, deterministic checks, validation helpers, audit support, and final rendering. It is not the standard brief-generation runtime. Brief content generation happens through specialist roles executed on external LLM runtimes.
+    \item \textbf{External runtime is main-agent/subagent execution surface.} Specialist roles run on one of five supported runtimes (Hermes, Claude, Codex, OpenCode, Manual). The Orchestrator delegates stages, but does not execute them in-process.
+    \item \textbf{No BriefPipeline monolith.} The workflow is an Orchestrator loop with stage-by-stage delegation, not a single end-to-end pipeline function. Each stage is independently inspectable at its state-file boundary.
+    \item \textbf{Public docs stay high-level.} The authoritative specification for stage order, artifact expectations, and decision legality is the contract YAML files in \texttt{configs/}. Prose documentation explains design rationale; contract files define runtime behavior.
+\end{enumerate}
+
+%===================================================================
+% 3. SYSTEM ARCHITECTURE
+%===================================================================
+\section{System Architecture}
+\label{sec:architecture}
+
+\subsection{Architecture Overview}
+
+\begin{figure}[ht]
+\centering
+\begin{lstlisting}[basicstyle=\scriptsize\ttfamily,frame=none,backgroundcolor={},aboveskip=0pt,belowskip=0pt]
++-------------------------------------------------------------+
+|                    CONTRACT REGISTRY                         |
+|  orchestrator_contract.yaml  stage_specs.yaml                |
+|  artifact_contracts.yaml     policy_packs/default.yaml       |
++--------------------------+----------------------------------+
+                           | reads
+                           v
++-------------------------------------------------------------+
+|                 ORCHESTRATOR CONTROL LOOP                    |
+|  read context -> identify stage -> delegate -> check artifact|
+|  -> decide (continue/retry/repair/review/block/finalize)    |
++-------+----------------------+-------------------+-----------+
+        | delegates (handoff)   | writes            | invokes (CLI)
+        v                       v                   v
++-----------------+  +------------------+  +------------------+
+| EXTERNAL LLM     |  | RUNTIME STATE    |  |  PYTHON TOOLS     |
+| RUNTIMES         |  | LAYER            |  |  (local CLI)      |
+| Hermes/Claude/   |  | runtime_manifest |  |  init/state       |
+| Codex/OpenCode/  |  | workflow_state   |  |  doctor/sources   |
+| Manual           |  | artifact_registry|  |  inputs/audit     |
+|                  |  | event_log        |  |  finalize         |
+| +--------------+ |  +------------------+  +------------------+
+| |Specialist    | |
+| |Roles (LLM)   | |
+| |scout/screener| |
+| |claim-ledger  | |
+| |analyst/editor| |
+| |auditor       | |
+| +--------------+ |
++-----------------+
+\end{lstlisting}
+\vspace{-6pt}
+\caption{System architecture overview. Python tools execute locally via CLI and are not LLM-powered. Specialist roles execute on external LLM runtimes via the handoff protocol. The Orchestrator delegates to both categories through the same decision vocabulary but through different invocation paths.}
+\label{fig:arch}
+\end{figure}
+
+The architecture embodies four design principles: contract-backed control surface (\S\ref{sec:design}), workflow control before agent autonomy (\S\ref{sec:design}), file-state as blackboard (\S\ref{sec:design}), and human-auditable by default (\S\ref{sec:design}). The architecture invariants (\S\ref{sec:design}) constrain what each layer may do.
+
+\subsection{Contract Registry}
+
+\subsubsection{Four Contract Categories}
+
+The contract registry (per \texttt{configs/orchestrator\_contract.yaml}, schema version \texttt{multi-agent-brief-orchestrator-contract/v1}) defines four categories:
+
+\textbf{Behavior Contract} (\texttt{first\_landing: v0.6.0}). Defines the Orchestrator's role boundaries and the boundary between the Orchestrator and each specialist role. The Orchestrator has authority as \texttt{runtime\_controller}; specialist roles execute within their stage-scoped contract surface. The Behavior Contract ensures that no role exceeds its delegated scope.
+
+\textbf{Process/Artifact Contract} (\texttt{first\_landing: v0.6.0\_reference\_only}). Defines stage readiness conditions and expected artifact categories. Each stage declares what artifacts it consumes and produces (per \texttt{configs/stage\_specs.yaml}). Each artifact declares its expected path, format, required/optional status, producer stage, consumer stages, and the decision to take on validation failure (per \texttt{configs/artifact\_contracts.yaml}). In v0.6.1, artifact status checking is operational; full enforcement is deferred.
+
+\textbf{Fact-Grounding/Evidence Contract} (\texttt{first\_landing: v0.6.0\_reference\_only}). Establishes that material statements must be traceable to supported claims. This contract defines the schema for claim-evidence linking but enforcement is deferred to v0.6.3. The contract shape is designed for compatibility with W3C~PROV provenance modeling~\cite{w3c_prov} and with FActScore-style atomic claim verification~\cite{min2023factscore}.
+
+\textbf{Quality/Audience Contract} (\texttt{first\_landing: v0.6.0\_reference\_only}). Keeps delivery decisions aligned with reader context. Defines quality gate thresholds and audience-appropriateness criteria. Enforcement deferred to v0.6.3, when material-fact, freshness, and target-relevance gates will be operational.
+
+\subsubsection{Contract as Reference/Config + State CLI}
+
+In v0.6.1, contracts are enforced through a hybrid mechanism: the Orchestrator reads contract references at the start of each stage, inspects runtime state files for artifact presence and validity, and applies the decision vocabulary. The Python tool layer (\texttt{tools\_validators\_renderers}) provides deterministic checks---schema validation, artifact existence, blocking reason recording---but does not implement a full programmatic contract enforcement API. See \S\ref{sec:snapshot} for the authoritative v0.6.1 component status (implements vs deferred), sourced from \texttt{orchestrator\_contract.yaml:v061\_boundaries}.
+
+\subsubsection{Contract-to-Stage Mapping}
+
+Each workflow stage enforces a subset of the contract surface:
+
+\begin{table}[ht]
+\centering
+\caption{Contract-to-Stage Mapping}
+\label{tab:contract-stage}
+\footnotesize
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Stage} & \textbf{Behavior} & \textbf{Process/Artifact} & \textbf{Fact-Grounding} & \textbf{Quality/Audience} \\
+\midrule
+doctor & $\checkmark$ (role boundary) & --- & --- & --- \\
+source-discovery & $\checkmark$ & $\checkmark$ (source\_candidates) & --- & --- \\
+input-governance & $\checkmark$ & $\checkmark$ (input\_classification) & --- & --- \\
+scout & $\checkmark$ & $\checkmark$ (candidate\_claims) & --- & --- \\
+screener & $\checkmark$ & $\checkmark$ (screened\_candidates) & --- & --- \\
+claim-ledger & $\checkmark$ & $\checkmark$ (claim\_ledger) & Reference & --- \\
+analyst & $\checkmark$ & $\checkmark$ (audited\_brief) & Reference & Reference \\
+editor & $\checkmark$ & $\checkmark$ (audited\_brief) & --- & Reference \\
+auditor & $\checkmark$ & $\checkmark$ (audit\_report) & Reference & Reference \\
+finalize & $\checkmark$ & $\checkmark$ (reader\_brief) & --- & Reference \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Runtime State Layer}
+
+\subsubsection{File-State as Blackboard}
+
+Nii~\cite{nii1986} defined a blackboard system as three components: a shared data structure (the blackboard), independent knowledge sources that read and write the blackboard, and a control component that decides which knowledge source to activate based on the blackboard's current state. MABW maps this pattern directly:
+
+\begin{table}[ht]
+\centering
+\caption{Blackboard Components Mapped to MABW}
+\label{tab:blackboard}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Blackboard Component} & \textbf{MABW Implementation} \\
+\midrule
+Shared data structure & \texttt{runtime\_manifest.json}, \texttt{workflow\_state.json}, \\
+                      & \texttt{artifact\_registry.json}, \texttt{event\_log.jsonl} \\
+Knowledge sources     & Specialist roles (scout, screener, claim-ledger, analyst,\\
+                      & \hspace{4pt} editor, auditor) and Python tools \\
+Control component     & Orchestrator---reads state, identifies next stage,\\
+                      & \hspace{4pt} delegates, checks artifacts, decides \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Each knowledge source (role or tool) reads from the blackboard (state files + input artifacts), performs its stage-specific work, and writes its output artifact. The Orchestrator then reads the updated blackboard state to decide the next action. No role communicates directly with another role; all coordination is mediated through the blackboard at stage boundaries.
+
+This contrasts with conversation-based multi-agent systems (e.g., AutoGen), where agents coordinate through message-passing and the shared context is chat history. In MABW, the blackboard is structured, schema-enforced, and human-inspectable at every stage boundary.
+
+\subsubsection{\texttt{runtime\_manifest.json}}
+
+Run-level metadata file. Immutable after creation.
+
+\begin{table}[ht]
+\centering
+\caption{\texttt{runtime\_manifest.json} Key Fields}
+\label{tab:runtime-manifest}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Field} & \textbf{Description} \\
+\midrule
+\texttt{run\_id} & Unique run identifier; preserved across non-reset \texttt{init} calls \\
+\texttt{runtime} & Target runtime: \texttt{hermes}, \texttt{claude}, \texttt{codex}, \texttt{opencode}, or \texttt{manual} \\
+\texttt{mabw\_version} & MABW version string \\
+\texttt{contract\_references} & Map of contract keys to relative file paths \\
+\texttt{stage\_order} & Ordered list of stage\_ids from \texttt{stage\_specs.yaml} \\
+\texttt{expected\_artifacts} & Array of artifact metadata per contract \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Full field listing in Appendix~\ref{sec:appendix-schemas}. The \texttt{run\_id} is a verification check in the v0.1 evaluation framework: a second non-reset \texttt{init} must preserve the existing \texttt{run\_id}.
+
+\subsubsection{\texttt{workflow\_state.json}}
+
+Stage-level state machine. Tracks the workflow's progress through the 10-stage pipeline.
+
+\begin{table}[ht]
+\centering
+\caption{\texttt{workflow\_state.json} Key Fields}
+\label{tab:workflow-state}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Field} & \textbf{Description} \\
+\midrule
+\texttt{current\_stage} & Stage currently executing, or \texttt{null} if workflow complete \\
+\texttt{blocked} & Boolean: \texttt{true} when the current stage is blocked \\
+\texttt{blocking\_reason} & Reason for block (if \texttt{blocked} is \texttt{true}) \\
+\texttt{stage\_statuses} & Per-stage map: \texttt{\{stage\_id: \{status, reason, updated\_at\}\}} \\
+\texttt{last\_decision} & Most recent decision: \texttt{\{stage\_id, decision, reason, created\_at\}} \\
+\texttt{next\_allowed\_decisions} & Subset of vocabulary legal at \texttt{current\_stage} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Stage status tracks workflow progress per stage.} The five values are \texttt{pending} (not yet reached), \texttt{ready} (current, unblocked), \texttt{complete}, \texttt{blocked} (current, blocked), and \texttt{skipped}. This is distinct from artifact status (\S\ref{sec:artifact-registry}): stage status describes pipeline progress; artifact status describes individual file state.
+
+\subsubsection{\texttt{artifact\_registry.json}}
+\label{sec:artifact-registry}
+
+Tracks every artifact's lifecycle across the workflow:
+
+\begin{table}[ht]
+\centering
+\caption{Artifact Status Values}
+\label{tab:artifact-status}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Status} & \textbf{Meaning} \\
+\midrule
+\texttt{expected} & Artifact declared in stage spec; producer stage not yet complete \\
+\texttt{missing} & Producer stage completed but file not found; triggers blocking if required \\
+\texttt{present} & File exists at declared path \\
+\texttt{valid} & File exists, schema-conformant, non-empty---ready for downstream consumption \\
+\texttt{invalid} & File exists but fails minimum validation---consumer stages should not proceed \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The artifact contract YAML (\texttt{configs/artifact\_contracts.yaml}) also declares \texttt{blocked} as a possible status value; the runtime state layer produces the five statuses above, with blocking expressed through \texttt{blocking\_reason} on \texttt{missing}/\texttt{invalid} records and through \texttt{workflow\_state.blocked} at the stage level.
+
+Required artifacts (\texttt{required: true}) trigger downstream stage blocking when missing or invalid. Specifically, an artifact transitions from \texttt{expected} to \texttt{missing} only after its producer stage has reached \texttt{complete} or \texttt{skipped} status---a fresh workspace where the producer stage has not yet run will show artifacts as \texttt{expected}, not \texttt{missing}, and will not be globally blocked. Optional artifacts (\texttt{required: false}) are tracked but do not block on their own. Blocking is always current-stage-scoped and consumer-stage-scoped, not global.
+
+\subsubsection{\texttt{event\_log.jsonl}}
+
+Append-only JSON Lines file recording runtime events (schema \texttt{multi-agent-brief-event-log/v1}):
+
+\begin{table}[ht]
+\centering
+\caption{\texttt{event\_log.jsonl} Event Fields}
+\label{tab:event-log}
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Field} & \textbf{Description} \\
+\midrule
+\texttt{event\_id} & Unique event identifier (UUID hex) \\
+\texttt{run\_id} & Run identifier \\
+\texttt{created\_at} & ISO 8601 timestamp \\
+\texttt{event\_type} & One of 13 event types (see Appendix~\ref{sec:appendix-schemas}) \\
+\texttt{actor} & One of: \texttt{cli}, \texttt{orchestrator}, \texttt{runtime}, \texttt{system} \\
+\texttt{stage\_id} & Stage this event relates to (nullable) \\
+\texttt{artifact\_id} & Artifact this event relates to (nullable) \\
+\texttt{decision} & Orchestrator decision value (nullable) \\
+\texttt{reason} & Human-readable description \\
+\texttt{metadata} & Arbitrary JSON object with event-specific detail \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The event log records all state transitions---not only Orchestrator decisions but also artifact observations, validation results, stage status changes. It is a \textbf{control trace}, not a full provenance graph: it records what happened and when, but does not yet model entity/activity/agent relationships (provenance graph deferred to v0.6.5).
+
+\subsection{Orchestrator Control Loop}
+
+\subsubsection{Decision Vocabulary}
+
+The Orchestrator uses a shared, six-term decision vocabulary (per \texttt{configs/orchestrator\_contract.yaml}):
+
+\begin{table}[ht]
+\centering
+\caption{Decision Vocabulary}
+\label{tab:decisions}
+\begin{tabular}{@{}lp{10cm}@{}}
+\toprule
+\textbf{Decision} & \textbf{Semantics} \\
+\midrule
+\texttt{continue} & Proceed to the next stage in the pipeline \\
+\texttt{retry\_stage} & Re-execute the current stage \\
+\texttt{delegate\_repair} & Flag the stage output for repair planning. In v0.6.1 this decision exists in the vocabulary but the downstream infrastructure (FeedbackIssue schema, RepairPlan artifact, feedback CLI) is entirely deferred to v0.6.2. \\
+\texttt{request\_human\_review} & Handoff to human operator for inspection and decision \\
+\texttt{block\_run} & Halt the workflow; require operator intervention \\
+\texttt{finalize} & Complete the run after audit readiness is confirmed \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Runtime Loop}
+
+The Orchestrator loop (per \texttt{docs/orchestrator-architecture.md}) follows an eight-step cycle:
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item Read workspace context: \texttt{config.yaml}, \texttt{sources.yaml}, \texttt{user.md}, inputs, handoff artifacts, and runtime state files
+    \item Read contract references from the handoff
+    \item Identify the current stage and expected artifact from \texttt{configs/stage\_specs.yaml}
+    \item Delegate the stage to the appropriate specialist role or Python tool
+    \item Check that the expected artifact is present and suitable for the next stage
+    \item \textbf{[Deferred to v0.6.2]} When audit findings or human feedback exist, structure issues and repair plans without executing repair. In v0.6.1, the Orchestrator can emit \texttt{delegate\_repair} as a decision but the downstream feedback/repair infrastructure is not implemented.
+    \item Decide: \texttt{continue} / \texttt{retry\_stage} / \texttt{delegate\_repair} / \texttt{request\_human\_review} / \texttt{block\_run} / \texttt{finalize}
+    \item \texttt{finalize} only after audit readiness
+\end{enumerate}
+
+\subsubsection{Stage-Scoped Decision Legality}
+
+Not all decisions are legal at all stages. Each stage declares an \texttt{allowed\_decisions} list:
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item \texttt{doctor} (Python tool, environment readiness): only \texttt{continue}, \texttt{request\_human\_review}, \texttt{block\_run}
+    \item \texttt{analyst} (specialist role, drafting): \texttt{continue}, \texttt{retry\_stage}, \texttt{delegate\_repair}, \texttt{request\_human\_review}, \texttt{block\_run}
+    \item \texttt{finalize} (Python tool, reader output): only \texttt{finalize}, \texttt{request\_human\_review}, \texttt{block\_run}
+\end{itemize}
+
+\subsection{External Runtime Surfaces}
+
+\subsubsection{Five-Runtime Model}
+
+MABW supports five runtime surfaces (per \texttt{orchestrator\_contract.yaml:runtime\_surfaces}): Hermes, Claude, Codex, OpenCode, and Manual. Each runtime can serve as the Orchestrator's execution environment and as the execution surface for delegated specialist roles. All five share the same contract references, decision vocabulary, handoff protocol, and state file schemas.
+
+\subsubsection{Runtime Parity: Control Model Consistency, not Semantic Equivalence}
+
+Runtime parity in MABW means that all runtimes share the same \textbf{control surface}: contract references, decision vocabulary, handoff protocol, and state file schemas. It does \textbf{not} guarantee that different LLMs will make identical decisions given the same inputs. As \texttt{docs/orchestrator-architecture.md} states: ``Runtime mechanics may differ, but artifact expectations should stay aligned.''
+
+\subsubsection{Runtime Handoff Protocol}
+
+Specialist roles operate as external subagents via a handoff protocol. The Orchestrator packages the role's contract surface (input artifacts, expected output, allowed decisions) into a structured handoff, delegates to the target runtime, and receives the produced artifact. Autonomous in-Python agent execution is \textbf{intentionally deferred}.
+
+\subsection{Specialist Roles}
+
+\subsubsection{Role Stage Pipeline}
+
+The workflow defines a 10-stage pipeline (per \texttt{configs/stage\_specs.yaml}):
+
+\begin{table}[ht]
+\centering
+\caption{Stage Pipeline}
+\label{tab:stages}
+\begin{tabular}{@{}clll@{}}
+\toprule
+\textbf{\#} & \textbf{Stage} & \textbf{Owner} & \textbf{Category} \\
+\midrule
+1 & \texttt{doctor} & \texttt{python\_tool} & Environment readiness \\
+2 & \texttt{source-discovery} & \texttt{python\_tool\_or\_source\_planner} & Source governance \\
+3 & \texttt{input-governance} & \texttt{python\_tool} & Input governance \\
+4 & \texttt{scout} & \texttt{scout} (specialist) & Source extraction \\
+5 & \texttt{screener} & \texttt{screener} (specialist) & Candidate screening \\
+6 & \texttt{claim-ledger} & \texttt{claim-ledger} (specialist) & Claim grounding \\
+7 & \texttt{analyst} & \texttt{analyst} (specialist) & Drafting \\
+8 & \texttt{editor} & \texttt{editor} (specialist) & Editorial refinement \\
+9 & \texttt{auditor} & \texttt{auditor} (specialist) & Audit \\
+10 & \texttt{finalize} & \texttt{python\_tool} & Reader output \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Python tool stages} (\texttt{doctor}, \texttt{source-discovery}, \texttt{input-governance}, \texttt{finalize}) are deterministic, schema-enforced operations that run via CLI commands. \textbf{Specialist role stages} (\texttt{scout}, \texttt{screener}, \texttt{claim-ledger}, \texttt{analyst}, \texttt{editor}, \texttt{auditor}) are LLM-powered, contract-governed operations executed via external runtime handoff. Notably: \texttt{finalize} is a Python tool/renderer gate, not a specialist formatter role; \texttt{claim-ledger} (not ``Claim Builder'') is the specialist role responsible for claim grounding.
+
+\subsubsection{Per-Role Contract Surface}
+
+\begin{table}[ht]
+\centering
+\caption{Specialist Role Contract Surfaces}
+\label{tab:role-contracts}
+\footnotesize
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Role} & \textbf{Consumes} & \textbf{Produces} & \textbf{Key Allowed Decisions} \\
+\midrule
+scout & workspace\_sources, input\_classification & candidate\_claims & continue, retry\_stage, request\_human\_review, block\_run \\
+screener & candidate\_claims & screened\_candidates & continue, retry\_stage, request\_human\_review, block\_run \\
+claim-ledger & screened\_candidates & claim\_ledger & continue, retry\_stage, request\_human\_review, block\_run \\
+analyst & claim\_ledger, user\_profile & audited\_brief & continue, retry\_stage, \textbf{delegate\_repair}, request\_human\_review, block\_run \\
+editor & audited\_brief, claim\_ledger & audited\_brief & continue, retry\_stage, \textbf{delegate\_repair}, request\_human\_review, block\_run \\
+auditor & audited\_brief, claim\_ledger & audit\_report & continue, retry\_stage, \textbf{delegate\_repair}, request\_human\_review, block\_run \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Python Tool / Validator / Renderer Layer}
+
+The Python layer's role is explicitly scoped as \texttt{tools\_validators\_renderers} (per \texttt{orchestrator\_contract.yaml:python\_layer}). Python commands fall into three categories:
+
+\textbf{Workspace lifecycle:} \texttt{init}, \texttt{state init}, \texttt{state check}.\\
+\textbf{Stage-bound tools:} \texttt{doctor}, \texttt{sources decide}, \texttt{inputs classify}, \texttt{audit}, \texttt{finalize}.\\
+\textbf{Feedback/repair lifecycle (deferred to v0.6.2):} \texttt{feedback ingest}, \texttt{feedback plan}, \texttt{feedback resolve}, \texttt{feedback show}, \texttt{feedback validate}.
+
+v0.6.1 implements minimum state file validation: schema enforcement for the four state files; artifact status checks (missing $\rightarrow$ warning; invalid/missing required $\rightarrow$ downstream stage blocking); and blocking reason recording. The CLI produces a stage-scoped blocking summary for operator audit.
+
+%===================================================================
+% 4. CONTRACT ENFORCEMENT CYCLE
+%===================================================================
+\section{Contract Enforcement Cycle}
+\label{sec:enforcement}
+
+\subsection{The Enforcement Loop}
+
+Each stage transition is a contract compliance checkpoint:
+
+\begin{quote}
+\texttt{Contract Read $\rightarrow$ State Inspect $\rightarrow$ Artifact Validate $\rightarrow$ Decision $\rightarrow$ Event Record}
+\end{quote}
+
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+    \item \textbf{Contract Read}: Orchestrator reads contract references for the current stage from \texttt{configs/stage\_specs.yaml} (expected artifacts, allowed decisions) and \texttt{configs/artifact\_contracts.yaml} (artifact requirements, validation rules)
+    \item \textbf{State Inspect}: Orchestrator reads \texttt{workflow\_state.json} and \texttt{artifact\_registry.json}
+    \item \textbf{Artifact Validate}: Orchestrator checks that consumed artifacts are present and valid; if a required artifact is missing or invalid, the enforcement path diverges to blocking
+    \item \textbf{Decision}: Orchestrator selects a decision from the stage's \texttt{allowed\_decisions} list
+    \item \textbf{Event Record}: Orchestrator writes a \texttt{decision\_recorded} event to \texttt{event\_log.jsonl}
+\end{enumerate}
+
+\subsection{Artifact Validation and Blocking}
+
+\subsubsection{Artifact Status Lifecycle}
+
+\begin{quote}
+\texttt{expected $\rightarrow$ (producer stage completes) $\rightarrow$ missing $\rightarrow$ (file written) $\rightarrow$ present $\rightarrow$ valid}\\
+\hspace*{58mm}\texttt{$\searrow$ invalid}
+\end{quote}
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item \texttt{expected}: Producer stage has not yet completed, or the artifact is optional
+    \item \texttt{missing}: Producer stage is \texttt{complete}/\texttt{skipped} but the artifact file is absent---triggers blocking for \texttt{required: true}
+    \item \texttt{present}: File exists at declared path
+    \item \texttt{valid}: File passes minimum validation---consumer stages may proceed
+    \item \texttt{invalid}: File fails minimum validation---consumer stages are blocked
+\end{itemize}
+
+These values describe \textbf{artifact state}, not stage state. Stage status (\texttt{pending}, \texttt{ready}, \texttt{complete}, \texttt{blocked}, \texttt{skipped}) tracks workflow progress independently of artifact validity.
+
+\subsubsection{Blocking Semantics}
+
+When a required artifact is missing or invalid: Orchestrator checks \texttt{artifact\_registry.json} $\rightarrow$ selects \texttt{block\_run} or \texttt{retry\_stage} $\rightarrow$ records blocking reason $\rightarrow$ stage visible in CLI summary. Optional artifacts (\texttt{required: false}) do not trigger blocking on their own.
+
+\subsection{Decision Recording}
+
+When the Orchestrator calls \texttt{record\_decision()}, the \texttt{workflow\_state.json} is updated (stage status, current stage, blocked/blocking\_reason, last\_decision, next\_allowed\_decisions), and a \texttt{decision\_recorded} event is appended to \texttt{event\_log.jsonl}. The \texttt{orchestrator\_contract.yaml} also defines \texttt{decision\_record\_fields} as a declarative contract-level specification; the runtime event log uses the event schema with decision-specific detail carried in \texttt{decision}, \texttt{stage\_id}, \texttt{reason}, and \texttt{metadata}.
+
+\subsection{Policy Packs}
+
+The default policy shell (\texttt{configs/policy\_packs/default.yaml}) provides minimal policy configuration. Full domain-specific policy packs (financial services, healthcare, regulatory) are deferred to future milestones. The governance framing aligns with NIST AI RMF~1.0 and ISO/IEC~42001, but operational policy enforcement is not implemented in v0.6.1.
+
+%===================================================================
+% 5. QUALITY GATES
+%===================================================================
+\section{Quality Gates}
+\label{sec:gates}
+
+\begin{quote}
+\textbf{Status: Planned (v0.6.3).} Quality gates are designed but not implemented in v0.6.1. Per \texttt{orchestrator\_contract.yaml:v061\_boundaries.deferred}: \texttt{material\_fact\_freshness\_target\_relevance\_gates} are deferred to v0.6.3. This section describes the planned design.
+\end{quote}
+
+\subsection{Domain-Specific Gate Design}
+
+Three gates are planned, each targeting a failure mode specific to enterprise briefing:
+
+\textbf{Policy Material Terms gate.} Verifies that policy terminology, regulatory references, and compliance-sensitive language in the brief accurately reflect the source documents.
+
+\textbf{Market Quote Freshness gate.} Verifies that market data is timely, quote attribution is correct, and data sources are within acceptable recency windows.
+
+\textbf{Target-Entity Relevance gate.} Verifies entity name accuracy, industry context appropriateness, and scope relevance.
+
+\subsection{Gate Integration with Quality/Audience Contract}
+
+When implemented (v0.6.3), each gate will score its target dimension, write the result to \texttt{event\_log.jsonl}, and on failure trigger \texttt{block\_run} or \texttt{request\_human\_review} depending on severity.
+
+\subsection{Gates vs Benchmarks}
+
+MABW quality gates are \textbf{workflow-internal operational controls}, not evaluation benchmarks. G-Eval~\cite{liu2023geval} and MT-Bench~\cite{zheng2023judging} are external NLG evaluation frameworks---they measure model output quality on benchmark datasets. MABW quality gates are internal stage-gating mechanisms---they control whether the workflow proceeds, retries, or blocks based on contract-defined criteria for a specific run. The purpose is different (benchmark comparison vs. operational control), the scope is different (model-level vs. run-level), and the action is different (publish a score vs. block/retry/approve a stage).
+
+%===================================================================
+% 6. CONTROLLED SELF-IMPROVEMENT LOOP
+%===================================================================
+\section{Controlled Self-Improvement Loop}
+\label{sec:self-improve}
+
+\begin{quote}
+\textbf{Status: Deferred (v0.6.1).} Per \texttt{orchestrator\_contract.yaml:v061\_boundaries.deferred}: \texttt{feedback\_repair\_loop} is entirely deferred in v0.6.1. v0.6.2 targets minimum feedback issue and repair-plan controls, but will not automatically edit brief artifacts, execute repair, or build a provenance graph (per \texttt{docs/orchestrator-architecture.md}). This section describes the planned design trajectory.
+\end{quote}
+
+\subsection{FeedbackIssue Schema}
+
+\textbf{Target: v0.6.2.} The FeedbackIssue schema provides structured issue recording: each issue is linked to a contract dimension, stage context, severity, and a human-readable description. Human feedback enters as a structured FeedbackIssue---not as free-text comment---making issues machine-parseable, aggregatable, and queryable across runs. The \texttt{feedback\_issues} artifact (per \texttt{configs/artifact\_contracts.yaml}) is an optional JSON artifact produced at the \texttt{auditor} stage.
+
+\subsection{RepairPlan}
+
+\textbf{Target: v0.6.2.} The RepairPlan provides bounded repair planning controls. From one or more FeedbackIssues, the system generates a structured \texttt{repair\_plan} artifact that proposes specific repair actions. \textbf{v0.6.2 scope is explicitly bounded} (per \texttt{docs/orchestrator-architecture.md}): the system structures issues and repair plans \textbf{without executing repair}. It does not automatically edit brief artifacts, execute repair actions, or modify prompts or contracts. The RepairPlan is a proposal---the human operator reviews it and decides whether to approve, reject, or modify the planned actions.
+
+\textbf{Deferred to v0.7+:} automated prompt adjustment, automated contract parameter modification, and FrictionStore-driven pattern detection.
+
+\subsection{FrictionStore}
+
+\textbf{Target: v0.7+.} FrictionStore is planned as a long-term failure memory: accumulated resolved FeedbackIssues across multiple runs, enabling pattern detection. FrictionStore is a historical data source for RepairPlan generation, not a real-time trigger.
+
+\subsection{The Loop in Context}
+
+\textbf{Controlled, not autonomous.} The design intent is that every RepairPlan requires human awareness before execution---stages that allow \texttt{delegate\_repair} produce a plan the Orchestrator can route directly to repair; stages that only allow \texttt{request\_human\_review} or \texttt{block\_run} require explicit human approval. There is no model-initiated self-modification without an audit trail.
+
+\textbf{Distinguished from Self-Refine / Reflexion.} Self-Refine~\cite{madaan2023selfrefine} and Reflexion operate through language feedback/refinement loops---the LLM critiques its own output and revises in a self-contained cycle. MABW externalizes feedback as file-state artifacts (FeedbackIssue, RepairPlan), constrains improvement actions to stage-scoped decisions, and routes them through the same contract enforcement cycle as every other workflow decision.
+
+%===================================================================
+% 7. IMPLEMENTATION SNAPSHOT
+%===================================================================
+\section{Implementation Snapshot}
+\label{sec:snapshot}
+
+\begin{quote}
+\textbf{Snapshot}: v0.6.1 working state \textbar{} \textbf{Branch}: \texttt{062} \textbar{} \textbf{Commit}: \texttt{cd57d0e} \textbar{} \textbf{Date}: 2026-06-08
+\end{quote}
+
+\subsection{Component Status}
+
+\textbf{Stable---v0.6.1 implements} (per \texttt{orchestrator\_contract.yaml:v061\_boundaries.implements}):
+
+\begin{table}[ht]
+\centering
+\caption{Stable Components}
+\label{tab:stable}
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component} & \textbf{Evidence} \\
+\midrule
+Shared Orchestrator authority + decision vocabulary & \texttt{configs/orchestrator\_contract.yaml} \\
+Contract references (4 categories) & \texttt{configs/orchestrator\_contract.yaml} \\
+Runtime role parity (5 surfaces) & \texttt{configs/orchestrator\_contract.yaml} \\
+Persisted runtime state control files & 4 state files \\
+Minimum artifact registry status check & \texttt{configs/artifact\_contracts.yaml} \\
+Stage-scoped blocking summary & CLI output \\
+Orchestrator decision event entrypoint & \texttt{event\_log.jsonl} \\
+Stage specifications (10 stages) & \texttt{configs/stage\_specs.yaml} \\
+Python tool layer & Workspace lifecycle + stage tools \\
+Role contracts + runtime handoff & \texttt{configs/stage\_specs.yaml} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Deferred---v0.6.1 defers} (per \texttt{orchestrator\_contract.yaml:v061\_boundaries.deferred}):
+
+\begin{table}[ht]
+\centering
+\caption{Deferred Components}
+\label{tab:deferred}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component} & \textbf{Target} \\
+\midrule
+Feedback/repair loop & v0.6.2 \\
+Material-fact/freshness/relevance gates & v0.6.3 \\
+Evidence execution graph & v0.6.5 \\
+Public golden cases & Future \\
+Fact-Grounding/Evidence Contract enforcement & v0.6.3 \\
+Quality/Audience Contract enforcement & v0.6.3 \\
+Full policy packs (domain-specific) & Future \\
+FrictionStore (long-term failure memory) & v0.7+ \\
+Autonomous in-Python agent execution & Intentionally deferred \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Phase Roadmap}
+
+\begin{table}[ht]
+\centering
+\caption{Phase Roadmap}
+\label{tab:roadmap}
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Milestone} & \textbf{Scope} \\
+\midrule
+\textbf{v0.6.1} (current) & Runtime state files + minimum artifact registry + stage blocking + decision event log + runtime parity + role handoff \\
+\textbf{v0.6.2} (next) & Minimum feedback issue schema + bounded repair planning controls (plan only) \\
+\textbf{v0.6.3} & Quality gates + Fact-Grounding/Evidence contract enforcement \\
+\textbf{v0.6.5} & Evidence execution graph + provenance (W3C PROV-aligned) \\
+\textbf{v0.7} & FrictionStore + full controlled self-improvement loop \\
+\textbf{v0.2} & System paper---experimental evaluation complete; arXiv-ready \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%===================================================================
+% 8. EVALUATION FRAMEWORK
+%===================================================================
+\section{Evaluation Framework}
+\label{sec:evaluation}
+
+\subsection{Evaluation Paradigm}
+
+Kapoor et al.~\cite{kapoor2024agents} argue in \textit{AI Agents That Matter} that agent benchmarks are often disconnected from real-world utility because they measure only final output quality, not system behavior. MABW's evaluation framework adopts this critique: \textbf{it evaluates agentic system behavior, not model output quality.}
+
+The evaluation dimensions for v0.1 are:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Failure localization}: Can an operator trace a quality issue to a specific stage, role, or contract dimension?
+    \item \textbf{State recoverability}: Can the system resume from a blocked stage without data loss?
+    \item \textbf{Artifact validity}: Does \texttt{artifact\_registry.json} correctly reflect the actual state of artifacts on disk?
+    \item \textbf{Operator auditability}: Can a non-AI-native user, given only the CLI summary and state files, understand what happened and why?
+\end{itemize}
+
+\subsection{Verification Checks v0.1}
+
+The following checks can be executed against the current v0.6.1 implementation:
+
+\textbf{State file readability and correctness.}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item \texttt{runtime\_manifest.json}: \texttt{run\_id} is present, non-empty, preserved across non-reset \texttt{init}
+    \item \texttt{workflow\_state.json}: \texttt{current\_stage} matches actual state; each \texttt{stage\_statuses} entry has valid status; \texttt{blocking\_reason} non-empty when \texttt{blocked} is \texttt{true}
+    \item \texttt{artifact\_registry.json}: each artifact's \texttt{status} is valid; \texttt{producer\_stage} and \texttt{consumer\_stages} match \texttt{stage\_specs.yaml}
+    \item \texttt{event\_log.jsonl}: each line is valid JSON; \texttt{event\_type} is a known type; \texttt{run\_id} matches manifest
+\end{itemize}
+
+\textbf{Artifact validation completeness.}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item Required artifact missing at stage boundary $\rightarrow$ Orchestrator selects \texttt{block\_run} or \texttt{retry\_stage} (not \texttt{continue})
+    \item Required artifact invalid $\rightarrow$ flagged in registry with \texttt{status: invalid} and \texttt{blocking\_reason} populated
+    \item Optional artifact missing $\rightarrow$ warning in event log, workflow proceeds
+\end{itemize}
+
+\textbf{Event log traceability.}
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item Every stage transition corresponds to at least one decision record
+    \item Decision records traced: \texttt{event\_id} $\rightarrow$ \texttt{stage\_id} $\rightarrow$ \texttt{decision} $\rightarrow$ \texttt{reason} $\rightarrow$ \texttt{metadata}
+\end{itemize}
+
+\subsection{Single-Agent Baseline Comparison Design}
+
+The baseline comparison is \textbf{designed but not yet executed}. \textbf{Baseline:} A single LLM executes the same enterprise briefing task without contract governance, state files, or artifact registry.
+
+\textbf{Testable hypotheses} (not pre-judged conclusions):
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{H1 (Failure localization):} MABW's structured state files enable more precise failure localization than a prompt-only baseline.
+    \item \textbf{H2 (State recoverability):} MABW's \texttt{artifact\_registry.json} enables mid-run recoverability without full restart.
+    \item \textbf{H3 (Operator auditability):} MABW's CLI summary + state files enable higher operator auditability for non-AI-native users.
+\end{itemize}
+
+These hypotheses do \textbf{not} pre-judge the baseline as ``worse.'' They identify dimensions where MABW's architecture makes different trade-offs (structured state vs. simplicity, multi-stage vs. single-pass).
+
+\subsection{Threats to Validity}
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{No real enterprise workload experiments.} All verification is on synthetic/development runs.
+    \item \textbf{Runtime parity verified at contract/handoff parity level, not at LLM semantic equivalence level.} Cross-runtime decision consistency is an open question.
+    \item \textbf{Baseline comparison designed but not executed.} The three hypotheses remain untested.
+    \item \textbf{Single-operator evaluation.} Multi-operator validation with operators of varying AI literacy has not been conducted.
+\end{enumerate}
+
+\subsection{Future Evaluation (v0.2+)}
+
+When experimental data becomes available, the evaluation framework expands to include briefing quality metrics (factual accuracy via FActScore~\cite{min2023factscore}, completeness, actionability) and controlled self-improvement metrics (FeedbackIssue resolution rate, RepairPlan acceptance rate, recurring failure reduction).
+
+%===================================================================
+% 9. RELATED WORK
+%===================================================================
+\section{Related Work}
+\label{sec:related}
+
+MABW sits at the intersection of four research lines: multi-agent frameworks, workflow/control-state systems, contract-governed software, and provenance/evidence grounding. This section is organized by \textbf{misclassification risk}---related work that MABW must engage with, and related work that MABW must be distinguished from.
+
+\subsection{Multi-Agent Conversation Frameworks}
+
+\textbf{AutoGen}~\cite{wu2023autogen} establishes a multi-agent conversation paradigm where agents coordinate through message-passing. \textbf{CAMEL}~\cite{li2023camel} introduces role-playing communicative agents that negotiate tasks through dialogue. \textbf{MetaGPT}~\cite{hong2023metagpt} encodes SOP/human workflow structures into multi-agent processes.
+
+MABW differs from all three in its coordination mechanism: roles are governed by contracts (not prompt negotiation), shared context is a file-state blackboard (not chat history), and cross-stage decisions belong to the Orchestrator (not agent consensus). MetaGPT's SOP encoding is the closest analogue, but MABW's contracts are runtime governance interfaces, not encoded workflow descriptions.
+
+\subsection{Workflow and Control-State Systems}
+
+\textbf{Workflow Patterns}~\cite{vanderaalst2003} cataloged the control-flow patterns that underpin business process management. MABW's Orchestrator decision vocabulary directly instantiates these patterns in an LLM-agent context.
+
+\textbf{Blackboard Architecture}~\cite{nii1986} established the pattern of shared data structure + independent knowledge sources + control component. MABW's state files are a literal blackboard; specialist roles are knowledge sources; the Orchestrator is the control component. This lineage---older than neural-network-based AI---provides a rigorous architectural vocabulary.
+
+\textbf{Building Effective Agents}~\cite{anthropic2024agents} draws a pragmatic distinction between workflow systems and autonomous agents. MABW aligns with the workflow pattern: each stage has clear inputs and outputs at every boundary.
+
+\subsection{Contract and Policy-Governed Software}
+
+\textbf{Design by Contract} (Meyer) introduced preconditions, postconditions, and invariants as a software correctness methodology. MABW extends this pattern from code verification to agent behavior governance.
+
+\textbf{NIST AI RMF~1.0}~\cite{nist_airmf} and \textbf{ISO/IEC~42001:2023}~\cite{iso42001} provide governance frameworks for AI systems. MABW's contract categories map to these dimensions---Behavior and Process/Artifact contracts operationalize documentation and oversight; Fact-Grounding/Evidence and Quality/Audience contracts operationalize risk management and continuous improvement.
+
+\subsection{Provenance and Evidence Grounding}
+
+\textbf{W3C~PROV}~\cite{w3c_prov} defines a data model with three core types: Entity, Activity, and Agent. MABW's artifact registry schema maps directly: \texttt{artifact\_id} $\rightarrow$ Entity, \texttt{producer\_stage} $\rightarrow$ Activity, \texttt{producer\_role} $\rightarrow$ Agent.
+
+\textbf{FActScore}~\cite{min2023factscore} decomposes generated text into atomic claims and verifies each against a knowledge source. \textbf{ALCE}~\cite{gao2023alce} evaluates citation quality and evidence grounding. MABW's Fact-Grounding/Evidence Contract is designed to operationalize these verification patterns as contract checks.
+
+\subsection{Self-Improvement Systems}
+
+\textbf{Self-Refine}~\cite{madaan2023selfrefine} and \textbf{Reflexion} use language feedback/refinement loops. MABW's controlled self-improvement loop differs in structure: feedback is externalized as file-state artifacts, routed through the Orchestrator's decision vocabulary, and gated by human approval.
+
+\subsection{Distinguished From: LLM-as-Judge Evaluation}
+
+\textbf{G-Eval}~\cite{liu2023geval} and \textbf{MT-Bench}~\cite{zheng2023judging} use LLMs to score NLG output quality. MABW's quality gates are workflow-internal operational controls, not evaluation benchmarks. The distinction is captured by Kapoor et al.~\cite{kapoor2024agents}: agent evaluation should assess system behavior, not just output quality scores.
+
+\subsection{Distinguished From: Human-in-the-Loop ML}
+
+Traditional HITL embeds human judgment into the model training or inference pipeline. MABW v0.6.1 provides handoff points (\texttt{request\_human\_review}) but does not implement real-time human intervention in agent execution.
+
+\subsection{Future Dialogue}
+
+\textbf{Enterprise Compliance / Policy Automation.} The EU~AI~Act's documentation, logging, and human oversight requirements align with MABW's design priorities~\cite{eu_ai_act}.
+
+\textbf{ReAct}~\cite{yao2022react} introduced the action/observation/decision trace pattern. MABW's event log provides a similar trace structure. Important distinction: ReAct guarantees reasoning trace structure, not factual correctness. MABW's Fact-Grounding/Evidence Contract (v0.6.3) is designed to address the correctness gap.
+
+%===================================================================
+% 10. LIMITATIONS & FUTURE WORK
+%===================================================================
+\section{Limitations \& Future Work}
+\label{sec:limitations}
+
+\subsection{Known Limitations v0.6.1}
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{No evaluation data.} v0.1 provides an evaluation framework design (\S\ref{sec:evaluation}) but no experimental results.
+    \item \textbf{Specialist role execution.} Role contracts and runtime handoff are implemented; autonomous in-Python agent execution is intentionally deferred.
+    \item \textbf{Contract enforcement completeness.} Behavior and Process/Artifact contracts have minimum enforcement. Fact-Grounding/Evidence and Quality/Audience contracts are reference-only (deferred to v0.6.3).
+    \item \textbf{Self-improvement loop entirely deferred.} FeedbackIssue, RepairPlan, and FrictionStore are not implemented in v0.6.1 ($\rightarrow$ v0.6.2 for minimum loop; v0.7 for full FrictionStore-driven loop).
+    \item \textbf{Event log is control trace, not provenance graph.} Full provenance deferred to v0.6.5.
+    \item \textbf{Scale validation absent.} The system has not been tested on sustained enterprise briefing workloads.
+\end{enumerate}
+
+\subsection{Design Boundary Statement}
+
+MABW is a \textbf{controlled self-improving} system, not a fully autonomous self-evolving one. RepairPlan proposals (v0.6.2+) operate within a human-accountable framework. No model-initiated contract modification occurs without an audit trail. MABW's contract dimensions are tuned for enterprise briefing; generalization to other workflow domains requires domain-specific policy pack adaptation.
+
+\subsection{Future Work}
+
+\begin{itemize}[leftmargin=*,itemsep=1pt]
+    \item \textbf{v0.6.2:} Minimum feedback issue schema + bounded repair planning controls (plan only)
+    \item \textbf{v0.6.3:} Quality gates + Fact-Grounding/Evidence + Quality/Audience contract enforcement
+    \item \textbf{v0.6.5:} Evidence execution graph + provenance (W3C PROV-aligned)
+    \item \textbf{v0.7:} FrictionStore + full controlled self-improvement loop + autonomous role execution (TBD)
+    \item \textbf{v0.2:} Experimental evaluation complete---system paper with baseline comparison data
+\end{itemize}
+
+%===================================================================
+% APPENDIX
+%===================================================================
+\appendix
+
+\section{Contract Schema Definitions}
+\label{sec:appendix-contracts}
+
+\subsection{Behavior Contract}
+\begin{lstlisting}[language=]
+# Source: configs/orchestrator_contract.yaml
+contracts:
+  behavior:
+    purpose: define orchestrator and specialist role boundaries
+    first_landing: v0.6.0
+\end{lstlisting}
+Defines the Orchestrator's role boundaries (\texttt{role: main\_agent}, \texttt{authority: runtime\_controller}) and the boundary between Orchestrator and each specialist role.
+
+\subsection{Process/Artifact Contract}
+\begin{lstlisting}[language=]
+# Source: configs/orchestrator_contract.yaml
+contracts:
+  process_artifact:
+    purpose: define stage readiness and expected artifact categories
+    first_landing: v0.6.0_reference_only
+\end{lstlisting}
+Defines stage readiness conditions and expected artifact categories.
+
+\subsection{Fact-Grounding/Evidence Contract}
+\begin{lstlisting}[language=]
+# Source: configs/orchestrator_contract.yaml
+contracts:
+  fact_grounding_evidence:
+    purpose: keep material statements traceable to supported claims
+    first_landing: v0.6.0_reference_only
+\end{lstlisting}
+Enforcement deferred to v0.6.3. Schema shape is W3C PROV-compatible.
+
+\subsection{Quality/Audience Contract}
+\begin{lstlisting}[language=]
+# Source: configs/orchestrator_contract.yaml
+contracts:
+  quality_audience:
+    purpose: keep delivery decisions aligned with reader context
+    first_landing: v0.6.0_reference_only
+\end{lstlisting}
+Enforcement deferred to v0.6.3.
+
+\section{Decision Vocabulary + Decision Record Schema}
+
+\textbf{Decision vocabulary} (per \texttt{configs/orchestrator\_contract.yaml}):
+\begin{lstlisting}[language=]
+decision_vocabulary:
+  - continue
+  - retry_stage
+  - delegate_repair
+  - request_human_review
+  - block_run
+  - finalize
+\end{lstlisting}
+
+\textbf{Decision record fields} (per \texttt{configs/orchestrator\_contract.yaml}):
+\begin{lstlisting}[language=]
+decision_record_fields:
+  - decision_id
+  - stage_id
+  - decision
+  - reason_summary
+  - input_artifacts
+  - output_artifacts
+  - validation_result
+  - next_allowed_actions
+  - created_at
+\end{lstlisting}
+
+\textbf{Stage-scoped decision legality} (example; full table in \texttt{configs/stage\_specs.yaml}):
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Stage} & \textbf{Allowed Decisions} \\
+\midrule
+doctor & continue, request\_human\_review, block\_run \\
+analyst & continue, retry\_stage, delegate\_repair, request\_human\_review, block\_run \\
+finalize & finalize, request\_human\_review, block\_run \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Runtime State File Schemas}
+\label{sec:appendix-schemas}
+
+\subsection{\texttt{runtime\_manifest.json}}
+
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{schema\_version} & string & \texttt{multi-agent-brief-runtime-manifest/v1} \\
+\texttt{run\_id} & string & Unique run identifier; preserved across non-reset \texttt{init} \\
+\texttt{created\_at} & string & ISO 8601 timestamp of initial creation \\
+\texttt{updated\_at} & string & ISO 8601 timestamp of last update \\
+\texttt{workspace} & string & Workspace path (stored as \texttt{"."}) \\
+\texttt{runtime} & string & Target runtime \\
+\texttt{mabw\_version} & string & MABW version string \\
+\texttt{contract\_references} & object & Map of contract keys to relative file paths \\
+\texttt{runtime\_state\_files} & object & Map of state file keys to relative paths \\
+\texttt{stage\_order} & [string] & Ordered list of stage\_ids \\
+\texttt{expected\_artifacts} & [object] & Array of artifact metadata per contract \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{\texttt{workflow\_state.json}}
+
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{schema\_version} & string & \texttt{multi-agent-brief-workflow-state/v1} \\
+\texttt{run\_id} & string & Run identifier \\
+\texttt{created\_at} & string & ISO 8601 timestamp of initial creation \\
+\texttt{updated\_at} & string & ISO 8601 timestamp of last update \\
+\texttt{current\_stage} & string\textbar{}null & Stage currently executing \\
+\texttt{blocked} & boolean & \texttt{true} when current stage is blocked \\
+\texttt{blocking\_reason} & string & Reason for block \\
+\texttt{stage\_statuses} & object & Per-stage map: \texttt{\{stage\_id: \{status, reason, updated\_at\}\}} \\
+\texttt{last\_decision} & object\textbar{}null & \texttt{\{stage\_id, decision, reason, created\_at\}} \\
+\texttt{next\_allowed\_decisions} & [string] & Subset of vocabulary legal at \texttt{current\_stage} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{\texttt{artifact\_registry.json}}
+
+Wrapper:
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{schema\_version} & string & \texttt{multi-agent-brief-artifact-registry/v1} \\
+\texttt{run\_id} & string & Run identifier \\
+\texttt{updated\_at} & string & ISO 8601 timestamp of last refresh \\
+\texttt{artifacts} & object & Map of \texttt{artifact\_id} $\rightarrow$ artifact record \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Per-artifact record:
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{artifact\_id} & string & Unique artifact identifier \\
+\texttt{path} & string & File path relative to workspace \\
+\texttt{format} & string & \texttt{json}, \texttt{yaml}, or \texttt{markdown} \\
+\texttt{required} & boolean & Blocks downstream stages when \texttt{true} \\
+\texttt{producer\_stage} & string & Stage that produces this artifact \\
+\texttt{producer\_role} & string & Role that produces this artifact \\
+\texttt{consumer\_stages} & [string] & Stages that consume this artifact \\
+\texttt{status} & string & \texttt{expected}, \texttt{missing}, \texttt{present}, \texttt{valid}, \texttt{invalid} \\
+\texttt{validation\_result} & string & Minimum validation outcome \\
+\texttt{blocking\_reason} & string & Reason if blocking progress \\
+\texttt{size\_bytes} & integer\textbar{}null & File size in bytes \\
+\texttt{mtime} & string\textbar{}null & ISO 8601 last-modified timestamp \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{\texttt{event\_log.jsonl}}
+
+Append-only JSON Lines. Event types (per \texttt{runtime\_state.py:EVENT\_TYPES}):
+
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Event Type} & \textbf{When Emitted} \\
+\midrule
+\texttt{run\_initialized} & First \texttt{state init} creates runtime state files \\
+\texttt{run\_reset} & \texttt{state init --reset-state} archives and reinitializes \\
+\texttt{handoff\_written} & Orchestrator writes handoff artifacts for a stage \\
+\texttt{artifact\_observed} & Artifact first detected on disk with new content \\
+\texttt{artifact\_validated} & Artifact validation result changes \\
+\texttt{stage\_status\_changed} & Current stage status or stage\_id changes \\
+\texttt{decision\_recorded} & Orchestrator records a decision via \texttt{record\_decision()} \\
+\texttt{feedback\_issue\_created} & New feedback issue ingested (v0.6.2+) \\
+\texttt{feedback\_issue\_planned} & Issue status changes to \texttt{planned} (v0.6.2+) \\
+\texttt{feedback\_issue\_resolved} & Issue resolved (v0.6.2+) \\
+\texttt{repair\_plan\_created} & New repair plan generated (v0.6.2+) \\
+\texttt{repair\_plan\_completed} & Repair plan completed (v0.6.2+) \\
+\texttt{run\_blocked} & \texttt{workflow\_state.blocked} transitions to \texttt{true} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Specialist Role Cards}
+
+Per \texttt{configs/stage\_specs.yaml}. Python tool stages included for completeness.
+
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{longtable}{@{}lllll@{}}
+\toprule
+\textbf{stage\_id} & \textbf{owner} & \textbf{category} & \textbf{consumes} & \textbf{produces} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{stage\_id} & \textbf{owner} & \textbf{category} & \textbf{consumes} & \textbf{produces} \\
+\midrule
+\endhead
+doctor & python\_tool & environment\_readiness & config, sources\_config & --- \\
+source-discovery & python\_tool\_or\_source\_planner & source\_governance & config, sources\_config, user\_profile & source\_candidates \\
+input-governance & python\_tool & input\_governance & workspace\_input & input\_classification \\
+scout & scout & source\_extraction & workspace\_sources, input\_classification & candidate\_claims \\
+screener & screener & candidate\_screening & candidate\_claims & screened\_candidates \\
+claim-ledger & claim-ledger & claim\_grounding & screened\_candidates & claim\_ledger \\
+analyst & analyst & drafting & claim\_ledger, user\_profile & audited\_brief \\
+editor & editor & editorial\_refinement & audited\_brief, claim\_ledger & audited\_brief \\
+auditor & auditor & audit & audited\_brief, claim\_ledger & audit\_report \\
+finalize & python\_tool & reader\_output & audited\_brief, audit\_report & reader\_brief \\
+\bottomrule
+\end{longtable}
+\end{table}
+
+\section{Implementation Evidence Map}
+
+\begin{table}[ht]
+\centering
+\footnotesize
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Claim} & \textbf{Evidence} \\
+\midrule
+Contract registry (4 categories) & \texttt{configs/orchestrator\_contract.yaml} \\
+Decision vocabulary (6 terms) & \texttt{configs/orchestrator\_contract.yaml} \\
+Stage pipeline (10 stages) & \texttt{configs/stage\_specs.yaml} \\
+Artifact status values & \texttt{configs/artifact\_contracts.yaml} \\
+Artifact definitions (11 artifacts) & \texttt{configs/artifact\_contracts.yaml} \\
+v0.6.1 boundaries & \texttt{configs/orchestrator\_contract.yaml} \\
+Runtime surfaces (5) & \texttt{configs/orchestrator\_contract.yaml} \\
+Python layer scope & \texttt{configs/orchestrator\_contract.yaml} \\
+Runtime loop (8 steps) & \texttt{docs/orchestrator-architecture.md} \\
+v0.6.2 bounded repair scope & \texttt{docs/orchestrator-architecture.md} \\
+Default policy pack & \texttt{configs/policy\_packs/default.yaml} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%-------------------------------------------------------------------
+% BIBLIOGRAPHY
+%-------------------------------------------------------------------
+\printbibliography[title={References}]
+
+\end{document}
