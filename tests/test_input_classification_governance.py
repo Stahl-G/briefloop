@@ -150,7 +150,7 @@ def test_inputs_extract_converts_non_text_inputs_with_mineru(tmp_path: Path, mon
     (input_dir / "feedback" / "screenshot.jpg").write_bytes(b"synthetic jpg")
 
     monkeypatch.setattr(
-        "multi_agent_brief.cli.input_commands.shutil.which",
+        "multi_agent_brief.inputs.extractor.shutil.which",
         lambda name: "/usr/bin/mineru" if name == "mineru" else None,
     )
 
@@ -166,7 +166,7 @@ def test_inputs_extract_converts_non_text_inputs_with_mineru(tmp_path: Path, mon
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(
-        "multi_agent_brief.cli.input_commands.subprocess.run",
+        "multi_agent_brief.inputs.extractor.subprocess.run",
         fake_run,
     )
 
@@ -207,7 +207,7 @@ def test_inputs_extract_reports_missing_mineru_cli(tmp_path: Path, monkeypatch: 
     (input_dir / "sources" / "report.pdf").write_bytes(b"%PDF-1.4 synthetic")
 
     monkeypatch.setattr(
-        "multi_agent_brief.cli.input_commands.shutil.which",
+        "multi_agent_brief.inputs.extractor.shutil.which",
         lambda name: None,
     )
 
@@ -227,7 +227,7 @@ def test_inputs_extract_fails_when_mineru_file_parse_fails(tmp_path: Path, monke
     (input_dir / "sources" / "report.pdf").write_bytes(b"%PDF-1.4 synthetic")
 
     monkeypatch.setattr(
-        "multi_agent_brief.cli.input_commands.shutil.which",
+        "multi_agent_brief.inputs.extractor.shutil.which",
         lambda name: "/usr/bin/mineru" if name == "mineru" else None,
     )
 
@@ -235,7 +235,7 @@ def test_inputs_extract_fails_when_mineru_file_parse_fails(tmp_path: Path, monke
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="parse failed")
 
     monkeypatch.setattr(
-        "multi_agent_brief.cli.input_commands.subprocess.run",
+        "multi_agent_brief.inputs.extractor.subprocess.run",
         fake_run,
     )
 
