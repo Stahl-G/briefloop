@@ -171,6 +171,8 @@ Write-Host "  multi-agent-brief version"
 Write-Host "  multi-agent-brief init my-workspace"
 Write-Host "  # Add source files to my-workspace/input/"
 Write-Host "  multi-agent-brief doctor --config my-workspace/config.yaml"
+Write-Host "  # Optional: make /generate-brief visible in Claude Desktop Code tab"
+Write-Host "  multi-agent-brief claude install --repo-workdir ."
 Write-Host "  Then use /generate-brief my-workspace in Claude Code"
 Write-Host ""
 Write-Host "If Activate.ps1 is blocked, run this once for your user account:" -ForegroundColor Yellow

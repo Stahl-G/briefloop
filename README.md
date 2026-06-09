@@ -245,7 +245,13 @@ multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```
 
-如果界面返回 `Unknown command: /generate-brief`，说明当前 Claude Code session 没有发现这个项目命令。先确认 Code tab 的 project folder 是本仓库根目录，输入 `/` 看命令列表里是否有 `/generate-brief`；也可以改用 `multi-agent-brief run --workspace ../mabw-workspace` 生成 handoff。
+如果想在 Claude Desktop Code tab 中从任意 project folder 使用 `/generate-brief`，先安装 Claude Code 用户级命令和 MABW subagents：
+
+```bash
+multi-agent-brief claude install --repo-workdir .
+```
+
+如果界面返回 `Unknown command: /generate-brief`，说明当前 Claude Code session 没有发现这个项目命令。先确认 Code tab 的 project folder 是本仓库根目录，或运行上面的安装命令后重新打开/刷新 Claude Code session，并输入 `/` 看命令列表里是否有 `/generate-brief`；也可以改用 `multi-agent-brief run --workspace ../mabw-workspace` 生成 handoff。
 
 ---
 

@@ -50,6 +50,8 @@ multi-agent-brief version
 
 ```powershell
 multi-agent-brief init --demo
+# Optional: install /generate-brief for Claude Desktop Code tab discovery
+multi-agent-brief claude install --repo-workdir .
 # Then use /generate-brief inside Claude Code CLI/Desktop Code tab
 # with this repository loaded, or use:
 # multi-agent-brief run --workspace <workspace>

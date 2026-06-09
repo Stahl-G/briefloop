@@ -184,7 +184,13 @@ multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```
 
-If the client returns `Unknown command: /generate-brief`, the current Claude Code session has not discovered this project command. Confirm that the Code tab project folder is the MABW repository root and type `/` to see whether `/generate-brief` is listed. You can also use `multi-agent-brief run --workspace ../mabw-workspace` to create a handoff.
+To make `/generate-brief` available from any Claude Desktop Code tab project folder, install the Claude Code user command and MABW subagents:
+
+```bash
+multi-agent-brief claude install --repo-workdir .
+```
+
+If the client returns `Unknown command: /generate-brief`, the current Claude Code session has not discovered this project command. Confirm that the Code tab project folder is the MABW repository root, or run the install command above and reopen/refresh the Claude Code session. Type `/` to see whether `/generate-brief` is listed. You can also use `multi-agent-brief run --workspace ../mabw-workspace` to create a handoff.
 
 ---
 

@@ -12,12 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Public-safe evaluation cases CLI**: added `multi-agent-brief eval-cases list`, `eval-cases validate`, and `eval-cases run` for deterministic developer/CI regression checks.
 - **Packaged eval fixtures**: bundled five public-safe workspace control cases plus one Hermes static invariant case so non-editable installs can run the default eval suite.
 - **Fixture leakage scanner**: eval-case validation rejects shell-string commands, non-synthetic manifests, local paths, unsafe URLs, email domains, token-shaped values, prompt labels, and non-synthetic claim/source IDs.
+- **Claude Code install helper**: added `multi-agent-brief claude install` to install `/generate-brief` and MABW subagents into a user-level Claude Code directory for Claude Desktop Code tab discovery.
 
 ### Changed
 
 - **Structured eval actions**: eval cases dispatch allowlisted actions such as `gates.check`, `feedback.ingest`, and `state.decide` instead of parsing or executing shell commands.
 - **Stage-explicit fixtures**: workspace cases declare `initial_stage` and prepare temporary runtime state explicitly, so cases validate control-surface behavior without executing workflow stages.
 - **Partial assertions**: eval results compare only stable control outputs such as exit codes, expected control artifacts, gate findings, feedback issues, workflow state, and static text invariants.
+- **Claude Code setup guidance**: README and setup scripts now include the optional install step for users who run Claude Code from Claude Desktop with a workspace or non-repository project folder selected.
 
 ### Boundaries
 

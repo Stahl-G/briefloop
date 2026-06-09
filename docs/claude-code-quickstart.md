@@ -26,8 +26,14 @@ tab with this repository selected as the project folder, so
 
 If Claude Code returns `Unknown command: /generate-brief`, the current session
 has not discovered this project command. Confirm the project folder is the MABW
-repository root, type `/` to inspect available commands, or use the standard
-CLI handoff instead:
+repository root, type `/` to inspect available commands, or install the command
+for user-level discovery:
+
+```bash
+multi-agent-brief claude install --repo-workdir .
+```
+
+You can also use the standard CLI handoff instead:
 
 ```bash
 multi-agent-brief run --workspace ../mabw-workspace

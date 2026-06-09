@@ -27,6 +27,7 @@ from multi_agent_brief.cli import (
     feedback_commands,
     gates_commands,
     eval_cases_commands,
+    claude_commands,
 )
 
 
@@ -76,6 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Public-safe evaluation cases
     eval_cases_commands.register(subparsers)
+
+    # Claude Code install helpers
+    claude_commands.register(subparsers)
 
     # Hermes runtime
     hermes_commands.register(subparsers)
@@ -155,6 +159,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "eval-cases":
         return eval_cases_commands.handle(args)
+
+    if cmd == "claude":
+        return claude_commands.handle(args)
 
     return 1
 
