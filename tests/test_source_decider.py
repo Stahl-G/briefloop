@@ -133,6 +133,94 @@ def test_merge_candidates_to_sources(workspace_with_sources: Path):
     assert updated["web_search"]["enabled"] is False
 
 
+def test_merge_candidates_normalizes_yaml_null_list_fields(tmp_path: Path):
+    """YAML empty list fields parse as None and must not crash merge."""
+    sources_path = tmp_path / "sources.yaml"
+    sources = {
+        "source_strategy": {
+            "profile": "llm_decide",
+            "enabled_providers": None,
+        },
+        "source_discovery": {
+            "company": "DemoCo",
+            "industry": "technology",
+            "language": "en",
+        },
+        "manual": {"enabled": True, "sources": None},
+        "rss": {"enabled": True, "feeds": None},
+        "web_search": {
+            "enabled": True,
+            "backend": "tavily",
+            "search_tasks": None,
+        },
+        "filing_resolver": {
+            "enabled": True,
+            "tickers": None,
+            "filing_types": None,
+        },
+    }
+    sources_path.write_text(yaml.dump(sources, allow_unicode=True), encoding="utf-8")
+
+    candidates_path = tmp_path / "source_candidates.yaml"
+    candidates = {
+        "metadata": {},
+        "recommended_sources": [
+            {
+                "name": "DemoCo Official",
+                "url": "https://example.com/democo",
+                "category": "company_official",
+                "enabled": True,
+            },
+            {
+                "name": "Demo RSS",
+                "url": "https://example.com/rss.xml",
+                "category": "rss_feed",
+                "enabled": True,
+            },
+        ],
+        "filing_sources": [
+            {
+                "name": "DemoCo filings",
+                "provider": "filing_resolver",
+                "tickers": ["DEMO"],
+                "filing_types": ["20-F"],
+                "enabled": True,
+            }
+        ],
+        "local_social_listening_tasks": [
+            {
+                "query": "DemoCo discussion",
+                "market": "US",
+                "language": "en",
+                "platform_group": "public_web",
+                "signal_type": "consumer_discussion",
+                "enabled": True,
+            }
+        ],
+    }
+    candidates_path.write_text(yaml.dump(candidates, allow_unicode=True), encoding="utf-8")
+
+    result = merge_candidates_to_sources(sources_path, candidates_path)
+
+    assert result["added_manual"] == 1
+    assert result["added_rss"] == 1
+    assert result["added_filing"] == 1
+    assert result["added_local"] == 1
+
+    updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+    assert updated["manual"]["sources"][0]["url"] == "https://example.com/democo"
+    assert updated["rss"]["feeds"][0]["url"] == "https://example.com/rss.xml"
+    assert updated["filing_resolver"]["tickers"] == ["DEMO"]
+    assert "20-F" in updated["filing_resolver"]["filing_types"]
+    assert updated["web_search"]["search_tasks"][0]["query"] == "DemoCo discussion"
+    assert updated["source_strategy"]["enabled_providers"] == [
+        "manual",
+        "rss",
+        "web_search",
+        "filing_resolver",
+    ]
+
+
 def test_merge_candidates_idempotent(workspace_with_sources: Path):
     """Merging same candidates twice should not duplicate."""
     sources_path = workspace_with_sources / "sources.yaml"

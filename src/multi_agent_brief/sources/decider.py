@@ -38,6 +38,43 @@ def _save_yaml(path: Path, data: dict[str, Any]) -> None:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
+def _ensure_mapping(
+    container: dict[str, Any],
+    key: str,
+    default: dict[str, Any],
+    *,
+    path: str | None = None,
+) -> dict[str, Any]:
+    """Return a mapping section, normalizing YAML null to defaults."""
+    value = container.get(key)
+    if value is None:
+        value = dict(default)
+        container[key] = value
+    if not isinstance(value, dict):
+        label = path or key
+        raise ValueError(f"{label} must be a mapping.")
+    for default_key, default_value in default.items():
+        value.setdefault(default_key, default_value)
+    return value
+
+
+def _ensure_list(
+    container: dict[str, Any],
+    key: str,
+    *,
+    path: str,
+    default: list[Any] | None = None,
+) -> list[Any]:
+    """Return a list field, normalizing YAML null to a concrete list."""
+    value = container.get(key)
+    if value is None:
+        value = list(default or [])
+        container[key] = value
+    if not isinstance(value, list):
+        raise ValueError(f"{path} must be a list.")
+    return value
+
+
 def load_source_discovery(sources_path: Path) -> dict[str, Any]:
     """Extract source_discovery section from sources.yaml."""
     data = _load_yaml(sources_path)
@@ -247,7 +284,7 @@ def merge_candidates_to_sources(
     sources = _load_yaml(sources_path)
     candidates = _load_yaml(candidates_path)
 
-    recommended = candidates.get("recommended_sources", [])
+    recommended = candidates.get("recommended_sources") or []
     enabled = [s for s in recommended if s.get("enabled", True)]
 
     # Group by category.
@@ -272,80 +309,110 @@ def merge_candidates_to_sources(
             # All other URL types go to manual sources (not RSS)
             manual_sources.append({"name": name, "url": url, "category": category, "enabled": True})
 
-    # Merge into sources
-    if "manual" not in sources:
-        sources["manual"] = {"enabled": True, "sources": []}
-    if "rss" not in sources:
-        sources["rss"] = {"enabled": True, "feeds": []}
+    # Merge into sources. YAML empty fields parse as None, so normalize known
+    # list sections before appending or iterating.
+    manual = _ensure_mapping(
+        sources,
+        "manual",
+        {"enabled": True, "sources": []},
+        path="manual",
+    )
+    manual_entries = _ensure_list(manual, "sources", path="manual.sources")
+    rss = _ensure_mapping(
+        sources,
+        "rss",
+        {"enabled": True, "feeds": []},
+        path="rss",
+    )
+    rss_entries = _ensure_list(rss, "feeds", path="rss.feeds")
 
     if overwrite:
-        sources["manual"]["sources"] = [
-            src for src in sources["manual"].get("sources", [])
+        manual_entries[:] = [
+            src for src in manual_entries
             if src.get("category") == "local_files" or (src.get("path") and not src.get("url"))
         ]
-        sources["rss"]["feeds"] = []
+        rss_entries.clear()
 
-    existing_manual_urls = {s.get("url") for s in sources["manual"].get("sources", [])}
-    existing_rss_urls = {f.get("url") for f in sources["rss"].get("feeds", [])}
+    existing_manual_urls = {s.get("url") for s in manual_entries}
+    existing_rss_urls = {f.get("url") for f in rss_entries}
 
     added_manual = 0
     added_rss = 0
 
     for src in manual_sources:
         if src["url"] not in existing_manual_urls:
-            sources["manual"]["sources"].append(src)
+            manual_entries.append(src)
             added_manual += 1
 
     for feed in rss_feeds:
         if feed["url"] not in existing_rss_urls:
-            sources["rss"]["feeds"].append(feed)
+            rss_entries.append(feed)
             added_rss += 1
 
     # Ensure web_search section exists, but do NOT auto-enable it.
     # Only enable web_search if it was already enabled OR the user explicitly
     # set a real backend (not mock). Mock data must never leak into real reports
     # unless the user explicitly opted in with allow_mock_search: true.
-    if not sources.get("web_search"):
-        sources["web_search"] = {"enabled": False, "max_results": 20, "recency_days": 7}
+    web_search = _ensure_mapping(
+        sources,
+        "web_search",
+        {"enabled": False, "max_results": 20, "recency_days": 7},
+        path="web_search",
+    )
     # Do not auto-enable web_search on merge.
 
     # Update source_strategy
-    if "source_strategy" not in sources:
-        sources["source_strategy"] = {"profile": "research", "enabled_providers": ["manual"]}
-    providers = sources["source_strategy"].get("enabled_providers", [])
+    source_strategy = _ensure_mapping(
+        sources,
+        "source_strategy",
+        {"profile": "research", "enabled_providers": ["manual"]},
+        path="source_strategy",
+    )
+    providers = _ensure_list(
+        source_strategy,
+        "enabled_providers",
+        path="source_strategy.enabled_providers",
+        default=["manual"],
+    )
     if "rss" not in providers and added_rss > 0:
         providers.append("rss")
     # Only add web_search to enabled_providers if it is actually enabled
-    if "web_search" not in providers and sources.get("web_search", {}).get("enabled"):
+    if "web_search" not in providers and web_search.get("enabled"):
         providers.append("web_search")
-    sources["source_strategy"]["enabled_providers"] = providers
 
     # Merge filing_sources into filing_resolver config
     filing_sources = [
-        s for s in candidates.get("filing_sources", []) if s.get("enabled", True)
+        s for s in (candidates.get("filing_sources") or []) if s.get("enabled", True)
     ]
     added_filing = 0
     if filing_sources:
-        if "filing_resolver" not in sources:
-            sources["filing_resolver"] = {"enabled": True, "tickers": [], "filing_types": ["10-K", "10-Q", "8-K"]}
-        fr = sources["filing_resolver"]
-        fr.setdefault("tickers", [])
-        fr.setdefault("filing_types", ["10-K", "10-Q", "8-K"])
-        existing_tickers = set(fr["tickers"])
+        fr = _ensure_mapping(
+            sources,
+            "filing_resolver",
+            {"enabled": True, "tickers": [], "filing_types": ["10-K", "10-Q", "8-K"]},
+            path="filing_resolver",
+        )
+        tickers = _ensure_list(fr, "tickers", path="filing_resolver.tickers")
+        filing_types = _ensure_list(
+            fr,
+            "filing_types",
+            path="filing_resolver.filing_types",
+            default=["10-K", "10-Q", "8-K"],
+        )
+        existing_tickers = set(tickers)
         for fs in filing_sources:
-            for ticker in fs.get("tickers", []):
+            for ticker in (fs.get("tickers") or []):
                 if ticker not in existing_tickers:
-                    fr["tickers"].append(ticker)
+                    tickers.append(ticker)
                     existing_tickers.add(ticker)
                     added_filing += 1
             # Merge filing_types if provided
-            for ft in fs.get("filing_types", []):
-                if ft not in fr["filing_types"]:
-                    fr["filing_types"].append(ft)
+            for ft in (fs.get("filing_types") or []):
+                if ft not in filing_types:
+                    filing_types.append(ft)
         # Add filing_resolver to enabled_providers
         if "filing_resolver" not in providers:
             providers.append("filing_resolver")
-            sources["source_strategy"]["enabled_providers"] = providers
 
     # Mark candidates as merged
     candidates["metadata"]["status"] = "merged"
@@ -355,18 +422,21 @@ def merge_candidates_to_sources(
 
     # Inject local social listening tasks into web_search search_tasks
     local_tasks = [
-        t for t in candidates.get("local_social_listening_tasks", [])
+        t for t in (candidates.get("local_social_listening_tasks") or [])
         if t.get("enabled", True)
     ]
     added_local = 0
-    if local_tasks and sources.get("web_search", {}).get("enabled"):
-        if "search_tasks" not in sources["web_search"]:
-            sources["web_search"]["search_tasks"] = []
-        existing_search_q = {t.get("query") for t in sources["web_search"]["search_tasks"]}
+    if local_tasks and web_search.get("enabled"):
+        search_tasks = _ensure_list(
+            web_search,
+            "search_tasks",
+            path="web_search.search_tasks",
+        )
+        existing_search_q = {t.get("query") for t in search_tasks}
         for task in local_tasks:
             query = task.get("query", "")
             if query and query not in existing_search_q:
-                sources["web_search"]["search_tasks"].append({
+                search_tasks.append({
                     "query": query,
                     "domains": None,
                     "topic": "consumer_signal",
