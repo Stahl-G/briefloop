@@ -2,6 +2,11 @@
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import ContractError, FieldViolation
+from multi_agent_brief.contracts.registry import (
+    ArtifactContract,
+    ContractRegistry,
+    StageSpec,
+)
 from multi_agent_brief.contracts.schemas import (
     AuditReportContract,
     CandidateItemContract,
@@ -15,6 +20,9 @@ __all__ = [
     "SchemaRegistry",
     "ContractError",
     "FieldViolation",
+    "ArtifactContract",
+    "ContractRegistry",
+    "StageSpec",
     "AuditReportContract",
     "CandidateItemContract",
     "ClaimContract",
