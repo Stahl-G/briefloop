@@ -215,17 +215,28 @@ audience_profile.md
 
 INPUT_README_EN = """# Input Folder
 
-Put public or synthetic source files here.
+Use the subfolders below to keep evidence, instructions, feedback, and
+background references separate.
 
-Supported MVP formats:
+| Folder | Use for | Enters Claim Ledger? |
+|---|---|---|
+| `sources/` | Current-period factual evidence: news, filings, market data, reports, RSS exports | Yes |
+| `context/` | Background reference: prior briefs, example report style, company background, historical notes | No |
+| `instructions/` | Task requirements, structure requirements, prompt drafts, writing rules | No |
+| `feedback/` | Human comments, revision notes, previous-version feedback | No |
 
-- `.md`
-- `.txt`
-- `.json`
+For prior weekly reports or example briefs, place a Markdown version in
+`input/context/`. These files are style and structure references only; they are
+not current-period evidence.
 
-Do not place confidential company documents, internal reports, private messages, credentials, raw logs, or material non-public information in this folder unless the folder is local-only and excluded from Git.
+Do not place confidential company documents, internal reports, private messages,
+credentials, raw logs, or material non-public information in this folder unless
+the workspace is local-only and excluded from Git.
 
-Recommended JSON format:
+Backward compatibility: files placed directly in `input/` may be treated as
+evidence. Prefer using the subfolders above.
+
+Recommended JSON format for `input/sources/`:
 
 ```json
 {
@@ -241,17 +252,24 @@ Recommended JSON format:
 
 INPUT_README_ZH = """# 输入文件夹
 
-请把公开或合成来源文件放在这里。
+请使用下面的子目录区分事实来源、任务要求、修改反馈和背景参考。
 
-MVP 支持的格式：
+| 目录 | 用途 | 是否进入 Claim Ledger |
+|---|---|---|
+| `sources/` | 本期事实证据：新闻、公告、市场数据、行业报告、RSS 导出等 | 是 |
+| `context/` | 背景参考：往期简报、简报示例、公司背景、历史资料 | 否 |
+| `instructions/` | 任务要求、结构要求、prompt 草稿、写作规则 | 否 |
+| `feedback/` | 人类批注、修改意见、上一版反馈 | 否 |
 
-- `.md`
-- `.txt`
-- `.json`
+请在 `input/context/` 里加入你的简报示例 Markdown 文件，例如往期周报。
+这些文件只作为结构、口吻和表格风格参考，不作为本期事实来源。
 
-不要把机密公司文件、内部报告、私有消息、凭据、原始日志或重大非公开信息放入此文件夹，除非该文件夹只保存在本地且已从 Git 中排除。
+不要把机密公司文件、内部报告、私有消息、凭据、原始日志或重大非公开信息放入此文件夹，除非该工作区只保存在本地且已从 Git 中排除。
 
-推荐 JSON 格式：
+向后兼容：直接放在 `input/` 根目录下的文件可能被视为 evidence。
+新项目请优先使用上面的子目录。
+
+`input/sources/` 推荐 JSON 格式：
 
 ```json
 {
@@ -368,6 +386,11 @@ def create_demo_workspace(target: Path, *, force: bool = False) -> None:
         ),
         target / ".gitignore": WORKSPACE_GITIGNORE,
         target / ".env.example": _build_env_example(),
+        input_dir / "README.md": build_input_readme("en-US"),
+        sources_dir / "README.md": _build_sources_readme("en-US"),
+        input_dir / "feedback" / "README.md": _build_feedback_readme("en-US"),
+        input_dir / "instructions" / "README.md": _build_instructions_readme("en-US"),
+        input_dir / "context" / "README.md": _build_context_readme("en-US"),
         sources_dir / "news.json": json.dumps(_build_demo_news(), indent=2),
         sources_dir / "market_data.json": json.dumps(_build_demo_market_data(), indent=2),
     }
@@ -400,6 +423,7 @@ def create_workspace(target: Path, profile: InitProfile, *, force: bool = False)
         ),
         target / ".gitignore": WORKSPACE_GITIGNORE,
         target / ".env.example": _build_env_example(),
+        input_dir / "README.md": build_input_readme(lang),
         sources_dir / "README.md": _build_sources_readme(lang),
         input_dir / "feedback" / "README.md": _build_feedback_readme(lang),
         input_dir / "instructions" / "README.md": _build_instructions_readme(lang),
@@ -1074,14 +1098,19 @@ def _build_context_readme(language: str) -> str:
         return (
             "# 背景资料\n\n"
             "将背景资料、参考材料、历史数据放在此目录。\n\n"
+            "如果你有往期周报、简报样例或目标版式，请优先放入 Markdown 版本，\n"
+            "例如：`input/context/previous_weekly_reference.md`。\n\n"
             "此目录中的文件**不会**被当作事实来源进入 Claim Ledger，\n"
-            "可作为 Analyst 写作时的背景参考。\n"
+            "可作为 Analyst / Editor 写作时的结构、口吻和背景参考。\n"
         )
     return (
         "# Background Context\n\n"
         "Place background materials, reference documents, and historical data here.\n\n"
+        "If you have prior weekly reports, example briefs, or target layout references,\n"
+        "prefer adding a Markdown version, for example:\n"
+        "`input/context/previous_weekly_reference.md`.\n\n"
         "Files in this directory are **NOT** treated as factual evidence for the Claim Ledger.\n"
-        "They serve as background reference for the Analyst.\n"
+        "They serve as structure, tone, and background reference for the Analyst / Editor.\n"
     )
 
 

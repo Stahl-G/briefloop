@@ -31,13 +31,24 @@ def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra
     return args
 
 
-def test_cli_init_creates_workspace(tmp_path):
+def test_cli_init_creates_workspace(tmp_path, capsys):
     workspace = tmp_path / "ws"
 
     assert main(complete_init_args(workspace)) == 0
+    output = capsys.readouterr().out
     assert (workspace / "config.yaml").exists()
     assert (workspace / "sources.yaml").exists()
     assert (workspace / "input").exists()
+    input_readme = (workspace / "input" / "README.md").read_text(encoding="utf-8")
+    context_readme = (workspace / "input" / "context" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "input/context" in input_readme
+    assert "简报示例 Markdown" in input_readme
+    assert "previous_weekly_reference.md" in context_readme
+    assert "input/context" in output
+    assert "简报示例 Markdown" in output
+    assert "Claim Ledger" in output
 
 
 def test_cli_audit_existing_brief(tmp_path):

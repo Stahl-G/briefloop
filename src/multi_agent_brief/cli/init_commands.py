@@ -189,6 +189,30 @@ def print_search_backend_guidance(profile) -> None:
         )
 
 
+def print_context_reference_guidance(target: Path, language: str = "en-US") -> None:
+    """Tell users where prior briefs and example reports belong."""
+    context_dir = (target / "input" / "context").as_posix()
+    if language == "zh-CN":
+        print()
+        print(
+            "提示：请在"
+            f" {context_dir} 里加入你的简报示例 Markdown 文件"
+            "（例如往期周报）。"
+        )
+        print("      它只作为结构、口吻和版式参考，不进入 Claim Ledger。")
+        return
+    if language == "bilingual":
+        print_context_reference_guidance(target, "zh-CN")
+        print_context_reference_guidance(target, "en-US")
+        return
+    print()
+    print(
+        "Tip: add example brief Markdown files, such as prior weekly reports,"
+        f" to {context_dir}."
+    )
+    print("     They are style/context references only and do not enter the Claim Ledger.")
+
+
 def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
     """Apply explicit CLI args onto a profile built from onboarding.
 
@@ -267,6 +291,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
         target = Path(args.target)
         create_demo_workspace(target, force=args.force)
         print(f"Created demo workspace: {target}")
+        print_context_reference_guidance(target, "en-US")
         print(
             "Demo only — sample data for feature exploration, not a real"
             " brief workspace."
@@ -385,6 +410,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
 
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
+    print_context_reference_guidance(target, profile.interface_language)
     print(f"Next: multi-agent-brief run --workspace {target}")
     print(
         "Hermes prompt: multi-agent-brief hermes prompt"

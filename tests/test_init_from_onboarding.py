@@ -9,7 +9,7 @@ import yaml
 from multi_agent_brief.cli.main import main
 
 
-def test_init_from_onboarding_creates_workspace(tmp_path: Path):
+def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
     onboarding = {
         "target": "exampleco-weekly",
         "company_or_org": "ExampleCo",
@@ -26,10 +26,20 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path):
 
     ws = tmp_path / "exampleco-weekly"
     rc = main(["init", str(ws), "--from-onboarding", str(ob_path), "--force"])
+    output = capsys.readouterr().out
     assert rc == 0
 
     for name in ("config.yaml", "profile.yaml", "sources.yaml", "user.md", "audience_profile.md"):
         assert (ws / name).exists(), f"{name} missing"
+    input_readme = (ws / "input" / "README.md").read_text(encoding="utf-8")
+    context_readme = (ws / "input" / "context" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "prior weekly reports" in input_readme
+    assert "input/context/" in input_readme
+    assert "previous_weekly_reference.md" in context_readme
+    assert "input/context" in output
+    assert "prior weekly reports" in output
     assert (ws / "input" / "sources" / "README.md").exists()
     audience_profile = (ws / "audience_profile.md").read_text(encoding="utf-8")
     assert "ExampleCo" in audience_profile

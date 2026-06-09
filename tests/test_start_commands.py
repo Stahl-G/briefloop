@@ -610,3 +610,12 @@ def test_init_demo_mentions_onboard(tmp_path, capsys):
     output = captured.out
     assert "demo" in output.lower()
     assert "multi-agent-brief onboard" in output
+    assert "input/context" in output
+    assert "example brief Markdown" in output
+    input_readme = (ws / "input" / "README.md").read_text(encoding="utf-8")
+    context_readme = (ws / "input" / "context" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    assert "prior weekly reports" in input_readme
+    assert "input/context/" in input_readme
+    assert "previous_weekly_reference.md" in context_readme
