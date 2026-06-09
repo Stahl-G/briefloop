@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.install.writer import (
+    InstallWriteError,
+    PlannedWrite,
+    apply_planned_writes,
+)
 from multi_agent_brief.orchestrator_contract import is_source_repo, resolve_repo_workdir
 
 
@@ -22,12 +26,6 @@ SOURCE_CLONE_ONLY_MESSAGE = (
 
 class RuntimeAssetInstallError(RuntimeError):
     """Raised when workspace runtime assets cannot be installed."""
-
-
-@dataclass(frozen=True)
-class PlannedWrite:
-    destination: Path
-    content: str
 
 
 def install_runtime_kit(
@@ -57,13 +55,16 @@ def install_runtime_kit(
         elif runtime_name == "claude":
             all_writes.extend(_claude_writes(workspace=ws, repo=repo))
 
-    _validate_destinations(workspace=ws, writes=all_writes)
-    _check_overwrites(writes=all_writes, force=force)
-
-    if not dry_run:
-        for write in all_writes:
-            write.destination.parent.mkdir(parents=True, exist_ok=True)
-            write.destination.write_text(write.content, encoding="utf-8")
+    try:
+        apply_planned_writes(
+            writes=all_writes,
+            root=ws,
+            force=force,
+            dry_run=dry_run,
+            generated_markers=(INSTALL_MARKER, JSONC_INSTALL_MARKER),
+        )
+    except InstallWriteError as exc:
+        raise RuntimeAssetInstallError(str(exc)) from exc
 
     return {
         "runtime": runtime,
@@ -338,52 +339,3 @@ Claim Ledger remains the source-grounded factual substrate. Final reader output
 must not expose internal claim IDs, source IDs, evidence text, local paths, or
 `file://` URLs.
 """
-
-
-def _validate_destinations(*, workspace: Path, writes: list[PlannedWrite]) -> None:
-    for write in writes:
-        resolved = write.destination.resolve()
-        try:
-            resolved.relative_to(workspace)
-        except ValueError as exc:
-            raise RuntimeAssetInstallError(
-                f"Runtime kit write resolves outside workspace: {write.destination}"
-            ) from exc
-        if write.destination.is_symlink():
-            raise RuntimeAssetInstallError(
-                f"Refusing to overwrite symlink during runtime kit install: {write.destination}"
-            )
-
-
-def _check_overwrites(*, writes: list[PlannedWrite], force: bool) -> None:
-    for write in writes:
-        dst = write.destination
-        if not dst.exists():
-            continue
-        existing_text = _read_existing_text(dst)
-        if force or (existing_text is not None and _text_is_generated(existing_text)):
-            continue
-        if existing_text == write.content:
-            continue
-        raise RuntimeAssetInstallError(
-            f"Refusing to overwrite existing non-MABW file without --force: {dst}"
-        )
-
-
-def _read_existing_text(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-
-def _existing_is_generated(path: Path) -> bool:
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return False
-    return _text_is_generated(text)
-
-
-def _text_is_generated(text: str) -> bool:
-    return INSTALL_MARKER in text or JSONC_INSTALL_MARKER in text
