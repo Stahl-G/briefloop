@@ -50,14 +50,15 @@ multi-agent-brief version
 
 ```powershell
 multi-agent-brief init --demo
-# Then use /generate-brief inside Claude Code, or use:
+# Then use /generate-brief inside Claude Code CLI/Desktop Code tab
+# with this repository loaded, or use:
 # multi-agent-brief run --workspace <workspace>
 ```
 
 或直接运行示例输入：
 
 ```powershell
-# Use /generate-brief only inside Claude Code for example workspaces.
+# Use /generate-brief only inside Claude Code with this repository loaded.
 # Generic chat clients should use multi-agent-brief run --workspace <workspace>.
 ```
 

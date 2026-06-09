@@ -107,7 +107,7 @@ This project provides the following tools and capabilities:
 
 **Multi-Runtime Support:**
 - Hermes (primary): `multi-agent-brief hermes install-plugin` + `/mabw new` in Hermes. Full `delegate_task` pipeline.
-- Claude Code: `/generate-brief <workspace>` inside a Claude Code repository session. This slash command is not a terminal command and is not registered in Gateway, ChatGPT, QQ, or other generic chat surfaces.
+- Claude Code: `/generate-brief <workspace>` inside the Claude Code CLI or the Claude Desktop Code tab when the MABW source repository is the project folder. This slash command is not a terminal command; it appears only when the session loads this repository's `.claude/commands` or skills.
 - Codex / OpenCode: agent configs in `.codex/` / `.opencode/`
 
 **Rendering & Output:**
@@ -184,7 +184,7 @@ multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```
 
-If the client returns `Unknown command: /generate-brief`, you are not in the Claude Code command surface. Do not keep pasting the slash command there; use `multi-agent-brief run --workspace ../mabw-workspace` to create a handoff, or open the repository in Claude Code and run `/generate-brief` there.
+If the client returns `Unknown command: /generate-brief`, the current Claude Code session has not discovered this project command. Confirm that the Code tab project folder is the MABW repository root and type `/` to see whether `/generate-brief` is listed. You can also use `multi-agent-brief run --workspace ../mabw-workspace` to create a handoff.
 
 ---
 
@@ -615,7 +615,7 @@ See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows 
 ## Multi-Runtime Agent Mode
 
 - **Hermes（主路径）**：`multi-agent-brief hermes install-plugin` then `/mabw new`. Full `delegate_task` subagent pipeline.
-- **Claude Code**: `/generate-brief <workspace>` inside a Claude Code repository session only; use `multi-agent-brief run --workspace <workspace>` for generic handoff creation.
+- **Claude Code**: `/generate-brief <workspace>` inside Claude Code CLI or the Claude Desktop Code tab when this repository is loaded; use `multi-agent-brief run --workspace <workspace>` for generic handoff creation.
 - **Codex / OpenCode**：agent configs in `.codex/` / `.opencode/`
 
 ### Two-Layer Architecture

@@ -43,7 +43,7 @@ Evaluation cases are developer/CI regression checks for control-surface behavior
 | Runtime | Status |
 |---|---|
 | Hermes (`delegate_task` native pipeline + cron) | Supported |
-| Claude Code (`/generate-brief` inside Claude Code only) | Supported |
+| Claude Code (`/generate-brief` in CLI or Desktop Code tab with this repository loaded) | Supported |
 | OpenCode (subagent workflow) | Supported |
 | Codex (subagent workflow) | Supported |
 | Manual (print workflow steps) | Supported |

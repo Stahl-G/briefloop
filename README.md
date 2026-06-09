@@ -196,7 +196,7 @@ output:
 ### 9. Hermes / Claude Code / Codex 多运行时适配
 
 - **Hermes（主路径）**：`multi-agent-brief hermes install-plugin` 一键安装插件。在 Hermes 中用 `/mabw new` 开始新建简报，`/mabw run <workspace>` 运行已有工作区，`/mabw continue <workspace>` 恢复之前的管线。底层走 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor），配合 cron 调度。
-- **Claude Code**：在 Claude Code 仓库会话内使用 `/generate-brief <workspace>` 命令。这个 slash command 不是终端命令，也不会在 Gateway、ChatGPT、QQ 或其他普通聊天界面中注册。
+- **Claude Code**：在 Claude Code CLI 或 Claude Desktop 的 Code tab 中打开本仓库时，使用 `/generate-brief <workspace>` 命令。这个 slash command 不是终端命令；如果当前 session 的 project folder 没有加载本仓库的 `.claude/commands` 或 skills，它也不会出现。
 - **Codex / OpenCode**：`.codex/`、`.opencode/` 目录下提供 agent 配置。
 
 ### 10. 开源发布安全检查
@@ -245,7 +245,7 @@ multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```
 
-如果界面返回 `Unknown command: /generate-brief`，说明当前不在 Claude Code command surface。不要继续粘贴 slash command；改用 `multi-agent-brief run --workspace ../mabw-workspace` 生成 handoff，或在真正的 Claude Code 仓库会话中运行 `/generate-brief`。
+如果界面返回 `Unknown command: /generate-brief`，说明当前 Claude Code session 没有发现这个项目命令。先确认 Code tab 的 project folder 是本仓库根目录，输入 `/` 看命令列表里是否有 `/generate-brief`；也可以改用 `multi-agent-brief run --workspace ../mabw-workspace` 生成 handoff。
 
 ---
 

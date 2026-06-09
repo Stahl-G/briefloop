@@ -16,15 +16,18 @@ multi-agent-brief init ..\mabw-workspace --demo
 
 ## 2. Generate the brief in Claude Code
 
-Run this slash command only inside Claude Code with this repository open, so
+Run this slash command inside the Claude Code CLI or the Claude Desktop Code
+tab with this repository selected as the project folder, so
 `.claude/commands/generate-brief.md` is loaded:
 
 ```text
 /generate-brief ../mabw-workspace
 ```
 
-If another client returns `Unknown command: /generate-brief`, it is not running
-the Claude Code command surface. Use the standard CLI handoff instead:
+If Claude Code returns `Unknown command: /generate-brief`, the current session
+has not discovered this project command. Confirm the project folder is the MABW
+repository root, type `/` to inspect available commands, or use the standard
+CLI handoff instead:
 
 ```bash
 multi-agent-brief run --workspace ../mabw-workspace
