@@ -678,6 +678,13 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 v0.6.6 增加 workspace-local `audience_profile.md` 和 frozen per-run `output/intermediate/audience_profile_snapshot.md`。`run/start/handoff` 会通过 `audience_memory_files` 暴露这层 runtime context；它不是 source evidence、artifact contract、quality gate、provenance graph 或长期记忆系统。
 
+如果在一次 run 期间修改 `audience_profile.md`，当前 run 会继续使用已经冻结的 snapshot。要让修改生效，请先开启新的 run state：
+
+```bash
+multi-agent-brief state init --workspace <workspace> --reset-state
+multi-agent-brief run --workspace <workspace>
+```
+
 [查看完整变更日志 →](CHANGELOG.md)
 
 ---
@@ -687,6 +694,7 @@ v0.6.6 增加 workspace-local `audience_profile.md` 和 frozen per-run `output/i
 运行测试：
 
 ```bash
+python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 

@@ -90,7 +90,6 @@ jobs:
               "feedback_issues.json",
               "repair_plan.json",
               "golden_cases",
-              "provenance_graph.json",
               "policy_material_terms",
           ]
           for file_name in ("docs/roadmap.md", "docs/roadmap.zh-CN.md"):

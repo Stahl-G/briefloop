@@ -674,17 +674,26 @@ Current version: **v0.6.6**
 
 v0.6.6 adds workspace-local `audience_profile.md` and frozen per-run `output/intermediate/audience_profile_snapshot.md`. `run/start/handoff` expose this runtime context through `audience_memory_files`; it is not source evidence, an artifact contract, a quality gate, a provenance graph, or a long-term memory system.
 
+If you edit `audience_profile.md` during a run, the active run keeps using the frozen snapshot. To apply the edits, start a new run state:
+
+```bash
+multi-agent-brief state init --workspace <workspace> --reset-state
+multi-agent-brief run --workspace <workspace>
+```
+
 [View full changelog →](CHANGELOG.md)
 
 ## Development
 
 ```bash
+python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
 PowerShell:
 
 ```powershell
+python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
