@@ -288,19 +288,22 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Run each step in order, verifying each artifact before continuing:\n\n"
             f"1. multi-agent-brief doctor --config {ws_path}/config.yaml\n"
             f"2. multi-agent-brief sources decide --config {ws_path}/config.yaml  (if configured)\n"
-            f"3. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
-            "4. Use the 'scout' subagent to write output/intermediate/candidate_claims.json\n"
-            "5. Use the 'screener' subagent to write output/intermediate/screened_candidates.json\n"
-            "6. Use the 'claim-ledger' subagent to write output/intermediate/claim_ledger.json\n"
-            "7. Use the 'analyst' subagent to write output/intermediate/audited_brief.md\n"
-            "8. Use the 'editor' subagent to polish output/intermediate/audited_brief.md\n"
-            "9. Use the 'auditor' subagent to write output/intermediate/audit_report.json\n"
-            f"10. multi-agent-brief finalize --config {ws_path}/config.yaml"
+            f"3. multi-agent-brief inputs extract --config {ws_path}/config.yaml  (if PDF/DOCX/image inputs exist)\n"
+            f"4. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
+            "5. Use the 'scout' subagent to write output/intermediate/candidate_claims.json\n"
+            "6. Use the 'screener' subagent to write output/intermediate/screened_candidates.json\n"
+            "7. Use the 'claim-ledger' subagent to write output/intermediate/claim_ledger.json\n"
+            "8. Use the 'analyst' subagent to write output/intermediate/audited_brief.md\n"
+            "9. Use the 'editor' subagent to polish output/intermediate/audited_brief.md\n"
+            "10. Use the 'auditor' subagent to write output/intermediate/audit_report.json\n"
+            f"11. multi-agent-brief finalize --config {ws_path}/config.yaml"
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
             "Each subagent step must complete before the next begins.",
             "Verify each artifact exists and is non-empty before continuing.",
+            "Use inputs extract to convert PDF/DOCX/image inputs into .mineru.md before Scout reads evidence files.",
+            "Directory role still controls claim eligibility: only extracted files under input/sources are evidence.",
             "The 'auditor' step must run before finalize.",
         ],
     )

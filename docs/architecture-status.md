@@ -13,10 +13,11 @@ This page separates current implementation state from roadmap goals. Use it befo
 - Optional deterministic provenance projection can write a workspace-local audit/debug graph from existing control files.
 - Workspace-local audience taste profiles can be frozen into per-run snapshots and exposed through runtime handoff as context.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
-- Finalize can generate a reader-facing `output/source_appendix.md` from sources cited in the audited brief without exposing internal claim IDs, source IDs, evidence text, or local paths.
+- Finalize can generate a reader-facing source appendix from sources cited in the audited brief, append it to final Markdown/DOCX by default, and keep `output/source_appendix.md` without exposing internal claim IDs, source IDs, evidence text, or local paths.
+- Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `multi-agent-brief runtime install`.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
-- Input governance separates evidence from feedback, instructions, and background context.
+- Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.
 - Old Python-pipeline framing is deprecated for the standard workflow.
 
 ## Roadmap Goals

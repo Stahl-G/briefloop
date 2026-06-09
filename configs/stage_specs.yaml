@@ -36,7 +36,7 @@ workflow:
     - stage_id: input-governance
       owner: python_tool
       category: input_governance
-      command: multi-agent-brief inputs classify --config <workspace>/config.yaml
+      command: multi-agent-brief inputs extract --config <workspace>/config.yaml (when non-text inputs exist); multi-agent-brief inputs classify --config <workspace>/config.yaml
       consumes:
         - workspace_input
       produces:

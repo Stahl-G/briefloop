@@ -13,10 +13,11 @@
 - 可选 deterministic provenance projection 可以基于已有 control files 写入 workspace-local audit/debug graph。
 - Workspace-local `audience_profile.md` 可以记录 reader taste；`run`、`start` 和 `handoff` 会创建或复用 frozen per-run `output/intermediate/audience_profile_snapshot.md`，并通过 handoff 暴露为 runtime context。
 - Orchestrator control switchboard 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
-- Finalize 可以从 audited brief 中实际引用的 Claim Ledger 来源生成 reader-facing `output/source_appendix.md`，不会在最终读者面暴露内部 claim IDs、source IDs、evidence text 或本地路径。
+- Finalize 可以从 audited brief 中实际引用的 Claim Ledger 来源生成 reader-facing source appendix，默认追加到最终 Markdown/DOCX 末尾，同时保留 `output/source_appendix.md`，不会在最终读者面暴露内部 claim IDs、source IDs、evidence text 或本地路径。
+- Runtime asset availability 已显式区分：package install 包含 contract configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `multi-agent-brief runtime install` 复制到 workspace。
 - Python 命令负责 setup、source tooling、validation、audit support 和 rendering。
 - Hermes、Claude Code、Codex、OpenCode 和 manual fallback 都是 agent runtime surfaces。
-- Input governance 已区分 evidence、feedback、instructions 和 background context。
+- Input governance 可以先用 MinerU 把受支持的非文本输入抽取为 Markdown，再区分 evidence、feedback、instructions 和 background context。
 - 旧 Python-pipeline 叙事不再是标准 workflow。
 
 ## Roadmap 目标

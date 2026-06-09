@@ -94,6 +94,8 @@ This project provides the following tools and capabilities:
 **Source Discovery & Collection:**
 - `multi-agent-brief sources decide` subcommand resolves `llm_decide` source policy into concrete candidates, with `--merge` to merge back into `sources.yaml`
 - Supports manual files, RSS, web search, API, SEC filings, MCP, CLI source providers
+- `multi-agent-brief inputs extract` converts PDF/DOCX/PPTX/XLSX/image files under `input/` to adjacent `.mineru.md` files with MinerU before classification
+- `multi-agent-brief inputs classify` keeps `input/sources/` evidence separate from `input/context/`, `input/instructions/`, and `input/feedback/`
 - `multi-agent-brief doctor` checks source configuration health
 
 **Subagent Workflow:**
@@ -109,6 +111,7 @@ This project provides the following tools and capabilities:
 - Hermes (primary): `multi-agent-brief hermes install-plugin` + `/mabw new` in Hermes. Full `delegate_task` pipeline.
 - Claude Code: `/generate-brief <workspace>` inside the Claude Code CLI or the Claude Desktop Code tab when the MABW source repository is the project folder. This slash command is not a terminal command; it appears only when the session loads this repository's `.claude/commands` or skills.
 - Codex / OpenCode: agent configs in `.codex/` / `.opencode/`
+- Workspace runtime kit: when you want to open the actual business workspace in Claude Code or OpenCode instead of opening the MABW source repository, run `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` from a source clone. It copies project-local commands, agents, and skills into the workspace so the runtime does not need to read the source checkout.
 
 **Rendering & Output:**
 - DOCX renderer (enabled by default)
@@ -189,6 +192,14 @@ To make `/generate-brief` available from any Claude Desktop Code tab project fol
 ```bash
 multi-agent-brief claude install --repo-workdir .
 ```
+
+To open the business workspace itself in Claude Code or OpenCode, install the workspace-local runtime kit:
+
+```bash
+multi-agent-brief runtime install --workspace ../mabw-workspace --runtime all --repo-workdir .
+```
+
+This copies project-local `.claude/` and `.opencode/` commands, agents, and skills into `../mabw-workspace`. It does not reinitialize the workspace and does not overwrite `audience_profile.md`, `config.yaml`, `sources.yaml`, `user.md`, or `input/`. If you installed only the Python package from wheel/PyPI/curl/Homebrew and do not have a source checkout, the command reports that runtime assets are source-clone-only; pass `--repo-workdir <MABW source repo>` when available.
 
 If the client returns `Unknown command: /generate-brief`, the current Claude Code session has not discovered this project command. Confirm that the Code tab project folder is the MABW repository root, or run the install command above and reopen/refresh the Claude Code session. Type `/` to see whether `/generate-brief` is listed. You can also use `multi-agent-brief run --workspace ../mabw-workspace` to create a handoff.
 
@@ -658,7 +669,7 @@ Public direction:
 - **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.
 - **v2.0: MAS Runtime Research Track** — after v1.0, explore richer runtime coordination concepts.
 
-See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.8 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, optional provenance projection, audience snapshots, and the Orchestrator control switchboard with a reader-facing source appendix generated during finalize. Python can surface control recommendations, record Orchestrator selections, and render a reader-facing source list; selection is still not execution, and the source appendix is not semantic proof. Gates, feedback, provenance, source discovery, repair, and subagent actions still require explicit Orchestrator action. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
+See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/runtime-asset-inventory.md](docs/runtime-asset-inventory.md) for install/runtime asset availability, [docs/runtime-recipes.md](docs/runtime-recipes.md) for runtime recipes, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.9 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, optional provenance projection, audience snapshots, the Orchestrator control switchboard, and reader-facing source appendices by stabilizing install/runtime asset parity. Python can surface control recommendations, record Orchestrator selections, and render a reader-facing source list; selection is still not execution, source appendices are not semantic proof, and runtime kit installation does not execute the brief workflow. Gates, feedback, provenance, source discovery, repair, and subagent actions still require explicit Orchestrator action. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
 
 ## Safety And Non-Investment-Advice Disclaimer
 
@@ -670,9 +681,9 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.6.8**
+Current version: **v0.6.9**
 
-v0.6.8 adds the reader-facing source appendix: `multi-agent-brief finalize` can generate `output/source_appendix.md` from Claim Ledger sources actually cited in the audited brief. The appendix does not expose internal claim/source IDs, evidence text, local paths, or `file://` URLs, and it is not semantic proof.
+v0.6.9 stabilizes install/runtime asset parity: package installs include the CLI, packaged contracts, and public-safe eval fixtures, while `.agents/`, `.claude/`, `.opencode/`, `.codex/`, and Hermes plugin source files are explicitly source-clone-only. The new `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` command copies OpenCode/Claude Code runtime kits into the business workspace so runtimes do not need to read the source checkout during normal execution.
 
 If you edit `audience_profile.md` during a run, the active run keeps using the frozen snapshot. To apply the edits, start a new run state:
 

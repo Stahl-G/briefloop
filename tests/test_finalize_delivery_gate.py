@@ -167,11 +167,14 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert report["source_appendix_source_count"] == 1
     assert report["source_appendix_cited_claim_count"] == 2
     assert report["source_appendix_resolved_claim_count"] == 1
+    assert report["source_appendix_mode"] == "append"
     assert "ExampleCo Opens Demo Facility" in appendix
     assert "Unused Source" not in appendix
     assert "SYN_CLAIM" not in appendix
     assert "SYN_SRC" not in appendix
     assert "Full synthetic evidence" not in appendix
+    assert "Source Appendix" in reader
+    assert "https://example.com/exampleco-demo" in reader
     assert "SYN_CLAIM" not in reader
 
 
@@ -410,3 +413,35 @@ def test_finalize_append_mode_uses_same_markdown_for_named_and_docx(tmp_path: Pa
     assert "Source Appendix" in _docx_text(output_dir / "ExampleCo_2026-06-09.docx")
     assert "[src:" not in reader
     assert result.source_appendix_mode == "append"
+
+
+def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "ExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n\n"
+        "## 附：本周 Claim Ledger 覆盖情况\n\n"
+        "| 覆盖类别 | 要求最低条数 | 实际条数 | 状态 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| 政策法规 | 4 | 4 | ok |\n\n"
+        "> 内部覆盖说明。\n\n"
+        "## Normal Reader Section\n\n"
+        "This should remain.\n",
+        encoding="utf-8",
+    )
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    assert "Claim Ledger 覆盖情况" not in reader
+    assert "覆盖类别" not in reader
+    assert "内部覆盖说明" not in reader
+    assert "Normal Reader Section" in reader
+    assert "[src:" not in reader

@@ -105,9 +105,17 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 
 - 已在 finalize 阶段加入 reader-facing source appendix 生成。
 - `source_appendix` 是当前 output format 名称；旧 `source_map` 作为兼容 alias 保留。
-- `output/source_appendix.md` 只来自 `output/intermediate/audited_brief.md` 实际引用、并可通过 `output/intermediate/claim_ledger.json` 解析的 claims。
+- Reader-facing 来源列表默认追加到最终 Markdown/DOCX 末尾，同时保留为 `output/source_appendix.md`；它只来自 `output/intermediate/audited_brief.md` 实际引用、并可通过 `output/intermediate/claim_ledger.json` 解析的 claims。
 - Reader-facing output 不应暴露 raw claim IDs、source IDs、evidence text、本地路径或 `file://` URL。
 - Appendix 不是 source evidence、semantic proof、runtime state file、provenance graph 或 workflow gate。
+
+### v0.6.9
+
+- 在进入 v0.7 improvement-proposal 工作前，先稳定 install/runtime asset parity。
+- Package install 包含 Python CLI、packaged contracts、policy packs 和 packaged public-safe eval fixtures。
+- `.agents/`、`.claude/`、`.codex/`、`.opencode/` 和 `integrations/hermes-plugin/` 等 runtime source directories 明确为 source-clone-only，除非复制到 workspace。
+- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` 可以从 source clone 安装 workspace-local OpenCode/Claude Code runtime kits。
+- v0.6.9 不新增 FrictionStore、improvement proposal commands、policy-pack authoring 或自动 workflow execution。
 
 ## 下一阶段
 
@@ -149,7 +157,7 @@ Non-goals:
 - 将 provenance projection 保持为 audit/debug tooling，semantic proof、replay 和 graph-database style query systems 后移。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
 
-v0.6.8 之后的公开顺序转向 FrictionStore、improvement proposals、policy packs 和 runtime parity，同时继续保持 subagent-first runtime boundary。
+v0.6.9 之后的公开顺序转向 FrictionStore、improvement proposals 和 policy packs，同时继续保持 subagent-first runtime boundary。
 
 公开实施概览：
 

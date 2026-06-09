@@ -15,6 +15,10 @@ from multi_agent_brief.outputs.source_appendix import (
 )
 
 _SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
+_INTERNAL_READER_SECTION_RE = re.compile(
+    r"(?:claim\s+ledger|声明账本).*(?:coverage|覆盖|覆盖情况)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -79,7 +83,9 @@ def finalize_reader_outputs(
 
     audited_markdown = audited_path.read_text(encoding="utf-8")
     stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
-    base_reader_markdown = strip_claim_citations(audited_markdown)
+    base_reader_markdown = _strip_internal_reader_sections(
+        strip_claim_citations(audited_markdown)
+    )
     formats = set(output_formats or ["markdown"])
     appendix_request = _source_appendix_request(
         output_formats=formats,
@@ -254,9 +260,9 @@ def _source_appendix_request(
     else:
         requested_by = "none"
         explicit = False
-    mode = str(source_appendix_config.get("mode") or "separate").strip().lower()
+    mode = str(source_appendix_config.get("mode") or "append").strip().lower()
     if mode not in {"separate", "append"}:
-        mode = "separate"
+        mode = "append"
     return {
         "requested_by": requested_by,
         "explicit": explicit,
@@ -314,3 +320,30 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
     return bool(value)
+
+
+def _strip_internal_reader_sections(markdown: str) -> str:
+    """Remove process-only sections that should not reach final readers."""
+    lines = markdown.splitlines()
+    cleaned: list[str] = []
+    skip_level: int | None = None
+
+    for line in lines:
+        heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
+        if skip_level is not None:
+            if heading and len(heading.group(1)) <= skip_level:
+                skip_level = None
+            else:
+                continue
+
+        if heading:
+            title = heading.group(2).strip()
+            if _INTERNAL_READER_SECTION_RE.search(title):
+                skip_level = len(heading.group(1))
+                while cleaned and not cleaned[-1].strip():
+                    cleaned.pop()
+                continue
+
+        cleaned.append(line)
+
+    return "\n".join(cleaned).rstrip() + "\n"

@@ -8,7 +8,7 @@ brief is produced by external subagents.
 
 ```text
 Python tools
-  init / sources decide / doctor / inputs classify / audit / finalize
+  init / sources decide / doctor / inputs extract / inputs classify / audit / finalize
 
 External subagents
   source-planner -> scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> formatter
@@ -21,6 +21,7 @@ The Python CLI keeps deterministic, testable support functions in code:
 - `multi-agent-brief init` — create a workspace
 - `multi-agent-brief sources decide` — resolve `llm_decide` source policy
 - `multi-agent-brief doctor` — check configuration and source health
+- `multi-agent-brief inputs extract` — convert supported PDF/DOCX/image inputs to adjacent `.mineru.md` files with MinerU
 - `multi-agent-brief inputs classify` — classify evidence and instruction inputs
 - `multi-agent-brief audit` — run deterministic audit checks where applicable
 - `multi-agent-brief finalize` — render reader-facing Markdown and DOCX from `audited_brief.md`
@@ -58,6 +59,9 @@ Source discovery if llm_decide is enabled
   |
   v
 doctor
+  |
+  v
+inputs extract when non-text inputs exist
   |
   v
 inputs classify

@@ -242,7 +242,7 @@ def build_hermes_cron_plan(
         "For low-cost frequent polling, convert the daily job to a wakeAgent/script gate in Hermes after the source pattern stabilizes.",
     ]
     return HermesCronPlan(
-        version="v0.6.8",
+        version="v0.6.9",
         workspace=str(workspace_path),
         project_name=summary["name"],
         cadences=resolved_cadences,
@@ -318,7 +318,7 @@ def render_hermes_cron_markdown(plan: HermesCronPlan) -> str:
 _SKILL_MD_TEMPLATE = '''---
 name: multi-agent-brief-hermes
 description: Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
-version: 0.6.8
+version: 0.6.9
 author: multi-agent-brief-workflow
 license: MIT
 platforms:
@@ -340,7 +340,7 @@ Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using 
 
 ## Operating Model
 
-Hermes is a native MABW runtime. The Hermes parent agent is the Orchestrator main agent: it reads shared contract references and runtime state files, manages artifact handoff, checks expected artifacts, and selects the next workflow decision. Hermes `delegate_task` children run scout, screener, claim-ledger, analyst, editor, and auditor tasks as isolated subagents. Python CLI tools handle init, doctor, sources decide, inputs classify, state checks, feedback ingest/plan/resolve/show/validate, gates check/show/validate, provenance build/show/validate, audit, finalize, and rendering support. Cron jobs provide durable scheduling; `delegate_task` provides child task dispatch within each run.
+Hermes is a native MABW runtime. The Hermes parent agent is the Orchestrator main agent: it reads shared contract references and runtime state files, manages artifact handoff, checks expected artifacts, and selects the next workflow decision. Hermes `delegate_task` children run scout, screener, claim-ledger, analyst, editor, and auditor tasks as isolated subagents. Python CLI tools handle init, doctor, sources decide, input extraction/classification, state checks, feedback ingest/plan/resolve/show/validate, gates check/show/validate, provenance build/show/validate, audit, finalize, and rendering support. Cron jobs provide durable scheduling; `delegate_task` provides child task dispatch within each run.
 
 Contract references:
 
@@ -516,21 +516,29 @@ multi-agent-brief sources decide --config <workspace>/config.yaml
 
 Review and merge according to workspace policy.
 
-6. Classify input files:
+6. Extract non-text input files when present:
+
+```bash
+multi-agent-brief inputs extract --config <workspace>/config.yaml
+```
+
+This converts PDF/DOCX/image inputs to adjacent `.mineru.md` files before classification. Directory role still controls claim eligibility: extracted files under `input/sources/` are evidence; extracted files under `input/context/`, `input/instructions/`, and `input/feedback/` are not evidence.
+
+7. Classify input files:
 
 ```bash
 multi-agent-brief inputs classify --config <workspace>/config.yaml
 ```
 
-7. Create `output/intermediate/` if it does not exist.
+8. Create `output/intermediate/` if it does not exist.
 
-8. Delegate child tasks with complete context and explicit artifact paths. Use `delegate_task` for each step.
+9. Delegate child tasks with complete context and explicit artifact paths. Use `delegate_task` for each step.
 
-9. After each child returns, verify the expected artifact exists and is non-empty before selecting the next decision.
+10. After each child returns, verify the expected artifact exists and is non-empty before selecting the next decision.
 
-10. If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
+11. If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
 
-11. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
+12. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
 
 ```bash
 multi-agent-brief gates check --workspace <workspace>
@@ -725,7 +733,7 @@ def render_hermes_setup_success(
     repo: str | Path,
     venv: str | Path,
     workspace: str | Path,
-    version: str = "v0.6.8",
+    version: str = "v0.6.9",
     doctor_status: str = "passed",
 ) -> str:
     return f"""Project is cloned and ready.
@@ -857,13 +865,16 @@ As the Hermes Orchestrator main agent, execute:
 6. If source discovery is configured:
    multi-agent-brief sources decide --config {workspace}/config.yaml
 
-7. If input governance is available:
+7. If non-text input files are present:
+   multi-agent-brief inputs extract --config {workspace}/config.yaml
+
+8. If input governance is available:
    multi-agent-brief inputs classify --config {workspace}/config.yaml
 
-8. Refresh runtime state without running stages:
+9. Refresh runtime state without running stages:
    multi-agent-brief state check --workspace {workspace}
 
-9. If audit findings or human feedback exist, structure them without running repair:
+10. If audit findings or human feedback exist, structure them without running repair:
    multi-agent-brief feedback ingest --workspace {workspace} --feedback <path> --source human|audit
    multi-agent-brief feedback plan --workspace {workspace}
    multi-agent-brief feedback resolve --workspace {workspace} --issue-id <id> --repair-plan-id <id> --reason <reason>

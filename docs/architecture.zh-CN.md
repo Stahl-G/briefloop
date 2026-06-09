@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-  A["用户需求<br/>onboarding + init"] --> B["来源治理<br/>sources decide + doctor + inputs classify"]
+  A["用户需求<br/>onboarding + init"] --> B["来源治理<br/>sources decide + doctor + inputs extract/classify"]
   B --> C["Scout<br/>信息侦察员"]
   C --> D["Screener<br/>筛选师"]
   D --> E["Claim Ledger<br/>事实账本"]
@@ -23,7 +23,7 @@ flowchart LR
 
 ### Hermes（主路径）
 
-Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → claim-ledger → analyst → editor → auditor。Python CLI 提供 init、doctor、inputs classify、finalize 工具；cron 处理定时调度。
+Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → claim-ledger → analyst → editor → auditor。Python CLI 提供 init、doctor、输入抽取/分类、finalize 工具；cron 处理定时调度。
 
 ### Claude Code / OpenCode / Codex
 
@@ -40,7 +40,7 @@ Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → cla
 | `input/instructions/` | 任务要求 | ❌ |
 | `input/context/` | 背景参考 | ❌ |
 
-`multi-agent-brief inputs classify --config <path>` 自动分类并产出 `input_classification.json`。Scout 被约束只从 `input/sources/` 和 `input/` 根目录（向后兼容）提取声明。ManualProvider 代码层阻止非证据目录作为 source。
+`multi-agent-brief inputs extract --config <path>` 会用 MinerU 把受支持的 PDF/DOCX/PPTX/XLSX/图片输入转换为相邻的 `.mineru.md` 文件。随后 `multi-agent-brief inputs classify --config <path>` 自动分类原始文件和抽取文件，并产出 `input_classification.json`。Scout 被约束只从 `input/sources/` 和 `input/` 根目录（向后兼容）提取声明。`input/context/`、`input/instructions/`、`input/feedback/` 下抽取出的 Markdown 仍然是非证据材料。ManualProvider 代码层阻止非证据目录作为 source。
 
 ## 各角色职责
 

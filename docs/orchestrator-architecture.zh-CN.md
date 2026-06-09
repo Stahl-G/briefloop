@@ -28,7 +28,7 @@ v0.6.0 引入公开安全的 contract references：
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks。v0.6.2 增加最小 feedback issue 和 repair-plan 控制面。v0.6.3 增加 deterministic material-fact、freshness 和 target-relevance gate controls。v0.6.4 增加 packaged public-safe evaluation cases，用于开发和 CI 回归验证。v0.6.5 增加可选 deterministic provenance projection，用于 workspace audit/debug review。v0.6.6 增加 workspace-local audience profile 和 frozen per-run audience snapshot，并通过 handoff 暴露。v0.6.7 增加 Orchestrator control switchboard，用于 deterministic control recommendations 和 enable/defer/reject selection 记录。v0.6.8 增加 finalize 阶段生成的 reader-facing source appendix，只使用 audited brief 实际引用的 Claim Ledger 来源。Python 仍不自动改 brief artifacts、不执行 repair、不 live-fetch sources、不做 semantic truth judgment、不用 LLM judge 给文章打分、不把 provenance 或 source appendix 当成语义证明，也不自动学习 taste 或自动执行 selected controls。
+这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks。v0.6.2 增加最小 feedback issue 和 repair-plan 控制面。v0.6.3 增加 deterministic material-fact、freshness 和 target-relevance gate controls。v0.6.4 增加 packaged public-safe evaluation cases，用于开发和 CI 回归验证。v0.6.5 增加可选 deterministic provenance projection，用于 workspace audit/debug review。v0.6.6 增加 workspace-local audience profile 和 frozen per-run audience snapshot，并通过 handoff 暴露。v0.6.7 增加 Orchestrator control switchboard，用于 deterministic control recommendations 和 enable/defer/reject selection 记录。v0.6.8 增加 finalize 阶段生成的 reader-facing source appendix，只使用 audited brief 实际引用的 Claim Ledger 来源。v0.6.9 稳定 install/runtime asset parity，并增加 workspace-local OpenCode/Claude Code runtime kits。Python 仍不自动改 brief artifacts、不执行 repair、不 live-fetch sources、不做 semantic truth judgment、不用 LLM judge 给文章打分、不把 provenance 或 source appendix 当成语义证明，也不自动学习 taste 或自动执行 selected controls。
 
 ## 四类 Contract
 
@@ -69,9 +69,22 @@ Orchestrator 使用统一 decision vocabulary：
 
 不同 runtime 的机制可以不同，但 artifact expectations 不应分叉。
 
+## Runtime Asset Availability
+
+Package install 包含 Python CLI、packaged contract configs、policy packs 和
+packaged public-safe eval fixtures。`.agents/`、`.claude/`、`.codex/`、
+`.opencode/` 和 `integrations/hermes-plugin/` 等 runtime source directories
+属于 source-clone-only。
+
+在源码仓库中运行
+`multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all`
+可以把 workspace-local OpenCode/Claude Code commands、agents 和 skills 复制到业务
+workspace。安装后的 workspace kit 允许 runtime 在业务 workspace 内运行，而不必读取
+MABW source repo。
+
 ## Reader-Facing Source Appendix
 
-v0.6.8 允许 `multi-agent-brief finalize` 在配置了 `source_appendix` 时写入 `output/source_appendix.md`；旧配置中的 `source_map` output format 会作为兼容 alias 处理。
+v0.6.8 允许 `multi-agent-brief finalize` 在配置了 `source_appendix` 时生成 reader-facing source appendix；当前 `source_appendix` 请求会默认把来源列表追加到最终 Markdown/DOCX 末尾，同时保留 `output/source_appendix.md`。旧配置中的 `source_map` output format 会作为兼容 alias 处理。
 
 - Appendix 只来自 `output/intermediate/audited_brief.md` 实际引用的 claims。
 - Reader-facing output 不应暴露 raw `claim_id`、`source_id`、evidence text、本地路径或 `file://` URL。

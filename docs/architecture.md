@@ -6,7 +6,7 @@ A subagent-first briefing workflow. The Python CLI manages workspaces, source go
 
 ```mermaid
 flowchart LR
-  A["User Requirements<br/>onboarding + init"] --> B["Source Governance<br/>sources decide + doctor + inputs classify"]
+  A["User Requirements<br/>onboarding + init"] --> B["Source Governance<br/>sources decide + doctor + inputs extract/classify"]
   B --> C["Scout"]
   C --> D["Screener"]
   D --> E["Claim Ledger"]
@@ -23,7 +23,7 @@ Gray steps (source governance, finalize) run via Python CLI. White steps (Scout 
 
 ### Hermes (Primary)
 
-Hermes uses `delegate_task` native child pipelines: scout → screener → claim-ledger → analyst → editor → auditor. Python CLI tools handle init, doctor, inputs classify, and finalize. Cron handles durable scheduling.
+Hermes uses `delegate_task` native child pipelines: scout → screener → claim-ledger → analyst → editor → auditor. Python CLI tools handle init, doctor, input extraction/classification, and finalize. Cron handles durable scheduling.
 
 ### Claude Code / OpenCode / Codex
 
@@ -40,7 +40,7 @@ Four convention directories under `input/`:
 | `input/instructions/` | Task requirements | ❌ |
 | `input/context/` | Background reference | ❌ |
 
-`multi-agent-brief inputs classify --config <path>` auto-classifies and produces `input_classification.json`. Scout is constrained to only extract claims from `input/sources/` and `input/` root (backward compatible). ManualProvider blocks non-evidence directories at the code level.
+`multi-agent-brief inputs extract --config <path>` converts supported PDF/DOCX/PPTX/XLSX/image inputs to adjacent `.mineru.md` files with MinerU. `multi-agent-brief inputs classify --config <path>` then auto-classifies the original and extracted files and produces `input_classification.json`. Scout is constrained to only extract claims from `input/sources/` and `input/` root (backward compatible). Extracted Markdown under `input/context/`, `input/instructions/`, or `input/feedback/` remains non-evidence. ManualProvider blocks non-evidence directories at the code level.
 
 ## Role Responsibilities
 

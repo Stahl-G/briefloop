@@ -7,8 +7,10 @@ Each capability has one of the following statuses:
 | **Supported** | Actively tested, documented, and considered stable for v1.0. |
 | **Experimental** | Functional but may change without notice. Not guaranteed for production. |
 | **Interface Only** | Abstract interface exists; no concrete implementation shipped. |
-| **CLI-only** | Requires source clone + manual setup; not available via pip install. |
+| **CLI-only** | Installs and exposes deterministic CLI commands, but does not include source-clone runtime asset trees. |
+| **Source-clone-only** | Requires repository files that are not shipped as Python package data. |
 | **Deprecated** | Still present but scheduled for removal. Use the replacement. |
+| **Not shipped** | Not included in this distribution surface. |
 
 ## Core Pipeline
 
@@ -27,6 +29,7 @@ Each capability has one of the following statuses:
 | `multi-agent-brief run --workspace <path>` | Supported |
 | `multi-agent-brief state init/check/show/decide` | Supported |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
+| `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|all` | Source-clone-only |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
 | `multi-agent-brief gates check/show/validate` | Supported |
 | `multi-agent-brief provenance build/show/validate` | Supported |
@@ -34,6 +37,7 @@ Each capability has one of the following statuses:
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
+| `multi-agent-brief inputs extract` | Experimental |
 | `multi-agent-brief inputs classify` | Supported |
 | `multi-agent-brief finalize` | Supported |
 | `multi-agent-brief audit` | Supported |
@@ -61,6 +65,13 @@ Source appendices are reader-facing delivery artifacts generated during finalize
 | OpenCode (subagent workflow) | Supported |
 | Codex (subagent workflow) | Supported |
 | Manual (print workflow steps) | Supported |
+
+Runtime source assets under `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
+and `integrations/hermes-plugin/` are source-clone assets. Package-only installs
+ship the CLI, packaged contracts, and packaged eval fixtures, but they do not
+ship those source runtime directories as Python package data. Use
+`multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all`
+from a source clone to copy OpenCode/Claude Code workspace-local runtime kits.
 
 ## Source Providers
 
@@ -105,6 +116,7 @@ Source appendices are reader-facing delivery artifacts generated during finalize
 |---|---|
 | Packaged public-safe evaluation cases (`eval-cases`) | Supported |
 | Workspace provenance projection (`provenance`) | Supported |
+| Runtime asset parity check (`scripts/check_runtime_asset_parity.py`) | Source-clone-only |
 | Private/commercial benchmark cases | Not shipped |
 | LLM-as-judge prose scoring | Not shipped |
 
@@ -139,6 +151,18 @@ Source appendices are reader-facing delivery artifacts generated during finalize
 | curl installer (`install.sh`) | CLI-only |
 | PowerShell installer (`install.ps1`) | CLI-only |
 | Hermes plugin (`integrations/hermes-plugin/`) | Supported |
+
+| Runtime asset | Source clone | Wheel / sdist / PyPI package |
+|---|---|---|
+| Packaged contracts (`configs/*.yaml`) | Supported | Supported |
+| Packaged eval fixtures (`eval-cases`) | Supported | Supported |
+| `.agents/skills/**` | Supported | Source-clone-only |
+| `.agents/hermes-skills/**` | Supported | Source-clone-only |
+| `.claude/agents/**` and `.claude/commands/**` | Supported | Source-clone-only |
+| `.opencode/agents/**` and `.opencode/commands/**` | Supported | Source-clone-only |
+| `.codex/agents/**` | Supported | Source-clone-only |
+| `integrations/hermes-plugin/**` | Supported | Source-clone-only |
+| `scripts/install.sh`, `scripts/install.ps1`, `Formula/` | Supported | Source-clone-only |
 
 ## Legacy / Deprecated
 

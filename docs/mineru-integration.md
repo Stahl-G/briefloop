@@ -13,7 +13,53 @@ pip install "mineru[all]"
 
 Requires Python 3.10-3.13. See [MinerU docs](https://opendatalab.github.io/MinerU/) for detailed installation.
 
-## Configuration
+## Input Extraction Mode
+
+Use this mode when users place PDF, DOCX, PPTX, XLSX, or image files under
+`input/`. MinerU converts the original files into adjacent Markdown files, and
+then input governance decides whether the extracted Markdown is evidence,
+context, instructions, or feedback.
+
+```bash
+multi-agent-brief inputs extract --config <workspace>/config.yaml
+multi-agent-brief inputs classify --config <workspace>/config.yaml
+```
+
+Example:
+
+```text
+input/
+  sources/company-filing.pdf
+  context/previous-weekly.docx
+  feedback/reviewer-screenshot.jpg
+```
+
+After extraction:
+
+```text
+input/
+  sources/company-filing_pdf.mineru.md
+  context/previous-weekly_docx.mineru.md
+  feedback/reviewer-screenshot_jpg.mineru.md
+```
+
+Directory semantics are preserved:
+
+| Folder | Extracted Markdown role | Enters Claim Ledger? |
+|---|---|---|
+| `input/sources/` | Evidence | Yes |
+| `input/context/` | Background/style reference | No |
+| `input/instructions/` | Task guidance | No |
+| `input/feedback/` | Review feedback | No |
+
+`inputs extract` writes `output/input_extraction_report.json`. If the MinerU
+CLI is missing, the command reports a clear failure and leaves original files
+untouched. Scout should read extracted Markdown, not raw binary documents.
+
+## Source Provider Mode
+
+Use this mode only when a MinerU-parsed document is meant to be collected as a
+source provider entry.
 
 In `sources.yaml`:
 
@@ -33,7 +79,7 @@ mineru:
   output_dir: "output/mineru_output"
 ```
 
-## How It Works
+## How Source Provider Mode Works
 
 1. `multi-agent-brief doctor` checks that `mineru` is available in PATH.
 2. When collecting sources, each configured path is parsed via `mineru -p <path> -o <output_dir> -b <backend>`.
@@ -112,4 +158,3 @@ mineru:
 2. If `path` is used (local file), the file is uploaded to MinerU's OSS via signed URL.
 3. The provider polls the task status until `state=done`.
 4. The parsed Markdown is returned as a SourceItem.
-

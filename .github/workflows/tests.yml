@@ -157,6 +157,9 @@ jobs:
       - name: Capabilities check
         run: python scripts/check_capabilities.py
 
+      - name: Runtime asset parity check
+        run: python scripts/check_runtime_asset_parity.py
+
       - name: Failure diagnostics
         if: failure()
         run: |
@@ -225,14 +228,30 @@ jobs:
       - name: Runtime handoff check
         run: |
           multi-agent-brief run --workspace /tmp/mabw-ci-smoke --skip-doctor
+          multi-agent-brief state show --workspace /tmp/mabw-ci-smoke --json
+          multi-agent-brief state check --workspace /tmp/mabw-ci-smoke --json
           test -f /tmp/mabw-ci-smoke/output/intermediate/agent_handoff.json
           test -f /tmp/mabw-ci-smoke/output/intermediate/runtime_manifest.json
           test -f /tmp/mabw-ci-smoke/output/intermediate/workflow_state.json
           test -f /tmp/mabw-ci-smoke/output/intermediate/artifact_registry.json
           test -f /tmp/mabw-ci-smoke/output/intermediate/event_log.jsonl
+          test -f /tmp/mabw-ci-smoke/output/intermediate/audience_profile_snapshot.md
           test -f /tmp/mabw-ci-smoke/output/intermediate/orchestrator_control_switchboard.json
           test ! -f /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
+          test ! -f /tmp/mabw-ci-smoke/output/intermediate/claim_ledger.json
           test ! -f /tmp/mabw-ci-smoke/output/brief.md
+          test ! -f /tmp/mabw-ci-smoke/output/source_appendix.md
+
+      - name: Package-only runtime asset boundary
+        run: |
+          cd /tmp
+          set +e
+          multi-agent-brief runtime install --workspace /tmp/mabw-ci-smoke --runtime opencode > /tmp/runtime-install.log 2>&1
+          rc=$?
+          set -e
+          cat /tmp/runtime-install.log
+          test "$rc" -ne 0
+          grep -q "source-clone-only" /tmp/runtime-install.log
 
       - name: Control switchboard smoke
         run: |
@@ -249,6 +268,17 @@ jobs:
 
       - name: Assert prepare stays removed
         run: python scripts/ci/smoke_pipeline.py /tmp/mabw-ci-smoke/config.yaml /tmp/mabw-ci-smoke/input
+
+      - name: Wheel install smoke
+        run: |
+          python -m pip install build
+          python -m build
+          python -m venv /tmp/mabw-wheel-smoke
+          /tmp/mabw-wheel-smoke/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/mabw-wheel-smoke/bin/multi-agent-brief init /tmp/mabw-wheel-ws --demo --force
+          /tmp/mabw-wheel-smoke/bin/multi-agent-brief run --workspace /tmp/mabw-wheel-ws --skip-doctor
+          /tmp/mabw-wheel-smoke/bin/multi-agent-brief eval-cases run --json
 
   llm-decide-smoke:
     name: llm_decide + doctor + sources decide smoke

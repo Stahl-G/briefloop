@@ -105,9 +105,17 @@ Two design principles guide the next phases:
 
 - Reader-facing source appendix generation was added to finalize.
 - `source_appendix` is the current output format name; legacy `source_map` remains a compatibility alias.
-- `output/source_appendix.md` is generated only from claims actually cited in `output/intermediate/audited_brief.md` and resolved through `output/intermediate/claim_ledger.json`.
+- The reader-facing source list is appended to final Markdown/DOCX by default and kept as `output/source_appendix.md`; it is generated only from claims actually cited in `output/intermediate/audited_brief.md` and resolved through `output/intermediate/claim_ledger.json`.
 - Reader-facing output must not expose raw claim IDs, source IDs, evidence text, local paths, or `file://` URLs.
 - The appendix is not source evidence, semantic proof, a runtime state file, a provenance graph, or a workflow gate.
+
+### v0.6.9
+
+- Install/runtime asset parity is stabilized before v0.7 improvement-proposal work.
+- Package installs include Python CLI code, packaged contracts, policy packs, and packaged public-safe eval fixtures.
+- Source runtime directories such as `.agents/`, `.claude/`, `.codex/`, `.opencode/`, and `integrations/hermes-plugin/` are documented as source-clone-only unless copied into a workspace.
+- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` installs workspace-local OpenCode/Claude Code runtime kits from a source clone.
+- v0.6.9 does not add FrictionStore, improvement proposal commands, policy-pack authoring, or automatic workflow execution.
 
 ## Next Milestones
 
@@ -149,7 +157,7 @@ Public scope:
 - Keep provenance projection as audit/debug tooling while deferring semantic proof, replay, and graph-database style query systems.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing after v0.6.8 moves toward FrictionStore, improvement proposals, policy packs, and runtime parity while preserving the subagent-first runtime boundary.
+Public sequencing after v0.6.9 moves toward FrictionStore, improvement proposals, and policy packs while preserving the subagent-first runtime boundary.
 
 Public implementation overviews:
 

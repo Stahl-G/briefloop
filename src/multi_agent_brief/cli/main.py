@@ -30,6 +30,7 @@ from multi_agent_brief.cli import (
     claude_commands,
     provenance_commands,
     controls_commands,
+    runtime_commands,
 )
 
 
@@ -85,6 +86,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Orchestrator control switchboard
     controls_commands.register(subparsers)
+
+    # Workspace runtime kit install
+    runtime_commands.register(subparsers)
 
     # Claude Code install helpers
     claude_commands.register(subparsers)
@@ -173,6 +177,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "controls":
         return controls_commands.handle(args)
+
+    if cmd == "runtime":
+        return runtime_commands.handle(args)
 
     if cmd == "claude":
         return claude_commands.handle(args)

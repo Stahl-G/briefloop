@@ -5,6 +5,24 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.9] — 2026-06-09
+
+### Added
+
+- **Workspace runtime kit installer**: added `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` to copy OpenCode/Claude Code project commands, agents, and a small workspace skill into the business workspace.
+- **Runtime asset inventory**: added `docs/runtime-asset-inventory.md` and `scripts/check_runtime_asset_parity.py` to distinguish packaged contract/eval data from source-clone-only runtime assets.
+- **Runtime recipes**: added `docs/runtime-recipes.md` to document full subagent and compact human-assisted workflow recipes without adding a Python workflow mode.
+- **Install smoke hardening**: expanded non-dev CI smoke to check state show/check, absence of stage outputs after `run`, package-only runtime asset boundaries, and wheel install behavior.
+
+### Changed
+
+- **Install/runtime truth**: README, README_en, support matrix, roadmap, and architecture docs now distinguish package-installed CLI behavior from source-clone runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, and the Hermes plugin source tree.
+- **Workspace-local runtime guidance**: users can install runtime assets into a workspace to avoid OpenCode/Claude reading the MABW source checkout during normal workspace execution.
+
+### Boundaries
+
+- v0.6.9 is a stabilization release. It does not add FrictionStore, improvement proposal commands, policy-pack authoring, automatic repair, automatic source fetching, or a Python brief-generation pipeline. Runtime kit selection and installation do not execute the brief workflow.
+
 ## [0.6.8] — 2026-06-09
 
 ### Added

@@ -229,6 +229,19 @@ For prior weekly reports or example briefs, place a Markdown version in
 `input/context/`. These files are style and structure references only; they are
 not current-period evidence.
 
+PDF, DOCX, PPTX, XLSX, and image inputs are supported through MinerU extraction.
+Place the original file in the correct subfolder first, then run:
+
+```bash
+multi-agent-brief inputs extract --config config.yaml
+multi-agent-brief inputs classify --config config.yaml
+```
+
+The extraction command writes an adjacent `.mineru.md` file. Directory role is
+preserved: extracted Markdown under `input/sources/` may enter the Claim Ledger;
+extracted Markdown under `input/context/`, `input/instructions/`, or
+`input/feedback/` remains non-evidence.
+
 Do not place confidential company documents, internal reports, private messages,
 credentials, raw logs, or material non-public information in this folder unless
 the workspace is local-only and excluded from Git.
@@ -263,6 +276,17 @@ INPUT_README_ZH = """# 输入文件夹
 
 请在 `input/context/` 里加入你的简报示例 Markdown 文件，例如往期周报。
 这些文件只作为结构、口吻和表格风格参考，不作为本期事实来源。
+
+PDF、DOCX、PPTX、XLSX 和图片输入通过 MinerU 抽取支持。请先把原始文件放到正确子目录，再运行：
+
+```bash
+multi-agent-brief inputs extract --config config.yaml
+multi-agent-brief inputs classify --config config.yaml
+```
+
+抽取命令会在原文件旁边写入 `.mineru.md`。目录角色保持不变：
+`input/sources/` 下抽取出的 Markdown 可以进入 Claim Ledger；`input/context/`、
+`input/instructions/`、`input/feedback/` 下抽取出的 Markdown 仍然是非证据材料。
 
 不要把机密公司文件、内部报告、私有消息、凭据、原始日志或重大非公开信息放入此文件夹，除非该工作区只保存在本地且已从 Git 中排除。
 

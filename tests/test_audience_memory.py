@@ -187,6 +187,24 @@ def test_run_backfills_missing_profile_from_workspace_config(tmp_path):
     assert "Unknown industry/theme" not in profile
 
 
+def test_runtime_state_commands_do_not_overwrite_existing_audience_profile(tmp_path):
+    ws = _write_workspace(tmp_path)
+    custom_profile = "# Audience Profile\n\nCUSTOM_TASTE_MARKER_DO_NOT_OVERWRITE\n"
+    (ws / "audience_profile.md").write_text(custom_profile, encoding="utf-8")
+
+    assert main(["run", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--skip-doctor"]) == 0
+    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
+
+    assert main(["state", "init", "--workspace", str(ws), "--repo-workdir", str(ROOT)]) == 0
+    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
+
+    assert main(["state", "check", "--workspace", str(ws), "--repo-workdir", str(ROOT)]) == 0
+    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
+
+    assert main(["state", "init", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--reset-state"]) == 0
+    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == custom_profile
+
+
 def test_rerun_same_run_id_does_not_duplicate_snapshot_created_event(tmp_path):
     ws = _write_workspace(tmp_path)
     for _ in range(2):

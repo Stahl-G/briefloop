@@ -115,7 +115,7 @@
 
 ### 4. 输入分类与来源治理
 
-项目在 `input/` 下预设四个子目录，并提供了 `multi-agent-brief inputs classify` 命令，自动将输入文件按角色分类：
+项目在 `input/` 下预设四个子目录，并提供了 `multi-agent-brief inputs extract` / `multi-agent-brief inputs classify` 命令。PDF、DOCX、PPTX、XLSX 和图片会先通过 MinerU 抽取为相邻的 `.mineru.md`，再按目录角色分类：
 
 | 目录 | 角色 | 路由目标 | 是否进入 Claim Ledger |
 |------|------|----------|----------------------|
@@ -125,6 +125,13 @@
 | `input/context/` | 📎 背景参考 | Analyst | ❌ 否 |
 
 `input/` 根目录下的文件向后兼容，视同证据。
+
+典型顺序：
+
+```bash
+multi-agent-brief inputs extract --config <workspace>/config.yaml
+multi-agent-brief inputs classify --config <workspace>/config.yaml
+```
 
 这解决了核心问题：用户的修改意见、任务说明、背景材料**不会被误当作事实来源**写入简报。Scout 子智能体被约束只从证据目录提取声明，非证据文件由 orchestrator 路由给对应的子智能体作为指导。
 
@@ -198,6 +205,7 @@ output:
 - **Hermes（主路径）**：`multi-agent-brief hermes install-plugin` 一键安装插件。在 Hermes 中用 `/mabw new` 开始新建简报，`/mabw run <workspace>` 运行已有工作区，`/mabw continue <workspace>` 恢复之前的管线。底层走 `delegate_task` 子代理管线（scout → screener → claim-ledger → analyst → editor → auditor），配合 cron 调度。
 - **Claude Code**：在 Claude Code CLI 或 Claude Desktop 的 Code tab 中打开本仓库时，使用 `/generate-brief <workspace>` 命令。这个 slash command 不是终端命令；如果当前 session 的 project folder 没有加载本仓库的 `.claude/commands` 或 skills，它也不会出现。
 - **Codex / OpenCode**：`.codex/`、`.opencode/` 目录下提供 agent 配置。
+- **Workspace runtime kit**：如果想在业务工作区本身打开 Claude Code 或 OpenCode，而不是打开 MABW 源码仓库，先从源码仓库运行 `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all`。它会把 project-local commands、agents 和 skills 复制到工作区，避免 runtime 访问源码目录。
 
 ### 10. 开源发布安全检查
 
@@ -250,6 +258,14 @@ multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```bash
 multi-agent-brief claude install --repo-workdir .
 ```
+
+如果想直接在业务工作区打开 Claude Code 或 OpenCode，安装 workspace-local runtime kit：
+
+```bash
+multi-agent-brief runtime install --workspace ../mabw-workspace --runtime all --repo-workdir .
+```
+
+这会把 `.claude/`、`.opencode/` 的 project-local commands/agents/skills 复制到 `../mabw-workspace`，不会重建工作区，也不会覆盖 `audience_profile.md`、`config.yaml`、`sources.yaml`、`user.md` 或 `input/`。如果只通过 wheel/PyPI/curl/Homebrew 安装了 Python 包，而没有源码仓库，这个命令会提示 runtime assets 是 source-clone-only；此时请传入 `--repo-workdir <MABW 源码仓库>`。
 
 如果界面返回 `Unknown command: /generate-brief`，说明当前 Claude Code session 没有发现这个项目命令。先确认 Code tab 的 project folder 是本仓库根目录，或运行上面的安装命令后重新打开/刷新 Claude Code session，并输入 `/` 看命令列表里是否有 `/generate-brief`；也可以改用 `multi-agent-brief run --workspace ../mabw-workspace` 生成 handoff。
 
@@ -526,7 +542,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 - Synthetic module price checks showed a 3.5% week-over-week decline in selected spot-market channels. [src:MARKETDA_867A7D67D0]
 ```
 
-给人阅读的 `brief.md` 会去掉内部引用标记；回溯关系保留在 `intermediate/audited_brief.md` 和 `claim_ledger.json`。如果配置了 `source_appendix`，`output/source_appendix.md` 会提供不含内部 ID 和 evidence text 的读者版来源列表。
+给人阅读的 `brief.md` 会去掉内部引用标记；回溯关系保留在 `intermediate/audited_brief.md` 和 `claim_ledger.json`。如果配置了 `source_appendix`，finalize 会生成不含内部 ID 和 evidence text 的读者版来源列表，默认追加到 `brief.md` / `brief.docx` 末尾，同时保留 `output/source_appendix.md`。
 
 对应事实会写入 `claim_ledger.json`：
 
@@ -558,6 +574,8 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 * [迁移说明](docs/MIGRATION.zh-CN.md)
 * [Orchestrator Contract 模型](docs/orchestrator-contracts.zh-CN.md)
 * [Orchestrator 架构](docs/orchestrator-architecture.zh-CN.md)
+* [Runtime Asset Inventory](docs/runtime-asset-inventory.md)
+* [Runtime Recipes](docs/runtime-recipes.md)
 * [Claude Code 工作流](docs/claude-code-workflow.md)
 * [Claude Code 快速开始](docs/claude-code-quickstart.md)
 * [Agent 协作设计](docs/agent-collaboration.md)
@@ -585,7 +603,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.8 在共享 Orchestrator authority、runtime state、feedback/repair control plane、deterministic quality gates、packaged public-safe evaluation cases、optional provenance projection、audience snapshot 和 control switchboard 之上，增加 reader-facing source appendix。Python 可以生成 control recommendations、记录 Orchestrator selections，并在 finalize 时生成读者版来源附录；但 selection 不等于 execution，source appendix 也不是语义证明。实际 gates、feedback、provenance、source discovery、repair 或 subagent action 仍必须由 Orchestrator 显式触发。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
+公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.9 在共享 Orchestrator authority、runtime state、feedback/repair control plane、deterministic quality gates、packaged public-safe evaluation cases、optional provenance projection、audience snapshot、control switchboard 和 reader-facing source appendix 之上，稳定 install/runtime asset parity。Python 可以生成 control recommendations、记录 Orchestrator selections，并在 finalize 时生成读者版来源附录；但 selection 不等于 execution，source appendix 也不是语义证明，runtime kit install 也不执行 brief workflow。实际 gates、feedback、provenance、source discovery、repair 或 subagent action 仍必须由 Orchestrator 显式触发。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
 
 ---
 
@@ -674,9 +692,9 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.6.8**
+当前版本：**v0.6.9**
 
-v0.6.8 增加 reader-facing source appendix：`multi-agent-brief finalize` 可从 audited brief 实际引用的 Claim Ledger 来源生成 `output/source_appendix.md`。该附录不暴露内部 claim/source IDs、evidence text、本地路径或 `file://` URL，也不等同于语义证明。
+v0.6.9 稳定 install/runtime asset parity：package install 包含 CLI、packaged contracts 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 与 Hermes plugin 源文件明确为 source-clone-only。新增 `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all`，可把 OpenCode/Claude Code runtime kit 复制到业务 workspace，避免运行时回读源码目录。
 
 如果在一次 run 期间修改 `audience_profile.md`，当前 run 会继续使用已经冻结的 snapshot。要让修改生效，请先开启新的 run state：
 
