@@ -88,6 +88,26 @@ Use these standards for every repository change, especially before opening, upda
 
 For architecture orientation before roadmap-driven work, read `docs/agent-dev-guide.zh-CN.md`, `docs/agent-dev-prompt.zh-CN.md`, `docs/architecture-status.md`, `docs/MIGRATION.md`, `docs/orchestrator-contracts.md`, and `docs/support-matrix.md`.
 
+### Implementation Plan Checklist
+
+Before implementing a feature or writing a code plan, answer these questions explicitly. This keeps runtime context, workflow artifacts, contracts, provenance, and reader-facing output from being mixed together.
+
+1. Which architecture layer does this feature belong to?
+2. Is it runtime state?
+3. Is it a workflow artifact?
+4. Should it enter `artifact_registry.json`?
+5. Should it enter `event_log.jsonl`?
+6. Should it enter `provenance_graph.json`?
+7. Should it enter the Claim Ledger?
+8. If it is missing or invalid, should it block the run? If yes, which stage and which decision?
+9. Who consumes it: Python tool, Orchestrator, specialist role, or final reader?
+10. Does any Python code cross into agent behavior such as drafting, editing, judging taste, executing repair, or coordinating specialist roles?
+11. Will this work in both source-clone and packaged/non-editable installs?
+12. Is the artifact, fixture, or documentation public-safe?
+13. Does it need an E2E fixture or packaged eval case?
+14. Does it affect a later planned version, contract, or migration path?
+15. What is the smallest P0 test that proves the boundary and behavior?
+
 ### Version And Release Semantics
 
 - If a branch, PR, README, changelog, or commit title claims a released version such as `v0.6.0`, update the release source files together: `VERSION`, `pyproject.toml`, `README.md`, `README_en.md`, `CHANGELOG.md`, Hermes skill metadata, and any version defaults in code.
