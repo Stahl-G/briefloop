@@ -6,7 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from multi_agent_brief.core.config import build_run_settings, load_config
+from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
 
@@ -41,6 +41,7 @@ def handle(args: argparse.Namespace) -> int:
         language=None,
         audience=None,
     )
+    output_config = get_output_config(config)
 
     try:
         result = finalize_reader_outputs(
@@ -53,12 +54,8 @@ def handle(args: argparse.Namespace) -> int:
             ),
             output_filename_template=settings.get("output_filename_template", ""),
             output_filename_tokens=settings.get("output_filename_tokens", {}),
-            docx_template=(config.get("output", {}) or {}).get(
-                "docx_template", "default"
-            ),
-            source_appendix_config=(config.get("output", {}) or {}).get(
-                "source_appendix", {}
-            ),
+            docx_template=output_config.get("docx_template", "default"),
+            source_appendix_config=output_config.get("source_appendix", {}),
         )
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         print(f"[finalize] Error: {exc}", file=sys.stderr)

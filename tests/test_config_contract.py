@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -94,6 +95,57 @@ class TestSelectorMaxItems:
             audience=None,
         )
         assert settings["max_claims"] == 5
+
+
+class TestOutputConfig:
+    """Output config should use canonical output key while preserving legacy alias."""
+
+    def test_default_config_uses_canonical_output_key(self):
+        config = yaml.safe_load((ROOT / "configs" / "default.yaml").read_text(encoding="utf-8"))
+
+        assert "output" in config
+        assert "outputs" not in config
+
+        settings = build_run_settings(
+            config={
+                **config,
+                "input": {"path": str(ROOT / "input")},
+                "output": {
+                    **config["output"],
+                    "path": str(ROOT / "output"),
+                },
+            },
+            input_dir=None,
+            output_dir=None,
+            name=None,
+            language=None,
+            audience=None,
+        )
+
+        assert "source_appendix" in settings["output_formats"]
+
+    def test_legacy_outputs_alias_is_still_supported(self, tmp_path):
+        config = {
+            "input": {"path": str(tmp_path / "input")},
+            "outputs": {
+                "path": str(tmp_path / "output"),
+                "formats": ["markdown", "source_appendix"],
+                "named_outputs": False,
+            },
+        }
+
+        settings = build_run_settings(
+            config=config,
+            input_dir=None,
+            output_dir=None,
+            name=None,
+            language=None,
+            audience=None,
+        )
+
+        assert settings["output_dir"] == str(tmp_path / "output")
+        assert settings["output_formats"] == ["markdown", "source_appendix"]
+        assert settings["output_named_outputs"] is False
 
 
 class TestPipelineSteps:

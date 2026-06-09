@@ -347,6 +347,40 @@ def test_finalize_cli_reports_missing_explicit_source_appendix_ledger_without_tr
     assert "Traceback" not in captured.err
 
 
+def test_finalize_cli_supports_legacy_outputs_alias_for_source_appendix(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: ExampleCo Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "outputs:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n"
+        "  source_appendix:\n"
+        "    enabled: true\n"
+        "  named_outputs: false\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+    _write_claim_ledger(intermediate / "claim_ledger.json")
+
+    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
+
+    assert rc == 0
+    assert (output_dir / "source_appendix.md").exists()
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["source_appendix_generation"] == "generated"
+    assert report["source_appendix_requested_by"] == "config"
+
+
 def test_finalize_append_mode_uses_same_markdown_for_named_and_docx(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"

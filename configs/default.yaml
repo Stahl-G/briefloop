@@ -20,7 +20,7 @@ audit:
   fail_on_missing_source: true
   redaction_scan: true
 
-outputs:
+output:
   formats:
     - markdown
     - claim_ledger

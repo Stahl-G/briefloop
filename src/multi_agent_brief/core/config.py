@@ -76,6 +76,18 @@ def normalize_language_config(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def get_output_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Return canonical output config, with legacy outputs alias support."""
+    config = config or {}
+    output_config = config.get("output")
+    if isinstance(output_config, dict):
+        return output_config
+    legacy_output_config = config.get("outputs")
+    if isinstance(legacy_output_config, dict):
+        return legacy_output_config
+    return {}
+
+
 def _as_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -109,7 +121,7 @@ def build_run_settings(
         raw_date = date.today().isoformat()
     selector = config.get("selector", {}) or {}
     input_config = config.get("input", {}) or {}
-    output_config = config.get("output", {}) or {}
+    output_config = get_output_config(config)
     config_dir = Path(config.get("_config_dir", "."))
 
     resolved_input = input_dir or input_config.get("path")
