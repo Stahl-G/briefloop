@@ -658,7 +658,7 @@ Public direction:
 - **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.
 - **v2.0: MAS Runtime Research Track** — after v1.0, explore richer runtime coordination concepts.
 
-See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.6 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, and optional provenance projection with a workspace-local audience taste profile, frozen per-run snapshot, and runtime handoff exposure. It does not mean Python learns taste automatically, updates profiles, routes controls, treats taste as source evidence or an artifact gate, or implements a long-term memory system. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
+See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.7 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, optional provenance projection, and audience snapshots with an Orchestrator control switchboard. Python can surface control recommendations and record Orchestrator selections, but selection is not execution; gates, feedback, provenance, source discovery, repair, and subagent actions still require explicit Orchestrator action. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
 
 ## Safety And Non-Investment-Advice Disclaimer
 
@@ -670,9 +670,9 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.6.6**
+Current version: **v0.6.7**
 
-v0.6.6 adds workspace-local `audience_profile.md` and frozen per-run `output/intermediate/audience_profile_snapshot.md`. `run/start/handoff` expose this runtime context through `audience_memory_files`; it is not source evidence, an artifact contract, a quality gate, a provenance graph, or a long-term memory system.
+v0.6.7 adds the Orchestrator control switchboard: `run/start/handoff` create `output/intermediate/orchestrator_control_switchboard.json`, and `multi-agent-brief controls select` records enable/defer/reject choices. Selection is not execution and does not automatically run gates, feedback, provenance, source discovery, repair, or subagents.
 
 If you edit `audience_profile.md` during a run, the active run keeps using the frozen snapshot. To apply the edits, start a new run state:
 

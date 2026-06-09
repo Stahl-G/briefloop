@@ -1,0 +1,6 @@
+source_strategy:
+  enabled_providers:
+    - manual
+manual:
+  enabled: true
+  sources: []

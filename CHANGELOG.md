@@ -5,6 +5,23 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] — 2026-06-09
+
+### Added
+
+- **Orchestrator Control Switchboard**: added `multi-agent-brief controls build-switchboard/show/select/validate` for deterministic runtime control recommendations and Orchestrator selection records.
+- **Switchboard control files**: `run`, `start`, and `handoff` now create `output/intermediate/orchestrator_control_switchboard.json` and expose it through `control_switchboard_files`; `control_selections.json` is created only when the Orchestrator explicitly records a selection.
+- **Runtime event trace**: event logs can record switchboard build, selection, and validation events.
+- **Public-safe eval case**: added a packaged eval case proving that selecting a control does not execute it.
+
+### Changed
+
+- **Runtime guidance**: Hermes, Claude Code, OpenCode, Codex, and manual handoff text now instruct the Orchestrator to read the switchboard and record enable/defer/reject selections before explicitly executing selected controls.
+
+### Boundaries
+
+- Selection is not execution. `controls select --selection enable` records Orchestrator intent only; it does not run quality gates, feedback planning, provenance projection, source discovery, local/social signal collection, repair, or subagents. Privacy-sensitive controls require explicit human approval before they are execution-ready.
+
 ## [0.6.6] — 2026-06-09
 
 ### Added

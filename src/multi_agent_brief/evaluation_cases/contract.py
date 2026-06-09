@@ -18,6 +18,10 @@ STATIC_CONTRACT_CASE = "static_contract"
 CASE_TYPES = {WORKSPACE_CASE, STATIC_CONTRACT_CASE}
 
 ALLOWED_ACTIONS = {
+    "controls.build_switchboard",
+    "controls.select",
+    "controls.show",
+    "controls.validate",
     "feedback.ingest",
     "feedback.plan",
     "feedback.validate",
@@ -33,6 +37,7 @@ ALLOWED_ACTIONS = {
 }
 
 ALLOWED_EXPECTED_KEYS = {
+    "artifacts_absent",
     "artifacts_exist",
     "contains_text",
     "exit_code",

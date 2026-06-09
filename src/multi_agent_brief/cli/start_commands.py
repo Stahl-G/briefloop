@@ -21,6 +21,7 @@ from multi_agent_brief.orchestrator_contract import (
 )
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
 from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
+from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
@@ -56,6 +57,7 @@ class AgentHandoff:
     expected_artifacts: list[str] = field(default_factory=list)
     runtime_state_files: dict[str, str] = field(default_factory=lambda: dict(RUNTIME_STATE_FILES))
     audience_memory_files: dict[str, str] = field(default_factory=lambda: dict(AUDIENCE_MEMORY_FILES))
+    control_switchboard_files: dict[str, str] = field(default_factory=lambda: dict(CONTROL_SWITCHBOARD_FILES))
     feedback_state_files: dict[str, str] = field(default_factory=lambda: dict(FEEDBACK_STATE_FILES))
     quality_gate_state_files: dict[str, str] = field(default_factory=lambda: dict(QUALITY_GATE_STATE_FILES))
     provenance_state_files: dict[str, str] = field(default_factory=lambda: dict(PROVENANCE_STATE_FILES))
@@ -122,6 +124,7 @@ def _hermes_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Read configs/orchestrator_contract.yaml, configs/stage_specs.yaml, configs/artifact_contracts.yaml, and configs/policy_packs/default.yaml before delegation.",
             "Read output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, and event_log.jsonl before selecting the next stage.",
             "Read output/intermediate/audience_profile_snapshot.md at run start for reader taste context; do not treat audience_profile.md as source evidence.",
+            "Read output/intermediate/orchestrator_control_switchboard.json; record enable/defer/reject selections before explicitly executing any selected control.",
             f"Orchestrator loop: {ORCHESTRATOR_LOOP}",
             "Each delegate_task child needs complete goal, context, input paths, and output paths.",
             "Parent must verify each artifact before proceeding to the next child.",
@@ -155,6 +158,9 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Read audience memory snapshot for this run:\n"
             "- output/intermediate/audience_profile_snapshot.md\n"
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
+            "Read the Orchestrator control switchboard:\n"
+            "- output/intermediate/orchestrator_control_switchboard.json\n"
+            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
             f"Repository: {repo.resolve()}\n"
             f"Workspace: {ws_path}\n"
             f"Activate venv: source {venv}"
@@ -195,7 +201,10 @@ def _opencode_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "- output/intermediate/event_log.jsonl\n\n"
             "Read audience memory snapshot for this run:\n"
             "- output/intermediate/audience_profile_snapshot.md\n"
-            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run."
+            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
+            "Read the Orchestrator control switchboard:\n"
+            "- output/intermediate/orchestrator_control_switchboard.json\n"
+            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval."
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -232,7 +241,10 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "- output/intermediate/event_log.jsonl\n\n"
             "Read audience memory snapshot for this run:\n"
             "- output/intermediate/audience_profile_snapshot.md\n"
-            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run."
+            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
+            "Read the Orchestrator control switchboard:\n"
+            "- output/intermediate/orchestrator_control_switchboard.json\n"
+            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval."
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -270,6 +282,9 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Read audience memory snapshot for this run:\n"
             "- output/intermediate/audience_profile_snapshot.md\n"
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
+            "Read the Orchestrator control switchboard:\n"
+            "- output/intermediate/orchestrator_control_switchboard.json\n"
+            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
             "Run each step in order, verifying each artifact before continuing:\n\n"
             f"1. multi-agent-brief doctor --config {ws_path}/config.yaml\n"
             f"2. multi-agent-brief sources decide --config {ws_path}/config.yaml  (if configured)\n"
@@ -339,6 +354,9 @@ def build_handoff(
     handoff.notes.append(
         "Audience memory is runtime context: audience_profile_snapshot.md is frozen per run and exposed through handoff; it is not source evidence or an artifact gate."
     )
+    handoff.notes.append(
+        "Control switchboard is runtime control context: orchestrator_control_switchboard.json recommends controls and control_selections.json records Orchestrator selections; selection is not execution."
+    )
 
     return handoff
 
@@ -398,6 +416,13 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
         "",
     ])
     for label, rel_path in handoff.audience_memory_files.items():
+        md_content.append(f"- `{label}`: `{rel_path}`")
+    md_content.extend([
+        "",
+        "## Control Switchboard Files",
+        "",
+    ])
+    for label, rel_path in handoff.control_switchboard_files.items():
         md_content.append(f"- `{label}`: `{rel_path}`")
     md_content.extend([
         "",

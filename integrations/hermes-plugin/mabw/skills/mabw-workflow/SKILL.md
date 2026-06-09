@@ -32,7 +32,8 @@ Read workspace context -> read contract references -> identify the next stage ->
 4. Call `mabw_run_handoff`.
 5. Read `agent_handoff.md`.
 6. Read `output/intermediate/audience_profile_snapshot.md` as the frozen runtime taste context.
-7. Continue the Orchestrator-led delegated workflow with Hermes child tasks.
+7. Read `output/intermediate/orchestrator_control_switchboard.json` and record control choices with `multi-agent-brief controls select`.
+8. Continue the Orchestrator-led delegated workflow with Hermes child tasks.
 
 ## Brief Profile Fields
 
@@ -55,6 +56,8 @@ doctor → source discovery when configured → input governance when available 
 ```
 
 Before `finalize`, run `multi-agent-brief gates check`, `state check --strict`, and `state decide --stage auditor --decision continue`. `finalize` only renders reader-facing outputs; it is not a quality-gate executor.
+
+Selection is not execution. `controls select --selection enable` records Orchestrator intent only; explicitly run the selected CLI, subagent, or human action afterward.
 
 Optional audit/debug projection after runtime state exists:
 

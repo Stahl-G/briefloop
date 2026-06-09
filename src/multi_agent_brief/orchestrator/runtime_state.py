@@ -64,6 +64,10 @@ EVENT_TYPES = {
     "provenance_graph_validated",
     "provenance_graph_invalid",
     "audience_profile_snapshot_created",
+    "control_switchboard_built",
+    "control_switchboard_warning",
+    "control_selection_recorded",
+    "control_selection_validated",
     "run_blocked",
     "run_reset",
 }
@@ -1033,7 +1037,38 @@ def check_runtime_state(
     _write_json_atomic(paths["artifact_registry"], registry)
     _write_json_atomic(paths["workflow_state"], refreshed_workflow)
 
-    return show_runtime_state(workspace=ws)
+    control_switchboard_warning: dict[str, Any] | None = None
+
+    try:
+        from multi_agent_brief.controls.contract import ControlSwitchboardError
+        from multi_agent_brief.controls.switchboard import refresh_control_switchboard_if_stale
+
+        try:
+            refresh_control_switchboard_if_stale(
+                workspace=ws,
+                repo_workdir=repo,
+                actor=actor,
+            )
+        except ControlSwitchboardError as exc:
+            control_switchboard_warning = {
+                "error": str(exc),
+                "details": exc.details,
+            }
+            append_event(
+                workspace=ws,
+                run_id=run_id,
+                event_type="control_switchboard_warning",
+                actor=actor,
+                reason=str(exc),
+                metadata=exc.details,
+            )
+    except ImportError:
+        pass
+
+    state = show_runtime_state(workspace=ws)
+    if control_switchboard_warning is not None:
+        state["control_switchboard_warning"] = control_switchboard_warning
+    return state
 
 
 def record_decision(

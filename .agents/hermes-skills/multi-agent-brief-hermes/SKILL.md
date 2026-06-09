@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Hermes with delegate_task support plus terminal and file access to a workspace with the multi-agent-brief CLI installed.
 metadata:
   author: multi-agent-brief-workflow
-  version: 0.6.6
+  version: 0.6.7
   tags:
     - hermes
     - cron
@@ -37,6 +37,8 @@ Runtime state files:
 - `output/intermediate/event_log.jsonl`
 
 Audience memory files: `audience_profile.md` and `output/intermediate/audience_profile_snapshot.md`. Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Mid-run profile edits apply to the next run.
+
+Control switchboard files: `output/intermediate/orchestrator_control_switchboard.json` lists available/recommended controls, and `output/intermediate/control_selections.json` records Orchestrator enable/defer/reject choices. Selection is not execution.
 
 Optional control files: feedback uses `output/intermediate/feedback_issues.json`, `output/intermediate/repair_plan.json`, and `output/intermediate/delta_audit_report.json`; gates check creates `output/intermediate/quality_gate_report.json`; provenance build creates `output/intermediate/provenance_graph.json` as an audit/debug projection, not semantic proof.
 
@@ -113,6 +115,7 @@ doctor
 
 Before finalize, run `multi-agent-brief gates check --workspace <workspace>`, `state check --strict`, and `state decide --stage auditor --decision continue`; `finalize` is not a quality-gate executor.
 At run start, read `output/intermediate/audience_profile_snapshot.md` for taste context and pass a concise summary to delegated roles. Do not treat `audience_profile.md` as evidence.
+Read `output/intermediate/orchestrator_control_switchboard.json`, then use `multi-agent-brief controls select` to record selected controls before explicitly running their CLI/subagent/human action. Selection is not execution.
 Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.
 Use `multi-agent-brief provenance build`, `provenance show --json`, and `provenance validate` only as optional audit/debug projection commands after runtime state exists. Provenance projection does not prove semantic support, execute repair, or gate finalize by default.
 
@@ -132,4 +135,4 @@ Read `references/cron-patterns.md` before creating or editing Hermes cron jobs.
 
 ## Reporting
 
-After a delegated run, report `output/brief.md`, configured named Markdown copy when enabled, `output/brief.docx` when configured, `output/intermediate/audited_brief.md`, `output/intermediate/claim_ledger.json`, `output/intermediate/audit_report.json`, `output/intermediate/audience_profile_snapshot.md` as runtime taste context, optional feedback/repair/quality/provenance control files, audit status, and remaining limitations.
+After a delegated run, report `output/brief.md`, configured named Markdown copy when enabled, `output/brief.docx` when configured, `output/intermediate/audited_brief.md`, `output/intermediate/claim_ledger.json`, `output/intermediate/audit_report.json`, `output/intermediate/audience_profile_snapshot.md` as runtime taste context, switchboard selections, optional feedback/repair/quality/provenance control files, audit status, and remaining limitations.

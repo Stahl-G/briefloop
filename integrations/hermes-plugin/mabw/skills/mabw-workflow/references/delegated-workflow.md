@@ -14,10 +14,15 @@ summarize the relevant taste guidance for delegated roles. The snapshot is
 runtime context only; do not treat `audience_profile.md` as source evidence,
 an artifact contract, a gate, or a provenance proof.
 
+Read `output/intermediate/orchestrator_control_switchboard.json` after handoff.
+Record enable, defer, or reject selections with `multi-agent-brief controls select`.
+Selection is not execution; selected controls still require an explicit CLI,
+subagent, or human action.
+
 Control loop:
 
 ```text
-Read workspace context -> read contract references -> identify the next stage -> delegate a specialist or Python tool -> check the expected artifact -> decide continue / retry_stage / delegate_repair / request_human_review / block_run / finalize.
+Read workspace context -> read audience snapshot -> read control switchboard -> read contract references -> identify the next stage -> delegate a specialist or Python tool -> check the expected artifact -> decide continue / retry_stage / delegate_repair / request_human_review / block_run / finalize.
 ```
 
 ## Sequence
@@ -52,6 +57,7 @@ Each step should check the expected artifact path before selecting the next deci
 After `audit_report.json` exists, run quality gates and refresh runtime state before selecting the finalize path:
 
 ```bash
+multi-agent-brief controls select --workspace <workspace> --control quality_gates --selection enable --reason "Use quality gates before finalize."
 multi-agent-brief gates check --workspace <workspace>
 multi-agent-brief state check --workspace <workspace> --strict
 multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."

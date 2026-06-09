@@ -162,6 +162,9 @@ def build_hermes_cron_plan(
                 "Read audience memory snapshot for this run:\n"
                 "- output/intermediate/audience_profile_snapshot.md\n"
                 "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
+                "Read the Orchestrator control switchboard:\n"
+                "- output/intermediate/orchestrator_control_switchboard.json\n"
+                "Record control selections with multi-agent-brief controls select. Selection is not execution.\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
                 "- output/intermediate/repair_plan.json\n"
@@ -174,6 +177,7 @@ def build_hermes_cron_plan(
                 "Run doctor, then use Hermes delegate_task children for:\n"
                 "scout -> screener -> claim-ledger -> analyst -> editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
+                f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
                 f"multi-agent-brief gates check --workspace {workspace_path}\n"
                 f"multi-agent-brief state check --workspace {workspace_path} --strict\n"
                 f"multi-agent-brief state decide --workspace {workspace_path} --stage auditor --decision continue --reason \"Audit and quality gates passed.\"\n"
@@ -206,6 +210,9 @@ def build_hermes_cron_plan(
                 "Read audience memory snapshot for this run:\n"
                 "- output/intermediate/audience_profile_snapshot.md\n"
                 "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
+                "Read the Orchestrator control switchboard:\n"
+                "- output/intermediate/orchestrator_control_switchboard.json\n"
+                "Record control selections with multi-agent-brief controls select. Selection is not execution.\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
                 "- output/intermediate/repair_plan.json\n"
@@ -219,6 +226,7 @@ def build_hermes_cron_plan(
                 "Run doctor, then use Hermes delegate_task children for:\n"
                 "scout -> screener -> claim-ledger -> analyst -> editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
+                f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
                 f"multi-agent-brief gates check --workspace {workspace_path}\n"
                 f"multi-agent-brief state check --workspace {workspace_path} --strict\n"
                 f"multi-agent-brief state decide --workspace {workspace_path} --stage auditor --decision continue --reason \"Audit and quality gates passed.\"\n"
@@ -234,7 +242,7 @@ def build_hermes_cron_plan(
         "For low-cost frequent polling, convert the daily job to a wakeAgent/script gate in Hermes after the source pattern stabilizes.",
     ]
     return HermesCronPlan(
-        version="v0.6.6",
+        version="v0.6.7",
         workspace=str(workspace_path),
         project_name=summary["name"],
         cadences=resolved_cadences,
@@ -310,7 +318,7 @@ def render_hermes_cron_markdown(plan: HermesCronPlan) -> str:
 _SKILL_MD_TEMPLATE = '''---
 name: multi-agent-brief-hermes
 description: Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
-version: 0.6.6
+version: 0.6.7
 author: multi-agent-brief-workflow
 license: MIT
 platforms:
@@ -354,6 +362,13 @@ Audience memory files:
 - `output/intermediate/audience_profile_snapshot.md`
 
 Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Mid-run profile edits apply to the next run.
+
+Control switchboard files:
+
+- `output/intermediate/orchestrator_control_switchboard.json`
+- `output/intermediate/control_selections.json`
+
+Read the switchboard after handoff, record enable/defer/reject choices with `multi-agent-brief controls select`, and then explicitly run the selected CLI/subagent/human action. Selection is not execution.
 
 Optional feedback state files:
 
@@ -479,18 +494,21 @@ The Hermes parent agent is the Orchestrator main agent for the full pipeline:
    - `sources.yaml`
    - `user.md`
    - `output/intermediate/audience_profile_snapshot.md`
+   - `output/intermediate/orchestrator_control_switchboard.json`
    - `input/`
    - `input/hermes_cache/` when present
 
 3. Summarize relevant taste guidance from `output/intermediate/audience_profile_snapshot.md` for delegated roles. Do not treat the profile as source evidence.
 
-4. Run doctor:
+4. Read the Orchestrator control switchboard and record control selections with `multi-agent-brief controls select`. Selection is not execution.
+
+5. Run doctor:
 
 ```bash
 multi-agent-brief doctor --config <workspace>/config.yaml
 ```
 
-5. If source discovery is configured:
+6. If source discovery is configured:
 
 ```bash
 multi-agent-brief sources decide --config <workspace>/config.yaml
@@ -707,7 +725,7 @@ def render_hermes_setup_success(
     repo: str | Path,
     venv: str | Path,
     workspace: str | Path,
-    version: str = "v0.6.6",
+    version: str = "v0.6.7",
     doctor_status: str = "passed",
 ) -> str:
     return f"""Project is cloned and ready.
@@ -758,6 +776,12 @@ Audience memory snapshot:
 - output/intermediate/audience_profile_snapshot.md
 
 Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and use that summary as runtime context. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.
+
+Control switchboard files:
+- output/intermediate/orchestrator_control_switchboard.json
+- output/intermediate/control_selections.json
+
+Read the switchboard after handoff and record enable/defer/reject choices with multi-agent-brief controls select. Selection is not execution; explicitly run selected controls afterward.
 
 Optional feedback state files:
 - output/intermediate/feedback_issues.json
@@ -823,78 +847,83 @@ As the Hermes Orchestrator main agent, execute:
    - output/intermediate/audience_profile_snapshot.md
    Summarize relevant taste guidance for delegated roles. Do not treat the profile as source evidence or as a correctness contract.
 
-4. Run doctor:
+4. Read the Orchestrator control switchboard:
+   - output/intermediate/orchestrator_control_switchboard.json
+   Record control choices with multi-agent-brief controls select. Selection is not execution.
+
+5. Run doctor:
    multi-agent-brief doctor --config {workspace}/config.yaml
 
-5. If source discovery is configured:
+6. If source discovery is configured:
    multi-agent-brief sources decide --config {workspace}/config.yaml
 
-6. If input governance is available:
+7. If input governance is available:
    multi-agent-brief inputs classify --config {workspace}/config.yaml
 
-7. Refresh runtime state without running stages:
+8. Refresh runtime state without running stages:
    multi-agent-brief state check --workspace {workspace}
 
-8. If audit findings or human feedback exist, structure them without running repair:
+9. If audit findings or human feedback exist, structure them without running repair:
    multi-agent-brief feedback ingest --workspace {workspace} --feedback <path> --source human|audit
    multi-agent-brief feedback plan --workspace {workspace}
    multi-agent-brief feedback resolve --workspace {workspace} --issue-id <id> --repair-plan-id <id> --reason <reason>
    multi-agent-brief feedback show --workspace {workspace} --json
    multi-agent-brief feedback validate --workspace {workspace}
 
-9. Delegate scout child via delegate_task:
+10. Delegate scout child via delegate_task:
    Goal: "Extract candidate reportable items for a MABW brief"
    Write: output/intermediate/candidate_claims.json
    toolsets: ["file", "terminal", "web"]
 
-10. After candidate_claims.json exists and is non-empty, delegate screener child:
+11. After candidate_claims.json exists and is non-empty, delegate screener child:
    Goal: "Screen and rank MABW candidate claims"
    Input: output/intermediate/candidate_claims.json
    Write: output/intermediate/screened_candidates.json
    toolsets: ["file", "terminal"]
 
-11. After screened_candidates.json exists, delegate claim-ledger child:
+12. After screened_candidates.json exists, delegate claim-ledger child:
    Goal: "Build the MABW Claim Ledger"
    Input: output/intermediate/screened_candidates.json
    Write: output/intermediate/claim_ledger.json
    toolsets: ["file", "terminal"]
 
-12. After claim_ledger.json exists, delegate analyst child:
+13. After claim_ledger.json exists, delegate analyst child:
    Goal: "Draft the audited MABW brief"
    Inputs: user.md and output/intermediate/claim_ledger.json
    Write: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-13. After audited_brief.md exists, delegate editor child:
+14. After audited_brief.md exists, delegate editor child:
    Goal: "Polish the audited MABW brief"
    Input and output: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-14. After editor completes, delegate auditor child:
+15. After editor completes, delegate auditor child:
     Goal: "Audit the MABW brief against the Claim Ledger"
     Inputs: output/intermediate/audited_brief.md and output/intermediate/claim_ledger.json
     Write: output/intermediate/audit_report.json
     toolsets: ["file", "terminal"]
 
-15. After audit_report.json exists, run deterministic quality gates and refresh runtime state:
+16. After audit_report.json exists, select and run deterministic quality gates, then refresh runtime state:
+    multi-agent-brief controls select --workspace {workspace} --control quality_gates --selection enable --reason "Use quality gates before finalize."
     multi-agent-brief gates check --workspace {workspace}
     multi-agent-brief state check --workspace {workspace} --strict
 
-16. If state is not blocked, record the auditor decision:
+17. If state is not blocked, record the auditor decision:
     multi-agent-brief state decide --workspace {workspace} --stage auditor --decision continue --reason "Audit and quality gates passed."
 
-17. If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
+18. If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
 
-18. Run finalize only after the gates/state decision path passes. finalize is not a quality-gate executor:
+19. Run finalize only after the gates/state decision path passes. finalize is not a quality-gate executor:
     multi-agent-brief finalize --config {workspace}/config.yaml
 
-19. Optional audit/debug projection after runtime state exists:
+20. Optional audit/debug projection after runtime state exists:
     multi-agent-brief provenance build --workspace {workspace}
     multi-agent-brief provenance show --workspace {workspace} --json
     multi-agent-brief provenance validate --workspace {workspace}
     Provenance projection is not semantic proof and is not required to finalize.
 
-20. Report artifact paths, audit status, quality gate status, and optional provenance_graph.json when created.
+21. Report artifact paths, audit status, quality gate status, switchboard selections, and optional provenance_graph.json when created.
 
 For each delegate_task call, write complete goal and context with the workspace path, input paths, and output paths fully specified. After each child returns, verify the expected artifact exists and is non-empty before selecting continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.
 

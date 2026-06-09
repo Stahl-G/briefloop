@@ -585,7 +585,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.6 在共享 Orchestrator authority、runtime state、feedback/repair control plane、deterministic quality gates、packaged public-safe evaluation cases 和 optional provenance projection 之上，增加 workspace-local audience taste profile、frozen per-run snapshot，并通过 runtime handoff 暴露。它不表示 Python 会自动学习口味、自动更新 profile、执行 smart routing、把 taste 当作 artifact gate/source evidence，或实现长期记忆系统。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
+公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.7 在共享 Orchestrator authority、runtime state、feedback/repair control plane、deterministic quality gates、packaged public-safe evaluation cases、optional provenance projection 和 audience snapshot 之上，增加 Orchestrator control switchboard。Python 可以生成 control recommendations 并记录 Orchestrator selections，但 selection 不等于 execution；实际 gates、feedback、provenance、source discovery、repair 或 subagent action 仍必须由 Orchestrator 显式触发。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
 
 ---
 
@@ -674,9 +674,9 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.6.6**
+当前版本：**v0.6.7**
 
-v0.6.6 增加 workspace-local `audience_profile.md` 和 frozen per-run `output/intermediate/audience_profile_snapshot.md`。`run/start/handoff` 会通过 `audience_memory_files` 暴露这层 runtime context；它不是 source evidence、artifact contract、quality gate、provenance graph 或长期记忆系统。
+v0.6.7 增加 Orchestrator control switchboard：`run/start/handoff` 会创建 `output/intermediate/orchestrator_control_switchboard.json`，`multi-agent-brief controls select` 可记录 enable/defer/reject 选择。selection 不是 execution，不会自动运行 gates、feedback、provenance、source discovery、repair 或 subagent。
 
 如果在一次 run 期间修改 `audience_profile.md`，当前 run 会继续使用已经冻结的 snapshot。要让修改生效，请先开启新的 run state：
 

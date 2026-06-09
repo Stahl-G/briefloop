@@ -16,6 +16,8 @@ from multi_agent_brief.audience_memory import (
     create_audience_profile_snapshot,
     profile_data_from_workspace_config,
 )
+from multi_agent_brief.controls.contract import ControlSwitchboardError
+from multi_agent_brief.controls.switchboard import build_control_switchboard
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
@@ -296,6 +298,11 @@ def _write_handoff_and_state(
             workspace=workspace,
             repo_workdir=repo_workdir,
         )
+        build_control_switchboard(
+            workspace=workspace,
+            repo_workdir=repo_workdir,
+            actor="cli",
+        )
         md_path, json_path = write_handoff_artifacts(handoff, workspace)
         record_handoff_written(
             workspace=workspace,
@@ -310,6 +317,9 @@ def _write_handoff_and_state(
         )
         return md_path, json_path
     except RuntimeStateError as exc:
+        print(f"{prefix} {exc}")
+        return None
+    except ControlSwitchboardError as exc:
         print(f"{prefix} {exc}")
         return None
 

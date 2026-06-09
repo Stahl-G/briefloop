@@ -30,6 +30,8 @@ Use for runtime handoff, Orchestrator contract changes, generated adapter config
 - `configs/stage_specs.yaml`
 - `configs/artifact_contracts.yaml`
 - selected policy pack
+- `output/intermediate/orchestrator_control_switchboard.json`
+- `output/intermediate/control_selections.json`
 - intermediate artifact status
 
 ## Outputs
@@ -44,11 +46,15 @@ Use for runtime handoff, Orchestrator contract changes, generated adapter config
 
 - Use multi-agent-brief run --workspace <workspace> as the standard launcher.
 - Read shared contract references before stage delegation.
+- Read the Orchestrator control switchboard, record enable/defer/reject choices
+  with `multi-agent-brief controls select`, and explicitly execute selected
+  controls afterward.
 - Keep role handoffs artifact-based.
 - Coordinate source-planner, scout, screener, claim-ledger, analyst, editor, auditor, and formatter as delegated specialists.
 - Check expected artifacts after each delegated stage.
 - Make stage decisions with continue, retry_stage, delegate_repair, request_human_review, block_run, and finalize.
 - Keep Python positioned as tools, validators, and renderers.
+- Keep control selections separate from execution; selection is not execution.
 - Update generation sources when generated platform adapter files change.
 - Run focused tests for changed areas.
 

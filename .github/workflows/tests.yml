@@ -230,7 +230,22 @@ jobs:
           test -f /tmp/mabw-ci-smoke/output/intermediate/workflow_state.json
           test -f /tmp/mabw-ci-smoke/output/intermediate/artifact_registry.json
           test -f /tmp/mabw-ci-smoke/output/intermediate/event_log.jsonl
+          test -f /tmp/mabw-ci-smoke/output/intermediate/orchestrator_control_switchboard.json
+          test ! -f /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
           test ! -f /tmp/mabw-ci-smoke/output/brief.md
+
+      - name: Control switchboard smoke
+        run: |
+          multi-agent-brief controls show --workspace /tmp/mabw-ci-smoke --json
+          multi-agent-brief controls validate --workspace /tmp/mabw-ci-smoke --json
+          multi-agent-brief controls select \
+            --workspace /tmp/mabw-ci-smoke \
+            --control quality_gates \
+            --selection enable \
+            --reason "Use quality gates before finalize." \
+            --json
+          test -f /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
+          test ! -f /tmp/mabw-ci-smoke/output/intermediate/quality_gate_report.json
 
       - name: Assert prepare stays removed
         run: python scripts/ci/smoke_pipeline.py /tmp/mabw-ci-smoke/config.yaml /tmp/mabw-ci-smoke/input

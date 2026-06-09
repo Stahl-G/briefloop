@@ -87,6 +87,9 @@ def test_claude_generate_brief_command_uses_orchestrator_contract():
     assert "configs/artifact_contracts.yaml" in text
     assert "multi-agent-brief run --workspace $ARGUMENTS --runtime claude --skip-doctor" in text
     assert "output/intermediate/audience_profile_snapshot.md" in text
+    assert "output/intermediate/orchestrator_control_switchboard.json" in text
+    assert "multi-agent-brief controls select" in text
+    assert "selection is not execution" in text
     assert "Do not treat `audience_profile.md` as source evidence" in text
     assert "retry_stage" in text
     assert "request_human_review" in text
@@ -99,5 +102,8 @@ def test_opencode_generate_brief_command_uses_audience_snapshot_context():
     assert "Orchestrator main agent" in text
     assert "multi-agent-brief run --workspace $ARGUMENTS --runtime opencode --skip-doctor" in text
     assert "output/intermediate/audience_profile_snapshot.md" in text
+    assert "output/intermediate/orchestrator_control_switchboard.json" in text
+    assert "multi-agent-brief controls select" in text
+    assert "selection is not execution" in text
     assert "Do not treat `audience_profile.md` as source evidence" in text
     assert "Check the expected artifact" in text

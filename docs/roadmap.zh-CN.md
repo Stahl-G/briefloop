@@ -11,7 +11,7 @@ subagent-first runtime
 → orchestrator contracts
 → feedback and repair loop
 → checkpointed quality gates and evaluation
-→ workspace memory and mode registry
+→ workspace memory and control switchboard
 → provenance-aware artifacts
 → policy packs and runtime parity
 → stable v1.0 baseline
@@ -93,6 +93,14 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 - Handoff JSON/Markdown 用独立 `audience_memory_files` 暴露该 context，不混入 expected artifacts 或 control files。
 - Python 不会把 audience profile 内容当作 source evidence、artifact contract、quality gate、provenance graph expansion、自动学习能力或长期记忆系统。
 
+### v0.6.7
+
+- 已加入 Orchestrator control switchboard，作为 runtime control surface。
+- `run`、`start` 和 `handoff` 会创建 `output/intermediate/orchestrator_control_switchboard.json`。
+- `controls build-switchboard`、`controls show`、`controls select` 和 `controls validate` 提供 recommendations 和 Orchestrator selections 的 CLI 入口。
+- `control_selections.json` 只在 Orchestrator 显式选择后记录 enable/defer/reject。
+- Selection 不是 execution：Python 不会自动运行 gates、feedback planning、provenance projection、source discovery、repair 或 subagents。
+
 ## 下一阶段
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -133,7 +141,7 @@ Non-goals:
 - 将 provenance projection 保持为 audit/debug tooling，semantic proof、replay 和 graph-database style query systems 后移。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
 
-v0.6.6 之后的公开顺序转向 FrictionStore、improvement proposals、policy packs 和 runtime parity，同时继续保持 subagent-first runtime boundary。
+v0.6.7 之后的公开顺序转向 FrictionStore、improvement proposals、policy packs 和 runtime parity，同时继续保持 subagent-first runtime boundary。
 
 公开实施概览：
 
@@ -156,9 +164,9 @@ Non-goals:
 
 - 跨 run 跟踪 recurring failure patterns。
 - 生成 improvement signals、patch plans 和 regression-plan suggestions。
-- 加入轻量 workspace memory model，用于 audience taste 和 recurring feedback patterns。
+- 在 audience snapshot baseline 之后，谨慎扩展 workspace-local memory，用于 recurring feedback patterns。
 - memory updates 只能是 agent-proposed、human-approved。
-- 使用 frozen per-run memory snapshots，避免同一次 run 因中途写入的新 memory 改变行为。
+- 继续使用 frozen per-run snapshots，避免同一次 run 因中途写入的新 memory 改变行为。
 - self-improvement 在人类或 maintainer 批准前只生成 proposal，不自动改代码。
 
 Non-goals:

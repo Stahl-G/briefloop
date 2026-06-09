@@ -24,6 +24,8 @@ orchestrator:
       - audit
       - finalize
       - provenance_build
+      - controls_build_switchboard
+      - controls_select
   developer_ci_tools:
     - eval_cases
 contracts:
@@ -135,3 +137,28 @@ v065_boundaries:
     - workflow_dag_runtime
     - graph_database_or_query_engine
     - automatic_repair_execution
+v066_boundaries:
+  implements:
+    - workspace_local_audience_profile
+    - per_run_audience_profile_snapshot
+    - audience_memory_handoff_context
+    - audience_profile_snapshot_event_trace
+  deferred:
+    - automatic_profile_updates
+    - taste_based_runtime_routing
+    - audience_memory_artifact_contract
+    - provenance_graph_expansion_for_audience_memory
+v067_boundaries:
+  implements:
+    - orchestrator_control_switchboard
+    - deterministic_control_recommendations
+    - explicit_control_selection_records
+    - human_approval_selection_state
+    - control_selection_event_trace
+  deferred:
+    - automatic_control_execution
+    - smart_runtime_router
+    - automatic_source_collection
+    - automatic_repair_execution
+    - friction_store
+    - policy_pack_rewrite

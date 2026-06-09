@@ -18,12 +18,14 @@ Each capability has one of the following statuses:
 | Runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Supported |
 | Runtime state control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Supported |
 | Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
+| Orchestrator control switchboard (`orchestrator_control_switchboard.json`, optional `control_selections.json`) | Supported |
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Quality gate control file (`quality_gate_report.json`) | Supported |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize (Markdown + DOCX) | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
 | `multi-agent-brief state init/check/show/decide` | Supported |
+| `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
 | `multi-agent-brief gates check/show/validate` | Supported |
 | `multi-agent-brief provenance build/show/validate` | Supported |
@@ -44,6 +46,8 @@ Evaluation cases are developer/CI regression checks for control-surface behavior
 Provenance commands write a deterministic workspace-local audit/debug graph from existing control files. They do not fetch sources, execute workflow stages, replay the runtime, execute repair, verify semantic truth, or block `finalize` by default.
 
 Audience profile files are workspace-local runtime context. The active run uses the frozen per-run snapshot exposed through handoff; these files are not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers.
+
+Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
 
 ## Runtimes
 

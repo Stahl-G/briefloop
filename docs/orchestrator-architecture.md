@@ -28,7 +28,7 @@ v0.6.0 introduces public-safe contract references:
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 added deterministic material-fact, freshness, and target-relevance gate controls. v0.6.4 added packaged public-safe evaluation cases for developer/CI regression checks. v0.6.5 added optional deterministic provenance projection for workspace audit/debug review. v0.6.6 adds a workspace-local audience profile and frozen per-run audience snapshot exposed through handoff. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, score prose with an LLM judge, treat provenance as semantic proof, learn taste automatically, or route controls based on taste.
+These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 added deterministic material-fact, freshness, and target-relevance gate controls. v0.6.4 added packaged public-safe evaluation cases for developer/CI regression checks. v0.6.5 added optional deterministic provenance projection for workspace audit/debug review. v0.6.6 adds a workspace-local audience profile and frozen per-run audience snapshot exposed through handoff. v0.6.7 adds an Orchestrator control switchboard for deterministic control recommendations and recorded enable/defer/reject selections. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, score prose with an LLM judge, treat provenance as semantic proof, learn taste automatically, or execute selected controls automatically.
 
 ## Four Contract Categories
 
@@ -50,21 +50,22 @@ The Orchestrator uses a shared decision vocabulary:
 - `block_run`
 - `finalize`
 
-In v0.6.1 these decisions can also be recorded through the runtime state event log. In v0.6.2 feedback issue and repair-plan events can also be recorded. In v0.6.3 quality gate check/pass/block events can also be recorded. In v0.6.5 provenance build/validate outcomes can also be recorded. In v0.6.6 audience snapshot creation can also be recorded. The event log is a control trace; `provenance_graph.json` is a separate derived projection.
+In v0.6.1 these decisions can also be recorded through the runtime state event log. In v0.6.2 feedback issue and repair-plan events can also be recorded. In v0.6.3 quality gate check/pass/block events can also be recorded. In v0.6.5 provenance build/validate outcomes can also be recorded. In v0.6.6 audience snapshot creation can also be recorded. In v0.6.7 switchboard build and control selection events can also be recorded. The event log is a control trace; `provenance_graph.json` is a separate derived projection.
 
 ## Runtime Loop
 
 Each runtime should communicate the same loop:
 
-1. Read `config.yaml`, `sources.yaml`, `user.md`, inputs, handoff artifacts, runtime state files, and `output/intermediate/audience_profile_snapshot.md`.
+1. Read `config.yaml`, `sources.yaml`, `user.md`, inputs, handoff artifacts, runtime state files, `output/intermediate/audience_profile_snapshot.md`, and `output/intermediate/orchestrator_control_switchboard.json`.
 2. Summarize relevant taste guidance from the frozen audience snapshot for delegated roles.
-3. Read contract references from the handoff.
-4. Identify the current stage and expected artifact.
-5. Delegate the stage to the appropriate specialist role or Python tool, passing the taste summary as context when useful.
-6. Check that the expected artifact is present and suitable for the next stage.
-7. When audit findings or human feedback exist, structure issues and repair plans without executing repair.
-8. Decide whether to continue, retry, delegate repair, request human review, block, or finalize.
-9. Finalize only after audit readiness.
+3. Record enable/defer/reject control selections when the switchboard recommends controls; selection is not execution.
+4. Read contract references from the handoff.
+5. Identify the current stage and expected artifact.
+6. Delegate the stage to the appropriate specialist role or Python tool, passing the taste summary as context when useful.
+7. Check that the expected artifact is present and suitable for the next stage.
+8. When audit findings or human feedback exist, structure issues and repair plans without executing repair.
+9. Decide whether to continue, retry, delegate repair, request human review, block, or finalize.
+10. Finalize only after audit readiness.
 
 Runtime mechanics may differ, but artifact expectations should stay aligned.
 
@@ -76,6 +77,15 @@ v0.6.6 creates workspace-local `audience_profile.md` during init and freezes it 
 - Mid-run edits to `audience_profile.md` apply to the next run.
 - Audience memory is runtime context, not source evidence, an artifact contract, a quality gate, a provenance graph node, or a stage blocker.
 - Python creates, freezes, exposes, and records the context; it does not learn taste automatically, update profiles, enforce taste, or route workflow controls based on taste.
+
+## Orchestrator Control Switchboard
+
+v0.6.7 creates `output/intermediate/orchestrator_control_switchboard.json` during runtime handoff and records explicit Orchestrator selections in `output/intermediate/control_selections.json` only when `multi-agent-brief controls select` is called.
+
+- The switchboard separates available controls, deterministic recommendations, Orchestrator selections, and execution.
+- Selection is not execution: choosing `enable` records intent but does not run quality gates, feedback planning, provenance projection, source discovery, repair, or subagents.
+- Privacy-sensitive controls require explicit human approval before they are execution-ready.
+- The switchboard is runtime control context, not a Claim Ledger input, final-reader artifact, or finalize gate.
 
 ## Provenance Projection
 

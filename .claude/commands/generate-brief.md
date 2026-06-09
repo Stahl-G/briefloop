@@ -17,7 +17,7 @@ Read shared contract references before delegation:
 Orchestrator control loop:
 
 ```text
-Read workspace context -> read frozen audience profile snapshot -> read contract references -> identify the next stage -> delegate a specialist or Python tool -> check the expected artifact -> decide continue / retry_stage / delegate_repair / request_human_review / block_run / finalize.
+Read workspace context -> read frozen audience profile snapshot -> read control switchboard -> read contract references -> identify the next stage -> delegate a specialist or Python tool -> check the expected artifact -> decide continue / retry_stage / delegate_repair / request_human_review / block_run / finalize.
 ```
 
 Follow this sequence:
@@ -26,8 +26,10 @@ Follow this sequence:
    - Run `multi-agent-brief run --workspace $ARGUMENTS --runtime claude --skip-doctor`.
    - Read `$ARGUMENTS/output/intermediate/agent_handoff.md`.
    - Read `$ARGUMENTS/output/intermediate/audience_profile_snapshot.md`.
+   - Read `$ARGUMENTS/output/intermediate/orchestrator_control_switchboard.json`.
    - Summarize relevant taste guidance for delegated roles.
    - Do not treat `audience_profile.md` as source evidence; mid-run profile edits apply to the next run.
+   - Record control choices with `multi-agent-brief controls select`; selection is not execution.
 
 2. Read:
    - $ARGUMENTS/config.yaml
@@ -94,6 +96,7 @@ Follow this sequence:
     - Check the expected artifact before selecting the next decision.
 
 13. Run deterministic quality gates and refresh runtime state before finalize:
+    - Confirm quality gate selection in `control_selections.json`, or record it with `multi-agent-brief controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason "Use quality gates before finalize."`.
     - Run `multi-agent-brief gates check --workspace $ARGUMENTS`.
     - Run `multi-agent-brief state check --workspace $ARGUMENTS --strict`.
     - If state is not blocked, run `multi-agent-brief state decide --workspace $ARGUMENTS --stage auditor --decision continue --reason "Audit and quality gates passed."`.
@@ -116,5 +119,6 @@ Follow this sequence:
     - Report artifact paths.
     - Report audit status.
     - Report quality gate status.
+    - Report switchboard selections.
     - Report optional provenance graph path when created.
     - Report remaining limitations.

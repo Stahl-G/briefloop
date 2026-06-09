@@ -53,6 +53,15 @@ The Orchestrator reads the frozen snapshot at run start and passes a concise
 taste summary to delegated roles. Mid-run edits to `audience_profile.md` apply
 to the next run.
 
+## Orchestrator Control Switchboard Files
+
+These files are runtime control context, not workflow artifacts, source
+evidence, feedback controls, quality gates, or provenance projection inputs.
+Selections record Orchestrator intent only; selection is not execution.
+
+- `output/intermediate/orchestrator_control_switchboard.json`
+- `output/intermediate/control_selections.json`
+
 ## Final Outputs
 
 - `output/brief.md`

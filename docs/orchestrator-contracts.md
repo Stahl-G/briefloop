@@ -6,9 +6,18 @@ v0.6 is organized around four public contract categories. This page defines them
 
 Defines role boundaries: what the main Orchestrator may coordinate, what specialist subagents are responsible for, and which actions should be blocked or escalated.
 
+v0.6.7 control switchboards expose deterministic control recommendations and
+record explicit Orchestrator selections. A selection is runtime intent only; it
+does not execute a CLI command, subagent, repair action, source collection, or
+human approval step.
+
 ## Process / Artifact Contract
 
 Defines whether the workflow has progressed through required stages and whether expected artifacts exist before downstream work proceeds.
+
+`orchestrator_control_switchboard.json` and `control_selections.json` are
+runtime control context files. They are not expected workflow artifacts, Claim
+Ledger evidence, reader-facing output, or default finalize gates.
 
 ## Fact-Grounding / Evidence Contract
 

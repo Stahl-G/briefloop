@@ -125,6 +125,8 @@ def test_plugin_skill_uses_orchestrator_contract():
     assert "not semantic proof" in skill_text
     assert "audience_profile_snapshot.md" in skill_text
     assert "not source evidence" in skill_text
+    assert "orchestrator_control_switchboard.json" in skill_text
+    assert "Selection is not execution" in skill_text
 
 
 def test_plugin_reference_mentions_feedback_controls():
@@ -149,6 +151,9 @@ def test_plugin_reference_mentions_feedback_controls():
     assert "audience_profile_snapshot.md" in reference_text
     assert "runtime context only" in reference_text
     assert "do not treat `audience_profile.md` as source evidence" in reference_text
+    assert "orchestrator_control_switchboard.json" in reference_text
+    assert "multi-agent-brief controls select" in reference_text
+    assert "Selection is not execution" in reference_text
     assert "feedback_issues.json" in artifact_text
     assert "repair_plan.json" in artifact_text
     assert "delta_audit_report.json" in artifact_text
@@ -156,6 +161,8 @@ def test_plugin_reference_mentions_feedback_controls():
     assert "provenance_graph.json" in artifact_text
     assert "audience_profile.md" in artifact_text
     assert "audience_profile_snapshot.md" in artifact_text
+    assert "orchestrator_control_switchboard.json" in artifact_text
+    assert "control_selections.json" in artifact_text
     assert "not workflow artifacts" in artifact_text
 
 
@@ -197,7 +204,20 @@ def test_run_handoff_passes_detected_repo_workdir(monkeypatch, tmp_path):
         "audience_profile": False,
         "audience_profile_snapshot": False,
     }
+    assert "control_switchboard_files" in result
+    assert result["control_switchboard_files"]["orchestrator_control_switchboard"] == str(
+        workspace / "output" / "intermediate" / "orchestrator_control_switchboard.json"
+    )
+    assert result["control_switchboard_files"]["control_selections"] == str(
+        workspace / "output" / "intermediate" / "control_selections.json"
+    )
+    assert result["control_switchboard_files_exist"] == {
+        "orchestrator_control_switchboard": False,
+        "control_selections": False,
+    }
     assert "audience_profile_snapshot.md" in result["next"]
+    assert "orchestrator_control_switchboard.json" in result["next"]
+    assert "selection is not execution" in result["next"]
     assert captured["cwd"] == str(repo_root)
     assert "--repo-workdir" in captured["cmd"]
     repo_arg = captured["cmd"].index("--repo-workdir") + 1

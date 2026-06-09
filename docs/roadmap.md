@@ -11,7 +11,7 @@ subagent-first runtime
 → orchestrator contracts
 → feedback and repair loop
 → checkpointed quality gates and evaluation
-→ workspace memory and mode registry
+→ workspace memory and control switchboard
 → provenance-aware artifacts
 → policy packs and runtime parity
 → stable v1.0 baseline
@@ -93,6 +93,14 @@ Two design principles guide the next phases:
 - Handoff JSON/Markdown expose `audience_memory_files` separately from expected artifacts and control files.
 - Python does not treat audience profile content as source evidence, an artifact contract, a quality gate, provenance graph expansion, automatic learning, or a long-term memory system.
 
+### v0.6.7
+
+- The Orchestrator control switchboard was added as a runtime control surface.
+- `run`, `start`, and `handoff` create `output/intermediate/orchestrator_control_switchboard.json`.
+- `controls build-switchboard`, `controls show`, `controls select`, and `controls validate` provide CLI entry points for recommendations and explicit Orchestrator selections.
+- `control_selections.json` records enable/defer/reject choices only when selected by the Orchestrator.
+- Selection is not execution: Python does not automatically run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
+
 ## Next Milestones
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -133,7 +141,7 @@ Public scope:
 - Keep provenance projection as audit/debug tooling while deferring semantic proof, replay, and graph-database style query systems.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing after v0.6.6 moves toward FrictionStore, improvement proposals, policy packs, and runtime parity while preserving the subagent-first runtime boundary.
+Public sequencing after v0.6.7 moves toward FrictionStore, improvement proposals, policy packs, and runtime parity while preserving the subagent-first runtime boundary.
 
 Public implementation overviews:
 
@@ -156,9 +164,9 @@ Public scope:
 
 - Track recurring failure patterns across runs.
 - Generate improvement signals, patch plans, and regression-plan suggestions.
-- Add a lightweight workspace memory model for audience taste and recurring feedback patterns.
+- Extend workspace-local memory cautiously for recurring feedback patterns after the audience snapshot baseline.
 - Treat memory updates as agent-proposed and human-approved.
-- Use frozen per-run memory snapshots so a run does not change behavior midway because of memory written during that same run.
+- Keep frozen per-run snapshots so a run does not change behavior midway because of memory written during that same run.
 - Keep self-improvement proposal-only until a human or maintainer approves code changes.
 
 Non-goals:

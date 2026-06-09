@@ -68,6 +68,9 @@ def handle_mabw(ctx, argstr: str):
             "  continue, retry_stage, delegate_repair, request_human_review, block_run, finalize\n\n"
             "Optional feedback controls:\n"
             "  multi-agent-brief feedback ingest/plan/resolve/show/validate structure feedback but do not run repair.\n\n"
+            "Orchestrator control switchboard:\n"
+            "  Read output/intermediate/orchestrator_control_switchboard.json and record choices with controls select.\n"
+            "  Selection is not execution; explicitly run the selected CLI, subagent, or human action afterward.\n\n"
             "Optional quality gate controls:\n"
             "  multi-agent-brief gates check/show/validate writes quality_gate_report.json but does not fetch sources or repair.\n\n"
             "Optional provenance projection:\n"
@@ -113,11 +116,13 @@ def handle_mabw(ctx, argstr: str):
             lines.append("  configs/artifact_contracts.yaml, configs/policy_packs/default.yaml")
             lines.append("")
             lines.append("Decide: continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.")
+            lines.append("Read orchestrator_control_switchboard.json and record control choices with controls select; selection is not execution.")
             lines.append("Use feedback ingest/plan/resolve/show/validate only when audit findings or human feedback exist; these commands do not execute repair.")
             lines.append("Use gates check/show/validate before finalize; these commands do not fetch sources or repair.")
             lines.append("Use provenance build/show/validate only when an audit/debug graph is useful; it is not semantic proof and is not required before finalize.")
             lines.append("")
             lines.append("Before finalize, run:")
+            lines.append(f"  multi-agent-brief controls select --workspace {ws_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"")
             lines.append(f"  multi-agent-brief gates check --workspace {ws_path}")
             lines.append(f"  multi-agent-brief state check --workspace {ws_path} --strict")
             lines.append(f"  multi-agent-brief state decide --workspace {ws_path} --stage auditor --decision continue --reason \"Audit and quality gates passed.\"")
@@ -157,11 +162,13 @@ def handle_mabw(ctx, argstr: str):
             "  configs/artifact_contracts.yaml, configs/policy_packs/default.yaml",
             "",
             "Decide: continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.",
+            "Read orchestrator_control_switchboard.json and record control choices with controls select; selection is not execution.",
             "Use feedback ingest/plan/resolve/show/validate only when audit findings or human feedback exist; these commands do not execute repair.",
             "Use gates check/show/validate before finalize; these commands do not fetch sources or repair.",
             "Use provenance build/show/validate only when an audit/debug graph is useful; it is not semantic proof and is not required before finalize.",
             "",
             "Before finalize, run:",
+            f"  multi-agent-brief controls select --workspace {ws_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"",
             f"  multi-agent-brief gates check --workspace {ws_path}",
             f"  multi-agent-brief state check --workspace {ws_path} --strict",
             f"  multi-agent-brief state decide --workspace {ws_path} --stage auditor --decision continue --reason \"Audit and quality gates passed.\"",

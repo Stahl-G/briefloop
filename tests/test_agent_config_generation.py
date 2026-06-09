@@ -275,6 +275,9 @@ def test_opencode_command_has_correct_agent(manifest):
     assert "Check the expected artifact before continuing" in content
     assert "multi-agent-brief run --workspace $ARGUMENTS --runtime opencode --skip-doctor" in content
     assert "output/intermediate/audience_profile_snapshot.md" in content
+    assert "output/intermediate/orchestrator_control_switchboard.json" in content
+    assert "multi-agent-brief controls select" in content
+    assert "selection is not execution" in content
     assert "Do not treat `audience_profile.md` as source evidence" in content
     assert "retry_stage" in content
 

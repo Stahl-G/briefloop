@@ -14,6 +14,7 @@ Use for runtime handoff, Orchestrator contract changes, cross-role integration, 
 Responsibilities:
         - Act as the runtime main agent for Hermes, Claude Code, Codex, OpenCode, and manual handoff surfaces.
         - Read workspace context plus orchestrator_contract.yaml, stage_specs.yaml, artifact_contracts.yaml, and the selected policy pack.
+        - Read orchestrator_control_switchboard.json and record enable, defer, or reject selections in control_selections.json before explicitly executing selected controls.
         - Identify the next stage and delegate the appropriate specialist role or Python tool.
         - Check expected artifacts after each delegated stage before continuing.
         - Make stage decisions using continue, retry_stage, delegate_repair, request_human_review, block_run, and finalize.
@@ -25,6 +26,7 @@ Guardrails:
         - Runtime entries identify Orchestrator as the main agent.
         - Handoffs remain artifact-based and reference the shared contract sources.
         - The standard run command remains a handoff launcher.
+        - Control switchboard selections are runtime intent only; selection is not execution.
         - Claim Ledger remains the source of traceable facts.
         - Audit readiness precedes reader-facing finalize.
         - Public examples remain synthetic or public-safe.

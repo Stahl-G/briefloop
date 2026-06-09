@@ -159,6 +159,39 @@ cases:
       graph_absent_text:
         - Full synthetic evidence text must stay out of provenance.
 
+  - case_id: control_switchboard_selection_is_not_execution
+    case_type: workspace
+    synthetic: true
+    description: Control selection records Orchestrator intent but does not execute the selected control.
+    initial_stage: doctor
+    commands:
+      - action: controls.build_switchboard
+        args: {}
+      - action: controls.select
+        args:
+          control: quality_gates
+          selection: enable
+          reason: Evaluation selects quality gates without executing them.
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: controls.build_switchboard
+          exit_code: 0
+        - action: controls.select
+          exit_code: 0
+        - action: state.check
+          exit_code: 0
+      artifacts_exist:
+        - output/intermediate/orchestrator_control_switchboard.json
+        - output/intermediate/control_selections.json
+      artifacts_absent:
+        - output/intermediate/quality_gate_report.json
+      workflow_state:
+        current_stage: doctor
+        blocked: false
+
   - case_id: static_hermes_no_skip_finalize
     case_type: static_contract
     synthetic: true

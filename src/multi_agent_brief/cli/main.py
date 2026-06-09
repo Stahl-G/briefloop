@@ -29,6 +29,7 @@ from multi_agent_brief.cli import (
     eval_cases_commands,
     claude_commands,
     provenance_commands,
+    controls_commands,
 )
 
 
@@ -81,6 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Deterministic provenance projection
     provenance_commands.register(subparsers)
+
+    # Orchestrator control switchboard
+    controls_commands.register(subparsers)
 
     # Claude Code install helpers
     claude_commands.register(subparsers)
@@ -166,6 +170,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "provenance":
         return provenance_commands.handle(args)
+
+    if cmd == "controls":
+        return controls_commands.handle(args)
 
     if cmd == "claude":
         return claude_commands.handle(args)

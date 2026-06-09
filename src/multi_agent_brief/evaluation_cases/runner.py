@@ -17,6 +17,13 @@ from multi_agent_brief.evaluation_cases.contract import (
     case_definitions,
     validate_case_contract,
 )
+from multi_agent_brief.controls.contract import ControlSwitchboardError
+from multi_agent_brief.controls.switchboard import (
+    build_control_switchboard,
+    select_control,
+    show_control_switchboard,
+    validate_control_switchboard,
+)
 from multi_agent_brief.evaluation_cases.fixtures import evaluation_cases_root
 from multi_agent_brief.feedback.feedback_contract import feedback_state_paths
 from multi_agent_brief.feedback.feedback_state import (
@@ -193,7 +200,7 @@ def _run_single_case(
                 root=root,
             )
         )
-    except (RuntimeStateError, EvaluationCaseRunError, EvaluationCaseContractError) as exc:
+    except (RuntimeStateError, EvaluationCaseRunError, EvaluationCaseContractError, ControlSwitchboardError) as exc:
         observed_exit_code = 1
         errors.append(str(exc))
         if hasattr(exc, "details") and getattr(exc, "details"):
@@ -283,7 +290,7 @@ def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[s
         if "source_repo_mode" in data:
             result["source_repo_mode"] = data["source_repo_mode"]
         return result
-    except (RuntimeStateError, EvaluationCaseRunError) as exc:
+    except (RuntimeStateError, EvaluationCaseRunError, ControlSwitchboardError) as exc:
         return {
             "action": action,
             "exit_code": 1,
@@ -297,6 +304,30 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
     workspace = context.get("workspace")
     repo_workdir = context["repo_workdir"]
 
+    if action == "controls.build_switchboard":
+        return build_control_switchboard(
+            workspace=_require_workspace(workspace),
+            repo_workdir=repo_workdir,
+            actor="system",
+        )
+    if action == "controls.show":
+        return show_control_switchboard(workspace=_require_workspace(workspace))
+    if action == "controls.select":
+        return select_control(
+            workspace=_require_workspace(workspace),
+            control_id=str(args.get("control") or ""),
+            selection=str(args.get("selection") or ""),
+            reason=str(args.get("reason") or "Evaluation control selection."),
+            approved_by_human=bool(args.get("approved_by_human", False)),
+            human_approval_ref=args.get("human_approval_ref"),
+            actor="orchestrator",
+        )
+    if action == "controls.validate":
+        return validate_control_switchboard(
+            workspace=_require_workspace(workspace),
+            strict=bool(args.get("strict", False)),
+            actor="system",
+        )
     if action == "gates.check":
         return check_quality_gates(
             workspace=_require_workspace(workspace),
@@ -409,6 +440,12 @@ def _assert_expected(
             continue
         if not (workspace / str(rel_path)).exists():
             errors.append(f"Expected artifact does not exist: {rel_path}.")
+    for rel_path in expected.get("artifacts_absent") or []:
+        if workspace is None:
+            errors.append(f"artifacts_absent requires a workspace case: {rel_path}.")
+            continue
+        if (workspace / str(rel_path)).exists():
+            errors.append(f"Expected artifact to be absent, but it exists: {rel_path}.")
 
     if workspace is not None:
         errors.extend(_assert_findings_any(workspace=workspace, expected=expected))

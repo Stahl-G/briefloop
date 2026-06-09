@@ -18,7 +18,7 @@ Read contract references before delegation:
 
 Use this Orchestrator loop for every stage:
 
-1. Read workspace context, frozen audience profile snapshot, and contract references.
+1. Read workspace context, frozen audience profile snapshot, control switchboard, and contract references.
 2. Identify the current stage and expected artifact.
 3. Delegate the specialist role or run the Python tool.
 4. Check the expected artifact before continuing.
@@ -30,8 +30,10 @@ Stage sequence:
    - Run: `multi-agent-brief run --workspace $ARGUMENTS --runtime opencode --skip-doctor`
    - Read `$ARGUMENTS/output/intermediate/agent_handoff.md`.
    - Read `$ARGUMENTS/output/intermediate/audience_profile_snapshot.md`.
+   - Read `$ARGUMENTS/output/intermediate/orchestrator_control_switchboard.json`.
    - Summarize relevant taste guidance for delegated roles.
    - Do not treat `audience_profile.md` as source evidence; mid-run profile edits apply to the next run.
+   - Record control choices with `multi-agent-brief controls select`; selection is not execution.
 
 2. Read `$ARGUMENTS/config.yaml`, `$ARGUMENTS/sources.yaml`, `$ARGUMENTS/user.md`, and workspace inputs.
 
@@ -78,6 +80,7 @@ Stage sequence:
     - Audit `$ARGUMENTS/output/intermediate/audited_brief.md` against `$ARGUMENTS/output/intermediate/claim_ledger.json`.
 
 13. Check `audit_report.json`, then run quality gates and refresh runtime state before finalize:
+    - Confirm quality gate selection in `control_selections.json`, or record it with `multi-agent-brief controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason "Use quality gates before finalize."`
     - Run: `multi-agent-brief gates check --workspace $ARGUMENTS`
     - Run: `multi-agent-brief state check --workspace $ARGUMENTS --strict`
     - If state is not blocked, run: `multi-agent-brief state decide --workspace $ARGUMENTS --stage auditor --decision continue --reason "Audit and quality gates passed."`
@@ -98,5 +101,6 @@ Stage sequence:
     - Report artifact paths.
     - Report audit status.
     - Report quality gate status.
+    - Report switchboard selections.
     - Report optional provenance graph path when created.
     - Report success when audit status supports delivery.
