@@ -86,6 +86,8 @@ def finalize_reader_outputs(
         source_appendix_config=source_appendix_config or {},
     )
     appendix_path = out / "source_appendix.md"
+    if appendix_path.exists():
+        appendix_path.unlink()
     appendix_result = _maybe_generate_source_appendix(
         audited_markdown=audited_markdown,
         ledger_path=intermediate_dir / "claim_ledger.json",
@@ -152,7 +154,7 @@ def finalize_reader_outputs(
         named_reader_docx=str(named_docx_path or ""),
         docx_generation=docx_status,
         stripped_src_marker_count=stripped_count,
-        source_appendix=str(appendix_path) if appendix_path.exists() else "",
+        source_appendix=str(appendix_path) if appendix_result.markdown and appendix_path.exists() else "",
         source_appendix_generation=appendix_result.status,
         source_appendix_requested_by=str(appendix_request["requested_by"]),
         source_appendix_mode=str(appendix_request["mode"]),

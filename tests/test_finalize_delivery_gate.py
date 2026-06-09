@@ -216,6 +216,137 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
         )
 
 
+def test_finalize_not_requested_removes_stale_source_appendix(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+    _write_claim_ledger(intermediate / "claim_ledger.json")
+
+    first = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+    assert first.source_appendix_generation == "generated"
+    assert (output_dir / "source_appendix.md").exists()
+
+    second = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+
+    assert second.source_appendix_generation == "not_requested"
+    assert second.source_appendix == ""
+    assert report["source_appendix"] == ""
+    assert not (output_dir / "source_appendix.md").exists()
+
+
+def test_finalize_legacy_missing_ledger_removes_stale_source_appendix(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+    ledger = intermediate / "claim_ledger.json"
+    _write_claim_ledger(ledger)
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+    assert (output_dir / "source_appendix.md").exists()
+    ledger.unlink()
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_map"],
+        output_named_outputs=False,
+    )
+
+    assert result.source_appendix_generation == "skipped_missing_ledger"
+    assert result.source_appendix == ""
+    assert not (output_dir / "source_appendix.md").exists()
+
+
+def test_finalize_legacy_malformed_ledger_removes_stale_source_appendix(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+    ledger = intermediate / "claim_ledger.json"
+    _write_claim_ledger(ledger)
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+    assert (output_dir / "source_appendix.md").exists()
+    ledger.write_text("{not json", encoding="utf-8")
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_map"],
+        output_named_outputs=False,
+    )
+
+    assert result.source_appendix_generation == "skipped_malformed_ledger"
+    assert result.source_appendix == ""
+    assert not (output_dir / "source_appendix.md").exists()
+
+
+def test_finalize_cli_reports_missing_explicit_source_appendix_ledger_without_traceback(
+    tmp_path: Path,
+    capsys,
+):
+    workspace = tmp_path / "workspace"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: ExampleCo Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n"
+        "    - source_appendix\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nClaim. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "[finalize] Error:" in captured.err
+    assert "Claim Ledger not found" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_finalize_append_mode_uses_same_markdown_for_named_and_docx(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"

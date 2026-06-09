@@ -13,6 +13,9 @@ from multi_agent_brief.core.schemas import Claim
 _SRC_REF_RE = re.compile(r"\[src:([^\]]+)\]")
 _LOCAL_PATH_MARKERS = ("/Users/", "/home/", "/private/", "/var/folders/")
 _WINDOWS_USER_RE = re.compile(r"[A-Za-z]:\\Users\\")
+_INTERNAL_ID_RE = re.compile(
+    r"\b(?:SYN_)?(?:CLAIM|SRC|SOURCE|CLM)_[A-Z0-9][A-Z0-9_-]*\b"
+)
 
 
 @dataclass
@@ -227,6 +230,8 @@ def _safe_display_text(value: str, *, field_name: str) -> tuple[str, str]:
         return "", f"Omitted {field_name} because it looked like a local path."
     if value.lower().startswith("file://"):
         return "", f"Omitted {field_name} because it used a file:// reference."
+    if _contains_internal_id(value):
+        return "", f"Omitted {field_name} because it looked like an internal ID."
     return value, ""
 
 
@@ -251,6 +256,10 @@ def _contains_private_path(value: str) -> bool:
         return PureWindowsPath(value).is_absolute()
     except ValueError:
         return False
+
+
+def _contains_internal_id(value: str) -> bool:
+    return bool(_INTERNAL_ID_RE.search(value))
 
 
 def _normalize(value: str) -> str:

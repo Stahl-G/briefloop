@@ -148,3 +148,31 @@ def test_source_appendix_filters_local_paths_and_file_urls(tmp_path: Path):
     assert "C:\\Users" not in result.markdown
     assert "file://" not in result.markdown
     assert result.warnings
+
+
+def test_source_appendix_filters_internal_id_shaped_metadata(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            _claim(
+                "SYN_CLAIM_001",
+                source_id="SYN_SRC_001",
+                metadata={
+                    "source_title": "SYN_SRC_001",
+                    "publisher": "CLAIM_INTERNAL_001",
+                    "published_at": "2026-06-01",
+                },
+            ),
+        ],
+    )
+
+    result = build_source_appendix(
+        audited_markdown="ID-shaped source metadata. [src:SYN_CLAIM_001]\n",
+        ledger_path=ledger,
+    )
+
+    assert "SYN_SRC_001" not in result.markdown
+    assert "CLAIM_INTERNAL_001" not in result.markdown
+    assert "Source record" in result.markdown
+    assert result.warnings

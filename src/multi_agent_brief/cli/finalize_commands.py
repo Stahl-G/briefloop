@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from multi_agent_brief.core.config import build_run_settings, load_config
@@ -41,23 +42,27 @@ def handle(args: argparse.Namespace) -> int:
         audience=None,
     )
 
-    result = finalize_reader_outputs(
-        output_dir=settings["output_dir"],
-        project_name=settings["project_name"],
-        output_formats=settings.get("output_formats", ["markdown"]),
-        output_footer=settings.get("output_footer", ""),
-        output_named_outputs=bool(
-            settings.get("output_named_outputs", True)
-        ),
-        output_filename_template=settings.get("output_filename_template", ""),
-        output_filename_tokens=settings.get("output_filename_tokens", {}),
-        docx_template=(config.get("output", {}) or {}).get(
-            "docx_template", "default"
-        ),
-        source_appendix_config=(config.get("output", {}) or {}).get(
-            "source_appendix", {}
-        ),
-    )
+    try:
+        result = finalize_reader_outputs(
+            output_dir=settings["output_dir"],
+            project_name=settings["project_name"],
+            output_formats=settings.get("output_formats", ["markdown"]),
+            output_footer=settings.get("output_footer", ""),
+            output_named_outputs=bool(
+                settings.get("output_named_outputs", True)
+            ),
+            output_filename_template=settings.get("output_filename_template", ""),
+            output_filename_tokens=settings.get("output_filename_tokens", {}),
+            docx_template=(config.get("output", {}) or {}).get(
+                "docx_template", "default"
+            ),
+            source_appendix_config=(config.get("output", {}) or {}).get(
+                "source_appendix", {}
+            ),
+        )
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"[finalize] Error: {exc}", file=sys.stderr)
+        return 1
 
     print(f"[finalize] Reader brief: {result.reader_brief}")
     if result.named_reader_brief:
