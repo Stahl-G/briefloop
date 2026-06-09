@@ -370,6 +370,7 @@ def test_cli_hermes_prompt_output_contains_workflow_steps(capsys, tmp_path: Path
     assert "multi-agent-brief gates check" in output
     assert "multi-agent-brief state check" in output
     assert "multi-agent-brief state decide" in output
+    assert "audience_profile_snapshot.md" in output
     assert "multi-agent-brief provenance build" in output
     assert output.index("multi-agent-brief gates check") < output.index("multi-agent-brief finalize")
     assert output.index("multi-agent-brief finalize") < output.index("multi-agent-brief provenance build")
@@ -405,6 +406,8 @@ def test_hermes_skill_contains_onboarding_workflow():
     assert "multi-agent-brief run --workspace <workspace>" in content
     assert "delegate_task" in content
     assert "gates check + state check/decide" in content
+    assert "audience_profile_snapshot.md" in content
+    assert "Do not treat `audience_profile.md` as evidence" in content
     assert "finalize` is not a quality-gate executor" in content
     assert "provenance build" in content
     assert "not semantic proof" in content

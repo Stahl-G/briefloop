@@ -5,6 +5,24 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] — 2026-06-09
+
+### Added
+
+- **Audience Profile Runtime Surface**: added workspace-local `audience_profile.md` as a human-editable reader taste and department preference file.
+- **Frozen per-run snapshot**: `run`, `start`, and `handoff` now create or reuse `output/intermediate/audience_profile_snapshot.md` so the active run uses stable taste context even if the live profile is edited later.
+- **Handoff references**: `agent_handoff.json` and `agent_handoff.md` now expose `audience_memory_files` separately from runtime state, feedback, quality gate, provenance, and expected workflow artifacts.
+- **Runtime event trace**: event logs can record `audience_profile_snapshot_created` with profile/snapshot paths and hashes.
+
+### Changed
+
+- **Workspace init**: onboarding, direct init, and demo init now create an audience profile template.
+- **Runtime guidance**: Hermes, Claude, OpenCode, Codex, and manual handoff text now instruct the Orchestrator to read the snapshot at run start, summarize relevant taste guidance, and pass it to delegated roles as context.
+
+### Boundaries
+
+- Audience profile files are runtime context, not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers. Python creates, freezes, exposes, and records the context; it does not enforce taste, update the profile automatically, route controls, or implement a long-term memory system.
+
 ## [0.6.5] — 2026-06-09
 
 ### Added

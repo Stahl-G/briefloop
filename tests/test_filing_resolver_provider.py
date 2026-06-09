@@ -28,7 +28,7 @@ def _make_mock_dfr(evidence: MagicMock | None = None, sources: list | None = Non
     if evidence is None:
         evidence = MagicMock()
         evidence.observations = []
-        evidence.entity.legal_name = "TOYO Co., Ltd"
+        evidence.entity.legal_name = "Demo Holdings Ltd"
     if sources is None:
         sources = []
     mod.resolve_disclosure = MagicMock(return_value=evidence)
@@ -94,7 +94,7 @@ def test_validate_valid_entry():
         provider = FilingResolverProvider()
         errors = provider.validate_config({
             "enabled": True,
-            "tickers": [{"ticker": "TOYO"}],
+            "tickers": [{"ticker": "DEMO"}],
         })
         identifier_errors = [e for e in errors if "at least one of" in e]
         assert identifier_errors == []
@@ -119,7 +119,7 @@ def test_collect_no_tickers_returns_empty():
 def test_collect_basic():
     sources = [
         {
-            "title": "TOYO Co., Ltd — 6-K — financial statements",
+            "title": "Demo Holdings Ltd — 6-K — financial statements",
             "url": "https://www.sec.gov/test.htm",
             "source_type": "filing",
             "date": "2026-03-15",
@@ -139,12 +139,12 @@ def test_collect_basic():
         provider = FilingResolverProvider()
         items = provider.collect(SourceQuery(), {
             "enabled": True,
-            "tickers": [{"ticker": "TOYO"}],
+            "tickers": [{"ticker": "DEMO"}],
         })
         assert len(items) == 1
         item = items[0]
         assert item.source_type == "filing_resolver"
-        assert "TOYO" in item.title
+        assert "Demo Holdings" in item.title
         assert item.reliability == "high"
         assert item.metadata["source_tier"] == "T1"
     finally:
@@ -169,7 +169,7 @@ def test_collect_xbrl_observations():
     )
     evidence = MagicMock()
     evidence.observations = [obs]
-    evidence.entity.legal_name = "TOYO Co., Ltd"
+    evidence.entity.legal_name = "Demo Holdings Ltd"
 
     mock_mod = _make_mock_dfr(evidence=evidence, sources=[])
     prev = _patch_dfr(mock_mod)
@@ -177,7 +177,7 @@ def test_collect_xbrl_observations():
         provider = FilingResolverProvider()
         items = provider.collect(SourceQuery(), {
             "enabled": True,
-            "tickers": [{"ticker": "TOYO"}],
+            "tickers": [{"ticker": "DEMO"}],
             "include_xbrl": True,
         })
         assert len(items) == 1
@@ -206,7 +206,7 @@ def test_collect_multiple_tickers():
         provider = FilingResolverProvider()
         items = provider.collect(SourceQuery(), {
             "enabled": True,
-            "tickers": [{"ticker": "TOYO"}, {"ticker": "TSLA"}],
+            "tickers": [{"ticker": "DEMO"}, {"ticker": "TSLA"}],
         })
         assert mock_mod.resolve_disclosure.call_count == 2
         assert len(items) == 2
@@ -237,7 +237,7 @@ def test_collect_import_error(monkeypatch):
         provider = FilingResolverProvider()
         items = provider.collect(SourceQuery(), {
             "enabled": True,
-            "tickers": [{"ticker": "TOYO"}],
+            "tickers": [{"ticker": "DEMO"}],
         })
         assert len(items) == 1
         assert items[0].source_type == "filing_resolver_error"
@@ -257,7 +257,7 @@ def test_collect_resolve_exception():
         provider = FilingResolverProvider()
         items = provider.collect(SourceQuery(), {
             "enabled": True,
-            "tickers": [{"ticker": "TOYO"}],
+            "tickers": [{"ticker": "DEMO"}],
         })
         assert len(items) == 1
         assert items[0].source_type == "filing_resolver_error"
@@ -301,12 +301,12 @@ def test_source_config_from_dict_with_filing_resolver():
         "source_strategy": {"enabled_providers": ["manual", "filing_resolver"]},
         "filing_resolver": {
             "enabled": True,
-            "tickers": [{"ticker": "TOYO"}],
+            "tickers": [{"ticker": "DEMO"}],
         },
     }
     config = SourceConfig.from_dict(data)
     assert config.filing_resolver["enabled"] is True
-    assert config.filing_resolver["tickers"][0]["ticker"] == "TOYO"
+    assert config.filing_resolver["tickers"][0]["ticker"] == "DEMO"
 
 
 # --- Source profiles ---

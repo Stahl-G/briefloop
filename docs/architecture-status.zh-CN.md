@@ -11,6 +11,7 @@
 - Deterministic material-fact、freshness 和 target-relevance gates 可以写入 quality gate report，但不会自动找源、改稿或 repair。
 - Packaged public-safe evaluation cases 可以验证 gates、feedback、runtime blocker 和 Hermes path 相关回归，用于开发和 CI。
 - 可选 deterministic provenance projection 可以基于已有 control files 写入 workspace-local audit/debug graph。
+- Workspace-local `audience_profile.md` 可以记录 reader taste；`run`、`start` 和 `handoff` 会创建或复用 frozen per-run `output/intermediate/audience_profile_snapshot.md`，并通过 handoff 暴露为 runtime context。
 - Python 命令负责 setup、source tooling、validation、audit support 和 rendering。
 - Hermes、Claude Code、Codex、OpenCode 和 manual fallback 都是 agent runtime surfaces。
 - Input governance 已区分 evidence、feedback、instructions 和 background context。
@@ -25,6 +26,7 @@ roadmap 中提到的概念不一定已经实现。除非代码、测试和 suppo
 - quality evaluation and feedback loops
 - policy packs
 - public-safe reference workflows
+- smart routing or automatic taste learning
 
 ## Experimental 或有限能力
 

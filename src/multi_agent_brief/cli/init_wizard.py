@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from multi_agent_brief.audience_memory import (
+    build_default_audience_profile,
+    profile_data_from_object,
+)
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -201,6 +206,7 @@ private_inputs/
 private_outputs/
 logs/
 user.md
+audience_profile.md
 *.docx
 *.pdf
 *.xlsx
@@ -332,6 +338,34 @@ def create_demo_workspace(target: Path, *, force: bool = False) -> None:
         target / "config.yaml": DEMO_CONFIG,
         target / "sources.yaml": DEMO_SOURCES,
         target / "user.md": DEMO_USER_MD,
+        target / "audience_profile.md": build_default_audience_profile(
+            {
+                "company": "Synthetic Corp",
+                "industry_text": "Manufacturing & Industrial",
+                "role": "strategy_office",
+                "audience": "management",
+                "audience_profile": "management",
+                "brief_title": "Synthetic Market Brief Demo",
+                "task_objective": "Validate the public-safe reference workflow with synthetic data.",
+                "interface_language": "en-US",
+                "output_language": "en-US",
+                "cadence": "weekly",
+                "source_profile": "conservative",
+                "focus_areas": [
+                    "Manufacturing output and capacity trends",
+                    "Trade regulation and policy impacts",
+                    "Competitor capacity announcements",
+                    "Commodity pricing and supply chain conditions",
+                ],
+                "forbidden_sources": [
+                    "confidential company documents",
+                    "private messages",
+                    "credentials",
+                    "material non-public information",
+                ],
+                "output_formats": ["markdown", "docx"],
+            }
+        ),
         target / ".gitignore": WORKSPACE_GITIGNORE,
         target / ".env.example": _build_env_example(),
         sources_dir / "news.json": json.dumps(_build_demo_news(), indent=2),
@@ -361,6 +395,9 @@ def create_workspace(target: Path, profile: InitProfile, *, force: bool = False)
         target / "sources.yaml": to_yaml(build_sources(profile)),
         target / "competitor_universe.yaml": to_yaml(_build_competitor_universe(profile)),
         target / "user.md": build_user_md(profile),
+        target / "audience_profile.md": build_default_audience_profile(
+            profile_data_from_object(profile)
+        ),
         target / ".gitignore": WORKSPACE_GITIGNORE,
         target / ".env.example": _build_env_example(),
         sources_dir / "README.md": _build_sources_readme(lang),

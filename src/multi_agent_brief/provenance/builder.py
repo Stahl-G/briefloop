@@ -449,7 +449,7 @@ def _add_event_nodes_and_edges(
     for idx, event in enumerate(events):
         event_id = str(event.get("event_id") or f"missing_event_id_{idx}")
         event_type = str(event.get("event_type") or "")
-        if event_type.startswith("provenance_graph_"):
+        if event_type.startswith("provenance_graph_") or event_type.startswith("audience_profile_snapshot_"):
             continue
         graph.add_node({
             "id": node_id("event", event_id),

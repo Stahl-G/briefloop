@@ -12,8 +12,13 @@ from multi_agent_brief.cli.start_commands import (
     render_handoff_cli,
     write_handoff_artifacts,
 )
+from multi_agent_brief.audience_memory import (
+    create_audience_profile_snapshot,
+    profile_data_from_workspace_config,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
+    append_event,
     check_runtime_state,
     initialize_runtime_state,
     record_decision,
@@ -255,12 +260,37 @@ def _write_handoff_and_state(
 ) -> tuple[Path, Path] | None:
     """Initialize runtime control files and write handoff artifacts."""
     try:
-        initialize_runtime_state(
+        state = initialize_runtime_state(
             workspace=workspace,
             runtime=handoff.runtime,
             repo_workdir=repo_workdir,
             actor="cli",
         )
+        snapshot = create_audience_profile_snapshot(
+            workspace=workspace,
+            run_id=str((state.get("manifest") or {}).get("run_id") or ""),
+            profile_data=profile_data_from_workspace_config(workspace),
+        )
+        if snapshot.created:
+            append_event(
+                workspace=workspace,
+                run_id=snapshot.run_id,
+                event_type="audience_profile_snapshot_created",
+                actor="cli",
+                reason="Audience profile snapshot created for the current run.",
+                metadata={
+                    "audience_profile": "audience_profile.md",
+                    "audience_profile_snapshot": snapshot.relative_path,
+                    "profile_created": snapshot.profile_created,
+                    "profile_missing": snapshot.profile_missing,
+                    "source_sha256": snapshot.source_sha256,
+                    "snapshot_sha256": snapshot.snapshot_sha256,
+                },
+            )
+        if snapshot.profile_missing:
+            handoff.notes.append(
+                "Audience profile was missing; a default audience_profile.md and frozen snapshot were created for this run."
+            )
         _record_doctor_state(
             handoff=handoff,
             workspace=workspace,

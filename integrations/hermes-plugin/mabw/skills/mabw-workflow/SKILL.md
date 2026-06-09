@@ -31,7 +31,8 @@ Read workspace context -> read contract references -> identify the next stage ->
 3. Call `mabw_init_workspace`.
 4. Call `mabw_run_handoff`.
 5. Read `agent_handoff.md`.
-6. Continue the Orchestrator-led delegated workflow with Hermes child tasks.
+6. Read `output/intermediate/audience_profile_snapshot.md` as the frozen runtime taste context.
+7. Continue the Orchestrator-led delegated workflow with Hermes child tasks.
 
 ## Brief Profile Fields
 
@@ -63,6 +64,10 @@ multi-agent-brief provenance validate --workspace <workspace>
 ```
 
 Provenance projection is not semantic proof and is not required to finalize.
+
+Audience memory is runtime context, not source evidence or an artifact gate. Read
+`audience_profile_snapshot.md` at run start, summarize relevant taste guidance for
+specialist roles, and ignore mid-run edits to `audience_profile.md` until the next run.
 
 ## References
 

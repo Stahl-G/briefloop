@@ -658,7 +658,7 @@ Public direction:
 - **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.
 - **v2.0: MAS Runtime Research Track** — after v1.0, explore richer runtime coordination concepts.
 
-See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.5 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, and packaged public-safe evaluation cases with an optional deterministic provenance projection for audit/debug review. It does not mean Python scores prose, calls an LLM judge, edits briefs, executes repair, live-fetches market data, recrawls sources, makes semantic truth judgments, or treats provenance as proof that a source supports a claim. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
+See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.6 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, and optional provenance projection with a workspace-local audience taste profile, frozen per-run snapshot, and runtime handoff exposure. It does not mean Python learns taste automatically, updates profiles, routes controls, treats taste as source evidence or an artifact gate, or implements a long-term memory system. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
 
 ## Safety And Non-Investment-Advice Disclaimer
 
@@ -670,21 +670,30 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.6.5** — deterministic provenance projection for workspace audit/debug traces
+Current version: **v0.6.6**
 
-v0.6.5 adds `multi-agent-brief provenance build/show/validate` and optional `output/intermediate/provenance_graph.json`. The graph projects existing runtime state, artifacts, events, decisions, claim/source citations, feedback, repair plans, and quality gate findings without executing stages, rewriting briefs, fetching sources, or asserting semantic truth.
+v0.6.6 adds workspace-local `audience_profile.md` and frozen per-run `output/intermediate/audience_profile_snapshot.md`. `run/start/handoff` expose this runtime context through `audience_memory_files`; it is not source evidence, an artifact contract, a quality gate, a provenance graph, or a long-term memory system.
+
+If you edit `audience_profile.md` during a run, the active run keeps using the frozen snapshot. To apply the edits, start a new run state:
+
+```bash
+multi-agent-brief state init --workspace <workspace> --reset-state
+multi-agent-brief run --workspace <workspace>
+```
 
 [View full changelog →](CHANGELOG.md)
 
 ## Development
 
 ```bash
+python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 
 PowerShell:
 
 ```powershell
+python -m pip install -e ".[dev]"
 python -m pytest -q
 ```
 

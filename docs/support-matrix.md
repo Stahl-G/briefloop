@@ -17,6 +17,7 @@ Each capability has one of the following statuses:
 | Subagent workflow (Scout → Screener → Claim Ledger → Analyst → Editor → Auditor) | Supported |
 | Runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Supported |
 | Runtime state control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Supported |
+| Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Quality gate control file (`quality_gate_report.json`) | Supported |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
@@ -41,6 +42,8 @@ Quality gate commands write deterministic gate reports and can block unsafe curr
 Evaluation cases are developer/CI regression checks for control-surface behavior. They do not create workflow artifacts, run subagents, fetch sources, score prose, call an LLM judge, or execute repair.
 
 Provenance commands write a deterministic workspace-local audit/debug graph from existing control files. They do not fetch sources, execute workflow stages, replay the runtime, execute repair, verify semantic truth, or block `finalize` by default.
+
+Audience profile files are workspace-local runtime context. The active run uses the frozen per-run snapshot exposed through handoff; these files are not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers.
 
 ## Runtimes
 

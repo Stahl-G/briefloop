@@ -85,6 +85,14 @@ Two design principles guide the next phases:
 - Provenance edges use citation/control wording and do not assert that a source semantically proves a claim.
 - Python does not execute workflow stages, fetch sources, replay a DAG, execute repair, verify semantic truth, or gate `finalize` by default as part of provenance projection.
 
+### v0.6.6
+
+- Workspace-local audience taste profiles were added as runtime context surfaces.
+- `audience_profile.md` is human-editable and lives at the workspace root.
+- `run`, `start`, and `handoff` create or reuse a frozen per-run `output/intermediate/audience_profile_snapshot.md`.
+- Handoff JSON/Markdown expose `audience_memory_files` separately from expected artifacts and control files.
+- Python does not treat audience profile content as source evidence, an artifact contract, a quality gate, provenance graph expansion, automatic learning, or a long-term memory system.
+
 ## Next Milestones
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -125,7 +133,7 @@ Public scope:
 - Keep provenance projection as audit/debug tooling while deferring semantic proof, replay, and graph-database style query systems.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing after v0.6.5 moves toward FrictionStore, improvement proposals, policy packs, and runtime parity while preserving the subagent-first runtime boundary.
+Public sequencing after v0.6.6 moves toward FrictionStore, improvement proposals, policy packs, and runtime parity while preserving the subagent-first runtime boundary.
 
 Public implementation overviews:
 

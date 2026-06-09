@@ -17,6 +17,7 @@ from multi_agent_brief.cli.start_commands import (
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
+from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
@@ -69,11 +70,15 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     )
     assert data["contract_references"] == CONTRACT_REFERENCES
     assert data["runtime_state_files"] == RUNTIME_STATE_FILES
+    assert data["audience_memory_files"] == AUDIENCE_MEMORY_FILES
     assert data["feedback_state_files"] == FEEDBACK_STATE_FILES
     assert data["quality_gate_state_files"] == QUALITY_GATE_STATE_FILES
     assert data["provenance_state_files"] == PROVENANCE_STATE_FILES
     for rel_path in data["runtime_state_files"].values():
         assert not Path(str(rel_path)).is_absolute()
+    for rel_path in data["audience_memory_files"].values():
+        assert not Path(str(rel_path)).is_absolute()
+        assert rel_path not in data["expected_artifacts"]
     for rel_path in data["feedback_state_files"].values():
         assert not Path(str(rel_path)).is_absolute()
         assert rel_path not in data["expected_artifacts"]
@@ -92,6 +97,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "configs/policy_packs/default.yaml" in text
     assert "runtime_manifest.json" in text
     assert "workflow_state.json" in text
+    assert "audience_profile_snapshot.md" in text
     assert "feedback_issues.json" in text
     assert "repair_plan.json" in text
     assert "quality_gate_report.json" in text
@@ -192,6 +198,8 @@ def test_start_auto_detects_workspace_in_cwd(tmp_path, monkeypatch):
     assert (ws / "output" / "intermediate" / "workflow_state.json").exists()
     assert (ws / "output" / "intermediate" / "artifact_registry.json").exists()
     assert (ws / "output" / "intermediate" / "event_log.jsonl").exists()
+    assert (ws / "audience_profile.md").exists()
+    assert (ws / "output" / "intermediate" / "audience_profile_snapshot.md").exists()
     data = json.loads(json_path.read_text(encoding="utf-8"))
     assert Path(data["repo_workdir"]).resolve() == ROOT
     _assert_orchestrator_contract_handoff(data)
@@ -216,6 +224,7 @@ def test_start_with_workspace_generates_handoff(tmp_path):
     assert md.exists()
     assert js.exists()
     assert (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert (ws / "output" / "intermediate" / "audience_profile_snapshot.md").exists()
 
     data = json.loads(js.read_text(encoding="utf-8"))
     assert data["runtime"] == "hermes"
@@ -337,6 +346,7 @@ def test_handoff_with_config_generates_artifacts(tmp_path):
     assert (ws / "output" / "intermediate" / "workflow_state.json").exists()
     assert (ws / "output" / "intermediate" / "artifact_registry.json").exists()
     assert (ws / "output" / "intermediate" / "event_log.jsonl").exists()
+    assert (ws / "output" / "intermediate" / "audience_profile_snapshot.md").exists()
 
 
 def test_handoff_no_config_fails(tmp_path):
@@ -433,10 +443,12 @@ def test_write_handoff_artifacts_writes_both_files(tmp_path):
     assert "# Agent Handoff" in md_content
     assert "## Contract References" in md_content
     assert "## Runtime State Files" in md_content
+    assert "## Audience Memory Files" in md_content
     assert "## Feedback State Files" in md_content
     assert "## Provenance State Files" in md_content
     assert "`orchestrator_contract`: `configs/orchestrator_contract.yaml`" in md_content
     assert "`runtime_manifest`: `output/intermediate/runtime_manifest.json`" in md_content
+    assert "`audience_profile_snapshot`: `output/intermediate/audience_profile_snapshot.md`" in md_content
     assert "`feedback_issues`: `output/intermediate/feedback_issues.json`" in md_content
     assert "`provenance_graph`: `output/intermediate/provenance_graph.json`" in md_content
     assert "delegate_task" in md_content
