@@ -1,0 +1,40 @@
+[
+  {
+    "claim_id": "SYN_CLAIM_001",
+    "statement": "ExampleCo opened a public demo facility in June 2026.",
+    "source_id": "SYN_SRC_001",
+    "evidence_text": "Full synthetic evidence text for demo facility must not render.",
+    "source_url": "https://example.com/exampleco-demo",
+    "source_type": "web_search",
+    "metadata": {
+      "source_title": "ExampleCo Opens Demo Facility",
+      "publisher": "Example News",
+      "published_at": "2026-06-01"
+    }
+  },
+  {
+    "claim_id": "SYN_CLAIM_002",
+    "statement": "ExampleCo reported Q1 results in May 2026.",
+    "source_id": "SYN_SRC_002",
+    "evidence_text": "Full synthetic evidence text for Q1 results must not render.",
+    "source_url": "https://example.com/exampleco-q1",
+    "source_type": "filing",
+    "metadata": {
+      "source_title": "ExampleCo Q1 Results",
+      "publisher": "ExampleCo",
+      "published_at": "2026-05-15"
+    }
+  },
+  {
+    "claim_id": "SYN_CLAIM_UNUSED",
+    "statement": "Unused claim must not appear in reader appendix.",
+    "source_id": "SYN_SRC_UNUSED",
+    "evidence_text": "Unused full synthetic evidence text must not render.",
+    "source_url": "https://example.com/unused",
+    "source_type": "web_search",
+    "metadata": {
+      "source_title": "Unused Source",
+      "publisher": "Example News"
+    }
+  }
+]

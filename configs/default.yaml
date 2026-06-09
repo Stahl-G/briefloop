@@ -25,7 +25,7 @@ outputs:
     - markdown
     - claim_ledger
     - audit_report
-    - source_map
+    - source_appendix
 
 connectors:
   sec:
@@ -40,4 +40,3 @@ connectors:
     enabled: false
   email:
     enabled: false
-

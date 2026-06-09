@@ -1,0 +1,13 @@
+project:
+  name: "Synthetic Source Appendix Brief"
+  audience: "management"
+input:
+  path: "input"
+output:
+  path: "output"
+  formats:
+    - markdown
+    - source_appendix
+  named_outputs: false
+report:
+  date: "2026-06-09"

@@ -28,7 +28,7 @@ v0.6.0 引入公开安全的 contract references：
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks。v0.6.2 增加最小 feedback issue 和 repair-plan 控制面。v0.6.3 增加 deterministic material-fact、freshness 和 target-relevance gate controls。v0.6.4 增加 packaged public-safe evaluation cases，用于开发和 CI 回归验证。v0.6.5 增加可选 deterministic provenance projection，用于 workspace audit/debug review。v0.6.6 增加 workspace-local audience profile 和 frozen per-run audience snapshot，并通过 handoff 暴露。v0.6.7 增加 Orchestrator control switchboard，用于 deterministic control recommendations 和 enable/defer/reject selection 记录。Python 仍不自动改 brief artifacts、不执行 repair、不 live-fetch sources、不做 semantic truth judgment、不用 LLM judge 给文章打分、不把 provenance 当成语义证明，也不自动学习 taste 或自动执行 selected controls。
+这些文件描述共享 authority、decision vocabulary、stage order、artifact expectations 和 default policy shell。v0.6.1 增加最小 runtime state control files 和 artifact status checks。v0.6.2 增加最小 feedback issue 和 repair-plan 控制面。v0.6.3 增加 deterministic material-fact、freshness 和 target-relevance gate controls。v0.6.4 增加 packaged public-safe evaluation cases，用于开发和 CI 回归验证。v0.6.5 增加可选 deterministic provenance projection，用于 workspace audit/debug review。v0.6.6 增加 workspace-local audience profile 和 frozen per-run audience snapshot，并通过 handoff 暴露。v0.6.7 增加 Orchestrator control switchboard，用于 deterministic control recommendations 和 enable/defer/reject selection 记录。v0.6.8 增加 finalize 阶段生成的 reader-facing source appendix，只使用 audited brief 实际引用的 Claim Ledger 来源。Python 仍不自动改 brief artifacts、不执行 repair、不 live-fetch sources、不做 semantic truth judgment、不用 LLM judge 给文章打分、不把 provenance 或 source appendix 当成语义证明，也不自动学习 taste 或自动执行 selected controls。
 
 ## 四类 Contract
 
@@ -65,9 +65,18 @@ Orchestrator 使用统一 decision vocabulary：
 7. 检查 expected artifact 是否存在，并是否适合进入下一 stage。
 8. 如果存在 audit findings 或 human feedback，先结构化 issue 和 repair plan，但不执行 repair。
 9. 决定 continue、retry、delegate repair、request human review、block 或 finalize。
-10. 仅在 audit readiness 后 finalize。
+10. 仅在 audit readiness 后 finalize，并按配置生成 reader-facing outputs 和 `output/source_appendix.md`。
 
 不同 runtime 的机制可以不同，但 artifact expectations 不应分叉。
+
+## Reader-Facing Source Appendix
+
+v0.6.8 允许 `multi-agent-brief finalize` 在配置了 `source_appendix` 时写入 `output/source_appendix.md`；旧配置中的 `source_map` output format 会作为兼容 alias 处理。
+
+- Appendix 只来自 `output/intermediate/audited_brief.md` 实际引用的 claims。
+- Reader-facing output 不应暴露 raw `claim_id`、`source_id`、evidence text、本地路径或 `file://` URL。
+- Appendix 是面向读者的来源列表，不是 runtime state file、artifact contract、quality gate、provenance graph，也不是 claim 语义为真的证明。
+- 显式 `source_appendix` 请求在 Claim Ledger 缺失或格式错误时会失败；legacy `source_map` 请求仅作为兼容 alias，可带 warning 跳过。
 
 ## Audience Profile Runtime Surface
 

@@ -5,6 +5,23 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] — 2026-06-09
+
+### Added
+
+- **Reader-facing source appendix**: `multi-agent-brief finalize` can generate `output/source_appendix.md` from sources cited in `output/intermediate/audited_brief.md` and resolved through `output/intermediate/claim_ledger.json`.
+- **Source appendix compatibility**: `source_appendix` is the new output format name; legacy `source_map` output format requests are treated as a compatibility alias.
+- **Public-safe eval case**: added a packaged eval case proving finalize can write a reader-facing appendix without leaking raw claim IDs, source IDs, evidence text, local paths, or unused ledger sources.
+
+### Changed
+
+- **Formatter guidance**: formatter role contracts and runtime command surfaces now mention configured source appendix rendering and its reader-facing safety boundary.
+- **Default output format**: new onboarding/default profiles now use `source_appendix` instead of the old `source_map` label.
+
+### Boundaries
+
+- The source appendix is a reader-facing source list, not source evidence, semantic proof, provenance, a runtime gate, or a workflow execution artifact. It does not fetch sources, rewrite claims, create citations, modify the Claim Ledger, or expose internal `[src:CLAIM_ID]` markers in final reader artifacts.
+
 ## [0.6.7] — 2026-06-09
 
 ### Added

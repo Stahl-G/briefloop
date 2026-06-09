@@ -288,7 +288,7 @@ class InitProfile:
     retrieval_provider: str = "ollama"
     retrieval_model: str = "nomic-embed-text"
     output_formats: list[str] = field(
-        default_factory=lambda: ["markdown", "docx", "claim_ledger", "audit_report", "source_map"]
+        default_factory=lambda: ["markdown", "docx", "claim_ledger", "audit_report", "source_appendix"]
     )
     source_profile: str = "llm_decide"
     source_decision_mode: str = "agent_decide"

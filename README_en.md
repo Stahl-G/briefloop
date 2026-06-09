@@ -27,7 +27,7 @@ This repo provides a toolkit that makes the workflow modular, inspectable, and r
 - Claude/Codex agents write the final brief from the Claim Ledger.
 - Draft and audited Markdown use explicit `[src:CLAIM_ID]` citations; the reader-facing `brief.md` strips those internal IDs.
 - Auditors check unsupported numbers, stale sources, duplicate claims, placeholders, and redaction risks.
-- Output artifacts keep the draft brief, audit report, claim ledger, and source map separate.
+- Output artifacts keep the draft brief, audit report, claim ledger, and reader-facing source appendix separate.
 
 ## Project Motivation
 
@@ -172,7 +172,7 @@ Hermes checks the environment, collects your brief profile in chat, creates the 
 > ```bash
 > multi-agent-brief finalize --config <workspace>/config.yaml
 > ```
-> Strips internal `[src:CLAIM_ID]` markers → writes `brief.md` / `brief.docx` → verifies outputs.
+> Strips internal `[src:CLAIM_ID]` markers → writes `brief.md` / `brief.docx` / optional `source_appendix.md` → verifies outputs.
 
 ### Other runtimes
 
@@ -240,7 +240,7 @@ The llm_decide mode does not block the workflow — if you skip `sources decide`
 
 ## DOCX Output
 
-When initializing a workspace, the default output formats now include `docx`. After running the pipeline, both `brief.md` and `brief.docx` will appear in the `output/` directory.
+When initializing a workspace, the default output formats now include `docx` and `source_appendix`. After running the pipeline and finalize, `brief.md`, `brief.docx`, and a reader-facing `source_appendix.md` can appear in the `output/` directory.
 
 The formatter also writes human-readable named delivery copies. The default template is:
 
@@ -658,7 +658,7 @@ Public direction:
 - **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.
 - **v2.0: MAS Runtime Research Track** — after v1.0, explore richer runtime coordination concepts.
 
-See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.7 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, optional provenance projection, and audience snapshots with an Orchestrator control switchboard. Python can surface control recommendations and record Orchestrator selections, but selection is not execution; gates, feedback, provenance, source discovery, repair, and subagent actions still require explicit Orchestrator action. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
+See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.8 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, optional provenance projection, audience snapshots, and the Orchestrator control switchboard with a reader-facing source appendix generated during finalize. Python can surface control recommendations, record Orchestrator selections, and render a reader-facing source list; selection is still not execution, and the source appendix is not semantic proof. Gates, feedback, provenance, source discovery, repair, and subagent actions still require explicit Orchestrator action. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
 
 ## Safety And Non-Investment-Advice Disclaimer
 
@@ -670,9 +670,9 @@ This project can help structure research and briefing workflows, but it does not
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-Current version: **v0.6.7**
+Current version: **v0.6.8**
 
-v0.6.7 adds the Orchestrator control switchboard: `run/start/handoff` create `output/intermediate/orchestrator_control_switchboard.json`, and `multi-agent-brief controls select` records enable/defer/reject choices. Selection is not execution and does not automatically run gates, feedback, provenance, source discovery, repair, or subagents.
+v0.6.8 adds the reader-facing source appendix: `multi-agent-brief finalize` can generate `output/source_appendix.md` from Claim Ledger sources actually cited in the audited brief. The appendix does not expose internal claim/source IDs, evidence text, local paths, or `file://` URLs, and it is not semantic proof.
 
 If you edit `audience_profile.md` during a run, the active run keeps using the frozen snapshot. To apply the edits, start a new run state:
 

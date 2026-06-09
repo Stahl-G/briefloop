@@ -24,7 +24,7 @@ This page records public-safe rationale for v0.6 control-surface regression chec
 | Global required-artifact blocking | Makes fresh workspaces look blocked by downstream artifacts that are not due yet. |
 | Repair plan equals repair completion | Lets the Orchestrator skip unresolved feedback. |
 | Gate findings auto-create feedback issues | Hides the Orchestrator decision that should route repair or human review. |
-| Final brief as auditable source surface | Reader-facing output should not need internal claim markers unless a source map exists. |
+| Final brief as auditable source surface | Reader-facing output should not need internal claim markers; use `source_appendix.md` for reader-facing source lists. |
 | Provenance graph as truth graph | The projection records citation/control relationships; semantic support still needs audit or human review. |
 | LLM-as-judge default eval | Turns deterministic regression checks into model-dependent scoring. |
 | Shell-string eval commands | Expands the fixture runner into an arbitrary command executor. |

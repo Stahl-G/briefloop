@@ -89,6 +89,7 @@ Stage sequence:
 14. Finalize only after the gates/state decision path passes:
     - Run: `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`
     - Confirm `output/brief.md` strips [src:CLAIM_ID].
+    - Confirm `output/source_appendix.md` exists when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.
     - Remember: finalize is not a quality-gate executor.
 
 15. Optional audit/debug provenance projection after runtime state exists:

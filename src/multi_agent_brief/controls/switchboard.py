@@ -430,7 +430,7 @@ def validate_selections_payload(
         if not isinstance(item.get("approved_by_human"), bool):
             errors.append(f"{prefix}.approved_by_human must be a boolean.")
         if item.get("executed") is not False:
-            errors.append(f"{prefix}.executed must remain false in v0.6.7.")
+            errors.append(f"{prefix}.executed must remain false; selection is not execution.")
         control = by_id.get(control_id) or {}
         if (
             control.get("requires_human_approval")

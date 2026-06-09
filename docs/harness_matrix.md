@@ -68,7 +68,7 @@ Allowed deterministic cleanup:
 - Inject public-safe front-page metadata if missing.
 - Convert wide Markdown tables into readable row sections.
 - Rename stale-current labels such as "current update" to neutral "event/status" when the source is old.
-- Preserve source maps while removing engineering IDs from reader-facing output.
+- Preserve reader-facing source appendices while removing engineering IDs from reader-facing output.
 
 ## Formatter Contract
 

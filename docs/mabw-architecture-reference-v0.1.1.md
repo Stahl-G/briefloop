@@ -9,7 +9,7 @@
 
 ---
 
-> **Current Release Boundary.** This technical report preserves the v0.1.1 design framing, but v0.6.7 implements the audience layer as a workspace-local runtime context surface and adds an Orchestrator control switchboard. `audience_profile.md` is the human-editable source file, and `output/intermediate/audience_profile_snapshot.md` is the frozen per-run file read through handoff. Mid-run profile edits apply to the next run. `output/intermediate/orchestrator_control_switchboard.json` exposes deterministic control recommendations, and `control_selections.json` records explicit Orchestrator selections. Selection is not execution. These surfaces are not a long-term memory system, artifact contracts, quality gates by themselves, source evidence, or provenance proof.
+> **Current Release Boundary.** This technical report preserves the v0.1.1 design framing, but v0.6.8 implements the audience layer as a workspace-local runtime context surface, adds an Orchestrator control switchboard, and adds a reader-facing source appendix during finalize. `audience_profile.md` is the human-editable source file, and `output/intermediate/audience_profile_snapshot.md` is the frozen per-run file read through handoff. Mid-run profile edits apply to the next run. `output/intermediate/orchestrator_control_switchboard.json` exposes deterministic control recommendations, and `control_selections.json` records explicit Orchestrator selections. Selection is not execution. `output/source_appendix.md` is a reader-facing source list generated from cited Claim Ledger sources, not semantic proof. These surfaces are not a long-term memory system, artifact contracts, quality gates by themselves, source evidence, or provenance proof.
 
 ---
 
@@ -87,7 +87,7 @@ Correctness can be mechanized. Taste cannot — it is learned through months of 
 
 ### 2.2 The Audience Profile Runtime Surface
 
-v0.1.1 introduces `audience_profile.md` — a plain-text file in the workspace, analogous to the Hermes agent's USER.md. v0.6.6 freezes that live profile into `output/intermediate/audience_profile_snapshot.md` for the active run. v0.6.7 adds `output/intermediate/orchestrator_control_switchboard.json` as a separate runtime control surface; it may read the snapshot as context, but it does not modify taste memory or execute controls. The profile/snapshot pair carries:
+v0.1.1 introduces `audience_profile.md` — a plain-text file in the workspace, analogous to the Hermes agent's USER.md. v0.6.6 freezes that live profile into `output/intermediate/audience_profile_snapshot.md` for the active run. v0.6.7 adds `output/intermediate/orchestrator_control_switchboard.json` as a separate runtime control surface; it may read the snapshot as context, but it does not modify taste memory or execute controls. v0.6.8 adds `output/source_appendix.md` as a reader-facing source list produced during finalize, not as part of the taste or control-routing layer. The profile/snapshot pair carries:
 
 - Editorial preferences ("lead with the key number, not background context")
 - Cultural taboos ("never suggest strategic pivots without explicit data support")
@@ -100,7 +100,7 @@ v0.1.1 introduces `audience_profile.md` — a plain-text file in the workspace, 
 1. **Initial state**: A few lines of natural language written by the department head or senior analyst. No schema, no YAML, no structured fields required.
 2. **Per-run**: `run`, `start`, and `handoff` create or reuse a frozen `audience_profile_snapshot.md` for the current `run_id`. The Orchestrator reads that snapshot at the start of the run, alongside contract references and state files. It produces a semantic summary of relevant taste guidelines for the current briefing task.
 3. **Injected into handoffs**: The summary is included in the handoff context for every specialist role that generates or edits content (scout through auditor).
-4. **Growth over time**: After each run, the human operator can add notes to `audience_profile.md` based on what went well or poorly. Those edits are captured only by a later run snapshot; mid-run edits do not change the active run. v0.6.7 does not automatically update the profile.
+4. **Growth over time**: After each run, the human operator can add notes to `audience_profile.md` based on what went well or poorly. Those edits are captured only by a later run snapshot; mid-run edits do not change the active run. v0.6.8 does not automatically update the profile.
 5. **No mechanical enforcement**: Unlike contracts, `audience_profile.md` and its snapshot have no schema validation for taste content, no blocking semantics, and no pass/fail gate. The snapshot is semantically interpreted by the Orchestrator and the specialist roles. Drift is accepted between runs, not within a frozen run.
 
 ### 2.3 Contract-Backed Control Surface
@@ -332,7 +332,7 @@ An agent suggestion that violates any of these red lines is an architecture-leve
 
 ### 8.1 Component Status
 
-**Stable baseline plus current additions through v0.6.7:**
+**Stable baseline plus current additions through v0.6.8:**
 
 | Component | Evidence |
 |-----------|----------|
@@ -348,8 +348,9 @@ An agent suggestion that violates any of these red lines is an architecture-leve
 | Role contracts + runtime handoff | `configs/stage_specs.yaml` |
 | **audience profile runtime surface** | `audience_profile.md` source + frozen `output/intermediate/audience_profile_snapshot.md`, exposed through `audience_memory_files` |
 | **Orchestrator control switchboard** | `output/intermediate/orchestrator_control_switchboard.json` recommendations + explicit `control_selections.json`; selection is not execution |
+| **Reader-facing source appendix** | `output/source_appendix.md` generated during finalize from cited Claim Ledger sources without raw internal IDs |
 
-**Deferred / out of scope for v0.6.7:**
+**Deferred / out of scope for v0.6.8:**
 
 | Component | Target |
 |-----------|--------|
@@ -372,7 +373,8 @@ An agent suggestion that violates any of these red lines is an architecture-leve
 | **v0.6.4** | Packaged public-safe evaluation cases |
 | **v0.6.5** | Optional deterministic provenance projection for audit/debug review |
 | **v0.6.6** | Workspace-local audience profile + frozen per-run snapshot exposed through handoff |
-| **v0.6.7** (current) | Orchestrator control switchboard + explicit control selection records |
+| **v0.6.7** | Orchestrator control switchboard + explicit control selection records |
+| **v0.6.8** (current) | Reader-facing source appendix generated during finalize |
 | **v0.7** | FrictionStore + full controlled self-improvement loop |
 | **v0.2** | System paper — experimental evaluation complete |
 
@@ -386,7 +388,7 @@ Following Kapoor et al. (2024) *AI Agents That Matter*, MABW evaluates **agentic
 
 ### 9.2 Verification Checks v0.1
 
-State file correctness, artifact validation completeness, event log traceability, run ID consistency, handoff context exposure, control switchboard selection behavior, and CLI output behavior — all executable against the current v0.6.7 implementation without experimental baseline data.
+State file correctness, artifact validation completeness, event log traceability, run ID consistency, handoff context exposure, control switchboard selection behavior, source appendix safety, and CLI output behavior — all executable against the current v0.6.8 implementation without experimental baseline data.
 
 ### 9.3 Single-Agent Baseline Comparison
 
@@ -406,7 +408,7 @@ MABW engages four research lines. It is distinguished from multi-agent conversat
 
 ## 11. Limitations & Future Work
 
-**Known limitations v0.6.7:** No private/commercial evaluation data; specialist roles are contract-defined but not autonomously executing in Python; automatic repair execution and semantic proof remain deferred; event log is control trace; provenance graph is optional audit/debug projection; audience profile is context only and is not automatically learned, updated, enforced, or routed; control selections do not execute selected controls; no scale validation.
+**Known limitations v0.6.8:** No private/commercial evaluation data; specialist roles are contract-defined but not autonomously executing in Python; automatic repair execution and semantic proof remain deferred; event log is control trace; provenance graph is optional audit/debug projection; source appendix is a reader-facing list rather than proof; audience profile is context only and is not automatically learned, updated, enforced, or routed; control selections do not execute selected controls; no scale validation.
 
 **Design boundary:** MABW is a controlled self-improving system, not fully autonomous. Contracts govern correctness; `audience_profile.md` and its frozen per-run snapshot provide taste context — the contract architecture generalizes across domains; the profile is per-team, per-department, per-company. Generalization to non-briefing workflows requires domain-specific policy pack adaptation.
 

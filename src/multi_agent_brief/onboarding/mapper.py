@@ -419,7 +419,7 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
         profile.forbidden_sources = list(result.forbidden_sources)
 
     # Output formats: standard artifact set
-    profile.output_formats = ["markdown", "docx", "claim_ledger", "audit_report", "source_map"]
+    profile.output_formats = ["markdown", "docx", "claim_ledger", "audit_report", "source_appendix"]
 
     # If output_style_plain requests docx/word, include it
     style_lower = (getattr(result, "output_style_plain", "") or "").lower()

@@ -28,7 +28,7 @@ v0.6.0 introduces public-safe contract references:
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 added deterministic material-fact, freshness, and target-relevance gate controls. v0.6.4 added packaged public-safe evaluation cases for developer/CI regression checks. v0.6.5 added optional deterministic provenance projection for workspace audit/debug review. v0.6.6 adds a workspace-local audience profile and frozen per-run audience snapshot exposed through handoff. v0.6.7 adds an Orchestrator control switchboard for deterministic control recommendations and recorded enable/defer/reject selections. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, score prose with an LLM judge, treat provenance as semantic proof, learn taste automatically, or execute selected controls automatically.
+These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 added deterministic material-fact, freshness, and target-relevance gate controls. v0.6.4 added packaged public-safe evaluation cases for developer/CI regression checks. v0.6.5 added optional deterministic provenance projection for workspace audit/debug review. v0.6.6 adds a workspace-local audience profile and frozen per-run audience snapshot exposed through handoff. v0.6.7 adds an Orchestrator control switchboard for deterministic control recommendations and recorded enable/defer/reject selections. v0.6.8 adds a reader-facing source appendix generated during finalize from cited Claim Ledger sources. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, score prose with an LLM judge, treat provenance or a source appendix as semantic proof, learn taste automatically, or execute selected controls automatically.
 
 ## Four Contract Categories
 
@@ -65,9 +65,18 @@ Each runtime should communicate the same loop:
 7. Check that the expected artifact is present and suitable for the next stage.
 8. When audit findings or human feedback exist, structure issues and repair plans without executing repair.
 9. Decide whether to continue, retry, delegate repair, request human review, block, or finalize.
-10. Finalize only after audit readiness.
+10. Finalize only after audit readiness, generating configured reader-facing outputs and `output/source_appendix.md` when requested.
 
 Runtime mechanics may differ, but artifact expectations should stay aligned.
+
+## Reader-Facing Source Appendix
+
+v0.6.8 lets `multi-agent-brief finalize` write `output/source_appendix.md` when `source_appendix` is configured, or when older configs request the legacy `source_map` output format.
+
+- The appendix is generated only from claims actually cited in `output/intermediate/audited_brief.md`.
+- Reader-facing output must not expose raw `claim_id`, `source_id`, evidence text, local paths, or `file://` URLs.
+- The appendix is a reader-facing source list, not a runtime state file, artifact contract, quality gate, provenance graph, or semantic proof that claims are true.
+- Missing or malformed Claim Ledger data fails explicit `source_appendix` requests; legacy `source_map` requests are treated as compatibility aliases and may skip with warnings.
 
 ## Audience Profile Runtime Surface
 

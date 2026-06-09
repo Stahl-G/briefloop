@@ -153,7 +153,7 @@ def test_onboarding_mapper_output_formats_default():
     assert "markdown" in profile.output_formats
     assert "claim_ledger" in profile.output_formats
     assert "audit_report" in profile.output_formats
-    assert "source_map" in profile.output_formats
+    assert "source_appendix" in profile.output_formats
     # Should NOT include "json" as a format
     assert "json" not in profile.output_formats
 

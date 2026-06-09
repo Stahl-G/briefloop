@@ -54,6 +54,9 @@ def handle(args: argparse.Namespace) -> int:
         docx_template=(config.get("output", {}) or {}).get(
             "docx_template", "default"
         ),
+        source_appendix_config=(config.get("output", {}) or {}).get(
+            "source_appendix", {}
+        ),
     )
 
     print(f"[finalize] Reader brief: {result.reader_brief}")
@@ -68,6 +71,10 @@ def handle(args: argparse.Namespace) -> int:
         print(
             f"[finalize] DOCX generation: {result.docx_generation}"
         )
+    if result.source_appendix:
+        print(f"[finalize] Source appendix: {result.source_appendix}")
+    elif result.source_appendix_generation not in {"not_requested", "generated"}:
+        print(f"[finalize] Source appendix: {result.source_appendix_generation}")
     print(
         "[finalize] Internal [src:CLAIM_ID] markers stripped from"
         " reader-facing artifacts."

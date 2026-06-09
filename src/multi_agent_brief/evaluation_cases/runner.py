@@ -24,6 +24,7 @@ from multi_agent_brief.controls.switchboard import (
     show_control_switchboard,
     validate_control_switchboard,
 )
+from multi_agent_brief.core.config import build_run_settings, load_config
 from multi_agent_brief.evaluation_cases.fixtures import evaluation_cases_root
 from multi_agent_brief.feedback.feedback_contract import feedback_state_paths
 from multi_agent_brief.feedback.feedback_state import (
@@ -40,6 +41,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     show_runtime_state,
 )
 from multi_agent_brief.orchestrator_contract import is_source_repo, resolve_repo_workdir
+from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from multi_agent_brief.provenance.builder import (
     build_provenance_workspace,
     show_provenance_workspace,
@@ -389,6 +391,29 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             workspace=_require_workspace(workspace),
             repo_workdir=repo_workdir,
         )
+    if action == "finalize":
+        ws = _require_workspace(workspace)
+        config = load_config(ws / "config.yaml")
+        settings = build_run_settings(
+            config=config,
+            input_dir=None,
+            output_dir=args.get("output"),
+            name=None,
+            language=None,
+            audience=None,
+        )
+        result = finalize_reader_outputs(
+            output_dir=settings["output_dir"],
+            project_name=settings["project_name"],
+            output_formats=settings.get("output_formats", ["markdown"]),
+            output_footer=settings.get("output_footer", ""),
+            output_named_outputs=bool(settings.get("output_named_outputs", True)),
+            output_filename_template=settings.get("output_filename_template", ""),
+            output_filename_tokens=settings.get("output_filename_tokens", {}),
+            docx_template=(config.get("output", {}) or {}).get("docx_template", "default"),
+            source_appendix_config=(config.get("output", {}) or {}).get("source_appendix", {}),
+        )
+        return {"ok": True, "finalize_report": result.to_dict()}
     if action == "provenance.build":
         return build_provenance_workspace(
             workspace=_require_workspace(workspace),
@@ -456,7 +481,8 @@ def _assert_expected(
         errors.extend(_assert_graph_absent_text(workspace=workspace, expected=expected))
         errors.extend(_assert_workflow_state(workspace=workspace, expected=expected))
 
-    errors.extend(_assert_contains_text(root=root, repo_workdir=repo_workdir, expected=expected))
+    errors.extend(_assert_contains_text(root=root, repo_workdir=repo_workdir, workspace=workspace, expected=expected))
+    errors.extend(_assert_absent_text(root=root, repo_workdir=repo_workdir, workspace=workspace, expected=expected))
     return errors
 
 
@@ -604,14 +630,23 @@ def _assert_workflow_state(*, workspace: Path, expected: dict[str, Any]) -> list
     return errors
 
 
-def _assert_contains_text(*, root: Path, repo_workdir: Path, expected: dict[str, Any]) -> list[str]:
+def _assert_contains_text(*, root: Path, repo_workdir: Path, workspace: Path | None, expected: dict[str, Any]) -> list[str]:
     conditions = expected.get("contains_text") or []
     errors: list[str] = []
     for condition in conditions:
         if not isinstance(condition, dict):
             errors.append(f"contains_text condition must be an object: {condition!r}.")
             continue
-        base = repo_workdir if condition.get("scope") == "repo" else root
+        try:
+            base = _assertion_base(
+                root=root,
+                repo_workdir=repo_workdir,
+                workspace=workspace,
+                scope=str(condition.get("scope") or "cases"),
+            )
+        except EvaluationCaseRunError as exc:
+            errors.append(str(exc))
+            continue
         try:
             path = _resolve_contained_path(base=base, rel_path=str(condition.get("file") or ""))
         except EvaluationCaseRunError as exc:
@@ -626,6 +661,45 @@ def _assert_contains_text(*, root: Path, repo_workdir: Path, expected: dict[str,
         if expected_text not in text:
             errors.append(f"{path} does not contain expected text: {expected_text!r}.")
     return errors
+
+
+def _assert_absent_text(*, root: Path, repo_workdir: Path, workspace: Path | None, expected: dict[str, Any]) -> list[str]:
+    conditions = expected.get("absent_text") or []
+    errors: list[str] = []
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            errors.append(f"absent_text condition must be an object: {condition!r}.")
+            continue
+        try:
+            base = _assertion_base(
+                root=root,
+                repo_workdir=repo_workdir,
+                workspace=workspace,
+                scope=str(condition.get("scope") or "cases"),
+            )
+            path = _resolve_contained_path(base=base, rel_path=str(condition.get("file") or ""))
+        except EvaluationCaseRunError as exc:
+            errors.append(str(exc))
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            errors.append(f"Failed to read {path}: {exc}.")
+            continue
+        absent = str(condition.get("text") or "")
+        if absent and absent in text:
+            errors.append(f"{path} unexpectedly contains text: {absent!r}.")
+    return errors
+
+
+def _assertion_base(*, root: Path, repo_workdir: Path, workspace: Path | None, scope: str) -> Path:
+    if scope == "repo":
+        return repo_workdir
+    if scope == "workspace":
+        if workspace is None:
+            raise EvaluationCaseRunError("workspace scope requires a workspace case.")
+        return workspace
+    return root
 
 
 def _resolve_contained_path(*, base: Path, rel_path: str) -> Path:

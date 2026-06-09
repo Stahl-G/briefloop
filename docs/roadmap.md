@@ -101,6 +101,14 @@ Two design principles guide the next phases:
 - `control_selections.json` records enable/defer/reject choices only when selected by the Orchestrator.
 - Selection is not execution: Python does not automatically run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
 
+### v0.6.8
+
+- Reader-facing source appendix generation was added to finalize.
+- `source_appendix` is the current output format name; legacy `source_map` remains a compatibility alias.
+- `output/source_appendix.md` is generated only from claims actually cited in `output/intermediate/audited_brief.md` and resolved through `output/intermediate/claim_ledger.json`.
+- Reader-facing output must not expose raw claim IDs, source IDs, evidence text, local paths, or `file://` URLs.
+- The appendix is not source evidence, semantic proof, a runtime state file, a provenance graph, or a workflow gate.
+
 ## Next Milestones
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -141,7 +149,7 @@ Public scope:
 - Keep provenance projection as audit/debug tooling while deferring semantic proof, replay, and graph-database style query systems.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing after v0.6.7 moves toward FrictionStore, improvement proposals, policy packs, and runtime parity while preserving the subagent-first runtime boundary.
+Public sequencing after v0.6.8 moves toward FrictionStore, improvement proposals, policy packs, and runtime parity while preserving the subagent-first runtime boundary.
 
 Public implementation overviews:
 

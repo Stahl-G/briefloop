@@ -38,14 +38,14 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
     assert rc == 0
     validation = json.loads(capsys.readouterr().out)
     assert validation["ok"] is True
-    assert validation["case_count"] == 8
+    assert validation["case_count"] == 9
 
     rc = main(["eval-cases", "run", "--repo-workdir", str(ROOT), "--json"])
 
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is True
-    assert result["passed_count"] == 8
+    assert result["passed_count"] == 9
     assert result["failed_count"] == 0
     assert {
         "unsupported_material_fact",
@@ -55,6 +55,7 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "planned_blocking_issue_cannot_continue",
         "provenance_projection_minimal",
         "control_switchboard_selection_is_not_execution",
+        "reader_facing_source_appendix",
         "static_hermes_no_skip_finalize",
     } == {case["case_id"] for case in result["results"]}
 

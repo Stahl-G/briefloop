@@ -23,6 +23,7 @@ Each capability has one of the following statuses:
 | Quality gate control file (`quality_gate_report.json`) | Supported |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize (Markdown + DOCX) | Supported |
+| Reader-facing source appendix (`source_appendix.md`) | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
 | `multi-agent-brief state init/check/show/decide` | Supported |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
@@ -48,6 +49,8 @@ Provenance commands write a deterministic workspace-local audit/debug graph from
 Audience profile files are workspace-local runtime context. The active run uses the frozen per-run snapshot exposed through handoff; these files are not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers.
 
 Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
+
+Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
 ## Runtimes
 
@@ -111,6 +114,7 @@ Control switchboard files are runtime control context. Python surfaces determini
 |---|---|
 | Markdown (`brief.md`) | Supported |
 | DOCX (`brief.docx`) | Supported |
+| Source appendix (`source_appendix.md`) | Supported |
 | Named output copies | Supported |
 | PDF | Experimental |
 | Feishu delivery | Experimental |

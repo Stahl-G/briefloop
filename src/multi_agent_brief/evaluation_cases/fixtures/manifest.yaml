@@ -192,6 +192,47 @@ cases:
         current_stage: doctor
         blocked: false
 
+  - case_id: reader_facing_source_appendix
+    case_type: workspace
+    synthetic: true
+    description: Finalize writes a reader-facing source appendix for cited claims without leaking internal IDs.
+    initial_stage: finalize
+    commands:
+      - action: finalize
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: finalize
+          exit_code: 0
+      artifacts_exist:
+        - output/brief.md
+        - output/source_appendix.md
+        - output/intermediate/finalize_report.json
+      contains_text:
+        - scope: workspace
+          file: output/source_appendix.md
+          text: "[S1] ExampleCo Opens Demo Facility"
+        - scope: workspace
+          file: output/source_appendix.md
+          text: "[S2] ExampleCo Q1 Results"
+      absent_text:
+        - scope: workspace
+          file: output/brief.md
+          text: "[src:"
+        - scope: workspace
+          file: output/source_appendix.md
+          text: "SYN_CLAIM_"
+        - scope: workspace
+          file: output/source_appendix.md
+          text: "SYN_SRC_"
+        - scope: workspace
+          file: output/source_appendix.md
+          text: "Full synthetic evidence text"
+        - scope: workspace
+          file: output/source_appendix.md
+          text: "Unused Source"
+
   - case_id: static_hermes_no_skip_finalize
     case_type: static_contract
     synthetic: true

@@ -849,6 +849,7 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "14. Finalize only after the gates/state decision path passes:\n"
         "    - Run: `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`\n"
         "    - Confirm `output/brief.md` strips [src:CLAIM_ID].\n"
+        "    - Confirm `output/source_appendix.md` exists when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.\n"
         "    - Remember: finalize is not a quality-gate executor.\n"
         "\n"
         "15. Optional audit/debug provenance projection after runtime state exists:\n"

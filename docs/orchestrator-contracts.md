@@ -33,6 +33,11 @@ For provenance graph edges, `artifact_derived_from` is directional: `from` is th
 
 Defines whether the delivered brief is useful for the intended reader, matches the task context, and meets delivery-readiness expectations.
 
+v0.6.8 source appendices are reader-facing delivery artifacts generated from
+claims actually cited in the audited brief and resolved through the Claim
+Ledger. They must not expose raw claim IDs, source IDs, evidence text, local
+paths, or `file://` URLs, and they are not semantic proof that claims are true.
+
 ## Public Boundary
 
 This public model intentionally does not publish full schema drafts, exact validation rules, private golden cases, industry-specific policy packs, or agent prompt details.

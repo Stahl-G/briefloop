@@ -100,7 +100,7 @@ v1.0 baseline
    Redis、Kafka、多进程、多服务器、完整 RAG、模型路由和全渠道交付都应后置。
 
 5. **Artifact 兼容风险**
-   v2 必须继续导出 v1-compatible Claim Ledger、audit report、source map 和 final output，否则无法复用现有审计与渲染生态。
+   v2 必须继续导出 v1-compatible Claim Ledger、audit report、reader-facing source appendix/source-map compatibility layer 和 final output，否则无法复用现有审计与渲染生态。
 
 ## 验收标准
 

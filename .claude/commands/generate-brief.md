@@ -106,6 +106,7 @@ Follow this sequence:
     - Run `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`.
     - Remember: `finalize` is not a quality-gate executor.
     - Confirm `$ARGUMENTS/output/brief.md` is reader-facing.
+    - Confirm `$ARGUMENTS/output/source_appendix.md` exists when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or `file://` URLs.
     - Confirm the configured named Markdown copy exists if enabled.
     - Confirm `$ARGUMENTS/output/brief.docx` exists if DOCX is configured.
 

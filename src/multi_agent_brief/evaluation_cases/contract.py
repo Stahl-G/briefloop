@@ -25,6 +25,7 @@ ALLOWED_ACTIONS = {
     "feedback.ingest",
     "feedback.plan",
     "feedback.validate",
+    "finalize",
     "gates.check",
     "gates.show",
     "gates.validate",
@@ -40,6 +41,7 @@ ALLOWED_EXPECTED_KEYS = {
     "artifacts_absent",
     "artifacts_exist",
     "contains_text",
+    "absent_text",
     "exit_code",
     "expected_actions",
     "findings_absent",
@@ -296,8 +298,29 @@ def _validate_expected_contract(*, prefix: str, expected: dict[str, Any]) -> lis
                     errors.append(f"{item_prefix} must be an object.")
                     continue
                 scope = item.get("scope", "cases")
-                if scope not in {"cases", "repo"}:
-                    errors.append(f"{item_prefix}.scope must be cases or repo.")
+                if scope not in {"cases", "repo", "workspace"}:
+                    errors.append(f"{item_prefix}.scope must be cases, repo, or workspace.")
+                rel_path = item.get("file")
+                if not isinstance(rel_path, str) or not rel_path.strip():
+                    errors.append(f"{item_prefix}.file is required.")
+                    continue
+                if _path_is_absolute_any_platform(rel_path):
+                    errors.append(f"{item_prefix}.file must be relative, not absolute.")
+                if _path_has_traversal_any_platform(rel_path):
+                    errors.append(f"{item_prefix}.file must not contain path traversal.")
+    absent_text = expected.get("absent_text")
+    if absent_text is not None:
+        if not isinstance(absent_text, list):
+            errors.append(f"{prefix}.expected.absent_text must be a list.")
+        else:
+            for idx, item in enumerate(absent_text):
+                item_prefix = f"{prefix}.expected.absent_text[{idx}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{item_prefix} must be an object.")
+                    continue
+                scope = item.get("scope", "cases")
+                if scope not in {"cases", "repo", "workspace"}:
+                    errors.append(f"{item_prefix}.scope must be cases, repo, or workspace.")
                 rel_path = item.get("file")
                 if not isinstance(rel_path, str) or not rel_path.strip():
                     errors.append(f"{item_prefix}.file is required.")
