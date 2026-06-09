@@ -148,11 +148,16 @@ class ManualProvider(SourceProvider):
                 title=src_config.get("name", url),
                 content=content,
                 url=url,
+                published_at=str(src_config.get("published_at", "")),
                 language=src_config.get("language", ""),
                 reliability=src_config.get("reliability", "medium"),
                 metadata={
                     "category": src_config.get("category", ""),
                     "ingestion_status": "fetched",
+                    "source_name": src_config.get("source_name", ""),
+                    "search_intent": src_config.get("search_intent", ""),
+                    "date_window_start": src_config.get("date_window_start", ""),
+                    "date_window_end": src_config.get("date_window_end", ""),
                 },
             )
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:

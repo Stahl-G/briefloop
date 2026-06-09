@@ -8,6 +8,8 @@ from pathlib import Path
 from multi_agent_brief.sources.decider import (
     load_source_discovery,
     build_search_queries,
+    build_daily_news_search_tasks,
+    build_news_domain_preferences,
     generate_source_candidates,
     merge_candidates_to_sources,
 )
@@ -35,6 +37,24 @@ def register_sources(subparsers: argparse._SubParsersAction) -> None:
         "--search",
         action="store_true",
         help="Run web search to discover sources (requires search backend).",
+    )
+    decide_parser.add_argument(
+        "--daily-news-backfill",
+        action="store_true",
+        help=(
+            "Run one user-need-customized news search per day for the"
+            " recent backfill window."
+        ),
+    )
+    decide_parser.add_argument(
+        "--backfill-days",
+        type=int,
+        help="Number of past days for --daily-news-backfill. Default: 7.",
+    )
+    decide_parser.add_argument(
+        "--daily-max-results",
+        type=int,
+        help="Maximum search results per day for daily news backfill. Default: 20.",
     )
     decide_parser.add_argument(
         "--merge",
@@ -124,13 +144,55 @@ def _sources_decide(args: argparse.Namespace) -> int:
         )
         return 0
 
+    ws_config = load_sources_config(sources_path) if sources_path.exists() else None
+    web_search_config = ws_config.web_search if ws_config else {}
+    backfill_config = web_search_config.get("initial_news_backfill") or {}
+    use_daily_backfill = bool(args.daily_news_backfill) or bool(
+        backfill_config.get("enabled")
+    )
+    backfill_days = int(
+        args.backfill_days
+        or backfill_config.get("days")
+        or 7
+    )
+    daily_max_results = int(
+        args.daily_max_results
+        or backfill_config.get("daily_max_results")
+        or 20
+    )
+
     # Default: generate source_candidates.yaml
-    queries = build_search_queries(discovery)
+    search_tasks = (
+        build_daily_news_search_tasks(
+            discovery,
+            days=backfill_days,
+            daily_max_results=daily_max_results,
+        )
+        if use_daily_backfill
+        else _build_standard_search_tasks(discovery)
+    )
+    queries = [str(task.get("query", "")) for task in search_tasks if task.get("query")]
     print(
         f"[sources] Source discovery for:"
         f" {discovery.get('company', 'N/A')}"
         f" ({discovery.get('industry', 'N/A')})"
     )
+    if use_daily_backfill:
+        print(
+            "[sources] Initial daily news backfill enabled:"
+            f" {backfill_days} days x {daily_max_results} results/day"
+        )
+    preferred_domains, excluded_domains = build_news_domain_preferences(discovery)
+    if preferred_domains:
+        print(
+            "[sources] Preferred news domains:"
+            f" {', '.join(preferred_domains)}"
+        )
+    if excluded_domains:
+        print(
+            "[sources] Excluded news domains:"
+            f" {', '.join(excluded_domains)}"
+        )
     print(f"[sources] Generated {len(queries)} search queries:")
     for i, q in enumerate(queries, 1):
         print(f"  {i}. {q}")
@@ -138,11 +200,6 @@ def _sources_decide(args: argparse.Namespace) -> int:
     search_results = None
     if args.search:
         # Check if a real search backend is configured
-        ws_config = (
-            load_sources_config(sources_path)
-            if sources_path.exists()
-            else None
-        )
         has_backend = (
             ws_config
             and ws_config.web_search.get("enabled")
@@ -194,17 +251,37 @@ def _sources_decide(args: argparse.Namespace) -> int:
             return 1
 
         print(
-            f"[sources] Executing {len(queries)} search queries via"
+            f"[sources] Executing {len(search_tasks)} search queries via"
             f" backend: {backend.name}"
         )
         search_results = []
-        max_results = ws_config.web_search.get("max_results", 10)
-        for q in queries:
+        max_results = web_search_config.get("max_results", 10)
+        for task in search_tasks:
+            q = str(task.get("query", ""))
+            domains = task.get("domains") or None
+            task_max_results = int(task.get("max_results") or max_results)
             try:
-                results = backend.search(q, max_results=max_results)
+                search_kwargs = {"domains": domains}
+                for key in ("topic", "vertical", "tbs"):
+                    if task.get(key):
+                        search_kwargs[key] = task[key]
+                if use_daily_backfill:
+                    search_kwargs["days"] = backfill_days
+                elif web_search_config.get("recency_days"):
+                    search_kwargs["days"] = web_search_config["recency_days"]
+                results = backend.search(
+                    q,
+                    max_results=task_max_results,
+                    **search_kwargs,
+                )
                 search_results.append(
                     {
                         "query": q,
+                        "metadata": {
+                            key: value
+                            for key, value in task.items()
+                            if key not in ("query", "domains")
+                        },
                         "results": [
                             {
                                 "title": r.title,
@@ -263,3 +340,16 @@ def _sources_decide(args: argparse.Namespace) -> int:
         " --merge"
     )
     return 0
+
+
+def _build_standard_search_tasks(discovery: dict) -> list[dict]:
+    preferred_domains, excluded_domains = build_news_domain_preferences(discovery)
+    tasks: list[dict] = []
+    for query in build_search_queries(discovery):
+        task = {"query": query, "domains": preferred_domains or None}
+        if preferred_domains:
+            task["preferred_domains"] = preferred_domains
+        if excluded_domains:
+            task["excluded_domains"] = excluded_domains
+        tasks.append(task)
+    return tasks

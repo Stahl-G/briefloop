@@ -5,8 +5,10 @@ and generates source_candidates.yaml for user review before merging.
 """
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import yaml
@@ -113,6 +115,179 @@ def build_search_queries(discovery: dict[str, Any]) -> list[str]:
     return queries
 
 
+def build_daily_news_search_tasks(
+    discovery: dict[str, Any],
+    *,
+    days: int = 7,
+    daily_max_results: int = 20,
+    report_date: str | date | None = None,
+) -> list[dict[str, Any]]:
+    """Build one user-need-customized news search task per day.
+
+    This is a source discovery helper. It does not execute searches and does
+    not write report content.
+    """
+    if days <= 0:
+        return []
+    if daily_max_results <= 0:
+        daily_max_results = 20
+
+    end_date = _parse_report_date(report_date)
+    terms = _build_user_need_terms(discovery)
+    if not terms:
+        terms = ["industry news"]
+    base_query = " ".join(terms)
+    language = str(discovery.get("language", "en")).lower()
+    news_word = "新闻 动态" if language.startswith("zh") else "news updates"
+    preferred_domains, excluded_domains = build_news_domain_preferences(discovery)
+
+    tasks: list[dict[str, Any]] = []
+    for offset in range(days, 0, -1):
+        window_start = end_date - timedelta(days=offset)
+        window_end = window_start + timedelta(days=1)
+        query = (
+            f"{base_query} {news_word}"
+            f" after:{window_start.isoformat()}"
+            f" before:{window_end.isoformat()}"
+        )
+        tasks.append(
+            {
+                "query": query,
+                "domains": preferred_domains or None,
+                "vertical": "news",
+                "topic": "news",
+                "source_intent": "initial_daily_news_backfill",
+                "date_window_start": window_start.isoformat(),
+                "date_window_end": window_end.isoformat(),
+                "max_results": daily_max_results,
+                "preferred_domains": preferred_domains,
+                "excluded_domains": excluded_domains,
+                "customized_from": [
+                    field
+                    for field in (
+                        "company",
+                        "industry",
+                        "task_objective",
+                        "focus_areas",
+                        "audience",
+                    )
+                    if discovery.get(field)
+                ],
+                "tbs": _google_custom_date_range(window_start, window_end),
+            }
+        )
+    return tasks
+
+
+def build_news_domain_preferences(discovery: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Return user-configured preferred and excluded news domains."""
+    selection = discovery.get("news_source_selection") or {}
+    preferred = _extract_domain_list(selection, "preferred_domains")
+    excluded = _extract_domain_list(selection, "excluded_domains")
+
+    if not preferred:
+        preferred = _extract_domain_list(discovery, "preferred_news_domains")
+    if not excluded:
+        excluded = _extract_domain_list(discovery, "excluded_news_domains")
+
+    return preferred, excluded
+
+
+def _extract_domain_list(container: dict[str, Any], key: str) -> list[str]:
+    raw = container.get(key)
+    values: list[str] = []
+    if isinstance(raw, str):
+        values = [item.strip() for item in raw.split(",") if item.strip()]
+    elif isinstance(raw, list):
+        values = [str(item).strip() for item in raw if str(item).strip()]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        domain = _normalize_domain(value)
+        if domain and domain not in seen:
+            normalized.append(domain)
+            seen.add(domain)
+    return normalized
+
+
+def _normalize_domain(value: str) -> str:
+    candidate = value.strip().lower()
+    if not candidate:
+        return ""
+    if "://" not in candidate:
+        candidate = f"//{candidate}"
+    parsed = urlparse(candidate)
+    host = parsed.netloc or parsed.path.split("/", 1)[0]
+    host = host.split("@")[-1].split(":")[0].strip().strip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _url_matches_domain(url: str, domains: list[str]) -> bool:
+    host = _normalize_domain(url)
+    if not host:
+        return False
+    for domain in domains:
+        if host == domain or host.endswith(f".{domain}"):
+            return True
+    return False
+
+
+def _parse_report_date(value: str | date | None) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            return datetime.strptime(value[:10], "%Y-%m-%d").date()
+    return date.today()
+
+
+def _google_custom_date_range(start: date, end: date) -> str:
+    return (
+        "cdr:1,"
+        f"cd_min:{start.month}/{start.day}/{start.year},"
+        f"cd_max:{end.month}/{end.day}/{end.year}"
+    )
+
+
+def _build_user_need_terms(discovery: dict[str, Any]) -> list[str]:
+    terms: list[str] = []
+    for key in ("company", "industry"):
+        value = str(discovery.get(key) or "").strip()
+        if value:
+            terms.append(value)
+
+    focus_areas = discovery.get("focus_areas", [])
+    if isinstance(focus_areas, str):
+        focus_areas = [a.strip() for a in focus_areas.split(",") if a.strip()]
+    for area in list(focus_areas)[:5]:
+        value = str(area).strip()
+        if value:
+            terms.append(value)
+
+    task_objective = str(discovery.get("task_objective") or "").strip()
+    if task_objective:
+        terms.append(task_objective[:120])
+
+    audience = str(discovery.get("audience") or "").strip()
+    if audience:
+        terms.append(audience[:80])
+
+    compact: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        normalized = " ".join(term.split())
+        key = normalized.lower()
+        if normalized and key not in seen:
+            compact.append(normalized)
+            seen.add(key)
+    return compact
+
+
 def build_search_tasks_with_metadata(discovery: dict[str, Any]) -> list[dict[str, Any]]:
     """Build search tasks as dicts with metadata for pipeline injection.
 
@@ -122,8 +297,14 @@ def build_search_tasks_with_metadata(discovery: dict[str, Any]) -> list[dict[str
     tasks: list[dict[str, Any]] = []
 
     # Standard queries — delegate to build_search_queries
+    preferred_domains, excluded_domains = build_news_domain_preferences(discovery)
     for q in build_search_queries(discovery):
-        tasks.append({"query": q, "domains": None})
+        task: dict[str, Any] = {"query": q, "domains": preferred_domains or None}
+        if preferred_domains:
+            task["preferred_domains"] = preferred_domains
+        if excluded_domains:
+            task["excluded_domains"] = excluded_domains
+        tasks.append(task)
 
     # Local signal tasks with metadata
     local_tasks = build_local_signal_tasks(discovery)
@@ -174,8 +355,15 @@ def generate_source_candidates(
     if search_results:
         for sr in search_results:
             query = sr.get("query", "")
+            search_metadata = sr.get("metadata") or {}
+            excluded_domains = _extract_domain_list(
+                search_metadata,
+                "excluded_domains",
+            )
             for result in sr.get("results", []):
                 url = result.get("url", "")
+                if excluded_domains and _url_matches_domain(url, excluded_domains):
+                    continue
                 title = result.get("title", "")
                 snippet = result.get("snippet", "")
 
@@ -194,6 +382,11 @@ def generate_source_candidates(
                     "category": tier,
                     "query": query,
                     "snippet": snippet[:200],
+                    "published_at": result.get("published_at", ""),
+                    "source_name": result.get("source_name", ""),
+                    "search_intent": search_metadata.get("source_intent", ""),
+                    "date_window_start": search_metadata.get("date_window_start", ""),
+                    "date_window_end": search_metadata.get("date_window_end", ""),
                     "enabled": True,
                 })
 
@@ -307,7 +500,16 @@ def merge_candidates_to_sources(
             rss_feeds.append({"name": name, "url": url, "category": category, "enabled": True})
         else:
             # All other URL types go to manual sources (not RSS)
-            manual_sources.append({"name": name, "url": url, "category": category, "enabled": True})
+            manual_source = {
+                "name": name,
+                "url": url,
+                "category": category,
+                "enabled": True,
+            }
+            for key in ("published_at", "source_name", "search_intent", "date_window_start", "date_window_end"):
+                if src.get(key):
+                    manual_source[key] = src[key]
+            manual_sources.append(manual_source)
 
     # Merge into sources. YAML empty fields parse as None, so normalize known
     # list sections before appending or iterating.

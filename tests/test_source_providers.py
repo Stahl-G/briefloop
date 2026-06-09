@@ -183,6 +183,53 @@ def test_web_search_metadata_uses_backend_name():
     assert len(items) > 0
     assert items[0].metadata["backend"] == "fake"
 
+
+def test_manual_url_preserves_search_candidate_dates(monkeypatch):
+    class FakeHeaders:
+        def get_content_charset(self):
+            return "utf-8"
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, max_bytes):
+            return b"<html><body>Daily source content.</body></html>"
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.manual.urlopen",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+    provider = ManualProvider()
+    items = provider.collect(
+        SourceQuery(),
+        {
+            "enabled": True,
+            "sources": [
+                {
+                    "name": "Daily Source",
+                    "url": "https://example.com/daily-source",
+                    "published_at": "2026-06-02",
+                    "source_name": "Example News",
+                    "search_intent": "initial_daily_news_backfill",
+                    "date_window_start": "2026-06-02",
+                    "date_window_end": "2026-06-03",
+                }
+            ],
+        },
+    )
+
+    assert len(items) == 1
+    assert items[0].published_at == "2026-06-02"
+    assert items[0].metadata["source_name"] == "Example News"
+    assert items[0].metadata["search_intent"] == "initial_daily_news_backfill"
+
+
 def test_web_search_disabled_returns_empty():
     provider = WebSearchProvider()
     config = {"enabled": False}

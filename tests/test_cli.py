@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import yaml
+
 from multi_agent_brief.cli.main import main
 
 
@@ -49,6 +51,48 @@ def test_cli_init_creates_workspace(tmp_path, capsys):
     assert "input/context" in output
     assert "简报示例 Markdown" in output
     assert "Claim Ledger" in output
+
+
+def test_cli_init_can_configure_initial_news_backfill(tmp_path):
+    workspace = tmp_path / "ws"
+
+    rc = main(
+        complete_init_args(
+            workspace,
+            language="en-US",
+            industry="manufacturing",
+            extra=[
+                "--source-profile",
+                "llm_decide",
+                "--web-search-mode",
+                "external_api",
+                "--search-backend",
+                "tavily",
+                "--initial-news-backfill",
+                "--preferred-news-domains",
+                "reuters.com, bloomberg.com",
+                "--excluded-news-domains",
+                "spam.example.com",
+            ],
+        )
+    )
+
+    assert rc == 0
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    backfill = sources["web_search"]["initial_news_backfill"]
+    assert backfill["enabled"] is True
+    assert backfill["days"] == 7
+    assert backfill["daily_max_results"] == 20
+    customization = sources["source_discovery"]["search_customization"]
+    assert "task_objective" in customization["derive_queries_from"]
+    assert customization["daily_backfill_uses_user_need_terms"] is True
+    source_selection = sources["source_discovery"]["news_source_selection"]
+    assert source_selection["preferred_domains"] == ["reuters.com", "bloomberg.com"]
+    assert source_selection["excluded_domains"] == ["spam.example.com"]
+    assert source_selection["do_not_use_fixed_personal_domain_list"] is True
+    domain_config = sources["web_search"]["news_source_domains"]
+    assert domain_config["preferred_domains"] == ["reuters.com", "bloomberg.com"]
+    assert domain_config["excluded_domains"] == ["spam.example.com"]
 
 
 def test_cli_audit_existing_brief(tmp_path):

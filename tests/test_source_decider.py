@@ -8,6 +8,7 @@ import yaml
 
 from multi_agent_brief.sources.decider import (
     build_search_queries,
+    build_daily_news_search_tasks,
     generate_source_candidates,
     load_source_discovery,
     merge_candidates_to_sources,
@@ -74,6 +75,67 @@ def test_build_search_queries_no_focus():
     assert len(queries) >= 2
 
 
+def test_build_daily_news_search_tasks_customized_from_user_need():
+    discovery = {
+        "company": "Example Solar",
+        "industry": "solar manufacturing",
+        "task_objective": "Track US policy and HJT capacity signals",
+        "focus_areas": ["IRA tariffs", "HJT capacity"],
+        "audience": "management",
+        "language": "en",
+    }
+
+    tasks = build_daily_news_search_tasks(
+        discovery,
+        days=7,
+        daily_max_results=20,
+        report_date="2026-06-09",
+    )
+
+    assert len(tasks) == 7
+    assert all(task["max_results"] == 20 for task in tasks)
+    assert tasks[0]["date_window_start"] == "2026-06-02"
+    assert tasks[-1]["date_window_end"] == "2026-06-09"
+    assert all("after:" in task["query"] and "before:" in task["query"] for task in tasks)
+    assert all(task["source_intent"] == "initial_daily_news_backfill" for task in tasks)
+    joined = "\n".join(task["query"] for task in tasks)
+    assert "Example Solar" in joined
+    assert "solar manufacturing" in joined
+    assert "IRA tariffs" in joined
+    assert "HJT capacity" in joined
+
+
+def test_build_daily_news_search_tasks_uses_user_selected_domains():
+    discovery = {
+        "company": "ExampleCo",
+        "industry": "industrial technology",
+        "focus_areas": ["supply chain"],
+        "language": "en",
+        "news_source_selection": {
+            "preferred_domains": [
+                "https://news.example.com/latest",
+                "www.industry.example.org",
+            ],
+            "excluded_domains": ["spam.example.net"],
+        },
+    }
+
+    tasks = build_daily_news_search_tasks(
+        discovery,
+        days=2,
+        daily_max_results=20,
+        report_date="2026-06-09",
+    )
+
+    assert len(tasks) == 2
+    assert all(
+        task["domains"] == ["news.example.com", "industry.example.org"]
+        for task in tasks
+    )
+    assert all(task["preferred_domains"] == ["news.example.com", "industry.example.org"] for task in tasks)
+    assert all(task["excluded_domains"] == ["spam.example.net"] for task in tasks)
+
+
 def test_generate_source_candidates(workspace_with_sources: Path):
     discovery = load_source_discovery(workspace_with_sources / "sources.yaml")
     candidates = generate_source_candidates(discovery)
@@ -98,6 +160,68 @@ def test_generate_source_candidates_with_search_results():
     candidates = generate_source_candidates(discovery, search_results)
     assert len(candidates["recommended_sources"]) == 2
     assert candidates["recommended_sources"][0]["category"] == "company_official"
+
+
+def test_generate_source_candidates_preserves_daily_backfill_metadata():
+    discovery = {"company": "TestCo", "industry": "finance", "language": "en"}
+    search_results = [
+        {
+            "query": "TestCo finance news after:2026-06-02 before:2026-06-03",
+            "metadata": {
+                "source_intent": "initial_daily_news_backfill",
+                "date_window_start": "2026-06-02",
+                "date_window_end": "2026-06-03",
+            },
+            "results": [
+                {
+                    "title": "TestCo policy update",
+                    "url": "https://example.com/testco-policy",
+                    "snippet": "A policy update affected TestCo.",
+                    "published_at": "2026-06-02",
+                    "source_name": "Example News",
+                },
+            ],
+        }
+    ]
+
+    candidates = generate_source_candidates(discovery, search_results)
+    source = candidates["recommended_sources"][0]
+    assert source["search_intent"] == "initial_daily_news_backfill"
+    assert source["date_window_start"] == "2026-06-02"
+    assert source["date_window_end"] == "2026-06-03"
+    assert source["published_at"] == "2026-06-02"
+    assert source["source_name"] == "Example News"
+
+
+def test_generate_source_candidates_filters_excluded_domains():
+    discovery = {"company": "TestCo", "industry": "finance", "language": "en"}
+    search_results = [
+        {
+            "query": "TestCo finance news",
+            "metadata": {
+                "source_intent": "initial_daily_news_backfill",
+                "excluded_domains": ["spam.example.com"],
+            },
+            "results": [
+                {
+                    "title": "Spam result",
+                    "url": "https://spam.example.com/testco",
+                    "snippet": "Low quality result.",
+                },
+                {
+                    "title": "Useful result",
+                    "url": "https://news.example.org/testco",
+                    "snippet": "Useful source.",
+                },
+            ],
+        }
+    ]
+
+    candidates = generate_source_candidates(discovery, search_results)
+
+    sources = candidates["recommended_sources"]
+    assert len(sources) == 1
+    assert sources[0]["name"] == "Useful result"
 
 
 def test_merge_candidates_to_sources(workspace_with_sources: Path):
@@ -131,6 +255,38 @@ def test_merge_candidates_to_sources(workspace_with_sources: Path):
     assert len(updated["rss"]["feeds"]) == 0
     # After fix: merge should NOT auto-enable web_search
     assert updated["web_search"]["enabled"] is False
+
+
+def test_merge_candidates_preserves_daily_backfill_source_metadata(workspace_with_sources: Path):
+    sources_path = workspace_with_sources / "sources.yaml"
+    candidates = {
+        "metadata": {},
+        "recommended_sources": [
+            {
+                "name": "Daily Source",
+                "url": "https://example.com/daily-source",
+                "category": "industry_media",
+                "published_at": "2026-06-02",
+                "source_name": "Example News",
+                "search_intent": "initial_daily_news_backfill",
+                "date_window_start": "2026-06-02",
+                "date_window_end": "2026-06-03",
+                "enabled": True,
+            }
+        ],
+    }
+    candidates_path = workspace_with_sources / "source_candidates.yaml"
+    candidates_path.write_text(yaml.dump(candidates, allow_unicode=True), encoding="utf-8")
+
+    merge_candidates_to_sources(sources_path, candidates_path)
+
+    updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+    source = updated["manual"]["sources"][0]
+    assert source["published_at"] == "2026-06-02"
+    assert source["source_name"] == "Example News"
+    assert source["search_intent"] == "initial_daily_news_backfill"
+    assert source["date_window_start"] == "2026-06-02"
+    assert source["date_window_end"] == "2026-06-03"
 
 
 def test_merge_candidates_normalizes_yaml_null_list_fields(tmp_path: Path):

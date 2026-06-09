@@ -101,6 +101,37 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Search backend for --web-search-mode external_api.",
     )
     init_parser.add_argument(
+        "--initial-news-backfill",
+        action="store_true",
+        help=(
+            "Configure first-run seven-day news discovery"
+            " (20 relevant news items per day)."
+        ),
+    )
+    init_parser.add_argument(
+        "--initial-news-backfill-days",
+        type=int,
+        help="Number of past days for initial news discovery. Default: 7.",
+    )
+    init_parser.add_argument(
+        "--initial-news-backfill-daily-max-results",
+        type=int,
+        help="Maximum news results per day for initial discovery. Default: 20.",
+    )
+    init_parser.add_argument(
+        "--preferred-news-domains",
+        help=(
+            "Comma-separated preferred news domains for source discovery"
+            " (for example: reuters.com,bloomberg.com)."
+        ),
+    )
+    init_parser.add_argument(
+        "--excluded-news-domains",
+        help=(
+            "Comma-separated news domains to exclude from discovered candidates."
+        ),
+    )
+    init_parser.add_argument(
         "--from-onboarding",
         help="Path to onboarding.json for conversational init.",
     )
@@ -221,6 +252,7 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
     from multi_agent_brief.cli.init_wizard import (
         normalize_language,
         parse_list_arg,
+        parse_int,
         apply_rag_args,
     )
 
@@ -270,6 +302,24 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
         profile.web_search_enabled = True
         profile.web_search_mode = "external_api"
         profile.search_backend = "tavily"
+    if getattr(args, "initial_news_backfill", False):
+        profile.initial_news_backfill_enabled = True
+    if getattr(args, "initial_news_backfill_days", None):
+        profile.initial_news_backfill_days = parse_int(
+            str(args.initial_news_backfill_days),
+            profile.initial_news_backfill_days,
+        )
+    if getattr(args, "initial_news_backfill_daily_max_results", None):
+        profile.initial_news_backfill_daily_max_results = parse_int(
+            str(args.initial_news_backfill_daily_max_results),
+            profile.initial_news_backfill_daily_max_results,
+        )
+    preferred_domains = parse_list_arg(getattr(args, "preferred_news_domains", None))
+    if preferred_domains:
+        profile.preferred_news_domains = preferred_domains
+    excluded_domains = parse_list_arg(getattr(args, "excluded_news_domains", None))
+    if excluded_domains:
+        profile.excluded_news_domains = excluded_domains
 
 
 def _init_workspace(args: argparse.Namespace) -> int:

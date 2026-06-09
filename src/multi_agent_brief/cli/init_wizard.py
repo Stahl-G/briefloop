@@ -315,6 +315,11 @@ class InitProfile:
     web_search_enabled: bool = False
     web_search_mode: str = "disabled"  # disabled, runtime_tool, external_api, configure_later
     search_backend: str = ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
+    initial_news_backfill_enabled: bool = False
+    initial_news_backfill_days: int = 7
+    initial_news_backfill_daily_max_results: int = 20
+    preferred_news_domains: list[str] = field(default_factory=list)
+    excluded_news_domains: list[str] = field(default_factory=list)
     competitor_module_enabled: bool = False
     competitor_names: list[str] = field(default_factory=list)
 
@@ -472,6 +477,24 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
             profile.web_search_enabled = True
             profile.web_search_mode = "external_api"
             profile.search_backend = "tavily"
+        if getattr(args, "initial_news_backfill", False):
+            profile.initial_news_backfill_enabled = True
+        if getattr(args, "initial_news_backfill_days", None):
+            profile.initial_news_backfill_days = parse_int(
+                str(args.initial_news_backfill_days),
+                profile.initial_news_backfill_days,
+            )
+        if getattr(args, "initial_news_backfill_daily_max_results", None):
+            profile.initial_news_backfill_daily_max_results = parse_int(
+                str(args.initial_news_backfill_daily_max_results),
+                profile.initial_news_backfill_daily_max_results,
+            )
+        preferred_domains = parse_list_arg(getattr(args, "preferred_news_domains", None))
+        if preferred_domains:
+            profile.preferred_news_domains = preferred_domains
+        excluded_domains = parse_list_arg(getattr(args, "excluded_news_domains", None))
+        if excluded_domains:
+            profile.excluded_news_domains = excluded_domains
         return profile
     # No CLI args → try interactive prompt
     if _is_interactive():
@@ -504,6 +527,11 @@ def has_direct_init_args(args: Any) -> bool:
         "source_profile",
         "web_search_mode",
         "search_backend",
+        "initial_news_backfill",
+        "initial_news_backfill_days",
+        "initial_news_backfill_daily_max_results",
+        "preferred_news_domains",
+        "excluded_news_domains",
     ]
     # Check string/list fields for non-None
     if any(getattr(args, field, None) is not None for field in fields):
@@ -586,6 +614,19 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
         profile.search_backend = ""
         profile.tavily_enabled = False
 
+    if profile.web_search_enabled:
+        profile.initial_news_backfill_enabled = ask_yes_no(
+            input_func,
+            prompts["initial_news_backfill"],
+            default=False,
+        )
+        profile.preferred_news_domains = parse_list_arg(
+            ask_text(input_func, prompts["preferred_news_domains"], "")
+        )
+        profile.excluded_news_domains = parse_list_arg(
+            ask_text(input_func, prompts["excluded_news_domains"], "")
+        )
+
     # Competitor monitoring
     competitor_enabled = ask_yes_no(input_func, prompts["competitor_module"], default=False)
     profile.competitor_module_enabled = competitor_enabled
@@ -632,6 +673,17 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
             "web_search": "Enable live web search? [y/N]: ",
             "search_backend": "How should live web search be provided? ",
+            "initial_news_backfill": (
+                "Run initial last-7-days news discovery? This searches 20"
+                " relevant news items per day. [y/N]: "
+            ),
+            "preferred_news_domains": (
+                "Optional preferred news domains, comma-separated"
+                " (leave blank for user-need-based general search): "
+            ),
+            "excluded_news_domains": (
+                "Optional domains to exclude from discovered news, comma-separated: "
+            ),
             "competitor_module": "Enable competitor monitoring? [y/N]: ",
             "competitor_names": "Enter competitor names, comma-separated (e.g. Acme Corp, Globex Inc): ",
         }
@@ -654,6 +706,18 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
                 "web_search": "Enable live web search? / 启用实时网络搜索？[y/N]: ",
                 "search_backend": "How should live web search be provided? / 如何提供实时网络搜索？ ",
+                "initial_news_backfill": (
+                    "Run initial last-7-days news discovery? / 是否运行过去七天新闻查找？"
+                    " 将会搜索过去七天每日二十条相关新闻。[y/N]: "
+                ),
+                "preferred_news_domains": (
+                    "Optional preferred news domains / 可选：偏好的新闻网站域名，"
+                    "comma-separated / 逗号分隔（留空则按用户需求通用搜索）: "
+                ),
+                "excluded_news_domains": (
+                    "Optional excluded news domains / 可选：排除的新闻网站域名，"
+                    "comma-separated / 逗号分隔: "
+                ),
                 "competitor_module": "Enable competitor monitoring? / 启用竞对监测？[y/N]: ",
                 "competitor_names": "Enter competitor names / 输入竞对公司名称，comma-separated / 逗号分隔: ",
             }
@@ -692,6 +756,9 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
         "web_search": "是否启用实时网络搜索？[y/N]：",
         "search_backend": "如何提供实时网络搜索？ ",
+        "initial_news_backfill": "是否运行过去七天新闻查找？将会搜索过去七天每日二十条相关新闻。[y/N]：",
+        "preferred_news_domains": "可选：偏好的新闻网站域名，逗号分隔（留空则按用户需求通用搜索）：",
+        "excluded_news_domains": "可选：排除的新闻网站域名，逗号分隔：",
         "competitor_module": "是否启用竞对监测？[y/N]：",
         "competitor_names": "请输入竞对公司名称，逗号分隔（如：XX科技、YY集团）：",
     }
@@ -920,6 +987,8 @@ def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
             "required_capability": "web_search",
             "max_results": 10,
             "recency_days": 7,
+            "initial_news_backfill": _build_initial_news_backfill_config(profile),
+            "news_source_domains": _build_news_source_domain_config(profile),
             "note": "Requires the execution runtime to provide a web search tool.",
         }
     elif mode == "external_api" and backend:
@@ -932,6 +1001,8 @@ def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
             "api_key_env": backend_info.get("env_key", ""),
             "max_results": 5,
             "recency_days": 7,
+            "initial_news_backfill": _build_initial_news_backfill_config(profile),
+            "news_source_domains": _build_news_source_domain_config(profile),
         }
         # Add backend-specific options (only Tavily supports these)
         if backend == "tavily":
@@ -946,8 +1017,38 @@ def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
             "status": "unconfigured",
             "max_results": 20,
             "recency_days": 7,
+            "initial_news_backfill": _build_initial_news_backfill_config(profile),
+            "news_source_domains": _build_news_source_domain_config(profile),
             "note": "Configure a search backend before running live retrieval.",
         }
+
+
+def _build_initial_news_backfill_config(profile: InitProfile) -> dict[str, Any]:
+    return {
+        "enabled": bool(getattr(profile, "initial_news_backfill_enabled", False)),
+        "days": int(getattr(profile, "initial_news_backfill_days", 7) or 7),
+        "daily_max_results": int(
+            getattr(profile, "initial_news_backfill_daily_max_results", 20) or 20
+        ),
+        "mode": "daily_news_windows",
+        "note": (
+            "When enabled, sources decide --search expands source discovery into"
+            " one user-need-customized news query per day."
+        ),
+    }
+
+
+def _build_news_source_domain_config(profile: InitProfile) -> dict[str, Any]:
+    return {
+        "preferred_domains": list(getattr(profile, "preferred_news_domains", []) or []),
+        "excluded_domains": list(getattr(profile, "excluded_news_domains", []) or []),
+        "mode": "user_configured_domains",
+        "note": (
+            "Optional per-workspace news source preferences. Leave empty to let"
+            " the search backend discover sources from company, industry,"
+            " focus areas, task objective, and audience."
+        ),
+    }
 
 
 def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
@@ -997,6 +1098,31 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
                 "avoid private, confidential, internal, or material non-public information",
                 "preserve source URL, source name, source tier, and published date",
             ],
+            "search_customization": {
+                "derive_queries_from": [
+                    "company",
+                    "industry",
+                    "task_objective",
+                    "focus_areas",
+                    "audience",
+                    "cadence",
+                ],
+                "avoid_fixed_personal_or_vendor_source_lists": True,
+                "daily_backfill_uses_user_need_terms": True,
+            },
+            "news_source_selection": {
+                "selection_mode": "user_need_customized",
+                "preferred_domains": list(profile.preferred_news_domains),
+                "excluded_domains": list(profile.excluded_news_domains),
+                "allow_backend_general_search_when_empty": True,
+                "derive_domains_from": [
+                    "user_provided_domains",
+                    "industry",
+                    "focus_areas",
+                    "source_profile",
+                ],
+                "do_not_use_fixed_personal_domain_list": True,
+            },
             "forbidden_sources": [
                 "credentials",
                 "private emails",
