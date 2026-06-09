@@ -328,6 +328,10 @@ def run_handoff(args: dict, **kwargs) -> str:
         provenance_state_files = {
             "provenance_graph": workspace / "output" / "intermediate" / "provenance_graph.json",
         }
+        audience_memory_files = {
+            "audience_profile": workspace / "audience_profile.md",
+            "audience_profile_snapshot": workspace / "output" / "intermediate" / "audience_profile_snapshot.md",
+        }
 
         result.update({
             "workspace": str(workspace),
@@ -345,12 +349,15 @@ def run_handoff(args: dict, **kwargs) -> str:
             "quality_gate_state_files_exist": {key: path.exists() for key, path in quality_gate_state_files.items()},
             "provenance_state_files": {key: str(path) for key, path in provenance_state_files.items()},
             "provenance_state_files_exist": {key: path.exists() for key, path in provenance_state_files.items()},
+            "audience_memory_files": {key: str(path) for key, path in audience_memory_files.items()},
+            "audience_memory_files_exist": {key: path.exists() for key, path in audience_memory_files.items()},
             "next": (
                 "Read agent_handoff.md and continue in Hermes as the Orchestrator main agent. "
                 "Read configs/orchestrator_contract.yaml, configs/stage_specs.yaml, "
                 "configs/artifact_contracts.yaml, configs/policy_packs/default.yaml, "
                 "workflow_state.json, artifact_registry.json, optional feedback state references, "
-                "optional quality gate state references, and optional provenance projection references before delegation."
+                "optional quality gate state references, optional provenance projection references, "
+                "and audience_profile_snapshot.md as runtime taste context before delegation."
             ),
         })
 

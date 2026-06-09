@@ -63,6 +63,7 @@ EVENT_TYPES = {
     "provenance_graph_built",
     "provenance_graph_validated",
     "provenance_graph_invalid",
+    "audience_profile_snapshot_created",
     "run_blocked",
     "run_reset",
 }

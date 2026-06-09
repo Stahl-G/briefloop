@@ -28,9 +28,13 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path):
     rc = main(["init", str(ws), "--from-onboarding", str(ob_path), "--force"])
     assert rc == 0
 
-    for name in ("config.yaml", "profile.yaml", "sources.yaml", "user.md"):
+    for name in ("config.yaml", "profile.yaml", "sources.yaml", "user.md", "audience_profile.md"):
         assert (ws / name).exists(), f"{name} missing"
     assert (ws / "input" / "sources" / "README.md").exists()
+    audience_profile = (ws / "audience_profile.md").read_text(encoding="utf-8")
+    assert "ExampleCo" in audience_profile
+    assert "Audience Profile" in audience_profile
+    assert "not source evidence" in audience_profile
 
     sources = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
     assert sources["source_strategy"]["profile"] == "llm_decide"
@@ -131,3 +135,46 @@ def test_init_from_onboarding_aliases_accepted(tmp_path: Path):
     assert rc == 0, f"init should succeed even with aliased field names, got rc={rc}"
     assert (ws / "config.yaml").exists()
     assert (ws / "user.md").exists()
+    assert (ws / "audience_profile.md").exists()
+
+
+def test_direct_init_creates_audience_profile(tmp_path: Path):
+    ws = tmp_path / "direct-ws"
+
+    rc = main([
+        "init",
+        str(ws),
+        "--language",
+        "en-US",
+        "--company",
+        "DirectCo",
+        "--industry",
+        "manufacturing",
+        "--title",
+        "DirectCo Weekly Brief",
+        "--audience",
+        "management",
+        "--cadence",
+        "weekly",
+        "--source-profile",
+        "llm_decide",
+        "--force",
+    ])
+
+    assert rc == 0
+    profile = (ws / "audience_profile.md").read_text(encoding="utf-8")
+    assert "DirectCo" in profile
+    assert "DirectCo Weekly Brief" in profile
+    assert "Audience Profile" in profile
+
+
+def test_demo_init_creates_public_safe_audience_profile(tmp_path: Path):
+    ws = tmp_path / "demo-ws"
+
+    rc = main(["init", str(ws), "--demo", "--force"])
+
+    assert rc == 0
+    profile = (ws / "audience_profile.md").read_text(encoding="utf-8")
+    assert "Synthetic Corp" in profile
+    assert "public-safe" in profile
+    assert "material non-public information" in profile

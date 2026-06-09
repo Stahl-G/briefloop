@@ -148,6 +148,33 @@ def test_provenance_filters_prior_provenance_lifecycle_events(tmp_path):
     assert "provenance_graph_validated" in events
 
 
+def test_provenance_does_not_expand_audience_memory_events(tmp_path):
+    ws = _workspace(tmp_path)
+    run_id = _init_state(ws)
+    append_event(
+        workspace=ws,
+        run_id=run_id,
+        event_type="audience_profile_snapshot_created",
+        actor="cli",
+        reason="Synthetic audience snapshot event.",
+        metadata={
+            "audience_profile": "audience_profile.md",
+            "audience_profile_snapshot": "output/intermediate/audience_profile_snapshot.md",
+        },
+    )
+
+    graph = build_provenance_workspace(workspace=ws, repo_workdir=REPO)["provenance_graph"]
+
+    event_types = {
+        str(node.get("event_type"))
+        for node in graph["nodes"]
+        if node.get("type") == "event"
+    }
+    assert "audience_profile_snapshot_created" not in event_types
+    events = (ws / "output" / "intermediate" / "event_log.jsonl").read_text(encoding="utf-8")
+    assert "audience_profile_snapshot_created" in events
+
+
 def test_artifact_derived_from_direction_is_output_to_input(tmp_path):
     ws = _workspace(tmp_path)
     _init_state(ws)

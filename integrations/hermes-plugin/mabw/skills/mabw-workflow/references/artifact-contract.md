@@ -41,6 +41,18 @@ This file is created only by `multi-agent-brief provenance build`.
 
 - `output/intermediate/provenance_graph.json`
 
+## Audience Runtime Context Files
+
+These files are runtime context, not workflow artifacts, source evidence,
+quality gates, feedback controls, or provenance projection inputs.
+
+- `audience_profile.md`
+- `output/intermediate/audience_profile_snapshot.md`
+
+The Orchestrator reads the frozen snapshot at run start and passes a concise
+taste summary to delegated roles. Mid-run edits to `audience_profile.md` apply
+to the next run.
+
 ## Final Outputs
 
 - `output/brief.md`

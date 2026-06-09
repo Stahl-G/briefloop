@@ -18,16 +18,17 @@ Read workspace context -> read contract references -> identify the next stage ->
 ## Parent Responsibilities
 
 1. Read `config.yaml`, `sources.yaml`, `user.md`, `input/`, and `input/hermes_cache/` when present.
-2. Run `multi-agent-brief doctor --config <workspace>/config.yaml`.
-3. Run source discovery when configured.
-4. Run input governance when available.
-5. Create `output/intermediate/` when needed.
-6. Delegate child tasks in sequence.
-7. Verify each expected artifact exists and is non-empty before selecting the next decision.
-8. Decide `continue`, `retry_stage`, `delegate_repair`, `request_human_review`, `block_run`, or `finalize`.
-9. Run quality gates and `state check/decide` before finalize.
-10. Run `multi-agent-brief finalize --config <workspace>/config.yaml` after audit readiness and gate readiness.
-11. Optionally run `multi-agent-brief provenance build/show/validate` for audit/debug projection after runtime state exists.
+2. Read `output/intermediate/audience_profile_snapshot.md` and summarize relevant taste guidance for delegated roles. Do not treat `audience_profile.md` as source evidence.
+3. Run `multi-agent-brief doctor --config <workspace>/config.yaml`.
+4. Run source discovery when configured.
+5. Run input governance when available.
+6. Create `output/intermediate/` when needed.
+7. Delegate child tasks in sequence.
+8. Verify each expected artifact exists and is non-empty before selecting the next decision.
+9. Decide `continue`, `retry_stage`, `delegate_repair`, `request_human_review`, `block_run`, or `finalize`.
+10. Run quality gates and `state check/decide` before finalize.
+11. Run `multi-agent-brief finalize --config <workspace>/config.yaml` after audit readiness and gate readiness.
+12. Optionally run `multi-agent-brief provenance build/show/validate` for audit/debug projection after runtime state exists.
 
 ## Child Task Templates
 
@@ -69,7 +70,7 @@ Goal: Draft the audited MABW brief.
 Inputs: `user.md`, `config.yaml`, `output/intermediate/claim_ledger.json`  
 Write: `output/intermediate/audited_brief.md`
 
-Write a management-ready brief in the workspace language with valid `[src:CLAIM_ID]` citations.
+Write a management-ready brief in the workspace language with valid `[src:CLAIM_ID]` citations. Use the Orchestrator-provided audience taste summary as style context, not as source evidence.
 
 ### Editor
 

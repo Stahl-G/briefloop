@@ -11,6 +11,7 @@ Python remains the tool layer. It provides workspace setup, source handling, det
 ```text
 runtime main agent
   -> reads workspace context
+  -> reads frozen audience profile snapshot
   -> reads contract references
   -> identifies the next stage
   -> delegates a specialist role
@@ -27,7 +28,7 @@ v0.6.0 introduces public-safe contract references:
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
-These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 added deterministic material-fact, freshness, and target-relevance gate controls. v0.6.4 added packaged public-safe evaluation cases for developer/CI regression checks. v0.6.5 adds optional deterministic provenance projection for workspace audit/debug review. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, score prose with an LLM judge, or treat provenance as semantic proof.
+These files describe shared authority, decision vocabulary, stage order, artifact expectations, and the default policy shell. v0.6.1 added minimum runtime state control files and artifact status checks. v0.6.2 added minimum feedback issue and repair-plan controls. v0.6.3 added deterministic material-fact, freshness, and target-relevance gate controls. v0.6.4 added packaged public-safe evaluation cases for developer/CI regression checks. v0.6.5 added optional deterministic provenance projection for workspace audit/debug review. v0.6.6 adds a workspace-local audience profile and frozen per-run audience snapshot exposed through handoff. Python still does not automatically edit brief artifacts, execute repair, live-fetch sources, make semantic truth judgments, score prose with an LLM judge, treat provenance as semantic proof, learn taste automatically, or route controls based on taste.
 
 ## Four Contract Categories
 
@@ -49,22 +50,32 @@ The Orchestrator uses a shared decision vocabulary:
 - `block_run`
 - `finalize`
 
-In v0.6.1 these decisions can also be recorded through the runtime state event log. In v0.6.2 feedback issue and repair-plan events can also be recorded. In v0.6.3 quality gate check/pass/block events can also be recorded. In v0.6.5 provenance build/validate outcomes can also be recorded. The event log is a control trace; `provenance_graph.json` is a separate derived projection.
+In v0.6.1 these decisions can also be recorded through the runtime state event log. In v0.6.2 feedback issue and repair-plan events can also be recorded. In v0.6.3 quality gate check/pass/block events can also be recorded. In v0.6.5 provenance build/validate outcomes can also be recorded. In v0.6.6 audience snapshot creation can also be recorded. The event log is a control trace; `provenance_graph.json` is a separate derived projection.
 
 ## Runtime Loop
 
 Each runtime should communicate the same loop:
 
-1. Read `config.yaml`, `sources.yaml`, `user.md`, inputs, handoff artifacts, and runtime state files.
-2. Read contract references from the handoff.
-3. Identify the current stage and expected artifact.
-4. Delegate the stage to the appropriate specialist role or Python tool.
-5. Check that the expected artifact is present and suitable for the next stage.
-6. When audit findings or human feedback exist, structure issues and repair plans without executing repair.
-7. Decide whether to continue, retry, delegate repair, request human review, block, or finalize.
-8. Finalize only after audit readiness.
+1. Read `config.yaml`, `sources.yaml`, `user.md`, inputs, handoff artifacts, runtime state files, and `output/intermediate/audience_profile_snapshot.md`.
+2. Summarize relevant taste guidance from the frozen audience snapshot for delegated roles.
+3. Read contract references from the handoff.
+4. Identify the current stage and expected artifact.
+5. Delegate the stage to the appropriate specialist role or Python tool, passing the taste summary as context when useful.
+6. Check that the expected artifact is present and suitable for the next stage.
+7. When audit findings or human feedback exist, structure issues and repair plans without executing repair.
+8. Decide whether to continue, retry, delegate repair, request human review, block, or finalize.
+9. Finalize only after audit readiness.
 
 Runtime mechanics may differ, but artifact expectations should stay aligned.
+
+## Audience Profile Runtime Surface
+
+v0.6.6 creates workspace-local `audience_profile.md` during init and freezes it into `output/intermediate/audience_profile_snapshot.md` for each active run. The snapshot is exposed through `agent_handoff.json` as `audience_memory_files`.
+
+- The Orchestrator reads the snapshot, not the live profile, during the run.
+- Mid-run edits to `audience_profile.md` apply to the next run.
+- Audience memory is runtime context, not source evidence, an artifact contract, a quality gate, a provenance graph node, or a stage blocker.
+- Python creates, freezes, exposes, and records the context; it does not learn taste automatically, update profiles, enforce taste, or route workflow controls based on taste.
 
 ## Provenance Projection
 

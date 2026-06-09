@@ -11,6 +11,7 @@ This page separates current implementation state from roadmap goals. Use it befo
 - Deterministic material-fact, freshness, and target-relevance gates can write a quality gate report without fetching sources or rewriting briefs.
 - Packaged public-safe evaluation cases can validate known gates, feedback, runtime blocker, and Hermes path regressions for development and CI.
 - Optional deterministic provenance projection can write a workspace-local audit/debug graph from existing control files.
+- Workspace-local audience taste profiles can be frozen into per-run snapshots and exposed through runtime handoff as context.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance separates evidence from feedback, instructions, and background context.

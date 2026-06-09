@@ -20,6 +20,7 @@ from multi_agent_brief.orchestrator_contract import (
     resolve_repo_workdir,
 )
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
+from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
@@ -54,6 +55,7 @@ class AgentHandoff:
     prompt: str = ""
     expected_artifacts: list[str] = field(default_factory=list)
     runtime_state_files: dict[str, str] = field(default_factory=lambda: dict(RUNTIME_STATE_FILES))
+    audience_memory_files: dict[str, str] = field(default_factory=lambda: dict(AUDIENCE_MEMORY_FILES))
     feedback_state_files: dict[str, str] = field(default_factory=lambda: dict(FEEDBACK_STATE_FILES))
     quality_gate_state_files: dict[str, str] = field(default_factory=lambda: dict(QUALITY_GATE_STATE_FILES))
     provenance_state_files: dict[str, str] = field(default_factory=lambda: dict(PROVENANCE_STATE_FILES))
@@ -119,6 +121,7 @@ def _hermes_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Then in Hermes: /mabw <workspace> → mabw_create_onboarding → mabw_init_workspace → mabw_run_handoff → read agent_handoff.md → continue delegated workflow.",
             "Read configs/orchestrator_contract.yaml, configs/stage_specs.yaml, configs/artifact_contracts.yaml, and configs/policy_packs/default.yaml before delegation.",
             "Read output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, and event_log.jsonl before selecting the next stage.",
+            "Read output/intermediate/audience_profile_snapshot.md at run start for reader taste context; do not treat audience_profile.md as source evidence.",
             f"Orchestrator loop: {ORCHESTRATOR_LOOP}",
             "Each delegate_task child needs complete goal, context, input paths, and output paths.",
             "Parent must verify each artifact before proceeding to the next child.",
@@ -149,6 +152,9 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "- output/intermediate/workflow_state.json\n"
             "- output/intermediate/artifact_registry.json\n"
             "- output/intermediate/event_log.jsonl\n\n"
+            "Read audience memory snapshot for this run:\n"
+            "- output/intermediate/audience_profile_snapshot.md\n"
+            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             f"Repository: {repo.resolve()}\n"
             f"Workspace: {ws_path}\n"
             f"Activate venv: source {venv}"
@@ -186,7 +192,10 @@ def _opencode_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "- output/intermediate/runtime_manifest.json\n"
             "- output/intermediate/workflow_state.json\n"
             "- output/intermediate/artifact_registry.json\n"
-            "- output/intermediate/event_log.jsonl"
+            "- output/intermediate/event_log.jsonl\n\n"
+            "Read audience memory snapshot for this run:\n"
+            "- output/intermediate/audience_profile_snapshot.md\n"
+            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run."
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -220,7 +229,10 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "- output/intermediate/runtime_manifest.json\n"
             "- output/intermediate/workflow_state.json\n"
             "- output/intermediate/artifact_registry.json\n"
-            "- output/intermediate/event_log.jsonl"
+            "- output/intermediate/event_log.jsonl\n\n"
+            "Read audience memory snapshot for this run:\n"
+            "- output/intermediate/audience_profile_snapshot.md\n"
+            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run."
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -255,6 +267,9 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "- output/intermediate/workflow_state.json\n"
             "- output/intermediate/artifact_registry.json\n"
             "- output/intermediate/event_log.jsonl\n\n"
+            "Read audience memory snapshot for this run:\n"
+            "- output/intermediate/audience_profile_snapshot.md\n"
+            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             "Run each step in order, verifying each artifact before continuing:\n\n"
             f"1. multi-agent-brief doctor --config {ws_path}/config.yaml\n"
             f"2. multi-agent-brief sources decide --config {ws_path}/config.yaml  (if configured)\n"
@@ -321,6 +336,9 @@ def build_handoff(
     handoff.notes.append(
         "Provenance projection is optional: provenance_graph.json is created only by multi-agent-brief provenance build and is an audit/debug view, not semantic proof."
     )
+    handoff.notes.append(
+        "Audience memory is runtime context: audience_profile_snapshot.md is frozen per run and exposed through handoff; it is not source evidence or an artifact gate."
+    )
 
     return handoff
 
@@ -373,6 +391,13 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
         "",
     ])
     for label, rel_path in handoff.runtime_state_files.items():
+        md_content.append(f"- `{label}`: `{rel_path}`")
+    md_content.extend([
+        "",
+        "## Audience Memory Files",
+        "",
+    ])
+    for label, rel_path in handoff.audience_memory_files.items():
         md_content.append(f"- `{label}`: `{rel_path}`")
     md_content.extend([
         "",

@@ -9,17 +9,21 @@
 
 ---
 
+> **Current Release Boundary.** This technical report preserves the v0.1.1 design framing, but v0.6.6 implements the audience layer as a workspace-local runtime context surface: `audience_profile.md` is the human-editable source file, and `output/intermediate/audience_profile_snapshot.md` is the frozen per-run file read through handoff. Mid-run profile edits apply to the next run. This is not a long-term memory system, an artifact contract, a quality gate, source evidence, or a provenance proof.
+
+---
+
 ## Abstract
 
 Enterprise briefing relies on a craft that takes new analysts months to acquire: writing briefs that are not only factually correct, but also aligned with an invisible set of departmental tastes, cultural taboos, and unstated editorial preferences. Single-LLM approaches fail here twice — they cannot guarantee factual correctness (no audit trail, no repairability), and they cannot learn taste (each run starts fresh).
 
-MABW (Multi-Agent Brief Workflow) addresses both gaps through a **contract-governed multi-agent workflow with a persistent memory layer**. Correctness is governed by four structured contracts enforced at stage boundaries through a file-state blackboard. Taste is carried by `audience_profile.md` — a plain-text, human-editable memory file that grows with use, analogous to the Hermes agent's USER.md. The Orchestrator reads this file at each run, produces a semantic summary, and injects it into stage handoffs. Contracts guarantee the brief is not wrong; taste guides it toward being right.
+MABW (Multi-Agent Brief Workflow) addresses both gaps through a **contract-governed multi-agent workflow with an audience profile runtime surface**. Correctness is governed by four structured contracts enforced at stage boundaries through a file-state blackboard. Taste is written in `audience_profile.md` — a plain-text, human-editable workspace file — and frozen into `output/intermediate/audience_profile_snapshot.md` for each run. The Orchestrator reads the snapshot, produces a semantic summary, and injects it into stage handoffs. Contracts bound correctness; taste context guides reader fit without becoming a contract.
 
-This report documents the v0.6.1 architecture, the v0.1.1 design update that adds the memory-and-taste layer, and the core design philosophy: **bringing the improvement-loop infrastructure that made coding agents successful — auditability, traceability, structured feedback, and human-gated repair — into real business workflows.**
+This report documents the v0.6.1 architecture lineage, the v0.1.1 design update that adds the audience profile runtime surface, and the core design philosophy: **bringing the improvement-loop infrastructure that made coding agents successful — auditability, traceability, structured feedback, and human-gated repair — into real business workflows.**
 
 ---
 
-> **About This Report.** This is a living architecture reference. v0.1.1 adds three major design elements absent from v0.1: (1) the memory-and-taste layer (`audience_profile.md` + Orchestrator semantic summary), (2) the formal separation between contract-governed correctness and profile-governed taste, and (3) explicit red lines that coding agents must never violate. Sections marked "Deferred" or "Planned" indicate design intent not yet implemented in v0.6.1. Chapter 8 provides the authoritative implementation snapshot.
+> **About This Report.** This is a living architecture reference. v0.1.1 adds three major design elements absent from v0.1: (1) the audience profile runtime surface (`audience_profile.md` + frozen per-run `audience_profile_snapshot.md` + Orchestrator semantic summary), (2) the formal separation between contract-governed correctness and profile-governed taste, and (3) explicit red lines that coding agents must never violate. Sections marked "Deferred" or "Planned" indicate design intent not yet implemented in the referenced baseline. For current release status, use `docs/architecture-status.md` and `docs/support-matrix.md`.
 
 ---
 
@@ -77,13 +81,13 @@ Enterprise briefing quality has two orthogonal dimensions:
 | Dimension | What It Means | Examples | How It's Enforced |
 |-----------|--------------|----------|-------------------|
 | **Correctness** | The brief contains no factual errors, stale data, misattributed claims, or structural violations | Wrong stock price, missing source, claim without evidence, wrong entity name | **Contract enforcement** — structured YAML, schema-validated, mechanically checked at stage boundaries |
-| **Taste** | The brief matches the department's editorial preferences, cultural norms, taboo topics, and unwritten expectations | "Don't give strategic advice without data," "use product-philosophy framing," "lead with risk disclaimers first" | **audience_profile.md** — plain natural language, human-edited, semantically interpreted by the Orchestrator |
+| **Taste** | The brief matches the department's editorial preferences, cultural norms, taboo topics, and unwritten expectations | "Don't give strategic advice without data," "use product-philosophy framing," "lead with risk disclaimers first" | **audience_profile.md** source + **audience_profile_snapshot.md** runtime context — plain natural language, human-edited, semantically interpreted by the Orchestrator |
 
 Correctness can be mechanized. Taste cannot — it is learned through months of feedback cycles, passed down through implicit cultural norms, and varies between companies, departments, and individual managers. MABW's architecture treats these two dimensions as separate concerns with separate governance mechanisms.
 
-### 2.2 The Memory-and-Taste Layer
+### 2.2 The Audience Profile Runtime Surface
 
-v0.1.1 introduces `audience_profile.md` — a plain-text file in the workspace, analogous to the Hermes agent's USER.md. It carries:
+v0.1.1 introduces `audience_profile.md` — a plain-text file in the workspace, analogous to the Hermes agent's USER.md. v0.6.6 freezes that live profile into `output/intermediate/audience_profile_snapshot.md` for the active run. The profile/snapshot pair carries:
 
 - Editorial preferences ("lead with the key number, not background context")
 - Cultural taboos ("never suggest strategic pivots without explicit data support")
@@ -94,10 +98,10 @@ v0.1.1 introduces `audience_profile.md` — a plain-text file in the workspace, 
 **Lifecycle:**
 
 1. **Initial state**: A few lines of natural language written by the department head or senior analyst. No schema, no YAML, no structured fields required.
-2. **Per-run**: The Orchestrator reads `audience_profile.md` at the start of each run, alongside contract references and state files. It produces a semantic summary of relevant taste guidelines for the current briefing task.
+2. **Per-run**: `run`, `start`, and `handoff` create or reuse a frozen `audience_profile_snapshot.md` for the current `run_id`. The Orchestrator reads that snapshot at the start of the run, alongside contract references and state files. It produces a semantic summary of relevant taste guidelines for the current briefing task.
 3. **Injected into handoffs**: The summary is included in the handoff context for every specialist role that generates or edits content (scout through auditor).
-4. **Growth over time**: After each run, the human operator can add notes to `audience_profile.md` based on what went well or poorly. FeedbackIssues that reveal a taste-level problem (not a correctness problem) can be summarized into the profile. The file grows organically, like institutional memory — not like a database schema.
-5. **No mechanical enforcement**: Unlike contracts, `audience_profile.md` has no schema validation, no blocking semantics, no pass/fail gate. It is semantically interpreted by the Orchestrator and the specialist roles. Drift is accepted — different runs may interpret the same profile slightly differently, just as different human analysts interpret the same manager's preferences differently.
+4. **Growth over time**: After each run, the human operator can add notes to `audience_profile.md` based on what went well or poorly. Those edits are captured only by a later run snapshot; mid-run edits do not change the active run. v0.6.6 does not automatically update the profile.
+5. **No mechanical enforcement**: Unlike contracts, `audience_profile.md` and its snapshot have no schema validation for taste content, no blocking semantics, and no pass/fail gate. The snapshot is semantically interpreted by the Orchestrator and the specialist roles. Drift is accepted between runs, not within a frozen run.
 
 ### 2.3 Contract-Backed Control Surface
 
@@ -114,7 +118,7 @@ MABW defines four contract categories (per `configs/orchestrator_contract.yaml`)
 
 In v0.6.1, contracts function as a **reference/config + state CLI hybrid control layer**. The Orchestrator reads contract references, inspects runtime state files, validates artifact status, and applies the decision vocabulary — but enforcement is not yet a full runtime API (→ v0.6.3+ for full contract enforcement). Contracts serve as the **precondition for subagent existence**: a specialist role cannot be defined without specifying its contract surface.
 
-**Contracts govern correctness. They do not govern taste.** Taste lives in `audience_profile.md` (§2.2). This separation is load-bearing: it means contracts change rarely (only when the workflow structure changes), while taste can be updated after every run by anyone who can write a sentence.
+**Contracts govern correctness. They do not govern taste.** Taste lives in `audience_profile.md` and the per-run `audience_profile_snapshot.md` (§2.2). This separation is load-bearing: it means contracts change rarely (only when the workflow structure changes), while taste can be updated between runs by anyone who can write a sentence.
 
 ### 2.4 Workflow Control Before Agent Autonomy
 
@@ -142,7 +146,7 @@ The following invariants define MABW's architectural boundary:
 
 4. **Public docs stay high-level.** The authoritative specification is the contract YAML files in `configs/`. Prose documentation explains design rationale; contract files define runtime behavior.
 
-5. **Contracts govern correctness; audience_profile.md governs taste.** They use different formats (structured YAML vs. plain text), different enforcement mechanisms (mechanical validation vs. semantic interpretation), and different edit frequencies (rarely vs. after every run). They do not contaminate each other.
+5. **Contracts govern correctness; audience profile snapshot governs taste context.** They use different formats (structured YAML vs. plain text), different enforcement mechanisms (mechanical validation vs. semantic interpretation), and different edit frequencies (rarely vs. between-run profile edits). They do not contaminate each other.
 
 6. **Human remains accountable.** All RepairPlan proposals operate within a human-accountable framework. No model-initiated contract modification occurs without an audit trail.
 
@@ -162,8 +166,8 @@ The following invariants define MABW's architectural boundary:
                        ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                  ORCHESTRATOR CONTROL LOOP                     │
-│  1. Read workspace (contracts + state files + audience_profile)│
-│  2. Summarize taste guidelines from audience_profile.md        │
+│  1. Read workspace (contracts + state + audience snapshot)     │
+│  2. Summarize taste guidelines from frozen snapshot            │
 │  3. Identify current stage → delegate → check artifact         │
 │  4. Decide (continue/retry/repair/review/block/finalize)       │
 └──┬─────────────────────┬──────────────────────┬──────────────┘
@@ -180,8 +184,8 @@ The following invariants define MABW's architectural boundary:
 │ ┌───────────┐ │  ├──────────────────┤  └──────────────────┘
 │ │Specialist │ │  │ WORKSPACE FILES   │
 │ │Roles (LLM)│ │  │ audience_profile  │
-│ │scout/     │ │  │ .md               │
-│ │screener/  │ │  │ (taste/memory)    │
+│ │scout/     │ │  │ snapshot.md       │
+│ │screener/  │ │  │ (taste context)   │
 │ │claim-     │ │  └──────────────────┘
 │ │ledger/    │ │
 │ │analyst/   │ │
@@ -190,7 +194,7 @@ The following invariants define MABW's architectural boundary:
 │ └───────────┘ │
 └──────────────┘
 ```
-*Python tools execute locally via CLI and are not LLM-powered. Specialist roles execute on external LLM runtimes via the handoff protocol. `audience_profile.md` is read by the Orchestrator at the start of each run; a semantic summary of taste guidelines is injected into each specialist role handoff. Contracts govern correctness; the profile governs taste.*
+*Python tools execute locally via CLI and are not LLM-powered. Specialist roles execute on external LLM runtimes via the handoff protocol. `audience_profile.md` is frozen into `output/intermediate/audience_profile_snapshot.md`; the Orchestrator reads the snapshot at the start of each run and injects a semantic taste summary into specialist role handoffs. Contracts govern correctness; the snapshot provides taste context.*
 
 ### 3.2 Contract Registry
 
@@ -232,8 +236,8 @@ Six shared terms: `continue`, `retry_stage`, `delegate_repair`, `request_human_r
 
 #### 3.4.2 Runtime Loop (v0.1.1 — updated with taste step)
 
-1. Read workspace context: `config.yaml`, `sources.yaml`, `user.md`, **`audience_profile.md`**, inputs, handoff artifacts, and runtime state files
-2. **Produce a semantic summary of taste guidelines from `audience_profile.md` relevant to the current briefing task**
+1. Read workspace context: `config.yaml`, `sources.yaml`, `user.md`, **`output/intermediate/audience_profile_snapshot.md`**, inputs, handoff artifacts, and runtime state files
+2. **Produce a semantic summary of taste guidelines from the frozen audience snapshot relevant to the current briefing task**
 3. Read contract references from the handoff
 4. Identify the current stage and expected artifact from `configs/stage_specs.yaml`
 5. Delegate the stage to the appropriate specialist role or Python tool, **including the taste summary in the handoff context**
@@ -254,7 +258,7 @@ Five runtimes: Hermes, Claude, Codex, OpenCode, Manual. All share the same contr
 
 The 10-stage pipeline: `doctor` (Python) → `source-discovery` → `input-governance` (Python) → `scout` → `screener` → `claim-ledger` → `analyst` → `editor` → `auditor` → `finalize` (Python).
 
-Specialist roles (`scout` through `auditor`) are LLM-powered, contract-governed, and executed via external runtime handoff. Each role receives the Orchestrator's taste summary alongside its contract surface in the handoff context. Autonomous in-Python agent execution is intentionally deferred.
+Specialist roles (`scout` through `auditor`) are LLM-powered, contract-governed, and executed via external runtime handoff. Each role receives the Orchestrator's taste summary from the frozen audience snapshot alongside its contract surface in the handoff context. Autonomous in-Python agent execution is intentionally deferred.
 
 ### 3.7 Python Tool / Validator / Renderer Layer
 
@@ -315,8 +319,8 @@ The following architectural boundaries must never be violated by any coding agen
 | **R6** | NEVER automatically edit brief content under "repair" | RepairPlan is a proposal. Human approves before execution. Autonomous content modification is prohibited |
 | **R7** | NEVER bypass the Orchestrator | No stage transition without an Orchestrator decision recorded in `event_log.jsonl` |
 | **R8** | NEVER remove or weaken the human gate on self-improvement | The system proposes; the human decides. This is architectural, not temporary |
-| **R9** | NEVER put taste rules in contract YAML | Taste lives in `audience_profile.md`. Contracts govern correctness. Conflating them makes both unmaintainable |
-| **R10** | NEVER require the human operator to read YAML or code | Non-AI-native users interact with CLI summaries, state files, and `audience_profile.md` natural language. Contracts are for the Orchestrator and the coding agent, not the end user |
+| **R9** | NEVER put taste rules in contract YAML | Taste lives in `audience_profile.md` and the frozen runtime snapshot. Contracts govern correctness. Conflating them makes both unmaintainable |
+| **R10** | NEVER require the human operator to read YAML or code | Non-AI-native users interact with CLI summaries, state files, and `audience_profile.md` natural language. The Orchestrator reads the snapshot; contracts are for the Orchestrator and the coding agent, not the end user |
 
 An agent suggestion that violates any of these red lines is an architecture-level drift, not a minor adjustment. If a coding agent proposes "let analyst directly modify scout's artifact to save time," it simultaneously violates R1, R2, and R7.
 
@@ -324,11 +328,11 @@ An agent suggestion that violates any of these red lines is an architecture-leve
 
 ## 8. Implementation Snapshot
 
-> **Snapshot**: v0.6.1 working state | **Branch**: `062` | **Commit**: `eff8bbc` | **Date**: 2026-06-08
+> **Historical Snapshot**: v0.6.1 working state | **Branch**: `062` | **Commit**: `eff8bbc` | **Date**: 2026-06-08. Current release status has advanced; see `docs/architecture-status.md`.
 
 ### 8.1 Component Status
 
-**Stable — v0.6.1 implements:**
+**Stable baseline plus current additions through v0.6.6:**
 
 | Component | Evidence |
 |-----------|----------|
@@ -342,30 +346,31 @@ An agent suggestion that violates any of these red lines is an architecture-leve
 | Stage specifications (10 stages) | `configs/stage_specs.yaml` |
 | Python tool layer | Workspace lifecycle + stage-bound tools |
 | Role contracts + runtime handoff | `configs/stage_specs.yaml` |
-| **audience_profile.md support** | **New in v0.1.1 — read by Orchestrator, summarized, injected into handoffs** |
+| **audience profile runtime surface** | `audience_profile.md` source + frozen `output/intermediate/audience_profile_snapshot.md`, exposed through `audience_memory_files` |
 
-**Deferred — v0.6.1 defers:**
+**Deferred / out of scope for v0.6.6:**
 
 | Component | Target |
 |-----------|--------|
-| Feedback/repair loop | v0.6.2 (plan only, no auto-edit/execute) |
-| Material-fact/freshness/relevance gates | v0.6.3 |
-| Evidence execution graph | v0.6.5 |
-| Public golden cases | Future |
-| Fact-Grounding/Evidence Contract enforcement | v0.6.3 |
-| Quality/Audience Contract enforcement | v0.6.3 |
+| Automatic repair execution | Future |
+| Semantic repair verification | Future |
+| Source support semantic proof graph | Future |
+| Private/commercial benchmark suites | Future |
 | Full policy packs (domain-specific) | Future |
 | FrictionStore (long-term failure memory) | v0.7+ |
+| Automatic taste learning or profile updates | Future |
 | Autonomous in-Python agent execution | Intentionally deferred |
 
 ### 8.2 Phase Roadmap
 
 | Milestone | Scope |
 |-----------|-------|
-| **v0.6.1** (current) | Runtime state files + minimum artifact registry + stage blocking + decision event log + runtime parity + role handoff + audience_profile.md Orchestrator integration |
-| **v0.6.2** (next) | Minimum feedback issue schema + bounded repair planning controls (plan only) |
-| **v0.6.3** | Quality gates + Fact-Grounding/Evidence contract enforcement |
-| **v0.6.5** | Evidence execution graph + provenance (W3C PROV-aligned) |
+| **v0.6.1** | Runtime state files + minimum artifact registry + stage blocking + decision event log + runtime parity + role handoff |
+| **v0.6.2** | Minimum feedback issue schema + bounded repair planning controls (plan only) |
+| **v0.6.3** | Deterministic quality gates |
+| **v0.6.4** | Packaged public-safe evaluation cases |
+| **v0.6.5** | Optional deterministic provenance projection for audit/debug review |
+| **v0.6.6** (current) | Workspace-local audience profile + frozen per-run snapshot exposed through handoff |
 | **v0.7** | FrictionStore + full controlled self-improvement loop |
 | **v0.2** | System paper — experimental evaluation complete |
 
@@ -379,7 +384,7 @@ Following Kapoor et al. (2024) *AI Agents That Matter*, MABW evaluates **agentic
 
 ### 9.2 Verification Checks v0.1
 
-State file correctness, artifact validation completeness, event log traceability, run ID consistency, and CLI output behavior — all executable against the current v0.6.1 implementation without experimental baseline data.
+State file correctness, artifact validation completeness, event log traceability, run ID consistency, handoff context exposure, and CLI output behavior — all executable against the current v0.6.6 implementation without experimental baseline data.
 
 ### 9.3 Single-Agent Baseline Comparison
 
@@ -393,15 +398,15 @@ No real enterprise workload experiments; runtime parity verified at contract/han
 
 ## 10. Related Work
 
-MABW engages four research lines. It is distinguished from multi-agent conversation frameworks (AutoGen, CAMEL, MetaGPT) by its contract-governed, file-state blackboard coordination model. It instantiates workflow patterns (van der Aalst et al.) and blackboard architecture (Nii) in an LLM-agent context. It extends Design by Contract from code verification to agent behavior governance, and aligns with NIST AI RMF and ISO/IEC 42001 governance frameworks. Its provenance schema is W3C PROV-compatible, designed to operationalize FActScore and ALCE verification patterns. Its controlled self-improvement loop is distinguished from Self-Refine and Reflexion by structured, file-system-persisted, human-gated feedback routing. MABW's memory-and-taste layer draws from the Hermes agent's USER.md pattern — a plain-text, human-editable, agent-readable preference file that grows with use.
+MABW engages four research lines. It is distinguished from multi-agent conversation frameworks (AutoGen, CAMEL, MetaGPT) by its contract-governed, file-state blackboard coordination model. It instantiates workflow patterns (van der Aalst et al.) and blackboard architecture (Nii) in an LLM-agent context. It extends Design by Contract from code verification to agent behavior governance, and aligns with NIST AI RMF and ISO/IEC 42001 governance frameworks. Its provenance schema is W3C PROV-compatible, designed to operationalize FActScore and ALCE verification patterns. Its controlled self-improvement loop is distinguished from Self-Refine and Reflexion by structured, file-system-persisted, human-gated feedback routing. MABW's audience profile runtime surface draws from the Hermes agent's USER.md pattern — a plain-text, human-editable, agent-readable preference file frozen into a per-run snapshot.
 
 ---
 
 ## 11. Limitations & Future Work
 
-**Known limitations v0.6.1:** No evaluation data; specialist roles are contract-defined but not autonomously executing; two of four contract categories are reference-only; self-improvement loop entirely deferred; event log is control trace, not provenance graph; no scale validation.
+**Known limitations v0.6.6:** No private/commercial evaluation data; specialist roles are contract-defined but not autonomously executing in Python; automatic repair execution and semantic proof remain deferred; event log is control trace; provenance graph is optional audit/debug projection; audience profile is context only and is not automatically learned, updated, enforced, or routed; no scale validation.
 
-**Design boundary:** MABW is a controlled self-improving system, not fully autonomous. Contracts govern correctness; `audience_profile.md` governs taste — the contract architecture generalizes across domains; the profile is per-team, per-department, per-company. Generalization to non-briefing workflows requires domain-specific policy pack adaptation.
+**Design boundary:** MABW is a controlled self-improving system, not fully autonomous. Contracts govern correctness; `audience_profile.md` and its frozen per-run snapshot provide taste context — the contract architecture generalizes across domains; the profile is per-team, per-department, per-company. Generalization to non-briefing workflows requires domain-specific policy pack adaptation.
 
 ---
 
@@ -415,7 +420,7 @@ Six-term vocabulary (`continue`/`retry_stage`/`delegate_repair`/`request_human_r
 
 ## Appendix C: Runtime State File Schemas
 
-Full field tables for `runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, and `event_log.jsonl` — sourced from `src/multi_agent_brief/orchestrator/runtime_state.py`. Event types (13) per `EVENT_TYPES` constant.
+Full field tables for `runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, and `event_log.jsonl` — sourced from `src/multi_agent_brief/orchestrator/runtime_state.py`. Event types are defined by the `EVENT_TYPES` constant.
 
 ## Appendix D: Specialist Role Cards
 

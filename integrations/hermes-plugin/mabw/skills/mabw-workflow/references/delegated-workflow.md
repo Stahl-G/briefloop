@@ -9,6 +9,11 @@ Read these contract references before delegation:
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
 
+Read `output/intermediate/audience_profile_snapshot.md` once at run start and
+summarize the relevant taste guidance for delegated roles. The snapshot is
+runtime context only; do not treat `audience_profile.md` as source evidence,
+an artifact contract, a gate, or a provenance proof.
+
 Control loop:
 
 ```text

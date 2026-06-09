@@ -159,6 +159,9 @@ def build_hermes_cron_plan(
                 "- output/intermediate/workflow_state.json\n"
                 "- output/intermediate/artifact_registry.json\n"
                 "- output/intermediate/event_log.jsonl\n\n"
+                "Read audience memory snapshot for this run:\n"
+                "- output/intermediate/audience_profile_snapshot.md\n"
+                "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
                 "- output/intermediate/repair_plan.json\n"
@@ -200,6 +203,9 @@ def build_hermes_cron_plan(
                 "- output/intermediate/workflow_state.json\n"
                 "- output/intermediate/artifact_registry.json\n"
                 "- output/intermediate/event_log.jsonl\n\n"
+                "Read audience memory snapshot for this run:\n"
+                "- output/intermediate/audience_profile_snapshot.md\n"
+                "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
                 "- output/intermediate/repair_plan.json\n"
@@ -228,7 +234,7 @@ def build_hermes_cron_plan(
         "For low-cost frequent polling, convert the daily job to a wakeAgent/script gate in Hermes after the source pattern stabilizes.",
     ]
     return HermesCronPlan(
-        version="v0.6.5",
+        version="v0.6.6",
         workspace=str(workspace_path),
         project_name=summary["name"],
         cadences=resolved_cadences,
@@ -304,7 +310,7 @@ def render_hermes_cron_markdown(plan: HermesCronPlan) -> str:
 _SKILL_MD_TEMPLATE = '''---
 name: multi-agent-brief-hermes
 description: Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
-version: 0.6.5
+version: 0.6.6
 author: multi-agent-brief-workflow
 license: MIT
 platforms:
@@ -341,6 +347,13 @@ Runtime state files:
 - `output/intermediate/workflow_state.json`
 - `output/intermediate/artifact_registry.json`
 - `output/intermediate/event_log.jsonl`
+
+Audience memory files:
+
+- `audience_profile.md`
+- `output/intermediate/audience_profile_snapshot.md`
+
+Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Mid-run profile edits apply to the next run.
 
 Optional feedback state files:
 
@@ -465,16 +478,19 @@ The Hermes parent agent is the Orchestrator main agent for the full pipeline:
    - `config.yaml`
    - `sources.yaml`
    - `user.md`
+   - `output/intermediate/audience_profile_snapshot.md`
    - `input/`
    - `input/hermes_cache/` when present
 
-3. Run doctor:
+3. Summarize relevant taste guidance from `output/intermediate/audience_profile_snapshot.md` for delegated roles. Do not treat the profile as source evidence.
+
+4. Run doctor:
 
 ```bash
 multi-agent-brief doctor --config <workspace>/config.yaml
 ```
 
-4. If source discovery is configured:
+5. If source discovery is configured:
 
 ```bash
 multi-agent-brief sources decide --config <workspace>/config.yaml
@@ -482,28 +498,28 @@ multi-agent-brief sources decide --config <workspace>/config.yaml
 
 Review and merge according to workspace policy.
 
-5. Classify input files:
+6. Classify input files:
 
 ```bash
 multi-agent-brief inputs classify --config <workspace>/config.yaml
 ```
 
-6. Create `output/intermediate/` if it does not exist.
+7. Create `output/intermediate/` if it does not exist.
 
-7. Delegate child tasks with complete context and explicit artifact paths. Use `delegate_task` for each step.
+8. Delegate child tasks with complete context and explicit artifact paths. Use `delegate_task` for each step.
 
-8. After each child returns, verify the expected artifact exists and is non-empty before selecting the next decision.
+9. After each child returns, verify the expected artifact exists and is non-empty before selecting the next decision.
 
-9. If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
+10. If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
 
-10. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
+11. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
 
 ```bash
 multi-agent-brief gates check --workspace <workspace>
 multi-agent-brief state check --workspace <workspace> --strict
 ```
 
-11. If state is not blocked, record the auditor decision:
+12. If state is not blocked, record the auditor decision:
 
 ```bash
 multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."
@@ -511,13 +527,13 @@ multi-agent-brief state decide --workspace <workspace> --stage auditor --decisio
 
 If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize.
 
-12. Run finalize only after the gates/state decision path passes. `finalize` is not a quality-gate executor:
+13. Run finalize only after the gates/state decision path passes. `finalize` is not a quality-gate executor:
 
 ```bash
 multi-agent-brief finalize --config <workspace>/config.yaml
 ```
 
-13. Optional audit/debug provenance projection after runtime state exists:
+14. Optional audit/debug provenance projection after runtime state exists:
 
 ```bash
 multi-agent-brief provenance build --workspace <workspace>
@@ -527,7 +543,7 @@ multi-agent-brief provenance validate --workspace <workspace>
 
 Provenance projection is not semantic proof and is not required before finalize.
 
-14. Report artifact paths, audit status, quality gate status, and optional provenance graph path when created.
+15. Report artifact paths, audit status, quality gate status, and optional provenance graph path when created.
 
 ### Delegation Sequence
 
@@ -691,7 +707,7 @@ def render_hermes_setup_success(
     repo: str | Path,
     venv: str | Path,
     workspace: str | Path,
-    version: str = "v0.6.5",
+    version: str = "v0.6.6",
     doctor_status: str = "passed",
 ) -> str:
     return f"""Project is cloned and ready.
@@ -737,6 +753,11 @@ Runtime state files:
 - output/intermediate/workflow_state.json
 - output/intermediate/artifact_registry.json
 - output/intermediate/event_log.jsonl
+
+Audience memory snapshot:
+- output/intermediate/audience_profile_snapshot.md
+
+Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and use that summary as runtime context. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.
 
 Optional feedback state files:
 - output/intermediate/feedback_issues.json
@@ -798,78 +819,82 @@ As the Hermes Orchestrator main agent, execute:
    - output/intermediate/artifact_registry.json
    - output/intermediate/event_log.jsonl
 
-3. Run doctor:
+3. Read audience memory snapshot:
+   - output/intermediate/audience_profile_snapshot.md
+   Summarize relevant taste guidance for delegated roles. Do not treat the profile as source evidence or as a correctness contract.
+
+4. Run doctor:
    multi-agent-brief doctor --config {workspace}/config.yaml
 
-4. If source discovery is configured:
+5. If source discovery is configured:
    multi-agent-brief sources decide --config {workspace}/config.yaml
 
-5. If input governance is available:
+6. If input governance is available:
    multi-agent-brief inputs classify --config {workspace}/config.yaml
 
-6. Refresh runtime state without running stages:
+7. Refresh runtime state without running stages:
    multi-agent-brief state check --workspace {workspace}
 
-7. If audit findings or human feedback exist, structure them without running repair:
+8. If audit findings or human feedback exist, structure them without running repair:
    multi-agent-brief feedback ingest --workspace {workspace} --feedback <path> --source human|audit
    multi-agent-brief feedback plan --workspace {workspace}
    multi-agent-brief feedback resolve --workspace {workspace} --issue-id <id> --repair-plan-id <id> --reason <reason>
    multi-agent-brief feedback show --workspace {workspace} --json
    multi-agent-brief feedback validate --workspace {workspace}
 
-8. Delegate scout child via delegate_task:
+9. Delegate scout child via delegate_task:
    Goal: "Extract candidate reportable items for a MABW brief"
    Write: output/intermediate/candidate_claims.json
    toolsets: ["file", "terminal", "web"]
 
-9. After candidate_claims.json exists and is non-empty, delegate screener child:
+10. After candidate_claims.json exists and is non-empty, delegate screener child:
    Goal: "Screen and rank MABW candidate claims"
    Input: output/intermediate/candidate_claims.json
    Write: output/intermediate/screened_candidates.json
    toolsets: ["file", "terminal"]
 
-10. After screened_candidates.json exists, delegate claim-ledger child:
+11. After screened_candidates.json exists, delegate claim-ledger child:
    Goal: "Build the MABW Claim Ledger"
    Input: output/intermediate/screened_candidates.json
    Write: output/intermediate/claim_ledger.json
    toolsets: ["file", "terminal"]
 
-11. After claim_ledger.json exists, delegate analyst child:
+12. After claim_ledger.json exists, delegate analyst child:
    Goal: "Draft the audited MABW brief"
    Inputs: user.md and output/intermediate/claim_ledger.json
    Write: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-12. After audited_brief.md exists, delegate editor child:
+13. After audited_brief.md exists, delegate editor child:
    Goal: "Polish the audited MABW brief"
    Input and output: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-13. After editor completes, delegate auditor child:
+14. After editor completes, delegate auditor child:
     Goal: "Audit the MABW brief against the Claim Ledger"
     Inputs: output/intermediate/audited_brief.md and output/intermediate/claim_ledger.json
     Write: output/intermediate/audit_report.json
     toolsets: ["file", "terminal"]
 
-14. After audit_report.json exists, run deterministic quality gates and refresh runtime state:
+15. After audit_report.json exists, run deterministic quality gates and refresh runtime state:
     multi-agent-brief gates check --workspace {workspace}
     multi-agent-brief state check --workspace {workspace} --strict
 
-15. If state is not blocked, record the auditor decision:
+16. If state is not blocked, record the auditor decision:
     multi-agent-brief state decide --workspace {workspace} --stage auditor --decision continue --reason "Audit and quality gates passed."
 
-16. If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
+17. If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
 
-17. Run finalize only after the gates/state decision path passes. finalize is not a quality-gate executor:
+18. Run finalize only after the gates/state decision path passes. finalize is not a quality-gate executor:
     multi-agent-brief finalize --config {workspace}/config.yaml
 
-18. Optional audit/debug projection after runtime state exists:
+19. Optional audit/debug projection after runtime state exists:
     multi-agent-brief provenance build --workspace {workspace}
     multi-agent-brief provenance show --workspace {workspace} --json
     multi-agent-brief provenance validate --workspace {workspace}
     Provenance projection is not semantic proof and is not required to finalize.
 
-19. Report artifact paths, audit status, quality gate status, and optional provenance_graph.json when created.
+20. Report artifact paths, audit status, quality gate status, and optional provenance_graph.json when created.
 
 For each delegate_task call, write complete goal and context with the workspace path, input paths, and output paths fully specified. After each child returns, verify the expected artifact exists and is non-empty before selecting continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.
 

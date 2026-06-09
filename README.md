@@ -585,7 +585,7 @@ multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
 
 v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event Store、TaskBoard、AgentMessage、ClaimProposal / ClaimReducer、run replay 和最小协调协议。
 
-公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.5 在共享 Orchestrator authority、runtime state、feedback/repair control plane、deterministic quality gates 和 packaged public-safe evaluation cases 之上，增加可选 deterministic provenance projection，用于 audit/debug review。它不表示 Python 会自动评分文章、调用 LLM judge、执行 repair、live-fetch market data、recrawl sources、做 semantic truth judgment，或把 provenance 当成“来源已经语义证明 claim”的证据。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
+公开路线图见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)，v0.6 控制模型见 [docs/orchestrator-architecture.zh-CN.md](docs/orchestrator-architecture.zh-CN.md)，v2.0 技术评估见 [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md)。v0.6.6 在共享 Orchestrator authority、runtime state、feedback/repair control plane、deterministic quality gates、packaged public-safe evaluation cases 和 optional provenance projection 之上，增加 workspace-local audience taste profile、frozen per-run snapshot，并通过 runtime handoff 暴露。它不表示 Python 会自动学习口味、自动更新 profile、执行 smart routing、把 taste 当作 artifact gate/source evidence，或实现长期记忆系统。详细实现规划、schema 草案、私有评测样例和商业场景设计不会放进公开仓库，直到对应能力稳定并适合发布。
 
 ---
 
@@ -674,9 +674,9 @@ v2.0 不作为短期主路径。v1.0 冻结后，再探索 Shared World、Event 
 
 完整的版本历史和变更说明请参见 [CHANGELOG.md](CHANGELOG.md)。
 
-当前版本：**v0.6.5** — deterministic provenance projection for workspace audit/debug traces
+当前版本：**v0.6.6**
 
-v0.6.5 增加 `multi-agent-brief provenance build/show/validate` 和可选 `output/intermediate/provenance_graph.json`。该 graph 只投影已有 runtime state、artifacts、events、decisions、claim/source citation、feedback、repair plan 和 quality gate findings；不执行 stage、不改稿、不抓取来源，也不声称完成语义真伪验证。
+v0.6.6 增加 workspace-local `audience_profile.md` 和 frozen per-run `output/intermediate/audience_profile_snapshot.md`。`run/start/handoff` 会通过 `audience_memory_files` 暴露这层 runtime context；它不是 source evidence、artifact contract、quality gate、provenance graph 或长期记忆系统。
 
 [查看完整变更日志 →](CHANGELOG.md)
 

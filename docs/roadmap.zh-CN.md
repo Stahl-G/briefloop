@@ -85,6 +85,14 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 - Provenance edges 使用 citation/control wording，不声称 source 已经语义证明 claim。
 - Python 不会在 provenance projection 中执行 workflow stages、抓取来源、replay DAG、执行 repair、验证语义真伪，默认也不会阻断 `finalize`。
 
+### v0.6.6
+
+- 已加入 workspace-local audience taste profile，作为 runtime context surface。
+- `audience_profile.md` 位于 workspace root，可由人工编辑。
+- `run`、`start` 和 `handoff` 会创建或复用 frozen per-run `output/intermediate/audience_profile_snapshot.md`。
+- Handoff JSON/Markdown 用独立 `audience_memory_files` 暴露该 context，不混入 expected artifacts 或 control files。
+- Python 不会把 audience profile 内容当作 source evidence、artifact contract、quality gate、provenance graph expansion、自动学习能力或长期记忆系统。
+
 ## 下一阶段
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -125,7 +133,7 @@ Non-goals:
 - 将 provenance projection 保持为 audit/debug tooling，semantic proof、replay 和 graph-database style query systems 后移。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
 
-v0.6.5 之后的公开顺序转向 FrictionStore、improvement proposals、policy packs 和 runtime parity，同时继续保持 subagent-first runtime boundary。
+v0.6.6 之后的公开顺序转向 FrictionStore、improvement proposals、policy packs 和 runtime parity，同时继续保持 subagent-first runtime boundary。
 
 公开实施概览：
 
