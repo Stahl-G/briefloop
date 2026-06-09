@@ -113,6 +113,17 @@ def test_controls_build_show_validate_are_machine_readable(tmp_path, capsys):
     assert "control_switchboard_built" in _event_types(ws)
 
 
+def test_limitation_hygiene_control_uses_ledger_cli_contract(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = build_control_switchboard(workspace=ws, repo_workdir=ROOT)
+
+    control = _control_by_id(state["orchestrator_control_switchboard"], "limitation_hygiene")
+
+    assert "limitation-hygiene --ledger <workspace>/output/intermediate/claim_ledger.json" in control["execution_hint"]
+    assert "--brief" not in control["execution_hint"]
+    assert control["inputs"] == ["output/intermediate/claim_ledger.json"]
+
+
 def test_controls_select_enable_does_not_execute_quality_gates(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     assert main([
@@ -146,6 +157,8 @@ def test_controls_select_enable_does_not_execute_quality_gates(tmp_path, capsys)
     assert selections[0]["selection"] == "enable"
     assert selections[0]["execution_ready"] is True
     assert selections[0]["executed"] is False
+    assert payload["control_selections"]["switchboard_context_signature"] == payload["orchestrator_control_switchboard"]["context_signature"]
+    assert selections[0]["switchboard_context_signature"] == payload["orchestrator_control_switchboard"]["context_signature"]
     assert not (ws / "output" / "intermediate" / "quality_gate_report.json").exists()
     assert "control_selection_recorded" in _event_types(ws)
 
@@ -490,6 +503,88 @@ def test_state_check_refreshes_stale_switchboard_recommendations(tmp_path, capsy
     refreshed = json.loads(switchboard_path.read_text(encoding="utf-8"))
     assert _control_by_id(refreshed, "quality_gates")["recommendation"] == "required"
     assert _control_by_id(refreshed, "quality_gates")["selection_required"] is True
+
+
+def test_switchboard_refresh_archives_same_run_stale_control_selections(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+
+    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    capsys.readouterr()
+    assert main([
+        "controls",
+        "select",
+        "--workspace",
+        str(ws),
+        "--control",
+        "quality_gates",
+        "--selection",
+        "enable",
+        "--reason",
+        "Use gates for the original context.",
+        "--json",
+    ]) == 0
+    original = json.loads(capsys.readouterr().out)
+    original_signature = original["orchestrator_control_switchboard"]["context_signature"]
+    run_id = original["control_selections"]["run_id"]
+
+    out = ws / "output" / "intermediate"
+    (out / "claim_ledger.json").write_text('{"claims": []}\n', encoding="utf-8")
+    (out / "audited_brief.md").write_text("# Audited Brief\n\nUpdated context.\n", encoding="utf-8")
+
+    assert main(["controls", "build-switchboard", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"]) == 0
+    rebuilt = json.loads(capsys.readouterr().out)
+    assert rebuilt["orchestrator_control_switchboard"]["context_signature"] != original_signature
+    assert rebuilt["control_selections"] is None
+    assert not (out / "control_selections.json").exists()
+    assert list(out.glob(f"control_selections.{run_id}.stale*.json"))
+
+    assert main([
+        "controls",
+        "select",
+        "--workspace",
+        str(ws),
+        "--control",
+        "quality_gates",
+        "--selection",
+        "enable",
+        "--reason",
+        "Use gates for the refreshed context.",
+        "--json",
+    ]) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["control_selections"]["switchboard_context_signature"] == rebuilt["orchestrator_control_switchboard"]["context_signature"]
+
+
+def test_control_selection_context_signature_must_match_switchboard(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+
+    assert main(["run", "--workspace", str(ws), "--skip-doctor", "--repo-workdir", str(ROOT)]) == 0
+    capsys.readouterr()
+    assert main([
+        "controls",
+        "select",
+        "--workspace",
+        str(ws),
+        "--control",
+        "quality_gates",
+        "--selection",
+        "enable",
+        "--reason",
+        "Use gates.",
+    ]) == 0
+    capsys.readouterr()
+
+    selections_path = ws / "output" / "intermediate" / "control_selections.json"
+    selections = json.loads(selections_path.read_text(encoding="utf-8"))
+    selections["switchboard_context_signature"] = "stale"
+    selections["selections"][0]["switchboard_context_signature"] = "stale"
+    selections_path.write_text(json.dumps(selections, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    rc = main(["controls", "validate", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    validation = json.loads(capsys.readouterr().out)
+    assert any("switchboard_context_signature" in error for error in validation["errors"])
 
 
 def test_state_check_switchboard_refresh_is_idempotent(tmp_path, capsys):

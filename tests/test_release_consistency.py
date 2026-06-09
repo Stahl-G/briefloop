@@ -62,6 +62,28 @@ class TestCheckReleaseConsistency:
         v2 = (repo / "VERSION").read_text(encoding="utf-8").strip()
         assert v1 == v2, f"pyproject={v1}, VERSION={v2}"
 
+    def test_agent_config_failure_prints_stderr_and_dependency_hint(self, monkeypatch, capsys):
+        spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=1,
+                stdout="",
+                stderr="ModuleNotFoundError: No module named 'yaml'\n",
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        assert module.check_agent_configs() is False
+        output = capsys.readouterr().out
+        assert "missing dependency" in output
+        assert "ModuleNotFoundError: No module named 'yaml'" in output
+        assert "Agent configs out of sync" not in output
+
 
 def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("check_version_consistency_test", VERSION_SCRIPT)

@@ -96,6 +96,11 @@ def build_control_switchboard(
         paths=paths,
         current_run_id=run_id,
     )
+    archived_stale_selections = _archive_selections_for_other_context(
+        paths=paths,
+        current_run_id=run_id,
+        current_context_signature=str(payload.get("context_signature") or ""),
+    )
     _write_json_atomic(paths["orchestrator_control_switchboard"], payload)
     append_event(
         workspace=ws,
@@ -109,6 +114,7 @@ def build_control_switchboard(
             "required_count": sum(1 for item in controls if item.get("recommendation") == "required"),
             "human_approval_count": sum(1 for item in controls if item.get("requires_human_approval")),
             "archived_control_selections": archived_selections,
+            "archived_stale_control_selections": archived_stale_selections,
         },
     )
     return _state_payload(ws, switchboard=payload)
@@ -177,10 +183,13 @@ def select_control(
         paths["control_selections"],
         label="control_selections.json",
     )
+    switchboard_context_signature = str(switchboard.get("context_signature") or "")
+    archived_stale_selections = None
     if existing is None:
         payload = {
             "schema_version": CONTROL_SELECTIONS_SCHEMA,
             "run_id": run_id,
+            "switchboard_context_signature": switchboard_context_signature,
             "created_at": now,
             "updated_at": now,
             "selections": [],
@@ -192,7 +201,22 @@ def select_control(
                 "control_selections.json run_id does not match switchboard run_id.",
                 details={"switchboard_run_id": run_id, "selections_run_id": payload.get("run_id")},
             )
-        payload["updated_at"] = now
+        if payload.get("switchboard_context_signature") != switchboard_context_signature:
+            archived_stale_selections = _archive_control_selections_path(
+                paths=paths,
+                existing=payload,
+                suffix="stale",
+            )
+            payload = {
+                "schema_version": CONTROL_SELECTIONS_SCHEMA,
+                "run_id": run_id,
+                "switchboard_context_signature": switchboard_context_signature,
+                "created_at": now,
+                "updated_at": now,
+                "selections": [],
+            }
+        else:
+            payload["updated_at"] = now
 
     requires_human = bool(control.get("requires_human_approval"))
     clean_human_approval_ref = human_approval_ref.strip() if human_approval_ref else None
@@ -219,6 +243,7 @@ def select_control(
         "reason": reason.strip(),
         "approved_by_human": bool(approved_by_human),
         "human_approval_ref": clean_human_approval_ref,
+        "switchboard_context_signature": switchboard_context_signature,
         "execution_ready": bool(execution_ready),
         "executed": False,
         "execution_ref": None,
@@ -248,6 +273,8 @@ def select_control(
             "selection": selection,
             "approved_by_human": bool(approved_by_human),
             "execution_ready": bool(execution_ready),
+            "switchboard_context_signature": switchboard_context_signature,
+            "archived_stale_control_selections": archived_stale_selections,
         },
     )
     return _state_payload(ws, switchboard=switchboard, selections=payload)
@@ -375,6 +402,9 @@ def validate_selections_payload(
         errors.append("control_selections.json has an unsupported schema_version.")
     if payload.get("run_id") != switchboard.get("run_id"):
         errors.append("control_selections.json run_id must match switchboard run_id.")
+    switchboard_context_signature = str(switchboard.get("context_signature") or "")
+    if payload.get("switchboard_context_signature") != switchboard_context_signature:
+        errors.append("control_selections.json switchboard_context_signature must match the current switchboard context_signature.")
     selections = payload.get("selections")
     if not isinstance(selections, list):
         errors.append("control_selections.json selections must be a list.")
@@ -393,6 +423,8 @@ def validate_selections_payload(
         seen.add(control_id)
         if item.get("selection") not in SELECTIONS:
             errors.append(f"{prefix}.selection must be one of {sorted(SELECTIONS)}.")
+        if item.get("switchboard_context_signature") != switchboard_context_signature:
+            errors.append(f"{prefix}.switchboard_context_signature must match the current switchboard context_signature.")
         if not str(item.get("reason") or "").strip():
             errors.append(f"{prefix}.reason is required.")
         if not isinstance(item.get("approved_by_human"), bool):
@@ -570,8 +602,8 @@ def _control_limitation_hygiene(*, text: str, claim_text: str) -> dict[str, Any]
             else "Limitation hygiene is available for uncertainty-heavy briefs."
         ),
         execution_type="cli",
-        execution_hint="multi-agent-brief limitation-hygiene --brief <workspace>/output/intermediate/audited_brief.md --output <workspace>/output/intermediate/limitation_hygiene_report.json",
-        inputs=["output/intermediate/audited_brief.md"],
+        execution_hint="multi-agent-brief limitation-hygiene --ledger <workspace>/output/intermediate/claim_ledger.json --output <workspace>/output/intermediate/limitation_hygiene_report.json",
+        inputs=["output/intermediate/claim_ledger.json"],
         outputs=["output/intermediate/limitation_hygiene_report.json"],
     )
 
@@ -777,11 +809,47 @@ def _archive_selections_for_other_run(
     existing = _read_json_object_if_exists(selections_path, label="control_selections.json")
     if existing is None or existing.get("run_id") == current_run_id:
         return None
+    return _archive_control_selections_path(
+        paths=paths,
+        existing=existing,
+        suffix=None,
+    )
+
+
+def _archive_selections_for_other_context(
+    *,
+    paths: dict[str, Path],
+    current_run_id: str,
+    current_context_signature: str,
+) -> str | None:
+    selections_path = paths["control_selections"]
+    existing = _read_json_object_if_exists(selections_path, label="control_selections.json")
+    if existing is None:
+        return None
+    if existing.get("run_id") != current_run_id:
+        return None
+    if existing.get("switchboard_context_signature") == current_context_signature:
+        return None
+    return _archive_control_selections_path(
+        paths=paths,
+        existing=existing,
+        suffix="stale",
+    )
+
+
+def _archive_control_selections_path(
+    *,
+    paths: dict[str, Path],
+    existing: dict[str, Any],
+    suffix: str | None,
+) -> str:
+    selections_path = paths["control_selections"]
     old_run_id = str(existing.get("run_id") or "unknown")
-    archive = selections_path.with_name(f"control_selections.{old_run_id}.json")
+    suffix_part = f".{suffix}" if suffix else ""
+    archive = selections_path.with_name(f"control_selections.{old_run_id}{suffix_part}.json")
     if archive.exists():
         archive = selections_path.with_name(
-            f"control_selections.{old_run_id}.{uuid.uuid4().hex[:8]}.json"
+            f"control_selections.{old_run_id}{suffix_part}.{uuid.uuid4().hex[:8]}.json"
         )
     os.replace(selections_path, archive)
     return archive.name

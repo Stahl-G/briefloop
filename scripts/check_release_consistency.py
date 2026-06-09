@@ -99,8 +99,22 @@ def check_agent_configs() -> bool:
         capture_output=True, text=True, cwd=str(REPO_ROOT),
     )
     if result.returncode != 0:
-        print(f"  [FAIL] Agent configs out of sync:")
-        print(f"         {result.stdout.strip()}")
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        label = "Agent config generation failed"
+        if "ModuleNotFoundError" in stderr or "No module named" in stderr:
+            label += " (missing dependency)"
+        print(f"  [FAIL] {label}:")
+        if stdout:
+            print("         stdout:")
+            for line in stdout.splitlines():
+                print(f"           {line}")
+        if stderr:
+            print("         stderr:")
+            for line in stderr.splitlines():
+                print(f"           {line}")
+        if not stdout and not stderr:
+            print("         no stdout/stderr captured")
         return False
     return True
 
