@@ -11,6 +11,7 @@ from multi_agent_brief.improvement.contract import (
     AUDIENCE_GUIDANCE_CATEGORIES,
     AUDIENCE_GUIDANCE_SCOPES,
 )
+from multi_agent_brief.improvement.memory import rebuild_improvement_memory
 from multi_agent_brief.improvement.state import (
     ImprovementLedgerError,
     approve_improvement,
@@ -102,6 +103,13 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     _add_workspace(validate_parser)
     _add_json(validate_parser)
 
+    rebuild_parser = actions.add_parser(
+        "rebuild",
+        help="Rebuild deterministic improvement/memory.md without touching runtime state.",
+    )
+    _add_workspace(rebuild_parser)
+    _add_json(rebuild_parser)
+
 
 def handle(args: argparse.Namespace) -> int:
     try:
@@ -168,6 +176,11 @@ def handle(args: argparse.Namespace) -> int:
             state = validate_improvement_ledger(workspace=args.workspace)
             _print_state("improve validate", state, as_json=getattr(args, "json", False))
             return 0 if state.get("ok") else 1
+
+        if args.improve_action == "rebuild":
+            state = rebuild_improvement_memory(workspace=args.workspace)
+            _print_state("improve rebuild", state, as_json=getattr(args, "json", False))
+            return 0
     except ImprovementLedgerError as exc:
         _print_error(exc, as_json=getattr(args, "json", False))
         return 1

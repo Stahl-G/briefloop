@@ -263,11 +263,44 @@ def test_improve_cli_does_not_materialize_memory_or_handoff(tmp_path, capsys):
     assert all(not path.exists() for path in forbidden)
 
 
-def test_run_start_handoff_sources_do_not_reference_improvement_ledger():
-    for rel_path in (
-        "src/multi_agent_brief/cli/run_commands.py",
-        "src/multi_agent_brief/cli/start_commands.py",
-    ):
-        text = (ROOT / rel_path).read_text(encoding="utf-8")
-        assert "improvement/ledger.jsonl" not in text
-        assert "improvement_memory_snapshot" not in text
+def test_improve_rebuild_cli_projects_memory_without_runtime_state(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    assert main([
+        "improve",
+        "propose",
+        "--workspace",
+        str(ws),
+        "--guidance",
+        "Lead with the decision-relevant number when evidence supports it.",
+        "--category",
+        "audience_mismatch",
+        "--scope",
+        "brief",
+        "--source-summary",
+        "Operator-created audience guidance proposal.",
+        "--json",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "improve",
+        "approve",
+        "--workspace",
+        str(ws),
+        "--entry-id",
+        "AG-0001",
+        "--by",
+        "stahl",
+        "--json",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["improve", "rebuild", "--workspace", str(ws), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["selected_entry_ids"] == ["AG-0001"]
+    assert payload["eligible_count"] == 1
+    assert payload["memory_path"] == "improvement/memory.md"
+    assert (ws / "improvement" / "memory.md").exists()
+    assert not (ws / "output" / "intermediate" / "improvement_memory_snapshot.md").exists()
+    assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()

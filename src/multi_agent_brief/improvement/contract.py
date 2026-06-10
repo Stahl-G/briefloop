@@ -48,6 +48,7 @@ ALLOWED_ORIGIN_KEYS = {
     "source_item_id",
     "issue_category",
     "issue_source",
+    "origin_runtime",
 }
 DIAGNOSTIC_SEVERITIES = {"info", "warning", "error"}
 DIAGNOSTIC_CODES = {
@@ -78,6 +79,7 @@ DIAGNOSTIC_CODES = {
 
 MAX_GUIDANCE_TEXT_LENGTH = 500
 MAX_EVIDENCE_SUMMARY_LENGTH = 300
+MAX_SOURCE_REFERENCE_LENGTH = 160
 MAX_ORIGIN_VALUE_LENGTH = 120
 MAX_APPROVAL_REASON_LENGTH = 300
 
@@ -670,6 +672,39 @@ def _validate_source_evidence(
                         "invalid_source_evidence",
                         "error",
                         f"source_evidence[{idx}].{ref_key} is required for feedback_issue evidence.",
+                        line_number=line_number,
+                        entry_id=entry_id,
+                        revision=revision,
+                    ))
+                    continue
+                if len(ref_value) > MAX_SOURCE_REFERENCE_LENGTH:
+                    diagnostics.append(_diag(
+                        "invalid_source_evidence",
+                        "error",
+                        f"source_evidence[{idx}].{ref_key} is too long.",
+                        line_number=line_number,
+                        entry_id=entry_id,
+                        revision=revision,
+                    ))
+                if "/" in ref_value or "\\" in ref_value:
+                    diagnostics.append(_diag(
+                        "invalid_source_evidence",
+                        "error",
+                        f"source_evidence[{idx}].{ref_key} must not contain path separators.",
+                        line_number=line_number,
+                        entry_id=entry_id,
+                        revision=revision,
+                    ))
+                for diagnostic in _text_hygiene_diagnostics(
+                    ref_value,
+                    code="invalid_source_evidence",
+                    label=f"source_evidence[{idx}].{ref_key}",
+                    allow_single_sentence=True,
+                ):
+                    diagnostics.append(_diag(
+                        diagnostic.code,
+                        diagnostic.severity,
+                        diagnostic.message,
                         line_number=line_number,
                         entry_id=entry_id,
                         revision=revision,

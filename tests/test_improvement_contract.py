@@ -321,6 +321,20 @@ def test_source_evidence_required_and_gate_must_not_be_direct_source_type():
             assert code in codes
 
 
+def test_feedback_issue_run_and_issue_refs_use_single_line_hygiene():
+    cases = [
+        _evidence(source_type="feedback_issue", issue_id="fi-1\n# Injected Heading", run_id="mabw-001"),
+        _evidence(source_type="feedback_issue", issue_id="fi-001", run_id="run-1\n# Injected Run"),
+        _evidence(source_type="feedback_issue", issue_id="/Users/example/secret", run_id="mabw-001"),
+        _evidence(source_type="feedback_issue", issue_id="fi-001", run_id="C:\\Users\\example\\secret"),
+        _evidence(source_type="feedback_issue", issue_id="fi-001", run_id="sk-abcdefghijklmnop"),
+    ]
+
+    for evidence in cases:
+        codes = _codes(validate_revision_payload(_revision(source_evidence=[evidence])))
+        assert "invalid_source_evidence" in codes
+
+
 def test_origin_fields_are_whitelisted_and_sanitized():
     valid_origin = _revision(source_evidence=[_evidence(origin={
         "control_file": "quality_gate_report.json",
@@ -328,15 +342,18 @@ def test_origin_fields_are_whitelisted_and_sanitized():
         "finding_type": "stale_source",
         "blocking_level": "warning",
         "source_item_id": "SYN_SRC_001",
+        "origin_runtime": "hermes",
     })])
     unknown_origin = _revision(source_evidence=[_evidence(origin={"raw_payload": "secret"})])
     path_origin = _revision(source_evidence=[_evidence(origin={"control_file": "output/intermediate/quality_gate_report.json"})])
     token_origin = _revision(source_evidence=[_evidence(origin={"gate_id": "sk-abcdefghijklmnop"})])
+    unsafe_runtime_origin = _revision(source_evidence=[_evidence(origin={"origin_runtime": "hermes\n# Injected"})])
 
     assert validate_revision_payload(valid_origin) == []
     assert "invalid_origin" in _codes(validate_revision_payload(unknown_origin))
     assert "invalid_origin" in _codes(validate_revision_payload(path_origin))
     assert "invalid_origin" in _codes(validate_revision_payload(token_origin))
+    assert "invalid_origin" in _codes(validate_revision_payload(unsafe_runtime_origin))
 
 
 def test_previous_revision_hash_mismatch_and_missing_previous_rules():

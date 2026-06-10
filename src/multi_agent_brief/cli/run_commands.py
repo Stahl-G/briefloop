@@ -18,6 +18,8 @@ from multi_agent_brief.audience_memory import (
 )
 from multi_agent_brief.controls.contract import ControlSwitchboardError
 from multi_agent_brief.controls.switchboard import build_control_switchboard
+from multi_agent_brief.improvement.memory import freeze_improvement_memory_for_run
+from multi_agent_brief.improvement.state import ImprovementLedgerError
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
@@ -303,6 +305,26 @@ def _write_handoff_and_state(
             repo_workdir=repo_workdir,
             actor="cli",
         )
+        improvement_snapshot = freeze_improvement_memory_for_run(
+            workspace=workspace,
+            run_id=str((state.get("manifest") or {}).get("run_id") or ""),
+        )
+        _apply_improvement_memory_handoff(handoff, improvement_snapshot)
+        if improvement_snapshot.snapshot_created_or_changed:
+            append_event(
+                workspace=workspace,
+                run_id=str((state.get("manifest") or {}).get("run_id") or ""),
+                event_type="improvement_memory_snapshot_created",
+                actor="cli",
+                reason="Improvement memory snapshot created for the current run.",
+                metadata={
+                    "ledger_sha256": improvement_snapshot.manifest_improvement["ledger_sha256"],
+                    "memory_sha256": improvement_snapshot.manifest_improvement["memory_sha256"],
+                    "snapshot_path": improvement_snapshot.snapshot_path,
+                    "snapshot_sha256": improvement_snapshot.snapshot_sha256,
+                    "materialized_entry_ids": improvement_snapshot.manifest_improvement["materialized_entry_ids"],
+                },
+            )
         md_path, json_path = write_handoff_artifacts(handoff, workspace)
         record_handoff_written(
             workspace=workspace,
@@ -322,6 +344,31 @@ def _write_handoff_and_state(
     except ControlSwitchboardError as exc:
         print(f"{prefix} {exc}")
         return None
+    except ImprovementLedgerError as exc:
+        print(f"{prefix} {exc}")
+        return None
+
+
+def _apply_improvement_memory_handoff(handoff: AgentHandoff, snapshot_result) -> None:
+    if not snapshot_result.snapshot_path:
+        handoff.improvement_memory_files = {}
+        return
+
+    handoff.improvement_memory_files = {
+        "improvement_memory_snapshot": snapshot_result.snapshot_path,
+    }
+    rules = (
+        "Read frozen improvement memory snapshot for this run:\n"
+        f"- {snapshot_result.snapshot_path}\n"
+        "Use it only as taste/audience guidance. It is not evidence, not source material, "
+        "not Claim Ledger input, and not a repair instruction. It must not alter material "
+        "facts, claims, citations, or source support. Mid-run ledger or memory edits apply "
+        "to later runs only."
+    )
+    handoff.prompt = f"{handoff.prompt}\n\n{rules}"
+    handoff.notes.append(
+        "Improvement memory is frozen per run: read the improvement memory snapshot only when present; do not read live improvement memory projections as runtime guidance."
+    )
 
 
 def _record_doctor_state(

@@ -72,6 +72,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert data["contract_references"] == CONTRACT_REFERENCES
     assert data["runtime_state_files"] == RUNTIME_STATE_FILES
     assert data["audience_memory_files"] == AUDIENCE_MEMORY_FILES
+    assert isinstance(data.get("improvement_memory_files"), dict)
     assert data["control_switchboard_files"] == CONTROL_SWITCHBOARD_FILES
     assert data["feedback_state_files"] == FEEDBACK_STATE_FILES
     assert data["quality_gate_state_files"] == QUALITY_GATE_STATE_FILES
@@ -79,6 +80,9 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     for rel_path in data["runtime_state_files"].values():
         assert not Path(str(rel_path)).is_absolute()
     for rel_path in data["audience_memory_files"].values():
+        assert not Path(str(rel_path)).is_absolute()
+        assert rel_path not in data["expected_artifacts"]
+    for rel_path in data["improvement_memory_files"].values():
         assert not Path(str(rel_path)).is_absolute()
         assert rel_path not in data["expected_artifacts"]
     for rel_path in data["control_switchboard_files"].values():
@@ -458,6 +462,7 @@ def test_write_handoff_artifacts_writes_both_files(tmp_path):
     assert "## Contract References" in md_content
     assert "## Runtime State Files" in md_content
     assert "## Audience Memory Files" in md_content
+    assert "## Improvement Memory Files" in md_content
     assert "## Control Switchboard Files" in md_content
     assert "## Feedback State Files" in md_content
     assert "## Provenance State Files" in md_content
