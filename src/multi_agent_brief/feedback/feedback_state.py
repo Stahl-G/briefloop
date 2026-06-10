@@ -448,17 +448,27 @@ def ingest_feedback(
         ]
 
     existing = _load_existing_issues(ws, now)
+    if feedback_state_paths(ws)["feedback_issues"].exists():
+        existing_errors = validate_feedback_issues_payload(existing, stages=stages, artifacts=artifacts)
+        if existing_errors:
+            raise RuntimeStateError(
+                "Existing feedback issues failed contract validation.",
+                details={"errors": existing_errors},
+            )
     existing_issues = [issue for issue in existing.get("issues") or [] if isinstance(issue, dict)]
     fingerprints = {str(issue.get("fingerprint")) for issue in existing_issues if issue.get("fingerprint")}
     new_issues = [
         issue for issue in candidate_issues if str(issue.get("fingerprint")) not in fingerprints
     ]
+
     payload = dict(existing)
     payload["schema_version"] = FEEDBACK_ISSUES_SCHEMA
     payload.setdefault("created_at", now)
     payload["updated_at"] = now
     payload["issues"] = [*existing_issues, *new_issues]
 
+    # Validate before touching runtime state. A malformed feedback file should
+    # not create runtime_manifest.json/event_log.jsonl as a side effect.
     errors = validate_feedback_issues_payload(payload, stages=stages, artifacts=artifacts)
     if errors:
         raise RuntimeStateError(
@@ -466,11 +476,26 @@ def ingest_feedback(
             details={"errors": errors},
         )
 
-    run_id = _runtime_run_id(workspace=ws, repo_workdir=repo_workdir)
+    run_id: str | None = None
+    if new_issues:
+        run_id = _runtime_run_id(workspace=ws, repo_workdir=repo_workdir)
+        for issue in new_issues:
+            metadata = dict(issue.get("metadata") or {})
+            metadata.setdefault("run_id", run_id)
+            issue["metadata"] = metadata
+
+        payload["issues"] = [*existing_issues, *new_issues]
+        errors = validate_feedback_issues_payload(payload, stages=stages, artifacts=artifacts)
+        if errors:
+            raise RuntimeStateError(
+                "Feedback issues failed contract validation.",
+                details={"errors": errors},
+            )
+
     for issue in new_issues:
         append_event(
             workspace=ws,
-            run_id=run_id,
+            run_id=str(run_id),
             event_type="feedback_issue_created",
             actor=actor,
             stage_id=issue.get("stage_id"),

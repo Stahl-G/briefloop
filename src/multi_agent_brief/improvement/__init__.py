@@ -16,6 +16,19 @@ from multi_agent_brief.improvement.contract import (
     validate_next_revision,
     validate_revision_payload,
 )
+from multi_agent_brief.improvement.state import (
+    ImprovementLedgerError,
+    approve_improvement,
+    improvement_ledger_path,
+    improvement_stats,
+    list_improvements,
+    propose_improvement,
+    reject_improvement,
+    revert_improvement,
+    show_improvement,
+    show_improvement_ledger,
+    validate_improvement_ledger,
+)
 
 __all__ = [
     "AppendPreflightResult",
@@ -32,4 +45,15 @@ __all__ = [
     "validate_guidance_text",
     "validate_next_revision",
     "validate_revision_payload",
+    "ImprovementLedgerError",
+    "approve_improvement",
+    "improvement_ledger_path",
+    "improvement_stats",
+    "list_improvements",
+    "propose_improvement",
+    "reject_improvement",
+    "revert_improvement",
+    "show_improvement",
+    "show_improvement_ledger",
+    "validate_improvement_ledger",
 ]

@@ -121,9 +121,17 @@ multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 
 * 导入本地资料与输入分类：见 [docs/onboarding.md](docs/onboarding.md)
 * Web 搜索后端（Tavily 等）：见 [docs/search-backends.md](docs/search-backends.md)
+* 源发现候选合并（包括 `llm_decide` source profile）：`multi-agent-brief sources decide --config <workspace>/config.yaml --merge`
 * 飞书集成（采集 + 推送）：见 [docs/feishu-integration.md](docs/feishu-integration.md)
 * SEC Filing 解析：见 [docs/opencli-source-provider.md](docs/opencli-source-provider.md)
 * Windows PowerShell：见 [docs/windows-powershell.md](docs/windows-powershell.md)
+
+常用命令片段：
+
+```bash
+multi-agent-brief init --from-onboarding onboarding.json
+multi-agent-brief sources decide --config <workspace>/config.yaml
+```
 
 ## 寻找合作 🤝
 

@@ -31,6 +31,7 @@ from multi_agent_brief.cli import (
     provenance_commands,
     controls_commands,
     runtime_commands,
+    improve_commands,
 )
 
 
@@ -86,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Orchestrator control switchboard
     controls_commands.register(subparsers)
+
+    # Improvement Ledger lifecycle
+    improve_commands.register(subparsers)
 
     # Workspace runtime kit install
     runtime_commands.register(subparsers)
@@ -177,6 +181,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "controls":
         return controls_commands.handle(args)
+
+    if cmd == "improve":
+        return improve_commands.handle(args)
 
     if cmd == "runtime":
         return runtime_commands.handle(args)

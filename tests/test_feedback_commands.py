@@ -277,6 +277,47 @@ def test_feedback_ingest_rejects_invalid_explicit_refs(tmp_path, capsys):
     assert not _issues_path(ws).exists()
 
 
+def test_feedback_ingest_bad_existing_contract_does_not_initialize_runtime(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    out = ws / "output" / "intermediate"
+    out.mkdir(parents=True)
+    _issues_path(ws).write_text(
+        json.dumps({"schema_version": "bad", "issues": []}),
+        encoding="utf-8",
+    )
+    feedback = tmp_path / "feedback.txt"
+    feedback.write_text("Bad existing feedback state.\n", encoding="utf-8")
+
+    rc = main([
+        "feedback",
+        "ingest",
+        "--workspace",
+        str(ws),
+        "--feedback",
+        str(feedback),
+        "--source",
+        "human",
+        "--stage",
+        "analyst",
+        "--artifact",
+        "audited_brief",
+        "--category",
+        "citation_error",
+        "--severity",
+        "blocking",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "feedback_issues.json has an unsupported schema_version" in json.dumps(payload)
+    assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert not (ws / "output" / "intermediate" / "event_log.jsonl").exists()
+
+
 def test_feedback_ingest_event_failure_leaves_feedback_file_unwritten(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"

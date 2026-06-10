@@ -68,6 +68,10 @@ EVENT_TYPES = {
     "control_switchboard_warning",
     "control_selection_recorded",
     "control_selection_validated",
+    "improvement_proposed",
+    "improvement_approved",
+    "improvement_rejected",
+    "improvement_reverted",
     "run_blocked",
     "run_reset",
 }

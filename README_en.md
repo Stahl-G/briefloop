@@ -122,9 +122,17 @@ Runtime installation details, workspace-local runtime kits, and common issues ar
 
 - Local input handling and onboarding: [docs/onboarding.md](docs/onboarding.md)
 - Web search backends such as Tavily: [docs/search-backends.md](docs/search-backends.md)
+- Source discovery candidate merge, including the `llm_decide` source profile: `multi-agent-brief sources decide --config <workspace>/config.yaml --merge`
 - Feishu integration for collection and delivery: [docs/feishu-integration.md](docs/feishu-integration.md)
 - SEC filing parsing: [docs/opencli-source-provider.md](docs/opencli-source-provider.md)
 - Windows PowerShell: [docs/windows-powershell.md](docs/windows-powershell.md)
+
+Common command snippets:
+
+```bash
+multi-agent-brief init --from-onboarding onboarding.json
+multi-agent-brief sources decide --config <workspace>/config.yaml
+```
 
 ## Looking For Collaborators
 
