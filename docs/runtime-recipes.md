@@ -100,7 +100,7 @@ Not allowed:
 
 ## Existing Draft Review
 
-Existing-draft review is not a standalone v0.6.9 mode. Treat it as a compact
+Existing-draft review is not a standalone v0.7.0 mode. Treat it as a compact
 workflow variant after `run` has created runtime state and handoff artifacts.
 The draft may be placed under `input/context/` as reference context or converted
 into auditable artifacts by the runtime/human process, but it must not bypass

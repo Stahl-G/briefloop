@@ -9,6 +9,7 @@ This page records public-safe rationale for v0.6 control-surface regression chec
 - Do not let `finalize` stand in for quality gates.
 - Do not treat feedback text as claim evidence.
 - Do not treat `FeedbackIssue` as guidance: guidance must be human-authored and human-approved, with no automatic path from issue or gate finding to materialized audience memory.
+- FeedbackIssue is evidence, not guidance. Guidance must be human-authored and human-approved. There is no automatic path from issue or gate finding to materialized audience memory.
 - Do not let future-stage artifacts or issues globally block a fresh workspace.
 - Do not let planned blocking issues be bypassed by `continue`.
 - Do not require reader-facing briefs to retain internal `[src:CLAIM_ID]` markers.

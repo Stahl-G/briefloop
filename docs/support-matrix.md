@@ -20,6 +20,7 @@ Each capability has one of the following statuses:
 | Runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Supported |
 | Runtime state control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Supported |
 | Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
+| Improvement Ledger / Memory (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Supported |
 | Orchestrator control switchboard (`orchestrator_control_switchboard.json`, optional `control_selections.json`) | Supported |
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Quality gate control file (`quality_gate_report.json`) | Supported |
@@ -33,6 +34,7 @@ Each capability has one of the following statuses:
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
 | `multi-agent-brief gates check/show/validate` | Supported |
 | `multi-agent-brief provenance build/show/validate` | Supported |
+| `multi-agent-brief improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Supported |
 | `multi-agent-brief eval-cases list/validate/run` | Supported |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
@@ -51,6 +53,8 @@ Evaluation cases are developer/CI regression checks for control-surface behavior
 Provenance commands write a deterministic workspace-local audit/debug graph from existing control files. They do not fetch sources, execute workflow stages, replay the runtime, execute repair, verify semantic truth, or block `finalize` by default.
 
 Audience profile files are workspace-local runtime context. The active run uses the frozen per-run snapshot exposed through handoff; these files are not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers.
+
+Improvement Ledger files are human-governed workspace memory controls. Approved materializable guidance is projected into `improvement/memory.md` and frozen into `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff`. The snapshot is taste/audience guidance only; it is not evidence, source material, Claim Ledger input, repair instruction, semantic proof, or an output-quality guarantee.
 
 Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
 

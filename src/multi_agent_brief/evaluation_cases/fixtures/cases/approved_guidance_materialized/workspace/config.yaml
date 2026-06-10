@@ -1,0 +1,18 @@
+project:
+  name: "Synthetic Improvement Approved Case"
+  company: "Demo Holdings Ltd"
+  industry: "synthetic testing"
+  language: "en"
+  audience: "management"
+report:
+  cadence: "weekly"
+input:
+  path: "input"
+output:
+  path: "output"
+source_strategy:
+  enabled_providers:
+    - manual
+manual:
+  enabled: true
+  sources: []

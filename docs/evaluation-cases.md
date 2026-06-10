@@ -1,6 +1,6 @@
 # Public-Safe Evaluation Cases
 
-v0.6.4 introduced packaged public-safe evaluation cases for developer and CI regression checks. v0.6.5 extends the packaged suite with provenance projection coverage.
+v0.6.4 introduced packaged public-safe evaluation cases for developer and CI regression checks. v0.6.5 extended the packaged suite with provenance projection coverage. v0.7.0 adds Improvement Memory control cases.
 
 These cases validate control-surface behavior across:
 
@@ -8,6 +8,7 @@ These cases validate control-surface behavior across:
 - feedback issue triage and repair planning controls
 - runtime state blockers
 - provenance projection controls
+- Improvement Ledger / Memory materialization controls
 - Hermes guidance invariants
 
 They are not benchmark scores and are not workflow artifacts.
@@ -30,6 +31,7 @@ Evaluation cases:
 - dispatch structured allowlisted actions
 - prepare temporary runtime state from explicit `initial_stage`
 - compare only stable partial assertions and optional `expected_actions`
+- validate structured runtime manifest fields such as `runtime_manifest.json.improvement`
 - do not infer workflow stage from files
 - do not execute workflow stages
 - do not run subagents

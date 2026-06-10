@@ -32,6 +32,7 @@ ALLOWED_ACTIONS = {
     "provenance.build",
     "provenance.show",
     "provenance.validate",
+    "runtime.run_handoff",
     "state.check",
     "state.decide",
     "static.hermes_no_skip_finalize",
@@ -50,6 +51,7 @@ ALLOWED_EXPECTED_KEYS = {
     "graph_edges_any",
     "graph_nodes_any",
     "issues_any",
+    "manifest_improvement",
     "workflow_state",
 }
 

@@ -117,6 +117,16 @@ Two design principles guide the next phases:
 - `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` installs workspace-local OpenCode/Claude Code runtime kits from a source clone.
 - v0.6.9 does not add FrictionStore, improvement proposal commands, policy-pack authoring, or automatic workflow execution.
 
+### v0.7.0
+
+- Improvement Ledger lifecycle commands are implemented: `improve propose/list/show/approve/reject/revert/stats/validate/rebuild`.
+- Human-authored, human-approved reader guidance can be stored in `improvement/ledger.jsonl`.
+- Approved materializable guidance is projected into `improvement/memory.md` and frozen per run into `output/intermediate/improvement_memory_snapshot.md`.
+- Runtime handoff exposes only the frozen snapshot, not live `improvement/memory.md`.
+- `runtime_manifest.json.improvement` records `ledger_sha256`, `memory_sha256`, `snapshot_path`, `snapshot_sha256`, and `materialized_entry_ids` for the active run.
+- Public-safe eval cases validate control behavior for unapproved, approved, and reverted improvement entries.
+- v0.7.0 does not add FrictionStore, autonomous learning, retrieval memory, runtime-specific guidance filtering, output-quality validation, ledger compaction, policy-pack authoring, or automatic workflow execution.
+
 ## Next Milestones
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -157,7 +167,7 @@ Public scope:
 - Keep provenance projection as audit/debug tooling while deferring semantic proof, replay, and graph-database style query systems.
 - Keep Python positioned as tools, validators, and renderers rather than the workflow runtime.
 
-Public sequencing after v0.6.9 moves toward FrictionStore, improvement proposals, and policy packs while preserving the subagent-first runtime boundary.
+Public sequencing after v0.7.0 moves toward FrictionStore, policy packs, reference workflows, and runtime parity while preserving the subagent-first runtime boundary.
 
 Public implementation overviews:
 
@@ -172,18 +182,26 @@ Non-goals:
 - no final report rendering redesign
 - no new search provider expansion
 
-### v0.7 — FrictionStore And Improvement Proposals
+### v0.7 — Improvement Ledger And Controlled Memory
 
-Goal: turn recurring failures, audit findings, human feedback, and workspace memory signals into controlled improvement proposals.
+Goal: preserve bounded, evidence-linked, human-gated reader-preference guidance as auditable workspace memory without making it autonomous learning.
 
-Public scope:
+Implemented in v0.7.0:
 
-- Track recurring failure patterns across runs.
-- Generate improvement signals, patch plans, and regression-plan suggestions.
-- Extend workspace-local memory cautiously for recurring feedback patterns after the audience snapshot baseline.
-- Treat memory updates as agent-proposed and human-approved.
-- Keep frozen per-run snapshots so a run does not change behavior midway because of memory written during that same run.
-- Keep self-improvement proposal-only until a human or maintainer approves code changes.
+- Improvement Ledger lifecycle.
+- Approved guidance materialization into deterministic memory projection.
+- Frozen per-run Improvement Memory snapshot exposed through handoff.
+- Public-safe eval cases for Improvement Memory control behavior.
+
+Deferred:
+
+- FrictionStore and automatic recurring-failure detection.
+- Autonomous learning.
+- Retrieval memory or RAG platform behavior.
+- Runtime-specific guidance filtering.
+- Output-quality validation for improvement guidance.
+- Ledger compaction.
+- Policy-pack-driven memory routing.
 
 Non-goals:
 

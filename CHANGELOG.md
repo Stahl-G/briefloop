@@ -5,6 +5,27 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-06-10
+
+### Added
+
+- **Improvement Ledger lifecycle**: added `multi-agent-brief improve propose/list/show/approve/reject/revert/stats/validate/rebuild` for human-authored, human-approved reader-preference guidance.
+- **Improvement Memory projection**: approved materializable guidance is deterministically projected into `improvement/memory.md`; `improve rebuild` writes only that projection and does not mutate runtime state, handoff, events, or snapshots.
+- **Frozen per-run Improvement Memory snapshot**: `run`, `start`, and `handoff` freeze eligible guidance into `output/intermediate/improvement_memory_snapshot.md` and expose only that snapshot through handoff.
+- **Runtime manifest improvement block**: `runtime_manifest.json.improvement` records `ledger_sha256`, `memory_sha256`, `snapshot_path`, `snapshot_sha256`, and `materialized_entry_ids` for the active run.
+- **Product-definition guardrail**: machine-checkable feedback issues stay in feedback/repair/gate surfaces unless a human rewrites them as persistent audience guidance.
+- **Public-safe eval cases**: added packaged eval cases proving unapproved entries are not materialized, approved guidance is frozen, and reverted entries are removed from the next snapshot.
+- **Improvement module docs**: added `docs/modules/improvement.md` for command lifecycle, files, semantics, and non-goals.
+
+### Changed
+
+- **Public roadmap and support status**: v0.7.0 now documents Improvement Ledger / Memory as the implemented public-control-surface slice while keeping FrictionStore, autonomous learning, retrieval memory, runtime-specific filtering, and output-quality validation deferred.
+- **Packaged eval fixtures**: package data now includes public-safe `improvement/ledger.jsonl` and `improvement/memory.md` eval fixtures.
+
+### Boundaries
+
+- v0.7.0 does not add autonomous learning, automatic repair, semantic proof, output quality guarantees, RAG/retrieval memory, runtime-specific guidance filtering, ledger compaction, policy-pack authoring, or automatic workflow execution. `FeedbackIssue` is evidence, not guidance; guidance must be human-authored and human-approved.
+
 ## [0.6.9] — 2026-06-09
 
 ### Added

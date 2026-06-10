@@ -15,10 +15,10 @@ This project is not an investment advice tool, trading signal generator, or repl
 
 ## Current Status
 
-Current version: **v0.6.9**
+Current version: **v0.7.0**
 
-- **Working today**: subagent-first workflows across Hermes / Claude Code / Codex / OpenCode, runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
-- **In progress** (v0.7): a controlled Improvement Ledger that turns human-confirmed feedback into agent-proposed, human-approved, per-run-frozen workspace memory.
+- **Working today**: subagent-first workflows across Hermes / Claude Code / Codex / OpenCode, runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
+- **New in v0.7.0**: human-authored, human-approved reader preferences can be recorded in `improvement/ledger.jsonl`, frozen on the next `run` / `start` / `handoff` as `output/intermediate/improvement_memory_snapshot.md`, and exposed through runtime handoff.
 - **Not yet**: not an autonomous agent, does not automatically edit brief content, does not automatically learn, and does not provide a long-term memory system. See [architecture status](docs/architecture-status.md) and [roadmap](docs/roadmap.md).
 
 One-line design principle: **the system proposes; humans decide.** For the hard boundaries, see [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md).
@@ -134,6 +134,24 @@ multi-agent-brief init --from-onboarding onboarding.json
 multi-agent-brief sources decide --config <workspace>/config.yaml
 ```
 
+## Record An Approved Reader Preference
+
+v0.7.0 adds controlled Improvement Ledger / Improvement Memory. It stores human-authored, human-approved reader preferences such as "lead with the decision-relevant number when evidence supports it." It is not an automatic learning system and does not edit the brief by itself.
+
+```bash
+multi-agent-brief improve propose --workspace <workspace> \
+  --guidance "Lead with the decision-relevant number when evidence supports it." \
+  --category audience_mismatch \
+  --scope brief \
+  --source-summary "Operator-created audience guidance proposal."
+
+multi-agent-brief improve approve --workspace <workspace> --entry-id AG-0001 --by <operator>
+multi-agent-brief improve rebuild --workspace <workspace>
+multi-agent-brief run --workspace <workspace> --skip-doctor
+```
+
+`approve` does not change an already-created current-run snapshot; the next `run` / `start` / `handoff` freezes the new snapshot. Runtime agents read only `output/intermediate/improvement_memory_snapshot.md`, not live `improvement/memory.md`. See [docs/modules/improvement.md](docs/modules/improvement.md).
+
 ## Looking For Collaborators
 
 This project is developed from real manufacturing and briefing work. It needs more real scenarios more than it needs more features. If any of the following describes you, GitHub Issues or Discussions are welcome:
@@ -157,7 +175,7 @@ This project is developed from real manufacturing and briefing work. It needs mo
 
 ## Roadmap Summary
 
-- **v0.7**: Improvement Ledger — turn human-confirmed feedback into controlled audience-guidance proposals; human-approved entries are frozen per run, with no automatic learning or FrictionStore auto-detection.
+- **v0.7**: Improvement Ledger — freeze human-authored, human-approved reader preferences into per-run Improvement Memory snapshots; no automatic learning, FrictionStore auto-detection, or output-quality guarantee.
 - **v0.8**: evaluation experiments and policy packs — systematic experiments against single-model baselines, mode registry, and a second policy pack.
 - **v0.9**: distribution and reference workflows — easier no-API-key setup, reference runs, and documentation cleanup.
 - **v1.0**: stable baseline — frozen schemas, stable CLI surfaces, security threat model, and clear support boundaries.
@@ -171,6 +189,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Orchestrator contracts](docs/orchestrator-contracts.md) ·
 [Quality gates](docs/harness.md) ·
 [Evaluation cases](docs/evaluation-cases.md) ·
+[Improvement Ledger](docs/modules/improvement.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·
 [Migration guide](docs/MIGRATION.md)

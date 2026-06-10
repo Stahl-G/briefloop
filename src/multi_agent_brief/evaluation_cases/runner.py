@@ -25,6 +25,8 @@ from multi_agent_brief.controls.switchboard import (
     validate_control_switchboard,
 )
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
+from multi_agent_brief.cli.run_commands import _write_handoff_and_state
+from multi_agent_brief.cli.start_commands import build_handoff
 from multi_agent_brief.evaluation_cases.fixtures import evaluation_cases_root
 from multi_agent_brief.feedback.feedback_contract import feedback_state_paths
 from multi_agent_brief.feedback.feedback_state import (
@@ -430,6 +432,29 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             strict=bool(args.get("strict", False)),
             actor="system",
         )
+    if action == "runtime.run_handoff":
+        ws = _require_workspace(workspace)
+        handoff = build_handoff(
+            workspace=ws,
+            repo_workdir=repo_workdir,
+            runtime=str(args.get("runtime") or "hermes"),
+            venv=args.get("venv"),
+            run_doctor=not bool(args.get("skip_doctor", True)),
+        )
+        written = _write_handoff_and_state(
+            handoff=handoff,
+            workspace=ws,
+            repo_workdir=repo_workdir,
+            prefix="[eval-cases]",
+        )
+        if written is None:
+            return {"ok": False}
+        md_path, json_path = written
+        return {
+            "ok": True,
+            "handoff_markdown": md_path.relative_to(ws).as_posix(),
+            "handoff_json": json_path.relative_to(ws).as_posix(),
+        }
     if action == "static.hermes_no_skip_finalize":
         return _check_hermes_no_skip_finalize(repo_workdir=repo_workdir)
 
@@ -481,6 +506,7 @@ def _assert_expected(
         errors.extend(_assert_graph_edges_any(workspace=workspace, expected=expected))
         errors.extend(_assert_graph_absent_text(workspace=workspace, expected=expected))
         errors.extend(_assert_workflow_state(workspace=workspace, expected=expected))
+        errors.extend(_assert_manifest_improvement(workspace=workspace, expected=expected))
 
     errors.extend(_assert_contains_text(root=root, repo_workdir=repo_workdir, workspace=workspace, expected=expected))
     errors.extend(_assert_absent_text(root=root, repo_workdir=repo_workdir, workspace=workspace, expected=expected))
@@ -629,6 +655,35 @@ def _assert_workflow_state(*, workspace: Path, expected: dict[str, Any]) -> list
         if workflow.get(key) != value:
             errors.append(f"workflow_state.{key} expected {value!r}, got {workflow.get(key)!r}.")
     return errors
+
+
+def _assert_manifest_improvement(*, workspace: Path, expected: dict[str, Any]) -> list[str]:
+    condition = expected.get("manifest_improvement")
+    if not condition:
+        return []
+    if not isinstance(condition, dict):
+        return ["manifest_improvement expected value must be an object."]
+    manifest_path = workspace / "output" / "intermediate" / "runtime_manifest.json"
+    if not manifest_path.exists():
+        return ["runtime_manifest.json is missing."]
+    manifest = _load_json(manifest_path)
+    improvement = manifest.get("improvement")
+    if not isinstance(improvement, dict):
+        return ["runtime_manifest.json does not contain improvement object."]
+    errors: list[str] = []
+    for key, value in condition.items():
+        actual = improvement.get(key)
+        if _is_non_null_sentinel(value):
+            if actual is None:
+                errors.append(f"manifest_improvement.{key} expected non-null value, got None.")
+            continue
+        if actual != value:
+            errors.append(f"manifest_improvement.{key} expected {value!r}, got {actual!r}.")
+    return errors
+
+
+def _is_non_null_sentinel(value: Any) -> bool:
+    return isinstance(value, str) and value in {"non-null", "<non-null>", "__non_null__"}
 
 
 def _assert_contains_text(*, root: Path, repo_workdir: Path, workspace: Path | None, expected: dict[str, Any]) -> list[str]:

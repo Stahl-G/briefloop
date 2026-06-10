@@ -15,6 +15,8 @@
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
 - Finalize 可以从 audited brief 中实际引用的 事实账本（事实账本） 来源生成 reader-facing source appendix，默认写入独立的 `output/source_appendix.md`；显式配置 `source_appendix.mode: append` 时才追加到最终 Markdown/DOCX 末尾，且不会在最终读者面暴露内部 claim IDs、source IDs、evidence text 或本地路径。
 - Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `multi-agent-brief runtime install` 复制到 workspace。
+- Improvement Ledger lifecycle 可以把人工撰写、人工批准的读者偏好保存在 `improvement/ledger.jsonl`，将 approved 且可物化的 entries 投影到 `improvement/memory.md`，在每次 run 冻结为 `output/intermediate/improvement_memory_snapshot.md`，并且只通过 handoff 暴露 frozen snapshot。
+- Packaged public-safe evaluation cases 已覆盖 Improvement Memory 控制行为：未批准 entry 不物化，已批准 guidance 会冻结，reverted entry 会从下一次 snapshot 中移除。
 - Python 命令负责 setup、source tooling、validation、audit support 和 rendering。
 - Hermes、Claude Code、Codex、OpenCode 和 manual fallback 都是 agent runtime surfaces。
 - Input governance 可以先用 MinerU 把受支持的非文本输入抽取为 Markdown，再区分 evidence、feedback、instructions 和 background context。
@@ -30,6 +32,7 @@ roadmap 中提到的概念不一定已经实现。除非代码、测试和 suppo
 - policy packs
 - public-safe reference workflows
 - smart routing or automatic taste learning
+- FrictionStore、retrieval memory、runtime-specific guidance filtering 和 output-quality validation
 
 ## Experimental 或有限能力
 

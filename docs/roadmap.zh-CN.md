@@ -117,6 +117,16 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 - `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` 可以从 source clone 安装 workspace-local OpenCode/Claude Code runtime kits。
 - v0.6.9 不新增 FrictionStore、improvement proposal commands、policy-pack authoring 或自动 workflow execution。
 
+### v0.7.0
+
+- 已实现 Improvement Ledger lifecycle commands：`improve propose/list/show/approve/reject/revert/stats/validate/rebuild`。
+- 人工撰写、人工批准的读者偏好可以保存在 `improvement/ledger.jsonl`。
+- Approved 且可物化的 guidance 会投影到 `improvement/memory.md`，并在每次 run 冻结为 `output/intermediate/improvement_memory_snapshot.md`。
+- Runtime handoff 只暴露 frozen snapshot，不暴露 live `improvement/memory.md`。
+- `runtime_manifest.json.improvement` 记录当前 run 的 `ledger_sha256`、`memory_sha256`、`snapshot_path`、`snapshot_sha256` 和 `materialized_entry_ids`。
+- Public-safe eval cases 已验证 unapproved、approved 和 reverted improvement entries 的控制行为。
+- v0.7.0 不新增 FrictionStore、autonomous learning、retrieval memory、runtime-specific guidance filtering、output-quality validation、ledger compaction、policy-pack authoring 或 automatic workflow execution。
+
 ## 下一阶段
 
 ### v0.5.9 — Roadmap Privacy And Architecture Status
@@ -157,7 +167,7 @@ Non-goals:
 - 将 溯源投影 保持为 audit/debug tooling，semantic proof、replay 和 graph-database style query systems 后移。
 - 保持 Python 作为 tools、validators、renderers，而不是 workflow runtime。
 
-v0.6.9 之后的公开顺序转向 FrictionStore、improvement proposals 和 policy packs，同时继续保持 subagent-first runtime boundary。
+v0.7.0 之后的公开顺序转向 FrictionStore、policy packs、reference workflows 和 runtime parity，同时继续保持 subagent-first runtime boundary。
 
 公开实施概览：
 
@@ -172,18 +182,26 @@ Non-goals:
 - 不重做 final report rendering。
 - 不扩张新的 search providers。
 
-### v0.7 — FrictionStore And Improvement Proposals
+### v0.7 — Improvement Ledger And Controlled Memory
 
-目标：把 recurring failures、audit findings、human feedback 和 workspace memory signals 转成受控 improvement proposals。
+目标：把有边界、有证据、人类把关的读者偏好保存为可审计的 workspace memory，但不把它做成自动学习系统。
 
-公开范围：
+v0.7.0 已实现：
 
-- 跨 run 跟踪 recurring failure patterns。
-- 生成 improvement signals、patch plans 和 regression-plan suggestions。
-- 在 读者快照 baseline 之后，谨慎扩展 workspace-local memory，用于 recurring feedback patterns。
-- memory updates 只能是 agent-proposed、human-approved。
-- 继续使用 frozen per-run snapshots，避免同一次 run 因中途写入的新 memory 改变行为。
-- self-improvement 在人类或 maintainer 批准前只生成 proposal，不自动改代码。
+- Improvement Ledger lifecycle。
+- Approved guidance materialization 到 deterministic memory projection。
+- 通过 handoff 暴露 frozen per-run Improvement Memory snapshot。
+- 用 public-safe eval cases 验证 Improvement Memory 控制行为。
+
+Deferred：
+
+- FrictionStore 和自动 recurring-failure detection。
+- Autonomous learning。
+- Retrieval memory 或 RAG platform behavior。
+- Runtime-specific guidance filtering。
+- Improvement guidance 的 output-quality validation。
+- Ledger compaction。
+- Policy-pack-driven memory routing。
 
 Non-goals:
 

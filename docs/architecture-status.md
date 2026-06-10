@@ -15,6 +15,8 @@ This page separates current implementation state from roadmap goals. Use it befo
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
 - Finalize can generate a reader-facing source appendix from sources cited in the audited brief and write `output/source_appendix.md` by default; explicit `source_appendix.mode: append` appends it to final Markdown/DOCX without exposing internal claim IDs, source IDs, evidence text, or local paths.
 - Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `multi-agent-brief runtime install`.
+- The Improvement Ledger lifecycle can preserve human-authored, human-approved reader guidance in `improvement/ledger.jsonl`, project approved materializable entries into `improvement/memory.md`, freeze per-run `output/intermediate/improvement_memory_snapshot.md`, and expose only the frozen snapshot through handoff.
+- Packaged public-safe evaluation cases now cover Improvement Memory control behavior: unapproved entries are not materialized, approved guidance is frozen, and reverted entries disappear from the next snapshot.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.
@@ -30,6 +32,7 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 - private or commercial benchmark suites
 - policy packs
 - public-safe reference workflows
+- FrictionStore, autonomous learning, retrieval memory, runtime-specific guidance filtering, and output-quality validation
 
 ## Experimental Or Limited Surfaces
 

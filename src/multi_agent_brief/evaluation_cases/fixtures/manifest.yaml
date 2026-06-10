@@ -242,3 +242,109 @@ cases:
         args: {}
     expected:
       exit_code: 0
+
+  - case_id: unapproved_entry_not_materialized
+    case_type: workspace
+    synthetic: true
+    description: Proposed improvement guidance is projected but not frozen into runtime handoff.
+    initial_stage: doctor
+    commands:
+      - action: runtime.run_handoff
+        args:
+          skip_doctor: true
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: runtime.run_handoff
+          exit_code: 0
+      artifacts_exist:
+        - improvement/memory.md
+        - output/intermediate/runtime_manifest.json
+        - output/intermediate/agent_handoff.json
+      artifacts_absent:
+        - output/intermediate/improvement_memory_snapshot.md
+      manifest_improvement:
+        ledger_sha256: non-null
+        memory_sha256: non-null
+        snapshot_path: null
+        snapshot_sha256: null
+        materialized_entry_ids: []
+      absent_text:
+        - scope: workspace
+          file: output/intermediate/agent_handoff.json
+          text: "improvement_memory_snapshot.md"
+
+  - case_id: approved_guidance_materialized
+    case_type: workspace
+    synthetic: true
+    description: Approved human-authored improvement guidance is frozen into a snapshot and exposed through handoff.
+    initial_stage: doctor
+    commands:
+      - action: runtime.run_handoff
+        args:
+          skip_doctor: true
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: runtime.run_handoff
+          exit_code: 0
+      artifacts_exist:
+        - improvement/memory.md
+        - output/intermediate/improvement_memory_snapshot.md
+        - output/intermediate/runtime_manifest.json
+        - output/intermediate/agent_handoff.json
+      manifest_improvement:
+        ledger_sha256: non-null
+        memory_sha256: non-null
+        snapshot_path: output/intermediate/improvement_memory_snapshot.md
+        snapshot_sha256: non-null
+        materialized_entry_ids:
+          - AG-0001
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/improvement_memory_snapshot.md
+          text: "Start with the operational implication before implementation detail."
+        - scope: workspace
+          file: output/intermediate/agent_handoff.json
+          text: "output/intermediate/improvement_memory_snapshot.md"
+      absent_text:
+        - scope: workspace
+          file: output/intermediate/improvement_memory_snapshot.md
+          text: "Operator-created synthetic preference for public eval."
+        - scope: workspace
+          file: output/intermediate/agent_handoff.json
+          text: "improvement/memory.md"
+
+  - case_id: reverted_entry_removed_from_next_snapshot
+    case_type: workspace
+    synthetic: true
+    description: Reverted improvement guidance is removed from regenerated memory and no longer exposed through handoff.
+    initial_stage: doctor
+    commands:
+      - action: runtime.run_handoff
+        args:
+          skip_doctor: true
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: runtime.run_handoff
+          exit_code: 0
+      artifacts_exist:
+        - improvement/memory.md
+        - output/intermediate/runtime_manifest.json
+        - output/intermediate/agent_handoff.json
+      artifacts_absent:
+        - output/intermediate/improvement_memory_snapshot.md
+      manifest_improvement:
+        ledger_sha256: non-null
+        memory_sha256: non-null
+        snapshot_path: null
+        snapshot_sha256: null
+        materialized_entry_ids: []
+      absent_text:
+        - scope: workspace
+          file: improvement/memory.md
+          text: "Start with the operational implication before implementation detail."
+        - scope: workspace
+          file: output/intermediate/agent_handoff.json
+          text: "improvement_memory_snapshot.md"
