@@ -162,3 +162,18 @@ v067_boundaries:
     - automatic_repair_execution
     - friction_store
     - policy_pack_rewrite
+v070_boundaries:
+  implements:
+    - approved_improvement_ledger
+    - deterministic_improvement_memory_projection
+    - per_run_improvement_memory_snapshot
+    - improvement_memory_handoff_context
+    - public_safe_improvement_eval_cases
+  deferred:
+    - retrieval_memory
+    - automatic_repair_execution
+    - automatic_prompt_rewriting
+    - runtime_specific_guidance_filtering
+    - output_quality_improvement_claims
+    - friction_store
+    - ledger_compaction

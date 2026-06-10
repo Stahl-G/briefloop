@@ -42,7 +42,19 @@ Approval is not immediate current-run effect. An approved ledger entry becomes r
 
 `memory_sha256` records the deterministic projection content computed during `run`, `start`, or `handoff`. It is not a runtime-readable input and must not cause handoff to expose `improvement/memory.md`.
 
+`memory_sha256` is the hash of the deterministic memory projection at the time
+the run snapshot was frozen. If live `improvement/memory.md` changes later after
+ledger updates, that does not invalidate the existing run snapshot.
+
 Handoff exposes only `output/intermediate/improvement_memory_snapshot.md`. Runtime agents should not read live `improvement/memory.md` as guidance.
+
+## Capacity And Auditability
+
+Active approved materialized entries should stay around 20. Full injection is an
+auditability requirement: every materialized entry remains visible in the frozen
+snapshot and `runtime_manifest.json.improvement.materialized_entry_ids`.
+Retrieval-based memory, compaction, and selective injection are deferred until
+they can be audited without hiding which guidance the run consumed.
 
 ## Feedback Boundary
 
