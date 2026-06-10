@@ -53,3 +53,11 @@ v065_boundaries:
   semantic_truth_verification: deferred
   execution_replay: deferred
   graph_database_or_query_engine: deferred
+v070_boundaries:
+  improvement_ledger: approved_human_guidance_control_surface
+  improvement_memory_snapshot: deterministic_per_run_projection
+  retrieval_memory: deferred
+  automatic_repair_execution: deferred
+  automatic_prompt_rewriting: deferred
+  runtime_specific_guidance_filtering: deferred
+  output_quality_improvement_claims: deferred
