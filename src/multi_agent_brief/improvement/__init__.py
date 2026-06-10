@@ -16,6 +16,11 @@ from multi_agent_brief.improvement.contract import (
     validate_next_revision,
     validate_revision_payload,
 )
+from multi_agent_brief.improvement.product_definition import (
+    ProductDefinitionDecision,
+    classify_improvement_source,
+    classify_ledger_entry_materialization,
+)
 from multi_agent_brief.improvement.state import (
     ImprovementLedgerError,
     approve_improvement,
@@ -37,7 +42,10 @@ __all__ = [
     "LEDGER_RELATIVE_PATH",
     "LedgerDiagnostic",
     "LedgerReadResult",
+    "ProductDefinitionDecision",
     "canonical_json",
+    "classify_improvement_source",
+    "classify_ledger_entry_materialization",
     "current_entries_from_revisions",
     "read_ledger_text",
     "revision_sha256",

@@ -8,6 +8,7 @@ This page records public-safe rationale for v0.6 control-surface regression chec
 - Do not let Python auto-repair prose or claim the repair is semantically complete.
 - Do not let `finalize` stand in for quality gates.
 - Do not treat feedback text as claim evidence.
+- Do not treat `FeedbackIssue` as guidance: guidance must be human-authored and human-approved, with no automatic path from issue or gate finding to materialized audience memory.
 - Do not let future-stage artifacts or issues globally block a fresh workspace.
 - Do not let planned blocking issues be bypassed by `continue`.
 - Do not require reader-facing briefs to retain internal `[src:CLAIM_ID]` markers.
@@ -30,3 +31,5 @@ This page records public-safe rationale for v0.6 control-surface regression chec
 | Shell-string eval commands | Expands the fixture runner into an arbitrary command executor. |
 
 These red lines are enforced through focused tests, packaged public-safe evaluation cases, and the support matrix.
+
+中文红线：`FeedbackIssue` 只是证据，不是读者偏好。Guidance 必须由人撰写、由人批准；从 issue 或 gate finding 到可物化 audience memory 不存在自动路径。

@@ -30,6 +30,11 @@ from multi_agent_brief.improvement.contract import (
     revision_sha256,
     validate_next_revision,
 )
+from multi_agent_brief.improvement.product_definition import (
+    ProductDefinitionDecision,
+    classify_improvement_source,
+    classify_ledger_entry_materialization,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
@@ -73,11 +78,13 @@ def validate_improvement_ledger(*, workspace: str | Path) -> dict[str, Any]:
     ws = _require_workspace(workspace)
     read_result = _read_ledger(ws)
     diagnostics = [_diagnostic_to_dict(item) for item in read_result.diagnostics]
+    materialization_diagnostics = _materialization_diagnostics(read_result.current_entries)
     return {
         "ok": not diagnostics,
         "workspace": str(ws),
         "ledger_path": str(improvement_ledger_path(ws)),
         "diagnostics": diagnostics,
+        "materialization_diagnostics": materialization_diagnostics,
         "revision_count": len(read_result.valid_revisions),
         "entry_count": len(read_result.current_entries),
     }
@@ -151,7 +158,13 @@ def improvement_stats(*, workspace: str | Path) -> dict[str, Any]:
                 source_type = str(evidence.get("source_type") or "unknown")
                 by_source_type[source_type] = by_source_type.get(source_type, 0) + 1
 
-    approved_count = by_status.get("approved", 0)
+    approved_entries = [entry for entry in current_entries if entry.get("status") == "approved"]
+    approved_count = len(approved_entries)
+    eligible_for_materialization_count = sum(
+        1
+        for entry in approved_entries
+        if classify_ledger_entry_materialization(entry).materializable
+    )
     return {
         "ok": True,
         "workspace": str(ws),
@@ -159,7 +172,7 @@ def improvement_stats(*, workspace: str | Path) -> dict[str, Any]:
         "entry_count": len(current_entries),
         "revision_count": len(read_result.valid_revisions),
         "approved_count": approved_count,
-        "eligible_for_materialization_count": approved_count,
+        "eligible_for_materialization_count": eligible_for_materialization_count,
         "reverted_count": by_status.get("reverted", 0),
         "counts_by_status": by_status,
         "counts_by_category": by_category,
@@ -185,8 +198,13 @@ def propose_improvement(
             details={"from_issue": from_issue},
         )
     if from_issue:
-        source_evidence = [_evidence_from_feedback_issue(workspace=ws, issue_id=from_issue)]
+        evidence, product_decision = _evidence_from_feedback_issue(workspace=ws, issue_id=from_issue)
+        source_evidence = [evidence]
     elif source_summary:
+        product_decision = classify_improvement_source(
+            source_type="human_feedback",
+            issue_category=category,
+        )
         source_evidence = [{
             "source_type": "human_feedback",
             "summary": source_summary,
@@ -222,6 +240,7 @@ def propose_improvement(
         revision=revision,
         event_type="improvement_proposed",
         event_reason="Improvement guidance proposed.",
+        product_decision=product_decision,
     )
 
 
@@ -292,6 +311,7 @@ def _append_transition(
     revision: dict[str, Any],
     event_type: str,
     event_reason: str,
+    product_decision: ProductDefinitionDecision | None = None,
 ) -> dict[str, Any]:
     existing_text = _read_ledger_text(workspace)
     preflight = validate_next_revision(existing_text, revision)
@@ -318,6 +338,8 @@ def _append_transition(
     state = show_improvement(workspace=workspace, entry_id=str(revision["entry_id"]))
     state.update(event_state)
     state["entry"] = revision
+    if product_decision is not None:
+        state["product_definition"] = product_decision.to_dict()
     return state
 
 
@@ -453,7 +475,11 @@ def _current_entry(workspace: Path, entry_id: str) -> dict[str, Any]:
     return current
 
 
-def _evidence_from_feedback_issue(*, workspace: Path, issue_id: str) -> dict[str, Any]:
+def _evidence_from_feedback_issue(
+    *,
+    workspace: Path,
+    issue_id: str,
+) -> tuple[dict[str, Any], ProductDefinitionDecision]:
     issues_path = feedback_state_paths(workspace)["feedback_issues"]
     if not issues_path.exists():
         raise ImprovementLedgerError(
@@ -484,6 +510,20 @@ def _evidence_from_feedback_issue(*, workspace: Path, issue_id: str) -> dict[str
             details={"issue_id": issue_id, "path": str(issues_path)},
         )
 
+    metadata = issue.get("metadata") if isinstance(issue.get("metadata"), dict) else {}
+    product_decision = classify_improvement_source(
+        source_type="feedback_issue",
+        issue_category=str(issue.get("category") or ""),
+        finding_type=str(metadata.get("finding_type") or ""),
+        source=str(issue.get("source") or ""),
+        control_file=str(issue.get("source_artifact") or ""),
+    )
+    if not product_decision.guidance_eligible:
+        raise ImprovementLedgerError(
+            "Feedback issue cannot be promoted directly into audience guidance.",
+            details=product_decision.to_dict(),
+        )
+
     run_id = _issue_run_id(workspace=workspace, issue_id=issue_id, issue=issue)
     if not run_id:
         raise ImprovementLedgerError(
@@ -499,7 +539,7 @@ def _evidence_from_feedback_issue(*, workspace: Path, issue_id: str) -> dict[str
     }
     if origin:
         evidence["origin"] = origin
-    return evidence
+    return evidence, product_decision
 
 
 def _validate_feedback_payload(*, workspace: Path, payload: dict[str, Any]) -> None:
@@ -566,6 +606,8 @@ def _issue_origin(issue: dict[str, Any]) -> dict[str, str]:
         ("source_item_id", metadata.get("source_finding_id") if isinstance(metadata, dict) else None),
         ("finding_type", metadata.get("finding_type") if isinstance(metadata, dict) else None),
         ("blocking_level", metadata.get("blocking_level") if isinstance(metadata, dict) else None),
+        ("issue_category", issue.get("category")),
+        ("issue_source", issue.get("source")),
     ):
         if isinstance(value, str) and value.strip():
             text = value.strip()
@@ -573,6 +615,25 @@ def _issue_origin(issue: dict[str, Any]) -> dict[str, str]:
                 text = Path(text).name
             origin[key] = text
     return origin
+
+
+def _materialization_diagnostics(current_entries: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    for entry_id, entry in sorted(current_entries.items()):
+        if entry.get("status") != "approved":
+            continue
+        decision = classify_ledger_entry_materialization(entry)
+        diagnostics.append({
+            "entry_id": entry_id,
+            "materializable": decision.materializable,
+            "non_materializable_reason": None if decision.materializable else decision.reason_code,
+            "requires_product_definition_review": decision.requires_product_definition_review,
+            "classification": decision.classification,
+            "action": decision.action,
+            "reason_code": decision.reason_code,
+            "message": decision.message,
+        })
+    return diagnostics
 
 
 def _validate_category_scope(*, category: str, scope: str) -> None:

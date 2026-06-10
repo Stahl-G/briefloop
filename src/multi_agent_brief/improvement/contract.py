@@ -46,6 +46,8 @@ ALLOWED_ORIGIN_KEYS = {
     "finding_type",
     "blocking_level",
     "source_item_id",
+    "issue_category",
+    "issue_source",
 }
 DIAGNOSTIC_SEVERITIES = {"info", "warning", "error"}
 DIAGNOSTIC_CODES = {

@@ -5,12 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from multi_agent_brief.improvement.contract import read_ledger_text
+from multi_agent_brief.improvement.contract import canonical_json, read_ledger_text, revision_sha256
 from multi_agent_brief.improvement.state import (
     ImprovementLedgerError,
     approve_improvement,
     improvement_ledger_path,
     improvement_stats,
+    validate_improvement_ledger,
     propose_improvement,
     reject_improvement,
     revert_improvement,
@@ -53,6 +54,11 @@ def _ledger_lines(ws: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def _ledger_text(ws: Path) -> str:
+    path = improvement_ledger_path(ws)
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
 def _events(ws: Path) -> list[dict]:
     path = ws / "output" / "intermediate" / "event_log.jsonl"
     if not path.exists():
@@ -60,7 +66,15 @@ def _events(ws: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def _write_feedback_issue(ws: Path, *, run_id: str = "mabw-test-run") -> None:
+def _write_feedback_issue(
+    ws: Path,
+    *,
+    run_id: str = "mabw-test-run",
+    source: str = "human",
+    category: str = "audience_mismatch",
+    finding_type: str = "audience_mismatch",
+    source_artifact: str = "",
+) -> None:
     path = ws / "output" / "intermediate" / "feedback_issues.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -72,20 +86,20 @@ def _write_feedback_issue(ws: Path, *, run_id: str = "mabw-test-run") -> None:
                 "issues": [
                     {
                         "issue_id": "fi-0001",
-                        "source": "audit",
+                        "source": source,
                         "severity": "high",
                         "stage_id": "auditor",
                         "artifact_id": "audited_brief",
-                        "category": "audience_mismatch",
+                        "category": category,
                         "summary": "Brief does not answer the executive audience question.",
                         "feedback_excerpt": "Brief does not answer the executive audience question.",
                         "raw_feedback_ref": "output/intermediate/quality_gate_report.json#finding:FINDING_001",
-                        "source_artifact": "output/intermediate/quality_gate_report.json",
+                        "source_artifact": source_artifact,
                         "supporting_context": [],
                         "metadata": {
                             "run_id": run_id,
                             "source_finding_id": "FINDING_001",
-                            "finding_type": "target_relevance",
+                            "finding_type": finding_type,
                             "blocking_level": "blocking",
                         },
                         "status": "open",
@@ -169,10 +183,11 @@ def test_propose_from_issue_freezes_minimal_feedback_evidence(tmp_path):
         "run_id": "mabw-run-001",
         "issue_id": "fi-0001",
         "origin": {
-            "control_file": "quality_gate_report.json",
             "source_item_id": "FINDING_001",
-            "finding_type": "target_relevance",
+            "finding_type": "audience_mismatch",
             "blocking_level": "blocking",
+            "issue_category": "audience_mismatch",
+            "issue_source": "human",
         },
     }
     assert state["entry"]["change"]["guidance_text"] == "Put the audience implication before methodology details."
@@ -269,6 +284,58 @@ def test_raw_gate_report_cannot_be_used_as_direct_issue_input(tmp_path):
             scope="brief",
         )
 
+    assert not improvement_ledger_path(ws).exists()
+
+
+def test_propose_from_issue_rejects_audit_gate_target_relevance_without_writing(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_feedback_issue(
+        ws,
+        run_id="mabw-run-001",
+        source="audit",
+        category="audience_mismatch",
+        finding_type="target_relevance",
+        source_artifact="output/intermediate/quality_gate_report.json",
+    )
+    before_events = (ws / "output" / "intermediate" / "event_log.jsonl").read_text(encoding="utf-8")
+
+    with pytest.raises(ImprovementLedgerError) as excinfo:
+        propose_improvement(
+            workspace=ws,
+            from_issue="fi-0001",
+            guidance="Put the target audience implication first.",
+            category="audience_mismatch",
+            scope="brief",
+        )
+
+    assert excinfo.value.details["reason_code"] == "target_relevance_rewrite_required"
+    assert "rewrite" in excinfo.value.details["message"]
+    assert not improvement_ledger_path(ws).exists()
+    assert (ws / "output" / "intermediate" / "event_log.jsonl").read_text(encoding="utf-8") == before_events
+
+
+def test_propose_from_issue_rejects_format_field_missing_without_writing(tmp_path):
+    ws = _workspace(tmp_path)
+    _write_feedback_issue(
+        ws,
+        run_id="mabw-run-001",
+        source="audit",
+        category="formatting",
+        finding_type="format_field_missing",
+        source_artifact="output/intermediate/audit_report.json",
+    )
+
+    with pytest.raises(ImprovementLedgerError) as excinfo:
+        propose_improvement(
+            workspace=ws,
+            from_issue="fi-0001",
+            guidance="Always include this field in the final brief.",
+            category="structure",
+            scope="brief",
+        )
+
+    assert excinfo.value.details["reason_code"] == "repair_only_finding_type"
     assert not improvement_ledger_path(ws).exists()
 
 
@@ -413,6 +480,116 @@ def test_stats_are_ledger_only_counts(tmp_path):
     assert stats["counts_by_source_type"] == {"human_feedback": 1}
 
 
+def test_validate_and_stats_use_product_definition_materialization(tmp_path):
+    ws = _workspace(tmp_path)
+    propose_improvement(
+        workspace=ws,
+        guidance="Lead with the decision-relevant number when evidence supports it.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created audience guidance proposal.",
+    )
+    approve_improvement(workspace=ws, entry_id="AG-0001", approved_by="stahl")
+    _append_approved_legacy_feedback_issue_entry(
+        ws,
+        entry_id="AG-0002",
+        finding_type="format_field_missing",
+        issue_category="formatting",
+    )
+    propose_improvement(
+        workspace=ws,
+        guidance="Use the best-fitting audience convention when no narrower category applies.",
+        category="other",
+        scope="brief",
+        source_summary="Operator-created audience guidance proposal.",
+    )
+    approve_improvement(workspace=ws, entry_id="AG-0003", approved_by="stahl")
+
+    validation = validate_improvement_ledger(workspace=ws)
+    by_entry = {item["entry_id"]: item for item in validation["materialization_diagnostics"]}
+
+    assert validation["ok"] is True
+    assert by_entry["AG-0001"]["materializable"] is True
+    assert by_entry["AG-0002"]["materializable"] is False
+    assert by_entry["AG-0002"]["requires_product_definition_review"] is True
+    assert by_entry["AG-0002"]["non_materializable_reason"] == "repair_only_finding_type"
+    assert by_entry["AG-0003"]["materializable"] is True
+    assert by_entry["AG-0003"]["reason_code"] == "category_other"
+
+    ledger_before = _ledger_text(ws)
+    stats = improvement_stats(workspace=ws)
+    assert stats["approved_count"] == 3
+    assert stats["eligible_for_materialization_count"] == 2
+    assert stats["counts_by_category"]["other"] == 1
+    assert _ledger_text(ws) == ledger_before
+
+
+def test_validate_and_stats_reject_legacy_feedback_issue_without_origin(tmp_path):
+    ws = _workspace(tmp_path)
+    _append_approved_legacy_feedback_issue_entry(
+        ws,
+        entry_id="AG-0001",
+        finding_type="",
+        issue_category="",
+        include_origin=False,
+    )
+
+    validation = validate_improvement_ledger(workspace=ws)
+    diagnostic = validation["materialization_diagnostics"][0]
+
+    assert validation["ok"] is True
+    assert diagnostic["entry_id"] == "AG-0001"
+    assert diagnostic["materializable"] is False
+    assert diagnostic["requires_product_definition_review"] is True
+    assert diagnostic["non_materializable_reason"] == "missing_feedback_issue_product_definition_origin"
+    assert improvement_stats(workspace=ws)["eligible_for_materialization_count"] == 0
+
+
+def test_damaged_ledger_no_final_newline_rejects_all_transition_writes(tmp_path):
+    for transition in ("propose", "approve", "reject", "revert"):
+        base = tmp_path / transition
+        base.mkdir()
+        ws = _workspace(base)
+        if transition == "propose":
+            _write_valid_proposed_ledger(ws, final_newline=False)
+        elif transition in {"approve", "reject"}:
+            _write_valid_proposed_ledger(ws, final_newline=False)
+        else:
+            _write_valid_approved_ledger(ws, final_newline=False)
+        before = _ledger_text(ws)
+
+        with pytest.raises(ImprovementLedgerError, match="failed validation"):
+            _run_transition(ws, transition)
+
+        assert _ledger_text(ws) == before
+
+
+def test_damaged_ledger_corrupt_middle_or_trailing_line_rejects_writes(tmp_path):
+    valid = _valid_revision()
+    cases = {
+        "middle": canonical_json(valid) + "\n{bad json}\n" + canonical_json(_valid_revision(entry_id="AG-0002")) + "\n",
+        "trailing": canonical_json(valid) + "\n{bad json}\n",
+    }
+    for name, text in cases.items():
+        base = tmp_path / name
+        base.mkdir()
+        ws = _workspace(base)
+        path = improvement_ledger_path(ws)
+        path.parent.mkdir(parents=True)
+        path.write_text(text, encoding="utf-8")
+
+        with pytest.raises(ImprovementLedgerError, match="failed validation"):
+            propose_improvement(
+                workspace=ws,
+                guidance="Lead with the decision-relevant number when evidence supports it.",
+                category="audience_mismatch",
+                scope="brief",
+                source_summary="Operator-created audience guidance proposal.",
+            )
+
+        assert path.read_text(encoding="utf-8") == text
+
+
 def test_approve_does_not_materialize_runtime_memory_or_handoff(tmp_path):
     ws = _workspace(tmp_path)
     propose_improvement(
@@ -429,3 +606,115 @@ def test_approve_does_not_materialize_runtime_memory_or_handoff(tmp_path):
     assert not (ws / "audience_profile.md").exists()
     assert not (ws / "output" / "intermediate" / "audience_profile_snapshot.md").exists()
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
+
+
+def _valid_revision(
+    *,
+    entry_id: str = "AG-0001",
+    status: str = "proposed",
+    revision: int = 1,
+    previous_revision_sha256=None,
+) -> dict:
+    payload = {
+        "schema_version": "multi-agent-brief-improvement-ledger/v1",
+        "entry_id": entry_id,
+        "revision": revision,
+        "previous_revision_sha256": previous_revision_sha256,
+        "created_at": "2026-06-10T00:00:00Z",
+        "status": status,
+        "level": 2,
+        "target_kind": "audience_guidance",
+        "change": {
+            "category": "audience_mismatch",
+            "scope": "brief",
+            "guidance_text": "Lead with the decision-relevant number when evidence supports it.",
+        },
+        "source_evidence": [{
+            "source_type": "human_feedback",
+            "summary": "Operator-created audience guidance proposal.",
+            "run_id": None,
+            "issue_id": None,
+        }],
+    }
+    if status == "approved":
+        payload["approved_by"] = "stahl"
+        payload["approved_at"] = "2026-06-10T00:01:00Z"
+    return payload
+
+
+def _write_valid_proposed_ledger(ws: Path, *, final_newline: bool = True) -> None:
+    path = improvement_ledger_path(ws)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = canonical_json(_valid_revision())
+    path.write_text(text + ("\n" if final_newline else ""), encoding="utf-8")
+
+
+def _write_valid_approved_ledger(ws: Path, *, final_newline: bool = True) -> None:
+    first = _valid_revision()
+    second = _valid_revision(
+        status="approved",
+        revision=2,
+        previous_revision_sha256=revision_sha256(first),
+    )
+    text = canonical_json(first) + "\n" + canonical_json(second)
+    path = improvement_ledger_path(ws)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text + ("\n" if final_newline else ""), encoding="utf-8")
+
+
+def _append_approved_legacy_feedback_issue_entry(
+    ws: Path,
+    *,
+    entry_id: str,
+    finding_type: str,
+    issue_category: str,
+    include_origin: bool = True,
+) -> None:
+    first = _valid_revision(entry_id=entry_id)
+    evidence = {
+        "source_type": "feedback_issue",
+        "summary": "Legacy feedback issue evidence.",
+        "run_id": "mabw-legacy-run",
+        "issue_id": "fi-legacy",
+    }
+    if include_origin:
+        evidence["origin"] = {
+            "finding_type": finding_type,
+            "issue_category": issue_category,
+            "issue_source": "audit",
+            "control_file": "audit_report.json",
+        }
+    first["source_evidence"] = [evidence]
+    second = _valid_revision(
+        entry_id=entry_id,
+        status="approved",
+        revision=2,
+        previous_revision_sha256=revision_sha256(first),
+    )
+    second["source_evidence"] = first["source_evidence"]
+    path = improvement_ledger_path(ws)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(canonical_json(first))
+        handle.write("\n")
+        handle.write(canonical_json(second))
+        handle.write("\n")
+
+
+def _run_transition(ws: Path, transition: str) -> None:
+    if transition == "propose":
+        propose_improvement(
+            workspace=ws,
+            guidance="Lead with the decision-relevant number when evidence supports it.",
+            category="audience_mismatch",
+            scope="brief",
+            source_summary="Operator-created audience guidance proposal.",
+        )
+    elif transition == "approve":
+        approve_improvement(workspace=ws, entry_id="AG-0001", approved_by="stahl")
+    elif transition == "reject":
+        reject_improvement(workspace=ws, entry_id="AG-0001", rejected_by="stahl", reason="Not appropriate.")
+    elif transition == "revert":
+        revert_improvement(workspace=ws, entry_id="AG-0001", reverted_by="stahl", reason="No longer desired.")
+    else:
+        raise AssertionError(f"unknown transition: {transition}")
