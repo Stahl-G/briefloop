@@ -1,157 +1,94 @@
-# Multi-Agent Brief Workflow Toolkit
+# Multi-Agent-Brief-Workflow
 
 <p align="center">
   <a href="README_en.md">English</a> |
   <a href="README.md">简体中文</a>
 </p>
 
-A source-grounded, audit-ready agent-orchestrated workflow toolkit for producing business, research, market, policy, and management briefs.
+A source-grounded, auditable, agent-collaborative briefing workflow for business, research, market, policy, company-tracking, and management-reporting briefs.
 
-> Let code do lookup. Let models do judgment. Keep every important claim traceable.
+> Let code organize the workflow. Let models handle judgment and expression. Keep every important conclusion traceable.
 
-This project provides workspace initialization, source discovery, source collection, Claim Ledger/audit utilities, document rendering, and multi-runtime agent workflow support. The final brief is written by agent runtime subagents (Hermes, Claude Code, Codex, OpenCode) using Claim Ledger and audit outputs.
+`multi-agent-brief-workflow` is not an "AI writes a weekly report" prompt. It breaks real briefing work into contract-governed steps: understand the task, discover sources, organize inputs, build a Claim Ledger, assist drafting, audit the result, and render delivery files. Each step has explicit expected artifacts, producer boundaries, transition rules, and inspectable records.
 
-```text
-Onboarding → Workspace Profile → Source Discovery → Source Collection → Claim Ledger/audit → Agent-assisted Drafting → Final Audit → Rendered Outputs
-```
+This project is not an investment advice tool, trading signal generator, or replacement for human review.
 
-It is not an investment advice tool, trading signal generator, or replacement for human review.
+## Current Status
 
-## What Problem This Solves
+Current version: **v0.6.9**
 
-Most weekly reports and executive briefs still depend on a fragile manual process: collect information, decide what matters, write analysis, verify facts, edit wording, and format the final file. That process is easy to rush, hard to audit, and difficult to reuse across teams.
+- **Working today**: subagent-first workflows across Hermes / Claude Code / Codex / OpenCode, runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
+- **In progress** (v0.7): a controlled Improvement Ledger that turns human-confirmed feedback into agent-proposed, human-approved, per-run-frozen workspace memory.
+- **Not yet**: not an autonomous agent, does not automatically edit brief content, does not automatically learn, and does not provide a long-term memory system. See [architecture status](docs/architecture-status.md) and [roadmap](docs/roadmap.md).
 
-This repo provides a toolkit that makes the workflow modular, inspectable, and runnable locally:
+One-line design principle: **the system proposes; humans decide.** For the hard boundaries, see [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md).
 
-- Python tools handle source collection, signal filtering, evidence tracking, and audit checks.
-- Claude/Codex agents write the final brief from the Claim Ledger.
-- Draft and audited Markdown use explicit `[src:CLAIM_ID]` citations; the reader-facing `brief.md` strips those internal IDs.
-- Auditors check unsupported numbers, stale sources, duplicate claims, placeholders, and redaction risks.
-- Output artifacts keep the draft brief, audit report, claim ledger, and reader-facing source appendix separate.
+## Why This Exists
 
-## Project Motivation
+In corporate strategy teams, sell-side research, buy-side research, investor relations, management offices, and similar environments, people spend a large amount of time producing daily reports, weekly reports, morning-meeting notes, and leadership briefs. The work matters, but the process is repetitive: find sources, decide what matters, remove stale or duplicate information, write a coherent brief, verify numbers, check whether AI invented anything, edit wording, and format the output.
 
-This project is an open-source workflow for producing leadership briefs, weekly reports, research notes, market updates, and policy briefings used in corporate strategy teams, securities research, funds, investor relations, management offices, and research desks.
+The deeper problem is that this kind of work does not reliably improve. A junior analyst gets corrected verbally, the correction disappears, and the next person repeats the same mistake. A "this section feels wrong" comment evaporates after the meeting. A stale number enters a brief, and no one can tell where it slipped through.
 
-In many organizations, interns, management trainees, and junior analysts spend a large amount of time preparing daily, weekly, and monthly reports. The work is important, but the process is often repetitive: collecting sources, filtering what matters, removing stale or duplicate signals, drafting analysis, checking facts, editing wording, and formatting the final document.
+Software engineering improves through tests, Git history, CI, and review. This project brings the same basic machinery into real briefing work: auditability, traceability, structured feedback, and human approval. The goal is to spend more time on judgment, questions, and decision support, and less time on repetitive copying and formatting.
 
-This project turns that workflow into a source-grounded, audit-ready, agent-orchestrated toolkit:
+## What It Solves
 
-```text
-Onboarding → Source Discovery → Source Collection → Claim Ledger/audit → Agent-assisted Drafting → Final Audit → Rendered Outputs
-```
+The common failure mode of AI-generated reports is not speed. It is control:
 
-It does not replace human judgment and does not provide investment advice. Instead, it helps structure repetitive briefing work so people can spend more time on analysis, discussion, and decision support.
+- A sentence appears, but its source is unclear.
+- Numbers and dates lose attribution.
+- Citation relationships break after several editing rounds.
+- Too many sources introduce duplicates, stale items, and low-quality material.
+- Long prompts make models skip steps.
+- The final document looks complete but cannot be audited.
 
-The core principle is:
-
-> Let code do lookup. Let models do judgment. Keep every important claim traceable.
-
-## Why Multi-Agent Instead Of One Prompt
-
-A real briefing process is not one job. It is a small editorial desk:
-
-- **Python preparation tools** handle source collection, signal filtering, evidence tracking, and audit checks.
-- **Claude/Codex agents** handle analysis writing, editing, and final delivery audit.
-- **Rendering tools** handle Markdown, DOCX, and other output formats.
-
-Splitting these roles reduces hidden reasoning shortcuts. Python tools handle deterministic tasks, agents handle tasks requiring judgment, and the audit trail shows where every claim came from.
-
-## Architecture
+The answer is a contract-governed workflow:
 
 ```text
-User Onboarding
-→ Workspace Profile
-→ Source Discovery
-→ Source Collection
-→ Claim Ledger / Audit Utilities
-→ Agent Runtime Drafting and Review
-→ Rendered Outputs
+User need → Source discovery → Source governance → Claim Ledger → Agent-assisted drafting → Audit and gates → Markdown / Word output
 ```
 
-Runtime responsibilities stay split:
+Each stage is handled by a specialist role: Scout, Screener, Claim Ledger, Analyst, Editor, and Auditor. An Orchestrator coordinates stage transitions, validation, and decisions. State is written to inspectable workspace files. For details, see [docs/architecture.md](docs/architecture.md). For the full technical reference, see [docs/mabw-architecture-reference-v0.1.2.md](docs/mabw-architecture-reference-v0.1.2.md).
 
-| Layer | Responsibility |
-|---|---|
-| User Onboarding | `onboarding.json`, `config.yaml`, `sources.yaml`, `user.md` |
-| Source Tooling | source discovery, collection, filtering, and health checks |
-| Python Support Tools | deterministic validation, audit support, runtime state, feedback/gates controls, rendering |
-| Agent Runtime | delegated scout, screener, claim-ledger, analyst, editor, and auditor roles |
-| Rendered Outputs | reader-facing Markdown, DOCX, and configured delivery artifacts |
+## What Output Looks Like
 
-See [docs/architecture.md](docs/architecture.md) for the plain-language architecture guide.
+The final delivery is a clean `brief.md` / `brief.docx`, but the real difference is in the intermediate artifacts. The example below is **synthetic** and only demonstrates structure. A full reference run is planned for v0.7.1.
 
-## Current Features
-
-This project provides the following tools and capabilities:
-
-**Workspace & Onboarding:**
-- `multi-agent-brief onboard` runs conversational onboarding and writes `onboarding.json`
-- `multi-agent-brief init --from-onboarding onboarding.json` creates a brief workspace from onboarding
-- `multi-agent-brief run --workspace <path>` hands off to the agent runtime (default: Hermes delegate_task)
-- Onboarding mapper auto-translates Chinese role, industry, and audience labels into English config values
-
-**Source Discovery & Collection:**
-- `multi-agent-brief sources decide` subcommand resolves `llm_decide` source policy into concrete candidates, with `--merge` to merge back into `sources.yaml`
-- Supports manual files, RSS, web search, API, SEC filings, MCP, CLI source providers
-- `multi-agent-brief inputs extract` converts PDF/DOCX/PPTX/XLSX/image files under `input/` to adjacent `.mineru.md` files with MinerU before classification
-- `multi-agent-brief inputs classify` keeps `input/sources/` evidence separate from `input/context/`, `input/instructions/`, and `input/feedback/`
-- `multi-agent-brief doctor` checks source configuration health
-
-**Subagent Workflow:**
-- Scout subagent extracts candidate reportable items
-- Screener subagent filters claims by novelty scoring, topic capacity caps, and deduplication
-- Claim Ledger subagent records source-grounded evidence
-- Analyst subagent drafts the brief from Claim Ledger entries
-- Editor subagent polishes readability
-- Auditor subagent checks unsupported facts, orphan citations, and process residue
-- `multi-agent-brief run --workspace <workspace>` produces a runtime handoff; the agent runtime orchestrates scout → screener → claim-ledger → analyst → editor → auditor → finalize
-
-**Multi-Runtime Support:**
-- Hermes (primary): `multi-agent-brief hermes install-plugin` + `/mabw new` in Hermes. Full `delegate_task` pipeline.
-- Claude Code: `/generate-brief <workspace>` inside the Claude Code CLI or the Claude Desktop Code tab when the MABW source repository is the project folder. This slash command is not a terminal command; it appears only when the session loads this repository's `.claude/commands` or skills.
-- Codex / OpenCode: agent configs in `.codex/` / `.opencode/`
-- Workspace runtime kit: when you want to open the actual business workspace in Claude Code or OpenCode instead of opening the MABW source repository, run `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` from a source clone. It copies project-local commands, agents, and skills into the workspace so the runtime does not need to read the source checkout.
-
-**Rendering & Output:**
-- DOCX renderer (enabled by default)
-- Stable `brief.md` / `brief.docx` outputs plus automatically named delivery copies from `output.filename_template`
-- `python scripts/check_terms.py` terminology consistency checker prevents spelling drift
-
-## Example Output
-
-The preparation tools create a Markdown draft with source citations:
+`output/brief.md` excerpt:
 
 ```markdown
-## Market
-
-- Synthetic module price checks showed a 3.5% week-over-week decline in selected spot-market channels. [src:MARKETDA_867A7D67D0]
+## 2. Market Updates
+This week, the sample photovoltaic module spot price fell 1.8% week over week, marking a third consecutive weekly decline.
+Company N announced that Phase I of its sample-state factory started production this week, with planned annual capacity of 2 GW...
 ```
 
-Every source-backed statement is also written to `claim_ledger.json`:
+Corresponding `output/intermediate/claim_ledger.json` excerpt:
 
 ```json
 {
-  "claim_id": "MARKETDA_867A7D67D0",
-  "statement": "Synthetic module price checks showed a 3.5% week-over-week decline in selected spot-market channels.",
-  "source_id": "MARKET_DATA",
-  "evidence_text": "Synthetic module price checks showed a 3.5% week-over-week decline in selected spot-market channels."
+  "claim_id": "CL-0012",
+  "statement": "The sample module spot price fell 1.8% week over week.",
+  "source_id": "SRC-003",
+  "source_date": "2026-06-05",
+  "support": "supported"
 }
 ```
 
-The audit report records whether the draft is distribution-ready:
+`output/intermediate/quality_gate_report.json` excerpt:
 
 ```json
 {
-  "audit_status": "pass",
-  "audit_score": 100,
+  "gate_id": "freshness",
+  "status": "pass",
   "findings": []
 }
 ```
 
-## Getting Started
+The point is simple: every important number in the delivered brief should have a registered source and date in the Claim Ledger. Stale sources and unsupported numbers should be stopped by audit gates instead of silently entering the final document. The execution trace is recorded in `event_log.jsonl`.
 
-### Hermes (primary path)
+## Quick Start
+
+### Hermes (Primary Path)
 
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -163,23 +100,15 @@ multi-agent-brief hermes install-plugin
 hermes plugins enable mabw
 ```
 
-Then in Hermes:
+Then type `/mabw new` in Hermes and follow the onboarding flow. Hermes creates a contract-governed runtime handoff, and the main agent delegates stages such as scout → screener → claim-ledger → analyst → editor → auditor. Stage progress still depends on artifact validation and Orchestrator decisions. After `audited_brief.md` is produced, run the delivery gate:
 
-```text
-/mabw new
+```bash
+multi-agent-brief finalize --config <workspace>/config.yaml
 ```
 
-Hermes checks the environment, collects your brief profile in chat, creates the workspace, and runs the full subagent pipeline: scout → screener → claim-ledger → analyst → editor → auditor. See [HERMES.md](HERMES.md) for the full protocol.
+See [HERMES.md](HERMES.md) for the full protocol.
 
-> **Finalize delivery gate:** after subagents produce `audited_brief.md`:
-> ```bash
-> multi-agent-brief finalize --config <workspace>/config.yaml
-> ```
-> Strips internal `[src:CLAIM_ID]` markers → writes `brief.md` / `brief.docx` / optional `source_appendix.md` → verifies outputs.
-
-### Other runtimes
-
-Claude Code, Codex, and OpenCode are also supported. After cloning the repo and `source .venv/bin/activate`, use the CLI to create the runtime handoff first:
+### Claude Code / Codex / OpenCode
 
 ```bash
 multi-agent-brief onboard
@@ -187,565 +116,57 @@ multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
 ```
 
-To make `/generate-brief` available from any Claude Desktop Code tab project folder, install the Claude Code user command and MABW subagents:
-
-```bash
-multi-agent-brief claude install --repo-workdir .
-```
-
-To open the business workspace itself in Claude Code or OpenCode, install the workspace-local runtime kit:
-
-```bash
-multi-agent-brief runtime install --workspace ../mabw-workspace --runtime all --repo-workdir .
-```
-
-This copies project-local `.claude/` and `.opencode/` commands, agents, and skills into `../mabw-workspace`. It does not reinitialize the workspace and does not overwrite `audience_profile.md`, `config.yaml`, `sources.yaml`, `user.md`, or `input/`. If you installed only the Python package from wheel/PyPI/curl/Homebrew and do not have a source checkout, the command reports that runtime assets are source-clone-only; pass `--repo-workdir <MABW source repo>` when available.
-
-If the client returns `Unknown command: /generate-brief`, the current Claude Code session has not discovered this project command. Confirm that the Code tab project folder is the MABW repository root, or run the install command above and reopen/refresh the Claude Code session. Type `/` to see whether `/generate-brief` is listed. You can also use `multi-agent-brief run --workspace ../mabw-workspace` to create a handoff.
-
----
-
-## Demo Workspace
-
-```bash
-multi-agent-brief init ../mabw-demo --demo
-multi-agent-brief run --workspace ../mabw-demo
-```
-
-Synthetic data only — shows the full pipeline from source to audit report without real company information.
-
-## Development
-
-```bash
-multi-agent-brief init ../mabw-demo --demo
-multi-agent-brief run --workspace ../mabw-demo
-```
-
-Or use `multi-agent-brief run --workspace <path>` from a cloned repo.
-
-## llm_decide Source Discovery
-
-The default `llm_decide` source mode lets the agent automatically generate search intents and candidate sources based on `user.md`:
-
-```bash
-# 1. Onboarding
-multi-agent-brief onboard
-
-# 2. Create workspace
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-
-# 3. Generate candidate sources (template mode, no API key needed)
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-
-# 4. Review candidates
-cat ../mabw-workspace/source_candidates.yaml
-
-# 5. Merge into sources
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
-
-# 6. Hand off to agent runtime
-multi-agent-brief run --workspace ../mabw-workspace
-```
-
-The llm_decide mode does not block the workflow — if you skip `sources decide`, the workflow continues with local `input/` files and prints a warning.
-
-## DOCX Output
-
-When initializing a workspace, the default output formats now include `docx` and `source_appendix`. After running the pipeline and finalize, `brief.md`, `brief.docx`, and a reader-facing `source_appendix.md` can appear in the `output/` directory.
-
-The formatter also writes human-readable named delivery copies. The default template is:
-
-```yaml
-output:
-  filename_template: "{project_name}_{report_date}"
-  named_outputs: true
-```
-
-DOCX requires the `python-docx` dependency. It is included when installing with `.[dev]`:
-
-```bash
-pip install -e ".[dev]"
-```
-
-Or install separately:
-
-```bash
-pip install "multi-agent-brief-workflow[docx]"
-```
-
-The DOCX uses a professional investment-bank-style layout with heading hierarchy, tables, lists, blockquotes, and code blocks. The default footer is "Confidential — Internal Use Only" — customize via `output.footer` in `config.yaml`.
-
-If `python-docx` is not installed, the pipeline continues without interruption but records `docx_generation: skipped_missing_dependency` in `output/intermediate/audit_report.json`.
-
-## Market & Competitor Intelligence Module
-
-New in v0.3.0 — the first pluggable AnalysisModule. Runs between Screener and Analyst, transforming scattered competitor information into structured analysis.
-
-- **Competitor Discovery & Confirmation**: `competitors init | list | merge` CLI — create candidate template, then `/propose-competitors` slash command (LLM-assisted) or manual editing → user reviews → merge into `competitor_universe.yaml`.
-- **Targeted Search**: Auto-generates per-competitor × dimension search tasks (capacity / technology / customers / financials).
-- **Entity Tagging**: Deterministic EntityEventEnricher tags Claims with entity_ids, event_type, geography, and dimension — between Scout and Screener.
-- **Event Aggregation**: Merge same-entity same-type Claims into MarketEvents, infer event status (announced → under_construction → operational).
-- **5 Intermediate Artifacts**: `events.json` / `competitor_matrix.json` / `coverage_report.json` / `watchlist.json` / `evidence_pack.json`.
-- **Cross-Period Tracking**: `event_history.jsonl` — marks each event as new/changed/unchanged/cancelled/resolved.
-- **6 Specialist Audits**: comparison_evidence, capacity_status, metric_basis, market_trend, single_source_confidence, coverage_gap.
-- **Generic Interface**: AnalysisModule + Registry — reusable for future earnings/policy/patent modules.
-
-See [Market & Competitor Module docs](docs/modules/market-competitor.zh-CN.md) for details.
-
-All specialist audit checks integrate into the CompositeAuditAgent when the module is enabled.
-Modules not enabled in `config.yaml` have zero impact on pipeline behavior.
-
-## Feishu / Lark Integration
-
-Bidirectional Feishu integration via the official [lark-cli](https://github.com/larksuite/cli) tool. Pull data from Feishu Docs, meeting minutes, Base tables, sheets, calendar, and approval tasks as source inputs — or deliver generated briefs to Feishu chats, docs, and Drive.
-
-### Install & Authenticate
-
-```bash
-npx @larksuite/cli@latest install      # one-time install
-lark-cli config init                    # configure app credentials
-lark-cli auth login --recommend         # log in with recommended scopes
-lark-cli auth status                    # verify
-```
-
-### Using Feishu as Source (Input)
-
-Add to `sources.yaml`:
-
-```yaml
-feishu:
-  enabled: true
-  sources:
-    - name: "meeting-notes"
-      token: "V1Mdjflk..."       # token from the Feishu doc/minutes URL
-      type: minutes               # see supported types below
-```
-
-**Supported source types:**
-
-| Type | What it fetches | How to get the token |
-|------|----------------|---------------------|
-| `doc` | Feishu Document (Markdown) | Open doc, copy token from URL `.../doc/<token>` |
-| `minutes` | Meeting minutes with AI summary/todos | Open minutes, token from URL `.../minutes/<token>` |
-| `base` | Base table records | Open Base, token from URL `.../base/<token>`. Also set `table_id`. |
-| `sheet` | Spreadsheet values | Open sheet, token from URL `.../sheet/<token>` |
-| `agenda` | Today's calendar events | No token required |
-| `approval` | Pending approval tasks | No token required |
-
-### Using Feishu as Delivery (Output)
-
-**Send to chat:**
-
-```python
-from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
-from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
-
-connector = FeishuDeliveryConnector()
-connector.deliver(
-    DeliveryArtifact(path="output/brief.md", title="Daily Brief"),
-    DeliveryTarget(channel="chat", recipient="oc_your_chat_id"),
-)
-```
-
-Get `chat_id` from the group chat URL (`.../?chat_id=oc_xxxxxxxxxxx`) or group info page.
-
-**Create a Feishu document:**
-
-```python
-connector.deliver(
-    DeliveryArtifact(path="output/brief.md", title="Weekly Report"),
-    DeliveryTarget(channel="doc"),
-)
-```
-
-**Upload file to Drive:**
-
-```python
-connector.deliver(
-    DeliveryArtifact(path="output/brief.docx", title="Weekly Report"),
-    DeliveryTarget(channel="drive"),
-)
-```
-
-### Typical Workflow
-
-```python
-# After multi-agent-brief run --workspace my-workspace:
-from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
-from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
-
-FeishuDeliveryConnector().deliver(
-    DeliveryArtifact(path="output/brief.md", title="Weekly Brief"),
-    DeliveryTarget(channel="chat", recipient="oc_your_chat_id"),
-)
-```
-
-See [docs/feishu-integration.md](docs/feishu-integration.md) for full details.
-
-## SEC Filing Resolution (disclosure-filing-resolver)
-
-Integrate with [disclosure-filing-resolver](https://github.com/Stahl-G/disclosure-filing-resolver) for automatic SEC EDGAR filing acquisition and XBRL financial data extraction. Ideal for tracking US-listed companies (foreign private issuers, ADRs, or domestic US companies).
-
-### What It Does
-
-| Capability | Description |
-|------------|-------------|
-| SEC filing download | Automatically downloads 10-K, 10-Q, 8-K, 6-K filing HTML documents |
-| 6-K exhibit expansion | Detects 6-K filings and expands Exhibit 99.x files (financial statements, operating reviews) |
-| XBRL extraction | Extracts revenue, net income, assets, EPS from SEC companyfacts API |
-| iXBRL parsing | Extracts Inline XBRL facts from filing HTML documents |
-| Source traceability | Every financial fact carries a SEC source URL for Claim Ledger integration |
-
-### Install
-
-```bash
-pip install disclosure-filing-resolver
-```
-
-### Configure
-
-Add `filing_resolver` to your workspace `sources.yaml`:
-
-```yaml
-filing_resolver:
-  enabled: true
-  tickers:
-    - AAPL      # replace with your target company ticker
-    - MSFT
-  filing_types:
-    - 10-K      # annual report
-    - 10-Q      # quarterly report
-    - 8-K       # material events
-  xbrl: true    # enable XBRL financial data extraction
-```
-
-### Auto-Configure via Source Discovery
-
-With `llm_decide` source mode, `sources decide` automatically generates SEC filing candidates:
-
-```bash
-# 1. Generate candidate sources (includes SEC EDGAR filing suggestions)
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-
-# 2. Review candidates
-cat ../mabw-workspace/source_candidates.yaml
-# The filing_sources section lists suggested SEC filing sources
-
-# 3. Edit source_candidates.yaml to set the correct ticker(s)
-
-# 4. Merge into sources.yaml
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
-```
-
-After merging, `sources.yaml` automatically:
-- Adds `filing_resolver` to `enabled_providers`
-- Configures `filing_resolver` tickers and filing_types
-
-### Set SEC User-Agent
-
-SEC EDGAR requires a declared User-Agent:
-
-```bash
-export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
-```
-
-### Typical Workflow
-
-```bash
-# 1. Install disclosure-filing-resolver
-pip install disclosure-filing-resolver
-
-# 2. Set environment variable
-export SEC_USER_AGENT="your_email@example.com disclosure-filing-resolver"
-
-# 3. Onboard and init workspace
-multi-agent-brief onboard
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-
-# 4. Discover sources (auto-generates SEC filing candidates)
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-
-# 5. Edit source_candidates.yaml to confirm ticker
-# 6. Merge
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
-
-# 7. Hand off to agent runtime
-multi-agent-brief run --workspace ../mabw-workspace
-```
-
-The brief will automatically include SEC-sourced financial data:
-
-```markdown
-- ACME Corp reported revenue of $150.0M for Q1 2026, up 12% year-over-year. [src:FILING_ACME_10Q]
-```
-
-See [disclosure-filing-resolver docs](https://github.com/Stahl-G/disclosure-filing-resolver) for full details.
-
-## CLI
-
-### Enable Tavily Live Search
-
-Web search is disabled by default. To enable it:
-
-You can opt in during `init` (the interactive wizard asks), or manually edit `sources.yaml`:
-
-```yaml
-web_search:
-  enabled: true
-  backend: tavily
-  api_key_env: TAVILY_API_KEY
-  topic: news
-  search_depth: basic
-  max_results: 5
-  search_tasks:
-    - query: "manufacturing tariff trade policy"
-      domains:
-        - "reuters.com"
-        - "bloomberg.com"
-```
-
-2. Set the environment variable and run:
-
-```bash
-export TAVILY_API_KEY=tvly-your-key-here
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-multi-agent-brief run --workspace ../mabw-workspace
-```
-
-PowerShell:
-
-```powershell
-$env:TAVILY_API_KEY = Read-Host "Enter your Tavily API key"
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-multi-agent-brief run --workspace ../mabw-workspace
-```
-
-3. Check configuration health:
-
-```bash
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-```
-
-Notes:
-- Web search is disabled by default and must be explicitly enabled
-- Tavily requires `TAVILY_API_KEY` environment variable
-- API keys must be stored in environment variables, not config files
-- API keys are never printed or stored in configuration
-- If Tavily is enabled but the API key is missing, the pipeline fails immediately (fail-fast)
-- Web search results may not provide reliable `published_at` dates — time-sensitive web_search claims should be manually verified
-- Web search ingestion includes boilerplate filtering (cookies, privacy policy, TOC, etc.) but is not perfect
-- Real-time search feature is not release-ready until live smoke passes
-
-Create a synthetic demo workspace (sample data for feature exploration):
-
-```bash
-multi-agent-brief init ../mabw-demo --demo
-multi-agent-brief sources decide --config ../mabw-demo/config.yaml
-multi-agent-brief run --workspace ../mabw-demo
-```
-
-PowerShell:
-
-```powershell
-multi-agent-brief init ../mabw-demo --demo
-multi-agent-brief sources decide --config ../mabw-demo/config.yaml
-multi-agent-brief run --workspace ../mabw-demo
-```
-
-Audit an existing brief:
-
-```bash
-multi-agent-brief audit <workspace>/output/intermediate/audited_brief.md \
-  --ledger <workspace>/output/intermediate/claim_ledger.json \
-  --output <workspace>/output/intermediate/audit_report.json
-```
-
-PowerShell:
-
-```powershell
-multi-agent-brief audit <workspace>/output/intermediate/audited_brief.md `
-  --ledger <workspace>/output/intermediate/claim_ledger.json `
-  --output <workspace>/output/intermediate/audit_report.json
-```
-
-Print the version:
-
-```bash
-multi-agent-brief version
-```
-
-## Auditor Agent Interface
-
-The auditor subagent delegates to an audit backend that implements `AuditAgentInterface`.
-
-Current audit backends:
-
-- `DeterministicAuditAgent`: checks source IDs, unsupported numbers, duplicate claims, missing source evidence, redaction risks, and reporting-window freshness.
-- `QualityHarnessAuditAgent`: ports public-safe quality gates from local workflow prototypes, including placeholders, internal process residue, `needs_recrawl`, low source density, and possible unit inflation.
-- `NoOpSemanticAuditAgent`: placeholder adapter for future model-backed semantic source-support review.
-- `CompositeAuditAgent`: runs deterministic audit first, then an optional semantic audit adapter.
-
-This keeps the MVP runnable without API keys while leaving a clean interface for Claude, OpenAI, LiteLLM, or local-model audit agents.
-
-See [docs/harness.md](docs/harness.md) for the current harness and migration backlog.
-
-For strict final-delivery gates, see [docs/harness_matrix.md](docs/harness_matrix.md). For Codex, Claude Code subagent, and external-agent handoff patterns, see [docs/agent-collaboration.md](docs/agent-collaboration.md).
-
-## Agent Support
-
-This repository can generate Codex and Claude Code agent configurations from a single role manifest.
-
-- `configs/agent_roles.yaml` is the source of truth.
-- `scripts/generate_agent_configs.py` generates platform-specific files.
-- `AGENTS.md` provides project-level instructions for Codex and other coding agents.
-- `.agents/skills/*/SKILL.md` provides Codex-compatible skills.
-- `.codex/agents/*.toml` provides Codex custom agents.
-- `.claude/agents/*.md` provides Claude Code subagents.
-- `docs/agents/` documents platform adaptation and harness subagents.
-
-Regenerate configs:
-
-```bash
-python scripts/generate_agent_configs.py --write
-```
-
-PowerShell:
-
-```powershell
-python scripts/generate_agent_configs.py --write
-```
-
-Check generated files:
-
-```bash
-python scripts/generate_agent_configs.py --check
-```
-
-PowerShell:
-
-```powershell
-python scripts/generate_agent_configs.py --check
-```
-
-See [docs/windows-powershell.md](docs/windows-powershell.md) for native Windows setup. WSL is optional, not required.
-
-## Multi-Runtime Agent Mode
-
-- **Hermes（主路径）**：`multi-agent-brief hermes install-plugin` then `/mabw new`. Full `delegate_task` subagent pipeline.
-- **Claude Code**: `/generate-brief <workspace>` inside Claude Code CLI or the Claude Desktop Code tab when this repository is loaded; use `multi-agent-brief run --workspace <workspace>` for generic handoff creation.
-- **Codex / OpenCode**：agent configs in `.codex/` / `.opencode/`
-
-### Two-Layer Architecture
-
-| Layer | Purpose | Characteristics |
-|-------|---------|-----------------|
-| Python CLI | Deterministic tooling: init, doctor, sources, audit, finalize, handoff | Testable, no API keys required |
-| Agent subagents | Interactive source planning, extraction, analysis, editing | Model-assisted judgment |
-
-### Available Subagents
-
-| Subagent | Purpose |
-|----------|---------|
-| `source-planner` | Generate/refine source candidates and search tasks |
-| `scout` | Extract candidate reportable items from sources |
-| `screener` | Rank, dedupe, and capacity-cap candidates |
-| `claim-ledger` | Build source-grounded claim entries |
-| `analyst` | Draft management-ready brief sections |
-| `editor` | Improve readability without adding facts |
-| `auditor` | Review final brief against ledger and audit report |
-
-See [docs/claude-code-workflow.md](docs/claude-code-workflow.md) and [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md).
-
-## Roadmap
-
-The roadmap now prioritizes a stable v1.0 baseline before any v2.0 MAS Runtime work.
-
-Public direction:
-
-- **v0.6: Orchestrator Contracts And Feedback Loop** — make the main agent explicit and demonstrate an output → feedback → bounded repair loop early.
-- **v0.7: FrictionStore And Improvement Proposals** — turn recurring failures, audit findings, and human feedback into controlled improvement proposals.
-- **v0.8: Policy Packs And Runtime Parity** — support different briefing contexts while keeping runtime artifact expectations aligned.
-- **v0.9: Distribution And Reference Workflows** — improve installation, setup diagnostics, and public-safe demos.
-- **v1.0: Stable Orchestrated Brief Workflow** — freeze a local-first, auditable, contract-governed baseline.
-- **v2.0: MAS Runtime Research Track** — after v1.0, explore richer runtime coordination concepts.
-
-See [docs/roadmap.md](docs/roadmap.md) for the public roadmap, [docs/architecture-status.md](docs/architecture-status.md) for current implementation status, [docs/MIGRATION.md](docs/MIGRATION.md) for migration notes, [docs/orchestrator-contracts.md](docs/orchestrator-contracts.md) for the public contract model, [docs/orchestrator-architecture.md](docs/orchestrator-architecture.md) for the v0.6 control model, [docs/runtime-asset-inventory.md](docs/runtime-asset-inventory.md) for install/runtime asset availability, [docs/runtime-recipes.md](docs/runtime-recipes.md) for runtime recipes, [docs/mas-v2-evaluation.zh-CN.md](docs/mas-v2-evaluation.zh-CN.md) for the v2.0 technical evaluation, and [docs/repo-metadata.md](docs/repo-metadata.md) for suggested GitHub description and topics. v0.6.9 builds on shared Orchestrator authority, runtime state, the feedback/repair control plane, deterministic quality gates, packaged public-safe evaluation cases, optional provenance projection, audience snapshots, the Orchestrator control switchboard, and reader-facing source appendices by stabilizing install/runtime asset parity. Python can surface control recommendations, record Orchestrator selections, and render a reader-facing source list; selection is still not execution, source appendices are not semantic proof, and runtime kit installation does not execute the brief workflow. Gates, feedback, provenance, source discovery, repair, and subagent actions still require explicit Orchestrator action. Detailed implementation plans, schema drafts, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until the corresponding capabilities are stable and ready to publish.
-
-## Safety And Non-Investment-Advice Disclaimer
-
-Do not commit credentials, tokens, webhooks, raw internal logs, private reports, customer names, confidential files, internal paths, or company-specific prompts. All examples in this repo should use public or synthetic data.
-
-This project can help structure research and briefing workflows, but it does not provide legal, financial, investment, trading, or compliance advice. Human review remains required before any real-world distribution or decision-making use.
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for the full version history.
-
-Current version: **v0.6.9**
-
-v0.6.9 stabilizes install/runtime asset parity: package installs include the CLI, packaged contracts, and public-safe eval fixtures, while `.agents/`, `.claude/`, `.opencode/`, `.codex/`, and Hermes plugin source files are explicitly source-clone-only. The new `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` command copies OpenCode/Claude Code runtime kits into the business workspace so runtimes do not need to read the source checkout during normal execution.
-
-If you edit `audience_profile.md` during a run, the active run keeps using the frozen snapshot. To apply the edits, start a new run state:
-
-```bash
-multi-agent-brief state init --workspace <workspace> --reset-state
-multi-agent-brief run --workspace <workspace>
-```
-
-[View full changelog →](CHANGELOG.md)
-
-## Development
-
-```bash
-python -m pip install -e ".[dev]"
-python -m pytest -q
-```
-
-PowerShell:
-
-```powershell
-python -m pip install -e ".[dev]"
-python -m pytest -q
-```
-
-## Contributing
-
-This project is currently maintained mainly by one person and is still at an early stage.
-
-Contributions, issues, discussions, and trial feedback are welcome, especially from people who have worked on weekly reports, management briefs, research notes, market updates, policy briefings, internal reporting workflows, or AI-assisted office work.
-
-The project needs feedback from different industries, roles, and career stages to become useful in real-world workflows.
-
-Useful contributions include:
-
-* real briefing scenarios;
-* pain points from weekly, monthly, or daily reporting work;
-* industry-specific report structures;
-* role-specific templates for strategy, investment, IR, legal, compliance, or management teams;
-* suggestions for Source Providers, Screener logic, Claim Ledger design, or audit checks;
-* synthetic examples and public-safe demos;
-* documentation, tests, and safety improvements.
-
-Even a single issue describing a real workflow, a template suggestion, or a failure case can help make the project more useful.
+Runtime installation details, workspace-local runtime kits, and common issues are covered in [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) and [docs/runtime-recipes.md](docs/runtime-recipes.md).
+
+### Use Your Own Materials / Optional Capabilities
+
+- Local input handling and onboarding: [docs/onboarding.md](docs/onboarding.md)
+- Web search backends such as Tavily: [docs/search-backends.md](docs/search-backends.md)
+- Feishu integration for collection and delivery: [docs/feishu-integration.md](docs/feishu-integration.md)
+- SEC filing parsing: [docs/opencli-source-provider.md](docs/opencli-source-provider.md)
+- Windows PowerShell: [docs/windows-powershell.md](docs/windows-powershell.md)
+
+## Looking For Collaborators
+
+This project is developed from real manufacturing and briefing work. It needs more real scenarios more than it needs more features. If any of the following describes you, GitHub Issues or Discussions are welcome:
+
+- **Pilot users**: you work in strategy, research, IR, management office, or a similar role and produce real weekly reports, competitor tracking, or leadership briefs. You are willing to run this on your workflow and report friction points.
+- **Evaluation collaborators**: you work on LLM agents or multi-agent systems and are interested in comparing contract-governed workflows against single-model baselines. The project can provide system design, realistic scenarios, and run data.
+- **Contributors**: start from a [good first issue](https://github.com/Stahl-G/multi-agent-brief-workflow/issues). Before submitting changes, read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
+
+## Glossary
+
+| Chinese term | English | Meaning |
+|---|---|---|
+| 司乐师 | Orchestrator | Runtime main agent that coordinates, validates, records decisions, and gates delivery |
+| 事实账本 | Claim Ledger | Registry of important claims and their evidence references |
+| 运行交接单 | Runtime Handoff | Artifact that passes execution context and contract references to a runtime |
+| 产物契约 | Artifact Contract | Definition of files produced, consumed, and validated by each stage |
+| 质量门禁 | Quality Gate | Quality check before transition or delivery |
+| 溯源图 | Provenance Graph | Audit graph projected from state, artifacts, claims, feedback, and gates |
+| 控制台 | Control Switchboard | Control surface for available controls, recommendations, and Orchestrator selections |
+| 信息侦察员 / 筛选师 / 分析师 / 编辑师 / 审计师 | Scout / Screener / Analyst / Editor / Auditor | Specialist roles for workflow stages |
+
+## Roadmap Summary
+
+- **v0.7**: Improvement Ledger — turn human-confirmed feedback into controlled audience-guidance proposals; human-approved entries are frozen per run, with no automatic learning or FrictionStore auto-detection.
+- **v0.8**: evaluation experiments and policy packs — systematic experiments against single-model baselines, mode registry, and a second policy pack.
+- **v0.9**: distribution and reference workflows — easier no-API-key setup, reference runs, and documentation cleanup.
+- **v1.0**: stable baseline — frozen schemas, stable CLI surfaces, security threat model, and clear support boundaries.
+
+See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, see [architecture status](docs/architecture-status.md).
+
+## Documentation Index
+
+[Architecture](docs/architecture.md) ·
+[Technical reference v0.1.2](docs/mabw-architecture-reference-v0.1.2.md) ·
+[Orchestrator contracts](docs/orchestrator-contracts.md) ·
+[Quality gates](docs/harness.md) ·
+[Evaluation cases](docs/evaluation-cases.md) ·
+[Support matrix](docs/support-matrix.md) ·
+[Security](docs/security.md) ·
+[Migration guide](docs/MIGRATION.md)
 
 ## License
 
 MIT
-
-## Interactive Onboarding Questions
-
-The initialization wizard asks the following 13 questions (with conditional follow-ups):
-
-1. **Company** — target company or organization
-2. **Role** — strategy/IR/research/policy/management support/other
-3. **Industry** — manufacturing/banking/fund/internet/general research
-4. **Brief Title** — custom brief name
-5. **Audience** — management, strategy, research, IR, marketing, etc.
-6. **Focus Areas** — comma-separated, e.g. sales data, autonomous driving, policy, supply chain
-7. **Cadence** — weekly, biweekly, monthly, ad hoc
-8. **Items Per Brief** — default 8
-9. **Historical Retrieval / RAG** — enable or not (default off). If enabled, choose provider: Ollama local / Gemini API
-10. **Output Formats** — comma-separated, e.g. markdown, docx
-11. **Max Source Age** — default 14 days
-12. **Source Profile** — conservative / research / aggressive signal / custom / LLM decide
-13. **Live Web Search** — enable or not (default off). If enabled, choose backend: tavily / exa / brave / firecrawl / serper
