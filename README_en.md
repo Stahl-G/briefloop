@@ -9,7 +9,7 @@ A source-grounded, auditable, agent-collaborative briefing workflow for business
 
 > Let code organize the workflow. Let models handle judgment and expression. Keep every important conclusion traceable.
 
-`multi-agent-brief-workflow` is not an "AI writes a weekly report" prompt. It breaks real briefing work into contract-governed steps: understand the task, discover sources, organize inputs, build a Claim Ledger, assist drafting, audit the result, and render delivery files. Each step has explicit expected artifacts, producer boundaries, transition rules, and inspectable records.
+`Multi-Agent-Brief-Workflow` (MABW) is not an "AI writes a weekly report" prompt. It breaks real briefing work into contract-governed steps: understand the task, discover sources, organize inputs, build a Claim Ledger, assist drafting, audit the result, and render delivery files. Each step has explicit expected artifacts, producer boundaries, transition rules, and inspectable records.
 
 This project is not an investment advice tool, trading signal generator, or replacement for human review.
 
