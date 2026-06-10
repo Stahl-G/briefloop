@@ -67,6 +67,8 @@ If `state check` reports blocking quality gate findings, choose `delegate_repair
 
 If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` to structure issues and create a bounded repair plan. These commands do not execute repair or edit brief artifacts.
 
+Repair best practice: repeated repair is a warning sign, not progress by itself. If the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`. If the proposed repair would touch more than two sections, narrow the scope before delegating repair or request human review. This is runtime guidance only; v0.7 does not implement automatic retry counters or trajectory regulation.
+
 When material-fact, freshness, or target-relevance gates are required, use `multi-agent-brief gates check`, `gates show --json`, and `gates validate` to create and inspect `output/intermediate/quality_gate_report.json`. Gate checks may block unsafe current-stage continue/finalize decisions, but repair ownership is still routed explicitly by the Orchestrator. Gate checks do not live-fetch sources, execute repair, or automatically create feedback issues; route failed gates into feedback explicitly when repair planning is needed.
 
 ## Optional Provenance Projection

@@ -43,6 +43,12 @@ EXPECTED_WORKFLOW_ARTIFACTS = [
     "output/intermediate/audit_report.json",
     "output/brief.md",
 ]
+REPAIR_GUIDANCE_NOTE = (
+    "Repair guidance is bounded runtime guidance, not an automatic trajectory "
+    "regulator: if the same stage has already needed roughly three retry/repair "
+    "rounds, prefer request_human_review or block_run; if a repair would touch "
+    "more than two sections, narrow the scope before delegating or request human review."
+)
 
 
 @dataclass
@@ -126,6 +132,7 @@ def _hermes_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Read output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, and event_log.jsonl before selecting the next stage.",
             "Read output/intermediate/audience_profile_snapshot.md at run start for reader taste context; do not treat audience_profile.md as source evidence.",
             "Read output/intermediate/orchestrator_control_switchboard.json; record enable/defer/reject selections before explicitly executing any selected control.",
+            REPAIR_GUIDANCE_NOTE,
             f"Orchestrator loop: {ORCHESTRATOR_LOOP}",
             "Each delegate_task child needs complete goal, context, input paths, and output paths.",
             "Parent must verify each artifact before proceeding to the next child.",
@@ -162,6 +169,7 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
             "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{REPAIR_GUIDANCE_NOTE}\n\n"
             f"Repository: {repo.resolve()}\n"
             f"Workspace: {ws_path}\n"
             f"Activate venv: source {venv}"
@@ -205,7 +213,8 @@ def _opencode_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval."
+            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{REPAIR_GUIDANCE_NOTE}"
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -245,7 +254,8 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval."
+            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{REPAIR_GUIDANCE_NOTE}"
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -286,6 +296,7 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
             "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{REPAIR_GUIDANCE_NOTE}\n\n"
             "Run each step in order, verifying each artifact before continuing:\n\n"
             f"1. multi-agent-brief doctor --config {ws_path}/config.yaml\n"
             f"2. multi-agent-brief sources decide --config {ws_path}/config.yaml  (if configured)\n"
@@ -305,6 +316,7 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Verify each artifact exists and is non-empty before continuing.",
             "Use inputs extract to convert PDF/DOCX/image inputs into .mineru.md before Scout reads evidence files.",
             "Directory role still controls claim eligibility: only extracted files under input/sources are evidence.",
+            REPAIR_GUIDANCE_NOTE,
             "The 'auditor' step must run before finalize.",
         ],
     )

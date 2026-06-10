@@ -212,7 +212,7 @@ Non-goals:
 
 ### v0.8 — Mode Registry, Policy Packs, And Runtime Parity
 
-Goal: support different brief contexts and entry modes through configurable policy packs while keeping runtime behavior consistent.
+Goal: support different brief contexts and entry modes through configurable policy packs while keeping runtime behavior consistent, and define the first evaluation protocol for whether approved guidance manifests without causing regressions.
 
 Public scope:
 
@@ -221,12 +221,14 @@ Public scope:
 - Keep Hermes, Claude Code, Codex, OpenCode, and manual fallback aligned around the same artifact expectations.
 - Keep CLI, Hermes GUI/plugin, and other runtime entry points backed by the same Orchestrator contracts and state files.
 - Preserve a single public support matrix.
+- Define guidance manifestation and guidance regression measurements for real runtime traces. `origin_runtime` may be used for analysis, but not for runtime filtering or routing.
 
 Non-goals:
 
 - no disclosure of commercial policy-pack internals before they are stable
 - no runtime-specific artifact schema forks
 - no separate simplified pipeline for GUI or messaging entry points
+- no claim that v0.7 Improvement Memory has already improved output quality before the v0.8 protocol is run
 
 ### v0.9 — Distribution And Reference Workflows
 

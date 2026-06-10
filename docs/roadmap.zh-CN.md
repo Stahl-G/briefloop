@@ -212,7 +212,7 @@ Non-goals:
 
 ### v0.8 — Mode Registry, Policy Packs, And Runtime Parity
 
-目标：用 configurable policy packs 和 mode registry 支持不同简报场景与入口，同时保持不同 runtime 的行为一致。
+目标：用 configurable policy packs 和 mode registry 支持不同简报场景与入口，同时保持不同 runtime 的行为一致，并定义 approved guidance 是否真正体现、是否造成回归的第一版评估协议。
 
 公开范围：
 
@@ -221,12 +221,14 @@ Non-goals:
 - 让 Hermes、Claude Code、Codex、OpenCode 和 manual fallback 对齐到同一组 artifact expectations。
 - 保证 CLI、Hermes GUI/plugin 和其他 runtime 入口都基于同一套 司乐师 契约 和 state files。
 - 保持单一公开 support matrix。
+- 定义 guidance manifestation 和 guidance regression 评估口径，用真实 runtime traces 观察 approved guidance 是否被体现、是否造成事实或表达回归。`origin_runtime` 只用于分析，不用于 runtime filtering 或 routing。
 
 Non-goals:
 
 - 商业 policy-pack 内部规则稳定前不公开。
 - 不让 runtime-specific 细节分叉业务 artifact schema。
 - 不为 GUI 或 messaging 入口另写一套简化 pipeline。
+- v0.8 协议实际执行前，不声称 v0.7 Improvement Memory 已经改善输出质量。
 
 ### v0.9 — Distribution And Reference Workflows
 

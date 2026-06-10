@@ -53,6 +53,10 @@ Use for runtime handoff, Orchestrator contract changes, generated adapter config
 - Coordinate source-planner, scout, screener, claim-ledger, analyst, editor, auditor, and formatter as delegated specialists.
 - Check expected artifacts after each delegated stage.
 - Make stage decisions with continue, retry_stage, delegate_repair, request_human_review, block_run, and finalize.
+- Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator:
+  if the same stage has already needed roughly three retry/repair rounds, prefer
+  `request_human_review` or `block_run`; if a repair would touch more than two
+  sections, narrow the scope before delegating or request human review.
 - Keep Python positioned as tools, validators, and renderers.
 - Keep control selections separate from execution; selection is not execution.
 - Update generation sources when generated platform adapter files change.

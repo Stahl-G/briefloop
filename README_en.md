@@ -176,7 +176,7 @@ This project is developed from real manufacturing and briefing work. It needs mo
 ## Roadmap Summary
 
 - **v0.7**: Improvement Ledger — freeze human-authored, human-approved reader preferences into per-run Improvement Memory snapshots; no automatic learning, FrictionStore auto-detection, or output-quality guarantee.
-- **v0.8**: evaluation experiments and policy packs — systematic experiments against single-model baselines, mode registry, and a second policy pack.
+- **v0.8**: evaluation experiments and policy packs — define guidance manifestation / regression evaluation, compare against single-model baselines, and advance the mode registry plus a second policy pack.
 - **v0.9**: distribution and reference workflows — easier no-API-key setup, reference runs, and documentation cleanup.
 - **v1.0**: stable baseline — frozen schemas, stable CLI surfaces, security threat model, and clear support boundaries.
 

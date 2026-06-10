@@ -13,6 +13,8 @@ draft facts pass
 
 A brief with correct facts can still be blocked if it is too thin, poorly structured, stale-but-current-framed, or unreadable after rendering.
 
+Gate design must avoid optimizing one visible metric while weakening the briefing job as a whole. In particular, precision-oriented checks should be paired with coverage-side checks so the workflow does not learn to avoid unsupported claims by silently omitting important, already-screened information.
+
 ## Protocol
 
 Final delivery gates use:
@@ -43,6 +45,21 @@ The current code exposes this through `FinalQualityAuditAgent`. It is intentiona
 | Stale-current framing | Final | Blocking | Old dated events cannot be described as current/latest without a new change. |
 | DOCX text depth | Rendered | Blocking | Rendered output must preserve enough text content. |
 | DOCX dependency availability | Rendered | Blocking | Production DOCX validation must fail if `python-docx` is missing. |
+
+## Coverage And Recall Boundary
+
+Coverage gates are not full-recall proofs. They can check configured coverage requirements, missing citations for known claims, and silent loss between screened candidates and the brief. They cannot prove that Scout or Screener found every important event in the source universe.
+
+Screener is a precision and capacity-control stage: it ranks, deduplicates, freshness-checks, and caps candidate items before Claim Ledger creation. That cap is useful for reader fit, but it can also drop lower-ranked items. Treat a coverage gap after Screener as a possible recall limitation that needs policy, human review, or a recall-side evaluation case; do not treat Screener output as proof that no omitted topic existed.
+
+Goodhart guardrail:
+
+```text
+precision gate alone -> risk: safer-looking omission
+precision gate + coverage-side check -> better signal: supported claims and visible omissions
+```
+
+This is a documentation and evaluation principle in v0.7. It is not yet an automatic trajectory regulator or complete recall benchmark.
 
 ## Default Thresholds
 

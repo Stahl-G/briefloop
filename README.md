@@ -175,7 +175,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 ## 路线图（摘要）
 
 * **v0.7**：改进账本（Improvement Ledger）——把人工撰写、人工批准的读者偏好按运行冻结为 Improvement Memory snapshot；不做自动学习、FrictionStore 自动检测或输出质量承诺。
-* **v0.8**：评估实验与策略包——对照单模型基线的系统性实验；mode registry 与第二个 policy pack。
+* **v0.8**：评估实验与策略包——定义 guidance manifestation / regression 评估协议，对照单模型基线，并推进 mode registry 与第二个 policy pack。
 * **v0.9**：分发与参考工作流——零 API key 快速上手、参考运行、文档整顿。
 * **v1.0**：稳定基线——schema 冻结、CLI 表面冻结、安全威胁模型、明确支持边界。
 

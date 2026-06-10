@@ -117,6 +117,7 @@ Before finalize, run `multi-agent-brief gates check --workspace <workspace>`, `s
 At run start, read `output/intermediate/audience_profile_snapshot.md` for taste context and pass a concise summary to delegated roles. Do not treat `audience_profile.md` as evidence.
 Read `output/intermediate/orchestrator_control_switchboard.json`, then use `multi-agent-brief controls select` to record selected controls before explicitly running their CLI/subagent/human action. Selection is not execution.
 Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.
+Repair guidance is bounded runtime guidance, not an automatic trajectory regulator: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 Use `multi-agent-brief provenance build`, `provenance show --json`, and `provenance validate` only as optional audit/debug projection commands after runtime state exists. Provenance projection does not prove semantic support, execute repair, or gate finalize by default.
 
 Read `references/delegate-task-sequence.md` before creating child tasks.

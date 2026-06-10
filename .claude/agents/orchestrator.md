@@ -23,6 +23,7 @@ Responsibilities:
 - Identify the next stage and delegate the appropriate specialist role or Python tool.
 - Check expected artifacts after each delegated stage before continuing.
 - Make stage decisions using continue, retry_stage, delegate_repair, request_human_review, block_run, and finalize.
+- Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
 - Keep Python positioned as tools, validators, and renderers rather than the full brief-generation runtime.
 - Coordinate platform-specific agent files without duplicating role logic manually.
 - Run or document tests before completion.

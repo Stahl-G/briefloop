@@ -12,6 +12,12 @@ HERMES_SKILL_NAME = "multi-agent-brief-hermes"
 DEFAULT_DAILY_SCHEDULE = "0 7 * * *"
 DEFAULT_WEEKLY_SCHEDULE = "0 9 * * 1"
 DEFAULT_MONTHLY_SCHEDULE = "30 8 1 * *"
+REPAIR_GUIDANCE_NOTE = (
+    "Repair guidance is bounded runtime guidance, not an automatic trajectory regulator: "
+    "if the same stage has already needed roughly three retry/repair rounds, prefer "
+    "request_human_review or block_run; if a repair would touch more than two sections, "
+    "narrow the scope before delegating or request human review."
+)
 
 
 @dataclass
@@ -165,6 +171,7 @@ def build_hermes_cron_plan(
                 "Read the Orchestrator control switchboard:\n"
                 "- output/intermediate/orchestrator_control_switchboard.json\n"
                 "Record control selections with multi-agent-brief controls select. Selection is not execution.\n\n"
+                f"{REPAIR_GUIDANCE_NOTE}\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
                 "- output/intermediate/repair_plan.json\n"
@@ -213,6 +220,7 @@ def build_hermes_cron_plan(
                 "Read the Orchestrator control switchboard:\n"
                 "- output/intermediate/orchestrator_control_switchboard.json\n"
                 "Record control selections with multi-agent-brief controls select. Selection is not execution.\n\n"
+                f"{REPAIR_GUIDANCE_NOTE}\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
                 "- output/intermediate/repair_plan.json\n"
@@ -538,14 +546,16 @@ multi-agent-brief inputs classify --config <workspace>/config.yaml
 
 11. If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
 
-12. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
+12. Repair guidance is bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
+
+13. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
 
 ```bash
 multi-agent-brief gates check --workspace <workspace>
 multi-agent-brief state check --workspace <workspace> --strict
 ```
 
-12. If state is not blocked, record the auditor decision:
+14. If state is not blocked, record the auditor decision:
 
 ```bash
 multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."
@@ -553,13 +563,13 @@ multi-agent-brief state decide --workspace <workspace> --stage auditor --decisio
 
 If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize.
 
-13. Run finalize only after the gates/state decision path passes. `finalize` is not a quality-gate executor:
+15. Run finalize only after the gates/state decision path passes. `finalize` is not a quality-gate executor:
 
 ```bash
 multi-agent-brief finalize --config <workspace>/config.yaml
 ```
 
-14. Optional audit/debug provenance projection after runtime state exists:
+16. Optional audit/debug provenance projection after runtime state exists:
 
 ```bash
 multi-agent-brief provenance build --workspace <workspace>
@@ -881,60 +891,62 @@ As the Hermes Orchestrator main agent, execute:
    multi-agent-brief feedback show --workspace {workspace} --json
    multi-agent-brief feedback validate --workspace {workspace}
 
-10. Delegate scout child via delegate_task:
+11. Repair guidance is bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
+
+12. Delegate scout child via delegate_task:
    Goal: "Extract candidate reportable items for a MABW brief"
    Write: output/intermediate/candidate_claims.json
    toolsets: ["file", "terminal", "web"]
 
-11. After candidate_claims.json exists and is non-empty, delegate screener child:
+13. After candidate_claims.json exists and is non-empty, delegate screener child:
    Goal: "Screen and rank MABW candidate claims"
    Input: output/intermediate/candidate_claims.json
    Write: output/intermediate/screened_candidates.json
    toolsets: ["file", "terminal"]
 
-12. After screened_candidates.json exists, delegate claim-ledger child:
+14. After screened_candidates.json exists, delegate claim-ledger child:
    Goal: "Build the MABW Claim Ledger"
    Input: output/intermediate/screened_candidates.json
    Write: output/intermediate/claim_ledger.json
    toolsets: ["file", "terminal"]
 
-13. After claim_ledger.json exists, delegate analyst child:
+15. After claim_ledger.json exists, delegate analyst child:
    Goal: "Draft the audited MABW brief"
    Inputs: user.md and output/intermediate/claim_ledger.json
    Write: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-14. After audited_brief.md exists, delegate editor child:
+16. After audited_brief.md exists, delegate editor child:
    Goal: "Polish the audited MABW brief"
    Input and output: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-15. After editor completes, delegate auditor child:
+17. After editor completes, delegate auditor child:
     Goal: "Audit the MABW brief against the Claim Ledger"
     Inputs: output/intermediate/audited_brief.md and output/intermediate/claim_ledger.json
     Write: output/intermediate/audit_report.json
     toolsets: ["file", "terminal"]
 
-16. After audit_report.json exists, select and run deterministic quality gates, then refresh runtime state:
+18. After audit_report.json exists, select and run deterministic quality gates, then refresh runtime state:
     multi-agent-brief controls select --workspace {workspace} --control quality_gates --selection enable --reason "Use quality gates before finalize."
     multi-agent-brief gates check --workspace {workspace}
     multi-agent-brief state check --workspace {workspace} --strict
 
-17. If state is not blocked, record the auditor decision:
+19. If state is not blocked, record the auditor decision:
     multi-agent-brief state decide --workspace {workspace} --stage auditor --decision continue --reason "Audit and quality gates passed."
 
-18. If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
+20. If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
 
-19. Run finalize only after the gates/state decision path passes. finalize is not a quality-gate executor:
+21. Run finalize only after the gates/state decision path passes. finalize is not a quality-gate executor:
     multi-agent-brief finalize --config {workspace}/config.yaml
 
-20. Optional audit/debug projection after runtime state exists:
+22. Optional audit/debug projection after runtime state exists:
     multi-agent-brief provenance build --workspace {workspace}
     multi-agent-brief provenance show --workspace {workspace} --json
     multi-agent-brief provenance validate --workspace {workspace}
     Provenance projection is not semantic proof and is not required to finalize.
 
-21. Report artifact paths, audit status, quality gate status, switchboard selections, and optional provenance_graph.json when created.
+23. Report artifact paths, audit status, quality gate status, switchboard selections, and optional provenance_graph.json when created.
 
 For each delegate_task call, write complete goal and context with the workspace path, input paths, and output paths fully specified. After each child returns, verify the expected artifact exists and is non-empty before selecting continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.
 

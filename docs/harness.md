@@ -33,6 +33,14 @@ The current harness includes public-safe versions of local weekly pipeline gates
 - Repeat/background claims appearing in the executive summary
 - Excess stale/no-update filler phrases
 
+## Gate Design Boundary
+
+Quality gates should not reward omission. Precision-oriented checks such as unsupported-number blocking need coverage-side companions when the workflow risk is silent loss of important information.
+
+Coverage checks do not prove full recall. They can identify configured coverage gaps, missing support for known claims, or screened candidates that disappear before the brief. They cannot prove that Scout and Screener found every material item in the source universe.
+
+Screener is a ranking, deduplication, freshness, and capacity-control stage. It improves focus, but it is not a recall certificate.
+
 ## Clean-Room Boundary
 
 Local prototypes may contain company-specific rules, templates, and delivery constraints. Those should not be copied verbatim into this public repo.

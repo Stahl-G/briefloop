@@ -59,6 +59,8 @@ Before `finalize`, run `multi-agent-brief gates check`, `state check --strict`, 
 
 Selection is not execution. `controls select --selection enable` records Orchestrator intent only; explicitly run the selected CLI, subagent, or human action afterward.
 
+Repair guidance is bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
+
 Optional audit/debug projection after runtime state exists:
 
 ```text

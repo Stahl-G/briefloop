@@ -101,6 +101,8 @@ multi-agent-brief state decide --workspace <workspace> --stage auditor --decisio
 
 If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize. `finalize` is not a quality-gate executor.
 
+Repair best practice: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating repair or request human review. This is runtime guidance only; v0.7 does not implement automatic retry counters or trajectory regulation.
+
 Optional provenance projection after runtime state exists:
 
 ```bash

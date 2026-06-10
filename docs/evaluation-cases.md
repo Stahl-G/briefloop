@@ -13,6 +13,17 @@ These cases validate control-surface behavior across:
 
 They are not benchmark scores and are not workflow artifacts.
 
+## Evaluation Claim Boundary
+
+Evaluation cases prove deterministic control behavior, not model output quality. A passing case can show that an approved Improvement Memory entry was materialized into a frozen snapshot and referenced by handoff; it does not prove that a runtime model followed the guidance well.
+
+For v0.8 planning, guidance evaluation should distinguish two future measurements:
+
+- **Guidance manifestation rate**: when relevant approved guidance is materialized, whether the output or run trace shows observable evidence that the guidance affected the brief.
+- **Guidance regression rate**: whether materialized guidance causes overfitting, factual weakening, omission, formatting harm, or conflict with evidence and contracts.
+
+These metrics require real runtime traces and baseline comparisons. They are not asserted by the v0.7 public-safe eval suite.
+
 ## Commands
 
 ```bash
