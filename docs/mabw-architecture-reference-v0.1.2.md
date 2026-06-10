@@ -19,11 +19,11 @@ Enterprise briefing relies on a craft that takes new analysts months to acquire:
 
 MABW (Multi-Agent Brief Workflow) addresses both gaps through a **contract-governed multi-agent workflow with an audience profile runtime surface**. Correctness is governed by four structured contracts enforced at stage boundaries through a file-state blackboard. Taste is written in `audience_profile.md` — a plain-text, human-editable workspace file — and frozen into `output/intermediate/audience_profile_snapshot.md` for each run. The Orchestrator reads the snapshot, produces a semantic summary, and injects it into stage handoffs. Contracts bound correctness; taste context guides reader fit without becoming a contract.
 
-This report documents the v0.6.9 architecture lineage, the v0.1.2 design update that adds the audience profile runtime surface and the LIFE-HARNESS independent convergence analysis, and the core design philosophy: **bringing the improvement-loop infrastructure that made coding agents successful — auditability, traceability, structured feedback, and human-gated repair — into real business workflows.**
+This report documents the v0.6.9 architecture lineage, the v0.1.2 design update that adds the audience profile runtime surface and the LIFE-HARNESS runtime-interface comparison, and the core design philosophy: **bringing the improvement-loop infrastructure that made coding agents successful — auditability, traceability, structured feedback, and human-gated repair — into real business workflows.**
 
 ---
 
-> **About This Report.** This is a living architecture reference. v0.1.2 adds: (1) the audience profile runtime surface (`audience_profile.md` + frozen per-run `audience_profile_snapshot.md` + Orchestrator semantic summary), (2) the formal separation between contract-governed correctness and profile-governed taste, (3) explicit red lines that coding agents must never violate, (4) the LIFE-HARNESS independent convergence analysis (§1.4, §10.6), and (5) a full status refresh mapping the v0.1.x design framing to the v0.6.9 implementation baseline. For current release status, use `docs/architecture-status.md` and `docs/support-matrix.md`.
+> **About This Report.** This is a living architecture reference. v0.1.2 adds: (1) the audience profile runtime surface (`audience_profile.md` + frozen per-run `audience_profile_snapshot.md` + Orchestrator semantic summary), (2) the formal separation between contract-governed correctness and profile-governed taste, (3) explicit red lines that coding agents must never violate, (4) the LIFE-HARNESS runtime-interface comparison (§1.4, §10.6), and (5) a full status refresh mapping the v0.1.x design framing to the v0.6.9 implementation baseline. For current release status, use `docs/architecture-status.md` and `docs/support-matrix.md`.
 
 ---
 
@@ -70,13 +70,13 @@ MABW does not try to make a single LLM smarter. It builds the five mechanisms:
 
 The bet: if you build the infrastructure, the improvement will follow — not because the model learns, but because the system accumulates feedback-to-improvement cycles the way a test suite accumulates regression checks.
 
-### 1.4 Independent Convergence: LIFE-HARNESS
+### 1.4 Runtime-Interface Comparison: LIFE-HARNESS
 
-In May 2026 — weeks before MABW development began, and entirely without knowledge exchange — Xu et al. released *Adapting the Interface, Not the Model: Runtime Harness Adaptation for Deterministic LLM Agents* (arXiv:2605.22166, v1 May 21, v2 May 27, 2026). The paper demonstrates that a structured runtime harness, evolved from training trajectories and applied to a frozen LLM, improves 116 out of 126 model–environment settings across 18 model backbones including GPT, Claude, Llama, and Qwen families, with an average relative gain of 88.5%. The harnesses were evolved only from Qwen3-4B-Instruct trajectories and transferred to 17 other models without modification.
+In May 2026, Xu et al. released *Adapting the Interface, Not the Model: Runtime Harness Adaptation for Deterministic LLM Agents* (arXiv:2605.22166, v1 May 21, v2 May 27, 2026). The paper demonstrates that a structured runtime harness, evolved from training trajectories and applied to frozen LLM agents, improves 116 out of 126 model–environment settings across 18 open model backbones including Qwen, Llama, and xLAM families, with an average relative gain of 88.5%. The harnesses were evolved only from Qwen3-4B-Instruct trajectories and transferred to 17 other models without modification.
 
-The authors had no knowledge of MABW. MABW's design had no knowledge of their work. Yet both projects converged on the same core thesis: **adapt the interface, not the model.** Their four-layer harness — Environment Contracts, Procedural Skills, Action Realization, Trajectory Regulation — maps structurally to MABW's Behavior, Process/Artifact, Fact-Grounding/Evidence, and Quality/Audience contracts. Both projects instantiate Design by Contract for LLM agent governance. Both arrived at this conclusion from different directions: LIFE-HARNESS from controlled laboratory experiments on deterministic agent benchmarks; MABW from the operational needs of enterprise briefing.
+The useful comparison is not a four-layer-to-four-contract isomorphism. LIFE-HARNESS layers are lifecycle interception points: before interaction, during task conditioning, before execution, and after execution. MABW contract categories are governance domains: behavior, process/artifact, fact-grounding/evidence, and quality/audience. These are different axes.
 
-This is not competition. It is independent validation. When a Peking University laboratory, running 126 controlled experiments across 18 models, reaches the same architectural conclusion as a practitioner designing for a specific business workflow, the convergence suggests something structural: **the model-centric phase of agent improvement is reaching its ceiling, and the interface-centric phase is beginning.** MABW and LIFE-HARNESS represent complementary expressions of this shift — one targeting continuous human-in-the-loop operational improvement for enterprise briefing, the other targeting offline trajectory-driven harness evolution for deterministic benchmarks. Their differences are as instructive as their similarities (see §10 for a detailed comparison).
+The convergence is at the thesis level: **adapt the interface, not the model.** LIFE-HARNESS shows that recurring failures in deterministic agent environments can be localized to the model-environment boundary and converted into structured, auditable, frozen harness interventions. MABW applies the same interface-first intuition to enterprise briefing, but uses human review, contract checks, state files, and bounded repair proposals rather than automatic harness evolution. Their differences are as instructive as their similarities (see §10 for a detailed comparison).
 
 ---
 
@@ -405,13 +405,21 @@ Following Kapoor et al. (2024) *AI Agents That Matter*, MABW evaluates **agentic
 
 State file correctness, artifact validation completeness, event log traceability, run ID consistency, handoff context exposure, control switchboard selection behavior, source appendix safety, and CLI output behavior — all executable against the v0.6.9 implementation baseline without experimental evaluation data.
 
-### 9.3 Single-Agent Baseline Comparison
+### 9.3 Experimental Protocol Design
 
-**Designed, not yet executed.** Three testable hypotheses compare MABW against a prompt-only single-LLM baseline on failure localization, state recoverability, and operator auditability — not brief quality scores.
+**Designed, not yet executed.** The initial comparison should not stop at "MABW versus a bare single LLM." A stronger protocol evaluates the control surface itself:
+
+1. **Frozen-surface evaluation.** Accumulate feedback, gates, profile snapshots, and harness rules on one task set; freeze the surface; then evaluate on a held-out task set. This mirrors the LIFE-HARNESS protocol of evolving on training trajectories and evaluating a fixed harness on unseen tasks.
+2. **Leave-one-surface-out ablation.** Run the same task set with selected surfaces disabled: quality gates, feedback/repair controls, audience snapshot, provenance projection, and control switchboard. This tests which control surface produces measurable system-behavior value.
+3. **Cross-runtime transfer.** Run the same contract, handoff, state, and validation surface across Hermes, Claude Code, Codex, OpenCode, and manual fallback where practical. Runtime parity should be measured as transfer of control semantics, not identical model outputs.
+4. **Prompt-optimized single-agent baseline.** Compare not only against a bare prompt, but also against a carefully optimized single-agent prompt. Otherwise the evaluation risks measuring prompt engineering effort rather than architecture.
+5. **Failure diagnosis before investment.** Before adding new control surfaces, manually classify failed reference runs by earliest dominant bottleneck: contract exposure, procedural guidance, action/artifact validation, trajectory regulation, evidence grounding, audience fit, or model reasoning. The distribution should drive the next engineering investment.
+
+The hypotheses remain system-behavior hypotheses: failure localization, state recoverability, artifact validity, cross-runtime control transfer, and operator auditability — not raw brief prose quality.
 
 ### 9.4 Threats to Validity
 
-No real enterprise workload experiments; runtime parity verified at contract/handoff level only; baseline comparison not executed; single-operator evaluation.
+No real enterprise workload experiments; runtime parity verified at contract/handoff level only; baseline and ablation comparisons not executed; single-operator evaluation; deterministic gates cover only slices of the briefing problem; open-ended briefing lacks the binary reward signal available in deterministic agent benchmarks.
 
 ---
 
@@ -439,23 +447,30 @@ MABW's provenance schema is W3C PROV-compatible, designed to operationalize FAct
 
 MABW's controlled self-improvement loop is distinguished from Self-Refine and Reflexion by structured, file-system-persisted, human-gated feedback routing. Feedback issues and repair plans are recorded as artifacts; RepairPlan is a proposal, not an automatic action.
 
-### 10.6 LIFE-HARNESS: Independent Convergence
+### 10.6 LIFE-HARNESS: Runtime Harness Adaptation
 
-Xu et al. (2026) released *Adapting the Interface, Not the Model: Runtime Harness Adaptation for Deterministic LLM Agents* in May 2026 (arXiv:2605.22166, v1 May 21, v2 May 27) — without any knowledge exchange between the projects. LIFE-HARNESS evolves a structured runtime harness from training trajectories and applies it to frozen LLMs, improving 116 out of 126 model–environment settings across 18 backbones (GPT, Claude, Llama, Qwen families) with an average relative gain of 88.5%. Harnesses evolved only from Qwen3-4B-Instruct transfer to 17 other models without modification.
+Xu et al. (2026) released *Adapting the Interface, Not the Model: Runtime Harness Adaptation for Deterministic LLM Agents* in May 2026 (arXiv:2605.22166, v1 May 21, v2 May 27). LIFE-HARNESS evolves a structured runtime harness from training trajectories and applies it to frozen LLM agents, improving 116 out of 126 model–environment settings across 18 open model backbones, with an average relative gain of 88.5%. Harnesses evolved only from Qwen3-4B-Instruct trajectories and transferred to 17 other models without modification.
 
-The architectural convergence is structural:
+The architectural comparison is strongest when the axes are kept separate:
 
 | Dimension | LIFE-HARNESS | MABW |
 |-----------|-------------|------|
 | Core thesis | Adapt the interface, not the model | Contract-governed, not model-dependent |
-| Harness layers | Environment Contracts, Procedural Skills, Action Realization, Trajectory Regulation | Behavior, Process/Artifact, Fact-Grounding/Evidence, Quality/Audience |
+| Primary axis | Lifecycle interception points: before interaction, task conditioning, before execution, after execution | Governance domains: behavior, process/artifact, fact-grounding/evidence, quality/audience |
+| Environment Contract | Tool descriptions, action constraints, policy rules exposed before interaction | Contracts, stage specs, artifact contracts, policy packs, handoff references |
+| Procedural Skill | Retrieved procedures distilled from training trajectories | Audience/profile context, role skills, recipes, and future FrictionStore patterns |
+| Action Realization | Validate, canonicalize, or block model actions before execution | Decision legality checks, artifact validation, CLI/source/action boundary checks |
+| Trajectory Regulation | Detect loops, stagnation, repeated invalid retries, and budget exhaustion after execution | Partially absent: event log records decisions, but v0.6.9 has no first-class retry counters, repair-loop detection, or budget-driven narrowing of allowed decisions |
 | Evolution mechanism | Offline trajectory-driven harness evolution from training data | Online human feedback → FeedbackIssue → RepairPlan → FrictionStore |
 | Applicability | Deterministic agent benchmarks (ALFWorld, WebShop, OS, DB, τ-bench) | Enterprise briefing (policy-driven, compliance-sensitive, human-in-the-loop) |
-| Human role | Evaluator (fixed harness assessed on unseen tasks) | Operator and reviewer (continuous feedback integration, RepairPlan approval) |
+| Reward signal | Binary task success in deterministic environments | Human review plus deterministic gates over limited slices of the task |
+| Human role | Evaluator and reviewer of fixed-harness results | Operator and reviewer of feedback, repair plans, and improvement proposals |
 | Model scope | 18 backbones, cross-model transfer demonstrated | Runtime parity: 5 runtimes sharing one contract surface |
-| Validation | 126 controlled experiments, 88.5% avg. gain | Architecture reference, public-safe evaluation cases, CI-validated regressions |
+| Validation | 126 controlled experiments, leave-one-layer ablation, prompt-evolving comparison | Architecture reference, public-safe evaluation cases, CI-validated regressions; ablation protocol not yet executed |
 
-The differences are as instructive as the similarities. LIFE-HARNESS demonstrates that harness adaptation is broadly effective across environments and models; MABW demonstrates that the same principle can be operationalized for continuous human-in-the-loop improvement in a specific business domain. LIFE-HARNESS proves the approach works at scale; MABW makes it usable for non-AI-native operators. They represent complementary expressions of the same paradigm shift: the model-centric phase of agent improvement is reaching its ceiling, and the interface-centric phase is beginning.
+The differences are as instructive as the similarities. LIFE-HARNESS demonstrates that interface adaptation works when the environment is deterministic and the reward signal is clear. MABW studies the harder business-workflow setting where the reward signal is sparse, human, and often tacit. Deterministic gates therefore have strategic value beyond quality checking: each gate converts a small part of briefing from "no reward signal" into a weak, auditable reward surface that can support controlled improvement.
+
+LIFE-HARNESS also exposes a missing MABW layer: trajectory regulation. MABW has legal decisions such as `retry_stage` and `delegate_repair`, and it records those decisions in `event_log.jsonl`, but v0.6.9 does not yet detect repeated repair loops, count retries per stage, or narrow `next_allowed_decisions` when a stage exhausts its attempt budget. A future control-surface patch should add stage-scoped retry counters, repair-loop detection, and budget-driven escalation to `request_human_review` or `block_run` without turning Python into the workflow executor.
 
 ### 10.7 Memory and Preference Systems
 
@@ -465,7 +480,7 @@ MABW's audience profile runtime surface draws from the Hermes agent's USER.md pa
 
 ## 11. Limitations & Future Work
 
-**Known limitations v0.6.9:** No private/commercial evaluation data; specialist roles are contract-defined but not autonomously executing in Python; automatic repair execution, semantic fact verification, and full provenance proof remain deferred; event log is control trace; provenance graph is optional audit/debug projection (v0.6.5); source appendix is a reader-facing source list, not semantic proof; audience profile is context only — not automatically learned, updated, enforced, or routed; control selections record intent without executing selected controls; FrictionStore and cross-run pattern detection deferred to v0.7+; no scale validation on real enterprise workloads.
+**Known limitations v0.6.9:** No private/commercial evaluation data; specialist roles are contract-defined but not autonomously executing in Python; automatic repair execution, semantic fact verification, and full provenance proof remain deferred; event log is control trace; provenance graph is optional audit/debug projection (v0.6.5); source appendix is a reader-facing source list, not semantic proof; audience profile is context only — not automatically learned, updated, enforced, or routed; control selections record intent without executing selected controls; first-class trajectory regulation is not implemented yet (no stage retry counters, repair-loop detection, or attempt-budget-driven decision narrowing); FrictionStore and cross-run pattern detection deferred to v0.7+; no scale validation on real enterprise workloads.
 
 **Design boundary:** MABW is a controlled self-improving system, not fully autonomous. Contracts govern correctness; `audience_profile.md` and its frozen per-run snapshot provide taste context — the contract architecture generalizes across domains; the profile is per-team, per-department, per-company. Generalization to non-briefing workflows requires domain-specific policy pack adaptation.
 
