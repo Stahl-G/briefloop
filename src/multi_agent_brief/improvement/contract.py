@@ -78,6 +78,7 @@ DIAGNOSTIC_CODES = {
     "invalid_supersedes_id",
     "unknown_supersedes_reference",
     "supersession_cycle",
+    "supersession_fork",
 }
 
 MAX_GUIDANCE_TEXT_LENGTH = 500
@@ -970,11 +971,14 @@ def _validate_origin(
 def _validate_supersession_graph(current_entries: dict[str, dict[str, Any]]) -> list[LedgerDiagnostic]:
     diagnostics: list[LedgerDiagnostic] = []
     graph: dict[str, str] = {}
+    approved_superseders_by_target: dict[str, list[str]] = {}
     for entry_id, entry in current_entries.items():
         target_id = supersedes_id(entry)
         if target_id is None:
             continue
         graph[entry_id] = target_id
+        if entry.get("status") == "approved":
+            approved_superseders_by_target.setdefault(target_id, []).append(entry_id)
         if target_id not in current_entries:
             diagnostics.append(_diag(
                 "unknown_supersedes_reference",
@@ -1003,6 +1007,18 @@ def _validate_supersession_graph(current_entries: dict[str, dict[str, Any]]) -> 
                 break
             seen.add(cursor)
             cursor = graph[cursor]
+    for target_id, superseders in sorted(approved_superseders_by_target.items()):
+        if len(superseders) <= 1:
+            continue
+        diagnostics.append(_diag(
+            "supersession_fork",
+            "error",
+            (
+                f"Multiple approved entries supersede {target_id}: "
+                f"{', '.join(sorted(superseders))}."
+            ),
+            entry_id=target_id,
+        ))
     return diagnostics
 
 

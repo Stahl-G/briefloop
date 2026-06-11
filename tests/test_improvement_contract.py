@@ -277,6 +277,36 @@ def test_supersedes_id_ledger_graph_rejects_unknown_and_cycles():
     cycle = read_ledger_text(f"{_line(a)}\n{_line(b)}\n")
     assert "supersession_cycle" in _codes(cycle.diagnostics)
 
+    second_approved = _revision(
+        entry_id="AG-0002",
+        revision=2,
+        status="approved",
+        previous_revision_sha256=revision_sha256(second),
+        supersedes_id="AG-0001",
+        approved_by="stahl",
+        approved_at="2026-06-10T00:02:00Z",
+    )
+    third = _revision(entry_id="AG-0003", supersedes_id="AG-0001")
+    third_approved = _revision(
+        entry_id="AG-0003",
+        revision=2,
+        status="approved",
+        previous_revision_sha256=revision_sha256(third),
+        supersedes_id="AG-0001",
+        approved_by="stahl",
+        approved_at="2026-06-10T00:03:00Z",
+    )
+    fork_text = (
+        f"{_line(first)}\n"
+        f"{_line(approved_first)}\n"
+        f"{_line(second)}\n"
+        f"{_line(second_approved)}\n"
+        f"{_line(third)}\n"
+    )
+    fork_result = validate_next_revision(fork_text, third_approved)
+    assert fork_result.ok is False
+    assert "supersession_fork" in _codes(fork_result.diagnostics)
+
 
 def test_required_approval_rejection_revert_metadata_and_timestamp_format():
     first = _revision()

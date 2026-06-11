@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.improvement.contract import canonical_json, read_ledger_text, revision_sha256
+from multi_agent_brief.improvement.memory import rebuild_improvement_memory
 from multi_agent_brief.improvement.state import (
     ImprovementLedgerError,
     approve_improvement,
@@ -623,6 +624,39 @@ def test_duplicate_and_forked_supersession_warnings(tmp_path):
         supersedes="AG-0001",
     )
     assert any(item["code"] == "supersedes_target_already_superseded" for item in fork["warnings"])
+
+
+def test_approve_rejects_parallel_supersession_fork(tmp_path):
+    ws = _workspace(tmp_path)
+    _propose_and_approve(ws, guidance="Original guidance.")
+    second = propose_improvement(
+        workspace=ws,
+        guidance="Replacement guidance B.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+        supersedes="AG-0001",
+    )
+    third = propose_improvement(
+        workspace=ws,
+        guidance="Replacement guidance C.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+        supersedes="AG-0001",
+    )
+
+    approve_improvement(workspace=ws, entry_id=second["entry"]["entry_id"], approved_by="stahl")
+    with pytest.raises(ImprovementLedgerError) as excinfo:
+        approve_improvement(workspace=ws, entry_id=third["entry"]["entry_id"], approved_by="stahl")
+
+    diagnostics = excinfo.value.details["diagnostics"]
+    assert any(item["code"] == "supersession_fork" for item in diagnostics)
+    by_entry = {item["entry_id"]: item for item in _ledger_lines(ws)}
+    assert by_entry["AG-0002"]["status"] == "approved"
+    assert by_entry["AG-0003"]["status"] == "proposed"
+    projection = rebuild_improvement_memory(workspace=ws)
+    assert projection["selected_entry_ids"] == ["AG-0002"]
 
 
 def test_revert_superseder_warns_about_reexposed_entry(tmp_path):
