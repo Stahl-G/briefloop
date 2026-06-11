@@ -58,6 +58,14 @@ def test_reader_final_gate_detects_process_wording_in_english_and_chinese() -> N
     assert result.counts["process_wording_count"] >= 5
 
 
+def test_reader_final_gate_counts_claim_ledger_wording_once_per_occurrence() -> None:
+    upper = detect_reader_residue("See Claim Ledger for details.", artifact="output/brief.md")
+    lower = detect_reader_residue("See claim ledger for details.", artifact="output/brief.md")
+
+    assert upper.counts["process_wording_count"] == 1
+    assert lower.counts["process_wording_count"] == 1
+
+
 def test_reader_final_gate_detects_local_paths_and_debug_residue() -> None:
     text = "\n".join(
         [

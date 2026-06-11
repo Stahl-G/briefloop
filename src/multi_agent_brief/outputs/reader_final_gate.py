@@ -45,7 +45,6 @@ _PROCESS_WORDINGS = [
     "Analyst subagent",
     "Auditor subagent",
     "Claim Ledger",
-    "claim ledger",
     "source appendix generated from cited Claim Ledger",
     "Human review required before distribution",
     "audited_brief",
