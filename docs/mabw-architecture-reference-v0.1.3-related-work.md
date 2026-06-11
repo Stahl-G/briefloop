@@ -1,8 +1,8 @@
 # MABW Architecture Reference v0.1.3 — Related Work (Standalone Chapter)
 
-**Snapshot**: v0.7.0 reference note | **Date**: 2026-06-10
+**Snapshot**: v0.6.9 | **Branch**: `main` | **Commit**: `ca4b952` | **Date**: 2026-06-10
 
-> This chapter integrates five recent papers and revises the related-work positioning for the v0.7 architecture reference. It is a standalone public-safe note, not a claim that all discussed roadmap items are implemented.
+> This chapter integrates five new papers (June 6–10, 2026) and revises the LIFE-HARNESS comparison per Mythos architectural review. It replaces the Related Work section in the v0.1.2 report and will be merged into the main reference document.
 
 ---
 
@@ -24,7 +24,7 @@ LIFE-HARNESS evolves a structured runtime harness from training trajectories and
 
 **Convergence and divergence.** LIFE-HARNESS and MABW arrived at the same thesis—adapt the interface, not the model—from different directions: LIFE-HARNESS from controlled laboratory experiments on deterministic agent benchmarks; MABW from the operational needs of enterprise briefing. Their four-layer harness (Environment Contracts, Procedural Skills, Action Realization, Trajectory Regulation) is organized by **lifecycle interception points** (when in the agent loop the intervention applies), while MABW's four contracts are organized by **governance domain** (what kind of quality boundary the contract enforces). These are complementary decompositions of the same problem space, not structurally equivalent mappings.
 
-**Trajectory Regulation: a missing layer in MABW.** LIFE-HARNESS's ablation study shows Trajectory Regulation is load-bearing—removing it causes an 86.5% performance drop in ALFWorld and 36.2% in Telecom. MABW's event log records every decision but does not yet enforce trajectory-level constraints such as retry budgets, loop detection, or automatic scope narrowing. v0.7 can document recommended handoff behavior for human review and scoped repair, but code-level enforcement remains deferred to v0.8.
+**Trajectory Regulation: a missing layer in MABW.** LIFE-HARNESS's ablation study shows Trajectory Regulation is load-bearing—removing it causes an 86.5% performance drop in ALFWorld and 36.2% in Telecom. MABW's event log records every decision but does not yet enforce trajectory-level constraints. This is more urgent than the "v0.8 design item" framing suggests: an operator waiting an hour for a 15th repair-loop iteration while the control plane never alarms is a real failure scenario. v0.7 addresses this with zero-code doc-level constraints added to handoff usage rules: a recommended repair round limit (exceeding N rounds should trigger `request_human_review`), and a scope-narrowing rule (a repair that rewrites more than N sections should narrow scope or request human review). These are constraints a compliant Orchestrator respects. Code-level enforcement (retry counters, decision narrowing) remains v0.8.
 
 **Experimental protocol for v0.8.** LIFE-HARNESS's evaluation methodology—frozen-after-evolution assessment, leave-one-surface-out ablation, cross-model transfer, and prompt-only evolving baseline—is the template for MABW's v0.8 baseline comparison protocol.
 
@@ -129,7 +129,43 @@ MABW's controlled self-improvement loop is distinguished from Self-Refine and Re
 
 ### 7. Memory and Preference Systems
 
-MABW's audience profile runtime surface follows a public, plain-text pattern for human-editable preferences that are frozen into a per-run snapshot. Unlike autonomous memory systems, MABW's profile is human-edited; the Orchestrator reads and summarizes it, but does not autonomously modify it.
+MABW's audience profile runtime surface draws from the Hermes agent's USER.md pattern—a plain-text, human-editable, agent-readable preference file frozen into a per-run snapshot. MABW also shares with Hermes the principle that memory is tool-driven and persisted to files, not managed entirely in conversation context. But the similarities end at the surface pattern. Hermes's memory was designed for a different problem, and using it directly for MABW would break five architectural boundaries.
+
+#### 7.1 What Hermes Memory Solves
+
+Hermes memory is general-purpose agent memory: persona memory, long-term preference memory, and environment notes. It solves a real problem well—saving user preferences and automatically injecting them into subsequent prompts. It enables the agent to remember communication style, tool preferences, and workflow patterns across sessions without the user repeating themselves.
+
+#### 7.2 What MABW Needs That Hermes Memory Does Not Provide
+
+MABW's problem is not "how to save preferences." It is:
+
+- Which preferences are allowed to enter a run?
+- Who approved them?
+- When do they take effect—immediately, or only on the next run?
+- Can they influence the factual layer, or only editorial taste?
+- How do you audit that a preference was actually used?
+- How do you prove it was used?
+- How do you revert it cleanly if it turns out to be wrong?
+
+These are not memory problems. They are governance problems. Hermes memory is a storage mechanism; MABW's Improvement Ledger is an auditable governance surface. The distinction is structural, not cosmetic.
+
+#### 7.3 Five Boundaries That Direct Hermes-Memory Adoption Would Break
+
+**Boundary 1: It is not a workspace-local auditable ledger.** MABW requires `entry_id`, `revision`, `approved_by`, `approved_at`, `source_evidence`, a SHA-256 hash chain linking revisions, a manifest recording `applied_entry_ids`, and a frozen per-run snapshot whose hash is recorded. Hermes memory is typically key-value or flat-file storage—it provides none of this audit infrastructure.
+
+**Boundary 2: It does not natively separate taste, correctness, and evidence.** MABW enforces strict domain separation: taste guidance lives in `audience_profile.md` and the Improvement Ledger; correctness is governed by contracts; factual claims live only in the Claim Ledger with source attribution. A general-purpose memory that stores everything in one file makes it dangerously easy to accidentally record "correct this factual error" as a long-term preference, contaminating the factual layer with unverifiable memory.
+
+**Boundary 3: It does not provide run-level freezing.** MABW's critical invariant is that mid-run ledger changes never affect the current run. `approve` appends a status record; materialization occurs only at the next run's start, producing a frozen snapshot with a manifest-cited hash. Hermes-style memory is typically live context—edits during a session can drift agent behavior mid-run, making post-hoc audit impossible.
+
+**Boundary 4: It does not provide materialization evidence.** MABW must be able to answer: which approved entries did this run consume? What was the snapshot hash? Which handoff file referenced it? Hermes memory may enable an agent to remember preferences, but it does not natively produce an auditable chain from `approve` → `snapshot` → `handoff injection` → `manifest record`. MABW's `applied_entry_ids` in the run manifest is the cleanest invariant in the system—it proves exactly which guidance was present, deterministically.
+
+**Boundary 5: It does not solve stable execution.** Even if Hermes memory perfectly remembers a preference like "lead with business impact before policy context," the model may still interpret this loosely—rounding "put business impact first" into "be more business-like overall." Memory solves remembering; it does not solve stable structural execution. MABW addresses structural execution through contracts and stage scoping; Hermes memory addresses recall. They solve different layers of the problem.
+
+#### 7.4 What MABW Borrows, and What It Builds Instead
+
+MABW borrows from Hermes the **surface pattern**: a plain-text, human-editable file. `audience_profile.md` is MABW's USER.md. But the governance layer around it—the Improvement Ledger—is purpose-built for MABW's requirements. It is an append-only, workspace-local, revision-chained, human-gated, per-run-frozen, manifest-cited audit ledger. These properties are not features Hermes memory lacks; they are properties Hermes memory was never designed to provide.
+
+The relationship is: Hermes memory inspired the human-editable surface. MABW built the governance infrastructure underneath it.
 
 ---
 
@@ -164,7 +200,7 @@ MABW's audience profile runtime surface follows a public, plain-text pattern for
 
 2. **DRA metrics (§2)**: Define MABW-own metrics for 080 protocol: guidance manifestation rate and guidance regression rate. Do not cite DRA's 35–40% incorporation rate—mechanisms differ (persistent frozen context vs. one-shot revision).
 
-3. **`origin_runtime` field**: v0.7 records optional `origin_runtime` metadata in Improvement Ledger evidence for transparent labeling only. It does not scope, filter, or route guidance by runtime.
+3. **`origin_runtime` field**: Add optional `origin_runtime` to `source_evidence` frozen copy in Improvement Ledger entries, captured from manifest at propose time. v0.7 only does transparent labeling, no scoping/filtering. Do this before v0.7.0 ships—schema is not yet frozen.
 
 4. **Coverage gate claim (§4)**: Reword from "complete coverage" to "no silent loss after screening." Add screener-recall limitation to docs. Cite Precision paper's prompt ablation as evidence that coverage cannot be solved by better prompts—it's a gate problem, not a guidance problem.
 

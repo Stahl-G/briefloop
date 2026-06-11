@@ -290,6 +290,7 @@ def _write_handoff_and_state(
             runtime=handoff.runtime,
             repo_workdir=repo_workdir,
             actor="cli",
+            recipe=handoff.recipe,
         )
         snapshot = create_audience_profile_snapshot(
             workspace=workspace,

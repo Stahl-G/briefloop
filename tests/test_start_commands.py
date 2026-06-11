@@ -78,6 +78,29 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert data["feedback_state_files"] == FEEDBACK_STATE_FILES
     assert data["quality_gate_state_files"] == QUALITY_GATE_STATE_FILES
     assert data["provenance_state_files"] == PROVENANCE_STATE_FILES
+    protocol = data.get("stage_completion_protocol")
+    assert isinstance(protocol, dict)
+    assert protocol["schema_version"] == "multi-agent-brief-stage-completion-protocol/v1"
+    assert protocol["status"] == "canonical_handoff_protocol"
+    assert any("artifact-based" in rule for rule in protocol["rules"])
+    protocol_stages = {stage["stage_id"]: stage for stage in protocol["stages"]}
+    assert protocol_stages["scout"]["required_output_artifacts"] == [
+        {
+            "artifact_id": "candidate_claims",
+            "path": "output/intermediate/candidate_claims.json",
+            "required": True,
+            "format": "json",
+        }
+    ]
+    assert protocol_stages["analyst"]["required_input_artifacts"] == [
+        {
+            "artifact_id": "claim_ledger",
+            "path": "output/intermediate/claim_ledger.json",
+            "required": True,
+            "format": "json",
+        }
+    ]
+    assert any("prose acknowledgement" in item for item in protocol_stages["auditor"]["forbidden_actions"])
     for rel_path in data["runtime_state_files"].values():
         assert not Path(str(rel_path)).is_absolute()
     for rel_path in data["audience_memory_files"].values():
@@ -117,6 +140,10 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "provenance_graph.json" in text
     assert "multi-agent-brief state decide --workspace <workspace>" in text
     assert "next_allowed_decisions" in text
+    assert "Stage completion protocol" in text
+    assert "MUST produce" in text
+    assert "I completed the stage" in text
+    assert "REFERENCE_RUN_ORCHESTRATOR_PROTOCOL.md" in text
     assert "multi-agent-brief gates check --workspace <workspace>" in text
     assert "multi-agent-brief state check --workspace <workspace> --strict" in text
     assert "Audit and quality gates passed" in text
@@ -354,8 +381,27 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
 
     assert rc == 0
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    manifest = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     text = data["prompt"] + "\n" + "\n".join(data["notes"])
     assert data["recipe"] == "fast-rerun"
+    assert manifest["recipe"] == "fast-rerun"
+    assert main([
+        "state",
+        "check",
+        "--workspace", str(ws),
+        "--repo-workdir", str(ROOT),
+        "--strict",
+    ]) == 0
+    after_state_check = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
+    assert after_state_check["recipe"] == "fast-rerun"
+    assert main([
+        "controls",
+        "build-switchboard",
+        "--workspace", str(ws),
+        "--repo-workdir", str(ROOT),
+    ]) == 0
+    after_switchboard = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
+    assert after_switchboard["recipe"] == "fast-rerun"
     assert "Runtime recipe: fast-rerun" in text
     assert "Start model-backed content work at Analyst" in text
     assert "Do not rerun source discovery, Scout, Screener, or Claim Ledger" in text
@@ -520,6 +566,9 @@ def test_write_handoff_artifacts_writes_both_files(tmp_path):
     assert "## Control Switchboard Files" in md_content
     assert "## Feedback State Files" in md_content
     assert "## Provenance State Files" in md_content
+    assert "## Stage Completion Protocol" in md_content
+    assert "Stage completion is artifact-based" in md_content
+    assert "`candidate_claims` at `output/intermediate/candidate_claims.json`" in md_content
     assert "`orchestrator_contract`: `configs/orchestrator_contract.yaml`" in md_content
     assert "`runtime_manifest`: `output/intermediate/runtime_manifest.json`" in md_content
     assert "`audience_profile_snapshot`: `output/intermediate/audience_profile_snapshot.md`" in md_content

@@ -283,10 +283,15 @@ cases:
       - action: runtime.run_handoff
         args:
           skip_doctor: true
+      - action: state.check
+        args:
+          strict: true
     expected:
       exit_code: 0
       expected_actions:
         - action: runtime.run_handoff
+          exit_code: 0
+        - action: state.check
           exit_code: 0
       artifacts_exist:
         - improvement/memory.md

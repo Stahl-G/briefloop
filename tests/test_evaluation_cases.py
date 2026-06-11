@@ -78,7 +78,10 @@ def test_eval_cases_improvement_approved_case_materializes_snapshot(capsys):
     result = json.loads(capsys.readouterr().out)
     case = result["results"][0]
     assert case["passed"] is True
-    assert case["actions"] == [{"action": "runtime.run_handoff", "exit_code": 0, "ok": True}]
+    assert case["actions"] == [
+        {"action": "runtime.run_handoff", "exit_code": 0, "ok": True},
+        {"action": "state.check", "exit_code": 0, "ok": True},
+    ]
 
 
 def test_provenance_projection_fixture_contains_required_stage_artifacts():

@@ -131,6 +131,32 @@ def _append_non_materializable_approved_entry(ws: Path, *, entry_id: str = "AG-0
         handle.write("\n")
 
 
+def test_state_check_strict_preserves_improvement_manifest_after_freeze(tmp_path):
+    ws = _workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    run_id = str(state["manifest"]["run_id"])
+    entry_id = _propose_and_approve(ws)
+
+    freeze_improvement_memory_for_run(workspace=ws, run_id=run_id)
+    before = json.loads(
+        (ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8")
+    )["improvement"]
+
+    assert main([
+        "state",
+        "check",
+        "--workspace", str(ws),
+        "--repo-workdir", str(ROOT),
+        "--strict",
+    ]) == 0
+    after = json.loads(
+        (ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8")
+    )["improvement"]
+
+    assert before["materialized_entry_ids"] == [entry_id]
+    assert after == before
+
+
 def _append_approved_feedback_issue_entry_with_refs(
     ws: Path,
     *,

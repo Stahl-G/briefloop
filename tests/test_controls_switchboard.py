@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import multi_agent_brief.controls.switchboard as switchboard_module
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
-from multi_agent_brief.controls.switchboard import build_control_switchboard
+from multi_agent_brief.controls.switchboard import build_control_switchboard, refresh_control_switchboard_if_stale
+from multi_agent_brief.improvement.memory import freeze_improvement_memory_for_run
+from multi_agent_brief.improvement.state import approve_improvement, propose_improvement
 from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
 
 
@@ -66,6 +69,19 @@ def _events(ws: Path) -> list[dict]:
     ]
 
 
+def _propose_and_approve_improvement(ws: Path) -> str:
+    state = propose_improvement(
+        workspace=ws,
+        guidance="Start with the decision-relevant implication before implementation detail.",
+        category="structure",
+        scope="brief",
+        source_summary="Synthetic public control-switchboard test preference.",
+    )
+    entry_id = str(state["entry"]["entry_id"])
+    approve_improvement(workspace=ws, entry_id=entry_id, approved_by="reviewer")
+    return entry_id
+
+
 def _control_by_id(switchboard: dict, control_id: str) -> dict:
     for control in switchboard["controls"]:
         if control["control_id"] == control_id:
@@ -122,6 +138,45 @@ def test_limitation_hygiene_control_uses_ledger_cli_contract(tmp_path):
     assert "limitation-hygiene --ledger <workspace>/output/intermediate/claim_ledger.json" in control["execution_hint"]
     assert "--brief" not in control["execution_hint"]
     assert control["inputs"] == ["output/intermediate/claim_ledger.json"]
+
+
+def test_build_switchboard_reuses_existing_runtime_state_without_reinitializing(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    def fail_initialize_runtime_state(**_kwargs):
+        raise AssertionError("build_control_switchboard must not reinitialize existing runtime state")
+
+    monkeypatch.setattr(switchboard_module, "initialize_runtime_state", fail_initialize_runtime_state)
+
+    state = build_control_switchboard(workspace=ws, repo_workdir=ROOT)
+
+    assert state["orchestrator_control_switchboard"]["run_id"]
+
+
+def test_switchboard_refresh_preserves_improvement_manifest(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    run_id = str(state["manifest"]["run_id"])
+    entry_id = _propose_and_approve_improvement(ws)
+    freeze_improvement_memory_for_run(workspace=ws, run_id=run_id)
+    build_control_switchboard(workspace=ws, repo_workdir=ROOT)
+    before = json.loads(
+        (ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8")
+    )["improvement"]
+
+    (ws / "user.md").write_text(
+        "# User\n\nNeed management-ready brief with updated context.\n",
+        encoding="utf-8",
+    )
+    refreshed = refresh_control_switchboard_if_stale(workspace=ws, repo_workdir=ROOT)
+    after = json.loads(
+        (ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8")
+    )["improvement"]
+
+    assert before["materialized_entry_ids"] == [entry_id]
+    assert refreshed is not None
+    assert after == before
 
 
 def test_controls_select_enable_does_not_execute_quality_gates(tmp_path, capsys):

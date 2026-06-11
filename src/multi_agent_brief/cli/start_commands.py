@@ -19,7 +19,11 @@ from multi_agent_brief.orchestrator_contract import (
     ORCHESTRATOR_LOOP,
     resolve_repo_workdir,
 )
-from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
+from multi_agent_brief.orchestrator.runtime_state import (
+    RUNTIME_STATE_FILES,
+    load_artifact_contracts,
+    load_stage_specs,
+)
 from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
 from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
@@ -70,6 +74,22 @@ FINALIZE_GATE_NOTE = (
     "--decision continue --reason \"Audit and quality gates passed.\"` when "
     "audit readiness and quality gates pass."
 )
+STAGE_COMPLETION_PROTOCOL_SCHEMA = "multi-agent-brief-stage-completion-protocol/v1"
+STAGE_COMPLETION_PROTOCOL_RULES = [
+    "Stage completion is artifact-based, not statement-based.",
+    "A natural-language acknowledgement such as 'I completed the stage' is not sufficient unless the required artifact paths are present and validated.",
+    "Before moving to the next stage, verify required output artifacts exist at the declared paths and have the expected shape where validators exist.",
+    "If a required artifact is missing, stale, or invalid, stop the stage and record retry_stage, request_human_review, or block_run instead of continuing.",
+    "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
+    "Record stage transitions with multi-agent-brief state decide only after artifact-level completion evidence is available.",
+]
+DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
+    "Do not claim stage completion based on prose acknowledgement alone.",
+    "Do not proceed to the next stage without naming the produced artifact path.",
+    "Do not mutate upstream input artifacts except through the stage's declared output artifacts.",
+    "Do not invent source evidence, claim support, citations, or validation results.",
+    "Do not bypass workflow_state.json next_allowed_decisions or skip state decide.",
+]
 
 
 @dataclass
@@ -91,6 +111,7 @@ class AgentHandoff:
     quality_gate_state_files: dict[str, str] = field(default_factory=lambda: dict(QUALITY_GATE_STATE_FILES))
     provenance_state_files: dict[str, str] = field(default_factory=lambda: dict(PROVENANCE_STATE_FILES))
     contract_references: dict[str, str] = field(default_factory=lambda: dict(CONTRACT_REFERENCES))
+    stage_completion_protocol: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -400,6 +421,10 @@ def build_handoff(
     if recipe == RUNTIME_RECIPE_FAST_RERUN:
         _apply_fast_rerun_recipe(handoff, ws)
 
+    handoff.stage_completion_protocol = _build_stage_completion_protocol(repo)
+    protocol_text = _render_stage_completion_protocol_prompt(handoff.stage_completion_protocol)
+    handoff.prompt = f"{handoff.prompt}\n\n{protocol_text}"
+
     if run_doctor:
         rc, status = _run_doctor(ws)
         handoff.doctor_status = status
@@ -421,8 +446,106 @@ def build_handoff(
     handoff.notes.append(
         "Control switchboard is runtime control context: orchestrator_control_switchboard.json recommends controls and control_selections.json records Orchestrator selections; selection is not execution."
     )
+    handoff.notes.append(
+        "Stage completion protocol is embedded in agent_handoff.json/agent_handoff.md; do not depend on any sidecar REFERENCE_RUN_ORCHESTRATOR_PROTOCOL.md file."
+    )
 
     return handoff
+
+
+def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
+    stages = load_stage_specs(repo)
+    artifacts = load_artifact_contracts(repo)
+    artifact_by_id = {str(item.get("artifact_id")): item for item in artifacts if item.get("artifact_id")}
+    stage_protocol: list[dict[str, Any]] = []
+
+    for stage in stages:
+        stage_id = str(stage.get("stage_id") or "")
+        consumes = [str(item) for item in (stage.get("consumes") or [])]
+        expected = [str(item) for item in (stage.get("expected_artifacts") or [])]
+        required_inputs: list[dict[str, Any]] = []
+        context_inputs: list[str] = []
+        required_outputs: list[dict[str, Any]] = []
+
+        for item in consumes:
+            artifact = artifact_by_id.get(item)
+            if artifact:
+                required_inputs.append(_protocol_artifact_ref(item, artifact))
+            else:
+                context_inputs.append(item)
+
+        for item in expected:
+            artifact = artifact_by_id.get(item)
+            if artifact:
+                required_outputs.append(_protocol_artifact_ref(item, artifact))
+            else:
+                required_outputs.append({
+                    "artifact_id": item,
+                    "path": item,
+                    "required": True,
+                    "format": "",
+                })
+
+        stage_protocol.append({
+            "stage_id": stage_id,
+            "owner": str(stage.get("owner") or ""),
+            "category": str(stage.get("category") or ""),
+            "required_input_artifacts": required_inputs,
+            "context_inputs": context_inputs,
+            "required_output_artifacts": required_outputs,
+            "allowed_decisions": [str(item) for item in (stage.get("allowed_decisions") or [])],
+            "forbidden_actions": list(DEFAULT_STAGE_FORBIDDEN_ACTIONS),
+            "completion_condition": (
+                "The stage is complete only when every required output artifact exists at the declared path, "
+                "passes available shape/schema validation, and the Orchestrator can cite those artifact paths."
+            ),
+        })
+
+    return {
+        "schema_version": STAGE_COMPLETION_PROTOCOL_SCHEMA,
+        "status": "canonical_handoff_protocol",
+        "rules": list(STAGE_COMPLETION_PROTOCOL_RULES),
+        "stages": stage_protocol,
+    }
+
+
+def _protocol_artifact_ref(artifact_id: str, artifact: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "artifact_id": artifact_id,
+        "path": str(artifact.get("path") or ""),
+        "required": bool(artifact.get("required", False)),
+        "format": str(artifact.get("format") or ""),
+    }
+
+
+def _render_stage_completion_protocol_prompt(protocol: dict[str, Any]) -> str:
+    lines = [
+        "Stage completion protocol:",
+        "- This protocol is embedded in the handoff; do not rely on a sidecar REFERENCE_RUN_ORCHESTRATOR_PROTOCOL.md file.",
+    ]
+    for rule in protocol.get("rules") or []:
+        lines.append(f"- {rule}")
+    lines.extend(["", "Per-stage artifact proof requirements:"])
+    for stage in protocol.get("stages") or []:
+        stage_id = stage.get("stage_id")
+        inputs = _protocol_paths(stage.get("required_input_artifacts") or [])
+        outputs = _protocol_paths(stage.get("required_output_artifacts") or [])
+        context = ", ".join(stage.get("context_inputs") or []) or "none"
+        lines.append(f"- {stage_id}:")
+        lines.append(f"  required input artifacts: {inputs}")
+        lines.append(f"  context inputs: {context}")
+        lines.append(f"  MUST produce: {outputs}")
+        lines.append("  forbidden: no prose-only completion, no upstream mutation, no invented evidence, no skipped state decision.")
+    return "\n".join(lines)
+
+
+def _protocol_paths(items: list[dict[str, Any]]) -> str:
+    paths = [
+        f"{item.get('artifact_id')} at {item.get('path')}"
+        for item in items
+        if item.get("artifact_id")
+    ]
+    return ", ".join(paths) if paths else "none"
 
 
 def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
@@ -548,6 +671,49 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
     ])
     for label, rel_path in handoff.provenance_state_files.items():
         md_content.append(f"- `{label}`: `{rel_path}`")
+    md_content.extend([
+        "",
+        "## Stage Completion Protocol",
+        "",
+        f"- Schema: `{handoff.stage_completion_protocol.get('schema_version', '')}`",
+        f"- Status: `{handoff.stage_completion_protocol.get('status', '')}`",
+        "",
+        "### Rules",
+        "",
+    ])
+    for rule in handoff.stage_completion_protocol.get("rules") or []:
+        md_content.append(f"- {rule}")
+    md_content.extend([
+        "",
+        "### Per-Stage Artifact Proof",
+        "",
+    ])
+    for stage in handoff.stage_completion_protocol.get("stages") or []:
+        md_content.extend([
+            f"#### `{stage.get('stage_id')}`",
+            "",
+            f"- Owner: `{stage.get('owner')}`",
+            f"- Context inputs: {', '.join(stage.get('context_inputs') or []) or 'none'}",
+            f"- Completion condition: {stage.get('completion_condition')}",
+            "- Required input artifacts:",
+        ])
+        inputs = stage.get("required_input_artifacts") or []
+        if inputs:
+            for item in inputs:
+                md_content.append(f"  - `{item.get('artifact_id')}` at `{item.get('path')}`")
+        else:
+            md_content.append("  - none")
+        md_content.append("- Required output artifacts:")
+        outputs = stage.get("required_output_artifacts") or []
+        if outputs:
+            for item in outputs:
+                md_content.append(f"  - `{item.get('artifact_id')}` at `{item.get('path')}`")
+        else:
+            md_content.append("  - none")
+        md_content.append("- Forbidden actions:")
+        for action in stage.get("forbidden_actions") or []:
+            md_content.append(f"  - {action}")
+        md_content.append("")
     md_content.extend([
         "",
         "## Prompt",

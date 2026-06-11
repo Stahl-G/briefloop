@@ -45,6 +45,7 @@ RUNTIME_STATE_FILES = {
     "artifact_registry": "output/intermediate/artifact_registry.json",
     "event_log": "output/intermediate/event_log.jsonl",
 }
+PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe")
 
 EVENT_TYPES = {
     "run_initialized",
@@ -417,6 +418,7 @@ def initialize_runtime_state(
     repo_workdir: str | Path | None = None,
     reset_state: bool = False,
     actor: str = "cli",
+    recipe: str | None = None,
 ) -> dict[str, Any]:
     """Initialize runtime control files for a workspace."""
     ws = _require_workspace(workspace)
@@ -479,6 +481,12 @@ def initialize_runtime_state(
         stages=stages,
         artifacts=artifacts,
     )
+    if old_manifest and not reset_state:
+        for key in PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS:
+            if key in old_manifest:
+                manifest[key] = old_manifest[key]
+    if recipe is not None:
+        manifest["recipe"] = str(recipe)
 
     if old_workflow and not reset_state:
         if old_workflow.get("schema_version") != WORKFLOW_STATE_SCHEMA:

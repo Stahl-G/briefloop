@@ -25,6 +25,7 @@ from multi_agent_brief.controls.contract import (
     ensure_safe_relative_path,
 )
 from multi_agent_brief.orchestrator.runtime_state import (
+    RUNTIME_MANIFEST_SCHEMA,
     RuntimeStateError,
     append_event,
     initialize_runtime_state,
@@ -57,19 +58,35 @@ def build_control_switchboard(
         state_paths["runtime_manifest"],
         label="runtime_manifest.json",
     )
-    existing_runtime = (
-        str(existing_manifest.get("runtime") or "")
-        if isinstance(existing_manifest, dict)
-        else ""
-    )
-    state = initialize_runtime_state(
-        workspace=ws,
-        repo_workdir=repo,
-        runtime=existing_runtime or "controls",
-        actor=actor,
-    )
-    manifest = state.get("manifest") or {}
+    if existing_manifest is not None and state_paths["workflow_state"].exists():
+        if existing_manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
+            raise ControlSwitchboardError(
+                "Existing runtime_manifest.json has an unsupported schema.",
+                details={
+                    "path": str(state_paths["runtime_manifest"]),
+                    "schema_version": existing_manifest.get("schema_version"),
+                },
+            )
+        manifest = existing_manifest
+    else:
+        existing_runtime = (
+            str(existing_manifest.get("runtime") or "")
+            if isinstance(existing_manifest, dict)
+            else ""
+        )
+        state = initialize_runtime_state(
+            workspace=ws,
+            repo_workdir=repo,
+            runtime=existing_runtime or "controls",
+            actor=actor,
+        )
+        manifest = state.get("manifest") or {}
     run_id = str(manifest.get("run_id") or "")
+    if not run_id:
+        raise ControlSwitchboardError(
+            "runtime_manifest.json run_id is required before building the control switchboard.",
+            details={"path": str(state_paths["runtime_manifest"])},
+        )
     paths = control_switchboard_paths(ws)
     now = utc_now()
 
