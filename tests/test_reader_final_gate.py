@@ -15,7 +15,12 @@ def test_reader_final_gate_detects_source_markers_and_claim_ids() -> None:
             "A raw [CL-0003] marker.",
             "A raw CLM-001 marker.",
             "A raw SYN_CLAIM_001 marker.",
+            "A raw CLAIM_123456 marker.",
+            "A raw CLAIM_TEST_001 marker.",
             "A source id SYN_SRC_001 marker.",
+            "A source id SRC_ABCDEF marker.",
+            "A source id SRC_001 marker.",
+            "A source id SOURCE_A marker.",
         ]
     )
 
@@ -23,8 +28,8 @@ def test_reader_final_gate_detects_source_markers_and_claim_ids() -> None:
 
     assert result.status == "fail"
     assert result.counts["src_marker_count"] == 2
-    assert result.counts["bare_claim_id_count"] == 5
-    assert result.counts["source_id_count"] == 1
+    assert result.counts["bare_claim_id_count"] == 7
+    assert result.counts["source_id_count"] == 4
     assert result.findings[0].artifact == "output/brief.md"
     assert result.findings[0].line == 1
 

@@ -28,9 +28,11 @@ COUNT_KEYS = {
 
 _SRC_MARKER_RE = re.compile(r"\[(?:src|source):[^\]]+\]", re.IGNORECASE)
 _CLAIM_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|CLM-\d{3,}|CL-\d{3,}|SYN_CLAIM_[A-Za-z0-9_-]+)(?![A-Za-z0-9_])"
+    r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|CLM-\d{3,}|CL-\d{3,}|(?:[A-Z][A-Z0-9]*_)?CLAIM_[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_])"
 )
-_SYN_SOURCE_ID_RE = re.compile(r"(?<![A-Za-z0-9_])SYN_SRC_[A-Za-z0-9_-]+(?![A-Za-z0-9_])")
+_SOURCE_ID_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[A-Z][A-Z0-9]*_)?(?:SRC|SOURCE)_[A-Z0-9][A-Z0-9_-]*(?![A-Za-z0-9_])"
+)
 _CONTEXTUAL_SRC_ID_RE = re.compile(
     r"(?i)(?:source[_\s-]*id|source\s+ref(?:erence)?|来源\s*ID|源\s*ID)[:：\s`'\"]*(SRC-\d{3,})"
 )
@@ -142,7 +144,7 @@ def detect_reader_residue(
         _collect_regex_findings(
             findings,
             kind="source_id",
-            regex=_SYN_SOURCE_ID_RE,
+            regex=_SOURCE_ID_RE,
             line=line,
             line_number=line_number,
             artifact=artifact,

@@ -471,6 +471,30 @@ def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
     assert report["reader_clean"]["sample_findings"][0]["artifact"].endswith("brief.md")
 
 
+def test_finalize_fails_on_common_internal_id_reader_residue(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Raw IDs CLAIM_123456, CLAIM_TEST_001, SRC_ABCDEF, SRC_001, and SOURCE_A should not ship.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["bare_claim_id_count"] == 2
+    assert reader_clean["source_id_count"] == 3
+
+
 def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
