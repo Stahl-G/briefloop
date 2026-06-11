@@ -42,6 +42,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     propose_parser.add_argument("--scope", required=True, choices=sorted(AUDIENCE_GUIDANCE_SCOPES))
     propose_parser.add_argument("--source-summary", help="Required for explicit human proposals.")
     propose_parser.add_argument("--from-issue", help="Feedback issue id to freeze as source evidence.")
+    propose_parser.add_argument("--supersedes", help="Approved materializable entry id replaced by this proposal.")
     _add_json(propose_parser)
 
     list_parser = actions.add_parser(
@@ -121,6 +122,7 @@ def handle(args: argparse.Namespace) -> int:
                 scope=args.scope,
                 source_summary=getattr(args, "source_summary", None),
                 from_issue=getattr(args, "from_issue", None),
+                supersedes=getattr(args, "supersedes", None),
             )
             _print_state("improve propose", state, as_json=getattr(args, "json", False))
             return 0
@@ -208,6 +210,8 @@ def _print_state(label: str, state: dict[str, Any], *, as_json: bool) -> None:
     print(f"[{label}] entries: {state.get('entry_count', 0)}")
     for diagnostic in state.get("diagnostics") or []:
         print(f"  - {diagnostic.get('severity')}: {diagnostic.get('message')}")
+    for warning in state.get("warnings") or []:
+        print(f"  - warning: {warning.get('message')}")
     if state.get("event_recorded") is False:
         print(f"[{label}] event: {state.get('event_reason')}")
 

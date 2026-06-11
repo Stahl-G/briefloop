@@ -69,6 +69,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     run_parser.add_argument(
         "--skip-doctor", action="store_true", help="Skip doctor check."
     )
+    run_parser.add_argument(
+        "--operator-reported-model",
+        help="Optional free-form model label reported by the operator; stored as an unverified runtime manifest observation.",
+    )
 
     prepare_parser = subparsers.add_parser(
         "prepare",
@@ -109,6 +113,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     start_parser.add_argument(
         "--skip-doctor", action="store_true", help="Skip doctor check."
     )
+    start_parser.add_argument(
+        "--operator-reported-model",
+        help="Optional free-form model label reported by the operator; stored as an unverified runtime manifest observation.",
+    )
 
     handoff_parser = subparsers.add_parser(
         "handoff",
@@ -138,6 +146,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     handoff_parser.add_argument(
         "--skip-doctor", action="store_true", help="Skip doctor check."
+    )
+    handoff_parser.add_argument(
+        "--operator-reported-model",
+        help="Optional free-form model label reported by the operator; stored as an unverified runtime manifest observation.",
     )
 
 
@@ -218,6 +230,7 @@ def _run_launcher(args: argparse.Namespace) -> int:
         workspace=workspace_path,
         repo_workdir=repo_workdir,
         prefix=prefix,
+        operator_reported_model=getattr(args, "operator_reported_model", None),
     )
     if written is None:
         return 1
@@ -267,6 +280,7 @@ def _run_handoff(args: argparse.Namespace) -> int:
         workspace=workspace,
         repo_workdir=repo_workdir,
         prefix="[handoff]",
+        operator_reported_model=getattr(args, "operator_reported_model", None),
     )
     if written is None:
         return 1
@@ -283,6 +297,7 @@ def _write_handoff_and_state(
     workspace: Path,
     repo_workdir: Path,
     prefix: str,
+    operator_reported_model: str | None = None,
 ) -> tuple[Path, Path] | None:
     """Initialize runtime control files and write handoff artifacts."""
     try:
@@ -292,6 +307,7 @@ def _write_handoff_and_state(
             repo_workdir=repo_workdir,
             actor="cli",
             recipe=handoff.recipe,
+            operator_reported_model=operator_reported_model,
         )
         snapshot = create_audience_profile_snapshot(
             workspace=workspace,

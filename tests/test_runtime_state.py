@@ -778,6 +778,7 @@ def test_completion_transactions_preserve_manifest_extensions(tmp_path):
     manifest_path = _state_file(ws, "runtime_manifest")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["recipe"] = "fast-rerun"
+    manifest["operator_reported_model"] = "DeepSeek V4 Pro"
     manifest["improvement"] = {
         "ledger_sha256": None,
         "memory_sha256": "zero",
@@ -795,11 +796,13 @@ def test_completion_transactions_preserve_manifest_extensions(tmp_path):
     )
     after_stage = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert after_stage["recipe"] == "fast-rerun"
+    assert after_stage["operator_reported_model"] == "DeepSeek V4 Pro"
     assert after_stage["improvement"] == manifest["improvement"]
 
     check_runtime_state(workspace=ws, repo_workdir=ROOT)
     after_check = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert after_check["recipe"] == "fast-rerun"
+    assert after_check["operator_reported_model"] == "DeepSeek V4 Pro"
     assert after_check["improvement"] == manifest["improvement"]
 
     _advance_to_finalize(ws)
@@ -812,6 +815,7 @@ def test_completion_transactions_preserve_manifest_extensions(tmp_path):
     )
     after_finalize = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert after_finalize["recipe"] == "fast-rerun"
+    assert after_finalize["operator_reported_model"] == "DeepSeek V4 Pro"
     assert after_finalize["improvement"] == manifest["improvement"]
 
 

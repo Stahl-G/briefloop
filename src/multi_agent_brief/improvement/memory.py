@@ -14,6 +14,7 @@ from typing import Any
 from multi_agent_brief.improvement.contract import (
     LEDGER_RELATIVE_PATH,
     read_ledger_text,
+    supersedes_id,
 )
 from multi_agent_brief.improvement.product_definition import (
     ProductDefinitionDecision,
@@ -56,6 +57,7 @@ class ImprovementMemoryProjection:
     selected_entry_ids: list[str]
     eligible_count: int
     skipped_entries: list[SkippedImprovementEntry]
+    warnings: list[SkippedImprovementEntry]
     memory_text: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +71,7 @@ class ImprovementMemoryProjection:
             "selected_entry_ids": list(self.selected_entry_ids),
             "eligible_count": self.eligible_count,
             "skipped_entries": [asdict(item) for item in self.skipped_entries],
+            "warnings": [asdict(item) for item in self.warnings],
         }
 
 
@@ -178,14 +181,31 @@ def _build_projection(workspace: Path) -> ImprovementMemoryProjection:
 
     selected: list[dict[str, Any]] = []
     skipped: list[SkippedImprovementEntry] = []
+    warnings: list[SkippedImprovementEntry] = []
+    superseded_by = _superseded_by_map(read_result.current_entries)
     for entry_id, entry in sorted(read_result.current_entries.items()):
         if entry.get("status") != "approved":
+            continue
+        superseders = superseded_by.get(entry_id) or []
+        if superseders:
+            skipped.append(SkippedImprovementEntry(
+                entry_id=entry_id,
+                reason_code="superseded_by_active_guidance",
+                message=f"Entry is superseded by {', '.join(superseders)}.",
+            ))
             continue
         decision = classify_ledger_entry_materialization(entry)
         if decision.materializable:
             selected.append(entry)
         else:
             skipped.append(_skipped(entry_id=entry_id, decision=decision))
+        target_id = supersedes_id(entry)
+        if target_id is not None and not decision.materializable:
+            warnings.append(SkippedImprovementEntry(
+                entry_id=entry_id,
+                reason_code="non_materializable_superseder_suppresses_target",
+                message=f"{entry_id} suppresses {target_id} but is not materializable.",
+            ))
 
     memory_text = _memory_text(ledger_sha256=ledger_sha, entries=selected)
     return ImprovementMemoryProjection(
@@ -197,6 +217,7 @@ def _build_projection(workspace: Path) -> ImprovementMemoryProjection:
         selected_entry_ids=[str(entry["entry_id"]) for entry in selected],
         eligible_count=len(selected),
         skipped_entries=skipped,
+        warnings=warnings,
         memory_text=memory_text,
     )
 
@@ -348,6 +369,18 @@ def _skipped(*, entry_id: str, decision: ProductDefinitionDecision) -> SkippedIm
         reason_code=decision.reason_code,
         message=decision.message,
     )
+
+
+def _superseded_by_map(current_entries: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    superseded: dict[str, list[str]] = {}
+    for entry_id, entry in sorted(current_entries.items()):
+        if entry.get("status") != "approved":
+            continue
+        target_id = supersedes_id(entry)
+        if target_id is None:
+            continue
+        superseded.setdefault(target_id, []).append(entry_id)
+    return {key: sorted(value) for key, value in superseded.items()}
 
 
 def _update_runtime_manifest_improvement(workspace: Path, improvement: dict[str, Any]) -> None:
