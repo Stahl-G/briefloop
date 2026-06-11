@@ -495,6 +495,35 @@ def test_finalize_fails_on_common_internal_id_reader_residue(tmp_path: Path):
     assert reader_clean["source_id_count"] == 3
 
 
+def test_finalize_fails_on_docx_footer_reader_residue(tmp_path: Path):
+    pytest.importorskip("docx", reason="python-docx not installed")
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nReader-safe body.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "docx"],
+            output_footer="Footer leaks CLAIM_123456",
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["status"] == "fail"
+    assert reader_clean["bare_claim_id_count"] == 1
+    assert any(
+        finding["artifact"].endswith("brief.docx")
+        for finding in reader_clean["sample_findings"]
+    )
+
+
 def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"

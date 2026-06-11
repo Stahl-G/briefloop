@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from multi_agent_brief.outputs.reader_final_gate import detect_reader_residue
+from pathlib import Path
+
+import pytest
+
+from multi_agent_brief.outputs.reader_final_gate import (
+    detect_reader_residue,
+    detect_reader_residue_in_docx,
+)
 
 
 def _kinds(text: str) -> list[str]:
@@ -113,3 +120,21 @@ This appendix lists source records used by the brief; it is not a semantic proof
 
     assert result.status == "pass"
     assert result.to_report_dict()["sample_findings"] == []
+
+
+def test_reader_final_gate_scans_docx_headers_and_footers(tmp_path: Path) -> None:
+    docx = pytest.importorskip("docx", reason="python-docx not installed")
+    document = docx.Document()
+    document.add_paragraph("Reader-safe body.")
+    section = document.sections[0]
+    section.header.paragraphs[0].text = "Header leaks CLAIM_123456"
+    section.footer.paragraphs[0].text = "Footer leaks SRC_001"
+    path = tmp_path / "reader.docx"
+    document.save(path)
+
+    result = detect_reader_residue_in_docx(path, artifact="output/brief.docx")
+
+    assert result.status == "fail"
+    assert result.counts["bare_claim_id_count"] == 1
+    assert result.counts["source_id_count"] == 1
+    assert {finding.artifact for finding in result.findings} == {"output/brief.docx"}

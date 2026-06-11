@@ -217,15 +217,9 @@ def detect_reader_residue_in_docx(
         return ReaderFinalGateResult(status="pass", findings=[], counts=_empty_counts())
 
     document = Document(str(path))
-    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    table_text = "\n".join(
-        cell.text
-        for table in document.tables
-        for row in table.rows
-        for cell in row.cells
-    )
+    text = "\n".join(_docx_text_parts(document))
     return detect_reader_residue(
-        text + "\n" + table_text,
+        text,
         artifact=artifact or str(path),
         allow_compliance_footer=allow_compliance_footer,
     )
@@ -245,6 +239,33 @@ def combine_reader_final_gate_results(
         findings=findings,
         counts=counts,
     )
+
+
+def _docx_text_parts(document: object) -> list[str]:
+    parts: list[str] = []
+    parts.extend(paragraph.text for paragraph in document.paragraphs)
+    parts.extend(_table_text_parts(document.tables))
+    for section in document.sections:
+        for container in (
+            section.header,
+            section.first_page_header,
+            section.even_page_header,
+            section.footer,
+            section.first_page_footer,
+            section.even_page_footer,
+        ):
+            parts.extend(paragraph.text for paragraph in container.paragraphs)
+            parts.extend(_table_text_parts(container.tables))
+    return parts
+
+
+def _table_text_parts(tables: object) -> list[str]:
+    return [
+        cell.text
+        for table in tables
+        for row in table.rows
+        for cell in row.cells
+    ]
 
 
 def _collect_regex_findings(
