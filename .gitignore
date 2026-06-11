@@ -26,6 +26,7 @@ logs/
 # Workspace
 brief-workspace/
 .mabw-eval-cases/
+.understand-anything/
 
 # IDE and personal settings
 .codegraph/

@@ -138,7 +138,9 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "repair_plan.json" in text
     assert "quality_gate_report.json" in text
     assert "provenance_graph.json" in text
-    assert "multi-agent-brief state decide --workspace <workspace>" in text
+    assert "multi-agent-brief state stage-complete --workspace <workspace>" in text
+    assert "multi-agent-brief state finalize-complete --workspace <workspace>" in text
+    assert "state decide" in text
     assert "next_allowed_decisions" in text
     assert "Stage completion protocol" in text
     assert "MUST produce" in text
@@ -405,7 +407,7 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
     assert "Runtime recipe: fast-rerun" in text
     assert "Start model-backed content work at Analyst" in text
     assert "Do not rerun source discovery, Scout, Screener, or Claim Ledger" in text
-    assert "state decide" in text
+    assert "state stage-complete" in text
     assert not (ws / "output" / "brief.md").exists()
 
 
@@ -626,6 +628,13 @@ def test_run_default_auto_resolves_to_hermes(tmp_path):
     assert "delegate_task" in data["prompt"]
     assert "/generate-brief" not in data["prompt"]
     _assert_orchestrator_contract_handoff(data)
+    manifest = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["improvement"]["ledger_sha256"] is None
+    assert isinstance(manifest["improvement"]["memory_sha256"], str)
+    assert manifest["improvement"]["memory_sha256"]
+    assert manifest["improvement"]["snapshot_path"] is None
+    assert manifest["improvement"]["snapshot_sha256"] is None
+    assert manifest["improvement"]["materialized_entry_ids"] == []
 
 
 def test_run_claude_contains_generate_brief(tmp_path):

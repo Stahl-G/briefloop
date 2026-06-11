@@ -32,7 +32,7 @@ validation unless that is stated separately.
 | Finalize (Markdown + DOCX) | Supported |
 | Reader-facing source appendix (`source_appendix.md`) | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
-| `multi-agent-brief state init/check/show/decide` | Supported |
+| `multi-agent-brief state init/check/show/decide/stage-complete/finalize-complete` | Supported |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
 | `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|all` | Source-clone-only |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |

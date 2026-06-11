@@ -22,19 +22,9 @@ This skill is the Hermes runtime contract for MABW. It applies when Hermes is as
 
 The Hermes parent agent is the Orchestrator main agent. It reads shared contract references and runtime state files, controls delegated stages, checks expected artifacts, and selects the next workflow decision.
 
-Contract references:
+Contract references: `configs/orchestrator_contract.yaml`, `configs/stage_specs.yaml`, `configs/artifact_contracts.yaml`, and `configs/policy_packs/default.yaml`.
 
-- `configs/orchestrator_contract.yaml`
-- `configs/stage_specs.yaml`
-- `configs/artifact_contracts.yaml`
-- `configs/policy_packs/default.yaml`
-
-Runtime state files:
-
-- `output/intermediate/runtime_manifest.json`
-- `output/intermediate/workflow_state.json`
-- `output/intermediate/artifact_registry.json`
-- `output/intermediate/event_log.jsonl`
+Runtime state files: `output/intermediate/runtime_manifest.json`, `output/intermediate/workflow_state.json`, `output/intermediate/artifact_registry.json`, and `output/intermediate/event_log.jsonl`.
 
 Audience memory files: `audience_profile.md` and `output/intermediate/audience_profile_snapshot.md`. Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Mid-run profile edits apply to the next run.
 
@@ -50,11 +40,7 @@ Read workspace context -> read contract references -> identify the next stage ->
 
 ## Use When
 
-Use this skill when the user asks Hermes to:
-
-- create or continue a MABW brief workspace
-- generate a management, market, policy, competitor, or research brief
-- schedule daily source cache collection or weekly/monthly brief generation
+Use this skill when the user asks Hermes to create or continue a MABW workspace, generate a management/market/policy/competitor/research brief, or schedule source cache and brief generation.
 
 ## Preferred Path: Hermes Plugin
 
@@ -110,10 +96,20 @@ doctor
 → delegate_task analyst
 → delegate_task editor
 → delegate_task auditor
-→ gates check + state check/decide → finalize
+→ gates check + state check + state stage-complete → finalize → state finalize-complete
 ```
 
-Before finalize, run `multi-agent-brief gates check --workspace <workspace>`, `multi-agent-brief state check --workspace <workspace> --strict`, and `multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."`; `finalize` is not a quality-gate executor. Blocking gate findings must route to feedback/repair, `request_human_review`, or `block_run`; do not finalize through a blocking gate.
+Before finalize, run this explicit success path:
+
+```bash
+multi-agent-brief gates check --workspace <workspace>
+multi-agent-brief state check --workspace <workspace> --strict
+multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+multi-agent-brief finalize --config <workspace>/config.yaml
+multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+```
+
+`finalize` is not a quality-gate executor. Blocking gate findings must route to feedback/repair, `request_human_review`, or `block_run`; do not finalize through a blocking gate.
 At run start, read `output/intermediate/audience_profile_snapshot.md` for taste context and pass a concise summary to delegated roles. Do not treat `audience_profile.md` as evidence.
 Read `output/intermediate/orchestrator_control_switchboard.json`, then use `multi-agent-brief controls select` to record selected controls before explicitly running their CLI/subagent/human action. Selection is not execution.
 Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.

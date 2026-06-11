@@ -20,9 +20,11 @@ Primary Hermes path:
 11. Before finalize, run:
    `multi-agent-brief gates check --workspace <workspace>`
    `multi-agent-brief state check --workspace <workspace> --strict`
-   `multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."`
+   `multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."`
 12. Then run `multi-agent-brief finalize --config <workspace>/config.yaml`.
-13. `finalize` alone is not a quality-gate executor; do not skip gates/state decisions when quality gates are required.
-14. Optional audit/debug trace: run `multi-agent-brief provenance build --workspace <workspace>` and `multi-agent-brief provenance validate --workspace <workspace>` after runtime state exists. This projection is not semantic proof and is not required to finalize.
-15. Report `output/brief.md`, `brief.docx`, `claim_ledger.json`, `audit_report.json`, `quality_gate_report.json`, audience snapshot context, switchboard selections, and optional `provenance_graph.json` when created.
-16. Never treat README, docs, examples, or repo files as evidence for the brief.
+13. After finalize writes reader-facing artifacts, run:
+   `multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."`
+14. `finalize` alone is not a quality-gate executor; do not skip gates/state completion checks when quality gates are required.
+15. Optional audit/debug trace: run `multi-agent-brief provenance build --workspace <workspace>` and `multi-agent-brief provenance validate --workspace <workspace>` after runtime state exists. This projection is not semantic proof and is not required to finalize.
+16. Report `output/brief.md`, `brief.docx`, `claim_ledger.json`, `audit_report.json`, `quality_gate_report.json`, audience snapshot context, switchboard selections, and optional `provenance_graph.json` when created.
+17. Never treat README, docs, examples, or repo files as evidence for the brief.

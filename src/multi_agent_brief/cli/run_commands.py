@@ -25,6 +25,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
     check_runtime_state,
+    complete_stage_transaction,
     initialize_runtime_state,
     record_decision,
     record_handoff_written,
@@ -400,11 +401,10 @@ def _record_doctor_state(
     repo_workdir: Path,
 ) -> None:
     if handoff.doctor_status == "passed":
-        record_decision(
+        complete_stage_transaction(
             workspace=workspace,
             repo_workdir=repo_workdir,
             stage_id="doctor",
-            decision="continue",
             reason="Doctor passed during runtime handoff launch.",
             actor="cli",
         )

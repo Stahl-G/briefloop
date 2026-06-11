@@ -114,8 +114,15 @@ def test_eval_cases_single_case_reports_expected_failed_action(capsys):
     case = result["results"][0]
     assert case["passed"] is True
     assert case["observed_exit_code"] == 1
-    assert case["actions"][-1]["action"] == "state.decide"
+    assert case["actions"][-1]["action"] == "state.stage_complete"
     assert case["actions"][-1]["exit_code"] == 1
+    observed_failure = " ".join(
+        [
+            case["actions"][-1].get("error", ""),
+            json.dumps(case["actions"][-1].get("details", {}), ensure_ascii=False),
+        ]
+    )
+    assert "unresolved blocking feedback issues" in observed_failure
     assert case["actions"][0]["action"] == "state.check"
     assert case["actions"][0]["exit_code"] == 0
 

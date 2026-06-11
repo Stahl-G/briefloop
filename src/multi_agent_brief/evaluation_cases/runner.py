@@ -36,7 +36,10 @@ from multi_agent_brief.feedback.feedback_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
+    append_event,
     check_runtime_state,
+    complete_finalize_transaction,
+    complete_stage_transaction,
     initialize_runtime_state,
     load_stage_specs,
     record_decision,
@@ -269,17 +272,56 @@ def _advance_to_stage(
             f"Unknown initial_stage: {initial_stage}",
             details={"initial_stage": initial_stage, "known_stages": stage_ids},
         )
-    for stage_id in stage_ids:
-        if stage_id == initial_stage:
-            break
-        record_decision(
+    workflow_path = workspace / "output" / "intermediate" / "workflow_state.json"
+    workflow = _load_json(workflow_path)
+    now = workflow.get("updated_at") or workflow.get("created_at") or ""
+    statuses: dict[str, dict[str, str]] = {}
+    initial_idx = stage_ids.index(initial_stage)
+    for idx, stage_id in enumerate(stage_ids):
+        if idx < initial_idx:
+            statuses[stage_id] = {
+                "status": "complete",
+                "reason": f"Evaluation fixture prepares {initial_stage}.",
+                "updated_at": str(now),
+            }
+        elif stage_id == initial_stage:
+            statuses[stage_id] = {"status": "ready", "reason": "", "updated_at": str(now)}
+        else:
+            statuses[stage_id] = {"status": "pending", "reason": "", "updated_at": str(now)}
+    workflow["current_stage"] = initial_stage
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["stage_statuses"] = statuses
+    workflow["next_allowed_decisions"] = _allowed_decisions_for_stage_specs(
+        stages=stages,
+        stage_id=initial_stage,
+    )
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    manifest = _load_json(workspace / "output" / "intermediate" / "runtime_manifest.json")
+    run_id = str(manifest.get("run_id") or "")
+    for stage_id in stage_ids[:initial_idx]:
+        append_event(
             workspace=workspace,
-            repo_workdir=repo_workdir,
+            run_id=run_id,
+            event_type="decision_recorded",
+            actor="system",
             stage_id=stage_id,
             decision="continue",
-            reason=f"Evaluation fixture advances through {stage_id}.",
-            actor="system",
+            reason=f"Evaluation fixture prepares {initial_stage}.",
+            metadata={"fixture_prepared": True},
         )
+
+
+def _allowed_decisions_for_stage_specs(
+    *,
+    stages: list[dict[str, Any]],
+    stage_id: str,
+) -> list[str]:
+    for stage in stages:
+        if str(stage.get("stage_id") or "") == stage_id:
+            return [str(item) for item in stage.get("allowed_decisions") or []]
+    return []
 
 
 def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -367,6 +409,21 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             stage_id=str(args.get("stage") or ""),
             decision=str(args.get("decision") or ""),
             reason=str(args.get("reason") or "Evaluation decision."),
+            actor="orchestrator",
+        )
+    if action == "state.stage_complete":
+        return complete_stage_transaction(
+            workspace=_require_workspace(workspace),
+            repo_workdir=repo_workdir,
+            stage_id=str(args.get("stage") or ""),
+            reason=str(args.get("reason") or "Evaluation stage completion."),
+            actor="orchestrator",
+        )
+    if action == "state.finalize_complete":
+        return complete_finalize_transaction(
+            workspace=_require_workspace(workspace),
+            repo_workdir=repo_workdir,
+            reason=str(args.get("reason") or "Evaluation finalize completion."),
             actor="orchestrator",
         )
     if action == "feedback.ingest":
@@ -543,6 +600,24 @@ def _assert_expected_actions(
                 f"expected_actions[{idx}].exit_code expected {expected.get('exit_code')!r}, "
                 f"got {action.get('exit_code')!r}."
             )
+        expected_error = expected.get("error_contains")
+        if expected_error is not None:
+            expected_fragments = (
+                [expected_error]
+                if isinstance(expected_error, str)
+                else [str(fragment) for fragment in expected_error]
+            )
+            observed = " ".join(
+                [
+                    str(action.get("error") or ""),
+                    json.dumps(action.get("details") or {}, ensure_ascii=False, sort_keys=True),
+                ]
+            )
+            for fragment in expected_fragments:
+                if fragment not in observed:
+                    errors.append(
+                        f"expected_actions[{idx}].error_contains missing {fragment!r}."
+                    )
     return errors
 
 
@@ -788,7 +863,8 @@ def _check_hermes_no_skip_finalize(*, repo_workdir: Path) -> dict[str, Any]:
     required_terms = [
         "gates check",
         "state check",
-        "state decide",
+        "state stage-complete",
+        "state finalize-complete",
         "finalize",
     ]
     combined_text = ""
@@ -800,9 +876,18 @@ def _check_hermes_no_skip_finalize(*, repo_workdir: Path) -> dict[str, Any]:
                 errors.append(f"{label} is missing invariant text: {term}.")
         gates_idx = text.find("gates check")
         state_idx = text.find("state check", max(gates_idx, 0))
-        finalize_idx = text.find("finalize", max(state_idx, 0))
-        if gates_idx == -1 or state_idx == -1 or finalize_idx == -1 or not (gates_idx < state_idx < finalize_idx):
-            errors.append(f"{label} does not keep gates/state before finalize.")
+        stage_complete_idx = text.find("state stage-complete", max(state_idx, 0))
+        finalize_idx = text.find("multi-agent-brief finalize", max(stage_complete_idx, 0))
+        finalize_complete_idx = text.find("state finalize-complete", max(finalize_idx, 0))
+        if (
+            gates_idx == -1
+            or state_idx == -1
+            or stage_complete_idx == -1
+            or finalize_idx == -1
+            or finalize_complete_idx == -1
+            or not (gates_idx < state_idx < stage_complete_idx < finalize_idx < finalize_complete_idx)
+        ):
+            errors.append(f"{label} does not keep gates/state completion transactions around finalize.")
         if "not a quality-gate executor" not in text and "only renders reader-facing outputs" not in text:
             errors.append(f"{label} does not warn that finalize alone is not a quality-gate executor.")
     if "quality_gate_report.json" not in combined_text:

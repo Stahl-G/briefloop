@@ -52,9 +52,10 @@ Use for runtime handoff, Orchestrator contract changes, generated adapter config
 - Keep role handoffs artifact-based.
 - Coordinate source-planner, scout, screener, claim-ledger, analyst, editor, auditor, and formatter as delegated specialists.
 - Check expected artifacts after each delegated stage.
-- Make stage decisions with continue, retry_stage, delegate_repair, request_human_review, block_run, and finalize.
-- Record every stage transition with `multi-agent-brief state decide --workspace <workspace> --stage <stage_id> --decision <decision> --reason "<reason>"` before moving to the next stage. Use only decisions allowed by `workflow_state.json.next_allowed_decisions`; if the command rejects the decision, stop and correct the stage state.
-- Before finalize, after Auditor completes, run `multi-agent-brief gates check --workspace <workspace>` and `multi-agent-brief state check --workspace <workspace> --strict`. If blocking findings exist, do not finalize; use feedback/repair, `request_human_review`, or `block_run`. Record `state decide --stage auditor --decision continue` only when audit readiness and quality gates pass.
+- Make stage decisions with completion transactions for successful progress, and `retry_stage`, `delegate_repair`, `request_human_review`, or `block_run` for non-success paths.
+- Record successful delegated stage completion with `multi-agent-brief state stage-complete --workspace <workspace> --stage <stage_id> --reason "<reason>"` before moving to the next stage. Use `multi-agent-brief state decide` only for non-success decisions such as retry, repair, human review, or block; if the command rejects the decision or completion, stop and correct the stage state.
+- Before finalize, after Auditor completes, run `multi-agent-brief gates check --workspace <workspace>` and `multi-agent-brief state check --workspace <workspace> --strict`. If blocking findings exist, do not finalize; use feedback/repair, `request_human_review`, or `block_run`. Record auditor completion with `state stage-complete --stage auditor` only when audit readiness and quality gates pass.
+- After `multi-agent-brief finalize` writes reader-facing artifacts, verify completion with `multi-agent-brief state finalize-complete --workspace <workspace> --reason "<reason>"` before reporting the run complete.
 - Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator:
   if the same stage has already needed roughly three retry/repair rounds, prefer
   `request_human_review` or `block_run`; if a repair would touch more than two

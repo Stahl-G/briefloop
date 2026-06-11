@@ -35,6 +35,8 @@ ALLOWED_ACTIONS = {
     "runtime.run_handoff",
     "state.check",
     "state.decide",
+    "state.finalize_complete",
+    "state.stage_complete",
     "static.hermes_no_skip_finalize",
 }
 
@@ -288,6 +290,17 @@ def _validate_expected_contract(*, prefix: str, expected: dict[str, Any]) -> lis
                 exit_code = item.get("exit_code")
                 if not isinstance(exit_code, int):
                     errors.append(f"{item_prefix}.exit_code must be an integer.")
+                error_contains = item.get("error_contains")
+                if error_contains is not None and not (
+                    isinstance(error_contains, str)
+                    or (
+                        isinstance(error_contains, list)
+                        and all(isinstance(value, str) for value in error_contains)
+                    )
+                ):
+                    errors.append(
+                        f"{item_prefix}.error_contains must be a string or list of strings."
+                    )
 
     contains_text = expected.get("contains_text")
     if contains_text is not None:

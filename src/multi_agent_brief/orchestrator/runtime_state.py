@@ -22,8 +22,11 @@ from multi_agent_brief.feedback.feedback_contract import (
     optional_feedback_artifact_activated,
 )
 from multi_agent_brief.quality_gates.contract import (
+    QualityGateContractError,
     current_stage_quality_gate_blocking_reasons,
+    load_quality_gate_report,
     quality_gate_artifact_activated,
+    validate_quality_gate_report_payload,
 )
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
 from multi_agent_brief import __version__
@@ -31,6 +34,11 @@ from multi_agent_brief.orchestrator_contract import (
     CONTRACT_REFERENCES,
     DECISION_VOCABULARY,
     resolve_repo_workdir,
+)
+from multi_agent_brief.outputs.reader_final_gate import (
+    combine_reader_final_gate_results,
+    detect_reader_residue,
+    detect_reader_residue_in_docx,
 )
 
 
@@ -93,6 +101,19 @@ ARTIFACT_PRESENT = "present"
 ARTIFACT_VALID = "valid"
 ARTIFACT_INVALID = "invalid"
 
+E_STAGE_ALREADY_COMPLETED = "E_STAGE_ALREADY_COMPLETED"
+E_STAGE_MISMATCH = "E_STAGE_MISMATCH"
+E_REQUIRED_ARTIFACT_MISSING = "E_REQUIRED_ARTIFACT_MISSING"
+E_ARTIFACT_INVALID = "E_ARTIFACT_INVALID"
+E_ILLEGAL_TRANSITION = "E_ILLEGAL_TRANSITION"
+E_MANIFEST_EXTENSION_LOST = "E_MANIFEST_EXTENSION_LOST"
+E_TRANSACTION_PARTIAL_WRITE = "E_TRANSACTION_PARTIAL_WRITE"
+E_TRANSACTION_INTEGRITY = "E_TRANSACTION_INTEGRITY"
+E_RUNTIME_STATE_NOT_INITIALIZED = "E_RUNTIME_STATE_NOT_INITIALIZED"
+E_QUALITY_GATE_REQUIRED = "E_QUALITY_GATE_REQUIRED"
+E_READER_FINAL_GATE_FAILED = "E_READER_FINAL_GATE_FAILED"
+E_COMPLETION_TRANSACTION_REQUIRED = "E_COMPLETION_TRANSACTION_REQUIRED"
+
 MAX_RUN_ID_LENGTH = 200
 _RUN_ID_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _RUN_ID_WINDOWS_ABSOLUTE_RE = re.compile(r"\b[A-Za-z]:[\\/]")
@@ -110,16 +131,26 @@ _RUN_ID_INJECTION_PHRASES = ("system:", "developer:", "assistant:", "ignore prev
 class RuntimeStateError(Exception):
     """Raised when runtime state cannot be read or written safely."""
 
-    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        error_code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.details = details or {}
+        self.error_code = error_code
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "ok": False,
             "error": str(self),
             "details": self.details,
         }
+        if self.error_code:
+            payload["error_code"] = self.error_code
+        return payload
 
 
 def utc_now() -> str:
@@ -258,6 +289,96 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
             f"Failed to append event log: {path}",
             details={"path": str(path), "reason": str(exc)},
         ) from exc
+
+
+def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise RuntimeStateError(
+            f"Failed to read event log: {path}",
+            details={"path": str(path), "reason": str(exc)},
+        ) from exc
+    if raw and not raw.endswith(b"\n"):
+        raise RuntimeStateError(
+            f"Event log is not newline-terminated: {path}",
+            details={"path": str(path)},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+
+    records: list[dict[str, Any]] = []
+    for lineno, line in enumerate(raw.decode("utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeStateError(
+                f"Invalid JSON event log line {lineno}: {path}",
+                details={"path": str(path), "line": lineno, "reason": str(exc)},
+                error_code=E_TRANSACTION_INTEGRITY,
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeStateError(
+                f"Event log line {lineno} must contain an object: {path}",
+                details={"path": str(path), "line": lineno},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        records.append(payload)
+    return records
+
+
+def _preflight_transaction_files(paths: dict[str, Path]) -> list[dict[str, Any]]:
+    paths["runtime_manifest"].parent.mkdir(parents=True, exist_ok=True)
+    for key in ("runtime_manifest", "workflow_state"):
+        if not paths[key].exists():
+            raise RuntimeStateError(
+                "Runtime state is not initialized. Run `multi-agent-brief state init --workspace <workspace>` first.",
+                details={"missing": str(paths[key])},
+                error_code=E_RUNTIME_STATE_NOT_INITIALIZED,
+            )
+    for key in ("runtime_manifest", "workflow_state", "artifact_registry"):
+        path = paths[key]
+        if path.exists():
+            _read_json(path)
+    return _read_event_log_records(paths["event_log"])
+
+
+def _completion_transaction_event_exists(
+    *,
+    event_records: list[dict[str, Any]],
+    transaction_id: str,
+) -> bool:
+    for event in event_records:
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        if (
+            event.get("event_type") == "decision_recorded"
+            and metadata.get("transaction_id") == transaction_id
+        ):
+            return True
+    return False
+
+
+def _completion_transaction_integrity_reason(
+    *,
+    paths: dict[str, Path],
+    workflow: dict[str, Any],
+) -> str:
+    transaction = workflow.get("last_completion_transaction")
+    if not isinstance(transaction, dict):
+        return ""
+    transaction_id = str(transaction.get("transaction_id") or "")
+    if not transaction_id:
+        return ""
+    records = _read_event_log_records(paths["event_log"])
+    if _completion_transaction_event_exists(event_records=records, transaction_id=transaction_id):
+        return ""
+    return (
+        "Last completion transaction is missing its decision_recorded event: "
+        f"{transaction_id}."
+    )
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -968,6 +1089,164 @@ def _completion_decision_gate_reasons(
     return reasons
 
 
+def _quality_gate_pass_reasons(
+    *,
+    workspace: Path,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
+    try:
+        payload = load_quality_gate_report(workspace)
+    except QualityGateContractError as exc:
+        return [f"Quality gate report is invalid: {exc}"]
+    if payload is None:
+        return ["quality_gate_report.json is required before completing this stage."]
+
+    errors = validate_quality_gate_report_payload(payload, stages=stages, artifacts=artifacts)
+    if errors:
+        return [f"Quality gate report is invalid: {' '.join(errors)}"]
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    gate_stage_id = str(metadata.get("gate_stage_id") or metadata.get("stage_id") or "")
+    if gate_stage_id != "auditor":
+        return [
+            "Quality gate report must be generated for auditor completion "
+            f"(metadata.gate_stage_id='auditor'); got {gate_stage_id or '<missing>'}."
+        ]
+    expected_brief = "output/intermediate/audited_brief.md"
+    expected_ledger = "output/intermediate/claim_ledger.json"
+    brief_ref = str(metadata.get("brief") or metadata.get("audited_brief") or "")
+    ledger_ref = str(metadata.get("ledger") or metadata.get("claim_ledger") or "")
+    if brief_ref != expected_brief:
+        return [f"Quality gate report brief metadata must be {expected_brief}; got {brief_ref}."]
+    if ledger_ref != expected_ledger:
+        return [f"Quality gate report ledger metadata must be {expected_ledger}; got {ledger_ref}."]
+    gate_ids = {
+        str(result.get("gate_id") or "")
+        for result in payload.get("gate_results") or []
+        if isinstance(result, dict)
+    }
+    required_gate_ids = {"material_fact", "freshness", "target_relevance"}
+    missing_gate_ids = sorted(required_gate_ids - gate_ids)
+    if missing_gate_ids:
+        return [
+            "Quality gate report must include material_fact, freshness, and target_relevance gate_results; "
+            f"missing: {', '.join(missing_gate_ids)}."
+        ]
+    if payload.get("status") == "fail":
+        return ["Quality gate report status is fail."]
+    failed_gate_ids = sorted(
+        str(result.get("gate_id") or "")
+        for result in payload.get("gate_results") or []
+        if isinstance(result, dict) and result.get("status") == "fail"
+    )
+    if failed_gate_ids:
+        return [f"Quality gate report has failing gate_results: {', '.join(failed_gate_ids)}."]
+    blocking_findings = [
+        str(finding.get("finding_id") or "")
+        for finding in payload.get("findings") or []
+        if isinstance(finding, dict) and finding.get("blocking_level") == "blocking"
+    ]
+    if blocking_findings:
+        return [
+            "Quality gate report has blocking findings: "
+            + ", ".join(finding for finding in blocking_findings if finding)
+        ]
+    return []
+
+
+def _resolve_report_artifact_path(workspace: Path, value: Any) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = workspace / path
+    return path.resolve()
+
+
+def _finalize_report_reader_artifact_paths(workspace: Path, report: dict[str, Any]) -> list[Path]:
+    paths: list[Path] = []
+    required_brief = workspace / "output" / "brief.md"
+    paths.append(required_brief.resolve())
+    for key in ("reader_brief", "named_reader_brief", "reader_docx", "named_reader_docx", "source_appendix"):
+        path = _resolve_report_artifact_path(workspace, report.get(key))
+        if path is not None:
+            paths.append(path)
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        marker = str(path)
+        if marker not in seen:
+            seen.add(marker)
+            unique.append(path)
+    return unique
+
+
+def _finalize_completion_reasons(workspace: Path) -> list[str]:
+    reasons: list[str] = []
+    report_path = workspace / "output" / "intermediate" / "finalize_report.json"
+    if not report_path.exists():
+        return ["finalize_report.json is required before finalize-complete."]
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"finalize_report.json is invalid JSON: {exc}"]
+    except OSError as exc:
+        return [f"finalize_report.json could not be read: {exc}"]
+    if not isinstance(report, dict):
+        return ["finalize_report.json must contain an object."]
+    if report.get("status") != "pass":
+        reasons.append("finalize_report.json status must be pass.")
+    reader_clean = report.get("reader_clean")
+    if not isinstance(reader_clean, dict) or reader_clean.get("status") != "pass":
+        reasons.append("finalize_report.json reader_clean.status must be pass.")
+
+    artifact_paths = _finalize_report_reader_artifact_paths(workspace, report)
+    missing = [path for path in artifact_paths if not path.exists()]
+    if missing:
+        reasons.append(
+            "finalize_report.json references missing reader artifacts: "
+            + ", ".join(str(path) for path in missing)
+        )
+        return reasons
+
+    gate_results = []
+    for path in artifact_paths:
+        suffix = path.suffix.lower()
+        if suffix in {".md", ".markdown"}:
+            try:
+                gate_results.append(
+                    detect_reader_residue(path.read_text(encoding="utf-8"), artifact=str(path))
+                )
+            except OSError as exc:
+                reasons.append(f"Reader artifact could not be read: {path}: {exc}")
+        elif suffix == ".docx":
+            gate_results.append(detect_reader_residue_in_docx(path, artifact=str(path)))
+    if gate_results:
+        reader_gate = combine_reader_final_gate_results(gate_results)
+        if reader_gate.status == "fail":
+            reasons.append(
+                "Current reader artifacts fail reader final gate: "
+                f"{sum(reader_gate.counts.values())} residue findings."
+            )
+    return reasons
+
+
+def _raise_completion_reasons(
+    *,
+    message: str,
+    reasons: list[str],
+    error_code: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    payload = dict(details or {})
+    payload["blocking_reasons"] = reasons
+    raise RuntimeStateError(
+        f"{message}: {' '.join(reasons)}",
+        details=payload,
+        error_code=error_code,
+    )
+
+
 def _recompute_stage_state(
     *,
     workspace: Path,
@@ -1102,6 +1381,22 @@ def check_runtime_state(
         previous_workflow=workflow,
         updated_at=now,
     )
+    transaction_integrity_warning = _completion_transaction_integrity_reason(
+        paths=paths,
+        workflow=refreshed_workflow,
+    )
+    if transaction_integrity_warning:
+        refreshed_workflow["blocked"] = True
+        refreshed_workflow["blocking_reason"] = transaction_integrity_warning
+        current_stage = refreshed_workflow.get("current_stage")
+        if current_stage:
+            statuses = dict(refreshed_workflow.get("stage_statuses") or {})
+            statuses[str(current_stage)] = _status_entry(
+                STAGE_BLOCKED,
+                transaction_integrity_warning,
+                now,
+            )
+            refreshed_workflow["stage_statuses"] = statuses
 
     planned_events = [
         *_changed_artifact_events(old_registry=old_registry, registry=registry),
@@ -1153,7 +1448,363 @@ def check_runtime_state(
     state = show_runtime_state(workspace=ws)
     if control_switchboard_warning is not None:
         state["control_switchboard_warning"] = control_switchboard_warning
+    if transaction_integrity_warning:
+        state["transaction_integrity_warning"] = {
+            "error_code": E_TRANSACTION_INTEGRITY,
+            "message": transaction_integrity_warning,
+        }
     return state
+
+
+def _validate_completion_target(
+    *,
+    stage_id: str,
+    workflow: dict[str, Any],
+    stage_by_id: dict[str, dict[str, Any]],
+    finalize: bool,
+) -> dict[str, Any]:
+    if stage_id not in stage_by_id:
+        raise RuntimeStateError(
+            f"Unknown stage: {stage_id}",
+            details={"stage_id": stage_id, "known_stages": list(stage_by_id)},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    current_stage = workflow.get("current_stage")
+    if current_stage is None and _stage_status(workflow, stage_id) == STAGE_COMPLETE:
+        raise RuntimeStateError(
+            f"Stage '{stage_id}' is already complete.",
+            details={"stage_id": stage_id},
+            error_code=E_STAGE_ALREADY_COMPLETED,
+        )
+    if stage_id != current_stage:
+        if _stage_status(workflow, stage_id) == STAGE_COMPLETE:
+            raise RuntimeStateError(
+                f"Stage '{stage_id}' is already complete.",
+                details={"stage_id": stage_id, "current_stage": current_stage},
+                error_code=E_STAGE_ALREADY_COMPLETED,
+            )
+        raise RuntimeStateError(
+            f"Completion stage '{stage_id}' does not match current stage '{current_stage}'.",
+            details={"stage_id": stage_id, "current_stage": current_stage},
+            error_code=E_STAGE_MISMATCH,
+        )
+    if finalize and stage_id != "finalize":
+        raise RuntimeStateError(
+            "finalize-complete can only complete the finalize stage.",
+            details={"stage_id": stage_id},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    if not finalize and stage_id == "finalize":
+        raise RuntimeStateError(
+            "stage-complete cannot complete the finalize stage; use finalize-complete.",
+            details={"stage_id": stage_id},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    stage = stage_by_id[stage_id]
+    decision = "finalize" if finalize else "continue"
+    allowed = [str(item) for item in (stage.get("allowed_decisions") or [])]
+    if decision not in allowed:
+        raise RuntimeStateError(
+            f"Decision '{decision}' is not allowed for stage '{stage_id}'.",
+            details={"stage_id": stage_id, "decision": decision, "stage_allowed_decisions": allowed},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    return stage
+
+
+def _workflow_after_completion(
+    *,
+    workflow: dict[str, Any],
+    stages: list[dict[str, Any]],
+    stage_id: str,
+    reason: str,
+    now: str,
+    transaction_id: str,
+    finalize: bool,
+) -> dict[str, Any]:
+    decision = "finalize" if finalize else "continue"
+    next_stage = _next_stage_id(stages, stage_id)
+    current_stage = None if finalize else next_stage
+    statuses = dict(workflow.get("stage_statuses") or {})
+    statuses[stage_id] = _status_entry(STAGE_COMPLETE, reason, now)
+    if current_stage:
+        statuses[current_stage] = _status_entry(STAGE_READY, "", now)
+    updated = dict(workflow)
+    updated["updated_at"] = now
+    updated["current_stage"] = current_stage
+    updated["blocked"] = False
+    updated["blocking_reason"] = ""
+    updated["stage_statuses"] = statuses
+    updated["last_decision"] = {
+        "stage_id": stage_id,
+        "decision": decision,
+        "reason": reason,
+        "created_at": now,
+    }
+    updated["last_completion_transaction"] = {
+        "transaction_id": transaction_id,
+        "stage_id": stage_id,
+        "decision": decision,
+        "reason": reason,
+        "created_at": now,
+    }
+    updated["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, current_stage)
+    return updated
+
+
+def _append_transaction_events(
+    *,
+    workspace: Path,
+    run_id: str,
+    actor: str,
+    transaction_id: str,
+    stage_id: str,
+    decision: str,
+    reason: str,
+    next_stage: str | None,
+    artifact_events: list[dict[str, Any]],
+) -> None:
+    try:
+        for event in artifact_events:
+            metadata = dict(event.get("metadata") or {})
+            metadata["transaction_id"] = transaction_id
+            append_event(
+                workspace=workspace,
+                run_id=run_id,
+                event_type=str(event["event_type"]),
+                actor=actor,
+                stage_id=event.get("stage_id"),
+                artifact_id=event.get("artifact_id"),
+                reason=str(event.get("reason") or ""),
+                metadata=metadata,
+            )
+        append_event(
+            workspace=workspace,
+            run_id=run_id,
+            event_type="decision_recorded",
+            actor=actor,
+            stage_id=stage_id,
+            decision=decision,
+            reason=reason,
+            metadata={"next_stage": next_stage, "transaction_id": transaction_id},
+        )
+    except RuntimeStateError as exc:
+        raise RuntimeStateError(
+            "Completion transaction partially wrote state but failed to append event.",
+            details={
+                "transaction_id": transaction_id,
+                "stage_id": stage_id,
+                "decision": decision,
+                "event_error": str(exc),
+                "event_details": exc.details,
+            },
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
+
+
+def _preserved_manifest_extensions(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: manifest[key]
+        for key in PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS
+        if key in manifest
+    }
+
+
+def _assert_manifest_extensions_preserved(
+    *,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> None:
+    missing = [
+        key
+        for key, value in before.items()
+        if key not in after or after.get(key) != value
+    ]
+    if missing:
+        raise RuntimeStateError(
+            "Registered runtime_manifest extension keys were lost.",
+            details={"missing_extensions": missing},
+            error_code=E_MANIFEST_EXTENSION_LOST,
+        )
+
+
+def _complete_stage_transaction(
+    *,
+    workspace: str | Path,
+    stage_id: str,
+    reason: str,
+    repo_workdir: str | Path | None = None,
+    actor: str = "orchestrator",
+    finalize: bool = False,
+) -> dict[str, Any]:
+    ws = _require_workspace(workspace)
+    paths = runtime_state_paths(ws)
+    _preflight_transaction_files(paths)
+    ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
+    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
+    stages = load_stage_specs(repo)
+    artifacts = load_artifact_contracts(repo)
+    stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
+    stage = _validate_completion_target(
+        stage_id=stage_id,
+        workflow=workflow,
+        stage_by_id=stage_by_id,
+        finalize=finalize,
+    )
+
+    artifact_reasons = _completion_artifact_gate_reasons(
+        workspace=ws,
+        stage=stage,
+        artifacts_by_id=_artifact_map(artifacts),
+    )
+    if artifact_reasons:
+        code = E_REQUIRED_ARTIFACT_MISSING
+        if any("invalid" in item.lower() for item in artifact_reasons):
+            code = E_ARTIFACT_INVALID
+        _raise_completion_reasons(
+            message=f"Cannot complete stage '{stage_id}'",
+            reasons=artifact_reasons,
+            error_code=code,
+            details={"stage_id": stage_id},
+        )
+
+    feedback_reasons = current_stage_feedback_blocking_reasons(
+        workspace=ws,
+        current_stage=stage_id,
+        stages=stages,
+        artifacts=artifacts,
+    )
+    if feedback_reasons:
+        _raise_completion_reasons(
+            message=f"Cannot complete stage '{stage_id}'",
+            reasons=feedback_reasons,
+            error_code=E_ILLEGAL_TRANSITION,
+            details={"stage_id": stage_id},
+        )
+
+    quality_reasons = current_stage_quality_gate_blocking_reasons(
+        workspace=ws,
+        current_stage=stage_id,
+        stages=stages,
+        artifacts=artifacts,
+    )
+    if stage_id == "auditor":
+        quality_reasons.extend(_quality_gate_pass_reasons(workspace=ws, stages=stages, artifacts=artifacts))
+    if quality_reasons:
+        _raise_completion_reasons(
+            message=f"Cannot complete stage '{stage_id}'",
+            reasons=quality_reasons,
+            error_code=E_QUALITY_GATE_REQUIRED,
+            details={"stage_id": stage_id},
+        )
+
+    if finalize:
+        finalize_reasons = _finalize_completion_reasons(ws)
+        if finalize_reasons:
+            _raise_completion_reasons(
+                message="Cannot complete finalize stage",
+                reasons=finalize_reasons,
+                error_code=E_READER_FINAL_GATE_FAILED,
+                details={"stage_id": stage_id},
+            )
+
+    transaction_id = uuid.uuid4().hex
+    now = utc_now()
+    run_id = str(manifest["run_id"])
+    preserved_extensions = _preserved_manifest_extensions(manifest)
+    next_workflow = _workflow_after_completion(
+        workflow=workflow,
+        stages=stages,
+        stage_id=stage_id,
+        reason=reason,
+        now=now,
+        transaction_id=transaction_id,
+        finalize=finalize,
+    )
+    old_registry = _read_json_if_exists(paths["artifact_registry"])
+    registry = _build_artifact_registry(
+        workspace=ws,
+        run_id=run_id,
+        artifacts=artifacts,
+        workflow=next_workflow,
+        updated_at=now,
+    )
+    artifact_events = _changed_artifact_events(old_registry=old_registry, registry=registry)
+
+    state_written = False
+    try:
+        _write_json_atomic(paths["artifact_registry"], registry)
+        state_written = True
+        _write_json_atomic(paths["workflow_state"], next_workflow)
+    except RuntimeStateError as exc:
+        code = E_TRANSACTION_PARTIAL_WRITE if state_written else exc.error_code
+        raise RuntimeStateError(
+            "Completion transaction failed while writing state files.",
+            details={
+                "transaction_id": transaction_id,
+                "stage_id": stage_id,
+                "state_error": str(exc),
+                "state_details": exc.details,
+            },
+            error_code=code,
+        ) from exc
+
+    _append_transaction_events(
+        workspace=ws,
+        run_id=run_id,
+        actor=actor,
+        transaction_id=transaction_id,
+        stage_id=stage_id,
+        decision="finalize" if finalize else "continue",
+        reason=reason,
+        next_stage=next_workflow.get("current_stage"),
+        artifact_events=artifact_events,
+    )
+
+    current_manifest = _read_json(paths["runtime_manifest"])
+    _assert_manifest_extensions_preserved(before=preserved_extensions, after=current_manifest)
+    state = show_runtime_state(workspace=ws)
+    state["transaction"] = {
+        "transaction_id": transaction_id,
+        "stage_id": stage_id,
+        "decision": "finalize" if finalize else "continue",
+    }
+    return state
+
+
+def complete_stage_transaction(
+    *,
+    workspace: str | Path,
+    stage_id: str,
+    reason: str,
+    repo_workdir: str | Path | None = None,
+    actor: str = "orchestrator",
+) -> dict[str, Any]:
+    return _complete_stage_transaction(
+        workspace=workspace,
+        stage_id=stage_id,
+        reason=reason,
+        repo_workdir=repo_workdir,
+        actor=actor,
+        finalize=False,
+    )
+
+
+def complete_finalize_transaction(
+    *,
+    workspace: str | Path,
+    reason: str,
+    repo_workdir: str | Path | None = None,
+    actor: str = "orchestrator",
+) -> dict[str, Any]:
+    return _complete_stage_transaction(
+        workspace=workspace,
+        stage_id="finalize",
+        reason=reason,
+        repo_workdir=repo_workdir,
+        actor=actor,
+        finalize=True,
+    )
 
 
 def record_decision(
@@ -1208,22 +1859,19 @@ def record_decision(
         )
 
     if decision in {"continue", "finalize"}:
-        gate_reasons = _completion_decision_gate_reasons(
-            workspace=ws,
-            stage=stage_by_id[stage_id],
-            stages=stages,
-            artifacts=artifacts,
+        command = "finalize-complete" if decision == "finalize" else "stage-complete"
+        raise RuntimeStateError(
+            (
+                f"Decision '{decision}' must be recorded with `multi-agent-brief state {command}`. "
+                "`state decide` is reserved for retry_stage, delegate_repair, request_human_review, and block_run."
+            ),
+            details={
+                "stage_id": stage_id,
+                "decision": decision,
+                "required_command": command,
+            },
+            error_code=E_COMPLETION_TRANSACTION_REQUIRED,
         )
-        if gate_reasons:
-            action = "finalize" if decision == "finalize" else "continue"
-            raise RuntimeStateError(
-                f"Cannot {action} stage '{stage_id}': {' '.join(gate_reasons)}",
-                details={
-                    "stage_id": stage_id,
-                    "decision": decision,
-                    "blocking_reasons": gate_reasons,
-                },
-            )
 
     now = utc_now()
     statuses = dict(workflow.get("stage_statuses") or {})

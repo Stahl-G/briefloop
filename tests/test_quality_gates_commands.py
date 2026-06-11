@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
+import multi_agent_brief.orchestrator.runtime_state as runtime_state
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     check_runtime_state,
     initialize_runtime_state,
-    record_decision,
 )
 from multi_agent_brief.quality_gates import state as quality_gate_state
 
@@ -72,21 +72,38 @@ def _events(ws: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def _set_current_stage(ws: Path, stage_id: str) -> None:
+    stages = runtime_state.load_stage_specs(ROOT)
+    stage_ids = [str(stage.get("stage_id") or "") for stage in stages if stage.get("stage_id")]
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    now = runtime_state.utc_now()
+    statuses = {}
+    for item in stage_ids:
+        if stage_ids.index(item) < stage_ids.index(stage_id):
+            statuses[item] = {"status": "complete", "reason": f"{item} fixture complete", "updated_at": now}
+        elif item == stage_id:
+            statuses[item] = {"status": "ready", "reason": "", "updated_at": now}
+        else:
+            statuses[item] = {"status": "pending", "reason": "", "updated_at": now}
+    workflow["updated_at"] = now
+    workflow["current_stage"] = stage_id
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["stage_statuses"] = statuses
+    workflow["next_allowed_decisions"] = runtime_state._allowed_decisions_for_stage(stages, stage_id)
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _advance_to_auditor(ws: Path) -> None:
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    for stage in ("doctor", "source-discovery", "input-governance"):
-        record_decision(workspace=ws, repo_workdir=ROOT, stage_id=stage, decision="continue", reason=f"{stage} done")
     _write_json(ws, "candidate_claims.json")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="scout", decision="continue", reason="scout done")
     _write_json(ws, "screened_candidates.json")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="screener", decision="continue", reason="screener done")
     if not (_intermediate(ws) / "claim_ledger.json").exists():
         _write_ledger(ws, [])
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="claim-ledger", decision="continue", reason="ledger done")
     if not (_intermediate(ws) / "audited_brief.md").exists():
         _write_audited_brief(ws, "# Brief\n")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="analyst", decision="continue", reason="analyst done")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="editor", decision="continue", reason="editor done")
+    _set_current_stage(ws, "auditor")
 
 
 def _write_json(ws: Path, name: str, payload: str = "[]\n") -> None:
@@ -144,7 +161,9 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
         "--json",
     ])
     assert rc == 1
-    assert "blocking quality gate findings" in json.loads(capsys.readouterr().out)["error"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert payload["details"]["required_command"] == "stage-complete"
 
 
 def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, capsys):
@@ -441,7 +460,7 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     _write_audited_brief(ws, "## Executive Summary\nTargetCo update.\n")
     _advance_to_auditor(ws)
     _write_json(ws, "audit_report.json", "{}\n")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="auditor", decision="continue", reason="audit done")
+    _set_current_stage(ws, "finalize")
     _write_reader_brief(ws, "## Executive Summary\nMarket update without the configured company.\n")
 
     rc = main([
@@ -484,7 +503,9 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
         "--json",
     ])
     assert rc == 1
-    assert "blocking quality gate findings" in json.loads(capsys.readouterr().out)["error"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert payload["details"]["required_command"] == "finalize-complete"
 
 
 def test_freshness_reads_config_report_defaults_and_preserves_zero(tmp_path, capsys):
@@ -575,7 +596,9 @@ input:
         "--json",
     ])
     assert rc == 1
-    assert "requires quality_gate_report.json" in json.loads(capsys.readouterr().out)["error"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert payload["details"]["required_command"] == "stage-complete"
 
 
 def test_gates_check_rolls_back_report_when_event_append_fails(tmp_path, monkeypatch):
@@ -706,7 +729,9 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
         "--json",
     ])
     assert rc == 1
-    assert "blocking quality gate findings" in json.loads(capsys.readouterr().out)["error"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert payload["details"]["required_command"] == "stage-complete"
 
 
 def test_high_severity_warning_does_not_block_by_default(tmp_path):

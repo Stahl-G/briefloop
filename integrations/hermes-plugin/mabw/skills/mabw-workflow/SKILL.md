@@ -52,10 +52,20 @@ Read workspace context -> read contract references -> identify the next stage ->
 ## Delegated Workflow
 
 ```text
-doctor → source discovery when configured → input governance when available → scout → screener → claim-ledger → analyst → editor → auditor → gates check/state check/state decide → finalize
+doctor → source discovery when configured → input governance when available → scout → screener → claim-ledger → analyst → editor → auditor → gates check/state check/stage-complete → finalize → finalize-complete
 ```
 
-Before `finalize`, run `multi-agent-brief gates check`, `state check --strict`, and `state decide --stage auditor --decision continue`. `finalize` only renders reader-facing outputs; it is not a quality-gate executor.
+Before `finalize`, run this explicit success path:
+
+```bash
+multi-agent-brief gates check --workspace <workspace>
+multi-agent-brief state check --workspace <workspace> --strict
+multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+multi-agent-brief finalize --config <workspace>/config.yaml
+multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+```
+
+`finalize` only renders reader-facing outputs; it is not a quality-gate executor.
 
 Selection is not execution. `controls select --selection enable` records Orchestrator intent only; explicitly run the selected CLI, subagent, or human action afterward.
 
