@@ -92,8 +92,8 @@ These surfaces persist across runs. They can influence later runs only through e
 | `improvement/ledger.jsonl` | Append-only human-governed reader guidance ledger. | Python CLI from human approval | Implemented | Stores governance lifecycle, not runtime effect or output quality proof. |
 | `improvement/memory.md` | Deterministic projection of approved materializable guidance. | Python | Implemented projection | Projection from ledger; not hand-authored source of truth. |
 | `output/intermediate/improvement_memory_snapshot.md` | Frozen improvement memory for the current run. | Python | Implemented projection | Runtime reads this snapshot, not live `improvement/memory.md`. |
-| `improvement/intake.jsonl` | Raw feedback intake and derivation links. | Python | Planned v0.7.2 | No lifecycle state; not a second ledger. |
-| `improvement/candidates.jsonl` | Candidate parking lot for preferences/rules/fact review routes. | Python validator from agent/human proposals | Planned v0.7.2/v0.7.3 | Candidates do not affect runtime until promoted and approved downstream. |
+| `improvement/intake.jsonl` | Raw feedback intake and derivation links. | Python | Deferred | No lifecycle state; not a second ledger. |
+| `improvement/candidates.jsonl` | Candidate parking lot for preferences/rules/fact review routes. | Python validator from agent/human proposals | Deferred v0.7.3+ | Candidates do not affect runtime until promoted and approved downstream. |
 | `reference_samples/manifest.jsonl` | Manifest for accepted samples used as taste evidence. | Python / human workspace management | Planned v0.8 | Non-evidence; must not be scanned as source material. |
 
 ## Run-Scoped Preference Evaluation

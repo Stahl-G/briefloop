@@ -377,7 +377,6 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
         "--workspace", str(ws),
         "--runtime", "claude",
         "--recipe", "fast-rerun",
-        "--operator-reported-model", "DeepSeek V4 Pro",
         "--skip-doctor",
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
     ])
@@ -388,7 +387,6 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
     text = data["prompt"] + "\n" + "\n".join(data["notes"])
     assert data["recipe"] == "fast-rerun"
     assert manifest["recipe"] == "fast-rerun"
-    assert manifest["operator_reported_model"] == "DeepSeek V4 Pro"
     assert main([
         "state",
         "check",
@@ -398,7 +396,6 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
     ]) == 0
     after_state_check = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     assert after_state_check["recipe"] == "fast-rerun"
-    assert after_state_check["operator_reported_model"] == "DeepSeek V4 Pro"
     assert main([
         "controls",
         "build-switchboard",
@@ -407,7 +404,6 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
     ]) == 0
     after_switchboard = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     assert after_switchboard["recipe"] == "fast-rerun"
-    assert after_switchboard["operator_reported_model"] == "DeepSeek V4 Pro"
     assert "Runtime recipe: fast-rerun" in text
     assert "Start model-backed content work at Analyst" in text
     assert "Do not rerun source discovery, Scout, Screener, or Claim Ledger" in text

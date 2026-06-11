@@ -53,7 +53,7 @@ RUNTIME_STATE_FILES = {
     "artifact_registry": "output/intermediate/artifact_registry.json",
     "event_log": "output/intermediate/event_log.jsonl",
 }
-PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe", "operator_reported_model")
+PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe")
 
 EVENT_TYPES = {
     "run_initialized",
@@ -507,7 +507,6 @@ def _runtime_manifest(
     runtime: str,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
-    operator_reported_model: str | None = None,
 ) -> dict[str, Any]:
     manifest = {
         "schema_version": RUNTIME_MANIFEST_SCHEMA,
@@ -531,15 +530,7 @@ def _runtime_manifest(
             for artifact in artifacts
         ],
     }
-    if operator_reported_model is not None:
-        manifest["operator_reported_model"] = operator_reported_model
     return manifest
-
-
-def _clean_optional_manifest_text(value: str | None) -> str | None:
-    if value is None:
-        return None
-    return str(value)
 
 
 def initialize_runtime_state(
@@ -550,7 +541,6 @@ def initialize_runtime_state(
     reset_state: bool = False,
     actor: str = "cli",
     recipe: str | None = None,
-    operator_reported_model: str | None = None,
 ) -> dict[str, Any]:
     """Initialize runtime control files for a workspace."""
     ws = _require_workspace(workspace)
@@ -612,7 +602,6 @@ def initialize_runtime_state(
         runtime=runtime,
         stages=stages,
         artifacts=artifacts,
-        operator_reported_model=_clean_optional_manifest_text(operator_reported_model),
     )
     if old_manifest and not reset_state:
         for key in PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS:
@@ -620,8 +609,6 @@ def initialize_runtime_state(
                 manifest[key] = old_manifest[key]
     if recipe is not None:
         manifest["recipe"] = str(recipe)
-    if operator_reported_model is not None:
-        manifest["operator_reported_model"] = _clean_optional_manifest_text(operator_reported_model)
 
     if old_workflow and not reset_state:
         if old_workflow.get("schema_version") != WORKFLOW_STATE_SCHEMA:

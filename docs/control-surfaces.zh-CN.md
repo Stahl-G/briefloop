@@ -77,8 +77,8 @@ MABW 的控制面可以按不同粒度统计：
 | `improvement/ledger.jsonl` | append-only human-governed reader guidance ledger。 | Python CLI，来自 human approval | 已实现 | 记录 governance lifecycle，不证明 runtime effect 或 output quality。 |
 | `improvement/memory.md` | 从 approved materializable guidance 派生的 deterministic projection。 | Python | 已实现投影 | 从 ledger 派生，不是手写真理源。 |
 | `output/intermediate/improvement_memory_snapshot.md` | 当前 run 的 frozen improvement memory。 | Python | 已实现投影 | Runtime 读取 snapshot，不读取 live `improvement/memory.md`。 |
-| `improvement/intake.jsonl` | 原始 feedback intake 和 derivation links。 | Python | 计划 v0.7.2 | 无 lifecycle state；不是第二本 ledger。 |
-| `improvement/candidates.jsonl` | preference/rule/fact review routes 的 candidate parking lot。 | Python validator，来自 agent/human proposals | 计划 v0.7.2/v0.7.3 | candidate 不影响 runtime，除非下游 promote 并 approve。 |
+| `improvement/intake.jsonl` | 原始 feedback intake 和 derivation links。 | Python | 延后 | 无 lifecycle state；不是第二本 ledger。 |
+| `improvement/candidates.jsonl` | preference/rule/fact review routes 的 candidate parking lot。 | Python validator，来自 agent/human proposals | 延后至 v0.7.3+ | candidate 不影响 runtime，除非下游 promote 并 approve。 |
 | `reference_samples/manifest.jsonl` | accepted samples 作为 taste evidence 的 manifest。 | Python / human workspace management | 计划 v0.8 | non-evidence；不得作为 source material 被扫描。 |
 
 ## Run 级偏好评估

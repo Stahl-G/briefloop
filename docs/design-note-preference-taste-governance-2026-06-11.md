@@ -50,8 +50,8 @@ Natural feedback / accepted samples
 
 | File | Role | Version |
 |------|------|---------|
-| `improvement/intake.jsonl` | Raw feedback entry; no lifecycle | v0.7.2 |
-| `improvement/candidates.jsonl` | Preference/rule candidate parking lot; immutable records + tombstones | v0.7.2–0.7.3 |
+| `improvement/intake.jsonl` | Raw feedback entry; no lifecycle | deferred |
+| `improvement/candidates.jsonl` | Preference/rule candidate parking lot; immutable records + tombstones | v0.7.3+ |
 | `improvement/ledger.jsonl` | Human-adopted audience guidance; append-only audit ledger | v0.7.0 |
 | `improvement/memory.md` | Deterministic projection from ledger; injected into handoff | v0.7.0 |
 | `output/intermediate/improvement_memory_snapshot.md` | Per-run frozen snapshot; manifest-cited SHA-256 | v0.7.0 |
@@ -173,11 +173,14 @@ contracts / policy / source-supported facts
 
 - Transaction layer (`stage complete` / `stage block` / `finalize complete`): P0
 - Product path: P1
-- `improvement/intake.jsonl` skeleton
-- `improvement/candidates.jsonl` schema + validator (if capacity allows; may slip to v0.7.3)
 - Ledger `provenance` field (`human_authored` / `machine_proposed`)
 - Route includes `already_enforced`
 - Documentation: non-evidence samples boundary; no Python LLM calls
+
+Deferred from v0.7.2:
+
+- `improvement/intake.jsonl` skeleton
+- `improvement/candidates.jsonl` schema + validator
 
 ### v0.7.3 — Candidate CLI
 
