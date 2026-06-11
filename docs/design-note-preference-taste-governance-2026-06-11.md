@@ -7,7 +7,7 @@
 
 ---
 
-## North Star
+## Core Promise
 
 > The system never learns anything the user has not approved.
 
