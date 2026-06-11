@@ -580,6 +580,35 @@ def test_finalize_fails_on_blank_source_index_row(tmp_path: Path):
     assert report["reader_clean"]["blank_citation_row_count"] == 1
 
 
+def test_finalize_fails_on_blank_source_index_id_cell(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Reader-safe content.\n\n"
+        "## Source Index\n\n"
+        "| ID | Title | Date | Priority |\n"
+        "| --- | --- | --- | --- |\n"
+        "|  | USTR Section 301对60个经济体调查 | 2026-06-04 | 高 |\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["status"] == "fail"
+    assert reader_clean["blank_citation_row_count"] == 1
+    assert "blank ID/source/reference cell" in reader_clean["sample_findings"][0]["message"]
+
+
 def test_finalize_cli_reports_reader_clean_failure_without_traceback(
     tmp_path: Path,
     capsys,

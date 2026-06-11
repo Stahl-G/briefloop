@@ -109,6 +109,26 @@ def test_reader_final_gate_detects_blank_rows_only_inside_source_sections() -> N
     assert result.findings[0].line == 7
 
 
+def test_reader_final_gate_detects_blank_source_id_cell_in_source_section() -> None:
+    markdown = """# Brief
+
+## Source Index
+
+| ID | Title | Date | Priority |
+| --- | --- | --- | --- |
+|  | USTR Section 301对60个经济体调查 | 2026-06-04 | 高 |
+"""
+
+    result = detect_reader_residue(markdown, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["blank_citation_row_count"] == 1
+    finding = result.findings[0]
+    assert finding.kind == "blank_citation_row"
+    assert finding.line == 7
+    assert "blank ID/source/reference cell" in finding.message
+
+
 def test_reader_final_gate_allows_reader_safe_source_appendix() -> None:
     appendix = """# Source Appendix
 

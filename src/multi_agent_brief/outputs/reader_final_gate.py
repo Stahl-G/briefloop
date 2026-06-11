@@ -78,6 +78,28 @@ _CITATION_SECTION_TITLES = [
 ]
 
 _BLANK_CELL_VALUES = {"", "-", "--", "—", "n/a", "na", "null", "none", "无", "未提供", "unknown"}
+_CITATION_ID_HEADERS = {
+    "id",
+    "claimid",
+    "sourceid",
+    "source",
+    "sourceref",
+    "sourcereference",
+    "citationid",
+    "citation",
+    "referenceid",
+    "reference",
+    "refid",
+    "ref",
+    "编号",
+    "来源",
+    "来源编号",
+    "来源id",
+    "引用",
+    "引用编号",
+    "引用id",
+    "证据编号",
+}
 
 
 @dataclass(frozen=True)
@@ -115,12 +137,14 @@ def detect_reader_residue(
 ) -> ReaderFinalGateResult:
     findings: list[ReaderResidueFinding] = []
     in_citation_section = False
+    citation_table_header: list[str] | None = None
 
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         heading = _HEADING_RE.match(line)
         if heading:
             title = heading.group(2).strip().lower()
             in_citation_section = any(marker in title for marker in _CITATION_SECTION_TITLES)
+            citation_table_header = None
 
         _collect_regex_findings(
             findings,
@@ -183,16 +207,31 @@ def detect_reader_residue(
             artifact=artifact,
             allow_compliance_footer=allow_compliance_footer,
         )
-        if in_citation_section and _is_blank_citation_row(line):
-            findings.append(
-                ReaderResidueFinding(
-                    kind="blank_citation_row",
-                    text=_shorten(line.strip()),
-                    line=line_number,
-                    artifact=artifact,
-                    message="Reader-facing source or citation section contains a blank table row.",
-                )
-            )
+        if in_citation_section:
+            cells = _table_cells(line)
+            if cells and not _TABLE_SEPARATOR_RE.match(line.strip()):
+                if citation_table_header is None:
+                    citation_table_header = cells
+                elif _is_blank_citation_row_cells(cells):
+                    findings.append(
+                        ReaderResidueFinding(
+                            kind="blank_citation_row",
+                            text=_shorten(line.strip()),
+                            line=line_number,
+                            artifact=artifact,
+                            message="Reader-facing source or citation section contains a blank table row.",
+                        )
+                    )
+                elif _has_blank_citation_id_cell(citation_table_header, cells):
+                    findings.append(
+                        ReaderResidueFinding(
+                            kind="blank_citation_row",
+                            text=_shorten(line.strip()),
+                            line=line_number,
+                            artifact=artifact,
+                            message="Reader-facing source or citation section contains a blank ID/source/reference cell.",
+                        )
+                    )
 
     counts = _empty_counts()
     for finding in findings:
@@ -317,15 +356,36 @@ def _collect_process_wording_findings(
 
 
 def _is_blank_citation_row(line: str) -> bool:
+    cells = _table_cells(line)
+    return bool(cells and _is_blank_citation_row_cells(cells))
+
+
+def _table_cells(line: str) -> list[str] | None:
     stripped = line.strip()
     if not (stripped.startswith("|") and stripped.endswith("|")):
-        return False
-    if _TABLE_SEPARATOR_RE.match(stripped):
-        return False
-    cells = [cell.strip().lower() for cell in stripped.strip("|").split("|")]
+        return None
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
     if len(cells) < 2:
-        return False
-    return all(cell in _BLANK_CELL_VALUES for cell in cells)
+        return None
+    return cells
+
+
+def _is_blank_citation_row_cells(cells: list[str]) -> bool:
+    return all(cell.strip().lower() in _BLANK_CELL_VALUES for cell in cells)
+
+
+def _has_blank_citation_id_cell(header_cells: list[str], row_cells: list[str]) -> bool:
+    for index, header in enumerate(header_cells):
+        if index >= len(row_cells):
+            continue
+        if _is_citation_id_header(header) and row_cells[index].strip().lower() in _BLANK_CELL_VALUES:
+            return True
+    return False
+
+
+def _is_citation_id_header(header: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", header.strip().lower())
+    return normalized in _CITATION_ID_HEADERS
 
 
 def _empty_counts() -> dict[str, int]:
