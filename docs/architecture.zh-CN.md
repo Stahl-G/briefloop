@@ -21,13 +21,17 @@ flowchart LR
 
 ## 运行时
 
-### Hermes（主路径）
+### Claude Code（一等写作者路径）
+
+Claude Code 是 first-class writer / five-verb path。`/mabw` 暴露 `new`、`run`、`status`、`feedback`、`deliver` 五个写作者动词；`/generate-brief` 仍是委派子智能体工作流命令。
+
+### Hermes（委派 / 定时运行时路径）
 
 Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → claim-ledger → analyst → editor → auditor。Python CLI 提供 init、doctor、输入抽取/分类、finalize 工具；cron 处理定时调度。
 
-### Claude Code / OpenCode / Codex
+### OpenCode / Codex
 
-通过 `multi-agent-brief run --workspace <path> --runtime claude|opencode|codex` 生成 `agent_handoff.md`，由对应平台的斜杠命令和子智能体配置执行。
+通过 `multi-agent-brief run --workspace <path> --runtime opencode|codex` 生成 `agent_handoff.md`，由对应平台的斜杠命令和子智能体配置执行。
 
 ## 输入治理
 

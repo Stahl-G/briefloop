@@ -15,10 +15,10 @@ This project is not an investment advice tool, trading signal generator, or repl
 
 ## Current Status
 
-Current version: **v0.7.0**
+Current version: **v0.7.2**
 
 - **Working today**: subagent-first workflows across Hermes / Claude Code / Codex / OpenCode, runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
-- **New in v0.7.0**: human-authored, human-approved reader preferences can be recorded in `improvement/ledger.jsonl`, frozen on the next `run` / `start` / `handoff` as `output/intermediate/improvement_memory_snapshot.md`, and exposed through runtime handoff.
+- **New in v0.7.2**: reader-final delivery gate, `stage-complete` / `finalize-complete` success-path transactions, the Claude Code five-verb writer entrypoint, read-only `status`, and Improvement Ledger supersession hygiene.
 - **Not yet**: not an autonomous agent, does not automatically edit brief content, does not automatically learn, and does not provide a long-term memory system. See [architecture status](docs/architecture-status.md) and [roadmap](docs/roadmap.md).
 
 One-line design principle: **the system proposes; humans decide.** For the hard boundaries, see [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md).

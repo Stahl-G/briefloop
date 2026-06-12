@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] — 2026-06-12
+
 ### Added
 
 - **Reader-final output gate**: `finalize` now records `finalize_report.json.reader_clean` and rejects reader-facing Markdown/DOCX/source appendix outputs that leak internal source markers, raw claim/source IDs, local paths, debug residue, process wording, or blank citation/source-index rows.

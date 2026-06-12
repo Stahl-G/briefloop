@@ -21,13 +21,17 @@ Gray steps (source governance, finalize) run via Python CLI. White steps (Scout 
 
 ## Runtimes
 
-### Hermes (Primary)
+### Claude Code (First-Class Writer Path)
+
+Claude Code is the first-class writer / five-verb path. The `/mabw` command exposes `new`, `run`, `status`, `feedback`, and `deliver`; `/generate-brief` remains the delegated subagent workflow command.
+
+### Hermes (Delegated / Scheduled Runtime Path)
 
 Hermes uses `delegate_task` native child pipelines: scout → screener → claim-ledger → analyst → editor → auditor. Python CLI tools handle init, doctor, input extraction/classification, and finalize. Cron handles durable scheduling.
 
-### Claude Code / OpenCode / Codex
+### OpenCode / Codex
 
-`multi-agent-brief run --workspace <path> --runtime claude|opencode|codex` generates `agent_handoff.md`, executed by platform slash commands and subagent configs.
+`multi-agent-brief run --workspace <path> --runtime opencode|codex` generates `agent_handoff.md`, executed by platform slash commands and subagent configs.
 
 ## Input Governance
 
