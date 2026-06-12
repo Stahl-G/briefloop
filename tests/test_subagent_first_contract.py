@@ -36,6 +36,7 @@ def test_user_facing_docs_do_not_present_prepare_as_workflow_runtime():
         "README.md",
         "README_en.md",
         "AGENTS.md",
+        ".claude/commands/mabw.md",
         ".claude/commands/generate-brief.md",
         ".opencode/commands/generate-brief.md",
         "docs/features.md",
@@ -95,6 +96,67 @@ def test_claude_generate_brief_command_uses_orchestrator_contract():
     assert "request_human_review" in text
     assert "block_run" in text
     assert "Check the expected artifact" in text
+
+
+def test_claude_mabw_command_is_five_verb_writer_surface():
+    text = _read(".claude/commands/mabw.md")
+    assert "Claude Code is the first-class writer / five-verb path." in text
+    assert "Hermes remains a supported delegated/scheduled runtime path." in text
+    assert "Do not mirror this five-verb command into Hermes, OpenCode, Codex" in text
+
+    first_screen = text.split("## First-Screen Writer Help", 1)[1].split(
+        "Do not put", 1
+    )[0]
+    expected = [
+        "/mabw new",
+        "/mabw run <workspace>",
+        "/mabw status <workspace>",
+        "/mabw feedback <workspace> [text-or-file]",
+        "/mabw deliver <workspace>",
+    ]
+    for verb in expected:
+        assert verb in first_screen
+    assert "/mabw doctor" not in first_screen
+    assert "eval-cases" not in first_screen
+    assert "runtime install" not in first_screen
+
+
+def test_claude_mabw_status_is_read_only_and_feedback_is_bounded():
+    text = _read(".claude/commands/mabw.md")
+    status_section = text.split("## `status <workspace>`", 1)[1].split(
+        "## `feedback <workspace> [text-or-file]`", 1
+    )[0]
+    assert "status is strictly read-only" in status_section
+    assert "multi-agent-brief status --workspace <workspace> --json" in status_section
+    assert "do not run `multi-agent-brief state check`" in status_section
+    assert "do not initialize runtime state" in status_section
+    assert "do not refresh artifact registry" in status_section
+    assert "do not append event log entries" in status_section
+
+    feedback_section = text.split("## `feedback <workspace> [text-or-file]`", 1)[1].split(
+        "## `deliver <workspace>`", 1
+    )[0]
+    assert "multi-agent-brief feedback ingest" in feedback_section
+    assert "Downstream actions require explicit user confirmation" in feedback_section
+    assert "do not execute repair" in feedback_section
+    assert "do not auto-resolve" in feedback_section
+    assert "do not automatically create Improvement Ledger entries" in feedback_section
+    assert "do not approve, reject, or revert improvement entries" in feedback_section
+
+
+def test_claude_mabw_deliver_uses_completion_transactions():
+    text = _read(".claude/commands/mabw.md")
+    deliver_section = text.split("## `deliver <workspace>`", 1)[1].split(
+        "## Diagnostic And Maintainer Commands", 1
+    )[0]
+    assert "multi-agent-brief gates check --workspace <workspace>" in deliver_section
+    assert "multi-agent-brief state check --workspace <workspace> --strict" in deliver_section
+    assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in deliver_section
+    assert "multi-agent-brief finalize --config <workspace>/config.yaml" in deliver_section
+    assert "multi-agent-brief state finalize-complete --workspace <workspace>" in deliver_section
+    assert "finalize` as a quality-gate executor" in deliver_section
+    assert "state decide --decision finalize" in deliver_section
+    assert "state decide --decision continue" not in deliver_section
 
 
 def test_opencode_generate_brief_command_uses_audience_snapshot_context():

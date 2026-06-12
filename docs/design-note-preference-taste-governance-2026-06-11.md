@@ -1,17 +1,49 @@
 # Design Note: Preference & Taste Governance System
 
 **Date**: 2026-06-11
-**Status**: Design specification — v0.7.2 foundations, v0.8 engine
+**Status**: Design specification — v0.7.2 control foundation, v0.7.3+ intake/candidates, v0.8 engine
 **Inputs**: PROSE paper analysis (Apple/Colorado, ICML 2025), 10-point agent ruling, PR2.5 intake design
 **Relationship**: Complements `docs/mabw-architecture-reference-v0.1.3-related-work.md` §7; v0.2 paper §"Preference Inference vs. Preference Governance"
 
 ---
 
-## North Star
+## Core Promise
 
 > The system never learns anything the user has not approved.
 
 MABW may use LLMs to help users discover, decompose, interpret, and candidate preferences. It must never allow an LLM to directly change the behavior of future runs. All taste, preference, and structure guidance that affects future output must pass through an auditable record, a deterministic validation check, human adoption, and a per-run frozen snapshot.
+
+---
+
+## Product Language Ruling
+
+This section is a design ruling for v0.7.3+ candidate/intake UX. It is **not**
+implemented behavior in v0.7.2.
+
+Candidate suggestions should be visible by default. The product should not hide
+machine or system suggestions in an invisible queue, because hidden preference
+inference makes later behavior look like silent learning.
+
+Future candidate views should group suggestions into four user-facing buckets:
+
+| User-facing bucket | Meaning |
+|---|---|
+| Writing preferences awaiting your confirmation | Possible audience/taste guidance that could become Improvement Ledger entries after human approval. |
+| Suggested fixed-format rules | Checkable format or delivery patterns that should become templates, packs, or delivery standards rather than soft memory. |
+| Facts or sources that need review | Correctness, freshness, attribution, or coverage issues that belong in feedback/repair/gates, not Improvement Memory. |
+| Already enforced by the system | Requests that are already covered by deterministic checks, with the mechanism and evidence location shown to the operator. |
+
+Candidates must be clearable and dismissible. A parking lot full of old
+suggestions is worse than no parking lot.
+
+Machine-proposed candidates must not be bulk-confirmed. The operator did not
+say those words, so each candidate needs a separate review gesture before it can
+enter an adoption path.
+
+When a user explicitly gives feedback and the system decomposes it into several
+items, the UI may show the split items with checkboxes and allow one submit
+action after the operator has reviewed the individual items. This is still a
+human confirmation path, not automatic learning.
 
 ---
 
@@ -36,9 +68,9 @@ No single component is simultaneously smart, authoritative, and untraceable.
 
 ```
 Natural feedback / accepted samples
-  → Intake Log (improvement/intake.jsonl)
+  → Intake Log (improvement/intake.jsonl, deferred)
   → Agent-side compiler (PROSE-inspired inference, v0.8)
-  → Candidate Parking Lot (improvement/candidates.jsonl)
+  → Candidate Parking Lot (improvement/candidates.jsonl, deferred)
   → Deterministic validation (Python)
   → Human adoption (improve approve / adopt)
   → Improvement Ledger (improvement/ledger.jsonl)
@@ -50,8 +82,8 @@ Natural feedback / accepted samples
 
 | File | Role | Version |
 |------|------|---------|
-| `improvement/intake.jsonl` | Raw feedback entry; no lifecycle | v0.7.2 |
-| `improvement/candidates.jsonl` | Preference/rule candidate parking lot; immutable records + tombstones | v0.7.2–0.7.3 |
+| `improvement/intake.jsonl` | Raw feedback entry; no lifecycle | deferred |
+| `improvement/candidates.jsonl` | Preference/rule candidate parking lot; immutable records + tombstones | v0.7.3+ |
 | `improvement/ledger.jsonl` | Human-adopted audience guidance; append-only audit ledger | v0.7.0 |
 | `improvement/memory.md` | Deterministic projection from ledger; injected into handoff | v0.7.0 |
 | `output/intermediate/improvement_memory_snapshot.md` | Per-run frozen snapshot; manifest-cited SHA-256 | v0.7.0 |
@@ -102,7 +134,7 @@ Natural feedback / accepted samples
 
 **Does**: store human-adopted audience guidance with full audit trail.  
 **Does not**: store fact corrections, gate rules, contract parameters, or repair plans.  
-**Provenance field** (added v0.7.2): `human_authored` or `machine_proposed`. Machine-proposed entries require: full per-entry display (no batch approval), human confirmation gesture per entry, and the option to edit—which flips provenance to `human_authored`. Machine-proposed entries materialize no earlier than v0.8.
+**Deferred provenance field**: a future ledger provenance field may distinguish `human_authored` and `machine_proposed` entries, but it is not implemented in v0.7.2. Machine-proposed entries require future design: full per-entry display (no batch approval), human confirmation gesture per entry, and the option to edit. Machine-proposed entries materialize no earlier than v0.8.
 
 ### 3.4 Reference Samples
 
@@ -171,13 +203,21 @@ contracts / policy / source-supported facts
 
 ### v0.7.2 — Deterministic Foundation
 
-- Transaction layer (`stage complete` / `stage block` / `finalize complete`): P0
+- Transaction layer (`stage-complete` / `finalize-complete` for success paths; block, retry, and human-review remain lower-level `state decide` decisions): P0
 - Product path: P1
-- `improvement/intake.jsonl` skeleton
-- `improvement/candidates.jsonl` schema + validator (if capacity allows; may slip to v0.7.3)
-- Ledger `provenance` field (`human_authored` / `machine_proposed`)
-- Route includes `already_enforced`
+- Improvement Ledger supersession hygiene:
+  - top-level immutable `supersedes_id`
+  - duplicate warning on propose
+  - approved supersession fork rejection
+  - revert warning when an old entry re-exposes
 - Documentation: non-evidence samples boundary; no Python LLM calls
+
+Deferred from v0.7.2:
+
+- `improvement/intake.jsonl` skeleton
+- `improvement/candidates.jsonl` schema + validator
+- Ledger provenance field (`human_authored` / `machine_proposed`)
+- Route includes `already_enforced`
 
 ### v0.7.3 — Candidate CLI
 

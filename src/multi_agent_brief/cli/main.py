@@ -23,6 +23,7 @@ from multi_agent_brief.cli import (
     analysis_commands,
     capability_commands,
     input_commands,
+    status_commands,
     state_commands,
     feedback_commands,
     gates_commands,
@@ -69,6 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Input governance
     input_commands.register(subparsers)
+
+    # Read-only writer-facing workspace status
+    status_commands.register(subparsers)
 
     # Orchestrator runtime state
     state_commands.register(subparsers)
@@ -163,6 +167,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "inputs":
         return input_commands.handle(args)
+
+    if cmd == "status":
+        return status_commands.handle(args)
 
     if cmd == "state":
         return state_commands.handle(args)

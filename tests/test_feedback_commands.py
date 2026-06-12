@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.feedback.feedback_state as feedback_state
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     check_runtime_state,
     initialize_runtime_state,
-    record_decision,
 )
 
 
@@ -56,16 +56,34 @@ def _write_json_artifact(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
 
 
+def _set_current_stage(ws: Path, stage_id: str) -> None:
+    stages = runtime_state.load_stage_specs(ROOT)
+    stage_ids = [str(stage.get("stage_id") or "") for stage in stages if stage.get("stage_id")]
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    now = runtime_state.utc_now()
+    statuses = {}
+    for item in stage_ids:
+        if stage_ids.index(item) < stage_ids.index(stage_id):
+            statuses[item] = {"status": "complete", "reason": f"{item} fixture complete", "updated_at": now}
+        elif item == stage_id:
+            statuses[item] = {"status": "ready", "reason": "", "updated_at": now}
+        else:
+            statuses[item] = {"status": "pending", "reason": "", "updated_at": now}
+    workflow["updated_at"] = now
+    workflow["current_stage"] = stage_id
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["stage_statuses"] = statuses
+    workflow["next_allowed_decisions"] = runtime_state._allowed_decisions_for_stage(stages, stage_id)
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _advance_to_analyst(ws: Path) -> None:
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="doctor", decision="continue", reason="doctor complete")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="source-discovery", decision="continue", reason="source complete")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="input-governance", decision="continue", reason="input complete")
     _write_json_artifact(ws, "candidate_claims.json")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="scout", decision="continue", reason="scout complete")
     _write_json_artifact(ws, "screened_candidates.json")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="screener", decision="continue", reason="screener complete")
     _write_json_artifact(ws, "claim_ledger.json")
-    record_decision(workspace=ws, repo_workdir=ROOT, stage_id="claim-ledger", decision="continue", reason="ledger complete")
+    _set_current_stage(ws, "analyst")
 
 
 def _events(ws: Path) -> list[dict[str, object]]:
@@ -540,21 +558,21 @@ def test_planned_blocking_issue_rejects_continue_until_resolved(tmp_path, capsys
 
     rc = main([
         "state",
-        "decide",
+        "stage-complete",
         "--workspace",
         str(ws),
         "--repo-workdir",
         str(ROOT),
         "--stage",
         "analyst",
-        "--decision",
-        "continue",
         "--reason",
         "skip repair",
         "--json",
     ])
     assert rc == 1
-    assert "unresolved blocking feedback issues" in json.loads(capsys.readouterr().out)["error"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_ILLEGAL_TRANSITION"
+    assert "unresolved blocking feedback issues" in " ".join(payload["details"]["blocking_reasons"])
 
     rc = main([
         "feedback",
@@ -581,15 +599,13 @@ def test_planned_blocking_issue_rejects_continue_until_resolved(tmp_path, capsys
 
     rc = main([
         "state",
-        "decide",
+        "stage-complete",
         "--workspace",
         str(ws),
         "--repo-workdir",
         str(ROOT),
         "--stage",
         "analyst",
-        "--decision",
-        "continue",
         "--reason",
         "repair resolved",
         "--json",

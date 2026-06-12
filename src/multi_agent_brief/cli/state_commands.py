@@ -9,6 +9,8 @@ from typing import Any
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     check_runtime_state,
+    complete_finalize_transaction,
+    complete_stage_transaction,
     initialize_runtime_state,
     record_decision,
     show_runtime_state,
@@ -85,6 +87,43 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     decide_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
+    stage_complete_parser = actions.add_parser(
+        "stage-complete",
+        help="Validate and record a successful current-stage completion transaction.",
+    )
+    stage_complete_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    stage_complete_parser.add_argument("--stage", required=True, help="Current non-finalize stage id to complete.")
+    stage_complete_parser.add_argument("--reason", required=True, help="Short completion reason summary.")
+    stage_complete_parser.add_argument(
+        "--repo-workdir",
+        help="Repository or packaged contract base (default: auto-detect).",
+    )
+    stage_complete_parser.add_argument(
+        "--actor",
+        default="orchestrator",
+        choices=("cli", "orchestrator", "runtime", "system"),
+        help="Actor recorded in event_log.jsonl.",
+    )
+    stage_complete_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    finalize_complete_parser = actions.add_parser(
+        "finalize-complete",
+        help="Validate reader-final artifacts and record finalize completion.",
+    )
+    finalize_complete_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    finalize_complete_parser.add_argument("--reason", required=True, help="Short completion reason summary.")
+    finalize_complete_parser.add_argument(
+        "--repo-workdir",
+        help="Repository or packaged contract base (default: auto-detect).",
+    )
+    finalize_complete_parser.add_argument(
+        "--actor",
+        default="orchestrator",
+        choices=("cli", "orchestrator", "runtime", "system"),
+        help="Actor recorded in event_log.jsonl.",
+    )
+    finalize_complete_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
 
 def handle(args: argparse.Namespace) -> int:
     try:
@@ -131,6 +170,33 @@ def handle(args: argparse.Namespace) -> int:
             else:
                 _print_human_summary("state decide", state)
             return 0
+
+        if args.state_action == "stage-complete":
+            state = complete_stage_transaction(
+                workspace=args.workspace,
+                stage_id=args.stage,
+                reason=args.reason,
+                repo_workdir=getattr(args, "repo_workdir", None),
+                actor=args.actor,
+            )
+            if getattr(args, "json", False):
+                print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                _print_human_summary("state stage-complete", state)
+            return 0
+
+        if args.state_action == "finalize-complete":
+            state = complete_finalize_transaction(
+                workspace=args.workspace,
+                reason=args.reason,
+                repo_workdir=getattr(args, "repo_workdir", None),
+                actor=args.actor,
+            )
+            if getattr(args, "json", False):
+                print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                _print_human_summary("state finalize-complete", state)
+            return 0
     except RuntimeStateError as exc:
         _print_error(exc, as_json=getattr(args, "json", False))
         return 1
@@ -161,4 +227,3 @@ def _print_error(exc: RuntimeStateError, *, as_json: bool) -> None:
         print(json.dumps(exc.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     else:
         print(f"[state] {exc}")
-

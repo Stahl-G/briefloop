@@ -7,7 +7,7 @@
 
 A source-grounded, auditable, agent-collaborative briefing workflow for business, research, market, policy, company-tracking, and management-reporting briefs.
 
-> Let code organize the workflow. Let models handle judgment and expression. Keep every important conclusion traceable.
+> MABW can observe and suggest, but only what you approve is remembered, and every approved memory stays in an inspectable ledger you can undo.
 
 `Multi-Agent-Brief-Workflow` (MABW) is not an "AI writes a weekly report" prompt. It breaks real briefing work into contract-governed steps: understand the task, discover sources, organize inputs, build a Claim Ledger, assist drafting, audit the result, and render delivery files. Each step has explicit expected artifacts, producer boundaries, transition rules, and inspectable records.
 
@@ -22,6 +22,19 @@ Current version: **v0.7.0**
 - **Not yet**: not an autonomous agent, does not automatically edit brief content, does not automatically learn, and does not provide a long-term memory system. See [architecture status](docs/architecture-status.md) and [roadmap](docs/roadmap.md).
 
 One-line design principle: **the system proposes; humans decide.** For the hard boundaries, see [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md).
+
+## The Four Things It Tracks Each Week
+
+The writer-facing model is not "how many control surfaces exist." Each run is meant to keep four practical things visible:
+
+| Question | What it records | Where you see it |
+|---|---|---|
+| What stage this run is in | Current stage, missing artifacts, blockers, and the next safe action | `/mabw status`, `workflow_state.json`, `agent_handoff.md` |
+| Where each number came from | Claim Ledger records, source dates, audit results, and gate findings | `claim_ledger.json`, `quality_gate_report.json`, `source_appendix.md` |
+| What reader preferences were approved | Human-approved reader guidance only; unapproved suggestions do not take effect | `improvement/ledger.jsonl`, `improvement_memory_snapshot.md` |
+| What checks are guarding delivery | Completion transactions, reader-final gate, source appendix, and delivery checks | `finalize_report.json`, `reader_clean`, `state finalize-complete` |
+
+In plain terms: AI can draft; the system records ledgers; only the operator can make preferences affect later runs. See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the user-facing explanation.
 
 ## Why This Exists
 
@@ -88,7 +101,7 @@ The point is simple: every important number in the delivered brief should have a
 
 ## Quick Start
 
-### Hermes (Primary Path)
+### Claude Code (Five-Verb Primary Path)
 
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -96,24 +109,44 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-multi-agent-brief hermes install-plugin
-hermes plugins enable mabw
+multi-agent-brief claude install --repo-workdir .
 ```
 
-Then type `/mabw new` in Hermes and follow the onboarding flow. Hermes creates a contract-governed runtime handoff, and the main agent delegates stages such as scout → screener → claim-ledger → analyst → editor → auditor. Stage progress still depends on artifact validation and Orchestrator decisions. After `audited_brief.md` is produced, run the delivery gate:
+Then use the five writer verbs inside Claude Code CLI or the Claude Desktop Code
+tab:
 
-```bash
-multi-agent-brief finalize --config <workspace>/config.yaml
+```text
+/mabw new
+/mabw run <workspace>
+/mabw status <workspace>
+/mabw feedback <workspace> [text-or-file]
+/mabw deliver <workspace>
 ```
 
-See [HERMES.md](HERMES.md) for the full protocol.
+`/mabw` is the writer-facing entrypoint. The full delegated subagent workflow
+still runs through `/generate-brief <workspace>`. `status` calls the read-only
+`multi-agent-brief status` helper, `feedback` records and triages without acting downstream, and `deliver` must go
+through gates, the reader-final gate, and `state finalize-complete`.
 
-### Claude Code / Codex / OpenCode
+See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Chinese writer-facing operator notes are available in [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
+
+### Other Runtimes
 
 ```bash
 multi-agent-brief onboard
 multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
+```
+
+Claude Code is the first-class writer / five-verb path. Hermes remains a
+supported delegated/scheduled runtime path. OpenCode, Codex, and manual fallback
+keep their existing entrypoints.
+
+The Hermes plugin remains available for the native `delegate_task` path:
+
+```bash
+multi-agent-brief hermes install-plugin
+hermes plugins enable mabw
 ```
 
 Runtime installation details, workspace-local runtime kits, and common issues are covered in [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) and [docs/runtime-recipes.md](docs/runtime-recipes.md).

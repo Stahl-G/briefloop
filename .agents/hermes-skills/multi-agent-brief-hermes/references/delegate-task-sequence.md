@@ -25,10 +25,11 @@ Read workspace context -> read contract references -> identify the next stage ->
 6. Create `output/intermediate/` when needed.
 7. Delegate child tasks in sequence.
 8. Verify each expected artifact exists and is non-empty before selecting the next decision.
-9. Decide `continue`, `retry_stage`, `delegate_repair`, `request_human_review`, `block_run`, or `finalize`.
-10. Run quality gates and `state check/decide` before finalize.
+9. Decide `retry_stage`, `delegate_repair`, `request_human_review`, or `block_run` for non-success paths; use completion transactions for success paths.
+10. Run quality gates, strict state check, and `state stage-complete` before finalize.
 11. Run `multi-agent-brief finalize --config <workspace>/config.yaml` after audit readiness and gate readiness.
-12. Optionally run `multi-agent-brief provenance build/show/validate` for audit/debug projection after runtime state exists.
+12. Run `state finalize-complete` after finalize writes reader-facing artifacts.
+13. Optionally run `multi-agent-brief provenance build/show/validate` for audit/debug projection after runtime state exists.
 
 ## Child Task Templates
 
@@ -96,10 +97,16 @@ After `audit_report.json` exists:
 ```bash
 multi-agent-brief gates check --workspace <workspace>
 multi-agent-brief state check --workspace <workspace> --strict
-multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."
+multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
 If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize. `finalize` is not a quality-gate executor.
+
+After finalize writes reader-facing artifacts, run:
+
+```bash
+multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+```
 
 Repair best practice: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating repair or request human review. This is runtime guidance only; v0.7 does not implement automatic retry counters or trajectory regulation.
 

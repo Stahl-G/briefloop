@@ -60,10 +60,16 @@ After `audit_report.json` exists, run quality gates and refresh runtime state be
 multi-agent-brief controls select --workspace <workspace> --control quality_gates --selection enable --reason "Use quality gates before finalize."
 multi-agent-brief gates check --workspace <workspace>
 multi-agent-brief state check --workspace <workspace> --strict
-multi-agent-brief state decide --workspace <workspace> --stage auditor --decision continue --reason "Audit and quality gates passed."
+multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
 If `state check` reports blocking quality gate findings, choose `delegate_repair`, `request_human_review`, or `block_run` instead of finalizing. `multi-agent-brief finalize` only renders reader-facing outputs; it is not a quality-gate executor.
+
+After finalize writes reader-facing artifacts, run:
+
+```bash
+multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+```
 
 If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` to structure issues and create a bounded repair plan. These commands do not execute repair or edit brief artifacts.
 

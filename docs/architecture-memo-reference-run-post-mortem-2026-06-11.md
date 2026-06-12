@@ -34,7 +34,7 @@ The ledger state machine, SHA-256 hash chain, frozen snapshot semantics, six-rin
 
 **What happened**: Duplicate entries, no supersede mechanism, and operator error (forgot to approve) were observed. Natural-language guidance produced inconsistent effects across runs.
 **Correction**:
-- **Defect half (fix in 0.7.2)**: Add `supersedes` field to ledger entries. Add duplicate-entry warning at propose time. Add `provenance` field. Add hygiene discipline.
+- **Defect half (fix in 0.7.2)**: Add `supersedes_id` lineage to ledger entries, duplicate-entry warning at propose time, approved supersession fork rejection, and revert-time warning when an old entry re-exposes. Ledger provenance, operator model metadata, and intake skeletons are deferred.
 - **Misdiagnosed half (not a bug)**: Unstable natural-language guidance execution is not a defect — it is the layer's physics. "Soft" is its value as a cheap experimentation surface. "Stable, precise, verifiable" is the responsibility of templates, contracts, and gates. Fixing this by tightening memory would produce a memory that pretends to be a contract.
 - **Deep half (v0.8)**: For checkable preferences, provide an escalation path (checkable_rule_candidate → promotion track). For uncheckable preferences, provide measurement (manifestation report). Do not conflate the two.
 
@@ -91,7 +91,7 @@ The ledger state machine, SHA-256 hash chain, frozen snapshot semantics, six-rin
 | Version | Load | Issues Covered |
 |---------|------|----------------|
 | **0.7.1** | Reference run (solar-pack public content) + Handoff hardening B + Demo suite + Model identity in summary | #2 (instruction-level), #4 (de-identification), #7 (light fix) |
-| **0.7.2** | Transaction layer C (P0) + Product path (deferred 0.6.10) + Preference hygiene pack (supersede, dup warning, provenance field, intake skeleton) | #2 (enforcement-level), #3 (defect half), #8, #9 |
+| **0.7.2** | Transaction layer C (P0) + Product path (deferred 0.6.10) + Preference hygiene pack (supersedes_id, duplicate warning, approved fork rejection, re-expose warning) | #2 (enforcement-level), #3 (defect half), #8, #9 |
 | **0.8** | Role convergence (B-form) + Mode/pack + Coverage gate + Manifestation metrics + 080 baseline experiments | #1, #3 (deep half), #5 (limitation), #6 (sample) |
 
 One sentence for the roadmap: three problems, two 0.7.x trains, one 0.8 train, zero new version numbers invented.

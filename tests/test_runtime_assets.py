@@ -96,6 +96,7 @@ def test_runtime_install_claude_workspace_kit_is_local(tmp_path: Path, capsys) -
     assert rc == 0
     assert "Installed workspace runtime kit for claude" in capsys.readouterr().out
     assert (ws / "CLAUDE.md").exists()
+    assert (ws / ".claude" / "commands" / "mabw.md").exists()
     assert (ws / ".claude" / "commands" / "generate-brief.md").exists()
     assert (ws / ".claude" / "commands" / "capability.md").exists()
     assert (ws / ".claude" / "commands" / "init-brief.md").exists()
@@ -103,6 +104,7 @@ def test_runtime_install_claude_workspace_kit_is_local(tmp_path: Path, capsys) -
     assert (ws / ".claude" / "agents" / "orchestrator.md").exists()
     assert (ws / ".claude" / "skills" / "multi-agent-brief-workflow" / "SKILL.md").exists()
     assert (ws / ".claude" / "skills" / "multi-agent-brief-workflow" / "references" / "artifact-boundary.md").exists()
+    _assert_frontmatter_first(ws / ".claude" / "commands" / "mabw.md")
     _assert_frontmatter_first(ws / ".claude" / "commands" / "generate-brief.md")
     _assert_frontmatter_first(ws / ".claude" / "commands" / "capability.md")
     _assert_frontmatter_first(ws / ".claude" / "commands" / "propose-competitors.md")

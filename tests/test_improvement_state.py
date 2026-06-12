@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.improvement.contract import canonical_json, read_ledger_text, revision_sha256
+from multi_agent_brief.improvement.memory import rebuild_improvement_memory
 from multi_agent_brief.improvement.state import (
     ImprovementLedgerError,
     approve_improvement,
@@ -113,6 +114,25 @@ def _write_feedback_issue(
         ),
         encoding="utf-8",
     )
+
+
+def _propose_and_approve(
+    ws: Path,
+    *,
+    guidance: str = "Lead with the decision-relevant number when evidence supports it.",
+    category: str = "audience_mismatch",
+    scope: str = "brief",
+) -> str:
+    state = propose_improvement(
+        workspace=ws,
+        guidance=guidance,
+        category=category,
+        scope=scope,
+        source_summary="Operator-created audience guidance proposal.",
+    )
+    entry_id = str(state["entry"]["entry_id"])
+    approve_improvement(workspace=ws, entry_id=entry_id, approved_by="stahl")
+    return entry_id
 
 
 def test_propose_human_creates_ledger_without_runtime_event(tmp_path):
@@ -498,6 +518,181 @@ def test_stats_are_ledger_only_counts(tmp_path):
     assert stats["counts_by_source_type"] == {"human_feedback": 1}
 
 
+def test_propose_supersedes_approved_materializable_entry(tmp_path):
+    ws = _workspace(tmp_path)
+    _propose_and_approve(ws, guidance="Lead with the key number first.")
+
+    state = propose_improvement(
+        workspace=ws,
+        guidance="Lead with the key number, then explain what changed.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created replacement guidance.",
+        supersedes="AG-0001",
+    )
+
+    assert state["entry"]["entry_id"] == "AG-0002"
+    assert state["entry"]["supersedes_id"] == "AG-0001"
+    assert state["warnings"] == []
+    approved = approve_improvement(workspace=ws, entry_id="AG-0002", approved_by="stahl")
+    assert approved["entry"]["supersedes_id"] == "AG-0001"
+    stats = improvement_stats(workspace=ws)
+    assert stats["approved_count"] == 2
+    assert stats["superseded_count"] == 1
+    assert stats["eligible_for_materialization_count"] == 1
+
+
+def test_propose_supersedes_rejects_invalid_targets(tmp_path):
+    ws = _workspace(tmp_path)
+    propose_improvement(
+        workspace=ws,
+        guidance="Lead with the key number first.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+    )
+
+    with pytest.raises(ImprovementLedgerError, match="currently approved"):
+        propose_improvement(
+            workspace=ws,
+            guidance="Replacement guidance.",
+            category="audience_mismatch",
+            scope="brief",
+            source_summary="Operator-created guidance.",
+            supersedes="AG-0001",
+        )
+    with pytest.raises(ImprovementLedgerError, match="Unknown supersedes target"):
+        propose_improvement(
+            workspace=ws,
+            guidance="Replacement guidance.",
+            category="audience_mismatch",
+            scope="brief",
+            source_summary="Operator-created guidance.",
+            supersedes="AG-9999",
+        )
+
+    nonmaterializable_base = tmp_path / "nonmaterializable"
+    nonmaterializable_base.mkdir()
+    ws2 = _workspace(nonmaterializable_base)
+    _append_approved_legacy_feedback_issue_entry(
+        ws2,
+        entry_id="AG-0001",
+        finding_type="format_field_missing",
+        issue_category="formatting",
+    )
+    with pytest.raises(ImprovementLedgerError, match="materializable"):
+        propose_improvement(
+            workspace=ws2,
+            guidance="Replacement guidance.",
+            category="audience_mismatch",
+            scope="brief",
+            source_summary="Operator-created guidance.",
+            supersedes="AG-0001",
+        )
+
+
+def test_duplicate_and_forked_supersession_warnings(tmp_path):
+    ws = _workspace(tmp_path)
+    _propose_and_approve(ws, guidance="Lead with the key number first.")
+
+    duplicate = propose_improvement(
+        workspace=ws,
+        guidance="Lead with the decision-relevant number first.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+    )
+    assert duplicate["warnings"][0]["code"] == "possible_duplicate_active_guidance"
+    assert duplicate["warnings"][0]["entry_id"] == "AG-0001"
+
+    replacement = propose_improvement(
+        workspace=ws,
+        guidance="Replacement guidance.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+        supersedes="AG-0001",
+    )
+    approve_improvement(workspace=ws, entry_id=replacement["entry"]["entry_id"], approved_by="stahl")
+
+    fork = propose_improvement(
+        workspace=ws,
+        guidance="Another replacement guidance.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+        supersedes="AG-0001",
+    )
+    fork_warning = next(
+        item
+        for item in fork["warnings"]
+        if item["code"] == "supersedes_target_already_superseded"
+    )
+    assert fork_warning["approval_blocker"] is True
+    assert "cannot be approved until the existing superseder is reverted" in fork_warning["message"]
+
+
+def test_approve_rejects_parallel_supersession_fork(tmp_path):
+    ws = _workspace(tmp_path)
+    _propose_and_approve(ws, guidance="Original guidance.")
+    second = propose_improvement(
+        workspace=ws,
+        guidance="Replacement guidance B.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+        supersedes="AG-0001",
+    )
+    third = propose_improvement(
+        workspace=ws,
+        guidance="Replacement guidance C.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+        supersedes="AG-0001",
+    )
+
+    approve_improvement(workspace=ws, entry_id=second["entry"]["entry_id"], approved_by="stahl")
+    with pytest.raises(ImprovementLedgerError) as excinfo:
+        approve_improvement(workspace=ws, entry_id=third["entry"]["entry_id"], approved_by="stahl")
+
+    diagnostics = excinfo.value.details["diagnostics"]
+    assert any(item["code"] == "supersession_fork" for item in diagnostics)
+    by_entry = {item["entry_id"]: item for item in _ledger_lines(ws)}
+    assert by_entry["AG-0002"]["status"] == "approved"
+    assert by_entry["AG-0003"]["status"] == "proposed"
+    projection = rebuild_improvement_memory(workspace=ws)
+    assert projection["selected_entry_ids"] == ["AG-0002"]
+
+
+def test_revert_superseder_warns_about_reexposed_entry(tmp_path):
+    ws = _workspace(tmp_path)
+    _propose_and_approve(ws, guidance="Original guidance.")
+    replacement = propose_improvement(
+        workspace=ws,
+        guidance="Replacement guidance.",
+        category="audience_mismatch",
+        scope="brief",
+        source_summary="Operator-created guidance.",
+        supersedes="AG-0001",
+    )
+    approve_improvement(workspace=ws, entry_id=replacement["entry"]["entry_id"], approved_by="stahl")
+
+    reverted = revert_improvement(
+        workspace=ws,
+        entry_id=replacement["entry"]["entry_id"],
+        reverted_by="stahl",
+        reason="No longer desired.",
+    )
+
+    assert reverted["warnings"] == [{
+        "code": "supersession_reexposes_entry",
+        "entry_id": "AG-0001",
+        "message": "Reverting AG-0002 re-exposes AG-0001.",
+    }]
+    assert improvement_stats(workspace=ws)["eligible_for_materialization_count"] == 1
+
+
 def test_validate_and_stats_use_product_definition_materialization(tmp_path):
     ws = _workspace(tmp_path)
     propose_improvement(
@@ -560,6 +755,33 @@ def test_validate_and_stats_reject_legacy_feedback_issue_without_origin(tmp_path
     assert diagnostic["materializable"] is False
     assert diagnostic["requires_product_definition_review"] is True
     assert diagnostic["non_materializable_reason"] == "missing_feedback_issue_product_definition_origin"
+    assert improvement_stats(workspace=ws)["eligible_for_materialization_count"] == 0
+
+
+def test_validate_warns_when_non_materializable_superseder_suppresses_target(tmp_path):
+    ws = _workspace(tmp_path)
+    _propose_and_approve(ws, guidance="Original materializable guidance.")
+    _append_approved_legacy_feedback_issue_entry(
+        ws,
+        entry_id="AG-0002",
+        finding_type="format_field_missing",
+        issue_category="formatting",
+        supersedes_id="AG-0001",
+    )
+
+    validation = validate_improvement_ledger(workspace=ws)
+    by_entry = {item["entry_id"]: item for item in validation["materialization_diagnostics"]}
+    warning = next(
+        item
+        for item in validation["materialization_diagnostics"]
+        if item["reason_code"] == "non_materializable_superseder_suppresses_target"
+    )
+
+    assert by_entry["AG-0001"]["materializable"] is False
+    assert by_entry["AG-0001"]["non_materializable_reason"] == "superseded_by_active_guidance"
+    assert by_entry["AG-0002"]["materializable"] is False
+    assert warning["entry_id"] == "AG-0002"
+    assert warning["supersedes_id"] == "AG-0001"
     assert improvement_stats(workspace=ws)["eligible_for_materialization_count"] == 0
 
 
@@ -687,8 +909,10 @@ def _append_approved_legacy_feedback_issue_entry(
     finding_type: str,
     issue_category: str,
     include_origin: bool = True,
+    supersedes_id: str | None = None,
 ) -> None:
     first = _valid_revision(entry_id=entry_id)
+    first["supersedes_id"] = supersedes_id
     evidence = {
         "source_type": "feedback_issue",
         "summary": "Legacy feedback issue evidence.",
@@ -709,6 +933,7 @@ def _append_approved_legacy_feedback_issue_entry(
         revision=2,
         previous_revision_sha256=revision_sha256(first),
     )
+    second["supersedes_id"] = supersedes_id
     second["source_evidence"] = first["source_evidence"]
     path = improvement_ledger_path(ws)
     path.parent.mkdir(parents=True, exist_ok=True)

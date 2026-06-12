@@ -9,6 +9,11 @@ from typing import Any
 
 from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
 from multi_agent_brief.outputs.naming import render_output_stem
+from multi_agent_brief.outputs.reader_final_gate import (
+    combine_reader_final_gate_results,
+    detect_reader_residue,
+    detect_reader_residue_in_docx,
+)
 from multi_agent_brief.outputs.source_appendix import (
     SourceAppendixResult,
     build_source_appendix,
@@ -41,11 +46,14 @@ class FinalizeResult:
     source_appendix_cited_claim_count: int = 0
     source_appendix_resolved_claim_count: int = 0
     source_appendix_warnings: list[str] | None = None
+    reader_clean: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         if data["source_appendix_warnings"] is None:
             data["source_appendix_warnings"] = []
+        if data["reader_clean"] is None:
+            data["reader_clean"] = _empty_reader_clean_report()
         return data
 
 
@@ -170,18 +178,35 @@ def finalize_reader_outputs(
         source_appendix_warnings=appendix_result.warnings,
     )
 
-    _assert_reader_artifact_clean(brief_path)
-    if named_brief_path and named_brief_path.exists():
-        _assert_reader_artifact_clean(named_brief_path)
-    if appendix_path.exists():
-        _assert_reader_artifact_clean(appendix_path)
-    if docx_path.exists():
-        _assert_docx_artifact_clean(docx_path)
-    if named_docx_path and named_docx_path.exists():
-        _assert_docx_artifact_clean(named_docx_path)
-
     report_path = intermediate_dir / "finalize_report.json"
+    reader_clean = _reader_clean_report(
+        markdown_paths=[
+            path
+            for path in (brief_path, named_brief_path, appendix_path if appendix_path.exists() else None)
+            if path is not None and path.exists()
+        ],
+        docx_paths=[
+            path
+            for path in (docx_path if docx_path.exists() else None, named_docx_path)
+            if path is not None and path.exists()
+        ],
+    )
+    result.reader_clean = reader_clean
     report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    if reader_clean["status"] == "fail":
+        result.status = "fail"
+        report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        finding_count = len(reader_clean.get("sample_findings", []))
+        total_count = sum(
+            int(value)
+            for key, value in reader_clean.items()
+            if key.endswith("_count") and isinstance(value, int)
+        )
+        raise RuntimeError(
+            "Reader final output gate failed: "
+            f"{total_count or finding_count} blocking residue findings. "
+            f"See {report_path}."
+        )
     _update_audit_report_metadata(
         intermediate_dir / "audit_report.json",
         result,
@@ -190,27 +215,34 @@ def finalize_reader_outputs(
     return result
 
 
-def _assert_reader_artifact_clean(path: Path) -> None:
-    text = path.read_text(encoding="utf-8")
-    if _SRC_MARKER_RE.search(text):
-        raise RuntimeError(f"Reader-facing artifact still contains [src:...] marker: {path}")
-
-
-def _assert_docx_artifact_clean(path: Path) -> None:
-    try:
-        from docx import Document  # type: ignore
-    except ImportError:
-        return
-    document = Document(str(path))
-    text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    table_text = "\n".join(
-        cell.text
-        for table in document.tables
-        for row in table.rows
-        for cell in row.cells
+def _reader_clean_report(
+    *,
+    markdown_paths: list[Path],
+    docx_paths: list[Path],
+) -> dict[str, Any]:
+    results = [
+        detect_reader_residue(path.read_text(encoding="utf-8"), artifact=str(path))
+        for path in markdown_paths
+    ]
+    results.extend(
+        detect_reader_residue_in_docx(path, artifact=str(path))
+        for path in docx_paths
     )
-    if _SRC_MARKER_RE.search(text + "\n" + table_text):
-        raise RuntimeError(f"Reader-facing DOCX still contains [src:...] marker: {path}")
+    return combine_reader_final_gate_results(results).to_report_dict()
+
+
+def _empty_reader_clean_report() -> dict[str, Any]:
+    return {
+        "status": "pass",
+        "src_marker_count": 0,
+        "bare_claim_id_count": 0,
+        "source_id_count": 0,
+        "process_wording_count": 0,
+        "blank_citation_row_count": 0,
+        "local_path_count": 0,
+        "debug_residue_count": 0,
+        "sample_findings": [],
+    }
 
 
 def _update_audit_report_metadata(

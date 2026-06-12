@@ -2,6 +2,8 @@
 
 **MABW：Process Accountability for the Briefing Loop**
 
+**MABW：可问责的 AI 简报工作流**
+
 <p align="center">
   <a href="README_en.md">English</a> |
   <a href="README.md">简体中文</a>
@@ -9,7 +11,7 @@
 
 一个基于来源、可审计、可由 AI agent 协作执行的简报工作流，用于生成商业、研究、市场、政策、公司跟踪和管理层汇报材料。
 
-> 让代码负责整理流程，让模型负责判断表达，让每一个重要结论都可以追溯来源。
+> 它会观察、会提议；但只有你点头的，才会被记住，而且记在一本你随时能翻、能撤销的账上。
 
 `Multi-Agent-Brief-Workflow` (MABW)不是一个"AI 写周报"的 Prompt。它把真实工作中的 briefing 流程拆成受契约约束的步骤：理解需求 → 发现来源 → 整理材料 → 建立事实账本 → 辅助写作 → 审计校验 → 输出文档。每一步产出什么文件、由谁产出、何时可以进入下一步，都有明确定义并留有完整记录。
 
@@ -24,6 +26,19 @@
 * **还不是的**：不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统。详见 [当前架构状态](docs/architecture-status.zh-CN.md) 和 [路线图](docs/roadmap.zh-CN.md)。
 
 设计原则一句话：**系统提案，人类决定。** 全部红线见 [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md)。
+
+## 每周它替你记住四件事
+
+MABW 的用户心智模型不是“有多少个控制面”，而是每次简报运行时它替你守住四件事：
+
+| 问题 | 它记录什么 | 你在哪里看 |
+|---|---|---|
+| 本期写到哪了 | 当前 stage、缺失产物、阻塞原因和下一步安全动作 | `/mabw status`、`workflow_state.json`、`agent_handoff.md` |
+| 每个数字哪来的 | Claim Ledger、来源日期、审计和质量门禁结果 | `claim_ledger.json`、`quality_gate_report.json`、`source_appendix.md` |
+| 它学到了什么 | 只有人工批准的读者偏好；未批准建议不会生效 | `improvement/ledger.jsonl`、`improvement_memory_snapshot.md` |
+| 什么在替你把关 | 阶段完成事务、reader-final gate、来源附录和交付检查 | `finalize_report.json`、`reader_clean`、`state finalize-complete` |
+
+一句话：AI 可以写草稿；系统记录账本；只有你能让偏好影响后续运行。面向业务用户的解释见 [docs/what-mabw-keeps-track-of.zh-CN.md](docs/what-mabw-keeps-track-of.zh-CN.md)。
 
 ## 为什么做这个项目
 
@@ -95,7 +110,7 @@ N 公司宣布其示例州工厂一期产线于本周投产，规划年产能 2G
 
 ## 快速开始
 
-### Hermes（主路径）
+### Claude Code（五动词主路径）
 
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -103,24 +118,38 @@ cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
 
-multi-agent-brief hermes install-plugin
-hermes plugins enable mabw
+multi-agent-brief claude install --repo-workdir .
 ```
 
-然后在 Hermes 中输入 `/mabw new`，按引导填写简报需求。Hermes 会创建受契约约束的运行交接，并由主 agent 按阶段委派 scout → screener → claim-ledger → analyst → editor → auditor；handoff 中包含状态、门禁和协议要求，阶段推进仍以产物校验和司乐师决策为准。生成 `audited_brief.md` 后运行交付渲染：
+然后在 Claude Code CLI 或 Claude Desktop Code tab 中使用五个 writer 动词：
 
-```bash
-multi-agent-brief finalize --config <workspace>/config.yaml
+```text
+/mabw new
+/mabw run <workspace>
+/mabw status <workspace>
+/mabw feedback <workspace> [text-or-file]
+/mabw deliver <workspace>
 ```
 
-详细流程见 [HERMES.md](HERMES.md)。
+`/mabw` 是 writer-facing 入口；完整 delegated subagent workflow 仍由 `/generate-brief <workspace>` 执行。`status` 调用只读的 `multi-agent-brief status`，`feedback` 只记录和分诊，`deliver` 必须经过 gates、reader-final gate 和 `state finalize-complete`。
 
-### Claude Code / Codex / OpenCode
+详细流程见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。中文写作者可直接看 [MABW 黄金路径](docs/golden-path.zh-CN.md) 和 [我每周怎么用 MABW](docs/weekly-use.zh-CN.md)。
+
+### 其他 runtime
 
 ```bash
 multi-agent-brief onboard
 multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace ../mabw-workspace --runtime claude
+```
+
+Claude Code 是 first-class writer / five-verb path。Hermes 仍是 supported delegated / scheduled runtime path。OpenCode、Codex 和 manual fallback 保留各自现有入口。
+
+Hermes 插件仍可用于 `delegate_task` 原生路径：
+
+```bash
+multi-agent-brief hermes install-plugin
+hermes plugins enable mabw
 ```
 
 运行时安装细节、workspace-local kit、常见问题见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) 和 [docs/runtime-recipes.md](docs/runtime-recipes.md)。
@@ -197,6 +226,8 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [质量门禁](docs/harness.md) ·
 [评估用例](docs/evaluation-cases.md) ·
 [改进账本](docs/modules/improvement.md) ·
+[黄金路径](docs/golden-path.zh-CN.md) ·
+[每周使用脚本](docs/weekly-use.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·
 [安全](docs/security.md) ·
 [迁移说明](docs/MIGRATION.zh-CN.md)

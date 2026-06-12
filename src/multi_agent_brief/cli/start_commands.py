@@ -57,11 +57,12 @@ REPAIR_GUIDANCE_NOTE = (
     "more than two sections, narrow the scope before delegating or request human review."
 )
 DECISION_RECORDING_NOTE = (
-    "Record every stage transition before moving on: run "
-    "`multi-agent-brief state decide --workspace <workspace> --stage <stage_id> "
-    "--decision <decision> --reason \"<reason>\"` using a value from "
-    "`workflow_state.json.next_allowed_decisions`. If the decision is rejected, "
-    "stop and correct the stage state instead of continuing."
+    "Record every successful stage completion before moving on: run "
+    "`multi-agent-brief state stage-complete --workspace <workspace> --stage <stage_id> "
+    "--reason \"<reason>\"`. Use low-level `multi-agent-brief state decide` only for "
+    "retry_stage, delegate_repair, request_human_review, or block_run decisions. "
+    "Use only decisions allowed by `workflow_state.json.next_allowed_decisions`. "
+    "If the transaction is rejected, stop and correct the stage state instead of continuing."
 )
 FINALIZE_GATE_NOTE = (
     "Before finalize, after the auditor stage completes, run "
@@ -69,10 +70,12 @@ FINALIZE_GATE_NOTE = (
     "`multi-agent-brief state check --workspace <workspace> --strict`; this "
     "creates or refreshes `output/intermediate/quality_gate_report.json`. If "
     "there are blocking findings, do not finalize. Use feedback/repair, "
-    "request_human_review, or block_run. Only record auditor continue with "
-    "`multi-agent-brief state decide --workspace <workspace> --stage auditor "
-    "--decision continue --reason \"Audit and quality gates passed.\"` when "
-    "audit readiness and quality gates pass."
+    "request_human_review, or block_run. Complete auditor with "
+    "`multi-agent-brief state stage-complete --workspace <workspace> --stage auditor "
+    "--reason \"Audit and quality gates passed.\"` only when audit readiness and "
+    "quality gates pass. After the finalize tool writes reader artifacts, run "
+    "`multi-agent-brief state finalize-complete --workspace <workspace> --reason "
+    "\"Reader artifacts finalized and clean.\"`."
 )
 STAGE_COMPLETION_PROTOCOL_SCHEMA = "multi-agent-brief-stage-completion-protocol/v1"
 STAGE_COMPLETION_PROTOCOL_RULES = [
@@ -81,14 +84,15 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "Before moving to the next stage, verify required output artifacts exist at the declared paths and have the expected shape where validators exist.",
     "If a required artifact is missing, stale, or invalid, stop the stage and record retry_stage, request_human_review, or block_run instead of continuing.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
-    "Record stage transitions with multi-agent-brief state decide only after artifact-level completion evidence is available.",
+    "Record successful stage transitions with multi-agent-brief state stage-complete only after artifact-level completion evidence is available.",
+    "Record finalize completion with multi-agent-brief state finalize-complete after reader artifacts and finalize_report.json are clean.",
 ]
 DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not claim stage completion based on prose acknowledgement alone.",
     "Do not proceed to the next stage without naming the produced artifact path.",
     "Do not mutate upstream input artifacts except through the stage's declared output artifacts.",
     "Do not invent source evidence, claim support, citations, or validation results.",
-    "Do not bypass workflow_state.json next_allowed_decisions or skip state decide.",
+    "Do not bypass workflow_state.json next_allowed_decisions or skip state stage-complete/finalize-complete.",
 ]
 
 
@@ -368,8 +372,9 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "10. Use the 'auditor' subagent to write output/intermediate/audit_report.json\n"
             f"11. multi-agent-brief gates check --workspace {ws_path}\n"
             f"12. multi-agent-brief state check --workspace {ws_path} --strict\n"
-            f"13. multi-agent-brief state decide --workspace {ws_path} --stage auditor --decision continue --reason \"Audit and quality gates passed.\"\n"
-            f"14. multi-agent-brief finalize --config {ws_path}/config.yaml"
+            f"13. multi-agent-brief state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
+            f"14. multi-agent-brief finalize --config {ws_path}/config.yaml\n"
+            f"15. multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -535,7 +540,7 @@ def _render_stage_completion_protocol_prompt(protocol: dict[str, Any]) -> str:
         lines.append(f"  required input artifacts: {inputs}")
         lines.append(f"  context inputs: {context}")
         lines.append(f"  MUST produce: {outputs}")
-        lines.append("  forbidden: no prose-only completion, no upstream mutation, no invented evidence, no skipped state decision.")
+        lines.append("  forbidden: no prose-only completion, no upstream mutation, no invented evidence, no skipped completion transaction.")
     return "\n".join(lines)
 
 
@@ -564,7 +569,7 @@ def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
         "Use this only for controlled reruns where source and fact-layer artifacts are intentionally frozen.",
         "Do not rerun source discovery, Scout, Screener, or Claim Ledger when their existing artifacts are present and valid.",
         "First run `multi-agent-brief state check --workspace <workspace> --strict` to refresh artifact status.",
-        "Then record the pre-analyst stage decisions with `multi-agent-brief state decide` in order: doctor, source-discovery, input-governance, scout, screener, claim-ledger.",
+        "Then record the pre-analyst successful completions with `multi-agent-brief state stage-complete` in order: doctor, source-discovery, input-governance, scout, screener, claim-ledger.",
         "If any required frozen artifact is missing or invalid, stop; do not silently fall back to a full run.",
         "Start model-backed content work at Analyst, then continue Editor, Auditor, required gates/state review, and Finalize.",
         "This recipe is for instrumentation and manifestation testing; it is not quality-equivalent to the full subagent workflow.",

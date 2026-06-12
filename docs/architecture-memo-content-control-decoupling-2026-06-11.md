@@ -89,7 +89,7 @@ What would violate the invariant is a D (graph shell) approach — Python schedu
 |-------|--------|-----------|
 | Tonight | Attempt A (REFERENCE_RUN_ORCHESTRATOR_PROTOCOL.md prompt hardening) | Workaround with recorded deviation; success criteria = all five instrumentation checks pass |
 | v0.7.1 | B (handoff hardening) — fold the protocol's wording into generated handoff templates | Handoff is the LLM's contract surface; dual-channel instructions (protocol file + handoff) is architecturally unsound |
-| v0.7.2 | C (`stage complete` / `stage block` / `finalize complete` transaction commands) | Migrate bookkeeping from instruction to enforcement; approved design today, P0 scheduling |
+| v0.7.2 | C (`stage-complete` / `finalize-complete` success-path transaction commands; block/retry/human-review remain `state decide`) | Migrate bookkeeping from instruction to enforcement; approved design today, P0 scheduling |
 | v0.8+ | D (graph shell) — **rejected** | Await real drift data after C lands; likely unnecessary |
 
 If A fails tonight, C is promoted to v0.7.1 blocking.

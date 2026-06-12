@@ -61,6 +61,7 @@ def _propose_and_approve(
     category: str = "audience_mismatch",
     scope: str = "brief",
     source_summary: str = "RAW SECRET SUMMARY SHOULD NOT APPEAR.",
+    supersedes: str | None = None,
 ) -> str:
     state = propose_improvement(
         workspace=ws,
@@ -68,6 +69,7 @@ def _propose_and_approve(
         category=category,
         scope=scope,
         source_summary=source_summary,
+        supersedes=supersedes,
     )
     entry_id = str(state["entry"]["entry_id"])
     approve_improvement(workspace=ws, entry_id=entry_id, approved_by="stahl")
@@ -114,14 +116,21 @@ def _valid_revision(
     return payload
 
 
-def _append_non_materializable_approved_entry(ws: Path, *, entry_id: str = "AG-0001") -> None:
+def _append_non_materializable_approved_entry(
+    ws: Path,
+    *,
+    entry_id: str = "AG-0001",
+    supersedes_id: str | None = None,
+) -> None:
     first = _valid_revision(entry_id=entry_id)
+    first["supersedes_id"] = supersedes_id
     second = _valid_revision(
         entry_id=entry_id,
         status="approved",
         revision=2,
         previous_revision_sha256=revision_sha256(first),
     )
+    second["supersedes_id"] = supersedes_id
     path = improvement_ledger_path(ws)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -285,6 +294,67 @@ def test_rebuild_renders_origin_runtime_in_source_line(tmp_path):
     text = (ws / IMPROVEMENT_MEMORY_FILE).read_text(encoding="utf-8")
     assert "runtime: hermes" in text
     assert "run mabw-legacy-run / issue fi-001 / runtime: hermes" in text
+
+
+def test_rebuild_excludes_superseded_entries(tmp_path):
+    ws = _workspace(tmp_path)
+    old_id = _propose_and_approve(ws, guidance="Original audience guidance.")
+    new_id = _propose_and_approve(
+        ws,
+        guidance="Replacement audience guidance.",
+        supersedes=old_id,
+    )
+
+    projection = rebuild_improvement_memory(workspace=ws)
+    text = (ws / IMPROVEMENT_MEMORY_FILE).read_text(encoding="utf-8")
+
+    assert projection["selected_entry_ids"] == [new_id]
+    assert projection["skipped_entries"] == [{
+        "entry_id": old_id,
+        "reason_code": "superseded_by_active_guidance",
+        "message": f"Entry is superseded by {new_id}.",
+    }]
+    assert "Replacement audience guidance." in text
+    assert "Original audience guidance." not in text
+
+
+def test_rebuild_chain_reexposes_middle_after_revert(tmp_path):
+    ws = _workspace(tmp_path)
+    first_id = _propose_and_approve(ws, guidance="A guidance.")
+    second_id = _propose_and_approve(ws, guidance="B guidance.", supersedes=first_id)
+    third_id = _propose_and_approve(ws, guidance="C guidance.", supersedes=second_id)
+
+    projection = rebuild_improvement_memory(workspace=ws)
+    assert projection["selected_entry_ids"] == [third_id]
+
+    revert_improvement(workspace=ws, entry_id=third_id, reverted_by="stahl", reason="No longer desired.")
+    projection_after_revert = rebuild_improvement_memory(workspace=ws)
+    text = (ws / IMPROVEMENT_MEMORY_FILE).read_text(encoding="utf-8")
+
+    assert projection_after_revert["selected_entry_ids"] == [second_id]
+    assert "B guidance." in text
+    assert "A guidance." not in text
+    assert "C guidance." not in text
+
+
+def test_non_materializable_superseder_suppresses_target_with_warning(tmp_path):
+    ws = _workspace(tmp_path)
+    old_id = _propose_and_approve(ws, guidance="Original materializable guidance.")
+    _append_non_materializable_approved_entry(ws, entry_id="AG-0002", supersedes_id=old_id)
+
+    projection = rebuild_improvement_memory(workspace=ws)
+
+    assert projection["selected_entry_ids"] == []
+    assert {
+        "entry_id": old_id,
+        "reason_code": "superseded_by_active_guidance",
+        "message": "Entry is superseded by AG-0002.",
+    } in projection["skipped_entries"]
+    assert projection["warnings"] == [{
+        "entry_id": "AG-0002",
+        "reason_code": "non_materializable_superseder_suppresses_target",
+        "message": f"AG-0002 suppresses {old_id} but is not materializable.",
+    }]
 
 
 def test_freeze_rejects_unsafe_runtime_run_id(tmp_path):

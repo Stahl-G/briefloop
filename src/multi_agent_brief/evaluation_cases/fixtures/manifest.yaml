@@ -103,23 +103,23 @@ cases:
   - case_id: planned_blocking_issue_cannot_continue
     case_type: workspace
     synthetic: true
-    description: A planned blocking issue cannot be bypassed by state decide continue.
+    description: A planned blocking issue cannot be bypassed by state stage-complete.
     initial_stage: analyst
     commands:
       - action: state.check
         args: {}
-      - action: state.decide
+      - action: state.stage_complete
         args:
           stage: analyst
-          decision: continue
           reason: Evaluation attempts to bypass planned blocking issue.
     expected:
       exit_code: 1
       expected_actions:
         - action: state.check
           exit_code: 0
-        - action: state.decide
+        - action: state.stage_complete
           exit_code: 1
+          error_contains: unresolved blocking feedback issues
       artifacts_exist:
         - output/intermediate/feedback_issues.json
         - output/intermediate/repair_plan.json

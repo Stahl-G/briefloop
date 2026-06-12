@@ -75,6 +75,10 @@ DIAGNOSTIC_CODES = {
     "invalid_change",
     "invalid_origin",
     "invalid_approval_metadata",
+    "invalid_supersedes_id",
+    "unknown_supersedes_reference",
+    "supersession_cycle",
+    "supersession_fork",
 }
 
 MAX_GUIDANCE_TEXT_LENGTH = 500
@@ -162,6 +166,16 @@ def current_entries_from_revisions(revisions: list[dict[str, Any]]) -> dict[str,
     return current
 
 
+def supersedes_id(entry: dict[str, Any]) -> str | None:
+    """Return normalized supersedes_id; missing and null are semantically equal."""
+    value = entry.get("supersedes_id")
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def read_ledger_text(text: str) -> LedgerReadResult:
     """Parse ledger JSONL text into valid revisions and diagnostics.
 
@@ -222,9 +236,11 @@ def read_ledger_text(text: str) -> LedgerReadResult:
         valid_revisions.append(payload)
         previous_by_entry[entry_id] = payload
 
+    current_entries = current_entries_from_revisions(valid_revisions)
+    diagnostics.extend(_validate_supersession_graph(current_entries))
     return LedgerReadResult(
         valid_revisions=valid_revisions,
-        current_entries=current_entries_from_revisions(valid_revisions),
+        current_entries=current_entries,
         diagnostics=diagnostics,
     )
 
@@ -267,6 +283,9 @@ def validate_next_revision(existing_text: str, revision: dict[str, Any]) -> Appe
     entry_id = str(revision.get("entry_id") or "")
     previous = read_result.current_entries.get(entry_id)
     diagnostics = validate_revision_payload(revision, previous_revision=previous)
+    if not any(item.severity == "error" for item in diagnostics):
+        current_entries = current_entries_from_revisions([*read_result.valid_revisions, revision])
+        diagnostics.extend(_validate_supersession_graph(current_entries))
     return AppendPreflightResult(
         ok=not any(item.severity == "error" for item in diagnostics),
         diagnostics=diagnostics,
@@ -305,6 +324,13 @@ def validate_revision_payload(
             entry_id=entry_id_text,
             revision=revision_number,
         ))
+
+    diagnostics.extend(_validate_supersedes_id(
+        payload,
+        line_number=line_number,
+        entry_id=entry_id_text,
+        revision=revision_number,
+    ))
 
     if not isinstance(revision, int) or revision < 1:
         diagnostics.append(_diag(
@@ -574,7 +600,49 @@ def _validate_immutable_status_revision(
                 entry_id=entry_id,
                 revision=revision,
             ))
+    if supersedes_id(payload) != supersedes_id(previous_revision):
+        diagnostics.append(_diag(
+            "immutable_revision_field_changed",
+            "error",
+            "supersedes_id must remain unchanged across status transitions.",
+            line_number=line_number,
+            entry_id=entry_id,
+            revision=revision,
+        ))
     return diagnostics
+
+
+def _validate_supersedes_id(
+    payload: dict[str, Any],
+    *,
+    line_number: int | None,
+    entry_id: str | None,
+    revision: int | None,
+) -> list[LedgerDiagnostic]:
+    if "supersedes_id" not in payload:
+        return []
+    value = payload.get("supersedes_id")
+    if value is None:
+        return []
+    if not isinstance(value, str) or not _ENTRY_ID_RE.match(value):
+        return [_diag(
+            "invalid_supersedes_id",
+            "error",
+            "supersedes_id must be null or match AG-0001 style.",
+            line_number=line_number,
+            entry_id=entry_id,
+            revision=revision,
+        )]
+    if entry_id and value == entry_id:
+        return [_diag(
+            "invalid_supersedes_id",
+            "error",
+            "supersedes_id must not reference the same entry.",
+            line_number=line_number,
+            entry_id=entry_id,
+            revision=revision,
+        )]
+    return []
 
 
 def _validate_change(
@@ -897,6 +965,60 @@ def _validate_origin(
                 entry_id=entry_id,
                 revision=revision,
             ))
+    return diagnostics
+
+
+def _validate_supersession_graph(current_entries: dict[str, dict[str, Any]]) -> list[LedgerDiagnostic]:
+    diagnostics: list[LedgerDiagnostic] = []
+    graph: dict[str, str] = {}
+    approved_superseders_by_target: dict[str, list[str]] = {}
+    for entry_id, entry in current_entries.items():
+        target_id = supersedes_id(entry)
+        if target_id is None:
+            continue
+        graph[entry_id] = target_id
+        if entry.get("status") == "approved":
+            approved_superseders_by_target.setdefault(target_id, []).append(entry_id)
+        if target_id not in current_entries:
+            diagnostics.append(_diag(
+                "unknown_supersedes_reference",
+                "error",
+                f"supersedes_id references unknown entry {target_id}.",
+                entry_id=entry_id,
+                revision=entry.get("revision") if isinstance(entry.get("revision"), int) else None,
+            ))
+
+    for entry_id in sorted(graph):
+        seen: set[str] = set()
+        cursor = entry_id
+        while cursor in graph:
+            if cursor in seen:
+                diagnostics.append(_diag(
+                    "supersession_cycle",
+                    "error",
+                    f"supersession cycle detected at {cursor}.",
+                    entry_id=entry_id,
+                    revision=(
+                        current_entries.get(entry_id, {}).get("revision")
+                        if isinstance(current_entries.get(entry_id, {}).get("revision"), int)
+                        else None
+                    ),
+                ))
+                break
+            seen.add(cursor)
+            cursor = graph[cursor]
+    for target_id, superseders in sorted(approved_superseders_by_target.items()):
+        if len(superseders) <= 1:
+            continue
+        diagnostics.append(_diag(
+            "supersession_fork",
+            "error",
+            (
+                f"Multiple approved entries supersede {target_id}: "
+                f"{', '.join(sorted(superseders))}."
+            ),
+            entry_id=target_id,
+        ))
     return diagnostics
 
 

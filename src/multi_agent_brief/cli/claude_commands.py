@@ -24,7 +24,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     install = actions.add_parser(
         "install",
-        help="Install /generate-brief and MABW subagents into ~/.claude.",
+        help="Install /mabw, /generate-brief, and MABW subagents into ~/.claude.",
     )
     install.add_argument(
         "--repo-workdir",
@@ -61,18 +61,27 @@ def handle(args: argparse.Namespace) -> int:
 def _install(args: argparse.Namespace) -> int:
     repo = Path(args.repo_workdir).expanduser().resolve()
     target = Path(args.target).expanduser().resolve()
-    command_src = repo / ".claude" / "commands" / "generate-brief.md"
+    command_dir = repo / ".claude" / "commands"
+    generate_src = command_dir / "generate-brief.md"
+    mabw_src = command_dir / "mabw.md"
     agents_src = repo / ".claude" / "agents"
-    if not command_src.exists():
-        raise RuntimeError(f"Claude command not found: {command_src}")
+    if not generate_src.exists():
+        raise RuntimeError(f"Claude command not found: {generate_src}")
+    if not mabw_src.exists():
+        raise RuntimeError(f"Claude command not found: {mabw_src}")
     if not agents_src.exists():
         raise RuntimeError(f"Claude agents directory not found: {agents_src}")
 
-    command_dst = target / "commands" / "generate-brief.md"
     agents_dst = target / "agents" / "mabw"
-    command_text = _installed_command_text(command_src, repo=repo)
 
-    writes: list[PlannedWrite] = [PlannedWrite(command_dst, command_text)]
+    command_sources = [mabw_src, generate_src]
+    writes: list[PlannedWrite] = [
+        PlannedWrite(
+            target / "commands" / src.name,
+            _installed_command_text(src, repo=repo),
+        )
+        for src in command_sources
+    ]
     for src in sorted(agents_src.glob("*.md")):
         writes.append(PlannedWrite(agents_dst / src.name, _installed_agent_text(src)))
 
@@ -96,13 +105,16 @@ def _install(args: argparse.Namespace) -> int:
         print(f"[claude install] wrote {dst}")
 
     print("")
-    print("[claude install] Installed /generate-brief for Claude Code CLI and Claude Desktop Code tab.")
-    print("[claude install] In Claude Code, type '/' and confirm /generate-brief is listed.")
+    print("[claude install] Installed /mabw and /generate-brief for Claude Code CLI and Claude Desktop Code tab.")
+    print("[claude install] In Claude Code, type '/' and confirm /mabw is listed.")
     return 0
 
 
 def _installed_command_text(command_src: Path, *, repo: Path) -> str:
     text = command_src.read_text(encoding="utf-8")
+    if command_src.name != "generate-brief.md":
+        return _with_install_marker(text)
+
     repo_text = repo.as_posix()
     text = text.replace(
         "Read shared contract references before delegation:\n\n"

@@ -188,6 +188,61 @@ def test_improve_approve_reject_revert_cli_boundaries(tmp_path, capsys):
     assert rc == 1
     assert "failed validation" in json.loads(capsys.readouterr().out)["error"]
 
+
+def test_improve_propose_supersedes_cli_records_top_level_lineage(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+
+    assert main([
+        "improve",
+        "propose",
+        "--workspace",
+        str(ws),
+        "--guidance",
+        "Lead with the decision-relevant number when evidence supports it.",
+        "--category",
+        "audience_mismatch",
+        "--scope",
+        "brief",
+        "--source-summary",
+        "Operator-created audience guidance proposal.",
+        "--json",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "improve",
+        "approve",
+        "--workspace",
+        str(ws),
+        "--entry-id",
+        "AG-0001",
+        "--by",
+        "stahl",
+        "--json",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "improve",
+        "propose",
+        "--workspace",
+        str(ws),
+        "--guidance",
+        "Lead with the replacement audience framing.",
+        "--category",
+        "audience_mismatch",
+        "--scope",
+        "brief",
+        "--source-summary",
+        "Operator-created replacement guidance.",
+        "--supersedes",
+        "AG-0001",
+        "--json",
+    ]) == 0
+    proposed = json.loads(capsys.readouterr().out)
+    assert proposed["entry"]["entry_id"] == "AG-0002"
+    assert proposed["entry"]["supersedes_id"] == "AG-0001"
+    assert proposed["warnings"] == []
+
     assert main([
         "improve",
         "revert",

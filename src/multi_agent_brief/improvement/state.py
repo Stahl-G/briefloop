@@ -28,6 +28,7 @@ from multi_agent_brief.improvement.contract import (
     canonical_json,
     read_ledger_text,
     revision_sha256,
+    supersedes_id,
     validate_next_revision,
 )
 from multi_agent_brief.improvement.product_definition import (
@@ -131,12 +132,13 @@ def show_improvement(
             f"Unknown improvement entry: {entry_id}",
             details={"entry_id": entry_id},
         )
+    computed = _computed_current_entries(read_result.current_entries)
     return {
         "ok": True,
         "workspace": str(ws),
         "ledger_path": str(improvement_ledger_path(ws)),
         "entry_id": entry_id,
-        "current": current,
+        "current": computed.get(entry_id, dict(current)),
         "revisions": revisions,
         "diagnostics": [_diagnostic_to_dict(item) for item in read_result.diagnostics],
     }
@@ -145,7 +147,8 @@ def show_improvement(
 def improvement_stats(*, workspace: str | Path) -> dict[str, Any]:
     ws = _require_workspace(workspace)
     read_result = _read_ledger(ws)
-    current_entries = list(read_result.current_entries.values())
+    computed_entries = _computed_current_entries(read_result.current_entries)
+    current_entries = list(computed_entries.values())
     by_status = _count_by(current_entries, "status")
     by_category = _count_by(
         current_entries,
@@ -160,10 +163,12 @@ def improvement_stats(*, workspace: str | Path) -> dict[str, Any]:
 
     approved_entries = [entry for entry in current_entries if entry.get("status") == "approved"]
     approved_count = len(approved_entries)
+    superseded_count = sum(1 for entry in approved_entries if entry.get("is_superseded") is True)
     eligible_for_materialization_count = sum(
         1
         for entry in approved_entries
-        if classify_ledger_entry_materialization(entry).materializable
+        if not entry.get("is_superseded")
+        and classify_ledger_entry_materialization(entry).materializable
     )
     return {
         "ok": True,
@@ -172,6 +177,7 @@ def improvement_stats(*, workspace: str | Path) -> dict[str, Any]:
         "entry_count": len(current_entries),
         "revision_count": len(read_result.valid_revisions),
         "approved_count": approved_count,
+        "superseded_count": superseded_count,
         "eligible_for_materialization_count": eligible_for_materialization_count,
         "reverted_count": by_status.get("reverted", 0),
         "counts_by_status": by_status,
@@ -189,6 +195,7 @@ def propose_improvement(
     scope: str,
     source_summary: str | None = None,
     from_issue: str | None = None,
+    supersedes: str | None = None,
 ) -> dict[str, Any]:
     ws = _require_workspace(workspace)
     _validate_category_scope(category=category, scope=scope)
@@ -223,11 +230,28 @@ def propose_improvement(
 
     read_result = _read_ledger(ws)
     entry_id = _next_entry_id(read_result.valid_revisions)
+    supersedes_value = supersedes.strip() if isinstance(supersedes, str) and supersedes.strip() else None
+    warnings: list[dict[str, Any]] = []
+    if supersedes_value is not None:
+        warnings.extend(_validate_supersedes_target(
+            current_entries=read_result.current_entries,
+            new_entry_id=entry_id,
+            supersedes_id=supersedes_value,
+            category=category,
+            scope=scope,
+        ))
+    else:
+        warnings.extend(_duplicate_guidance_warnings(
+            current_entries=read_result.current_entries,
+            category=category,
+            scope=scope,
+        ))
     revision = {
         "schema_version": IMPROVEMENT_LEDGER_SCHEMA,
         "entry_id": entry_id,
         "revision": 1,
         "previous_revision_sha256": None,
+        "supersedes_id": supersedes_value,
         "created_at": _utc_now(),
         "status": "proposed",
         "level": 2,
@@ -245,6 +269,7 @@ def propose_improvement(
         event_type="improvement_proposed",
         event_reason="Improvement guidance proposed.",
         product_decision=product_decision,
+        warnings=warnings,
     )
 
 
@@ -296,16 +321,23 @@ def revert_improvement(
     reason: str,
 ) -> dict[str, Any]:
     ws = _require_workspace(workspace)
-    previous = _current_entry(ws, entry_id)
+    read_result = _read_ledger(ws)
+    previous = _current_entry_from_read_result(read_result, entry_id)
     revision = _status_revision(previous, status="reverted")
     revision["reverted_by"] = reverted_by
     revision["reverted_at"] = _utc_now()
     revision["revert_reason"] = reason
+    warnings = _reexposed_entries_on_revert(
+        current_entries=read_result.current_entries,
+        superseder_entry_id=entry_id,
+        revert_revision=revision,
+    )
     return _append_transition(
         workspace=ws,
         revision=revision,
         event_type="improvement_reverted",
         event_reason=reason,
+        warnings=warnings,
     )
 
 
@@ -316,6 +348,7 @@ def _append_transition(
     event_type: str,
     event_reason: str,
     product_decision: ProductDefinitionDecision | None = None,
+    warnings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     existing_text = _read_ledger_text(workspace)
     preflight = validate_next_revision(existing_text, revision)
@@ -344,6 +377,7 @@ def _append_transition(
     state["entry"] = revision
     if product_decision is not None:
         state["product_definition"] = product_decision.to_dict()
+    state["warnings"] = warnings or []
     return state
 
 
@@ -442,13 +476,14 @@ def _preflight_event_log_jsonl(path: Path) -> None:
 
 
 def _state_payload(*, workspace: Path, read_result) -> dict[str, Any]:
+    current_entries = _computed_current_entries(read_result.current_entries)
     return {
         "ok": not any(item.severity == "error" for item in read_result.diagnostics),
         "workspace": str(workspace),
         "ledger_path": str(improvement_ledger_path(workspace)),
-        "current_entries": read_result.current_entries,
+        "current_entries": current_entries,
         "revision_count": len(read_result.valid_revisions),
-        "entry_count": len(read_result.current_entries),
+        "entry_count": len(current_entries),
         "diagnostics": [_diagnostic_to_dict(item) for item in read_result.diagnostics],
     }
 
@@ -463,6 +498,7 @@ def _status_revision(previous: dict[str, Any], *, status: str) -> dict[str, Any]
         "status": status,
         "level": previous["level"],
         "target_kind": previous["target_kind"],
+        "supersedes_id": supersedes_id(previous),
         "change": deepcopy(previous["change"]),
         "source_evidence": deepcopy(previous["source_evidence"]),
     }
@@ -470,6 +506,10 @@ def _status_revision(previous: dict[str, Any], *, status: str) -> dict[str, Any]
 
 def _current_entry(workspace: Path, entry_id: str) -> dict[str, Any]:
     read_result = _read_ledger(workspace)
+    return _current_entry_from_read_result(read_result, entry_id)
+
+
+def _current_entry_from_read_result(read_result, entry_id: str) -> dict[str, Any]:
     current = read_result.current_entries.get(entry_id)
     if current is None:
         raise ImprovementLedgerError(
@@ -639,8 +679,23 @@ def _human_feedback_origin(workspace: Path) -> dict[str, str]:
 
 def _materialization_diagnostics(current_entries: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     diagnostics: list[dict[str, Any]] = []
+    superseded_by = _superseded_by_map(current_entries)
     for entry_id, entry in sorted(current_entries.items()):
         if entry.get("status") != "approved":
+            continue
+        if superseded_by.get(entry_id):
+            diagnostics.append({
+                "entry_id": entry_id,
+                "materializable": False,
+                "non_materializable_reason": "superseded_by_active_guidance",
+                "requires_product_definition_review": False,
+                "classification": "audience_guidance",
+                "action": "skip",
+                "reason_code": "superseded_by_active_guidance",
+                "message": f"Entry is superseded by {', '.join(superseded_by[entry_id])}.",
+                "superseded_by": list(superseded_by[entry_id]),
+                "is_superseded": True,
+            })
             continue
         decision = classify_ledger_entry_materialization(entry)
         diagnostics.append({
@@ -652,8 +707,190 @@ def _materialization_diagnostics(current_entries: dict[str, dict[str, Any]]) -> 
             "action": decision.action,
             "reason_code": decision.reason_code,
             "message": decision.message,
+            "superseded_by": [],
+            "is_superseded": False,
         })
+    diagnostics.extend(_non_materializable_superseder_warnings(current_entries))
     return diagnostics
+
+
+def _superseded_by_map(current_entries: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    superseded: dict[str, list[str]] = {}
+    for entry_id, entry in sorted(current_entries.items()):
+        if entry.get("status") != "approved":
+            continue
+        target_id = supersedes_id(entry)
+        if target_id is None:
+            continue
+        superseded.setdefault(target_id, []).append(entry_id)
+    return {key: sorted(value) for key, value in superseded.items()}
+
+
+def _computed_current_entries(current_entries: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    superseded = _superseded_by_map(current_entries)
+    computed: dict[str, dict[str, Any]] = {}
+    for entry_id, entry in sorted(current_entries.items()):
+        item = deepcopy(entry)
+        item["supersedes_id"] = supersedes_id(entry)
+        item["superseded_by"] = list(superseded.get(entry_id, []))
+        item["is_superseded"] = bool(item["superseded_by"])
+        decision = classify_ledger_entry_materialization(entry)
+        item["materializable"] = (
+            entry.get("status") == "approved"
+            and decision.materializable
+            and not item["is_superseded"]
+        )
+        item["non_materializable_reason"] = (
+            "superseded_by_active_guidance"
+            if item["is_superseded"]
+            else (None if decision.materializable else decision.reason_code)
+        )
+        computed[entry_id] = item
+    return computed
+
+
+def _validate_supersedes_target(
+    *,
+    current_entries: dict[str, dict[str, Any]],
+    new_entry_id: str,
+    supersedes_id: str,
+    category: str,
+    scope: str,
+) -> list[dict[str, Any]]:
+    if supersedes_id == new_entry_id:
+        raise ImprovementLedgerError(
+            "Improvement entry cannot supersede itself.",
+            details={"supersedes_id": supersedes_id, "entry_id": new_entry_id},
+        )
+    target = current_entries.get(supersedes_id)
+    if target is None:
+        raise ImprovementLedgerError(
+            f"Unknown supersedes target: {supersedes_id}",
+            details={"supersedes_id": supersedes_id},
+        )
+    if target.get("status") != "approved":
+        raise ImprovementLedgerError(
+            "supersedes target must be currently approved.",
+            details={"supersedes_id": supersedes_id, "status": target.get("status")},
+        )
+    target_decision = classify_ledger_entry_materialization(target)
+    if not target_decision.materializable:
+        raise ImprovementLedgerError(
+            "supersedes target must be materializable audience guidance.",
+            details={"supersedes_id": supersedes_id, "reason_code": target_decision.reason_code},
+        )
+
+    warnings: list[dict[str, Any]] = []
+    target_change = target.get("change") if isinstance(target.get("change"), dict) else {}
+    if target_change.get("category") != category or target_change.get("scope") != scope:
+        warnings.append({
+            "code": "supersedes_category_scope_mismatch",
+            "entry_id": supersedes_id,
+            "message": (
+                f"Supersedes target {supersedes_id} has category/scope "
+                f"{target_change.get('category')}/{target_change.get('scope')}."
+            ),
+        })
+    existing_superseders = _superseded_by_map(current_entries).get(supersedes_id, [])
+    if existing_superseders:
+        warnings.append({
+            "code": "supersedes_target_already_superseded",
+            "entry_id": supersedes_id,
+            "superseded_by": list(existing_superseders),
+            "approval_blocker": True,
+            "message": (
+                f"Supersedes target {supersedes_id} is already superseded by "
+                f"{', '.join(existing_superseders)}; this proposal cannot be approved "
+                "until the existing superseder is reverted."
+            ),
+        })
+    return warnings
+
+
+def _duplicate_guidance_warnings(
+    *,
+    current_entries: dict[str, dict[str, Any]],
+    category: str,
+    scope: str,
+) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    superseded = _superseded_by_map(current_entries)
+    for entry_id, entry in sorted(current_entries.items()):
+        if entry.get("status") not in {"proposed", "approved"}:
+            continue
+        if superseded.get(entry_id):
+            continue
+        change = entry.get("change") if isinstance(entry.get("change"), dict) else {}
+        if (
+            entry.get("target_kind") == "audience_guidance"
+            and entry.get("level") == 2
+            and change.get("category") == category
+            and change.get("scope") == scope
+        ):
+            warnings.append({
+                "code": "possible_duplicate_active_guidance",
+                "entry_id": entry_id,
+                "message": (
+                    f"Existing active guidance has the same category/scope. "
+                    f"Consider --supersedes {entry_id}."
+                ),
+            })
+    return warnings
+
+
+def _reexposed_entries_on_revert(
+    *,
+    current_entries: dict[str, dict[str, Any]],
+    superseder_entry_id: str,
+    revert_revision: dict[str, Any],
+) -> list[dict[str, Any]]:
+    previous = current_entries.get(superseder_entry_id)
+    if previous is None or previous.get("status") != "approved":
+        return []
+    target_id = supersedes_id(previous)
+    if target_id is None:
+        return []
+    next_entries = dict(current_entries)
+    next_entries[superseder_entry_id] = revert_revision
+    target = next_entries.get(target_id)
+    if target is None or target.get("status") != "approved":
+        return []
+    if _superseded_by_map(next_entries).get(target_id):
+        return []
+    decision = classify_ledger_entry_materialization(target)
+    if not decision.materializable:
+        return []
+    return [{
+        "code": "supersession_reexposes_entry",
+        "entry_id": target_id,
+        "message": f"Reverting {superseder_entry_id} re-exposes {target_id}.",
+    }]
+
+
+def _non_materializable_superseder_warnings(current_entries: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    warnings: list[dict[str, Any]] = []
+    for entry_id, entry in sorted(current_entries.items()):
+        if entry.get("status") != "approved":
+            continue
+        target_id = supersedes_id(entry)
+        if target_id is None:
+            continue
+        decision = classify_ledger_entry_materialization(entry)
+        if decision.materializable:
+            continue
+        warnings.append({
+            "entry_id": entry_id,
+            "materializable": False,
+            "non_materializable_reason": "non_materializable_superseder_suppresses_target",
+            "requires_product_definition_review": decision.requires_product_definition_review,
+            "classification": decision.classification,
+            "action": "warn",
+            "reason_code": "non_materializable_superseder_suppresses_target",
+            "message": f"{entry_id} suppresses {target_id} but is not materializable.",
+            "supersedes_id": target_id,
+            "is_superseded": False,
+        })
+    return warnings
 
 
 def _validate_category_scope(*, category: str, scope: str) -> None:

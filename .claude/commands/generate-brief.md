@@ -99,13 +99,14 @@ Follow this sequence:
     - Confirm quality gate selection in `control_selections.json`, or record it with `multi-agent-brief controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason "Use quality gates before finalize."`.
     - Run `multi-agent-brief gates check --workspace $ARGUMENTS`.
     - Run `multi-agent-brief state check --workspace $ARGUMENTS --strict`.
-    - If state is not blocked, run `multi-agent-brief state decide --workspace $ARGUMENTS --stage auditor --decision continue --reason "Audit and quality gates passed."`.
+    - If state is not blocked, run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage auditor --reason "Audit and quality gates passed."`.
     - If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize.
     - Repair guidance is bounded runtime guidance, not an automatic trajectory regulator: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 
-14. Invoke the **formatter** subagent / finalize tool only after the gates/state decision path passes:
+14. Invoke the **formatter** subagent / finalize tool only after the gates/state completion path passes:
     - Run `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`.
     - Remember: `finalize` is not a quality-gate executor.
+    - After finalize writes reader-facing artifacts, run `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`.
     - Confirm `$ARGUMENTS/output/brief.md` is reader-facing.
     - Confirm `$ARGUMENTS/output/source_appendix.md` exists when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or `file://` URLs.
     - Confirm the configured named Markdown copy exists if enabled.

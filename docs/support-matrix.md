@@ -32,7 +32,8 @@ validation unless that is stated separately.
 | Finalize (Markdown + DOCX) | Supported |
 | Reader-facing source appendix (`source_appendix.md`) | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
-| `multi-agent-brief state init/check/show/decide` | Supported |
+| `multi-agent-brief status --workspace <path>` | Supported |
+| `multi-agent-brief state init/check/show/decide/stage-complete/finalize-complete` | Supported |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
 | `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|all` | Source-clone-only |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
@@ -69,10 +70,14 @@ Source appendices are reader-facing delivery artifacts generated during finalize
 | Runtime | Status |
 |---|---|
 | Hermes (`delegate_task` native pipeline + cron) | Supported |
-| Claude Code (`/generate-brief` in CLI or Desktop Code tab; installable with `multi-agent-brief claude install`) | Supported |
+| Claude Code (`/mabw` five-verb writer entrypoint + `/generate-brief` compatibility; installable with `multi-agent-brief claude install`) | Supported |
 | OpenCode (subagent workflow) | Supported |
 | Codex (subagent workflow) | Supported |
 | Manual (print workflow steps) | Supported |
+
+Claude Code is the first-class writer / five-verb path (`new`, `run`, `status`,
+`feedback`, `deliver`). Hermes remains a supported delegated/scheduled runtime
+path. Other runtimes keep their existing workflow entrypoints.
 
 Runtime source assets under `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
 and `integrations/hermes-plugin/` are source-clone assets. Package-only installs

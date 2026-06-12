@@ -25,6 +25,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
     check_runtime_state,
+    complete_stage_transaction,
     initialize_runtime_state,
     record_decision,
     record_handoff_written,
@@ -68,7 +69,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     run_parser.add_argument(
         "--skip-doctor", action="store_true", help="Skip doctor check."
     )
-
     prepare_parser = subparsers.add_parser(
         "prepare",
         help="[legacy] Replaced by 'multi-agent-brief run'.",
@@ -108,7 +108,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     start_parser.add_argument(
         "--skip-doctor", action="store_true", help="Skip doctor check."
     )
-
     handoff_parser = subparsers.add_parser(
         "handoff",
         help="Generate a runtime handoff artifact from a workspace config.",
@@ -138,7 +137,6 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     handoff_parser.add_argument(
         "--skip-doctor", action="store_true", help="Skip doctor check."
     )
-
 
 def handle(args: argparse.Namespace) -> int:
     """Dispatch run / start / handoff / prepare commands."""
@@ -400,11 +398,10 @@ def _record_doctor_state(
     repo_workdir: Path,
 ) -> None:
     if handoff.doctor_status == "passed":
-        record_decision(
+        complete_stage_transaction(
             workspace=workspace,
             repo_workdir=repo_workdir,
             stage_id="doctor",
-            decision="continue",
             reason="Doctor passed during runtime handoff launch.",
             actor="cli",
         )

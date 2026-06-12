@@ -227,6 +227,87 @@ def test_status_transitions_cannot_rewrite_guidance_or_evidence():
         )
 
 
+def test_supersedes_id_contract_is_top_level_nullable_and_immutable():
+    historical = _revision()
+    explicit_null = _revision(supersedes_id=None)
+    valid = _revision(entry_id="AG-0002", supersedes_id="AG-0001")
+    bad_format = _revision(supersedes_id="BAD-1")
+    self_reference = _revision(entry_id="AG-0001", supersedes_id="AG-0001")
+    approved_changed = _revision(
+        revision=2,
+        status="approved",
+        previous_revision_sha256=revision_sha256(explicit_null),
+        supersedes_id="AG-0009",
+        approved_by="stahl",
+        approved_at="2026-06-10T00:01:00Z",
+    )
+
+    assert validate_revision_payload(historical) == []
+    assert validate_revision_payload(explicit_null) == []
+    assert validate_revision_payload(valid) == []
+    assert "invalid_supersedes_id" in _codes(validate_revision_payload(bad_format))
+    assert "invalid_supersedes_id" in _codes(validate_revision_payload(self_reference))
+    assert "immutable_revision_field_changed" in _codes(
+        validate_revision_payload(approved_changed, previous_revision=explicit_null)
+    )
+
+
+def test_supersedes_id_ledger_graph_rejects_unknown_and_cycles():
+    first = _revision(entry_id="AG-0001")
+    approved_first = _revision(
+        entry_id="AG-0001",
+        revision=2,
+        status="approved",
+        previous_revision_sha256=revision_sha256(first),
+        approved_by="stahl",
+        approved_at="2026-06-10T00:01:00Z",
+    )
+    second = _revision(entry_id="AG-0002", supersedes_id="AG-0001")
+    valid_text = f"{_line(first)}\n{_line(approved_first)}\n"
+
+    assert validate_next_revision(valid_text, second).ok is True
+
+    unknown = _revision(entry_id="AG-0003", supersedes_id="AG-9999")
+    unknown_result = validate_next_revision(valid_text, unknown)
+    assert unknown_result.ok is False
+    assert "unknown_supersedes_reference" in _codes(unknown_result.diagnostics)
+
+    a = _revision(entry_id="AG-0001", supersedes_id="AG-0002")
+    b = _revision(entry_id="AG-0002", supersedes_id="AG-0001")
+    cycle = read_ledger_text(f"{_line(a)}\n{_line(b)}\n")
+    assert "supersession_cycle" in _codes(cycle.diagnostics)
+
+    second_approved = _revision(
+        entry_id="AG-0002",
+        revision=2,
+        status="approved",
+        previous_revision_sha256=revision_sha256(second),
+        supersedes_id="AG-0001",
+        approved_by="stahl",
+        approved_at="2026-06-10T00:02:00Z",
+    )
+    third = _revision(entry_id="AG-0003", supersedes_id="AG-0001")
+    third_approved = _revision(
+        entry_id="AG-0003",
+        revision=2,
+        status="approved",
+        previous_revision_sha256=revision_sha256(third),
+        supersedes_id="AG-0001",
+        approved_by="stahl",
+        approved_at="2026-06-10T00:03:00Z",
+    )
+    fork_text = (
+        f"{_line(first)}\n"
+        f"{_line(approved_first)}\n"
+        f"{_line(second)}\n"
+        f"{_line(second_approved)}\n"
+        f"{_line(third)}\n"
+    )
+    fork_result = validate_next_revision(fork_text, third_approved)
+    assert fork_result.ok is False
+    assert "supersession_fork" in _codes(fork_result.diagnostics)
+
+
 def test_required_approval_rejection_revert_metadata_and_timestamp_format():
     first = _revision()
     approved_missing = _revision(

@@ -445,3 +445,201 @@ def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path)
     assert "内部覆盖说明" not in reader
     assert "Normal Reader Section" in reader
     assert "[src:" not in reader
+
+
+def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nA raw internal marker [CL-0001] should not ship.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["reader_clean"]["status"] == "fail"
+    assert report["reader_clean"]["bare_claim_id_count"] == 1
+    assert report["reader_clean"]["sample_findings"][0]["artifact"].endswith("brief.md")
+
+
+def test_finalize_fails_on_common_internal_id_reader_residue(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Raw IDs CLAIM_123456, CLAIM_TEST_001, SRC_ABCDEF, SRC_001, and SOURCE_A should not ship.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["bare_claim_id_count"] == 2
+    assert reader_clean["source_id_count"] == 3
+
+
+def test_finalize_fails_on_docx_footer_reader_residue(tmp_path: Path):
+    pytest.importorskip("docx", reason="python-docx not installed")
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nReader-safe body.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "docx"],
+            output_footer="Footer leaks CLAIM_123456",
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["status"] == "fail"
+    assert reader_clean["bare_claim_id_count"] == 1
+    assert any(
+        finding["artifact"].endswith("brief.docx")
+        for finding in reader_clean["sample_findings"]
+    )
+
+
+def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "A residual marker [source:CL-0001] should fail.\n"
+        "The Analyst subagent wrote this from the Claim Ledger.\n"
+        "Local path /Users/example/workspace/source.md leaked.\n"
+        "DEBUG details should not ship.\n"
+        "质量门禁不应出现在读者终稿。\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["src_marker_count"] == 1
+    assert reader_clean["process_wording_count"] >= 3
+    assert reader_clean["local_path_count"] == 1
+    assert reader_clean["debug_residue_count"] == 1
+
+
+def test_finalize_fails_on_blank_source_index_row(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Reader-safe content.\n\n"
+        "## Source Index\n\n"
+        "| Title | Publisher | URL |\n"
+        "| --- | --- | --- |\n"
+        "|  |  |  |\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["reader_clean"]["blank_citation_row_count"] == 1
+
+
+def test_finalize_fails_on_blank_source_index_id_cell(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Reader-safe content.\n\n"
+        "## Source Index\n\n"
+        "| ID | Title | Date | Priority |\n"
+        "| --- | --- | --- | --- |\n"
+        "|  | USTR Section 301对60个经济体调查 | 2026-06-04 | 高 |\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["status"] == "fail"
+    assert reader_clean["blank_citation_row_count"] == 1
+    assert "blank ID/source/reference cell" in reader_clean["sample_findings"][0]["message"]
+
+
+def test_finalize_cli_reports_reader_clean_failure_without_traceback(
+    tmp_path: Path,
+    capsys,
+):
+    workspace = tmp_path / "workspace"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: ExampleCo Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nA raw CLM-001 marker should not ship.\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "[finalize] Error:" in captured.err
+    assert "Reader final output gate failed" in captured.err
+    assert "finalize_report.json" in captured.err
+    assert "Traceback" not in captured.err
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["reader_clean"]["status"] == "fail"

@@ -127,7 +127,7 @@ def render_source_appendix(
     lines = [
         "# Source Appendix",
         "",
-        "Generated from cited Claim Ledger entries during finalize. This appendix lists source records used by the brief; it is not a semantic proof of every statement.",
+        "This appendix lists source records used by the brief; it is not a semantic proof of every statement.",
         "",
         "## Sources",
         "",
