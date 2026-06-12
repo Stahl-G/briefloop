@@ -89,7 +89,7 @@ understand four things without exposing a schema inventory:
 | Question | What status should tell you |
 |---|---|
 | What stage this run is in | Current stage, missing artifacts, blockers, and the next safe action. |
-| Where each number came from | Whether Claim Ledger, audit, gate, and source appendix surfaces are present or stale. |
+| Source-trail surface readiness | Whether Claim Ledger, audit, gate, and source appendix artifacts are present or stale. To trace a specific number, open those source-trail files. |
 | What reader preferences were approved | Whether Improvement Memory was materialized for this run, and which snapshot is frozen. |
 | What checks are guarding delivery | Gate status, reader-final cleanliness, feedback/repair blockers, and finalize readiness. |
 

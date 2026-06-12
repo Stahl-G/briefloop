@@ -42,7 +42,7 @@ multi-agent-brief claude install --repo-workdir .
 `status` 是只读的。它只回答四件事：
 
 - 本期写到哪了；
-- 每个数字的来源面是否齐；
+- 来源相关 surface 是否已出现或可能过期；具体数字要去 Claim Ledger / 来源附录 / 审计记录里查；
 - 哪些读者偏好已经在本 run 冻结；
 - 交付前有哪些门禁或反馈还在拦。
 
