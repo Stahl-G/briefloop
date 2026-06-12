@@ -37,7 +37,7 @@ def test_public_safety_scan_allows_fake_test_tokens(tmp_path):
     test_dir.mkdir()
     fake_path = test_dir / "fake_safety_fixture_for_unit_test.md"
     fake_path.write_text(
-        "Example recipient oc_secret_chat and file:///Users/example/source.md\n",
+        "Example recipient oc_secret_chat and file:///Users/example/source.md # PUBLIC_SAFETY_TEST_FIXTURE\n",
         encoding="utf-8",
     )
 
@@ -52,10 +52,10 @@ def test_public_safety_scan_catches_lark_recipient_and_file_token_prefixes(tmp_p
     sample.write_text(
         "\n".join(
             [
-                "folder fld1234567890abcdef",
-                "open message on1234567890abcdef",
-                "cli token cli1234567890abcdef",
-                "file token f1234567890abcdef",
+                "folder fld1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+                "open message on1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+                "cli token cli1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+                "file token f1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
             ]
         )
         + "\n",
@@ -72,6 +72,30 @@ def test_public_safety_scan_catches_lark_recipient_and_file_token_prefixes(tmp_p
     ]
 
 
+def test_public_safety_scan_catches_no_digit_lark_token_shapes(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "candidate_pack.md"
+    sample.write_text(
+        "\n".join(
+            [
+                "folder fldabcdefghijk",  # PUBLIC_SAFETY_TEST_FIXTURE
+                "cli token cliabcdefghijk",  # PUBLIC_SAFETY_TEST_FIXTURE
+                "file token fabcdefghijklmnop",  # PUBLIC_SAFETY_TEST_FIXTURE
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert [finding.sample for finding in findings] == [
+        "folder fldabcdefghijk",  # PUBLIC_SAFETY_TEST_FIXTURE
+        "cli token cliabcdefghijk",  # PUBLIC_SAFETY_TEST_FIXTURE
+        "file token fabcdefghijklmnop",  # PUBLIC_SAFETY_TEST_FIXTURE
+    ]
+
+
 def test_public_safety_scan_does_not_flag_common_words_starting_with_token_prefixes(tmp_path):
     module = _load_module()
     sample = tmp_path / "public_docs.md"
@@ -83,3 +107,20 @@ def test_public_safety_scan_does_not_flag_common_words_starting_with_token_prefi
     findings = module.scan([sample], banned_terms=[])
 
     assert findings == []
+
+
+def test_public_safety_scan_does_not_broadly_allow_tests_directory(tmp_path):
+    module = _load_module()
+    module.ROOT = tmp_path
+    test_dir = tmp_path / "tests"
+    test_dir.mkdir()
+    leak_path = test_dir / "test_leak.py"
+    leak_path.write_text(
+        "SECRET = 'sk-123456789012345678901234'\n"  # PUBLIC_SAFETY_TEST_FIXTURE
+        "URL = 'file:///Users/realuser/private.md'\n",  # PUBLIC_SAFETY_TEST_FIXTURE
+        encoding="utf-8",
+    )
+
+    findings = module.scan([leak_path], banned_terms=[])
+
+    assert sorted(finding.kind for finding in findings) == ["common_secret", "file_url", "user_path"]

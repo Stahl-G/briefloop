@@ -18,10 +18,10 @@ ROOT = Path(__file__).resolve().parent.parent
 LARK_TOKEN_CANDIDATE_RE = re.compile(
     r"\b(?:"
     r"(?:oc|ou|on|om)_[A-Za-z0-9][A-Za-z0-9_-]{5,}"
-    r"|(?:oc|ou|on|om)[0-9][A-Za-z0-9_-]{7,}"
+    r"|(?:oc|ou|on|om)[A-Za-z0-9][A-Za-z0-9_-]{7,}"
     r"|cli_[A-Za-z0-9][A-Za-z0-9_-]{5,}"
-    r"|cli[0-9][A-Za-z0-9_-]{7,}"
-    r"|fld[A-Za-z0-9_-]{8,}"
+    r"|cli[A-Za-z0-9][A-Za-z0-9_-]{7,}"
+    r"|fld[A-Za-z0-9-]{8,}"
     r"|f[A-Za-z0-9]{15,}"
     r")\b"
 )
@@ -129,7 +129,9 @@ def _allowed_fixture(path: Path, line: str, kind: str) -> bool:
         "src/multi_agent_brief/outputs/reader_final_gate.py",
     } and kind in {"user_path", "file_url"}:
         return True
-    if rel.startswith("tests/") and kind != "banned_term":
+    if rel in _PUBLIC_TEST_FIXTURE_FINDINGS and kind in _PUBLIC_TEST_FIXTURE_FINDINGS[rel]:
+        return True
+    if rel.startswith("tests/") and "PUBLIC_SAFETY_TEST_FIXTURE" in line and kind != "banned_term":
         return True
     if kind == "file_url" and line.strip() in {
         "- `file://`",
@@ -167,12 +169,24 @@ def _sample(line: str, needle: str) -> str:
     return text[start:end]
 
 
-def _looks_like_lark_token(value: str) -> bool:
-    if value.startswith(("cli", "fld")):
-        return any(char.isdigit() for char in value)
-    if value.startswith("f"):
-        return any(char.isdigit() for char in value)
-    return True
+_LARK_TOKEN_CONTEXT_RE = re.compile(
+    r"(?:\brecipient\b|\bchat\b|\bfolder\b|\bfile\b|\btoken\b|open[_ -]?id|folder[_ -]?token|chat[_ -]?id|\bmessage\b)\W*$",
+    re.IGNORECASE,
+)
+
+_PUBLIC_TEST_FIXTURE_FINDINGS: dict[str, set[str]] = {
+    "tests/test_improvement_contract.py": {"file_url", "user_path", "common_secret"},
+    "tests/test_provenance_projection.py": {"file_url", "user_path"},
+    "tests/test_reader_final_gate.py": {"file_url", "user_path"},
+    "tests/test_source_appendix.py": {"file_url", "user_path"},
+}
+
+
+def _looks_like_lark_token(value: str, line: str, start: int) -> bool:
+    if any(char.isdigit() for char in value):
+        return True
+    context = line[max(0, start - 48):start]
+    return bool(_LARK_TOKEN_CONTEXT_RE.search(context))
 
 
 def scan(paths: list[Path] | None = None, *, banned_terms: list[str] | None = None) -> list[Finding]:
@@ -195,7 +209,7 @@ def scan(paths: list[Path] | None = None, *, banned_terms: list[str] | None = No
                     checks.append(("banned_term", term))
             for match in LARK_TOKEN_CANDIDATE_RE.finditer(line):
                 token = match.group(0)
-                if _looks_like_lark_token(token):
+                if _looks_like_lark_token(token, line, match.start()):
                     checks.append(("lark_token", token))
             for kind, regex in (
                 ("user_path", USER_PATH_RE),
