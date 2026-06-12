@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] — 2026-06-12
+
+### Added
+
+- **Release safety scan**: added `scripts/check_public_safety.py` and focused tests for public-safe release surfaces, including local path, token-like, environment-file, and configurable banned-term checks.
+- **Private onboarding guardrail**: root `onboarding.json` is ignored so personal onboarding answers do not accidentally enter release commits.
+- **Delivery artifact integrity**: `finalize_report.json` records delivery artifact hashes, and `multi-agent-brief deliver` rejects artifacts that changed after finalize.
+
+### Changed
+
+- **Runtime prompt hardening**: generated Orchestrator and Claude command guidance now states that stage completion is defined by `state stage-complete`, not by artifact existence or natural-language completion claims.
+- **Configuration authority clarified**: screener/runtime guidance now treats `max_source_age_days` and `fail_on_stale_source` as authoritative config and forbids prompt-only freshness exceptions.
+- **Onboarding privacy boundary clarified**: `/mabw new` guidance now forbids inferring company or organization from maintainer identity, repo history, private memory, prior workspaces, local directories, or previous reports.
+
+### Boundaries
+
+- v0.7.3 is a release-hardening patch over v0.7.2. It does not add new autonomous learning, role topology changes, output-quality scoring, public raw trace packs, or A-grade manifestation experiments.
+
 ## [0.7.2] — 2026-06-12
 
 ### Added

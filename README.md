@@ -19,10 +19,10 @@
 
 ## 当前状态（诚实版）
 
-当前版本：**v0.7.2**
+当前版本：**v0.7.3**
 
 * **能跑的**：subagent-first 工作流（Hermes / Claude Code / Codex / OpenCode），运行时状态文件，事实账本，确定性质量门禁，反馈与修复计划，溯源投影，受众画像快照，受控的改进账本 / 改进记忆，Markdown / Word 输出。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
-* **v0.7.2 新增**：reader-final 交付门禁、`stage-complete` / `finalize-complete` 成功路径事务、Claude Code 五动词 writer 入口、只读 `status`，以及 Improvement Ledger supersession hygiene。
+* **v0.7.3 新增**：在 v0.7.2 的 reader-final 门禁、completion transactions、五动词入口和 supersession hygiene 之上，补齐 release safety hardening：public-safety scan、私有 onboarding 防线、runtime prompt 边界和 delivery artifact hash 校验。
 * **还不是的**：不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统。详见 [当前架构状态](docs/architecture-status.zh-CN.md) 和 [路线图](docs/roadmap.zh-CN.md)。
 
 设计原则一句话：**系统提案，人类决定。** 全部红线见 [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md)。

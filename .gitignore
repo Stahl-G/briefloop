@@ -25,6 +25,7 @@ logs/
 
 # Workspace
 brief-workspace/
+onboarding.json
 .mabw-eval-cases/
 .understand-anything/
 
