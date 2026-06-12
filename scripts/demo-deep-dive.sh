@@ -106,3 +106,4 @@ PY
 echo
 echo "[demo-deep-dive] complete: approved guidance was materialized into a frozen runtime snapshot."
 echo "[demo-deep-dive] this demonstrates control behavior, not model output-quality improvement."
+echo "[demo-deep-dive] this is the lightest path that still keeps the accountability spine intact."

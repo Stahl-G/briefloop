@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Improvement Ledger supersession hygiene**: added top-level immutable `supersedes_id`, deterministic duplicate proposal warnings, approved supersession fork rejection, non-materializable superseder warnings, and revert-time warnings when old guidance re-exposes.
 - **Read-only writer status**: added the writer-facing status model for current run status, source-trail surface readiness, approved reader preferences, and delivery guardrails without refreshing or mutating runtime state. It points to Claim Ledger / audit / source appendix surfaces rather than tracing individual numbers itself.
 - **Product-definition docs**: added the Chinese golden path, Chinese weekly-use script, and writer-facing trust map for the four product concepts behind v0.7.2.
+- **Public integration summary and launch checklist**: added a public-safe solar integration reference summary and a Chinese launch-validation checklist for golden-path self-test and fresh-clone pilot validation.
+- **On-ramp language**: added three entry paths ("look once", "run once", and "live with it") while keeping Claim Ledger, gates, human delivery, execution trace, and frozen snapshots as non-negotiable accountability surfaces.
 - **v1.0 freeze list**: added a maintainer-facing freeze checklist for runtime state, artifact contracts, gate reports, Improvement Ledger schema, handoff, eval-case runner actions, and deferred v0.8 surfaces.
 - **Improvement origin runtime metadata**: human-feedback Improvement Ledger proposals capture `origin_runtime` when runtime state exists; this is audit/rendering metadata only and is not used for routing, filtering, or materialization.
 

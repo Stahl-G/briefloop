@@ -12,6 +12,19 @@
 multi-agent-brief claude install --repo-workdir .
 ```
 
+## 首次运行变体：本地材料，零 API key
+
+如果你只是想用自己的几份材料跑一遍，不要先配置搜索后端。先走最小路径：
+
+1. 用 `/mabw new` 创建 workspace。
+2. 把少量已整理好的本地文本材料放进 `input/sources/`。
+3. 用 `/mabw run <workspace>` 生成 handoff。
+4. 用 `/generate-brief <workspace>` 执行 delegated workflow。
+5. 用 `/mabw status <workspace>` 看哪里被拦住。
+6. 用 `/mabw deliver <workspace>` 交付。
+
+第一次建议只放 3-5 份 Markdown 或纯文本材料。PDF / DOCX 如果不能被当前输入治理路径直接读取，先转成文本再放入 `input/sources/`。不要为了快而绕过 Claim Ledger、gates 或 reader-final gate。
+
 ## 1. `/mabw new`
 
 用它创建一份新简报工作区。

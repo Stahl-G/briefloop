@@ -65,7 +65,7 @@ Each stage is handled by a specialist role: Scout, Screener, Claim Ledger, Analy
 
 ## What Output Looks Like
 
-The final delivery is a clean `brief.md` / `brief.docx`, but the real difference is in the intermediate artifacts. The example below is **synthetic** and only demonstrates structure. A full reference run is planned for v0.7.1.
+The final delivery is a clean `brief.md` / `brief.docx`, but the real difference is in the intermediate artifacts. The example below is **synthetic** and only demonstrates structure. A public-safe integration summary is available in [docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md); it is an integration reference, not proof of output-quality improvement or strict causal effect.
 
 `output/brief.md` excerpt:
 
@@ -98,6 +98,18 @@ Corresponding `output/intermediate/claim_ledger.json` excerpt:
 ```
 
 The point is simple: every important number in the delivered brief should have a registered source and date in the Claim Ledger. Stale sources and unsupported numbers should be stopped by audit gates instead of silently entering the final document. The execution trace is recorded in `event_log.jsonl`.
+
+## Three On-Ramps
+
+MABW does not have a "lite mode." The entry cost can be reduced, but the accountability spine stays: Claim Ledger, gates, human delivery, execution trace, and frozen snapshots.
+
+| Path | Best for | How to start | What does not get lighter |
+|---|---|---|---|
+| Look once | You want to decide whether the project is relevant | Read the [public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md), then run `bash scripts/demo.sh` and `bash scripts/demo-deep-dive.sh` | The demo shows control behavior and traceability, not output-quality improvement |
+| Run once | You want to try a few local materials | Skip search backend setup, use a small set of local text sources, and follow the Chinese [golden path](docs/golden-path.zh-CN.md) | Claim Ledger, gates, reader-final gate, and human delivery still apply |
+| Live with it | You want a weekly workflow | Configure search sources, cadence, feedback, and approved preferences with the [weekly-use script](docs/weekly-use.zh-CN.md) | Unapproved preferences do not take effect; approved preferences only affect later frozen runs |
+
+Do not use "audit an arbitrary external AI report" as the lightweight entrypoint. Without a Claim Ledger, external drafts can only receive shallow checks and cannot provide MABW's accountability guarantees.
 
 ## Quick Start
 
@@ -223,6 +235,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Quality gates](docs/harness.md) ·
 [Evaluation cases](docs/evaluation-cases.md) ·
 [Improvement Ledger](docs/modules/improvement.md) ·
+[Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·
 [Migration guide](docs/MIGRATION.md)

@@ -60,3 +60,5 @@ grep -n "materialized_entry_ids" \
 
 echo
 echo "[demo] complete: deterministic control behavior demonstrated; no output-quality claim made."
+echo "[demo] next: run scripts/demo-deep-dive.sh to see approved guidance materialize into a frozen runtime snapshot."
+echo "[demo] the point is traceability: pick a result and follow it back to the control record, not just the final prose."

@@ -74,7 +74,7 @@ AI 生成报告的常见问题不是"写得不够快"，而是：
 
 ## 看一眼产出长什么样
 
-最终交付是干净的 `brief.md` / `brief.docx`，但真正的差别在中间产物。下面是一个**合成示例**（虚构主体，仅展示结构；真实完整运行样例将随 v0.7.1 一起发布）：
+最终交付是干净的 `brief.md` / `brief.docx`，但真正的差别在中间产物。下面是一个**合成示例**（虚构主体，仅展示结构）。真实运行证据见 [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)；它是 integration reference，不是输出质量提升或严格因果效果证明。
 
 `output/brief.md`（节选）：
 
@@ -107,6 +107,18 @@ N 公司宣布其示例州工厂一期产线于本周投产，规划年产能 2G
 ```
 
 也就是说，按契约运行时，成稿里的关键数字应能在事实账本里找到登记的来源和日期；过期来源、无出处数字应被审计和质量门禁暴露出来，而不是无记录地混进终稿。审计轨迹（谁在哪一步做了什么决定）保存在 `event_log.jsonl`。
+
+## 三条上手路径
+
+MABW 没有“轻量版”。降低的是进入成本，不降低的是信任标准：事实账本、门禁、人工交付、运行轨迹和冻结快照仍然在场。
+
+| 路径 | 适合谁 | 怎么做 | 不降低什么 |
+|---|---|---|---|
+| 看一眼 | 想先判断这个项目是不是有意义 | 读 [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)，跑 `bash scripts/demo.sh` 和 `bash scripts/demo-deep-dive.sh` | demo 展示的是控制行为和可追问性，不声称输出质量提升 |
+| 跑一遍 | 想用几份本地材料试一次 | 不配搜索后端，只放少量本地文本材料，按 [黄金路径](docs/golden-path.zh-CN.md) 走 `new → run → status → deliver` | Claim Ledger、gates、reader-final gate 和人工 deliver 仍然执行 |
+| 过日子 | 想每周稳定使用 | 配置搜索后端、来源节奏、feedback 和已批准偏好，按 [每周使用脚本](docs/weekly-use.zh-CN.md) 运行 | 未批准偏好不会生效，已批准偏好只在后续 run 冻结 |
+
+不要把外部 AI 报告直接丢进来“审计”当作轻量入口。没有 Claim Ledger 的外来稿只能做浅层检查，不能提供 MABW 的核心问责能力。
 
 ## 快速开始
 
@@ -228,6 +240,8 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [改进账本](docs/modules/improvement.md) ·
 [黄金路径](docs/golden-path.zh-CN.md) ·
 [每周使用脚本](docs/weekly-use.zh-CN.md) ·
+[公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
+[发布验证清单](docs/launch-validation.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·
 [安全](docs/security.md) ·
 [迁移说明](docs/MIGRATION.zh-CN.md)
