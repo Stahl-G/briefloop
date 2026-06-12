@@ -74,7 +74,7 @@ AI 生成报告的常见问题不是"写得不够快"，而是：
 
 ## 看一眼产出长什么样
 
-最终交付包只放 `output/delivery/brief.md` 和 `output/delivery/<命名>.docx`。Claim Ledger、audit report、audited brief 和 `output/source_appendix.md` 继续保留为审计追溯文件，不作为交付给读者的文件。下面是一个**合成示例**（虚构主体，仅展示结构）。真实运行证据见 [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)；它是 integration reference，不是输出质量提升或严格因果效果证明。
+最终交付包只放 `output/delivery/brief.md` 和 `output/delivery/<命名>.docx`。配置来源附录时，来源列表会追加在这两份交付稿底部；独立的 `output/source_appendix.md`、Claim Ledger、audit report 和 audited brief 继续保留为审计追溯文件，不作为额外交付文件。下面是一个**合成示例**（虚构主体，仅展示结构）。真实运行证据见 [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)；它是 integration reference，不是输出质量提升或严格因果效果证明。
 
 `output/delivery/brief.md`（节选）：
 
@@ -107,6 +107,8 @@ N 公司宣布其示例州工厂一期产线于本周投产，规划年产能 2G
 ```
 
 也就是说，按契约运行时，成稿里的关键数字应能在事实账本里找到登记的来源和日期；过期来源、无出处数字应被审计和质量门禁暴露出来，而不是无记录地混进终稿。审计轨迹（谁在哪一步做了什么决定）保存在 `event_log.jsonl`。
+
+当前边界也很明确：MABW 提供过程问责和来源可追溯，重要主张会链接到登记过的来源条目，并保留来源、日期和门禁记录。它还不是语义证明系统；这些链接说明“这条主张从哪里进入流水线”，不自动证明来源逐字支持每个子主张。source-to-claim 语义支撑校验是 v0.8 的头号评估目标。
 
 ## 三条上手路径
 

@@ -18,9 +18,13 @@ from multi_agent_brief.outputs.reader_final_gate import (
 from multi_agent_brief.outputs.source_appendix import (
     SourceAppendixResult,
     build_source_appendix,
+    cited_claim_ids,
 )
 
 _SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
+_AUDIT_CLAIM_ID_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:CL-\d{3,}|CLM-\d{3,}|SYN_CLAIM_[A-Z0-9_-]+|CLAIM_[A-Z0-9_-]+)(?![A-Za-z0-9_])"
+)
 _INTERNAL_READER_SECTION_RE = re.compile(
     r"(?:claim\s+ledger|声明账本).{0,80}(?:coverage|覆盖情况|覆盖)",
     re.IGNORECASE,
@@ -52,6 +56,7 @@ class FinalizeResult:
     delivery_artifacts: list[str] = field(default_factory=list)
     delivery_artifact_sha256: dict[str, str] = field(default_factory=dict)
     reader_clean: dict[str, Any] | None = None
+    audit_binding: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -59,6 +64,8 @@ class FinalizeResult:
             data["source_appendix_warnings"] = []
         if data["reader_clean"] is None:
             data["reader_clean"] = _empty_reader_clean_report()
+        if data["audit_binding"] is None:
+            data["audit_binding"] = _empty_audit_binding_report()
         return data
 
 
@@ -181,6 +188,10 @@ def finalize_reader_outputs(
         source_appendix_cited_claim_count=appendix_result.cited_claim_count,
         source_appendix_resolved_claim_count=appendix_result.resolved_claim_count,
         source_appendix_warnings=appendix_result.warnings,
+        audit_binding=_audit_binding_report(
+            intermediate_dir=intermediate_dir,
+            audited_markdown=audited_markdown,
+        ),
     )
     delivery_bundle = _build_delivery_bundle(
         output_dir=out,
@@ -211,6 +222,15 @@ def finalize_reader_outputs(
     )
     result.reader_clean = reader_clean
     report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    if result.audit_binding and result.audit_binding.get("status") == "fail":
+        result.status = "fail"
+        report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        findings = result.audit_binding.get("findings") or []
+        raise RuntimeError(
+            "Audit report binding check failed: "
+            f"{len(findings)} blocking finding{'s' if len(findings) != 1 else ''}. "
+            f"See {report_path}."
+        )
     if reader_clean["status"] == "fail":
         result.status = "fail"
         report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
@@ -316,6 +336,195 @@ def _empty_reader_clean_report() -> dict[str, Any]:
     }
 
 
+def _empty_audit_binding_report() -> dict[str, Any]:
+    return {
+        "status": "not_checked",
+        "claim_ledger_sha256": "",
+        "audited_brief_sha256": "",
+        "ledger_claim_count": 0,
+        "audited_brief_cited_claim_count": 0,
+        "findings": [],
+    }
+
+
+def _audit_binding_report(
+    *,
+    intermediate_dir: Path,
+    audited_markdown: str,
+) -> dict[str, Any]:
+    """Check that an existing audit report still matches this run.
+
+    This is a control-plane consistency check, not semantic fact verification.
+    It catches stale audit reports that mention old Claim Ledger entries or
+    still require repair while finalize would otherwise publish clean reader
+    artifacts.
+    """
+    ledger_path = intermediate_dir / "claim_ledger.json"
+    audit_report_path = intermediate_dir / "audit_report.json"
+    cited_ids = cited_claim_ids(audited_markdown)
+    brief_sha = _sha256_text(audited_markdown)
+    ledger_ids: set[str] = set()
+    ledger_sha = ""
+    findings: list[dict[str, Any]] = []
+
+    if ledger_path.exists():
+        ledger_sha = _sha256_file(ledger_path)
+        try:
+            ledger_ids = _claim_ids_from_ledger(ledger_path)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            findings.append(
+                {
+                    "kind": "malformed_claim_ledger",
+                    "message": f"Claim Ledger could not be read for audit binding: {exc}",
+                }
+            )
+
+    report: dict[str, Any] = {
+        "status": "pass",
+        "claim_ledger_sha256": ledger_sha,
+        "audited_brief_sha256": brief_sha,
+        "ledger_claim_count": len(ledger_ids),
+        "audited_brief_cited_claim_count": len(cited_ids),
+        "findings": findings,
+    }
+
+    if not audit_report_path.exists():
+        report["status"] = "not_checked"
+        return report
+
+    try:
+        payload = json.loads(audit_report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        findings.append(
+            {
+                "kind": "malformed_audit_report",
+                "message": f"audit_report.json is not valid JSON: {exc}",
+            }
+        )
+        report["status"] = "fail"
+        return report
+    if not isinstance(payload, dict):
+        findings.append(
+            {
+                "kind": "malformed_audit_report",
+                "message": "audit_report.json must be an object.",
+            }
+        )
+        report["status"] = "fail"
+        return report
+
+    if payload.get("passed") is False:
+        findings.append(
+            {
+                "kind": "audit_not_passed",
+                "message": "audit_report.json records passed=false.",
+            }
+        )
+    blocking_findings = payload.get("blocking_findings")
+    if isinstance(blocking_findings, list) and blocking_findings:
+        findings.append(
+            {
+                "kind": "audit_blocking_findings",
+                "message": "audit_report.json still contains blocking_findings.",
+                "count": len(blocking_findings),
+            }
+        )
+    recommendation = str(payload.get("recommendation") or "").strip().lower()
+    if recommendation in {"repair_required", "block", "blocked", "reject"}:
+        findings.append(
+            {
+                "kind": "audit_recommendation_not_ready",
+                "message": f"audit_report.json recommendation is {recommendation}.",
+            }
+        )
+
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    old_binding = metadata.get("audit_binding") if isinstance(metadata.get("audit_binding"), dict) else {}
+    if old_binding:
+        _compare_audit_binding_value(
+            findings,
+            old_binding,
+            key="claim_ledger_sha256",
+            expected=ledger_sha,
+        )
+        _compare_audit_binding_value(
+            findings,
+            old_binding,
+            key="audited_brief_sha256",
+            expected=brief_sha,
+        )
+        _compare_audit_binding_value(
+            findings,
+            old_binding,
+            key="ledger_claim_count",
+            expected=len(ledger_ids),
+        )
+        _compare_audit_binding_value(
+            findings,
+            old_binding,
+            key="audited_brief_cited_claim_count",
+            expected=len(cited_ids),
+        )
+
+    mentioned_ids = set(_AUDIT_CLAIM_ID_RE.findall(json.dumps(payload, ensure_ascii=False)))
+    unknown_ids = sorted(mentioned_ids - ledger_ids)
+    if unknown_ids:
+        findings.append(
+            {
+                "kind": "audit_mentions_unknown_claim_ids",
+                "message": "audit_report.json mentions claim IDs that are absent from the current Claim Ledger.",
+                "claim_ids": unknown_ids[:20],
+            }
+        )
+
+    report["findings"] = findings
+    report["status"] = "fail" if findings else "pass"
+    return report
+
+
+def _claim_ids_from_ledger(path: Path) -> set[str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        raw_claims = data.get("claims") or data.get("items") or []
+    else:
+        raw_claims = data
+    if not isinstance(raw_claims, list):
+        raise ValueError("Claim Ledger must be a list or object with claims/items.")
+    claim_ids: set[str] = set()
+    for item in raw_claims:
+        if not isinstance(item, dict):
+            continue
+        claim_id = item.get("claim_id")
+        if isinstance(claim_id, str) and claim_id.strip():
+            claim_ids.add(claim_id.strip())
+    return claim_ids
+
+
+def _compare_audit_binding_value(
+    findings: list[dict[str, Any]],
+    old_binding: dict[str, Any],
+    *,
+    key: str,
+    expected: Any,
+) -> None:
+    if key not in old_binding:
+        return
+    actual = old_binding.get(key)
+    if actual != expected:
+        findings.append(
+            {
+                "kind": "audit_binding_mismatch",
+                "field": key,
+                "expected": expected,
+                "actual": actual,
+            }
+        )
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _update_audit_report_metadata(
     audit_report_path: Path,
     result: FinalizeResult,
@@ -333,6 +542,7 @@ def _update_audit_report_metadata(
     metadata["delivery_markdown_artifact"] = result.delivery_markdown
     metadata["delivery_artifacts"] = result.delivery_artifacts
     metadata["delivery_artifact_sha256"] = result.delivery_artifact_sha256
+    metadata["audit_binding"] = result.audit_binding or _empty_audit_binding_report()
     metadata["reader_brief_transform"] = "strip_claim_citations"
     metadata["reader_brief_finalized"] = True
     metadata["reader_brief_stripped_src_marker_count"] = result.stripped_src_marker_count

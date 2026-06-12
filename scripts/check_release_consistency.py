@@ -8,6 +8,7 @@ Checks:
   4. CHANGELOG.md has a section for the current version
   5. Latest git tag matches current version (skipped if no tags or --no-tag)
   6. Generated agent configs are up to date (delegates to generate_agent_configs.py --check)
+  7. Public safety scan passes for tracked release files
 
 Usage:
   python scripts/check_release_consistency.py [--strict] [--no-tag]
@@ -119,6 +120,30 @@ def check_agent_configs() -> bool:
     return True
 
 
+def check_public_safety() -> bool:
+    """Run tracked-file public safety scan and return True if it passes."""
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "check_public_safety.py")],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    if result.returncode != 0:
+        print("  [FAIL] Public safety scan failed:")
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if stdout:
+            print("         stdout:")
+            for line in stdout.splitlines():
+                print(f"           {line}")
+        if stderr:
+            print("         stderr:")
+            for line in stderr.splitlines():
+                print(f"           {line}")
+        if not stdout and not stderr:
+            print("         no stdout/stderr captured")
+        return False
+    return True
+
+
 def main(strict: bool = False, check_tag: bool = True) -> int:
     print("Release Consistency Check")
     print("=" * 40)
@@ -171,6 +196,12 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("Generated agent configs in sync", configs_ok)
     except Exception as exc:
         check("Generated agent configs in sync", False, str(exc))
+
+    try:
+        public_safety_ok = check_public_safety()
+        check("Public safety scan passes", public_safety_ok)
+    except Exception as exc:
+        check("Public safety scan passes", False, str(exc))
 
     print()
     if ERRORS:

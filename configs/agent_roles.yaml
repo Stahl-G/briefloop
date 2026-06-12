@@ -241,12 +241,12 @@ roles:
       storage, claim metadata, or ledger consistency.
     responsibilities:
     - Create stable claim IDs.
-    - Ensure every claim has source evidence.
+    - Ensure every claim links to a registered source entry.
     - Preserve source IDs and evidence text.
     - Carry useful Screener metadata forward.
     - Detect duplicate or unsupported claims.
     hard_rules:
-    - Every claim must be evidence-backed.
+    - Every claim must be traceable to registered source material.
     - Merge claims only when traceability is preserved.
     - Keep language strength aligned with evidence strength.
   analyst:
@@ -399,7 +399,7 @@ roles:
     - Block internal workflow residue.
     - Keep final gate separate from default MVP draft audit.
     hard_rules:
-    - Require final text quality gates in addition to factual correctness.
+    - Require final text quality gates in addition to source/claim audit readiness.
     - Repair final prose within existing evidence.
     - Preserve required safety notes during formatting fixes.
   rendered-output-harness:

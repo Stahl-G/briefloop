@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Audit binding consistency check**: `finalize` now rejects stale audit reports that still mention claim IDs absent from the current Claim Ledger, record blocking audit findings, or carry stale ledger/brief binding metadata.
+
+### Changed
+
+- **Release public-safety check**: `check_release_consistency.py` now runs the tracked-file public-safety scan so release checks fail on local paths, token-like strings, environment-file references, or configured private terms.
+- **Source appendix wording**: public docs now state that source appendices are appended inside the reader delivery files when configured, while standalone `output/source_appendix.md` remains an audit/control copy.
+
+### Boundaries
+
+- **Traceability, not semantic proof**: release-facing wording now states that registered source links show where a claim entered the workflow, but do not yet prove that each source semantically supports every sub-claim. Source-to-claim semantic support remains a v0.8 evaluation target.
+
 ## [0.7.3] — 2026-06-12
 
 ### Added

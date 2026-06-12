@@ -25,7 +25,7 @@ Responsibilities:
 - Keep final gate separate from default MVP draft audit.
 
 Guardrails:
-- Require final text quality gates in addition to factual correctness.
+- Require final text quality gates in addition to source/claim audit readiness.
 - Repair final prose within existing evidence.
 - Preserve required safety notes during formatting fixes.
 

@@ -65,7 +65,7 @@ Each stage is handled by a specialist role: Scout, Screener, Claim Ledger, Analy
 
 ## What Output Looks Like
 
-The final delivery bundle contains only `output/delivery/brief.md` and `output/delivery/<named>.docx`. Claim Ledger, audit report, audited brief, and `output/source_appendix.md` remain available as audit/control records, not files handed to the reader. The example below is **synthetic** and only demonstrates structure. A public-safe integration summary is available in [docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md); it is an integration reference, not proof of output-quality improvement or strict causal effect.
+The final delivery bundle contains only `output/delivery/brief.md` and `output/delivery/<named>.docx`. When source appendix output is configured, the source list is appended to those delivery files; standalone `output/source_appendix.md`, Claim Ledger, audit report, and audited brief remain audit/control records, not extra reader handoff files. The example below is **synthetic** and only demonstrates structure. A public-safe integration summary is available in [docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md); it is an integration reference, not proof of output-quality improvement or strict causal effect.
 
 `output/delivery/brief.md` excerpt:
 
@@ -97,7 +97,9 @@ Corresponding `output/intermediate/claim_ledger.json` excerpt:
 }
 ```
 
-The point is simple: every important number in the delivered brief should have a registered source and date in the Claim Ledger. Stale sources and unsupported numbers should be stopped by audit gates instead of silently entering the final document. The execution trace is recorded in `event_log.jsonl`.
+The point is simple: every important number in the delivered brief should link to a registered source entry with source/date metadata. Stale source metadata and obvious unsupported numbers should be stopped by audit gates instead of silently entering the final document. The execution trace is recorded in `event_log.jsonl`.
+
+The current boundary is explicit: MABW provides process accountability and traceability, not semantic proof. A source link shows where a claim entered the workflow; it does not yet prove that the source semantically supports every sub-claim. Source-to-claim semantic support checking is the top v0.8 evaluation target.
 
 ## Three On-Ramps
 

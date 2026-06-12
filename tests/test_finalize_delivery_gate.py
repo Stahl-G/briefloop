@@ -74,6 +74,25 @@ def _write_claim_ledger(path: Path) -> None:
     path.write_text(json.dumps(claims, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_single_claim_ledger(path: Path, *, claim_id: str = "CL-001") -> None:
+    claims = [
+        {
+            "claim_id": claim_id,
+            "statement": "ExampleCo opened a public demo facility in June 2026.",
+            "source_id": "SRC-001",
+            "evidence_text": "ExampleCo opened a public demo facility in June 2026.",
+            "source_url": "https://example.com/exampleco-demo",
+            "source_type": "web_search",
+            "metadata": {
+                "source_title": "ExampleCo Opens Demo Facility",
+                "publisher": "Example News",
+                "published_at": "2026-06-01",
+            },
+        }
+    ]
+    path.write_text(json.dumps(claims, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     """Subagent-updated audited_brief.md must be the single source for final delivery."""
     output_dir = tmp_path / "output"
@@ -203,6 +222,95 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert report["delivery_artifacts"] == [str(output_dir / "delivery" / "brief.md")]
     assert not (output_dir / "delivery" / "source_appendix.md").exists()
     assert not (output_dir / "delivery" / "claim_ledger.json").exists()
+
+
+def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "Audited CL-001 and stale CL-002.",
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    audit_binding = report["audit_binding"]
+    assert audit_binding["status"] == "fail"
+    assert audit_binding["ledger_claim_count"] == 1
+    assert audit_binding["audited_brief_cited_claim_count"] == 1
+    assert any(
+        finding["kind"] == "audit_mentions_unknown_claim_ids"
+        and finding["claim_ids"] == ["CL-002"]
+        for finding in audit_binding["findings"]
+    )
+
+
+def test_finalize_records_audit_binding_metadata(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    ledger = intermediate / "claim_ledger.json"
+    _write_single_claim_ledger(ledger)
+    audit_report = intermediate / "audit_report.json"
+    audit_report.write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "CL-001 is ready for delivery.",
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+
+    updated_audit = json.loads(audit_report.read_text(encoding="utf-8"))
+    binding = updated_audit["metadata"]["audit_binding"]
+    assert result.audit_binding["status"] == "pass"
+    assert binding["status"] == "pass"
+    assert binding["claim_ledger_sha256"] == _sha256_file(ledger)
+    assert binding["audited_brief_sha256"] == hashlib.sha256(
+        audited.read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+    assert binding["ledger_claim_count"] == 1
+    assert binding["audited_brief_cited_claim_count"] == 1
 
 
 def test_finalize_legacy_source_map_skips_missing_ledger_without_failing(tmp_path: Path):

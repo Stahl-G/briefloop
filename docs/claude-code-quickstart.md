@@ -193,8 +193,9 @@ This produces reader-facing output such as:
 - `output/delivery/<named>.docx` when DOCX output is configured
 
 Internal audit/control records remain under `output/intermediate/` and
-`output/source_appendix.md`. Do not hand those files to the reader as delivery
-artifacts.
+`output/source_appendix.md`. When source appendix output is configured, the
+appendix is already appended inside the delivery files; do not hand the
+standalone audit/control copy to the reader as an extra artifact.
 
 To show the finalized local delivery bundle directly:
 

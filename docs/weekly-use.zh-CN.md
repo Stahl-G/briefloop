@@ -12,7 +12,7 @@
 
 周四，重跑一次，专门看上周批准的偏好这次有没有进入 snapshot；有疑问就 `/mabw status`。
 
-周五，`/mabw deliver`，门禁全绿，只交 `output/delivery/brief.md` 和 `output/delivery/<命名周报>.docx`。来源附录留作审计追溯，不单独当成交付文件。
+周五，`/mabw deliver`，门禁全绿，只交 `output/delivery/brief.md` 和 `output/delivery/<命名周报>.docx`。来源附录会附在交付稿底部；独立的 `output/source_appendix.md` 只留作审计追溯，不单独当成交付文件。
 
 周六，不碰它。
 

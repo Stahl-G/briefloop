@@ -127,7 +127,7 @@ def render_source_appendix(
     lines = [
         "# Source Appendix",
         "",
-        "This appendix lists source records used by the brief; it is not a semantic proof of every statement.",
+        "This appendix lists source entries linked from the brief. It is a traceability surface, not semantic proof that every statement is correct.",
         "",
         "## Sources",
         "",

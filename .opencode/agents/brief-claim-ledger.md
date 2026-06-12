@@ -26,12 +26,12 @@ Use when implementing or reviewing claim ID creation, source evidence storage, c
 
 Responsibilities:
 - Create stable claim IDs.
-- Ensure every claim has source evidence.
+- Ensure every claim links to a registered source entry.
 - Preserve source IDs and evidence text.
 - Carry useful Screener metadata forward.
 - Detect duplicate or unsupported claims.
 
 Guardrails:
-- Every claim must be evidence-backed.
+- Every claim must be traceable to registered source material.
 - Merge claims only when traceability is preserved.
 - Keep language strength aligned with evidence strength.
