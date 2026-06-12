@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] — 2026-06-12
+
 ### Added
 
 - **Audit binding consistency check**: `finalize` now rejects stale audit reports that still mention claim IDs absent from the current Claim Ledger, record blocking audit findings, or carry stale ledger/brief binding metadata.
@@ -20,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Boundaries
 
 - **Traceability, not semantic proof**: release-facing wording now states that registered source links show where a claim entered the workflow, but do not yet prove that each source semantically supports every sub-claim. Source-to-claim semantic support remains a v0.8 evaluation target.
+- **Distribution boundary**: v0.7.4 release notes use source clone plus demo scripts as the primary get-started path. Homebrew, curl, and PowerShell installer assets remain non-primary installer surfaces until separately packaged and smoke-tested.
 
 ## [0.7.3] — 2026-06-12
 

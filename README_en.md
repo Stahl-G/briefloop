@@ -15,10 +15,10 @@ This project is not an investment advice tool, trading signal generator, or repl
 
 ## Current Status
 
-Current version: **v0.7.3**
+Current version: **v0.7.4**
 
 - **Working today**: subagent-first workflows across Hermes / Claude Code / Codex / OpenCode, runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
-- **New in v0.7.3**: release-safety hardening over v0.7.2, including public-safety scanning, private onboarding guardrails, runtime prompt boundary hardening, and delivery artifact hash validation on top of the reader-final gate, completion transactions, five-verb entrypoint, and Improvement Ledger supersession hygiene.
+- **New in v0.7.4**: hardening over v0.7.3, including stale audit-report blocking, clarified source-appendix delivery semantics, release public-safety scan wiring, and a public organoid-industry failure study that makes the source-to-claim semantic support boundary explicit.
 - **Not yet**: not an autonomous agent, does not automatically edit brief content, does not automatically learn, and does not provide a long-term memory system. See [architecture status](docs/architecture-status.md) and [roadmap](docs/roadmap.md).
 
 One-line design principle: **the system proposes; humans decide.** For the hard boundaries, see [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md).
@@ -65,7 +65,7 @@ Each stage is handled by a specialist role: Scout, Screener, Claim Ledger, Analy
 
 ## What Output Looks Like
 
-The final delivery bundle contains only `output/delivery/brief.md` and `output/delivery/<named>.docx`. When source appendix output is configured, the source list is appended to those delivery files; standalone `output/source_appendix.md`, Claim Ledger, audit report, and audited brief remain audit/control records, not extra reader handoff files. The example below is **synthetic** and only demonstrates structure. A public-safe integration summary is available in [docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md); it is an integration reference, not proof of output-quality improvement or strict causal effect. See also the [v0.7.3 organoid-industry failure study](docs/reference-runs/v0.7.3-organoid-failure-study.zh-CN.md), a real external research case that exposed the current source-to-claim semantic support boundary.
+The final delivery bundle contains only `output/delivery/brief.md` and `output/delivery/<named>.docx`. When source appendix output is configured, the source list is appended to those delivery files; standalone `output/source_appendix.md`, Claim Ledger, audit report, and audited brief remain audit/control records, not extra reader handoff files. The example below is **synthetic** and only demonstrates structure. A public-safe integration summary is available in [docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md); it is an integration reference, not proof of output-quality improvement or strict causal effect. See also the [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md), a real external research case that exposed the current source-to-claim semantic support boundary.
 
 `output/delivery/brief.md` excerpt:
 

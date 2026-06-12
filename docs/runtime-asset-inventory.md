@@ -42,8 +42,8 @@ new workflow contract.
 | Source clone + editable install | Supported | Supported | Available | `multi-agent-brief runtime install --workspace <ws> --runtime opencode\|claude\|all` copies assets into the workspace. |
 | Wheel / sdist install | Supported | Supported | Not included | Source-clone-only unless `--repo-workdir` points to a source clone. |
 | PyPI install | Experimental | Supported when package data is present | Not included | Source-clone-only unless `--repo-workdir` points to a source clone. |
-| curl / PowerShell installer | CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
-| Homebrew formula | CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
+| curl / PowerShell installer | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
+| Homebrew formula source | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
 | Hermes plugin source install | Supported from source clone | Uses CLI/package contracts | Source plugin tree required | Plugin installation remains source-clone-driven unless plugin assets are packaged separately. |
 
 ## Workspace Runtime Kit

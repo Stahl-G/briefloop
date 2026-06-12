@@ -19,10 +19,10 @@
 
 ## 当前状态（诚实版）
 
-当前版本：**v0.7.3**
+当前版本：**v0.7.4**
 
 * **能跑的**：subagent-first 工作流（Hermes / Claude Code / Codex / OpenCode），运行时状态文件，事实账本，确定性质量门禁，反馈与修复计划，溯源投影，受众画像快照，受控的改进账本 / 改进记忆，Markdown / Word 输出。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
-* **v0.7.3 新增**：在 v0.7.2 的 reader-final 门禁、completion transactions、五动词入口和 supersession hygiene 之上，补齐 release safety hardening：public-safety scan、私有 onboarding 防线、runtime prompt 边界和 delivery artifact hash 校验。
+* **v0.7.4 新增**：在 v0.7.3 的 release safety hardening 之上，补齐 stale audit report 阻断、来源附录交付语义收口、release public-safety 检查接线，并公开一份类器官行业研究失败研究，明确 source-to-claim 语义支撑仍是 v0.8 目标。
 * **还不是的**：不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统。详见 [当前架构状态](docs/architecture-status.zh-CN.md) 和 [路线图](docs/roadmap.zh-CN.md)。
 
 设计原则一句话：**系统提案，人类决定。** 全部红线见 [docs/red-lines-and-anti-patterns.md](docs/red-lines-and-anti-patterns.md)。
@@ -74,7 +74,7 @@ AI 生成报告的常见问题不是"写得不够快"，而是：
 
 ## 看一眼产出长什么样
 
-最终交付包只放 `output/delivery/brief.md` 和 `output/delivery/<命名>.docx`。配置来源附录时，来源列表会追加在这两份交付稿底部；独立的 `output/source_appendix.md`、Claim Ledger、audit report 和 audited brief 继续保留为审计追溯文件，不作为额外交付文件。下面是一个**合成示例**（虚构主体，仅展示结构）。真实运行证据见 [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)；它是 integration reference，不是输出质量提升或严格因果效果证明。另见 [v0.7.3 类器官行业研究失败研究](docs/reference-runs/v0.7.3-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。
+最终交付包只放 `output/delivery/brief.md` 和 `output/delivery/<命名>.docx`。配置来源附录时，来源列表会追加在这两份交付稿底部；独立的 `output/source_appendix.md`、Claim Ledger、audit report 和 audited brief 继续保留为审计追溯文件，不作为额外交付文件。下面是一个**合成示例**（虚构主体，仅展示结构）。真实运行证据见 [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)；它是 integration reference，不是输出质量提升或严格因果效果证明。另见 [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。
 
 `output/delivery/brief.md`（节选）：
 

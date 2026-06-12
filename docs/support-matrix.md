@@ -162,9 +162,9 @@ from a source clone to copy OpenCode/Claude Code workspace-local runtime kits.
 |---|---|
 | Source clone + `bash scripts/setup.sh` + `pip install -e ".[dev]"` | Supported |
 | `pip install multi-agent-brief-workflow` (PyPI) | Experimental |
-| Homebrew (`brew install multi-agent-brief`) | CLI-only |
-| curl installer (`install.sh`) | CLI-only |
-| PowerShell installer (`install.ps1`) | CLI-only |
+| Homebrew formula source (`Formula/`) | Experimental; not a primary release path |
+| curl installer (`install.sh`) | Experimental CLI-only installer asset |
+| PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
 | Hermes plugin (`integrations/hermes-plugin/`) | Supported |
 
 | Runtime asset | Source clone | Wheel / sdist / PyPI package |
