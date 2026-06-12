@@ -61,22 +61,18 @@ def handle(args: argparse.Namespace) -> int:
         print(f"[finalize] Error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"[finalize] Reader brief: {result.reader_brief}")
-    if result.named_reader_brief:
-        print(
-            f"[finalize] Named reader brief:"
-            f" {result.named_reader_brief}"
-        )
-    if result.reader_docx:
-        print(f"[finalize] Reader DOCX: {result.reader_docx}")
+    print(f"[finalize] Delivery Markdown: {result.delivery_markdown}")
+    if result.delivery_docx:
+        print(f"[finalize] Delivery DOCX: {result.delivery_docx}")
     elif result.docx_generation != "not_requested":
         print(
             f"[finalize] DOCX generation: {result.docx_generation}"
         )
     if result.source_appendix:
-        print(f"[finalize] Source appendix: {result.source_appendix}")
+        print(f"[finalize] Source appendix audit copy: {result.source_appendix}")
     elif result.source_appendix_generation not in {"not_requested", "generated"}:
-        print(f"[finalize] Source appendix: {result.source_appendix_generation}")
+        print(f"[finalize] Source appendix audit copy: {result.source_appendix_generation}")
+    print("[finalize] Audit records remain under output/intermediate/.")
     print(
         "[finalize] Internal [src:CLAIM_ID] markers stripped from"
         " reader-facing artifacts."

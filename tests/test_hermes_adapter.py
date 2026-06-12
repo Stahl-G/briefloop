@@ -278,7 +278,7 @@ def test_hermes_prompt_contains_artifact_paths():
     assert "claim_ledger.json" in prompt
     assert "audited_brief.md" in prompt
     assert "audit_report.json" in prompt
-    assert "output/brief.md" in prompt
+    assert "output/delivery/brief.md" in prompt
 
 
 def test_hermes_prompt_contains_doctor_and_sources():

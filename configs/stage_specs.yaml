@@ -97,6 +97,7 @@ workflow:
       consumes:
         - claim_ledger
         - user_profile
+        - input_classification
       produces:
         - audited_brief
       expected_artifacts:
@@ -113,6 +114,8 @@ workflow:
       consumes:
         - audited_brief
         - claim_ledger
+        - user_profile
+        - input_classification
       produces:
         - audited_brief
       expected_artifacts:

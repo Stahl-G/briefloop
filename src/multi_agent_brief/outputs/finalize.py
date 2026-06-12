@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,9 @@ class FinalizeResult:
     source_appendix_cited_claim_count: int = 0
     source_appendix_resolved_claim_count: int = 0
     source_appendix_warnings: list[str] | None = None
+    delivery_markdown: str = ""
+    delivery_docx: str = ""
+    delivery_artifacts: list[str] = field(default_factory=list)
     reader_clean: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,7 +113,7 @@ def finalize_reader_outputs(
         explicit=bool(appendix_request["explicit"]),
     )
     reader_markdown = base_reader_markdown
-    if appendix_request["mode"] == "append" and appendix_result.markdown and appendix_result.source_count:
+    if appendix_result.markdown and appendix_result.source_count:
         reader_markdown = base_reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
 
     brief_path = out / "brief.md"
@@ -177,17 +180,29 @@ def finalize_reader_outputs(
         source_appendix_resolved_claim_count=appendix_result.resolved_claim_count,
         source_appendix_warnings=appendix_result.warnings,
     )
+    delivery_bundle = _build_delivery_bundle(
+        output_dir=out,
+        brief_path=brief_path,
+        docx_path=docx_path if docx_path.exists() else None,
+        named_docx_path=named_docx_path,
+    )
+    result.delivery_markdown = delivery_bundle["delivery_markdown"]
+    result.delivery_docx = delivery_bundle["delivery_docx"]
+    result.delivery_artifacts = delivery_bundle["delivery_artifacts"]
 
     report_path = intermediate_dir / "finalize_report.json"
     reader_clean = _reader_clean_report(
         markdown_paths=[
             path
-            for path in (brief_path, named_brief_path, appendix_path if appendix_path.exists() else None)
+            for path in (
+                Path(result.delivery_markdown) if result.delivery_markdown else None,
+                appendix_path if appendix_path.exists() else None,
+            )
             if path is not None and path.exists()
         ],
         docx_paths=[
             path
-            for path in (docx_path if docx_path.exists() else None, named_docx_path)
+            for path in (Path(result.delivery_docx) if result.delivery_docx else None,)
             if path is not None and path.exists()
         ],
     )
@@ -213,6 +228,49 @@ def finalize_reader_outputs(
         named_brief_path=named_brief_path,
     )
     return result
+
+
+def _build_delivery_bundle(
+    *,
+    output_dir: Path,
+    brief_path: Path,
+    docx_path: Path | None,
+    named_docx_path: Path | None,
+) -> dict[str, Any]:
+    """Create the minimal reader delivery bundle.
+
+    The root output files remain available for compatibility and audit/debugging,
+    while ``output/delivery`` is the only surface intended to be handed to the
+    final reader.
+    """
+    delivery_dir = output_dir / "delivery"
+    if delivery_dir.exists():
+        for child in delivery_dir.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+    else:
+        delivery_dir.mkdir(parents=True, exist_ok=True)
+
+    delivery_markdown = delivery_dir / "brief.md"
+    shutil.copyfile(brief_path, delivery_markdown)
+
+    delivery_docx = ""
+    source_docx = named_docx_path if named_docx_path and named_docx_path.exists() else docx_path
+    if source_docx is not None and source_docx.exists():
+        docx_target = delivery_dir / source_docx.name
+        shutil.copyfile(source_docx, docx_target)
+        delivery_docx = str(docx_target)
+
+    artifacts = [str(delivery_markdown)]
+    if delivery_docx:
+        artifacts.append(delivery_docx)
+    return {
+        "delivery_markdown": str(delivery_markdown),
+        "delivery_docx": delivery_docx,
+        "delivery_artifacts": artifacts,
+    }
 
 
 def _reader_clean_report(
@@ -259,6 +317,8 @@ def _update_audit_report_metadata(
         return
     metadata = payload.setdefault("metadata", {})
     metadata["reader_brief_artifact"] = result.reader_brief
+    metadata["delivery_markdown_artifact"] = result.delivery_markdown
+    metadata["delivery_artifacts"] = result.delivery_artifacts
     metadata["reader_brief_transform"] = "strip_claim_citations"
     metadata["reader_brief_finalized"] = True
     metadata["reader_brief_stripped_src_marker_count"] = result.stripped_src_marker_count
@@ -269,6 +329,8 @@ def _update_audit_report_metadata(
         metadata["source_appendix_artifact"] = result.source_appendix
     if result.reader_docx:
         metadata["rendered_docx_path"] = result.reader_docx
+    if result.delivery_docx:
+        metadata["delivery_docx_artifact"] = result.delivery_docx
     if named_brief_path:
         metadata["named_reader_brief_artifact"] = str(named_brief_path)
     audit_report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

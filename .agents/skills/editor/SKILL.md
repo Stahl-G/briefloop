@@ -24,6 +24,7 @@ Use after analyst has written audited_brief.md.
 - `output/intermediate/audited_brief.md`
 - `output/intermediate/claim_ledger.json`
 - `user.md`
+- `output/input_classification.json` when present, especially entries under `context`
 
 ## Outputs
 
@@ -32,9 +33,12 @@ Use after analyst has written audited_brief.md.
 ## Work
 
 - Improve headings, flow, concision, and management readability.
+- Use `input/context/` files listed in `output/input_classification.json` only as
+  non-evidence style and structure references.
 - Preserve valid [src:CLAIM_ID] citations.
 - Preserve caveats, uncertainty, dates, and factual scope.
 - Clean process residue, invalid citation markers, and obvious formatting defects.
+- Do not add facts from `input/context/`; those files do not enter the Claim Ledger.
 
 ## Handoff
 

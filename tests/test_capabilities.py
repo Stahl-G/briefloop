@@ -140,6 +140,31 @@ class TestDetect:
         status = assess_capability("web_search", enabled_providers={"web_search"})
         assert status.state == "ENABLED_NEEDS_SETUP"
 
+    def test_assess_capability_runtime_tool_ready_without_api_key(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+        monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+        monkeypatch.delenv("SERPER_API_KEY", raising=False)
+        (tmp_path / "sources.yaml").write_text(
+            "source_strategy:\n"
+            "  enabled_providers:\n"
+            "    - web_search\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: runtime_tool\n",
+            encoding="utf-8",
+        )
+
+        status = assess_capability(
+            "web_search",
+            workspace_dir=tmp_path,
+            enabled_providers={"web_search"},
+        )
+
+        assert status.state == "ENABLED_READY"
+        assert "No search backend API key" not in status.notes
+
     def test_assess_capability_unknown(self):
         status = assess_capability("nonexistent")
         assert status.state == "UNAVAILABLE"

@@ -106,11 +106,11 @@ Follow this sequence:
 14. Invoke the **formatter** subagent / finalize tool only after the gates/state completion path passes:
     - Run `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`.
     - Remember: `finalize` is not a quality-gate executor.
-    - After finalize writes reader-facing artifacts, run `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`.
-    - Confirm `$ARGUMENTS/output/brief.md` is reader-facing.
-    - Confirm `$ARGUMENTS/output/source_appendix.md` exists when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or `file://` URLs.
-    - Confirm the configured named Markdown copy exists if enabled.
-    - Confirm `$ARGUMENTS/output/brief.docx` exists if DOCX is configured.
+    - After finalize writes delivery artifacts, run `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`.
+    - Confirm `$ARGUMENTS/output/delivery/brief.md` is reader-facing.
+    - Confirm `$ARGUMENTS/output/delivery/<named>.docx` exists if DOCX is configured.
+    - Confirm `$ARGUMENTS/output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or `file://` URLs.
+    - Do not present Claim Ledger, Audit Report, Audited Brief, named Markdown, or source appendix audit copy as user delivery files.
 
 15. Optional audit/debug provenance projection after runtime state exists:
     - Run `multi-agent-brief provenance build --workspace $ARGUMENTS`.

@@ -55,13 +55,15 @@ MABW 不只是一个写简报的工具。它更重要的作用，是把一份简
 
 - claim、数字、日期、公司事实、政策、价格、产能、客户和项目进度的来源与支撑；
 - 与这些 claim 相关的 audit 和 quality-gate findings；
-- 交付给读者看的 source appendix 条目。
+- 交付包中附在 `brief.md` / DOCX 后的 source appendix 条目。
 
 你在哪看：
 
 - `output/intermediate/claim_ledger.json`
 - `output/intermediate/quality_gate_report.json`
 - `output/intermediate/audit_report.json`
+- `output/delivery/brief.md`
+- `output/delivery/<命名周报>.docx`
 - `output/source_appendix.md`
 - `output/intermediate/provenance_graph.json`
 

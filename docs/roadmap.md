@@ -105,7 +105,7 @@ Two design principles guide the next phases:
 
 - Reader-facing source appendix generation was added to finalize.
 - `source_appendix` is the current output format name; legacy `source_map` remains a compatibility alias.
-- The reader-facing source list is written to `output/source_appendix.md` by default; explicit `source_appendix.mode: append` appends it to final Markdown/DOCX. It is generated only from claims actually cited in `output/intermediate/audited_brief.md` and resolved through `output/intermediate/claim_ledger.json`.
+- The reader-facing source list is appended to delivery Markdown/DOCX under `output/delivery/`, while `output/source_appendix.md` remains an audit/control copy. It is generated only from claims actually cited in `output/intermediate/audited_brief.md` and resolved through `output/intermediate/claim_ledger.json`.
 - Reader-facing output must not expose raw claim IDs, source IDs, evidence text, local paths, or `file://` URLs.
 - The appendix is not source evidence, semantic proof, a runtime state file, a provenance graph, or a workflow gate.
 

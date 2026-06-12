@@ -98,8 +98,20 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
             "path": "output/intermediate/claim_ledger.json",
             "required": True,
             "format": "json",
+        },
+        {
+            "artifact_id": "input_classification",
+            "path": "output/input_classification.json",
+            "required": False,
+            "format": "json",
         }
     ]
+    assert protocol_stages["analyst"]["context_inputs"] == ["user_profile"]
+    editor_inputs = {
+        item["artifact_id"] for item in protocol_stages["editor"]["required_input_artifacts"]
+    }
+    assert {"audited_brief", "claim_ledger", "input_classification"} <= editor_inputs
+    assert protocol_stages["editor"]["context_inputs"] == ["user_profile"]
     assert any("prose acknowledgement" in item for item in protocol_stages["auditor"]["forbidden_actions"])
     for rel_path in data["runtime_state_files"].values():
         assert not Path(str(rel_path)).is_absolute()

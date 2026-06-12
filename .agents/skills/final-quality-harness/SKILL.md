@@ -21,7 +21,8 @@ Use when changing final report depth, quiet-week handling, front-page metadata, 
 
 ## Inputs
 
-- `output/brief.md`
+- `output/delivery/brief.md`
+- `output/delivery/<named>.docx` when DOCX delivery is configured
 - `output/intermediate/audit_report.json`
 - final quality rule code or tests
 

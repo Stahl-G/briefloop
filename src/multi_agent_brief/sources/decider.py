@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -75,6 +76,31 @@ def _ensure_list(
     if not isinstance(value, list):
         raise ValueError(f"{path} must be a list.")
     return value
+
+
+def _canonical_filing_ticker_entry(entry: Any) -> dict[str, Any] | None:
+    """Return canonical filing_resolver ticker config for writer paths."""
+    if isinstance(entry, dict):
+        return dict(entry)
+    if isinstance(entry, str):
+        value = entry.strip()
+        if not value:
+            return None
+        if re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,9}", value):
+            return {"ticker": value}
+        return {"company_name": value}
+    return None
+
+
+def _filing_ticker_key(entry: Any) -> str | None:
+    normalized = _canonical_filing_ticker_entry(entry)
+    if normalized is None:
+        return None
+    for key in ("ticker", "company_name", "cik"):
+        value = normalized.get(key)
+        if value:
+            return f"{key}:{str(value).strip()}"
+    return None
 
 
 def load_source_discovery(sources_path: Path) -> dict[str, Any]:
@@ -601,12 +627,22 @@ def merge_candidates_to_sources(
             path="filing_resolver.filing_types",
             default=["10-K", "10-Q", "8-K"],
         )
-        existing_tickers = set(tickers)
+        canonical_tickers: list[dict[str, Any]] = []
+        existing_tickers: set[str] = set()
+        for existing in tickers:
+            entry = _canonical_filing_ticker_entry(existing)
+            key = _filing_ticker_key(entry)
+            if entry is not None and key and key not in existing_tickers:
+                canonical_tickers.append(entry)
+                existing_tickers.add(key)
+        tickers[:] = canonical_tickers
         for fs in filing_sources:
             for ticker in (fs.get("tickers") or []):
-                if ticker not in existing_tickers:
-                    tickers.append(ticker)
-                    existing_tickers.add(ticker)
+                entry = _canonical_filing_ticker_entry(ticker)
+                key = _filing_ticker_key(entry)
+                if entry is not None and key and key not in existing_tickers:
+                    tickers.append(entry)
+                    existing_tickers.add(key)
                     added_filing += 1
             # Merge filing_types if provided
             for ft in (fs.get("filing_types") or []):

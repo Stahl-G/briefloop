@@ -206,6 +206,12 @@ multi-agent-brief gates check --workspace <workspace>
 multi-agent-brief state check --workspace <workspace> --strict
 ```
 
+Interpret `current_stage: None` / `null` as terminal completion, not as
+"pipeline has not started." If the run is terminal, gates pass, reader-clean
+passes, and `output/intermediate/finalize_report.json` lists delivery
+artifacts, do not ask the user to rerun the pipeline. Report the existing
+reader-facing delivery paths.
+
 If the current stage is `auditor` and state is not blocked, record audit/gate
 completion:
 
@@ -223,12 +229,13 @@ multi-agent-brief finalize --config <workspace>/config.yaml
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 
-Report reader-facing artifact paths:
+Report reader-facing delivery paths:
 
-- `output/brief.md`;
-- configured named Markdown output;
-- `output/brief.docx` when configured;
-- `output/source_appendix.md` when configured.
+- `output/delivery/brief.md`;
+- `output/delivery/<named>.docx` when configured.
+
+Also mention that internal audit/control records remain under `output/intermediate/`
+and `output/source_appendix.md`; do not present those as user delivery files.
 
 Forbidden:
 

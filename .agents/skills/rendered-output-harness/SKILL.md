@@ -21,8 +21,9 @@ Use when changing DOCX/PDF/Markdown rendering or rendered-output validation.
 
 ## Inputs
 
-- `output/brief.md`
-- `output/brief.docx or configured rendered artifacts`
+- `output/delivery/brief.md`
+- `output/delivery/<named>.docx or configured rendered artifacts`
+- `output/source_appendix.md` as an audit/control copy when source appendix is configured
 - rendering code or tests
 
 ## Outputs

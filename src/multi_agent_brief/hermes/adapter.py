@@ -720,14 +720,18 @@ Parent runs:
 multi-agent-brief finalize --config <workspace>/config.yaml
 ```
 
-Then reports:
+Then reports delivery artifacts:
 
-- `output/brief.md`
-- configured named Markdown copy if enabled
-- `output/brief.docx` if configured
+- `output/delivery/brief.md`
+- `output/delivery/<named>.docx` if configured
+
+Internal audit/control records remain available:
+
 - `output/intermediate/audited_brief.md`
 - `output/intermediate/claim_ledger.json`
 - `output/intermediate/audit_report.json`
+- `output/intermediate/finalize_report.json`
+- `output/source_appendix.md` when configured
 
 ## Source Cache Contract
 
@@ -948,7 +952,7 @@ As the Hermes Orchestrator main agent, execute:
 21. Run finalize only after the gates/state completion path passes. finalize is not a quality-gate executor:
     multi-agent-brief finalize --config {workspace}/config.yaml
 
-22. After finalize writes reader-facing artifacts, verify completion:
+22. After finalize writes delivery artifacts under output/delivery/, verify completion:
     multi-agent-brief state finalize-complete --workspace {workspace} --reason "Reader-facing artifacts passed finalize checks."
 
 23. Optional audit/debug projection after runtime state exists:
@@ -967,7 +971,7 @@ Expected artifacts:
 - {workspace}/output/intermediate/claim_ledger.json
 - {workspace}/output/intermediate/audited_brief.md
 - {workspace}/output/intermediate/audit_report.json
-- {workspace}/output/brief.md
+- {workspace}/output/delivery/brief.md
 """
 
 

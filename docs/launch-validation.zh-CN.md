@@ -20,6 +20,16 @@
 
 ### 操作
 
+先确认全局命令入口和 Claude Code 命令已经指向当前 checkout，而不是旧安装：
+
+```bash
+which multi-agent-brief
+multi-agent-brief version
+multi-agent-brief claude install --repo-workdir .
+```
+
+如果 `multi-agent-brief version` 不是当前仓库版本，先修安装入口，再开始自测。不要在旧 CLI 上继续跑黄金路径。
+
 记录一个新的测试目录：
 
 ```bash
@@ -111,6 +121,8 @@ git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
 source .venv/bin/activate
+which multi-agent-brief
+multi-agent-brief version
 python3 -m pytest -q tests/test_runtime_assets.py tests/test_subagent_first_contract.py tests/test_status_commands.py
 multi-agent-brief init /tmp/mabw-demo --demo --force
 multi-agent-brief claude install --repo-workdir .
@@ -163,4 +175,3 @@ Known limitations left for next release:
 ```
 
 只有当这两项都有记录时，才开始更大范围地转发链接或邀请试点。
-

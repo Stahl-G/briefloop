@@ -65,9 +65,9 @@ Each stage is handled by a specialist role: Scout, Screener, Claim Ledger, Analy
 
 ## What Output Looks Like
 
-The final delivery is a clean `brief.md` / `brief.docx`, but the real difference is in the intermediate artifacts. The example below is **synthetic** and only demonstrates structure. A public-safe integration summary is available in [docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md); it is an integration reference, not proof of output-quality improvement or strict causal effect.
+The final delivery bundle contains only `output/delivery/brief.md` and `output/delivery/<named>.docx`. Claim Ledger, audit report, audited brief, and `output/source_appendix.md` remain available as audit/control records, not files handed to the reader. The example below is **synthetic** and only demonstrates structure. A public-safe integration summary is available in [docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md); it is an integration reference, not proof of output-quality improvement or strict causal effect.
 
-`output/brief.md` excerpt:
+`output/delivery/brief.md` excerpt:
 
 ```markdown
 ## 2. Market Updates
@@ -166,7 +166,7 @@ Runtime installation details, workspace-local runtime kits, and common issues ar
 ### Use Your Own Materials / Optional Capabilities
 
 - Local input handling and onboarding: [docs/onboarding.md](docs/onboarding.md)
-- Web search backends such as Tavily: [docs/search-backends.md](docs/search-backends.md)
+- Web search options, from runtime-provided search to Tavily/Exa/Brave API backends: [docs/search-backends.md](docs/search-backends.md)
 - Source discovery candidate merge, including the `llm_decide` source profile: `multi-agent-brief sources decide --config <workspace>/config.yaml --merge`
 - Feishu integration for collection and delivery: [docs/feishu-integration.md](docs/feishu-integration.md)
 - SEC filing parsing: [docs/opencli-source-provider.md](docs/opencli-source-provider.md)

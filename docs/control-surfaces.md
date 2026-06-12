@@ -78,7 +78,7 @@ These surfaces separate content from evidence. LLMs may draft content artifacts,
 | `feedback_issues.json` | Structured human/audit feedback issues. | Python CLI from human/audit input | Implemented | Evidence for repair or future proposals; not guidance by itself. |
 | `repair_plan.json` | Bounded repair plan for current feedback issues. | Python CLI | Implemented | Does not execute repair automatically. |
 | `delta_audit_report.json` | Optional audit of repair delta. | Auditor/runtime output, then validated | Implemented when repair path is used | Run-scoped; not a long-term memory surface. |
-| `source_appendix.md` | Reader-facing source appendix generated from cited sources. | Python finalize | Implemented | Projection for readers; not source evidence itself. |
+| `source_appendix.md` | Audit/control copy of the source appendix appended into delivery Markdown/DOCX. | Python finalize | Implemented | Reader projection copy; not source evidence itself or a separate delivery file. |
 | `provenance_graph.json` | Workspace-local audit/debug projection from existing control files. | Python | Implemented projection | Does not fetch sources, replay runtime, or prove semantic truth. |
 
 ## Workspace-Scoped Taste And Memory

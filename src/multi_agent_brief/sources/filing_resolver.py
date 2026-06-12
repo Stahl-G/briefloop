@@ -44,7 +44,13 @@ class FilingResolverProvider(SourceProvider):
             errors.append("filing_resolver: 'tickers' list is required when enabled.")
             return errors
         for i, entry in enumerate(tickers):
-            if not any(entry.get(k) for k in ("ticker", "company_name", "cik")):
+            normalized = _normalize_ticker_entry(entry)
+            if normalized is None:
+                errors.append(
+                    f"filing_resolver: tickers[{i}] must be a mapping or a non-empty string."
+                )
+                continue
+            if not any(normalized.get(k) for k in ("ticker", "company_name", "cik")):
                 errors.append(
                     f"filing_resolver: tickers[{i}] must have at least one of "
                     "'ticker', 'company_name', or 'cik'."
@@ -73,13 +79,20 @@ class FilingResolverProvider(SourceProvider):
 
         items: list[SourceItem] = []
         for entry in tickers:
+            normalized = _normalize_ticker_entry(entry)
+            if normalized is None:
+                items.append(self._error_item(
+                    "Invalid filing_resolver ticker entry",
+                    "tickers entries must be mappings or non-empty strings.",
+                ))
+                continue
             try:
                 items.extend(self._resolve_one(
-                    entry, include_xbrl=include_xbrl, download=download, out_dir=out_dir,
+                    normalized, include_xbrl=include_xbrl, download=download, out_dir=out_dir,
                 ))
             except Exception as exc:
                 items.append(self._error_item(
-                    f"Failed to resolve {entry.get('ticker', entry.get('company_name', '?'))}",
+                    f"Failed to resolve {normalized.get('ticker', normalized.get('company_name', '?'))}",
                     str(exc)[:200],
                 ))
         return items
@@ -363,3 +376,25 @@ class FilingResolverProvider(SourceProvider):
             content=detail,
             metadata={"error_type": "FilingResolverError"},
         )
+
+
+def _normalize_ticker_entry(entry: Any) -> dict[str, Any] | None:
+    """Return canonical filing resolver ticker config.
+
+    Older source-decider output used bare strings as a shorthand. Keep accepting
+    that shape at read time, but writer paths should emit mappings.
+    """
+    if isinstance(entry, dict):
+        return entry
+    if isinstance(entry, str):
+        value = entry.strip()
+        if not value:
+            return None
+        if _looks_like_ticker(value):
+            return {"ticker": value}
+        return {"company_name": value}
+    return None
+
+
+def _looks_like_ticker(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,9}", value))

@@ -13,7 +13,7 @@
 - 可选 deterministic 溯源投影 可以基于已有 control files 写入 workspace-local audit/debug graph。
 - Workspace-local `audience_profile.md` 可以记录 reader taste；`run`、`start` 和 `handoff` 会创建或复用 frozen per-run `output/intermediate/audience_profile_snapshot.md`，并通过 handoff 暴露为 runtime context。
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
-- Finalize 可以从 audited brief 中实际引用的 事实账本（事实账本） 来源生成 reader-facing source appendix，默认写入独立的 `output/source_appendix.md`；显式配置 `source_appendix.mode: append` 时才追加到最终 Markdown/DOCX 末尾，且不会在最终读者面暴露内部 claim IDs、source IDs、evidence text 或本地路径。
+- Finalize 会把 reader delivery bundle 写入 `output/delivery/`，并把来源附录追加到交付 Markdown/DOCX 末尾；`output/source_appendix.md` 继续作为 audit/control copy 保留。交付产物不得暴露内部 claim IDs、source IDs、evidence text、本地路径或 file URL。
 - Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `multi-agent-brief runtime install` 复制到 workspace。
 - Improvement Ledger lifecycle 可以把人工撰写、人工批准的读者偏好保存在 `improvement/ledger.jsonl`，将 approved 且可物化的 entries 投影到 `improvement/memory.md`，在每次 run 冻结为 `output/intermediate/improvement_memory_snapshot.md`，并且只通过 handoff 暴露 frozen snapshot。
 - Packaged public-safe evaluation cases 已覆盖 Improvement Memory 控制行为：未批准 entry 不物化，已批准 guidance 会冻结，reverted entry 会从下一次 snapshot 中移除。

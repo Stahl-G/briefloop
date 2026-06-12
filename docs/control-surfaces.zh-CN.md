@@ -63,7 +63,7 @@ MABW 的控制面可以按不同粒度统计：
 | `feedback_issues.json` | 结构化 human/audit feedback issues。 | Python CLI，来自 human/audit input | 已实现 | repair 或未来 proposal 的 evidence，本身不是 guidance。 |
 | `repair_plan.json` | 当前 feedback issues 的有界 repair plan。 | Python CLI | 已实现 | 不自动执行 repair。 |
 | `delta_audit_report.json` | repair delta 的可选审计报告。 | Auditor/runtime 输出，再验证 | repair path 使用时已实现 | run-scoped，不是长期 memory surface。 |
-| `source_appendix.md` | 从 cited sources 生成的 reader-facing source appendix。 | Python finalize | 已实现 | reader projection，不是 source evidence 本身。 |
+| `source_appendix.md` | 已追加进交付 Markdown/DOCX 的来源附录审计/控制副本。 | Python finalize | 已实现 | reader projection copy；不是 source evidence 本身，也不是单独交付文件。 |
 | `provenance_graph.json` | 从现有 control files 派生的 workspace-local audit/debug projection。 | Python | 已实现投影 | 不 fetch sources、不 replay runtime、不证明语义真实。 |
 
 ## Workspace 级品味与记忆

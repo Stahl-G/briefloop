@@ -70,6 +70,8 @@ class WebSearchProvider(SourceProvider):
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         if not config.get("enabled"):
             return []
+        if config.get("mode") == "runtime_tool":
+            return []
         backend_name = config.get("backend") or ""
         if not backend_name:
             return []  # capability enabled but no backend; doctor handles this as WARN
@@ -90,6 +92,8 @@ class WebSearchProvider(SourceProvider):
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:
         if not config.get("enabled"):
+            return []
+        if config.get("mode") == "runtime_tool":
             return []
 
         backend = self._get_backend(config)

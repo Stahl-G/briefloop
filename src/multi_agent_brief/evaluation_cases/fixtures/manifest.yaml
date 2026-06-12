@@ -206,10 +206,13 @@ cases:
         - action: finalize
           exit_code: 0
       artifacts_exist:
-        - output/brief.md
+        - output/delivery/brief.md
         - output/source_appendix.md
         - output/intermediate/finalize_report.json
       contains_text:
+        - scope: workspace
+          file: output/delivery/brief.md
+          text: "Source Appendix"
         - scope: workspace
           file: output/source_appendix.md
           text: "[S1] ExampleCo Opens Demo Facility"
@@ -218,7 +221,7 @@ cases:
           text: "[S2] ExampleCo Q1 Results"
       absent_text:
         - scope: workspace
-          file: output/brief.md
+          file: output/delivery/brief.md
           text: "[src:"
         - scope: workspace
           file: output/source_appendix.md

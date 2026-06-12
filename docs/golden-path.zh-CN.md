@@ -6,6 +6,21 @@
 
 确认你正在 Claude Code 的 MABW 项目里，并且 `/mabw` 命令可用。
 
+先在仓库目录确认你实际调用到的是当前版本：
+
+```bash
+which multi-agent-brief
+multi-agent-brief version
+```
+
+如果版本不是当前仓库声明的版本，先刷新安装入口。开发 checkout 中可用：
+
+```bash
+bash scripts/setup.sh
+source .venv/bin/activate
+multi-agent-brief version
+```
+
 如果 `/mabw` 不可用，先在仓库目录运行：
 
 ```bash
@@ -123,11 +138,15 @@ multi-agent-brief claude install --repo-workdir .
 - reader-final gate；
 - `state finalize-complete`。
 
-通过后才把 reader-facing artifacts 当成交付结果：
+通过后才把 `output/delivery/` 里的 reader-facing artifacts 当成交付结果：
 
-- `output/brief.md`
-- 配置的命名 Markdown；
-- `output/brief.docx`
+- `output/delivery/brief.md`
+- `output/delivery/<命名周报>.docx`
+
+审计追溯文件继续保留，但不要当作交付给读者的文件：
+
+- `output/intermediate/claim_ledger.json`
+- `output/intermediate/audit_report.json`
 - `output/source_appendix.md`
 
 如果 reader-final gate 失败，不要手工搬走坏文件。看 `output/intermediate/finalize_report.json`，先处理残留的内部 ID、路径、空来源行或流程痕迹。

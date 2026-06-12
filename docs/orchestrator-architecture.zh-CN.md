@@ -84,11 +84,11 @@ MABW source repo。
 
 ## Reader-Facing Source Appendix
 
-v0.6.8 允许 `multi-agent-brief finalize` 在配置了 `source_appendix` 时生成 reader-facing source appendix；当前 `source_appendix` 请求会默认把来源列表追加到最终 Markdown/DOCX 末尾，同时保留 `output/source_appendix.md`。旧配置中的 `source_map` output format 会作为兼容 alias 处理。
+`multi-agent-brief finalize` 会把 reader delivery bundle 写入 `output/delivery/`。配置 `source_appendix`，或旧配置请求 legacy `source_map` output format 时，来源附录会追加到交付 Markdown/DOCX 末尾，并同时保留 `output/source_appendix.md` 作为 audit/control copy。
 
 - Appendix 只来自 `output/intermediate/audited_brief.md` 实际引用的 claims。
 - Reader-facing output 不应暴露 raw `claim_id`、`source_id`、evidence text、本地路径或 `file://` URL。
-- Appendix 是面向读者的来源列表，不是 runtime state file、产物契约、质量门禁、溯源图，也不是 claim 语义为真的证明。
+- Appendix 是交付包里的面向读者来源列表，同时 `output/source_appendix.md` 是 audit/control copy；它不是 runtime state file、产物契约、质量门禁、溯源图，也不是 claim 语义为真的证明。
 - 显式 `source_appendix` 请求在事实账本缺失或格式错误时会失败；legacy `source_map` 请求仅作为兼容 alias，可带 warning 跳过。
 
 ## 读者画像运行时层面（Audience Profile Runtime Surface）

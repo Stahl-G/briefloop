@@ -250,6 +250,17 @@ def test_web_search_enabled_without_backend_returns_registry_error():
     assert any("no backend" in e.get("message", "").lower() for e in errors)
 
 
+def test_web_search_runtime_tool_collects_no_python_sources_without_error():
+    """runtime_tool search is provided by the Orchestrator, not Python provider collection."""
+    config = SourceConfig(
+        enabled_providers=["web_search"],
+        web_search={"enabled": True, "mode": "runtime_tool"},
+    )
+    items, errors = collect_all_sources(config)
+    assert items == []
+    assert errors == []
+
+
 # --- Non-stub providers (api_news, filings, mcp, cli) ---
 
 def test_news_api_disabled_returns_empty():
@@ -1098,7 +1109,7 @@ def test_doctor_errors_on_no_backend(tmp_path):
     (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
 
     results = run_doctor(config_path=config_path)
-    assert any("no backend configured" in r.message.lower() for r in results)
+    assert any("no python search backend" in r.message.lower() for r in results)
     assert any(r.status == "WARN" for r in results)
 
 

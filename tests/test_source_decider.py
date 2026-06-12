@@ -366,7 +366,7 @@ def test_merge_candidates_normalizes_yaml_null_list_fields(tmp_path: Path):
     updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
     assert updated["manual"]["sources"][0]["url"] == "https://example.com/democo"
     assert updated["rss"]["feeds"][0]["url"] == "https://example.com/rss.xml"
-    assert updated["filing_resolver"]["tickers"] == ["DEMO"]
+    assert updated["filing_resolver"]["tickers"] == [{"ticker": "DEMO"}]
     assert "20-F" in updated["filing_resolver"]["filing_types"]
     assert updated["web_search"]["search_tasks"][0]["query"] == "DemoCo discussion"
     assert updated["source_strategy"]["enabled_providers"] == [
@@ -439,7 +439,7 @@ def test_merge_candidates_merges_filing_sources(workspace_with_sources: Path):
     updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
     assert "filing_resolver" in updated
     assert updated["filing_resolver"]["enabled"] is True
-    assert "测试公司" in updated["filing_resolver"]["tickers"]
+    assert {"company_name": "测试公司"} in updated["filing_resolver"]["tickers"]
     assert "10-K" in updated["filing_resolver"]["filing_types"]
     assert "filing_resolver" in updated["source_strategy"]["enabled_providers"]
 
@@ -480,7 +480,7 @@ def test_merge_candidates_filing_idempotent(workspace_with_sources: Path):
     merge_candidates_to_sources(sources_path, candidates_path)
 
     updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
-    assert updated["filing_resolver"]["tickers"].count("测试公司") == 1
+    assert updated["filing_resolver"]["tickers"].count({"company_name": "测试公司"}) == 1
 
 
 def test_merge_candidates_filing_merges_tickers(workspace_with_sources: Path):
@@ -512,5 +512,75 @@ def test_merge_candidates_filing_merges_tickers(workspace_with_sources: Path):
 
     updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
     tickers = updated["filing_resolver"]["tickers"]
-    assert "测试公司" in tickers
-    assert "PEER" in tickers
+    assert {"company_name": "测试公司"} in tickers
+    assert {"ticker": "PEER"} in tickers
+
+
+def test_merge_candidates_filing_handles_existing_mapping_tickers(workspace_with_sources: Path):
+    """Existing canonical filing_resolver mappings remain idempotent."""
+    sources_path = workspace_with_sources / "sources.yaml"
+    sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+    sources["filing_resolver"] = {
+        "enabled": True,
+        "tickers": [{"ticker": "PEER"}],
+        "filing_types": ["10-K"],
+    }
+    sources_path.write_text(yaml.dump(sources, allow_unicode=True), encoding="utf-8")
+
+    candidates = {
+        "metadata": {},
+        "filing_sources": [
+            {
+                "name": "Peer Corp — SEC EDGAR filings",
+                "provider": "filing_resolver",
+                "tickers": ["PEER"],
+                "filing_types": ["10-Q"],
+                "category": "company_official",
+                "enabled": True,
+            }
+        ],
+    }
+    candidates_path = workspace_with_sources / "source_candidates.yaml"
+    candidates_path.write_text(yaml.dump(candidates, allow_unicode=True), encoding="utf-8")
+
+    result = merge_candidates_to_sources(sources_path, candidates_path)
+
+    updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+    assert result["added_filing"] == 0
+    assert updated["filing_resolver"]["tickers"] == [{"ticker": "PEER"}]
+    assert "10-Q" in updated["filing_resolver"]["filing_types"]
+
+
+def test_merge_candidates_filing_normalizes_existing_string_tickers(workspace_with_sources: Path):
+    """Legacy string ticker entries are normalized during merge."""
+    sources_path = workspace_with_sources / "sources.yaml"
+    sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+    sources["filing_resolver"] = {
+        "enabled": True,
+        "tickers": ["FSLR"],
+        "filing_types": ["10-K"],
+    }
+    sources_path.write_text(yaml.dump(sources, allow_unicode=True), encoding="utf-8")
+
+    candidates = {
+        "metadata": {},
+        "filing_sources": [
+            {
+                "name": "First Solar — SEC EDGAR filings",
+                "provider": "filing_resolver",
+                "tickers": ["FSLR"],
+                "filing_types": ["10-Q"],
+                "category": "company_official",
+                "enabled": True,
+            }
+        ],
+    }
+    candidates_path = workspace_with_sources / "source_candidates.yaml"
+    candidates_path.write_text(yaml.dump(candidates, allow_unicode=True), encoding="utf-8")
+
+    result = merge_candidates_to_sources(sources_path, candidates_path)
+
+    updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
+    assert result["added_filing"] == 0
+    assert updated["filing_resolver"]["tickers"] == [{"ticker": "FSLR"}]
+    assert "10-Q" in updated["filing_resolver"]["filing_types"]

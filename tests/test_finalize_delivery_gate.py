@@ -101,6 +101,14 @@ def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     assert docx_path.exists()
     assert "[src:" not in _docx_text(docx_path)
     assert "[src:" not in _docx_text(output_dir / "上能电气_电力设备周报_2026-06-06.docx")
+    assert (output_dir / "delivery" / "brief.md").exists()
+    assert (output_dir / "delivery" / "上能电气_电力设备周报_2026-06-06.docx").exists()
+    assert not (output_dir / "delivery" / "source_appendix.md").exists()
+    assert not (output_dir / "delivery" / "claim_ledger.json").exists()
+    assert result.delivery_artifacts == [
+        str(output_dir / "delivery" / "brief.md"),
+        str(output_dir / "delivery" / "上能电气_电力设备周报_2026-06-06.docx"),
+    ]
 
 
 def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path):
@@ -136,6 +144,7 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path):
     assert "[src:" in audited_path.read_text(encoding="utf-8")
     assert "[src:" not in (output_dir / "brief.md").read_text(encoding="utf-8")
     assert "[src:" not in (output_dir / "上能电气_电力设备周报_2026-06-06.md").read_text(encoding="utf-8")
+    assert (output_dir / "delivery" / "brief.md").exists()
     assert (intermediate / "finalize_report.json").exists()
 
 
@@ -173,9 +182,18 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert "SYN_CLAIM" not in appendix
     assert "SYN_SRC" not in appendix
     assert "Full synthetic evidence" not in appendix
-    assert "Source Appendix" not in reader
-    assert "https://example.com/exampleco-demo" not in reader
+    delivery = (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8")
+    assert "Source Appendix" in reader
+    assert "https://example.com/exampleco-demo" in reader
+    assert "Source Appendix" in delivery
+    assert "https://example.com/exampleco-demo" in delivery
     assert "SYN_CLAIM" not in reader
+    assert "SYN_CLAIM" not in delivery
+    assert report["delivery_markdown"] == str(output_dir / "delivery" / "brief.md")
+    assert report["delivery_docx"] == ""
+    assert report["delivery_artifacts"] == [str(output_dir / "delivery" / "brief.md")]
+    assert not (output_dir / "delivery" / "source_appendix.md").exists()
+    assert not (output_dir / "delivery" / "claim_ledger.json").exists()
 
 
 def test_finalize_legacy_source_map_skips_missing_ledger_without_failing(tmp_path: Path):
@@ -413,6 +431,46 @@ def test_finalize_append_mode_uses_same_markdown_for_named_and_docx(tmp_path: Pa
     assert "Source Appendix" in _docx_text(output_dir / "ExampleCo_2026-06-09.docx")
     assert "[src:" not in reader
     assert result.source_appendix_mode == "append"
+    assert (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8") == reader
+    assert "Source Appendix" in _docx_text(output_dir / "delivery" / "ExampleCo_2026-06-09.docx")
+
+
+def test_finalize_delivery_bundle_contains_appended_sources_without_audit_files(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+    _write_claim_ledger(intermediate / "claim_ledger.json")
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "docx", "source_appendix"],
+        output_named_outputs=True,
+        output_filename_template="{project_name}_{report_date}",
+        output_filename_tokens={"project_name": "ExampleCo", "report_date": "2026-06-12"},
+    )
+
+    delivery_dir = output_dir / "delivery"
+    delivery_markdown = delivery_dir / "brief.md"
+    delivery_docx = delivery_dir / "ExampleCo_2026-06-12.docx"
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+
+    assert delivery_markdown.exists()
+    assert delivery_docx.exists()
+    assert "Source Appendix" in delivery_markdown.read_text(encoding="utf-8")
+    assert "Source Appendix" in _docx_text(delivery_docx)
+    assert not (delivery_dir / "source_appendix.md").exists()
+    assert not (delivery_dir / "claim_ledger.json").exists()
+    assert not any(path.suffix == ".md" and path.name != "brief.md" for path in delivery_dir.iterdir())
+    assert result.delivery_markdown == str(delivery_markdown)
+    assert result.delivery_docx == str(delivery_docx)
+    assert result.delivery_artifacts == [str(delivery_markdown), str(delivery_docx)]
+    assert report["delivery_artifacts"] == [str(delivery_markdown), str(delivery_docx)]
+    assert report["reader_clean"]["status"] == "pass"
 
 
 def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path):

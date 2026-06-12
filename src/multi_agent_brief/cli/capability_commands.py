@@ -439,16 +439,13 @@ def handle_setup(args: argparse.Namespace) -> int:
             ws = sources_data.setdefault("web_search", {})
             if not ws.get("enabled"):
                 ws["enabled"] = True
-                # Keep legacy setup behavior deterministic, but surface that
-                # users may switch backend to exa/brave/firecrawl/serper and
-                # the matching env var.
-                ws.setdefault("backend", "tavily")
-                ws.setdefault("api_key_env", "TAVILY_API_KEY")
+                ws.setdefault("mode", "runtime_tool")
+                ws.setdefault("required_capability", "web_search")
                 changes_made += 1
                 print(
                     "  ✓ Enabled web_search in sources.yaml"
-                    " (default backend: tavily; alternatives: exa, brave,"
-                    " firecrawl, serper)"
+                    " (mode: runtime_tool; optional external backends:"
+                    " tavily, exa, brave, firecrawl, serper)"
                 )
         elif cap_id == "mineru":
             mu = sources_data.setdefault("mineru", {})

@@ -102,6 +102,20 @@ def test_validate_valid_entry():
         _unpatch_dfr(prev)
 
 
+def test_validate_accepts_string_ticker_shorthand():
+    mock_mod = _make_mock_dfr()
+    prev = _patch_dfr(mock_mod)
+    try:
+        provider = FilingResolverProvider()
+        errors = provider.validate_config({
+            "enabled": True,
+            "tickers": ["DEMO"],
+        })
+        assert not any("tickers[0]" in e for e in errors)
+    finally:
+        _unpatch_dfr(prev)
+
+
 # --- collect ---
 
 def test_collect_disabled_returns_empty():
@@ -147,6 +161,32 @@ def test_collect_basic():
         assert "Demo Holdings" in item.title
         assert item.reliability == "high"
         assert item.metadata["source_tier"] == "T1"
+    finally:
+        _unpatch_dfr(prev)
+
+
+def test_collect_accepts_string_ticker_shorthand():
+    sources = [
+        {
+            "title": "Demo Holdings Ltd — 10-K",
+            "url": "https://www.sec.gov/test.htm",
+            "source_type": "filing",
+            "date": "2026-03-15",
+            "provider": "sec_edgar",
+            "metadata": {"form": "10-K"},
+        },
+    ]
+    mock_mod = _make_mock_dfr(sources=sources)
+    prev = _patch_dfr(mock_mod)
+    try:
+        provider = FilingResolverProvider()
+        items = provider.collect(SourceQuery(), {
+            "enabled": True,
+            "tickers": ["DEMO"],
+        })
+        assert len(items) == 1
+        mock_mod.resolve_disclosure.assert_called_once()
+        assert mock_mod.resolve_disclosure.call_args.kwargs["ticker"] == "DEMO"
     finally:
         _unpatch_dfr(prev)
 

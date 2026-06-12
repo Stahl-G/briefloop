@@ -29,8 +29,8 @@ validation unless that is stated separately.
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Quality gate control file (`quality_gate_report.json`) | Supported |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
-| Finalize (Markdown + DOCX) | Supported |
-| Reader-facing source appendix (`source_appendix.md`) | Supported |
+| Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
+| Source appendix audit/control copy (`source_appendix.md`) | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
 | `multi-agent-brief status --workspace <path>` | Supported |
 | `multi-agent-brief state init/check/show/decide/stage-complete/finalize-complete` | Supported |
@@ -137,9 +137,9 @@ from a source clone to copy OpenCode/Claude Code workspace-local runtime kits.
 
 | Format / Channel | Status |
 |---|---|
-| Markdown (`brief.md`) | Supported |
-| DOCX (`brief.docx`) | Supported |
-| Source appendix (`source_appendix.md`) | Supported |
+| Markdown (`output/delivery/brief.md`) | Supported |
+| DOCX (`output/delivery/<named>.docx`) | Supported |
+| Source appendix audit/control copy (`source_appendix.md`) | Supported |
 | Named output copies | Supported |
 | PDF | Experimental |
 | Feishu delivery | Experimental |

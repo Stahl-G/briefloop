@@ -6,16 +6,34 @@ This file is for developing and running Multi-Agent Brief Workflow inside Claude
 
 For runtime-neutral instructions, see `AGENTS.md`. For Claude Code execution, use the repository slash command and subagents.
 
+## First Response In Claude Code
+
+If the user greets you, asks what to do next, or asks how to use MABW from
+Claude Code, point them to the five writer verbs first:
+
+```text
+/mabw new
+/mabw run <workspace>
+/mabw status <workspace>
+/mabw feedback <workspace> [text-or-file]
+/mabw deliver <workspace>
+```
+
+Do not present `/generate-brief` as the first-screen entrypoint. It remains the
+compatibility command for the full delegated subagent workflow after `/mabw run`
+has created or refreshed the runtime handoff.
+
 ## Standard Claude Code Path
 
 For a real brief workspace:
 
-```bash
-multi-agent-brief onboard
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
+```text
+/mabw new
+/mabw run ../mabw-workspace
 ```
 
-Then run in Claude Code:
+Then, if the user wants to execute the full delegated subagent workflow, run in
+Claude Code:
 
 ```text
 /generate-brief ../mabw-workspace
@@ -27,7 +45,14 @@ For a demo workspace:
 multi-agent-brief init ../mabw-demo --demo
 ```
 
-Then run:
+Then run the writer-facing path:
+
+```text
+/mabw run ../mabw-demo
+/mabw status ../mabw-demo
+```
+
+To execute the full delegated subagent workflow:
 
 ```text
 /generate-brief ../mabw-demo

@@ -83,11 +83,11 @@ lets a runtime operate from the workspace without reading the MABW source repo.
 
 ## Reader-Facing Source Appendix
 
-v0.6.8 lets `multi-agent-brief finalize` write a reader-facing source appendix when `source_appendix` is configured, or when older configs request the legacy `source_map` output format. Current `source_appendix` requests write `output/source_appendix.md` by default; explicit `source_appendix.mode: append` appends the source list to final reader Markdown/DOCX.
+`multi-agent-brief finalize` writes the reader delivery bundle under `output/delivery/`. When `source_appendix` is configured, or when older configs request the legacy `source_map` output format, the source appendix is appended to delivery Markdown/DOCX and `output/source_appendix.md` is retained as an audit/control copy.
 
 - The appendix is generated only from claims actually cited in `output/intermediate/audited_brief.md`.
 - Reader-facing output must not expose raw `claim_id`, `source_id`, evidence text, local paths, or `file://` URLs.
-- The appendix is a reader-facing source list, not a runtime state file, artifact contract, quality gate, provenance graph, or semantic proof that claims are true.
+- The appendix is a reader-facing source list inside the delivery bundle and an audit/control copy at `output/source_appendix.md`; it is not a runtime state file, artifact contract, quality gate, provenance graph, or semantic proof that claims are true.
 - Missing or malformed Claim Ledger data fails explicit `source_appendix` requests; legacy `source_map` requests are treated as compatibility aliases and may skip with warnings.
 
 ## Audience Profile Runtime Surface

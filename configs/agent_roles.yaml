@@ -17,7 +17,7 @@ project:
   - output/intermediate/claim_ledger.json
   - output/intermediate/audited_brief.md
   - output/intermediate/audit_report.json
-  - output/brief.md
+  - output/delivery/brief.md
   non_goals:
   - investment advice
   - trading signals
@@ -236,6 +236,8 @@ roles:
       or analytical output.
     responsibilities:
     - Read claim_ledger.json and user.md to understand context and available evidence.
+    - Read output/input_classification.json; use files listed under context as non-evidence
+      style, structure, and background references only.
     - Draft management-ready sections using only Claim Ledger material.
     - Attach [src:CLAIM_ID] citations to every important statement.
     - Preserve every [src:CLAIM_ID] citation exactly.
@@ -248,6 +250,8 @@ roles:
       source set is insufficient.
     hard_rules:
     - Keep facts, numbers, and causality within Claim Ledger support.
+    - Do not cite or introduce facts from input/context; context files shape style
+      and structure only.
     - Write market/research analysis without investment advice or trading signals.
     - Cite only claim IDs that exist in the ledger.
     - Preserve [src:CLAIM_ID] citations exactly.
@@ -290,6 +294,8 @@ roles:
       remove process residue while preserving valid citations.
     responsibilities:
     - Improve readability and management tone.
+    - Read output/input_classification.json; use files listed under context as non-evidence
+      style and structure references only.
     - Reduce repetition.
     - Preserve all [src:CLAIM_ID] citations exactly.
     - Preserve uncertainty.
@@ -301,30 +307,32 @@ roles:
     - Keep claim IDs unchanged.
     hard_rules:
     - Edit existing claims and prose only.
+    - Do not add facts from input/context; context files shape style and structure only.
     - Keep claim citations with supported statements.
     - Preserve caveats and uncertainty.
     - Preserve [src:CLAIM_ID] citations exactly.
   formatter:
     stage: pipeline
     tool_profile: edit_safe
-    description: Renders reader-facing outputs from audited_brief.md and audit_report.json
-      through finalize.
+    description: Renders the final reader delivery bundle from audited_brief.md and
+      audit_report.json through finalize.
     trigger: Use after the auditor has produced audit_report.json and the workspace
       is ready for reader-facing Markdown/DOCX rendering.
     responsibilities:
     - Run or follow multi-agent-brief finalize --config <workspace>/config.yaml.
-    - Render reader-facing Markdown and DOCX outputs when configured.
-    - Generate configured reader-facing source_appendix.md from cited Claim Ledger
-      sources when enabled.
-    - Strip internal [src:CLAIM_ID] markers from reader-facing artifacts.
+    - Render the final delivery bundle under output/delivery/.
+    - Keep output/source_appendix.md as an internal audit/control copy generated
+      from cited Claim Ledger sources when enabled.
+    - Strip internal [src:CLAIM_ID] markers from reader-facing delivery artifacts.
     - Preserve audited meaning and structure.
     - Report final artifact paths, audit status, and rendering limitations.
     hard_rules:
     - Do not create or modify claim_ledger.json.
     - Do not add new facts during rendering.
+    - Do not present Claim Ledger, Audit Report, or Audited Brief as user delivery files.
     - Do not expose raw claim IDs, source IDs, evidence text, local paths, or file
-      URLs in reader-facing source appendices.
-    - Treat source_appendix.md as a reader-facing source list, not semantic proof
+      URLs in delivery artifacts or source appendix audit copies.
+    - Treat source_appendix.md as an audit/control source list, not semantic proof
       that claims are true.
     - Surface failed audits clearly.
     - Write files only inside configured output directories.

@@ -132,4 +132,4 @@ Read `references/cron-patterns.md` before creating or editing Hermes cron jobs.
 
 ## Reporting
 
-After a delegated run, report `output/brief.md`, configured named Markdown copy when enabled, `output/brief.docx` when configured, `output/intermediate/audited_brief.md`, `output/intermediate/claim_ledger.json`, `output/intermediate/audit_report.json`, `output/intermediate/audience_profile_snapshot.md` as runtime taste context, switchboard selections, optional feedback/repair/quality/provenance control files, audit status, and remaining limitations.
+After a delegated run, report delivery files from `output/delivery/` (`brief.md` and the configured DOCX when present). Treat `output/intermediate/audited_brief.md`, `output/intermediate/claim_ledger.json`, `output/intermediate/audit_report.json`, `output/source_appendix.md`, `output/intermediate/audience_profile_snapshot.md` as runtime/audit/control records, not user delivery files.

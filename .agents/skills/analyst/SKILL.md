@@ -24,6 +24,7 @@ Use after claim-ledger has written claim_ledger.json.
 - `user.md`
 - `config.yaml`
 - `output/intermediate/claim_ledger.json`
+- `output/input_classification.json` when present, especially entries under `context`
 
 ## Outputs
 
@@ -33,9 +34,13 @@ Use after claim-ledger has written claim_ledger.json.
 
 - Write a management-ready brief in the workspace output language.
 - Use claim ledger entries as the factual evidence base.
+- Use `input/context/` files listed in `output/input_classification.json` only as
+  non-evidence style, structure, and background references.
 - Attach valid [src:CLAIM_ID] citations to important factual statements.
 - Include dates, numbers, locations, parties, and caveats when the ledger supports them.
 - Preserve uncertainty and source limitations.
+- Do not cite or introduce facts from `input/context/`; those files do not enter
+  the Claim Ledger.
 
 ## Handoff
 

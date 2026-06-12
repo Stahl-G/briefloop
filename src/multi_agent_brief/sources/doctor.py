@@ -75,9 +75,21 @@ def run_doctor(
 
     # 7. Web search
     if source_config.web_search.get("enabled"):
+        mode = source_config.web_search.get("mode") or ""
         backend_name = source_config.web_search.get("backend") or ""
-        if not backend_name:
-            results.append(CheckResult("WARN", "web_search is enabled but no backend configured. Set TAVILY_API_KEY and run init with --tavily to enable live search."))
+        if mode == "runtime_tool":
+            results.append(CheckResult(
+                "OK",
+                "Web search uses the current runtime's built-in search tool; no API key is required. "
+                "Configure Tavily/Exa/Brave/Firecrawl/Serper only if you want a reproducible external search backend.",
+            ))
+        elif not backend_name:
+            results.append(CheckResult(
+                "WARN",
+                "web_search is enabled but no Python search backend is configured. "
+                "Use mode: runtime_tool for built-in runtime search, or configure an external backend "
+                "(tavily/exa/brave/firecrawl/serper) with its API key.",
+            ))
         elif backend_name == "mock":
             results.append(CheckResult("ERROR", "web_search: mock backend has been removed from runtime code"))
         else:
@@ -170,7 +182,7 @@ def _add_available_info(results: list[CheckResult], source_config: SourceConfig)
     enabled = set(source_config.enabled_providers)
 
     provider_hints = {
-        "web_search": "web_search.enabled: true + choose backend (tavily/exa/brave/firecrawl/serper) + set matching API key in .env",
+        "web_search": "web_search.enabled: true + mode: runtime_tool for built-in runtime search, or choose backend (tavily/exa/brave/firecrawl/serper) + set matching API key in .env",
         "rss": "rss.enabled: true + add rss.feeds",
         "api": "api.enabled: true + set NEWSAPI_API_KEY in .env",
         "filing_resolver": "filing_resolver.enabled: true + add tickers",

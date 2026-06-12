@@ -87,6 +87,39 @@ class TestDoctorAvailableButUnconfigured:
         assert "Available but not enabled" in report
         assert "web_search" in report
 
+    def test_runtime_tool_web_search_is_ok_without_api_key(self, workspace, monkeypatch):
+        (workspace / "input").mkdir()
+        sources = workspace / "sources.yaml"
+        sources.write_text(
+            "source_strategy:\n"
+            "  profile: research\n"
+            "  enabled_providers:\n"
+            "    - manual\n"
+            "    - web_search\n"
+            "manual:\n"
+            "  enabled: true\n"
+            "  sources:\n"
+            "    - name: Test\n"
+            "      path: input/\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: runtime_tool\n"
+            "  required_capability: web_search\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+        monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+        monkeypatch.delenv("SERPER_API_KEY", raising=False)
+
+        results = run_doctor(config_path=workspace / "config.yaml")
+        messages = [r.message for r in results]
+
+        assert any("built-in search" in m and "no API key is required" in m for m in messages)
+        assert not any("no backend configured" in m.lower() for m in messages)
+        assert not any(r.status == "ERROR" for r in results)
+
 
 class TestDoctorRootEnvExample:
     """Root .env.example should list all 7 API keys."""

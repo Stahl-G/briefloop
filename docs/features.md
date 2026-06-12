@@ -21,7 +21,7 @@ multi-agent-brief setup <workspace>
 |------|---------|--------|
 | Add local files to brief | Manual Inputs | `manual (always enabled)` |
 | Monitor RSS feeds | RSS Feeds | ``rss.enabled: true` + add `rss.feeds`` |
-| Search the web for news/data | Web Search | ``web_search.enabled: true` + set API key` |
+| Search the web for news/data | Web Search | ``web_search.enabled: true` + `mode: runtime_tool`, or configure an external API backend` |
 | Search NewsAPI.org | News API | ``api.enabled: true` + set `NEWSAPI_API_KEY`` |
 | Fetch SEC EDGAR filings | SEC Filings | ``filings.enabled: true`` |
 | Resolve tickers to XBRL filings | Filing Resolver & XBRL | ``filing_resolver.enabled: true` + add tickers` |
@@ -37,7 +37,8 @@ multi-agent-brief setup <workspace>
 
 ## API Keys
 
-Required only for features you enable:
+Required only for external API features you enable. Runtime-provided web search
+does not require a MABW API key.
 
 | Variable | Feature | Where to get |
 |----------|---------|-------------|
@@ -49,7 +50,7 @@ Required only for features you enable:
 | `NEWSAPI_API_KEY` | News API | https://newsapi.org/register |
 | `MINERU_API_TOKEN` | MinerU premium parsing | https://mineru.net |
 
-No key needed: manual, rss, filings, filing_resolver, feishu, mcp, cli, cached_package.
+No key needed: manual, rss, filings, filing_resolver, feishu, mcp, cli, cached_package, web_search with `mode: runtime_tool`.
 
 Copy `.env.example` to `.env` in your workspace and fill in keys for enabled features.
 

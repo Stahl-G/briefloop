@@ -1,6 +1,37 @@
 # Search Backends
 
-This document describes the pluggable search backend architecture and planned providers.
+This document describes the runtime search option and pluggable external search backend architecture.
+
+## User-Facing Modes
+
+MABW supports two search paths:
+
+1. `mode: runtime_tool` — use the current Orchestrator runtime's built-in web
+   search tool. This is the zero-API-key path. MABW records the resulting
+   evidence through the normal Claim Ledger and gates, but Python does not call
+   a search API.
+2. `mode: external_api` — use a configured Python search backend such as
+   Tavily, Exa, Brave, Firecrawl, or Serper. This is better for reproducible
+   source collection and reference runs, and requires the matching API key.
+
+Example runtime-tool config:
+
+```yaml
+web_search:
+  enabled: true
+  mode: runtime_tool
+  required_capability: web_search
+```
+
+Example external API config:
+
+```yaml
+web_search:
+  enabled: true
+  mode: external_api
+  backend: tavily
+  api_key_env: TAVILY_API_KEY
+```
 
 ## Architecture
 
@@ -20,9 +51,9 @@ All backends implement `SearchBackend` (from `sources/search_backends/base.py`):
 
 `WebSearchProvider` converts `SearchResult` into `SourceItem` with standardized metadata keys.
 
-## Planned Providers
+## External API Providers
 
-### 1. Tavily (default)
+### 1. Tavily
 
 | Field | Value |
 |-------|-------|

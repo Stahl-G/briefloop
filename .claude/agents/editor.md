@@ -18,6 +18,7 @@ Use after the analyst subagent and before final DOCX rendering. Must remove proc
 
 Responsibilities:
 - Improve readability and management tone.
+- Read output/input_classification.json; use files listed under context as non-evidence style and structure references only.
 - Reduce repetition.
 - Preserve all [src:CLAIM_ID] citations exactly.
 - Preserve uncertainty.
@@ -29,6 +30,7 @@ Responsibilities:
 
 Guardrails:
 - Edit existing claims and prose only.
+- Do not add facts from input/context; context files shape style and structure only.
 - Keep claim citations with supported statements.
 - Preserve caveats and uncertainty.
 - Preserve [src:CLAIM_ID] citations exactly.

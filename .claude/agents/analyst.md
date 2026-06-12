@@ -18,6 +18,7 @@ Use after the claim-ledger subagent or validator has produced claim_ledger.json 
 
 Responsibilities:
 - Read claim_ledger.json and user.md to understand context and available evidence.
+- Read output/input_classification.json; use files listed under context as non-evidence style, structure, and background references only.
 - Draft management-ready sections using only Claim Ledger material.
 - Attach [src:CLAIM_ID] citations to every important statement.
 - Preserve every [src:CLAIM_ID] citation exactly.
@@ -30,6 +31,7 @@ Responsibilities:
 
 Guardrails:
 - Keep facts, numbers, and causality within Claim Ledger support.
+- Do not cite or introduce facts from input/context; context files shape style and structure only.
 - Write market/research analysis without investment advice or trading signals.
 - Cite only claim IDs that exist in the ledger.
 - Preserve [src:CLAIM_ID] citations exactly.

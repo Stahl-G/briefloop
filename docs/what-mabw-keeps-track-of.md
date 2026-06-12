@@ -55,13 +55,15 @@ What it records:
 
 - sources and support for claims, numbers, dates, company facts, policies, prices, capacity, customers, and project status;
 - audit and quality-gate findings tied to those claims;
-- reader-facing source appendix entries for delivered sources.
+- source appendix entries appended to the delivery `brief.md` / DOCX.
 
 Where to look:
 
 - `output/intermediate/claim_ledger.json`
 - `output/intermediate/quality_gate_report.json`
 - `output/intermediate/audit_report.json`
+- `output/delivery/brief.md`
+- `output/delivery/<named>.docx`
 - `output/source_appendix.md`
 - `output/intermediate/provenance_graph.json`
 

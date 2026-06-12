@@ -68,7 +68,7 @@ from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
 from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
 
 connector = FeishuDeliveryConnector()
-artifact = DeliveryArtifact(path="output/brief.md", title="Weekly Brief")
+artifact = DeliveryArtifact(path="output/delivery/brief.md", title="Weekly Brief")
 target = DeliveryTarget(channel="chat", recipient="oc_xxxxxxxxxx")
 result = connector.deliver(artifact, target)
 ```

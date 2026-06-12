@@ -74,9 +74,9 @@ AI 生成报告的常见问题不是"写得不够快"，而是：
 
 ## 看一眼产出长什么样
 
-最终交付是干净的 `brief.md` / `brief.docx`，但真正的差别在中间产物。下面是一个**合成示例**（虚构主体，仅展示结构）。真实运行证据见 [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)；它是 integration reference，不是输出质量提升或严格因果效果证明。
+最终交付包只放 `output/delivery/brief.md` 和 `output/delivery/<命名>.docx`。Claim Ledger、audit report、audited brief 和 `output/source_appendix.md` 继续保留为审计追溯文件，不作为交付给读者的文件。下面是一个**合成示例**（虚构主体，仅展示结构）。真实运行证据见 [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)；它是 integration reference，不是输出质量提升或严格因果效果证明。
 
-`output/brief.md`（节选）：
+`output/delivery/brief.md`（节选）：
 
 ```markdown
 ## 二、市场动态
@@ -169,7 +169,7 @@ hermes plugins enable mabw
 ### 使用自己的材料 / 启用可选能力
 
 * 导入本地资料与输入分类：见 [docs/onboarding.md](docs/onboarding.md)
-* Web 搜索后端（Tavily 等）：见 [docs/search-backends.md](docs/search-backends.md)
+* Web 搜索选项（runtime 自带搜索，或 Tavily/Exa/Brave 等 API 增强）：见 [docs/search-backends.md](docs/search-backends.md)
 * 源发现候选合并（包括 `llm_decide` source profile）：`multi-agent-brief sources decide --config <workspace>/config.yaml --merge`
 * 飞书集成（采集 + 推送）：见 [docs/feishu-integration.md](docs/feishu-integration.md)
 * SEC Filing 解析：见 [docs/opencli-source-provider.md](docs/opencli-source-provider.md)

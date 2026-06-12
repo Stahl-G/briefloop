@@ -15,7 +15,7 @@
 - `analyst.md` — Drafts executive-readable brief sections using only Claim Ledger entries.
 - `auditor.md` — Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures.
 - `editor.md` — Improves clarity, structure, tone, and executive readability without adding facts.
-- `formatter.md` — Renders reader-facing outputs from audited_brief.md and audit_report.json through finalize.
+- `formatter.md` — Renders the final reader delivery bundle from audited_brief.md and audit_report.json through finalize.
 - `draft-audit-harness.md` — Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks.
 - `final-quality-harness.md` — Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target.
 - `rendered-output-harness.md` — Reviews rendered output gates for DOCX/PDF/Markdown rendering fidelity.

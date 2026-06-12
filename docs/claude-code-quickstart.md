@@ -188,9 +188,12 @@ multi-agent-brief finalize --config ..\mabw-workspace\config.yaml
 
 This produces reader-facing output such as:
 
-- `output/brief.md`
-- configured named Markdown output
-- `output/brief.docx` when DOCX output is configured
+- `output/delivery/brief.md`
+- `output/delivery/<named>.docx` when DOCX output is configured
+
+Internal audit/control records remain under `output/intermediate/` and
+`output/source_appendix.md`. Do not hand those files to the reader as delivery
+artifacts.
 
 ## Complete Workflow Example
 

@@ -30,7 +30,7 @@ This page records public-safe rationale for v0.6 control-surface regression chec
 | Gate findings auto-create feedback issues | Hides the Orchestrator decision that should route repair or human review. |
 | Precision-only quality gate | Can reward omission: unsupported claims disappear, but important missing topics are not surfaced. Pair with coverage-side checks when the risk is omission. |
 | Screener as recall proof | Screener ranks and caps candidates; it does not prove the source universe contains no other material item. |
-| Final brief as auditable source surface | Reader-facing output should not need internal claim markers; use `source_appendix.md` for reader-facing source lists. |
+| Final brief as auditable source surface | Reader-facing output should not need internal claim markers; use the delivery source appendix and `output/source_appendix.md` audit copy for source lists. |
 | Provenance graph as truth graph | The projection records citation/control relationships; semantic support still needs audit or human review. |
 | LLM-as-judge default eval | Turns deterministic regression checks into model-dependent scoring. |
 | Shell-string eval commands | Expands the fixture runner into an arbitrary command executor. |

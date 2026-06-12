@@ -88,9 +88,11 @@ Stage sequence:
 
 14. Finalize only after the gates/state completion path passes:
     - Run: `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`
-    - After finalize writes reader-facing artifacts, run: `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
-    - Confirm `output/brief.md` strips [src:CLAIM_ID].
-    - Confirm `output/source_appendix.md` exists when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.
+    - After finalize writes delivery artifacts, run: `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
+    - Confirm `output/delivery/brief.md` strips [src:CLAIM_ID].
+    - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.
+    - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.
+    - Do not present Claim Ledger, Audit Report, Audited Brief, named Markdown, or source appendix audit copy as user delivery files.
     - Remember: finalize is not a quality-gate executor.
 
 15. Optional audit/debug provenance projection after runtime state exists:

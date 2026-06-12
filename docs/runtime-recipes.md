@@ -75,8 +75,9 @@ output/intermediate/screened_candidates.json
 output/intermediate/claim_ledger.json
 output/intermediate/audited_brief.md
 output/intermediate/audit_report.json
-output/brief.md
-output/source_appendix.md when configured
+output/delivery/brief.md
+output/delivery/<named>.docx when DOCX output is configured
+output/source_appendix.md as an audit/control copy when configured
 ```
 
 Allowed compression:

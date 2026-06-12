@@ -21,7 +21,7 @@ multi-agent-brief setup <workspace>
 |------|------|------|
 | 添加本地文件 | 本地输入 | `manual（默认启用）` |
 | 监控 RSS 订阅 | RSS 订阅 | ``rss.enabled: true` + 添加 `rss.feeds`` |
-| 搜索新闻和数据 | 网络搜索 | ``web_search.enabled: true` + 设置 API key` |
+| 搜索新闻和数据 | 网络搜索 | ``web_search.enabled: true` + `mode: runtime_tool`，或配置外部 API 后端` |
 | 搜索 NewsAPI.org | 新闻 API | ``api.enabled: true` + 设置 `NEWSAPI_API_KEY`` |
 | 获取 SEC EDGAR 文件 | SEC 文件 | ``filings.enabled: true`` |
 | 将股票代码解析为 XBRL | 文件解析与 XBRL | ``filing_resolver.enabled: true` + 添加 tickers` |
@@ -37,7 +37,7 @@ multi-agent-brief setup <workspace>
 
 ## API 密钥
 
-仅为启用的功能需要：
+仅外部 API 功能需要。使用 runtime 自带搜索时，MABW 不需要 API key。
 
 | 变量 | 功能 | 获取地址 |
 |------|------|---------|
@@ -49,7 +49,7 @@ multi-agent-brief setup <workspace>
 | `NEWSAPI_API_KEY` | 新闻 API | https://newsapi.org/register |
 | `MINERU_API_TOKEN` | MinerU 高级解析 | https://mineru.net |
 
-无需密钥：manual, rss, filings, filing_resolver, feishu, mcp, cli, cached_package。
+无需密钥：manual, rss, filings, filing_resolver, feishu, mcp, cli, cached_package，以及 `mode: runtime_tool` 的 web_search。
 
 将 `.env.example` 复制为 `.env` 并填入启用功能的密钥。
 

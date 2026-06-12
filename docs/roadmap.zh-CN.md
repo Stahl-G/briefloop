@@ -105,7 +105,7 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 
 - 已在 finalize 阶段加入 reader-facing source appendix 生成。
 - `source_appendix` 是当前 output format 名称；旧 `source_map` 作为兼容 alias 保留。
-- Reader-facing 来源列表默认写入独立的 `output/source_appendix.md`；显式配置 `source_appendix.mode: append` 时才追加到最终 Markdown/DOCX 末尾。它只来自 `output/intermediate/audited_brief.md` 实际引用、并可通过 `output/intermediate/claim_ledger.json` 解析的 claims。
+- Reader-facing 来源列表会追加到 `output/delivery/` 下的交付 Markdown/DOCX 末尾，同时 `output/source_appendix.md` 作为 audit/control copy 保留。它只来自 `output/intermediate/audited_brief.md` 实际引用、并可通过 `output/intermediate/claim_ledger.json` 解析的 claims。
 - Reader-facing output 不应暴露 raw claim IDs、source IDs、evidence text、本地路径或 `file://` URL。
 - Appendix 不是 source evidence、semantic proof、runtime state file、溯源图 或 workflow gate。
 

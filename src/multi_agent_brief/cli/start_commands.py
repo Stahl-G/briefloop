@@ -48,7 +48,7 @@ EXPECTED_WORKFLOW_ARTIFACTS = [
     "output/intermediate/claim_ledger.json",
     "output/intermediate/audited_brief.md",
     "output/intermediate/audit_report.json",
-    "output/brief.md",
+    "output/delivery/brief.md",
 ]
 REPAIR_GUIDANCE_NOTE = (
     "Repair guidance is bounded runtime guidance, not an automatic trajectory "
@@ -73,7 +73,8 @@ FINALIZE_GATE_NOTE = (
     "request_human_review, or block_run. Complete auditor with "
     "`multi-agent-brief state stage-complete --workspace <workspace> --stage auditor "
     "--reason \"Audit and quality gates passed.\"` only when audit readiness and "
-    "quality gates pass. After the finalize tool writes reader artifacts, run "
+    "quality gates pass. After the finalize tool writes delivery artifacts under "
+    "`output/delivery/`, run "
     "`multi-agent-brief state finalize-complete --workspace <workspace> --reason "
     "\"Reader artifacts finalized and clean.\"`."
 )
@@ -85,7 +86,7 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "If a required artifact is missing, stale, or invalid, stop the stage and record retry_stage, request_human_review, or block_run instead of continuing.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
     "Record successful stage transitions with multi-agent-brief state stage-complete only after artifact-level completion evidence is available.",
-    "Record finalize completion with multi-agent-brief state finalize-complete after reader artifacts and finalize_report.json are clean.",
+    "Record finalize completion with multi-agent-brief state finalize-complete after delivery artifacts and finalize_report.json are clean.",
 ]
 DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not claim stage completion based on prose acknowledgement alone.",

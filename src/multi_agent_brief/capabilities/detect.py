@@ -59,6 +59,31 @@ def detect_readiness(
     results: list[RequirementResult] = []
 
     if capability_id == "web_search":
+        if workspace_dir:
+            sources_path = Path(workspace_dir) / "sources.yaml"
+            if sources_path.exists():
+                try:
+                    import yaml
+                    data = yaml.safe_load(sources_path.read_text(encoding="utf-8")) or {}
+                    ws_config = data.get("web_search", {}) or {}
+                    if ws_config.get("enabled") and ws_config.get("mode") == "runtime_tool":
+                        results.append(RequirementResult(
+                            requirement="runtime_web_search",
+                            status="OK",
+                            message=(
+                                "runtime_tool mode uses the current runtime's built-in search; "
+                                "no external API key is required"
+                            ),
+                        ))
+                        return results
+                except Exception as exc:
+                    results.append(RequirementResult(
+                        requirement="sources.yaml",
+                        status="ERROR",
+                        message=f"Failed to parse sources.yaml: {exc}",
+                    ))
+                    return results
+
         backends = {
             "tavily": "TAVILY_API_KEY",
             "exa": "EXA_API_KEY",
