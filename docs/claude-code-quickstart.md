@@ -14,6 +14,23 @@ Code. The verbs are:
 `/mabw` is the writer-facing entrypoint. `/generate-brief` remains the
 compatibility command for the full delegated subagent workflow.
 
+For Chinese writer-facing operation notes, see:
+
+- `docs/golden-path.zh-CN.md`
+- `docs/weekly-use.zh-CN.md`
+
+## Five Writer Verbs
+
+| Verb | Product meaning |
+|---|---|
+| `/mabw new` | Start a new brief workspace by answering who it is for, what this issue covers, and what to watch. |
+| `/mabw run <workspace>` | Create or refresh this run's handoff without executing specialist agents or marking stages complete. |
+| `/mabw status <workspace>` | See where the run stands. Strictly read-only. |
+| `/mabw feedback <workspace> [text-or-file]` | Record what feels wrong; triage, repair, improvement proposals, and approvals require explicit confirmation. |
+| `/mabw deliver <workspace>` | Deliver only after gates, the reader-final gate, and `state finalize-complete` pass. |
+
+`doctor` is still available for diagnostics, but it is not a sixth writer verb.
+
 ## 1. Create a workspace
 
 ```bash

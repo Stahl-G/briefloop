@@ -13,18 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Runtime completion transactions**: added `multi-agent-brief state stage-complete` and `state finalize-complete` for deterministic success-path bookkeeping. These commands validate and record completion claims; they do not execute stages, invoke agents, call `finalize`, or repair content.
 - **Claude Code five-verb writer entrypoint**: added `/mabw` for Claude Code with `new`, `run`, `status`, `feedback`, and `deliver`, plus `multi-agent-brief claude install` support for the Claude writer path.
 - **Improvement Ledger supersession hygiene**: added top-level immutable `supersedes_id`, deterministic duplicate proposal warnings, approved supersession fork rejection, non-materializable superseder warnings, and revert-time warnings when old guidance re-exposes.
+- **Read-only writer status**: added the writer-facing status model for current run status, source trail, approved reader preferences, and delivery guardrails without refreshing or mutating runtime state.
+- **Product-definition docs**: added the Chinese golden path, Chinese weekly-use script, and writer-facing trust map for the four product concepts behind v0.7.2.
+- **v1.0 freeze list**: added a maintainer-facing freeze checklist for runtime state, artifact contracts, gate reports, Improvement Ledger schema, handoff, eval-case runner actions, and deferred v0.8 surfaces.
+- **Improvement origin runtime metadata**: human-feedback Improvement Ledger proposals capture `origin_runtime` when runtime state exists; this is audit/rendering metadata only and is not used for routing, filtering, or materialization.
 
 ### Changed
 
 - **Success path uses transactions**: generated handoff/runtime guidance now routes successful stage progress through `state stage-complete` and terminal delivery through `state finalize-complete`; `state decide` remains for retry, repair, human review, and block decisions.
 - **Delivery path hardened**: `/mabw deliver` and runtime handoff guidance require gates, strict state checks, final rendering, reader-final cleanliness, and `finalize-complete` before terminal completion is recorded.
 - **Improvement materialization remains computed**: superseded guidance is a read-time/materialization computation, not a stored ledger status. Reverting a superseder can re-expose the previous approved entry by design.
+- **Five-verb language clarified**: `doctor` remains a diagnostic/maintainer command, not a sixth writer verb; five-verb UX ships first on Claude Code and does not claim all-runtime parity.
 
 ### Boundaries
 
 - v0.7.2 does not add autonomous learning, automatic repair, automatic approval, output-quality scoring, role-topology compression, manifestation metrics, retrieval memory, or runtime-specific guidance filtering.
 - v0.7.2 does not include `operator_reported_model`; model/run observation metadata is deferred to v0.7.3 / v0.8 scorecard design.
-- v0.7.2 does not include `improvement/intake.jsonl` or `improvement/candidates.jsonl`; intake/candidate parking-lot work is deferred to v0.7.3+.
+- v0.7.2 does not include generic ledger provenance fields, `improvement/intake.jsonl`, or `improvement/candidates.jsonl`; intake/candidate parking-lot work is deferred to v0.7.3+.
+- v0.7.2 does not include role topology convergence, guidance manifestation reports, runtime-specific guidance filtering, or a public A-grade reference run.
 
 ## [0.7.0] — 2026-06-10
 

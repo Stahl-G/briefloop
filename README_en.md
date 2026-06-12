@@ -128,7 +128,7 @@ still runs through `/generate-brief <workspace>`. `status` calls the read-only
 `multi-agent-brief status` helper, `feedback` records and triages without acting downstream, and `deliver` must go
 through gates, the reader-final gate, and `state finalize-complete`.
 
-See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path.
+See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Chinese writer-facing operator notes are available in [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
 
 ### Other Runtimes
 

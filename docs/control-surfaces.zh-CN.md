@@ -104,6 +104,35 @@ MABW 的控制面可以按不同粒度统计：
 | `docs/architecture-status.md` | 当前实现状态与 roadmap goals 的区分。 | Maintainers | 已实现 |
 | `docs/red-lines-and-anti-patterns.md` | Public red lines 和 misuse patterns。 | Maintainers | 已实现 |
 
+## v1.0 冻结清单
+
+冻结意味着 schema 或命令族获得向后兼容承诺，并由 CI 看守。一个 surface 可以已经实现，但尚未冻结。
+
+| Surface | v1.0 冻结前提 |
+|---|---|
+| `event_log.jsonl` schema 和 event types | v0.7.2 completion transaction events 必须稳定；若 v0.8 增加 trajectory events，需先加后冻。 |
+| `workflow_state.json` 和 decision vocabulary | `stage-complete` / `finalize-complete` 语义必须并入；角色收敛后才能定稿 stage 集合。 |
+| `runtime_manifest.json` | `improvement` 和 `recipe` 的单写者保留必须继续有回归覆盖。`operator_reported_model` 延后至 v0.7.3 / v0.8；在此之前 reference-run summary 手工记录 model identity。 |
+| `artifact_registry.json` | 角色收敛后 artifact 名称稳定，才适合冻结。 |
+| `stage_specs.yaml` / stage order | 角色收敛仍属 v0.8 工作，必须先于 stage order 冻结。 |
+| `artifact_contracts.yaml` | 角色收敛必须先定下 artifact contract 集合；candidate/screened coverage anchor 仍是迁移前不变量。 |
+| `orchestrator_contract.yaml` | Completion transaction 语义必须进入冻结的 decision table。 |
+| Gate report schema 和 gate ids | Reader-final / process-residue gates 以及 coverage-side gates 需先稳定。 |
+| Policy pack schema | 至少需要第二个 pack 证明泛化能力。Pack 内容不冻结，它是调参层。 |
+| `feedback_issues.json` / `repair_plan.json` | repair path 回归覆盖稳定后可进入冻结候选。 |
+| Improvement Ledger schema | v0.7.2 已实现 schema hygiene：`supersedes_id`、duplicate warning、approved supersession fork rejection、revert re-expose warning。Generic ledger provenance field 与 `intake.jsonl` / `candidates.jsonl` 一起延后至 v0.7.3+。 |
+| `origin_runtime` | 已实现为 audit/rendering metadata；不参与 filtering、routing 或 materialization。 |
+| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | 延后至 v0.7.3+，太年轻，不进入 v1.0 冻结。 |
+| `improvement/memory.md` / improvement snapshot 渲染 | 需等 ledger schema 稳定后冻结。 |
+| Runtime handoff 格式 | 最终 usage rules 和 v0.8 precedence table 定稿后再冻结。 |
+| 五动词 writer entrypoint 与核心 CLI families | 五个 writer verbs、completion transactions、gates、finalize、feedback、improve 命令族必须在 support matrix 和 help 中一致。 |
+| Eval-case schema 和 runner actions | 需覆盖最终 v0.7.2 control actions 和 v0.8 evaluation-only surfaces。 |
+| `audience_profile.md` 格式 | 格式可冻结；profile 内容由人编辑，永不冻结。 |
+| Reference sample manifest | 计划 v0.8；至少一个真实使用周期前保持 experimental。 |
+| Manifestation report | 计划 v0.8，仅 evaluation-only；不得成为 runtime blocker。 |
+| Mode registry / role topology | 计划 v0.8+；角色收敛通过真实测试前不冻结。 |
+| Support matrix | 它定义冻结承诺范围；每个冻结 surface 都必须同步更新。 |
+
 ## 分配原则
 
 ### 1. 按质量维度分

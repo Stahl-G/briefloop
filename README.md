@@ -9,7 +9,7 @@
 
 一个基于来源、可审计、可由 AI agent 协作执行的简报工作流，用于生成商业、研究、市场、政策、公司跟踪和管理层汇报材料。
 
-> 它会观察、会提议，但只有你点头的，才会被记住，而且记在一本你随时能翻、能撤销的账上。
+> 它会观察、会提议；但只有你点头的，才会被记住，而且记在一本你随时能翻、能撤销的账上。
 
 `Multi-Agent-Brief-Workflow` (MABW)不是一个"AI 写周报"的 Prompt。它把真实工作中的 briefing 流程拆成受契约约束的步骤：理解需求 → 发现来源 → 整理材料 → 建立事实账本 → 辅助写作 → 审计校验 → 输出文档。每一步产出什么文件、由谁产出、何时可以进入下一步，都有明确定义并留有完整记录。
 
@@ -131,7 +131,7 @@ multi-agent-brief claude install --repo-workdir .
 
 `/mabw` 是 writer-facing 入口；完整 delegated subagent workflow 仍由 `/generate-brief <workspace>` 执行。`status` 调用只读的 `multi-agent-brief status`，`feedback` 只记录和分诊，`deliver` 必须经过 gates、reader-final gate 和 `state finalize-complete`。
 
-详细流程见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。
+详细流程见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。中文写作者可直接看 [MABW 黄金路径](docs/golden-path.zh-CN.md) 和 [我每周怎么用 MABW](docs/weekly-use.zh-CN.md)。
 
 ### 其他 runtime
 
@@ -224,6 +224,8 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [质量门禁](docs/harness.md) ·
 [评估用例](docs/evaluation-cases.md) ·
 [改进账本](docs/modules/improvement.md) ·
+[黄金路径](docs/golden-path.zh-CN.md) ·
+[每周使用脚本](docs/weekly-use.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·
 [安全](docs/security.md) ·
 [迁移说明](docs/MIGRATION.zh-CN.md)

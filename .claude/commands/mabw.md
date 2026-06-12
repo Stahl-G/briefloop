@@ -20,14 +20,29 @@ verbs first:
 
 ```text
 /mabw new
+  Start a new brief. Answer who it is for, what this issue covers, and what to watch.
+  MABW creates the workspace and prepares the run rules and handoff.
+
 /mabw run <workspace>
+  Create or refresh this run's handoff. It prepares evidence/accountability surfaces,
+  but it does not execute specialist agents or mark stages complete.
+
 /mabw status <workspace>
+  See where the run stands. Strictly read-only: it never changes files,
+  refreshes state, or appends events.
+
 /mabw feedback <workspace> [text-or-file]
+  Tell MABW what feels wrong. Feedback is recorded first; triage, repair,
+  Improvement Ledger proposals, and approvals require explicit confirmation.
+
 /mabw deliver <workspace>
+  Final delivery. It must pass gates, the reader-final gate, and
+  state finalize-complete before reader artifacts are treated as delivered.
 ```
 
 Do not put `doctor`, `runtime install`, `eval-cases`, release checks, generated
 asset checks, or low-level state commands in first-screen writer help.
+`doctor` remains a diagnostic/maintainer command, not a sixth writer verb.
 
 ## Routing
 

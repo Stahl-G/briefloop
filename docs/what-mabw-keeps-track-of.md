@@ -15,7 +15,7 @@ What is guarding delivery.
 
 ## The Promise
 
-MABW can observe and suggest, but only what you approve is remembered, and every approved change is recorded in a ledger you can inspect and undo.
+MABW can observe and suggest, but only what you approve is remembered, and every approved memory stays in an inspectable ledger you can undo.
 
 In shorter form:
 
