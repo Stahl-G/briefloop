@@ -57,6 +57,24 @@ def _write_quality_gate_report(ws: Path, finding: dict[str, object]) -> None:
     )
 
 
+def _write_legacy_quality_gate_report(ws: Path, finding: dict[str, object]) -> None:
+    path = _intermediate(ws) / "quality_gate_report.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "fail",
+                "findings": [finding],
+                "metadata": {"gate_stage_id": "auditor"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
@@ -76,7 +94,7 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["repair_owner"] == "analyst/editor"
+    assert payload["repair_owner"] == "analyst"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
     assert "output/intermediate/audit_report.json" in payload["blocked_direct_edits"]
@@ -143,6 +161,187 @@ def test_repair_route_maps_missing_source_excerpt_to_source_discovery(tmp_path, 
     assert payload["allowed_artifacts"] == ["input/sources/*"]
     assert payload["must_rerun_from"] == "input-governance"
     assert "output/intermediate/claim_ledger.json" in payload["blocked_direct_edits"]
+
+
+def test_repair_route_prefers_source_discovery_metadata_over_text_heuristic(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_MATERIAL_FACT_001",
+            "finding_type": "needs_recrawl_claim_used",
+            "severity": "high",
+            "artifact_id": "claim_ledger",
+            "repair_owner": "source-discovery",
+            "repair_stage_id": "source-discovery",
+            "repair_artifact_id": "claim_ledger",
+            "message": "Claim Ledger cites a source marked needs_recrawl.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "source-discovery"
+    assert payload["allowed_artifacts"] == ["input/sources/*"]
+    assert payload["must_rerun_from"] == "input-governance"
+
+
+def test_repair_route_prefers_low_confidence_source_metadata(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_MATERIAL_FACT_002",
+            "finding_type": "low_confidence_source_used",
+            "severity": "high",
+            "artifact_id": "claim_ledger",
+            "repair_owner": "source-discovery",
+            "repair_stage_id": "source-discovery",
+            "repair_artifact_id": "claim_ledger",
+            "message": "Claim Ledger cites a low-confidence source.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "source-discovery"
+    assert payload["allowed_artifacts"] == ["input/sources/*"]
+
+
+def test_repair_route_prefers_target_relevance_metadata(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "analyst",
+            "repair_stage_id": "analyst",
+            "repair_artifact_id": "audited_brief",
+            "message": "Executive summary does not mention the configured target.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "analyst"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert payload["must_rerun_from"] == "auditor"
+
+
+def test_repair_route_prefers_target_priority_metadata(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_002",
+            "finding_type": "target_priority_claim_missing_from_summary",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "analyst",
+            "repair_stage_id": "analyst",
+            "repair_artifact_id": "audited_brief",
+            "message": "A high-priority target claim is missing from the summary.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "analyst"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+
+
+def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_MATERIAL_FACT_003",
+            "finding_type": "number_without_source",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "analyst",
+            "repair_stage_id": "analyst",
+            "repair_artifact_id": "audited_brief",
+            "message": "A number-like value appears without a source reference.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "analyst"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+
+
+def test_repair_route_rejects_invalid_gate_report_json(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{broken", encoding="utf-8")
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["input_errors"][0]["source"] == "auditor_quality_gate_report"
+
+
+def test_repair_route_rejects_invalid_artifact_registry_json(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    runtime_state_paths(ws)["artifact_registry"].write_text("{broken", encoding="utf-8")
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["input_errors"][0]["source"] == "artifact_registry"
+
+
+def test_repair_route_ignores_legacy_gate_projection_when_scoped_report_exists(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    finding = {
+        "finding_id": "QG_TARGET_RELEVANCE_001",
+        "finding_type": "target_relevance_gap",
+        "severity": "high",
+        "artifact_id": "audited_brief",
+        "repair_owner": "analyst",
+        "repair_stage_id": "analyst",
+        "repair_artifact_id": "audited_brief",
+        "message": "Executive summary does not mention the configured target.",
+    }
+    _write_quality_gate_report(ws, finding)
+    _write_legacy_quality_gate_report(ws, finding)
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["finding_count"] == 1
+    assert len(payload["routes"]) == 1
 
 
 def test_repair_route_no_match_is_read_only_none_route(tmp_path, capsys):
