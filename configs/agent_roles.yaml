@@ -121,13 +121,15 @@ roles:
     - Use state decide only for non-success decisions such as retry_stage,
       delegate_repair, request_human_review, or block_run; if the command
       rejects the decision or completion, stop and correct the stage state.
-    - Before finalize, after Auditor completes, run gates check and strict state
-      check. If blocking findings exist, do not finalize; use feedback/repair,
-      request_human_review, or block_run. Record auditor completion with state
-      stage-complete only when audit readiness and quality gates pass.
+    - Before finalize, after Auditor completes, run gates check with
+      `--stage auditor` and strict state check. If blocking findings exist,
+      do not finalize; use feedback/repair, request_human_review, or block_run.
+      Record auditor completion with state stage-complete only when audit
+      readiness and quality gates pass.
     - After finalize writes reader-facing artifacts, verify completion with
-      multi-agent-brief state finalize-complete before reporting the run
-      complete.
+      `multi-agent-brief gates check --stage finalize --brief <workspace>/output/brief.md`
+      and then multi-agent-brief state finalize-complete before reporting the
+      run complete.
     - Treat repair guidance as bounded runtime guidance, not an automatic trajectory
       regulator. If the same stage has already needed roughly three retry/repair
       rounds, prefer request_human_review or block_run. If a repair would touch

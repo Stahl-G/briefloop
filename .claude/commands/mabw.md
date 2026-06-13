@@ -228,7 +228,7 @@ Purpose: check gates/finalize status, then deliver the reader delivery bundle.
 Run the delivery sequence explicitly:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace>
+multi-agent-brief gates check --workspace <workspace> --stage auditor
 multi-agent-brief state check --workspace <workspace> --strict
 ```
 
@@ -252,6 +252,7 @@ Once the current stage is `finalize`, run:
 
 ```bash
 multi-agent-brief finalize --config <workspace>/config.yaml
+multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 

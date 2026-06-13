@@ -81,14 +81,15 @@ Stage sequence:
 
 13. Check `audit_report.json`, then run quality gates and refresh runtime state before finalize:
     - Confirm quality gate selection in `control_selections.json`, or record it with `multi-agent-brief controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason "Use quality gates before finalize."`
-    - Run: `multi-agent-brief gates check --workspace $ARGUMENTS`
+    - Run: `multi-agent-brief gates check --workspace $ARGUMENTS --stage auditor`
     - Run: `multi-agent-brief state check --workspace $ARGUMENTS --strict`
     - If state is not blocked, run: `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage auditor --reason "Audit and quality gates passed."`
     - If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
 
 14. Finalize only after the gates/state completion path passes:
     - Run: `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`
-    - After finalize writes delivery artifacts, run: `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
+    - After finalize writes delivery artifacts, run: `multi-agent-brief gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.
+    - Then run: `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
     - Confirm `output/delivery/brief.md` strips [src:<claim_id>].
     - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.
     - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.

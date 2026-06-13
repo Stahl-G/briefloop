@@ -60,7 +60,9 @@ MABW 不只是一个写简报的工具。它更重要的作用，是把一份简
 你在哪看：
 
 - `output/intermediate/claim_ledger.json`
-- `output/intermediate/quality_gate_report.json`
+- `output/intermediate/gates/auditor_quality_gate_report.json`
+- `output/intermediate/gates/finalize_quality_gate_report.json`
+- `output/intermediate/quality_gate_report.json`（latest/legacy projection）
 - `output/intermediate/audit_report.json`
 - `output/delivery/brief.md`
 - `output/delivery/<命名周报>.docx`
@@ -107,7 +109,9 @@ MABW 不只是一个写简报的工具。它更重要的作用，是把一份简
 - `configs/stage_specs.yaml`
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
-- `output/intermediate/quality_gate_report.json`
+- `output/intermediate/gates/auditor_quality_gate_report.json`
+- `output/intermediate/gates/finalize_quality_gate_report.json`
+- `output/intermediate/quality_gate_report.json`（latest/legacy projection）
 - `output/intermediate/repair_plan.json`
 
 出错时它怎么保护你：

@@ -195,8 +195,8 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: delegate_repair
-  - artifact_id: quality_gate_report
-    path: output/intermediate/quality_gate_report.json
+  - artifact_id: auditor_quality_gate_report
+    path: output/intermediate/gates/auditor_quality_gate_report.json
     format: json
     required: false
     producer_stage: auditor
@@ -209,6 +209,21 @@ artifacts:
     allowed_decisions:
       - continue
       - delegate_repair
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
+  - artifact_id: finalize_quality_gate_report
+    path: output/intermediate/gates/finalize_quality_gate_report.json
+    format: json
+    required: false
+    producer_stage: finalize
+    producer_role: python_tool
+    consumer_stages:
+      - finalize
+    validation_result: conditional_quality_gate_only
+    blocking_reason: ""
+    allowed_decisions:
+      - finalize
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review

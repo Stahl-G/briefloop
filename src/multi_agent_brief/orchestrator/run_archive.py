@@ -21,6 +21,8 @@ _KNOWN_INTERMEDIATE_FILES = (
     "claim_ledger.json",
     "audited_brief.md",
     "audit_report.json",
+    "gates/auditor_quality_gate_report.json",
+    "gates/finalize_quality_gate_report.json",
     "quality_gate_report.json",
     "finalize_report.json",
 )
@@ -166,7 +168,8 @@ def _archive_file_plan(
 
     intermediate_dir = workspace / "output" / "intermediate"
     for name in _KNOWN_INTERMEDIATE_FILES:
-        source = intermediate_dir / name
+        rel_from_intermediate = Path(name)
+        source = intermediate_dir / rel_from_intermediate
         if source.exists() and source.is_file():
             _add_file_record(
                 records,
@@ -174,7 +177,7 @@ def _archive_file_plan(
                 role="intermediate",
                 source=source,
                 original_path=_workspace_relative(workspace, source),
-                archive_path=Path("intermediate") / name,
+                archive_path=Path("intermediate") / rel_from_intermediate,
             )
 
     artifacts = artifact_registry.get("artifacts") if isinstance(artifact_registry.get("artifacts"), dict) else {}
@@ -187,7 +190,11 @@ def _archive_file_plan(
         source = workspace / rel_path
         if not source.exists() or not source.is_file():
             continue
-        archive_path = Path("intermediate") / source.name
+        try:
+            rel_from_intermediate = source.relative_to(intermediate_dir)
+        except ValueError:
+            rel_from_intermediate = Path(source.name)
+        archive_path = Path("intermediate") / rel_from_intermediate
         _add_file_record(
             records,
             seen_archive_paths,

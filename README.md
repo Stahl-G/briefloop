@@ -71,7 +71,7 @@ its sample-state factory started production, with planned capacity of 2 GW...
 }
 ```
 
-`output/intermediate/quality_gate_report.json`: deterministic checks that can block delivery. There is no force flag.
+`output/intermediate/gates/auditor_quality_gate_report.json` and `output/intermediate/gates/finalize_quality_gate_report.json`: deterministic checks that can block audit completion or delivery. `output/intermediate/quality_gate_report.json` is a latest/legacy projection. There is no force flag.
 
 ```json
 {
@@ -90,7 +90,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 | Question | What it records | Where you look |
 |---|---|---|
 | Where is this run? | Current stage, missing artifacts, blockers, next safe action | `/mabw status`, `workflow_state.json` |
-| Where did each number come from? | Claim Ledger entries, source dates, gate findings | `claim_ledger.json`, `quality_gate_report.json`, `source_appendix.md` |
+| Where did each number come from? | Claim Ledger entries, source dates, stage-scoped gate findings | `claim_ledger.json`, `gates/*_quality_gate_report.json`, `source_appendix.md` |
 | What has it learned? | Human-approved reader preferences only; unapproved suggestions never take effect | `improvement/ledger.jsonl` (append-only, hash-chained, revertible) |
 | What is guarding delivery? | Stage-completion transactions, reader-final gate, delivery checks | `finalize_report.json`, `state finalize-complete` |
 

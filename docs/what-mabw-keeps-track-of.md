@@ -60,7 +60,9 @@ What it records:
 Where to look:
 
 - `output/intermediate/claim_ledger.json`
-- `output/intermediate/quality_gate_report.json`
+- `output/intermediate/gates/auditor_quality_gate_report.json`
+- `output/intermediate/gates/finalize_quality_gate_report.json`
+- `output/intermediate/quality_gate_report.json` (latest/legacy projection)
 - `output/intermediate/audit_report.json`
 - `output/delivery/brief.md`
 - `output/delivery/<named>.docx`
@@ -107,7 +109,9 @@ Where to look:
 - `configs/stage_specs.yaml`
 - `configs/artifact_contracts.yaml`
 - `configs/policy_packs/default.yaml`
-- `output/intermediate/quality_gate_report.json`
+- `output/intermediate/gates/auditor_quality_gate_report.json`
+- `output/intermediate/gates/finalize_quality_gate_report.json`
+- `output/intermediate/quality_gate_report.json` (latest/legacy projection)
 - `output/intermediate/repair_plan.json`
 
 How it protects you when things go wrong:

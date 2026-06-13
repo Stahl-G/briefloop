@@ -314,7 +314,8 @@ def test_claude_mabw_deliver_uses_completion_transactions():
     deliver_section = text.split("## `deliver <workspace>`", 1)[1].split(
         "## Diagnostic And Maintainer Commands", 1
     )[0]
-    assert "multi-agent-brief gates check --workspace <workspace>" in deliver_section
+    assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in deliver_section
+    assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in deliver_section
     assert "multi-agent-brief state check --workspace <workspace> --strict" in deliver_section
     assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in deliver_section
     assert "multi-agent-brief finalize --config <workspace>/config.yaml" in deliver_section

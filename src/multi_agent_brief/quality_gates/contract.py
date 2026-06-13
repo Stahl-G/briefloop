@@ -1,8 +1,10 @@
 """Quality-gate report contract helpers.
 
 The quality-gate layer is intentionally side-effect free here. It validates
-``quality_gate_report.json`` and computes current-stage blockers for runtime
-state code without running agents, repair, source discovery, or web fetches.
+stage-scoped quality gate reports and computes current-stage blockers for
+runtime state code without running agents, repair, source discovery, or web
+fetches. ``quality_gate_report.json`` is retained as a legacy/latest
+projection; authoritative runtime checks use stage-scoped reports.
 """
 
 from __future__ import annotations
@@ -16,7 +18,13 @@ import yaml
 
 QUALITY_GATE_SCHEMA = "multi-agent-brief-quality-gates/v1"
 QUALITY_GATE_REPORT_FILE = "output/intermediate/quality_gate_report.json"
-QUALITY_GATE_STATE_FILES = {"quality_gate_report": QUALITY_GATE_REPORT_FILE}
+AUDITOR_QUALITY_GATE_REPORT_FILE = "output/intermediate/gates/auditor_quality_gate_report.json"
+FINALIZE_QUALITY_GATE_REPORT_FILE = "output/intermediate/gates/finalize_quality_gate_report.json"
+QUALITY_GATE_STATE_FILES = {
+    "quality_gate_report": QUALITY_GATE_REPORT_FILE,
+    "auditor_quality_gate_report": AUDITOR_QUALITY_GATE_REPORT_FILE,
+    "finalize_quality_gate_report": FINALIZE_QUALITY_GATE_REPORT_FILE,
+}
 
 GATE_IDS = {"material_fact", "freshness", "target_relevance"}
 GATE_STATUSES = {"pass", "warning", "fail"}
@@ -44,6 +52,15 @@ def quality_gate_paths(workspace: str | Path) -> dict[str, Path]:
     return {key: ws / rel_path for key, rel_path in QUALITY_GATE_STATE_FILES.items()}
 
 
+def quality_gate_report_key_for_stage(stage_id: str | None) -> str:
+    return "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
+
+
+def quality_gate_report_path_for_stage(workspace: str | Path, stage_id: str | None) -> Path:
+    paths = quality_gate_paths(workspace)
+    return paths[quality_gate_report_key_for_stage(stage_id)]
+
+
 def stage_ids(stages: list[dict[str, Any]]) -> set[str]:
     return {str(stage["stage_id"]) for stage in stages if stage.get("stage_id")}
 
@@ -56,8 +73,7 @@ def artifact_ids(artifacts: list[dict[str, Any]]) -> set[str]:
     }
 
 
-def load_quality_gate_report(workspace: str | Path) -> dict[str, Any] | None:
-    path = quality_gate_paths(workspace)["quality_gate_report"]
+def _load_quality_gate_report_path(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
@@ -80,16 +96,44 @@ def load_quality_gate_report(workspace: str | Path) -> dict[str, Any] | None:
     return data
 
 
+def load_quality_gate_report(workspace: str | Path) -> dict[str, Any] | None:
+    """Load the legacy/latest quality gate report projection."""
+    return _load_quality_gate_report_path(quality_gate_paths(workspace)["quality_gate_report"])
+
+
+def load_quality_gate_report_for_stage(
+    workspace: str | Path,
+    stage_id: str | None,
+    *,
+    allow_legacy: bool = True,
+) -> dict[str, Any] | None:
+    """Load the authoritative report for a stage, optionally falling back to legacy."""
+    paths = quality_gate_paths(workspace)
+    scoped = _load_quality_gate_report_path(paths[quality_gate_report_key_for_stage(stage_id)])
+    if scoped is not None:
+        return scoped
+    if allow_legacy:
+        return _load_quality_gate_report_path(paths["quality_gate_report"])
+    return None
+
+
 def quality_gate_artifact_activated(
     *,
     workspace: str | Path,
     artifact_id: str,
 ) -> bool:
     """Return whether an optional quality gate control artifact is active."""
-    if artifact_id != "quality_gate_report":
+    if artifact_id not in {
+        "quality_gate_report",
+        "auditor_quality_gate_report",
+        "finalize_quality_gate_report",
+    }:
         return False
     paths = quality_gate_paths(workspace)
-    if paths["quality_gate_report"].exists():
+    path = paths.get(artifact_id)
+    if path and path.exists():
+        return True
+    if artifact_id == "auditor_quality_gate_report" and paths["quality_gate_report"].exists():
         return True
 
     config = _load_quality_gate_config(workspace)
@@ -115,7 +159,7 @@ def quality_gate_required_for_stage(
     workspace: str | Path,
     current_stage: str | None,
 ) -> bool:
-    """Return whether missing quality_gate_report.json should block a stage."""
+    """Return whether missing stage-scoped quality gate report should block a stage."""
     if current_stage is None:
         return False
     gates = _load_quality_gate_config(workspace)
@@ -240,32 +284,70 @@ def validate_quality_gate_workspace(
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    try:
-        payload = load_quality_gate_report(workspace)
-    except QualityGateContractError as exc:
-        return {"ok": False, "errors": [str(exc)], "details": exc.details}
-    if payload is None:
+    payloads: list[tuple[str, dict[str, Any]]] = []
+    errors: list[str] = []
+    for stage in ("auditor", "finalize"):
+        key = quality_gate_report_key_for_stage(stage)
+        try:
+            payload = load_quality_gate_report_for_stage(workspace, stage, allow_legacy=False)
+        except QualityGateContractError as exc:
+            errors.append(f"{key}: {exc}")
+            continue
+        if payload is not None:
+            payloads.append((key, payload))
+
+    if not payloads:
+        try:
+            legacy_payload = load_quality_gate_report(workspace)
+        except QualityGateContractError as exc:
+            errors.append(f"quality_gate_report: {exc}")
+            legacy_payload = None
+        if legacy_payload is not None:
+            payloads.append(("quality_gate_report", legacy_payload))
+
+    if not payloads:
         return {
-            "ok": True,
-            "errors": [],
+            "ok": not errors,
+            "errors": errors,
             "report_present": False,
             "finding_count": 0,
             "blocking_count": 0,
         }
-    errors = validate_quality_gate_report_payload(
-        payload,
-        stages=stages,
-        artifacts=artifacts,
-    )
-    findings = [item for item in payload.get("findings") or [] if isinstance(item, dict)]
+
+    finding_count = 0
+    blocking_count = 0
+    statuses: dict[str, str] = {}
+    for key, payload in payloads:
+        report_errors = validate_quality_gate_report_payload(
+            payload,
+            stages=stages,
+            artifacts=artifacts,
+        )
+        errors.extend(f"{key}: {error}" for error in report_errors)
+        findings = [item for item in payload.get("findings") or [] if isinstance(item, dict)]
+        finding_count += len(findings)
+        blocking_count += sum(1 for item in findings if item.get("blocking_level") == "blocking")
+        statuses[key] = str(payload.get("status") or "")
     return {
         "ok": not errors,
         "errors": errors,
         "report_present": True,
-        "finding_count": len(findings),
-        "blocking_count": sum(1 for item in findings if item.get("blocking_level") == "blocking"),
-        "status": payload.get("status"),
+        "finding_count": finding_count,
+        "blocking_count": blocking_count,
+        "statuses": statuses,
+        "status": _rollup_quality_gate_status(statuses.values()),
     }
+
+
+def _rollup_quality_gate_status(statuses: Any) -> str | None:
+    values = {str(status) for status in statuses if str(status)}
+    if "fail" in values:
+        return "fail"
+    if "warning" in values:
+        return "warning"
+    if "pass" in values:
+        return "pass"
+    return None
 
 
 def current_stage_quality_gate_blocking_reasons(
@@ -279,14 +361,21 @@ def current_stage_quality_gate_blocking_reasons(
     if current_stage is None:
         return []
     try:
-        payload = load_quality_gate_report(workspace)
+        payload = load_quality_gate_report_for_stage(
+            workspace,
+            current_stage,
+            allow_legacy=False,
+        )
     except QualityGateContractError as exc:
         return [f"Quality gate report is invalid for current stage '{current_stage}': {exc}"]
     if payload is None:
         if quality_gate_required_for_stage(workspace=workspace, current_stage=current_stage):
+            key = quality_gate_report_key_for_stage(current_stage)
+            paths = quality_gate_paths(workspace)
+            rel_path = paths[key].relative_to(Path(workspace).expanduser().resolve()).as_posix()
             return [
-                f"Current stage '{current_stage}' requires quality_gate_report.json before continuing. "
-                "Run multi-agent-brief gates check or request human review."
+                f"Current stage '{current_stage}' requires {rel_path} before continuing. "
+                f"Run multi-agent-brief gates check --stage {current_stage} or request human review."
             ]
         return []
 

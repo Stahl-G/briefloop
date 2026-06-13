@@ -66,15 +66,17 @@ DECISION_RECORDING_NOTE = (
 )
 FINALIZE_GATE_NOTE = (
     "Before finalize, after the auditor stage completes, run "
-    "`multi-agent-brief gates check --workspace <workspace>` and "
+    "`multi-agent-brief gates check --workspace <workspace> --stage auditor` and "
     "`multi-agent-brief state check --workspace <workspace> --strict`; this "
-    "creates or refreshes `output/intermediate/quality_gate_report.json`. If "
+    "creates or refreshes `output/intermediate/gates/auditor_quality_gate_report.json` "
+    "and a legacy latest projection at `output/intermediate/quality_gate_report.json`. If "
     "there are blocking findings, do not finalize. Use feedback/repair, "
     "request_human_review, or block_run. Complete auditor with "
     "`multi-agent-brief state stage-complete --workspace <workspace> --stage auditor "
     "--reason \"Audit and quality gates passed.\"` only when audit readiness and "
     "quality gates pass. After the finalize tool writes delivery artifacts under "
-    "`output/delivery/`, run "
+    "`output/delivery/`, run `multi-agent-brief gates check --workspace <workspace> "
+    "--stage finalize --brief <workspace>/output/brief.md`, then run "
     "`multi-agent-brief state finalize-complete --workspace <workspace> --reason "
     "\"Reader artifacts finalized and clean.\"`."
 )
@@ -437,11 +439,12 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "8. Use the 'analyst' subagent to write output/intermediate/audited_brief.md\n"
             "9. Use the 'editor' subagent to polish output/intermediate/audited_brief.md\n"
             "10. Use the 'auditor' subagent to write output/intermediate/audit_report.json\n"
-            f"11. multi-agent-brief gates check --workspace {ws_path}\n"
+            f"11. multi-agent-brief gates check --workspace {ws_path} --stage auditor\n"
             f"12. multi-agent-brief state check --workspace {ws_path} --strict\n"
             f"13. multi-agent-brief state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
             f"14. multi-agent-brief finalize --config {ws_path}/config.yaml\n"
-            f"15. multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
+            f"15. multi-agent-brief gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
+            f"16. multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
@@ -508,7 +511,7 @@ def build_handoff(
         "Feedback loop controls are optional: feedback_issues.json and repair_plan.json are created only by multi-agent-brief feedback ingest/plan/resolve."
     )
     handoff.notes.append(
-        "output/intermediate/quality_gate_report.json is created only by multi-agent-brief gates check; before finalize, gates check is required and blocking findings must route to feedback/repair or human review instead of finalize."
+        "output/intermediate/gates/auditor_quality_gate_report.json and output/intermediate/gates/finalize_quality_gate_report.json are created only by multi-agent-brief gates check; output/intermediate/quality_gate_report.json is a legacy/latest projection, not an authoritative completion artifact."
     )
     handoff.notes.append(
         "Provenance projection is optional: provenance_graph.json is created only by multi-agent-brief provenance build and is an audit/debug view, not semantic proof."

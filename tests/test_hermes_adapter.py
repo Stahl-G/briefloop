@@ -140,13 +140,16 @@ def test_hermes_skill_uses_delegate_task_runtime():
     assert "provenance build/show/validate" in skill
     assert "feedback_issues.json" in skill
     assert "repair_plan.json" in skill
+    assert "auditor_quality_gate_report.json" in skill
+    assert "finalize_quality_gate_report.json" in skill
     assert "quality_gate_report.json" in skill
     assert "provenance_graph.json" in skill
     assert "orchestrator_control_switchboard.json" in skill
     assert "control_selections.json" in skill
     assert "controls select" in skill
     assert "Selection is not execution" in skill
-    assert "multi-agent-brief gates check --workspace <workspace>" in skill
+    assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in skill
+    assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in skill
     assert "multi-agent-brief state check --workspace <workspace> --strict" in skill
     assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in skill
     assert "multi-agent-brief state finalize-complete --workspace <workspace>" in skill
@@ -225,6 +228,8 @@ def test_hermes_prompt_keeps_user_inside_hermes():
     assert "block_run" in prompt
     assert "multi-agent-brief feedback ingest" in prompt
     assert "feedback show" in prompt
+    assert "auditor_quality_gate_report.json" in prompt
+    assert "finalize_quality_gate_report.json" in prompt
     assert "quality_gate_report.json" in prompt
     assert "provenance_graph.json" in prompt
     assert "orchestrator_control_switchboard.json" in prompt
@@ -233,7 +238,8 @@ def test_hermes_prompt_keeps_user_inside_hermes():
     assert "Selection is not execution" in prompt
     resolved_ws = str(Path("/tmp/test-ws").resolve())
     assert f"multi-agent-brief controls select --workspace {resolved_ws}" in prompt
-    assert f"multi-agent-brief gates check --workspace {resolved_ws}" in prompt
+    assert f"multi-agent-brief gates check --workspace {resolved_ws} --stage auditor" in prompt
+    assert f"multi-agent-brief gates check --workspace {resolved_ws} --stage finalize" in prompt
     assert f"multi-agent-brief state check --workspace {resolved_ws} --strict" in prompt
     assert f"multi-agent-brief state stage-complete --workspace {resolved_ws} --stage auditor" in prompt
     assert f"multi-agent-brief state finalize-complete --workspace {resolved_ws}" in prompt

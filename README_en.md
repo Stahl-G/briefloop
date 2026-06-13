@@ -53,7 +53,7 @@ The writer-facing model is not "how many control surfaces exist." Each run is me
 | Question | What it records | Where you see it |
 |---|---|---|
 | What stage this run is in | Current stage, missing artifacts, blockers, and the next safe action | `/mabw status`, `workflow_state.json`, `agent_handoff.md` |
-| Where each number came from | Claim Ledger records, source dates, audit results, and gate findings | `claim_ledger.json`, `quality_gate_report.json`, `source_appendix.md` |
+| Where each number came from | Claim Ledger records, source dates, audit results, and stage-scoped gate findings | `claim_ledger.json`, `gates/*_quality_gate_report.json`, `source_appendix.md` |
 | What reader preferences were approved | Human-approved reader guidance only; unapproved suggestions do not take effect | `improvement/ledger.jsonl`, `improvement_memory_snapshot.md` |
 | What checks are guarding delivery | Completion transactions, reader-final gate, source appendix, and delivery checks | `finalize_report.json`, `reader_clean`, `state finalize-complete` |
 
@@ -95,7 +95,7 @@ Corresponding `output/intermediate/claim_ledger.json` excerpt:
 }
 ```
 
-`output/intermediate/quality_gate_report.json` excerpt:
+`output/intermediate/gates/auditor_quality_gate_report.json` excerpt (`output/intermediate/quality_gate_report.json` is only the latest/legacy projection):
 
 ```json
 {

@@ -96,7 +96,7 @@ Check source support, orphan citations, unsupported numbers, missing dates, stal
 After `audit_report.json` exists:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace>
+multi-agent-brief gates check --workspace <workspace> --stage auditor
 multi-agent-brief state check --workspace <workspace> --strict
 multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
@@ -106,6 +106,7 @@ If state is blocked, choose `delegate_repair`, `request_human_review`, or `block
 After finalize writes reader-facing artifacts, run:
 
 ```bash
+multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 

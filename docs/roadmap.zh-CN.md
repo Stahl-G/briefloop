@@ -65,7 +65,7 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 ### v0.6.3
 
 - 已为 auditable artifacts 加入 deterministic material-fact、freshness 和 target-relevance gates。
-- `gates check`、`gates show` 和 `gates validate` 提供 `quality_gate_report.json` 的 CLI 入口。
+- `gates check`、`gates show` 和 `gates validate` 提供 `output/intermediate/gates/` 下 stage-scoped quality gate reports 的 CLI 入口；`quality_gate_report.json` 保留为 latest/legacy projection。
 - 质量门禁 blocking 只作用于当前 stage，并以明确 blocking 语义为准，不把所有 high severity finding 默认当成 runtime stop。
 - Python 不会 live-fetch market data、自动 recrawl source、改稿、执行 repair 或做 semantic truth judgment。
 

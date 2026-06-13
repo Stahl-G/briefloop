@@ -73,7 +73,7 @@ These surfaces separate content from evidence. LLMs may draft content artifacts,
 | `candidate_claims.json` | Candidate factual claims extracted from sources. | Specialist runtime output, then validated | Implemented | Content artifact; not final proof by itself. |
 | `screened_candidates.json` | Screened claims that should be preserved or intentionally excluded. | Specialist runtime output, then validated | Implemented | Coverage anchor for later brief generation. |
 | `claim_ledger.json` | Claim-level source support used by downstream brief writing and audit. | Specialist runtime output, then validated | Implemented | Source/evidence surface, not taste memory. |
-| `quality_gate_report.json` | Deterministic material-fact, freshness, target-relevance, and related gate findings. | Python | Implemented | Can block unsafe current-stage continuation/finalize decisions. |
+| `gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json` | Deterministic material-fact, freshness, target-relevance, and related gate findings. `quality_gate_report.json` remains a latest/legacy projection. | Python | Implemented | Stage-scoped reports can block unsafe auditor completion and finalize completion. |
 | `audit_report.json` | Semantic audit findings from the Auditor role. | Auditor runtime role | Implemented | Semantic review; not a deterministic gate report. |
 | `feedback_issues.json` | Structured human/audit feedback issues. | Python CLI from human/audit input | Implemented | Evidence for repair or future proposals; not guidance by itself. |
 | `repair_plan.json` | Bounded repair plan for current feedback issues. | Python CLI | Implemented | Does not execute repair automatically. |

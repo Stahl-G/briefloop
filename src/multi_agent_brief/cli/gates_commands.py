@@ -18,7 +18,7 @@ from multi_agent_brief.quality_gates.state import (
 def register(subparsers: argparse._SubParsersAction) -> None:
     gates_parser = subparsers.add_parser(
         "gates",
-        help="Run deterministic quality gates and inspect quality_gate_report.json.",
+        help="Run deterministic quality gates and inspect stage-scoped quality gate reports.",
     )
     actions = gates_parser.add_subparsers(dest="gates_action", required=True)
 
@@ -27,7 +27,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Run material-fact, freshness, and target-relevance gates.",
     )
     check_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
-    check_parser.add_argument("--brief", help="Brief path. Defaults to output/intermediate/audited_brief.md.")
+    check_parser.add_argument(
+        "--brief",
+        help="Brief path. Defaults to output/intermediate/audited_brief.md, or output/brief.md for --stage finalize.",
+    )
     check_parser.add_argument("--ledger", help="Claim Ledger path. Defaults to output/intermediate/claim_ledger.json.")
     check_parser.add_argument("--report-date", default="", help="Report date, e.g. 2026-06-08.")
     check_parser.add_argument("--max-source-age-days", type=int, help="Maximum current-source age in days.")
@@ -45,7 +48,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     show_parser = actions.add_parser(
         "show",
-        help="Show quality gate report state.",
+        help="Show quality gate report state, including stage-scoped reports and legacy projection.",
     )
     show_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
     show_parser.add_argument("--repo-workdir", help="Repository or packaged contract base.")
@@ -53,7 +56,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     validate_parser = actions.add_parser(
         "validate",
-        help="Validate quality_gate_report.json.",
+        help="Validate stage-scoped quality gate reports.",
     )
     validate_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
     validate_parser.add_argument("--repo-workdir", help="Repository or packaged contract base.")

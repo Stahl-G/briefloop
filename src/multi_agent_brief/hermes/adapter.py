@@ -177,7 +177,9 @@ def build_hermes_cron_plan(
                 "- output/intermediate/repair_plan.json\n"
                 "- output/intermediate/delta_audit_report.json\n\n"
                 "Optional quality gate state files are created only by gates commands:\n"
-                "- output/intermediate/quality_gate_report.json\n\n"
+                "- output/intermediate/gates/auditor_quality_gate_report.json\n"
+                "- output/intermediate/gates/finalize_quality_gate_report.json\n"
+                "- output/intermediate/quality_gate_report.json (legacy/latest projection)\n\n"
                 "Optional provenance projection files are created only by provenance commands:\n"
                 "- output/intermediate/provenance_graph.json\n\n"
                 f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n"
@@ -185,11 +187,11 @@ def build_hermes_cron_plan(
                 "scout -> screener -> claim-ledger -> analyst -> editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
                 f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
-                f"multi-agent-brief gates check --workspace {workspace_path}\n"
+                f"multi-agent-brief gates check --workspace {workspace_path} --stage auditor\n"
                 f"multi-agent-brief state check --workspace {workspace_path} --strict\n"
                 f"multi-agent-brief state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
                 f"Then run multi-agent-brief finalize --config {workspace_path}/config.yaml.\n"
-                f"After finalize writes reader-facing artifacts, run multi-agent-brief state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+                f"After finalize writes reader-facing artifacts, run multi-agent-brief gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run multi-agent-brief state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
                 "finalize is not a quality-gate executor.\n"
                 "Optionally run multi-agent-brief provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
@@ -227,7 +229,9 @@ def build_hermes_cron_plan(
                 "- output/intermediate/repair_plan.json\n"
                 "- output/intermediate/delta_audit_report.json\n\n"
                 "Optional quality gate state files are created only by gates commands:\n"
-                "- output/intermediate/quality_gate_report.json\n\n"
+                "- output/intermediate/gates/auditor_quality_gate_report.json\n"
+                "- output/intermediate/gates/finalize_quality_gate_report.json\n"
+                "- output/intermediate/quality_gate_report.json (legacy/latest projection)\n\n"
                 "Optional provenance projection files are created only by provenance commands:\n"
                 "- output/intermediate/provenance_graph.json\n\n"
                 f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n"
@@ -236,11 +240,11 @@ def build_hermes_cron_plan(
                 "scout -> screener -> claim-ledger -> analyst -> editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
                 f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
-                f"multi-agent-brief gates check --workspace {workspace_path}\n"
+                f"multi-agent-brief gates check --workspace {workspace_path} --stage auditor\n"
                 f"multi-agent-brief state check --workspace {workspace_path} --strict\n"
                 f"multi-agent-brief state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
                 f"Then run multi-agent-brief finalize --config {workspace_path}/config.yaml.\n"
-                f"After finalize writes reader-facing artifacts, run multi-agent-brief state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+                f"After finalize writes reader-facing artifacts, run multi-agent-brief gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run multi-agent-brief state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
                 "finalize is not a quality-gate executor.\n"
                 "Optionally run multi-agent-brief provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
@@ -388,7 +392,9 @@ Optional feedback state files:
 
 Optional quality gate state files:
 
-- `output/intermediate/quality_gate_report.json`
+- `output/intermediate/gates/auditor_quality_gate_report.json`
+- `output/intermediate/gates/finalize_quality_gate_report.json`
+- `output/intermediate/quality_gate_report.json` (legacy/latest projection)
 
 Optional provenance projection files:
 
@@ -554,7 +560,7 @@ multi-agent-brief inputs classify --config <workspace>/config.yaml
 13. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace>
+multi-agent-brief gates check --workspace <workspace> --stage auditor
 multi-agent-brief state check --workspace <workspace> --strict
 ```
 
@@ -575,6 +581,7 @@ multi-agent-brief finalize --config <workspace>/config.yaml
 16. After finalize writes reader-facing artifacts, verify completion:
 
 ```bash
+multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 
@@ -820,7 +827,9 @@ Optional feedback state files:
 - output/intermediate/delta_audit_report.json
 
 Optional quality gate state files:
-- output/intermediate/quality_gate_report.json
+- output/intermediate/gates/auditor_quality_gate_report.json
+- output/intermediate/gates/finalize_quality_gate_report.json
+- output/intermediate/quality_gate_report.json (legacy/latest projection)
 
 Optional provenance projection files:
 - output/intermediate/provenance_graph.json
@@ -943,7 +952,7 @@ As the Hermes Orchestrator main agent, execute:
 
 18. After audit_report.json exists, select and run deterministic quality gates, then refresh runtime state:
     multi-agent-brief controls select --workspace {workspace} --control quality_gates --selection enable --reason "Use quality gates before finalize."
-    multi-agent-brief gates check --workspace {workspace}
+    multi-agent-brief gates check --workspace {workspace} --stage auditor
     multi-agent-brief state check --workspace {workspace} --strict
 
 19. If state is not blocked, record the auditor completion:
@@ -955,6 +964,7 @@ As the Hermes Orchestrator main agent, execute:
     multi-agent-brief finalize --config {workspace}/config.yaml
 
 22. After finalize writes delivery artifacts under output/delivery/, verify completion:
+    multi-agent-brief gates check --workspace {workspace} --stage finalize --brief {workspace}/output/brief.md
     multi-agent-brief state finalize-complete --workspace {workspace} --reason "Reader-facing artifacts passed finalize checks."
 
 23. Optional audit/debug projection after runtime state exists:

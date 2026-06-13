@@ -528,6 +528,23 @@ def _control_quality_gates(*, current_stage: str | None, files: dict[str, bool])
         if required
         else "Quality gates are available when auditable draft and claim ledger artifacts exist."
     )
+    if current_stage == "finalize":
+        execution_hint = (
+            "multi-agent-brief gates check --workspace <workspace> "
+            "--stage finalize --brief <workspace>/output/brief.md"
+        )
+        inputs = ["output/brief.md", "output/intermediate/claim_ledger.json"]
+        outputs = [
+            "output/intermediate/gates/finalize_quality_gate_report.json",
+            "output/intermediate/quality_gate_report.json",
+        ]
+    else:
+        execution_hint = "multi-agent-brief gates check --workspace <workspace> --stage auditor"
+        inputs = ["output/intermediate/audited_brief.md", "output/intermediate/claim_ledger.json"]
+        outputs = [
+            "output/intermediate/gates/auditor_quality_gate_report.json",
+            "output/intermediate/quality_gate_report.json",
+        ]
     return _base_control(
         control_id="quality_gates",
         title="Deterministic quality gates",
@@ -535,11 +552,11 @@ def _control_quality_gates(*, current_stage: str | None, files: dict[str, bool])
         requires_human_approval=False,
         reason=reason,
         execution_type="cli",
-        execution_hint="multi-agent-brief gates check --workspace <workspace>",
-        inputs=["output/intermediate/audited_brief.md", "output/intermediate/claim_ledger.json"],
-        outputs=["output/intermediate/quality_gate_report.json"],
+        execution_hint=execution_hint,
+        inputs=inputs,
+        outputs=outputs,
         selection_required=required,
-        blocking_semantics="Existing quality gate runtime blockers apply only after gates check creates a report or policy enables gates.",
+        blocking_semantics="Existing quality gate runtime blockers apply only after gates check creates the stage-scoped report or policy enables gates.",
     )
 
 
@@ -792,6 +809,8 @@ def _context_signature(ws: Path, *, context: dict[str, Any] | None = None) -> st
                 "output/brief.md",
                 "output/intermediate/feedback_issues.json",
                 "output/intermediate/repair_plan.json",
+                "output/intermediate/gates/auditor_quality_gate_report.json",
+                "output/intermediate/gates/finalize_quality_gate_report.json",
                 "output/intermediate/quality_gate_report.json",
             )
         },
@@ -897,6 +916,12 @@ def _load_context(ws: Path) -> dict[str, Any]:
         "feedback_issues": (ws / "output" / "intermediate" / "feedback_issues.json").exists(),
         "repair_plan": (ws / "output" / "intermediate" / "repair_plan.json").exists(),
         "quality_gate_report": (ws / "output" / "intermediate" / "quality_gate_report.json").exists(),
+        "auditor_quality_gate_report": (
+            ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
+        ).exists(),
+        "finalize_quality_gate_report": (
+            ws / "output" / "intermediate" / "gates" / "finalize_quality_gate_report.json"
+        ).exists(),
     }
     return {
         "warnings": warnings,

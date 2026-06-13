@@ -29,8 +29,9 @@ from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.quality_gates.contract import (
     QualityGateContractError,
     current_stage_quality_gate_blocking_reasons,
-    load_quality_gate_report,
+    load_quality_gate_report_for_stage,
     quality_gate_artifact_activated,
+    quality_gate_report_path_for_stage,
     validate_quality_gate_report_payload,
 )
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
@@ -1531,31 +1532,37 @@ def _completion_decision_gate_reasons(
     return reasons
 
 
-def _quality_gate_pass_reasons(
+def _stage_quality_gate_pass_reasons(
     *,
     workspace: Path,
+    stage_id: str,
+    expected_brief: str,
+    expected_ledger: str,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[str]:
     try:
-        payload = load_quality_gate_report(workspace)
+        payload = load_quality_gate_report_for_stage(workspace, stage_id, allow_legacy=False)
     except QualityGateContractError as exc:
         return [f"Quality gate report is invalid: {exc}"]
     if payload is None:
-        return ["quality_gate_report.json is required before completing this stage."]
+        report_path = quality_gate_report_path_for_stage(workspace, stage_id)
+        try:
+            rel_path = report_path.relative_to(workspace).as_posix()
+        except ValueError:
+            rel_path = str(report_path)
+        return [f"{rel_path} is required before completing stage '{stage_id}'."]
 
     errors = validate_quality_gate_report_payload(payload, stages=stages, artifacts=artifacts)
     if errors:
         return [f"Quality gate report is invalid: {' '.join(errors)}"]
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     gate_stage_id = str(metadata.get("gate_stage_id") or metadata.get("stage_id") or "")
-    if gate_stage_id != "auditor":
+    if gate_stage_id != stage_id:
         return [
-            "Quality gate report must be generated for auditor completion "
-            f"(metadata.gate_stage_id='auditor'); got {gate_stage_id or '<missing>'}."
+            f"Quality gate report must be generated for {stage_id} completion "
+            f"(metadata.gate_stage_id='{stage_id}'); got {gate_stage_id or '<missing>'}."
         ]
-    expected_brief = "output/intermediate/audited_brief.md"
-    expected_ledger = "output/intermediate/claim_ledger.json"
     brief_ref = str(metadata.get("brief") or metadata.get("audited_brief") or "")
     ledger_ref = str(metadata.get("ledger") or metadata.get("claim_ledger") or "")
     if brief_ref != expected_brief:
@@ -1594,6 +1601,38 @@ def _quality_gate_pass_reasons(
             + ", ".join(finding for finding in blocking_findings if finding)
         ]
     return []
+
+
+def _quality_gate_pass_reasons(
+    *,
+    workspace: Path,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
+    return _stage_quality_gate_pass_reasons(
+        workspace=workspace,
+        stage_id="auditor",
+        expected_brief="output/intermediate/audited_brief.md",
+        expected_ledger="output/intermediate/claim_ledger.json",
+        stages=stages,
+        artifacts=artifacts,
+    )
+
+
+def _finalize_quality_gate_pass_reasons(
+    *,
+    workspace: Path,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
+    return _stage_quality_gate_pass_reasons(
+        workspace=workspace,
+        stage_id="finalize",
+        expected_brief="output/brief.md",
+        expected_ledger="output/intermediate/claim_ledger.json",
+        stages=stages,
+        artifacts=artifacts,
+    )
 
 
 def _resolve_report_artifact_path(workspace: Path, value: Any) -> Path | None:
@@ -1646,11 +1685,24 @@ def _finalize_report_delivery_artifact_reasons(workspace: Path, report: dict[str
     return reasons
 
 
-def _finalize_completion_reasons(workspace: Path) -> list[str]:
+def _finalize_completion_reasons(
+    workspace: Path,
+    *,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
     reasons: list[str] = []
+    reasons.extend(
+        _finalize_quality_gate_pass_reasons(
+            workspace=workspace,
+            stages=stages,
+            artifacts=artifacts,
+        )
+    )
     report_path = workspace / "output" / "intermediate" / "finalize_report.json"
     if not report_path.exists():
-        return ["finalize_report.json is required before finalize-complete."]
+        reasons.append("finalize_report.json is required before finalize-complete.")
+        return reasons
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -2302,7 +2354,7 @@ def _complete_stage_transaction(
         )
 
     if finalize:
-        finalize_reasons = _finalize_completion_reasons(ws)
+        finalize_reasons = _finalize_completion_reasons(ws, stages=stages, artifacts=artifacts)
         if finalize_reasons:
             _raise_completion_reasons(
                 message="Cannot complete finalize stage",

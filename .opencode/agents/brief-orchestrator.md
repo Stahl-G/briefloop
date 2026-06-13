@@ -52,8 +52,8 @@ Responsibilities:
 - Treat source_candidates.yaml as a source plan, not source evidence. Scout must extract candidate claims from actual source content or materialized source files.
 - Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet. Summary-only notes are discovery hints, not evidence.
 - Use state decide only for non-success decisions such as retry_stage, delegate_repair, request_human_review, or block_run; if the command rejects the decision or completion, stop and correct the stage state.
-- Before finalize, after Auditor completes, run gates check and strict state check. If blocking findings exist, do not finalize; use feedback/repair, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
-- After finalize writes reader-facing artifacts, verify completion with multi-agent-brief state finalize-complete before reporting the run complete.
+- Before finalize, after Auditor completes, run gates check with `--stage auditor` and strict state check. If blocking findings exist, do not finalize; use feedback/repair, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
+- After finalize writes reader-facing artifacts, verify completion with `multi-agent-brief gates check --stage finalize --brief <workspace>/output/brief.md` and then multi-agent-brief state finalize-complete before reporting the run complete.
 - Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
 - Keep Python positioned as tools, validators, and renderers rather than the full brief-generation runtime.
 - Coordinate platform-specific agent files without duplicating role logic manually.

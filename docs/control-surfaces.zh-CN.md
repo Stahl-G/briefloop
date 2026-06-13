@@ -58,7 +58,7 @@ MABW 的控制面可以按不同粒度统计：
 | `candidate_claims.json` | 从 sources 中提取的候选事实 claim。 | specialist runtime 输出，再验证 | 已实现 | 内容 artifact；本身不是最终证明。 |
 | `screened_candidates.json` | 经筛选后应保留或明确排除的 claims。 | specialist runtime 输出，再验证 | 已实现 | 后续 brief generation 的 coverage anchor。 |
 | `claim_ledger.json` | 下游 brief writing 和 audit 使用的 claim-level source support。 | specialist runtime 输出，再验证 | 已实现 | source/evidence surface，不是 taste memory。 |
-| `quality_gate_report.json` | material-fact、freshness、target-relevance 等确定性 gate findings。 | Python | 已实现 | 可阻断不安全的 current-stage continue/finalize decision。 |
+| `gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json` | material-fact、freshness、target-relevance 等确定性 gate findings。`quality_gate_report.json` 保留为 latest/legacy projection。 | Python | 已实现 | stage-scoped reports 可阻断不安全的 auditor completion 和 finalize completion。 |
 | `audit_report.json` | Auditor role 的语义审计发现。 | Auditor runtime role | 已实现 | 语义 review，不等同于 deterministic gate report。 |
 | `feedback_issues.json` | 结构化 human/audit feedback issues。 | Python CLI，来自 human/audit input | 已实现 | repair 或未来 proposal 的 evidence，本身不是 guidance。 |
 | `repair_plan.json` | 当前 feedback issues 的有界 repair plan。 | Python CLI | 已实现 | 不自动执行 repair。 |

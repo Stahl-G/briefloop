@@ -65,7 +65,7 @@ Two design principles guide the next phases:
 ### v0.6.3
 
 - Deterministic material-fact, freshness, and target-relevance gates were added for auditable artifacts.
-- `gates check`, `gates show`, and `gates validate` provide CLI entry points for `quality_gate_report.json`.
+- `gates check`, `gates show`, and `gates validate` provide CLI entry points for stage-scoped quality gate reports under `output/intermediate/gates/`; `quality_gate_report.json` remains a latest/legacy projection.
 - Quality gate blocking is scoped to the current stage and uses explicit blocking semantics rather than treating every high-severity finding as a runtime stop.
 - Python does not live-fetch market data, recrawl sources, rewrite briefs, execute repair, or make semantic truth judgments.
 

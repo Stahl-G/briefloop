@@ -1035,8 +1035,8 @@ def _check_hermes_no_skip_finalize(*, repo_workdir: Path) -> dict[str, Any]:
             errors.append(f"{label} does not keep gates/state completion transactions around finalize.")
         if "not a quality-gate executor" not in text and "only renders reader-facing outputs" not in text:
             errors.append(f"{label} does not warn that finalize alone is not a quality-gate executor.")
-    if "quality_gate_report.json" not in combined_text:
-        errors.append("Hermes runtime guidance does not reference quality_gate_report.json.")
+    if "auditor_quality_gate_report.json" not in combined_text or "finalize_quality_gate_report.json" not in combined_text:
+        errors.append("Hermes runtime guidance does not reference stage-scoped quality gate reports.")
     return {
         "ok": not errors,
         "errors": errors,

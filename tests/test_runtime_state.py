@@ -99,7 +99,10 @@ def _write_quality_gate_report(
     status: str = "pass",
     blocking: bool = False,
     stage_id: str = "auditor",
+    legacy_only: bool = False,
 ) -> None:
+    gate_artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
+    brief_ref = "output/brief.md" if stage_id == "finalize" else "output/intermediate/audited_brief.md"
     findings = []
     if blocking:
         findings.append({
@@ -110,54 +113,61 @@ def _write_quality_gate_report(
             "blocking": True,
             "stage_id": stage_id,
             "gate_stage_id": stage_id,
-            "artifact_id": "quality_gate_report",
-            "gate_artifact_id": "quality_gate_report",
+            "artifact_id": gate_artifact_id,
+            "gate_artifact_id": gate_artifact_id,
             "repair_stage_id": stage_id,
             "repair_artifact_id": "audited_brief",
             "repair_owner": "orchestrator",
             "message": "Synthetic blocking finding.",
             "metadata": {},
         })
-    (_intermediate(ws) / "quality_gate_report.json").write_text(
-        json.dumps({
-            "schema_version": "multi-agent-brief-quality-gates/v1",
-            "created_at": "2026-06-11T00:00:00+00:00",
-            "updated_at": "2026-06-11T00:00:00+00:00",
-            "workspace": ".",
-            "report_date": "2026-06-11",
-            "policy_pack": "default",
-            "status": status,
-            "gate_results": [
-                {
-                    "gate_id": "freshness",
-                    "status": "pass",
-                    "blocking": False,
-                    "finding_ids": [],
-                },
-                {
-                    "gate_id": "material_fact",
-                    "status": "pass",
-                    "blocking": False,
-                    "finding_ids": [],
-                },
-                {
-                    "gate_id": "target_relevance",
-                    "status": "fail" if blocking else status,
-                    "blocking": blocking,
-                    "finding_ids": [item["finding_id"] for item in findings],
-                }
-            ],
-            "findings": findings,
-            "metadata": {
-                "brief": "output/intermediate/audited_brief.md",
-                "ledger": "output/intermediate/claim_ledger.json",
-                "stage_id": stage_id,
-                "gate_stage_id": stage_id,
-                "gate_artifact_id": "quality_gate_report",
+    payload = {
+        "schema_version": "multi-agent-brief-quality-gates/v1",
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "updated_at": "2026-06-11T00:00:00+00:00",
+        "workspace": ".",
+        "report_date": "2026-06-11",
+        "policy_pack": "default",
+        "status": status,
+        "gate_results": [
+            {
+                "gate_id": "freshness",
+                "status": "pass",
+                "blocking": False,
+                "finding_ids": [],
             },
-        }),
-        encoding="utf-8",
-    )
+            {
+                "gate_id": "material_fact",
+                "status": "pass",
+                "blocking": False,
+                "finding_ids": [],
+            },
+            {
+                "gate_id": "target_relevance",
+                "status": "fail" if blocking else status,
+                "blocking": blocking,
+                "finding_ids": [item["finding_id"] for item in findings],
+            },
+        ],
+        "findings": findings,
+        "metadata": {
+            "brief": brief_ref,
+            "ledger": "output/intermediate/claim_ledger.json",
+            "stage_id": stage_id,
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": gate_artifact_id,
+        },
+    }
+    payload_text = json.dumps(payload)
+    if not legacy_only:
+        report_path = (
+            _intermediate(ws)
+            / "gates"
+            / ("finalize_quality_gate_report.json" if stage_id == "finalize" else "auditor_quality_gate_report.json")
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(payload_text, encoding="utf-8")
+    (_intermediate(ws) / "quality_gate_report.json").write_text(payload_text, encoding="utf-8")
 
 
 def _write_finalize_report(
@@ -267,7 +277,7 @@ def _advance_to_auditor(ws: Path) -> None:
 def _complete_finalized_workspace(ws: Path) -> dict:
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     return complete_finalize_transaction(
         workspace=ws,
@@ -309,8 +319,10 @@ def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
     assert registry["claim_ledger"]["status"] == "expected"
     assert registry["audited_brief"]["status"] == "expected"
     assert registry["reader_brief"]["status"] == "expected"
-    assert registry["quality_gate_report"]["status"] == "expected"
-    assert registry["quality_gate_report"]["validation_result"] == "not_checked"
+    assert registry["auditor_quality_gate_report"]["status"] == "expected"
+    assert registry["finalize_quality_gate_report"]["status"] == "expected"
+    assert registry["auditor_quality_gate_report"]["validation_result"] == "not_checked"
+    assert registry["finalize_quality_gate_report"]["validation_result"] == "not_checked"
 
 
 def test_state_check_strict_fresh_workspace_returns_zero(tmp_path):
@@ -821,11 +833,13 @@ def test_optional_feedback_artifacts_do_not_become_missing_after_auditor_complet
     assert registry["feedback_issues"]["status"] == "expected"
     assert registry["repair_plan"]["status"] == "expected"
     assert registry["delta_audit_report"]["status"] == "expected"
-    assert registry["quality_gate_report"]["status"] == "expected"
+    assert registry["auditor_quality_gate_report"]["status"] == "expected"
+    assert registry["finalize_quality_gate_report"]["status"] == "expected"
     assert registry["feedback_issues"]["validation_result"] == "not_checked"
     assert registry["repair_plan"]["validation_result"] == "not_checked"
     assert registry["delta_audit_report"]["validation_result"] == "not_checked"
-    assert registry["quality_gate_report"]["validation_result"] == "not_checked"
+    assert registry["auditor_quality_gate_report"]["validation_result"] == "not_checked"
+    assert registry["finalize_quality_gate_report"]["validation_result"] == "not_checked"
 
 
 def test_delta_audit_report_missing_only_when_repair_active(tmp_path):
@@ -1398,7 +1412,7 @@ def test_auditor_stage_complete_rejects_incomplete_quality_gate_report(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
-    report_path = _intermediate(ws) / "quality_gate_report.json"
+    report_path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["gate_results"] = [
         result for result in report["gate_results"] if result["gate_id"] != "freshness"
@@ -1422,7 +1436,7 @@ def test_auditor_stage_complete_rejects_missing_quality_gate_input_metadata(tmp_
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_auditor(ws)
     _write_quality_gate_report(ws)
-    report_path = _intermediate(ws) / "quality_gate_report.json"
+    report_path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["metadata"].pop("brief")
     report["metadata"].pop("ledger")
@@ -1454,6 +1468,59 @@ def test_auditor_stage_complete_passes_with_clean_quality_gate_report(tmp_path):
     )
 
     assert state["workflow_state"]["current_stage"] == "finalize"
+
+
+def test_auditor_stage_complete_ignores_legacy_quality_gate_projection(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws, legacy_only=True)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="auditor complete",
+        )
+
+    assert excinfo.value.error_code == "E_QUALITY_GATE_REQUIRED"
+    assert "output/intermediate/gates/auditor_quality_gate_report.json is required" in str(excinfo.value)
+
+
+def test_finalize_gate_does_not_mutate_frozen_auditor_gate_report(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws)
+
+    auditor_state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor and gates passed",
+    )
+    auditor_report = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    auditor_sha = auditor_state["artifact_registry"]["artifacts"]["auditor_quality_gate_report"]["sha256"]
+    assert auditor_sha == runtime_state._sha256_file(auditor_report)
+
+    _write_finalize_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    finalize_report = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+
+    assert finalize_report.exists()
+    assert runtime_state._sha256_file(auditor_report) == auditor_sha
+
+    state = complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader-facing gates and final artifacts passed",
+    )
+
+    registry = state["artifact_registry"]["artifacts"]
+    assert registry["auditor_quality_gate_report"]["sha256"] == auditor_sha
+    assert registry["finalize_quality_gate_report"]["sha256"] == runtime_state._sha256_file(finalize_report)
+    assert state["workflow_state"]["current_stage"] is None
 
 
 def test_auditor_stage_complete_rejects_audit_report_missing_audit_status(tmp_path):
@@ -1572,7 +1639,7 @@ def test_finalize_complete_requires_passing_audit_binding(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     report_path = _intermediate(ws) / "finalize_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1594,7 +1661,7 @@ def test_finalize_complete_rejects_stale_audit_binding_hash(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     report_path = _intermediate(ws) / "finalize_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1618,7 +1685,7 @@ def test_finalize_complete_rejects_forged_clean_report_with_dirty_artifact(tmp_p
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     (ws / "output" / "brief.md").write_text("# Brief\n\nLeaked [CL-0001].\n", encoding="utf-8")
 
@@ -1636,7 +1703,7 @@ def test_finalize_complete_records_terminal_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
 
     state = complete_finalize_transaction(
@@ -1727,7 +1794,7 @@ def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
     initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     run_id = initialized["manifest"]["run_id"]
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     archive = ws / "output" / "runs" / run_id
@@ -1804,7 +1871,7 @@ def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delive
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     report_path = _intermediate(ws) / "finalize_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1847,6 +1914,24 @@ def test_finalize_complete_accepts_reader_facing_quality_gate_report(tmp_path):
     assert state["workflow_state"]["stage_statuses"]["finalize"]["status"] == "complete"
 
 
+def test_finalize_complete_ignores_legacy_quality_gate_projection(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_finalize_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize", legacy_only=True)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader-facing gates and final artifacts passed",
+        )
+
+    assert excinfo.value.error_code == "E_READER_FINAL_GATE_FAILED"
+    assert "output/intermediate/gates/finalize_quality_gate_report.json is required" in str(excinfo.value)
+
+
 def test_completion_transactions_preserve_manifest_extensions(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -1878,7 +1963,7 @@ def test_completion_transactions_preserve_manifest_extensions(tmp_path):
     assert after_check["improvement"] == manifest["improvement"]
 
     _advance_to_finalize(ws)
-    _write_quality_gate_report(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     complete_finalize_transaction(
         workspace=ws,

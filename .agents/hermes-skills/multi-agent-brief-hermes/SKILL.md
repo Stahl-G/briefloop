@@ -30,7 +30,7 @@ Audience memory files: `audience_profile.md` and `output/intermediate/audience_p
 
 Control switchboard files: `output/intermediate/orchestrator_control_switchboard.json` lists available/recommended controls, and `output/intermediate/control_selections.json` records Orchestrator enable/defer/reject choices. Selection is not execution.
 
-Control files are produced by explicit commands: feedback uses `output/intermediate/feedback_issues.json`, `output/intermediate/repair_plan.json`, and `output/intermediate/delta_audit_report.json`; gates check creates `output/intermediate/quality_gate_report.json`; provenance build creates `output/intermediate/provenance_graph.json` as an audit/debug projection, not semantic proof. Before finalize, gates check is required; missing `quality_gate_report.json` means gates have not been checked, not that they passed.
+Control files are produced by explicit commands: feedback uses `output/intermediate/feedback_issues.json`, `output/intermediate/repair_plan.json`, and `output/intermediate/delta_audit_report.json`; gates check creates stage-scoped reports under `output/intermediate/gates/` and also refreshes `output/intermediate/quality_gate_report.json` as a legacy/latest projection; provenance build creates `output/intermediate/provenance_graph.json` as an audit/debug projection, not semantic proof. Before finalize, `gates check --stage auditor` is required; after finalize, `gates check --stage finalize --brief <workspace>/output/brief.md` is required before `finalize-complete`.
 
 Orchestrator control loop:
 
@@ -104,10 +104,11 @@ If runtime WebSearch reports `Did 0 searches`, or every query returns an empty r
 Before finalize, run this explicit success path:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace>
+multi-agent-brief gates check --workspace <workspace> --stage auditor
 multi-agent-brief state check --workspace <workspace> --strict
 multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 multi-agent-brief finalize --config <workspace>/config.yaml
+multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 

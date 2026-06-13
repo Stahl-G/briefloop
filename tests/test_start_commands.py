@@ -148,6 +148,8 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "Selection is not execution" in text or "selection is not execution" in text
     assert "feedback_issues.json" in text
     assert "repair_plan.json" in text
+    assert "auditor_quality_gate_report.json" in text
+    assert "finalize_quality_gate_report.json" in text
     assert "quality_gate_report.json" in text
     assert "provenance_graph.json" in text
     assert "multi-agent-brief state stage-complete --workspace <workspace>" in text
@@ -163,7 +165,8 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "must not rewrite them in place" in text
     assert "route repair back to the owner stage" in text
     assert "REFERENCE_RUN_ORCHESTRATOR_PROTOCOL.md" in text
-    assert "multi-agent-brief gates check --workspace <workspace>" in text
+    assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in text
+    assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in text
     assert "multi-agent-brief state check --workspace <workspace> --strict" in text
     assert "Did 0 searches" in text
     assert "every query returns an empty result set" in text
@@ -323,6 +326,8 @@ def test_start_does_not_generate_brief(tmp_path):
     assert not (ws / "output" / "intermediate" / "repair_plan.json").exists()
     assert not (ws / "output" / "intermediate" / "delta_audit_report.json").exists()
     assert not (ws / "output" / "intermediate" / "quality_gate_report.json").exists()
+    assert not (ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json").exists()
+    assert not (ws / "output" / "intermediate" / "gates" / "finalize_quality_gate_report.json").exists()
     assert not (ws / "output" / "intermediate" / "provenance_graph.json").exists()
     assert (ws / "output" / "intermediate" / "orchestrator_control_switchboard.json").exists()
     assert not (ws / "output" / "intermediate" / "control_selections.json").exists()

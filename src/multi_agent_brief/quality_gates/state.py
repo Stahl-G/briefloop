@@ -28,10 +28,13 @@ from multi_agent_brief.orchestrator.runtime_state import (
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.quality_gates.contract import (
     GATE_IDS,
-    QUALITY_GATE_REPORT_FILE,
     QUALITY_GATE_SCHEMA,
+    QUALITY_GATE_STATE_FILES,
     empty_quality_gate_report,
     load_quality_gate_report,
+    load_quality_gate_report_for_stage,
+    quality_gate_report_key_for_stage,
+    quality_gate_report_path_for_stage,
     quality_gate_paths,
     validate_quality_gate_report_payload,
     validate_quality_gate_workspace,
@@ -654,10 +657,12 @@ def check_quality_gates(
     ws = _require_workspace(workspace)
     _repo, stages, artifacts = _contracts(workspace=ws, repo_workdir=repo_workdir)
 
-    brief_path = _resolve_path(ws, brief, "output/intermediate/audited_brief.md")
+    requested_stage_id = stage_id or "auditor"
+    default_brief = "output/brief.md" if requested_stage_id == "finalize" else "output/intermediate/audited_brief.md"
+    brief_path = _resolve_path(ws, brief, default_brief)
     reader_mode = _reader_facing_mode(ws, brief_path)
-    gate_stage_id = "finalize" if reader_mode else (stage_id or "auditor")
-    gate_artifact_id = "reader_brief" if reader_mode else "quality_gate_report"
+    gate_stage_id = stage_id or ("finalize" if reader_mode else "auditor")
+    gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)
     if not _stage_exists(stages, gate_stage_id):
         raise RuntimeStateError(
             f"Unknown gate stage: {gate_stage_id}",
@@ -744,12 +749,17 @@ def check_quality_gates(
             details={"errors": errors},
         )
 
-    report_path = quality_gate_paths(ws)["quality_gate_report"]
+    report_path = quality_gate_report_path_for_stage(ws, gate_stage_id)
+    legacy_report_path = quality_gate_paths(ws)["quality_gate_report"]
     old_report = report_path.read_bytes() if report_path.exists() else None
+    old_legacy_report = legacy_report_path.read_bytes() if legacy_report_path.exists() else None
     wrote_report = False
+    wrote_legacy_report = False
     try:
         _write_json_atomic(report_path, payload)
         wrote_report = True
+        _write_json_atomic(legacy_report_path, payload)
+        wrote_legacy_report = True
         run_id = _runtime_run_id(workspace=ws, repo_workdir=repo_workdir)
         append_event(
             workspace=ws,
@@ -761,6 +771,8 @@ def check_quality_gates(
             reason=f"Quality gates checked with status {payload['status']}.",
             metadata={
                 "status": payload["status"],
+                "report_path": _workspace_relative(ws, report_path),
+                "legacy_projection_path": _workspace_relative(ws, legacy_report_path),
                 "finding_count": len(findings),
                 "blocking_count": sum(1 for finding in findings if finding.get("blocking_level") == "blocking"),
             },
@@ -788,6 +800,11 @@ def check_quality_gates(
                 metadata={},
             )
     except Exception:
+        if wrote_legacy_report:
+            if old_legacy_report is None:
+                legacy_report_path.unlink(missing_ok=True)
+            else:
+                legacy_report_path.write_bytes(old_legacy_report)
         if wrote_report:
             if old_report is None:
                 report_path.unlink(missing_ok=True)
@@ -809,6 +826,14 @@ def show_quality_gates(
         report = load_quality_gate_report(ws)
     except Exception:
         report = None
+    stage_reports: dict[str, Any] = {}
+    for stage in ("auditor", "finalize"):
+        try:
+            stage_report = load_quality_gate_report_for_stage(ws, stage, allow_legacy=False)
+        except Exception:
+            stage_report = None
+        if stage_report is not None:
+            stage_reports[quality_gate_report_key_for_stage(stage)] = stage_report
     validation = validate_quality_gates_workspace(
         workspace=ws,
         repo_workdir=repo_workdir,
@@ -816,8 +841,9 @@ def show_quality_gates(
     return {
         "ok": bool(validation.get("ok")),
         "workspace": str(ws),
-        "quality_gate_state_files": {"quality_gate_report": QUALITY_GATE_REPORT_FILE},
+        "quality_gate_state_files": QUALITY_GATE_STATE_FILES,
         "quality_gate_report": report or empty_quality_gate_report(),
+        "stage_quality_gate_reports": stage_reports,
         "validation": validation,
     }
 

@@ -42,6 +42,8 @@ OPTIONAL_INPUTS = {
     "feedback_issues": "output/intermediate/feedback_issues.json",
     "repair_plan": "output/intermediate/repair_plan.json",
     "delta_audit_report": "output/intermediate/delta_audit_report.json",
+    "auditor_quality_gate_report": "output/intermediate/gates/auditor_quality_gate_report.json",
+    "finalize_quality_gate_report": "output/intermediate/gates/finalize_quality_gate_report.json",
     "quality_gate_report": "output/intermediate/quality_gate_report.json",
     "reader_brief": "output/brief.md",
 }
@@ -746,44 +748,70 @@ def _add_quality_gate_projection(
     stage_order: list[str],
     artifact_records: dict[str, dict[str, Any]],
 ) -> None:
-    rel_path = "output/intermediate/quality_gate_report.json"
-    payload = _read_optional_json(workspace, rel_path, warnings=warnings, label="quality_gate_report.json")
-    if payload is None:
+    scoped_report_paths = [
+        (
+            "output/intermediate/gates/auditor_quality_gate_report.json",
+            "auditor_quality_gate_report.json",
+        ),
+        (
+            "output/intermediate/gates/finalize_quality_gate_report.json",
+            "finalize_quality_gate_report.json",
+        ),
+    ]
+    payloads: list[tuple[str, dict[str, Any]]] = []
+    for rel_path, label in scoped_report_paths:
+        payload = _read_optional_json(workspace, rel_path, warnings=warnings, label=label)
+        if payload is not None:
+            payloads.append((rel_path, payload))
+    if not payloads:
+        legacy_rel_path = "output/intermediate/quality_gate_report.json"
+        legacy_payload = _read_optional_json(
+            workspace,
+            legacy_rel_path,
+            warnings=warnings,
+            label="quality_gate_report.json",
+        )
+        if legacy_payload is not None:
+            payloads.append((legacy_rel_path, legacy_payload))
+    if not payloads:
         return
-    _add_source_file(workspace, workspace / rel_path, source_files)
     known_stages = set(stage_order)
     known_artifacts = set(artifact_records)
-    for finding in payload.get("findings") or []:
-        if not isinstance(finding, dict):
-            continue
-        finding_id = str(finding.get("finding_id") or "")
-        if not finding_id:
-            continue
-        graph.add_node({
-            "id": node_id("gate_finding", finding_id),
-            "type": "gate_finding",
-            "finding_id": finding_id,
-            "finding_type": finding.get("finding_type"),
-            "severity": finding.get("severity"),
-            "blocking_level": finding.get("blocking_level"),
-            "blocking": finding.get("blocking"),
-        })
-        stage_id = str(finding.get("gate_stage_id") or finding.get("stage_id") or "")
-        artifact_id = str(finding.get("gate_artifact_id") or finding.get("artifact_id") or "")
-        if stage_id in known_stages:
-            graph.add_edge({
-                "from": node_id("gate_finding", finding_id),
-                "to": node_id("stage", stage_id),
-                "type": "gate_finding_targets_stage",
-                "method": "quality_gate_finding_stage_id",
+    for rel_path, payload in payloads:
+        _add_source_file(workspace, workspace / rel_path, source_files)
+        for finding in payload.get("findings") or []:
+            if not isinstance(finding, dict):
+                continue
+            finding_id = str(finding.get("finding_id") or "")
+            if not finding_id:
+                continue
+            graph.add_node({
+                "id": node_id("gate_finding", finding_id),
+                "type": "gate_finding",
+                "finding_id": finding_id,
+                "finding_type": finding.get("finding_type"),
+                "severity": finding.get("severity"),
+                "blocking_level": finding.get("blocking_level"),
+                "blocking": finding.get("blocking"),
             })
-        if artifact_id in known_artifacts:
-            graph.add_edge({
-                "from": node_id("gate_finding", finding_id),
-                "to": node_id("artifact", artifact_id),
-                "type": "gate_finding_targets_artifact",
-                "method": "quality_gate_finding_artifact_id",
-            })
+            stage_id = str(finding.get("gate_stage_id") or finding.get("stage_id") or "")
+            artifact_id = str(finding.get("gate_artifact_id") or finding.get("artifact_id") or "")
+            if artifact_id == "quality_gate_report" and "auditor_quality_gate_report" in known_artifacts:
+                artifact_id = "auditor_quality_gate_report"
+            if stage_id in known_stages:
+                graph.add_edge({
+                    "from": node_id("gate_finding", finding_id),
+                    "to": node_id("stage", stage_id),
+                    "type": "gate_finding_targets_stage",
+                    "method": "quality_gate_finding_stage_id",
+                })
+            if artifact_id in known_artifacts:
+                graph.add_edge({
+                    "from": node_id("gate_finding", finding_id),
+                    "to": node_id("artifact", artifact_id),
+                    "type": "gate_finding_targets_artifact",
+                    "method": "quality_gate_finding_artifact_id",
+                })
 
 
 def _append_provenance_event(

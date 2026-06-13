@@ -299,7 +299,7 @@ afterward when appropriate.
 Before finalize, run gates/state review:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace>
+multi-agent-brief gates check --workspace <workspace> --stage auditor
 multi-agent-brief state check --workspace <workspace> --strict
 ```
 
@@ -307,6 +307,7 @@ Only finalize after audit, gates, and state review pass:
 
 ```bash
 multi-agent-brief finalize --config <workspace>/config.yaml
+multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 ```
 """)
 

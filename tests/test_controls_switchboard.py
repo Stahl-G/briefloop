@@ -89,6 +89,15 @@ def _control_by_id(switchboard: dict, control_id: str) -> dict:
     raise AssertionError(f"control not found: {control_id}")
 
 
+def _set_current_stage(ws: Path, stage_id: str) -> None:
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["current_stage"] = stage_id
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def test_controls_build_show_validate_are_machine_readable(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
 
@@ -558,6 +567,33 @@ def test_state_check_refreshes_stale_switchboard_recommendations(tmp_path, capsy
     refreshed = json.loads(switchboard_path.read_text(encoding="utf-8"))
     assert _control_by_id(refreshed, "quality_gates")["recommendation"] == "required"
     assert _control_by_id(refreshed, "quality_gates")["selection_required"] is True
+
+
+def test_switchboard_quality_gate_hint_uses_finalize_stage_when_current_stage_finalize(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "finalize")
+    out = ws / "output"
+    intermediate = out / "intermediate"
+    out.mkdir(parents=True, exist_ok=True)
+    intermediate.mkdir(parents=True, exist_ok=True)
+    (out / "brief.md").write_text("# Reader Brief\n", encoding="utf-8")
+    (intermediate / "claim_ledger.json").write_text('{"claims": []}\n', encoding="utf-8")
+
+    switchboard = build_control_switchboard(workspace=ws, repo_workdir=ROOT)["orchestrator_control_switchboard"]
+    control = _control_by_id(switchboard, "quality_gates")
+
+    assert control["recommendation"] == "required"
+    assert control["selection_required"] is True
+    assert control["execution_hint"] == (
+        "multi-agent-brief gates check --workspace <workspace> "
+        "--stage finalize --brief <workspace>/output/brief.md"
+    )
+    assert control["inputs"] == ["output/brief.md", "output/intermediate/claim_ledger.json"]
+    assert control["outputs"] == [
+        "output/intermediate/gates/finalize_quality_gate_report.json",
+        "output/intermediate/quality_gate_report.json",
+    ]
 
 
 def test_switchboard_refresh_archives_same_run_stale_control_selections(tmp_path, capsys):

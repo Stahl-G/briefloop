@@ -43,6 +43,8 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     workflow = _read_json(ws / INTERMEDIATE_DIR / "workflow_state.json")
     registry = _read_json(ws / INTERMEDIATE_DIR / "artifact_registry.json")
     quality_gate = _read_json(ws / INTERMEDIATE_DIR / "quality_gate_report.json")
+    auditor_quality_gate = _read_json(ws / INTERMEDIATE_DIR / "gates" / "auditor_quality_gate_report.json")
+    finalize_quality_gate = _read_json(ws / INTERMEDIATE_DIR / "gates" / "finalize_quality_gate_report.json")
     finalize_report = _read_json(ws / INTERMEDIATE_DIR / "finalize_report.json")
     feedback_issues = _read_json(ws / INTERMEDIATE_DIR / "feedback_issues.json")
     repair_plan = _read_json(ws / INTERMEDIATE_DIR / "repair_plan.json")
@@ -51,7 +53,14 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["workflow"] = _workflow_summary(workflow)
     payload["artifacts"] = _artifact_summary(registry)
     payload["events"] = _event_summary(ws / INTERMEDIATE_DIR / "event_log.jsonl")
-    payload["quality_gate"] = _quality_gate_summary(quality_gate)
+    payload["quality_gate"] = _quality_gate_summary(
+        _select_quality_gate_result(
+            workflow=payload["workflow"],
+            legacy=quality_gate,
+            auditor=auditor_quality_gate,
+            finalize=finalize_quality_gate,
+        )
+    )
     payload["reader_clean"] = _reader_clean_summary(finalize_report)
     payload["improvement"] = _improvement_summary(ws, manifest)
     payload["feedback"] = _feedback_summary(feedback_issues, repair_plan)
@@ -62,6 +71,8 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         ("workflow_state", workflow),
         ("artifact_registry", registry),
         ("quality_gate_report", quality_gate),
+        ("auditor_quality_gate_report", auditor_quality_gate),
+        ("finalize_quality_gate_report", finalize_quality_gate),
         ("finalize_report", finalize_report),
         ("feedback_issues", feedback_issues),
         ("repair_plan", repair_plan),
@@ -284,6 +295,25 @@ def _quality_gate_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _select_quality_gate_result(
+    *,
+    workflow: dict[str, Any],
+    legacy: dict[str, Any],
+    auditor: dict[str, Any],
+    finalize: dict[str, Any],
+) -> dict[str, Any]:
+    current_stage = workflow.get("current_stage")
+    if current_stage == "finalize" and finalize.get("status") == "present":
+        return finalize
+    if current_stage == "auditor" and auditor.get("status") == "present":
+        return auditor
+    if auditor.get("status") == "present":
+        return auditor
+    if finalize.get("status") == "present":
+        return finalize
+    return legacy
+
+
 def _reader_clean_summary(result: dict[str, Any]) -> dict[str, Any]:
     payload = result.get("payload") if result.get("status") == "present" else None
     if not isinstance(payload, dict):
@@ -357,7 +387,7 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     if current_stage == "finalize":
         return f"/mabw deliver {workspace}"
     if current_stage == "auditor" and gate.get("status") != "pass":
-        return f"multi-agent-brief gates check --workspace {workspace}"
+        return f"multi-agent-brief gates check --workspace {workspace} --stage auditor"
     if current_stage:
         return f"/generate-brief {workspace}"
     return f"multi-agent-brief run --workspace {workspace} --runtime claude --skip-doctor"

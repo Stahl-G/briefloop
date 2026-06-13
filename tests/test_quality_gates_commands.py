@@ -50,6 +50,14 @@ def _report_path(ws: Path) -> Path:
     return ws / "output" / "intermediate" / "quality_gate_report.json"
 
 
+def _auditor_report_path(ws: Path) -> Path:
+    return ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
+
+
+def _finalize_report_path(ws: Path) -> Path:
+    return ws / "output" / "intermediate" / "gates" / "finalize_quality_gate_report.json"
+
+
 def _write_ledger(ws: Path, claims: list[dict]) -> None:
     (_intermediate(ws) / "claim_ledger.json").write_text(
         json.dumps(claims, ensure_ascii=False, indent=2),
@@ -65,6 +73,57 @@ def _write_reader_brief(ws: Path, text: str) -> None:
     output = ws / "output"
     output.mkdir(parents=True, exist_ok=True)
     (output / "brief.md").write_text(text, encoding="utf-8")
+
+
+def _quality_gate_payload(*, status: str, stage_id: str) -> dict:
+    artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
+    return {
+        "schema_version": "multi-agent-brief-quality-gates/v1",
+        "created_at": "2026-06-08T00:00:00+00:00",
+        "updated_at": "2026-06-08T00:00:00+00:00",
+        "workspace": ".",
+        "report_date": "",
+        "policy_pack": "default",
+        "status": status,
+        "gate_results": [
+            {
+                "gate_id": gate_id,
+                "status": status if gate_id == "target_relevance" else "pass",
+                "blocking": status == "fail" and gate_id == "target_relevance",
+                "finding_ids": ["QG_TARGET_001"] if gate_id == "target_relevance" and status == "fail" else [],
+            }
+            for gate_id in ("freshness", "material_fact", "target_relevance")
+        ],
+        "findings": [
+            {
+                "finding_id": "QG_TARGET_001",
+                "gate_id": "target_relevance",
+                "finding_type": "target_relevance_gap",
+                "severity": "high",
+                "blocking_level": "blocking",
+                "blocking": True,
+                "repair_owner": "analyst",
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "gate_stage_id": stage_id,
+                "gate_artifact_id": artifact_id,
+                "claim_id": None,
+                "source_id": None,
+                "line_number": None,
+                "description": "Synthetic gate failure.",
+                "recommendation": "Repair before completion.",
+                "evidence_ref": "",
+                "metadata": {},
+            }
+        ] if status == "fail" else [],
+        "metadata": {
+            "brief": "output/brief.md" if stage_id == "finalize" else "output/intermediate/audited_brief.md",
+            "ledger": "output/intermediate/claim_ledger.json",
+            "stage_id": stage_id,
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+        },
+    }
 
 
 def _events(ws: Path) -> list[dict[str, object]]:
@@ -134,7 +193,7 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     report = json.loads(capsys.readouterr().out)["quality_gate_report"]
     blocker = next(finding for finding in report["findings"] if finding["finding_type"] == "number_without_source")
     assert blocker["gate_stage_id"] == "auditor"
-    assert blocker["gate_artifact_id"] == "quality_gate_report"
+    assert blocker["gate_artifact_id"] == "auditor_quality_gate_report"
     assert blocker["stage_id"] == "analyst"
     assert blocker["artifact_id"] == "audited_brief"
     assert blocker["repair_stage_id"] == "analyst"
@@ -189,6 +248,8 @@ def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, cap
     report = payload["quality_gate_report"]
     assert report["status"] == "fail"
     assert _report_path(ws).exists()
+    assert _auditor_report_path(ws).exists()
+    assert not _finalize_report_path(ws).exists()
     findings = report["findings"]
     assert any(finding["finding_type"] == "number_without_source" for finding in findings)
     assert any(finding["blocking_level"] == "blocking" for finding in findings)
@@ -376,7 +437,8 @@ def test_explicit_reader_brief_skips_source_reference_material_gate(tmp_path, ca
     assert "number_without_source" not in finding_types
     assert "target_priority_claim_missing_from_summary" not in finding_types
     assert report["metadata"]["gate_stage_id"] == "finalize"
-    assert report["metadata"]["gate_artifact_id"] == "reader_brief"
+    assert report["metadata"]["gate_artifact_id"] == "finalize_quality_gate_report"
+    assert _finalize_report_path(ws).exists()
 
 
 def test_auditable_brief_hyphenated_target_claim_ref_counts_for_summary(tmp_path, capsys):
@@ -479,7 +541,7 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     report = json.loads(capsys.readouterr().out)["quality_gate_report"]
     gap = next(finding for finding in report["findings"] if finding["finding_type"] == "target_relevance_gap")
     assert gap["gate_stage_id"] == "finalize"
-    assert gap["gate_artifact_id"] == "reader_brief"
+    assert gap["gate_artifact_id"] == "finalize_quality_gate_report"
     assert gap["stage_id"] == "analyst"
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -578,7 +640,7 @@ input:
 
     assert state["workflow_state"]["current_stage"] == "auditor"
     assert state["workflow_state"]["blocked"] is True
-    assert "requires quality_gate_report.json" in state["workflow_state"]["blocking_reason"]
+    assert "requires output/intermediate/gates/auditor_quality_gate_report.json" in state["workflow_state"]["blocking_reason"]
 
     rc = main([
         "state",
@@ -599,6 +661,61 @@ input:
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
     assert payload["details"]["required_command"] == "stage-complete"
+
+
+def test_gates_validate_json_rolls_up_auditor_scoped_status(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
+    _auditor_report_path(ws).write_text(
+        json.dumps(_quality_gate_payload(status="fail", stage_id="auditor")),
+        encoding="utf-8",
+    )
+
+    rc = main(["gates", "validate", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "fail"
+    assert payload["statuses"] == {"auditor_quality_gate_report": "fail"}
+
+
+def test_gates_validate_json_rolls_up_finalize_scoped_status(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    _finalize_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
+    _finalize_report_path(ws).write_text(
+        json.dumps(_quality_gate_payload(status="warning", stage_id="finalize")),
+        encoding="utf-8",
+    )
+
+    rc = main(["gates", "validate", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "warning"
+    assert payload["statuses"] == {"finalize_quality_gate_report": "warning"}
+
+
+def test_gates_validate_json_rolls_up_both_scoped_statuses(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
+    _auditor_report_path(ws).write_text(
+        json.dumps(_quality_gate_payload(status="pass", stage_id="auditor")),
+        encoding="utf-8",
+    )
+    _finalize_report_path(ws).write_text(
+        json.dumps(_quality_gate_payload(status="fail", stage_id="finalize")),
+        encoding="utf-8",
+    )
+
+    rc = main(["gates", "validate", "--workspace", str(ws), "--repo-workdir", str(ROOT), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "fail"
+    assert payload["statuses"] == {
+        "auditor_quality_gate_report": "pass",
+        "finalize_quality_gate_report": "fail",
+    }
 
 
 def test_gates_check_rolls_back_report_when_event_append_fails(tmp_path, monkeypatch):
@@ -663,7 +780,8 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
         "## Executive Summary\nTargetCo update.\n\n## Detail\nRevenue was $42 million.\n",
     )
     _advance_to_auditor(ws)
-    _report_path(ws).write_text(
+    _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
+    _auditor_report_path(ws).write_text(
         json.dumps({
             "schema_version": "multi-agent-brief-quality-gates/v1",
             "created_at": "2026-06-08T00:00:00+00:00",
@@ -691,7 +809,8 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
                     "blocking": True,
                     "repair_owner": "auditor",
                     "stage_id": "auditor",
-                    "artifact_id": "audit_report",
+                        "artifact_id": "audit_report",
+                        "gate_artifact_id": "auditor_quality_gate_report",
                     "claim_id": None,
                     "source_id": None,
                     "line_number": None,
@@ -737,8 +856,8 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
 def test_high_severity_warning_does_not_block_by_default(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    _report_path(ws).parent.mkdir(parents=True, exist_ok=True)
-    _report_path(ws).write_text(
+    _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
+    _auditor_report_path(ws).write_text(
         json.dumps({
             "schema_version": "multi-agent-brief-quality-gates/v1",
             "created_at": "2026-06-08T00:00:00+00:00",
@@ -765,7 +884,8 @@ def test_high_severity_warning_does_not_block_by_default(tmp_path):
                     "blocking": False,
                     "repair_owner": "human",
                     "stage_id": "doctor",
-                    "artifact_id": "quality_gate_report",
+                    "artifact_id": "auditor_quality_gate_report",
+                    "gate_artifact_id": "auditor_quality_gate_report",
                     "claim_id": None,
                     "source_id": None,
                     "line_number": None,
@@ -784,4 +904,4 @@ def test_high_severity_warning_does_not_block_by_default(tmp_path):
 
     assert state["workflow_state"]["current_stage"] == "doctor"
     assert state["workflow_state"]["blocked"] is False
-    assert state["artifact_registry"]["artifacts"]["quality_gate_report"]["status"] == "valid"
+    assert state["artifact_registry"]["artifacts"]["auditor_quality_gate_report"]["status"] == "valid"
