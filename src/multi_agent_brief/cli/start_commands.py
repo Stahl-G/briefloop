@@ -321,6 +321,7 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Codex child-agent depth should stay at one.\n"
             "Do not use the Claude/OpenCode slash-command workflow; that is not the Codex runtime path.\n"
             "Codex custom agents are in .codex/agents/. Spawn the named Codex custom agent for each specialist stage.\n"
+            "Codex loads project .codex/config.toml and custom agents only after the workspace is trusted in Codex.\n"
             "If Codex cannot see these custom agents, stop and ask the user to install Codex runtime assets.\n\n"
             "Read contract references before delegation:\n"
             "- configs/orchestrator_contract.yaml\n"
@@ -349,6 +350,7 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
             "Codex agent configs are in .codex/agents/.",
+            "Codex must trust the workspace before project .codex/config.toml and custom agents load.",
             "The root Codex session is the Orchestrator main agent; spawn specialist custom agents directly.",
             "If Codex cannot see custom agents, run `multi-agent-brief runtime install --workspace <workspace> --runtime codex --repo-workdir <repo>` from a source clone.",
         ],

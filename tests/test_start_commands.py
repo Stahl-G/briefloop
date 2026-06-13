@@ -409,6 +409,7 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     assert "formatter/finalize -> Python finalize tool" in prompt
     assert "state stage-complete" in prompt
     assert "state finalize-complete" in prompt
+    assert "workspace is trusted in Codex" in prompt
     assert "install Codex runtime assets" in prompt
     _assert_orchestrator_contract_handoff(data)
 
@@ -575,6 +576,8 @@ def test_build_handoff_codex_maps_specialists_to_custom_agents(tmp_path):
     assert "Do not call the next specialist until" in handoff.prompt
     assert "state stage-complete" in handoff.prompt
     assert "state finalize-complete" in handoff.prompt
+    assert "workspace is trusted in Codex" in handoff.prompt
+    assert any("Codex must trust the workspace" in note for note in handoff.notes)
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
 

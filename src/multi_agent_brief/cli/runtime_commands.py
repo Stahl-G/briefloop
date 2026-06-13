@@ -72,5 +72,10 @@ def handle(args: argparse.Namespace) -> int:
             f"[runtime install] {status} workspace runtime kit "
             f"for {result['runtime']} ({result['count']} files)."
         )
+        if result["runtime"] in {"codex", "all"}:
+            print(
+                "[runtime install] Codex note: open and trust this workspace in Codex "
+                "so project .codex/config.toml and custom agents are loaded."
+            )
         return 0
     return 1

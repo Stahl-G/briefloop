@@ -138,7 +138,9 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     ])
 
     assert rc == 0
-    assert "Installed workspace runtime kit for codex" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Installed workspace runtime kit for codex" in out
+    assert "open and trust this workspace in Codex" in out
     assert (ws / "AGENTS.md").exists()
     assert (ws / ".codex" / "config.toml").exists()
     assert (ws / ".codex" / "agents" / "scout.toml").exists()
@@ -206,6 +208,7 @@ def test_runtime_install_codex_dry_run_lists_assets(tmp_path: Path, capsys) -> N
     assert rc == 0
     out = capsys.readouterr().out
     assert "would write" in out
+    assert "open and trust this workspace in Codex" in out
     assert ".codex/config.toml" in out
     assert ".codex/agents/scout.toml" in out
     assert not (ws / ".codex").exists()

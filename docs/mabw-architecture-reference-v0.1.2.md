@@ -361,7 +361,7 @@ An agent suggestion that violates any of these red lines is an architecture-leve
 | **Audience profile runtime surface** | `audience_profile.md` source + frozen `output/intermediate/audience_profile_snapshot.md` |
 | **Orchestrator control switchboard** | `output/intermediate/orchestrator_control_switchboard.json` + `control_selections.json`; selection is not execution |
 | **Reader-facing source appendix** | `output/source_appendix.md` generated during finalize; mode: `append` appends to final Markdown/DOCX |
-| **Runtime asset installer** | `multi-agent-brief runtime install --workspace <ws> --runtime opencode\|claude\|all` — copies project commands, agents, and workspace skill |
+| **Runtime asset installer** | `multi-agent-brief runtime install --workspace <ws> --runtime opencode\|claude\|codex\|all` — copies project commands, agents, workspace skill, and Experimental Codex custom-agent assets |
 | **Runtime asset inventory** | `docs/runtime-asset-inventory.md` + `scripts/check_runtime_asset_parity.py` — distinguishes packaged contract data from source-clone-only runtime assets |
 
 **Deferred / out of scope for v0.6.9:**

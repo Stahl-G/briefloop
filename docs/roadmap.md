@@ -114,7 +114,7 @@ Two design principles guide the next phases:
 - Install/runtime asset parity is stabilized before v0.7 improvement-proposal work.
 - Package installs include Python CLI code, packaged contracts, policy packs, and packaged public-safe eval fixtures.
 - Source runtime directories such as `.agents/`, `.claude/`, `.codex/`, `.opencode/`, and `integrations/hermes-plugin/` are documented as source-clone-only unless copied into a workspace.
-- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` installs workspace-local OpenCode/Claude Code runtime kits from a source clone.
+- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all` installs workspace-local OpenCode/Claude Code runtime kits and Experimental Codex custom-agent assets from a source clone.
 - v0.6.9 does not add FrictionStore, improvement proposal commands, policy-pack authoring, or automatic workflow execution.
 
 ### v0.7.0

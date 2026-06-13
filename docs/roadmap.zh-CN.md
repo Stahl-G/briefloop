@@ -114,7 +114,7 @@ v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为
 - 在进入 v0.7 improvement-proposal 工作前，先稳定 install/runtime asset parity。
 - Package install 包含 Python CLI、packaged 契约、policy packs 和 packaged public-safe eval fixtures。
 - `.agents/`、`.claude/`、`.codex/`、`.opencode/` 和 `integrations/hermes-plugin/` 等 runtime source directories 明确为 source-clone-only，除非复制到 workspace。
-- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all` 可以从 source clone 安装 workspace-local OpenCode/Claude Code runtime kits。
+- `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all` 可以从 source clone 安装 workspace-local OpenCode/Claude Code runtime kits 和 Experimental Codex custom-agent assets。
 - v0.6.9 不新增 FrictionStore、improvement proposal commands、policy-pack authoring 或自动 workflow execution。
 
 ### v0.7.0
