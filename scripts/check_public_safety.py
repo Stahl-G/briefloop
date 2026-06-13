@@ -159,7 +159,7 @@ def _allowed_fixture(path: Path, line: str, kind: str) -> bool:
         return True
     if rel in _PUBLIC_TEST_FIXTURE_FINDINGS and kind in _PUBLIC_TEST_FIXTURE_FINDINGS[rel]:
         return True
-    if rel.startswith("tests/") and "PUBLIC_SAFETY_TEST_FIXTURE" in line and kind != "banned_term":
+    if _path_has_part(path, "tests") and "PUBLIC_SAFETY_TEST_FIXTURE" in line and kind != "banned_term":
         return True
     if kind == "file_url" and line.strip() in {
         "- `file://`",
@@ -185,6 +185,10 @@ def _allowed_fixture(path: Path, line: str, kind: str) -> bool:
     if kind == "lark_token" and re.search(r"\b(?:oc|ou|on|om)_x+\b", line):
         return True
     return False
+
+
+def _path_has_part(path: Path, part: str) -> bool:
+    return part in path.parts or part in Path(_relative(path)).parts
 
 
 def _sample(line: str, needle: str) -> str:

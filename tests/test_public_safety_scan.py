@@ -47,6 +47,22 @@ def test_public_safety_scan_allows_fake_test_tokens(tmp_path):
     assert findings == []
 
 
+def test_public_safety_scan_allows_fake_test_tokens_by_path_component(tmp_path):
+    module = _load_module()
+    module.ROOT = tmp_path / "repo-root"
+    test_dir = tmp_path / "outside" / "tests"
+    test_dir.mkdir(parents=True)
+    fake_path = test_dir / "fake_safety_fixture_for_unit_test.md"
+    fake_path.write_text(
+        "Example recipient oc_secret_chat and file:///Users/example/source.md # PUBLIC_SAFETY_TEST_FIXTURE\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan([fake_path], banned_terms=[])
+
+    assert findings == []
+
+
 def test_public_safety_scan_catches_lark_recipient_and_file_token_prefixes(tmp_path):
     module = _load_module()
     sample = tmp_path / "candidate_pack.md"
