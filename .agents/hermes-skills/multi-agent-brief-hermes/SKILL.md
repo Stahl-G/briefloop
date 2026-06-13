@@ -99,6 +99,8 @@ doctor
 → gates check + state check + state stage-complete → finalize → state finalize-complete
 ```
 
+If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
+
 Before finalize, run this explicit success path:
 
 ```bash

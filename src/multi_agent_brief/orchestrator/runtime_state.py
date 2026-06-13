@@ -7,6 +7,7 @@ external-runtime handoff state introduced in v0.6.1.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,9 @@ from multi_agent_brief.feedback.feedback_contract import (
     current_stage_feedback_blocking_reasons,
     optional_feedback_artifact_activated,
 )
+from multi_agent_brief.contracts.schemas.claim import ClaimContract
+from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.quality_gates.contract import (
     QualityGateContractError,
     current_stage_quality_gate_blocking_reasons,
@@ -34,6 +38,11 @@ from multi_agent_brief.orchestrator_contract import (
     CONTRACT_REFERENCES,
     DECISION_VOCABULARY,
     resolve_repo_workdir,
+)
+from multi_agent_brief.orchestrator.run_archive import (
+    E_RUN_ARCHIVE_CONFLICT,
+    RunArchiveError,
+    archive_finalized_run,
 )
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
@@ -54,6 +63,7 @@ RUNTIME_STATE_FILES = {
     "event_log": "output/intermediate/event_log.jsonl",
 }
 PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe")
+NON_EVIDENCE_INPUT_SUBDIRS = {"context", "feedback", "instructions"}
 
 EVENT_TYPES = {
     "run_initialized",
@@ -86,6 +96,7 @@ EVENT_TYPES = {
     "delivery_attempted",
     "delivery_succeeded",
     "delivery_failed",
+    "run_archived",
     "run_blocked",
     "run_reset",
 }
@@ -113,6 +124,7 @@ E_MANIFEST_EXTENSION_LOST = "E_MANIFEST_EXTENSION_LOST"
 E_TRANSACTION_PARTIAL_WRITE = "E_TRANSACTION_PARTIAL_WRITE"
 E_TRANSACTION_INTEGRITY = "E_TRANSACTION_INTEGRITY"
 E_RUNTIME_STATE_NOT_INITIALIZED = "E_RUNTIME_STATE_NOT_INITIALIZED"
+E_RUN_ARCHIVE_FAILED = "E_RUN_ARCHIVE_FAILED"
 E_QUALITY_GATE_REQUIRED = "E_QUALITY_GATE_REQUIRED"
 E_READER_FINAL_GATE_FAILED = "E_READER_FINAL_GATE_FAILED"
 E_COMPLETION_TRANSACTION_REQUIRED = "E_COMPLETION_TRANSACTION_REQUIRED"
@@ -262,6 +274,45 @@ def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
     return _read_json(path)
 
 
+def _wrap_archive_error(exc: RunArchiveError) -> RuntimeStateError:
+    return RuntimeStateError(
+        str(exc),
+        details=exc.details,
+        error_code=exc.error_code or E_RUN_ARCHIVE_FAILED,
+    )
+
+
+def _workflow_is_finalized(workflow: dict[str, Any] | None) -> bool:
+    if not workflow:
+        return False
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    finalize_status = statuses.get("finalize") if isinstance(statuses.get("finalize"), dict) else {}
+    return workflow.get("current_stage") is None and finalize_status.get("status") == STAGE_COMPLETE
+
+
+def _archive_finalized_state_if_needed(
+    *,
+    workspace: Path,
+    manifest: dict[str, Any],
+    workflow: dict[str, Any],
+    artifact_registry: dict[str, Any],
+    finalize_report: dict[str, Any],
+) -> dict[str, Any]:
+    run_id = _validate_runtime_run_id(manifest.get("run_id") or "")
+    try:
+        result = archive_finalized_run(
+            workspace=workspace,
+            run_id=run_id,
+            manifest=manifest,
+            workflow=workflow,
+            artifact_registry=artifact_registry,
+            finalize_report=finalize_report,
+        )
+    except RunArchiveError as exc:
+        raise _wrap_archive_error(exc) from exc
+    return result
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -327,6 +378,27 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
             raise RuntimeStateError(
                 f"Event log line {lineno} must contain an object: {path}",
                 details={"path": str(path), "line": lineno},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        schema_version = payload.get("schema_version")
+        if schema_version != EVENT_LOG_SCHEMA:
+            raise RuntimeStateError(
+                f"Unsupported event log schema on line {lineno}: {schema_version}",
+                details={"path": str(path), "line": lineno, "schema_version": schema_version},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        event_type = payload.get("event_type")
+        if event_type not in EVENT_TYPES:
+            raise RuntimeStateError(
+                f"Unknown event type on event log line {lineno}: {event_type}",
+                details={"path": str(path), "line": lineno, "event_type": event_type},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        actor = payload.get("actor")
+        if actor not in ACTORS:
+            raise RuntimeStateError(
+                f"Unknown event actor on event log line {lineno}: {actor}",
+                details={"path": str(path), "line": lineno, "actor": actor},
                 error_code=E_TRANSACTION_INTEGRITY,
             )
         records.append(payload)
@@ -559,7 +631,10 @@ def initialize_runtime_state(
             old_manifest = _read_json_if_exists(paths["runtime_manifest"])
         except RuntimeStateError:
             old_manifest = None
-        old_workflow = None
+        try:
+            old_workflow = _read_json_if_exists(paths["workflow_state"])
+        except RuntimeStateError:
+            old_workflow = None
     else:
         old_manifest = _read_json_if_exists(paths["runtime_manifest"])
         old_workflow = _read_json_if_exists(paths["workflow_state"])
@@ -569,6 +644,31 @@ def initialize_runtime_state(
     archived_event_log: str | None = None
 
     if reset_state:
+        if old_manifest and _workflow_is_finalized(old_workflow):
+            old_registry = _read_json(paths["artifact_registry"])
+            finalize_report = _read_json(paths["runtime_manifest"].parent / "finalize_report.json")
+            archive_result = _archive_finalized_state_if_needed(
+                workspace=ws,
+                manifest=old_manifest,
+                workflow=old_workflow or {},
+                artifact_registry=old_registry,
+                finalize_report=finalize_report,
+            )
+            append_event(
+                workspace=ws,
+                run_id=str(old_manifest["run_id"]),
+                event_type="run_archived",
+                actor=actor,
+                stage_id="finalize",
+                reason="Finalized run archived before runtime state reset.",
+                metadata={
+                    "archive_path": _workspace_relative(ws, Path(str(archive_result["archive_path"]))),
+                    "archive_manifest": _workspace_relative(ws, Path(str(archive_result["archive_manifest"]))),
+                    "archive_manifest_sha256": archive_result["archive_manifest_sha256"],
+                    "file_count": archive_result["file_count"],
+                    "event_log_includes_run_archived": False,
+                },
+            )
         old_run_id = previous_run_id or "unknown"
         if paths["event_log"].exists():
             archive = paths["event_log"].with_name(f"event_log.{old_run_id}.jsonl")
@@ -777,7 +877,15 @@ def _workspace_relative(workspace: Path, path: Path) -> str:
         return path.as_posix()
 
 
-def _validate_artifact(path: Path, fmt: str) -> tuple[str, str]:
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str, str]:
     if not path.exists():
         return ARTIFACT_EXPECTED, "not_checked"
     if not path.is_file():
@@ -793,7 +901,9 @@ def _validate_artifact(path: Path, fmt: str) -> tuple[str, str]:
 
     try:
         if fmt == "json":
-            json.loads(text)
+            payload = json.loads(text)
+            if artifact_id == "claim_ledger":
+                return _validate_claim_ledger_payload(payload)
         elif fmt in {"yaml", "yml"}:
             yaml.safe_load(text)
         elif fmt == "markdown":
@@ -804,6 +914,38 @@ def _validate_artifact(path: Path, fmt: str) -> tuple[str, str]:
         return ARTIFACT_INVALID, "parse_error"
 
     return ARTIFACT_VALID, "valid_minimum"
+
+
+def _validate_claim_ledger_payload(payload: Any) -> tuple[str, str]:
+    try:
+        claims = ClaimLedger._claim_items_from_json(payload)
+    except ValueError as exc:
+        return ARTIFACT_INVALID, f"claim_ledger_schema_error:{exc}"
+
+    seen_ids: set[str] = set()
+    for idx, claim in enumerate(claims):
+        for field in ("claim_id", "statement", "source_id", "evidence_text"):
+            value = claim.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return ARTIFACT_INVALID, f"claim_ledger_schema_error:claim[{idx}].{field}"
+        claim_id = str(claim["claim_id"]).strip()
+        if claim_id in seen_ids:
+            return ARTIFACT_INVALID, f"claim_ledger_schema_error:duplicate_claim_id:{claim_id}"
+        seen_ids.add(claim_id)
+        violations = ClaimContract.validate(claim)
+        errors = [violation for violation in violations if violation.severity == "error"]
+        if errors:
+            first = errors[0]
+            return ARTIFACT_INVALID, f"claim_ledger_schema_error:claim[{idx}].{first.field}"
+
+    try:
+        ledger = ClaimLedger([Claim.from_dict(item) for item in claims])
+    except (TypeError, ValueError) as exc:
+        return ARTIFACT_INVALID, f"claim_ledger_schema_error:{exc}"
+    errors = ledger.validate_claims()
+    if errors:
+        return ARTIFACT_INVALID, f"claim_ledger_schema_error:{errors[0]}"
+    return ARTIFACT_VALID, "valid_claim_ledger_schema"
 
 
 def _current_stage_index(stages: list[dict[str, Any]], stage_id: str | None) -> int | None:
@@ -842,7 +984,7 @@ def _artifact_record(
     rel_path = str(artifact.get("path") or "")
     fmt = str(artifact.get("format") or "")
     producer_stage = str(artifact.get("producer_stage") or "")
-    status, validation_result = _validate_artifact(workspace / rel_path, fmt)
+    status, validation_result = _validate_artifact(workspace / rel_path, fmt, artifact_id)
 
     activated_optional = optional_feedback_artifact_activated(
         workspace=workspace,
@@ -871,6 +1013,7 @@ def _artifact_record(
     path = workspace / rel_path
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
+    sha256 = _sha256_file(path) if path.exists() and path.is_file() else None
 
     return {
         "artifact_id": artifact_id,
@@ -887,6 +1030,7 @@ def _artifact_record(
         "retry_or_human_review_decision": artifact.get("retry_or_human_review_decision", ""),
         "size_bytes": size_bytes,
         "mtime": mtime,
+        "sha256": sha256,
     }
 
 
@@ -913,6 +1057,53 @@ def _build_artifact_registry(
         "updated_at": updated_at,
         "artifacts": records,
     }
+
+
+def _frozen_artifact_integrity_reasons(
+    *,
+    old_registry: dict[str, Any] | None,
+    registry: dict[str, Any],
+    workflow: dict[str, Any],
+    artifacts: list[dict[str, Any]],
+    stages: list[dict[str, Any]],
+    mutating_stage: str | None = None,
+) -> list[str]:
+    old_records = ((old_registry or {}).get("artifacts") or {})
+    new_records = registry.get("artifacts") or {}
+    reasons: list[str] = []
+    statuses = workflow.get("stage_statuses") or {}
+    mutating_stage_produces = {
+        str(item)
+        for stage in stages
+        if str(stage.get("stage_id") or "") == str(mutating_stage or "")
+        for item in (stage.get("produces") or [])
+    }
+    for artifact in artifacts:
+        artifact_id = str(artifact.get("artifact_id") or "")
+        if not artifact_id:
+            continue
+        if artifact_id in mutating_stage_produces:
+            continue
+        producer_stage = str(artifact.get("producer_stage") or "")
+        producer_status = ((statuses.get(producer_stage) or {}).get("status") or "")
+        if producer_status not in {STAGE_COMPLETE, STAGE_SKIPPED}:
+            continue
+        old_record = old_records.get(artifact_id) or {}
+        old_sha = old_record.get("sha256")
+        if not old_sha:
+            continue
+        new_record = new_records.get(artifact_id) or {}
+        new_sha = new_record.get("sha256")
+        path = str(new_record.get("path") or old_record.get("path") or artifact.get("path") or artifact_id)
+        if new_record.get("status") == ARTIFACT_MISSING or not new_sha:
+            reasons.append(
+                f"Frozen artifact '{path}' from owner stage '{producer_stage}' is missing after stage-complete; route repair back to the owner stage."
+            )
+        elif new_sha != old_sha:
+            reasons.append(
+                f"Frozen artifact '{path}' from owner stage '{producer_stage}' changed after stage-complete; route repair back to the owner stage instead of downstream in-place conversion."
+            )
+    return reasons
 
 
 def _changed_artifact_events(
@@ -1027,12 +1218,21 @@ def _required_consumed_artifacts(
     return required
 
 
-def _status_entry(status: str, reason: str, updated_at: str) -> dict[str, Any]:
-    return {
+def _status_entry(
+    status: str,
+    reason: str,
+    updated_at: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    entry = {
         "status": status,
         "reason": reason,
         "updated_at": updated_at,
     }
+    if metadata:
+        entry["metadata"] = metadata
+    return entry
 
 
 def _completion_artifact_gate_reasons(
@@ -1048,7 +1248,7 @@ def _completion_artifact_gate_reasons(
             continue
         rel_path = str(contract.get("path") or "")
         fmt = str(contract.get("format") or "")
-        status, validation_result = _validate_artifact(workspace / rel_path, fmt)
+        status, validation_result = _validate_artifact(workspace / rel_path, fmt, str(artifact_id))
         required = bool(contract.get("required", False))
         if required and status != ARTIFACT_VALID:
             reasons.append(
@@ -1059,6 +1259,166 @@ def _completion_artifact_gate_reasons(
                 f"Optional expected artifact '{artifact_id}' at '{rel_path}' is invalid ({validation_result})."
             )
     return reasons
+
+
+def _load_workspace_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _is_evidence_input_path(path: Path, workspace: Path) -> bool:
+    input_dir = (workspace / "input").resolve()
+    resolved = path.resolve()
+    try:
+        relative = resolved.relative_to(input_dir)
+    except ValueError:
+        return True
+    if relative.parts and relative.parts[0] in NON_EVIDENCE_INPUT_SUBDIRS:
+        return False
+    return True
+
+
+def _count_evidence_files(path: Path, workspace: Path) -> int:
+    if not path.exists() or not _is_evidence_input_path(path, workspace):
+        return 0
+    if path.is_file():
+        return 1
+    if path.is_dir():
+        return sum(
+            1
+            for item in path.rglob("*")
+            if item.is_file() and _is_evidence_input_path(item, workspace)
+        )
+    return 0
+
+
+def _configured_evidence_source_count(sources: dict[str, Any], workspace: Path) -> int:
+    count = 0
+    manual = sources.get("manual") if isinstance(sources.get("manual"), dict) else {}
+    manual_sources = manual.get("sources") if isinstance(manual.get("sources"), list) else []
+    for item in manual_sources:
+        if not isinstance(item, dict):
+            continue
+        if item.get("enabled") is False:
+            continue
+        if item.get("url"):
+            count += 1
+            continue
+        raw_path = item.get("path")
+        if raw_path:
+            source_path = Path(str(raw_path))
+            if not source_path.is_absolute():
+                source_path = workspace / source_path
+            count += _count_evidence_files(source_path, workspace)
+
+    rss = sources.get("rss") if isinstance(sources.get("rss"), dict) else {}
+    feeds = rss.get("feeds") if isinstance(rss.get("feeds"), list) else []
+    count += len([
+        item
+        for item in feeds
+        if isinstance(item, dict) and item.get("enabled", True) and item.get("url")
+    ])
+
+    input_dir = workspace / "input"
+    if input_dir.exists():
+        count += sum(
+            1
+            for item in input_dir.rglob("*")
+            if item.is_file() and _is_evidence_input_path(item, workspace)
+        )
+    return count
+
+
+def _runtime_search_observation_counts(path: Path) -> tuple[bool, list[int]]:
+    if not path.exists():
+        return False, []
+    try:
+        text = path.read_text(encoding="utf-8")
+        data = yaml.safe_load(text) or {}
+    except (OSError, yaml.YAMLError):
+        return False, []
+    if "Did 0 searches" in text:
+        return True, [0]
+    if not isinstance(data, dict):
+        return False, []
+
+    counts: list[int] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            lowered = {str(key).lower(): val for key, val in value.items()}
+            for key in ("result_count", "results_count", "search_count", "observation_count"):
+                if key in lowered:
+                    try:
+                        counts.append(int(lowered[key]))
+                    except (TypeError, ValueError):
+                        pass
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(data)
+    return bool(counts), counts
+
+
+def _contains_zero_runtime_search_observation(path: Path) -> bool:
+    has_observation, counts = _runtime_search_observation_counts(path)
+    return has_observation and counts and all(count == 0 for count in counts)
+
+
+def _contains_positive_runtime_search_observation(path: Path) -> bool:
+    has_observation, counts = _runtime_search_observation_counts(path)
+    return has_observation and any(count > 0 for count in counts)
+
+
+def _source_candidates_durable_entry_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return 0
+    if not isinstance(data, dict):
+        return 0
+    count = 0
+    for key in ("recommended_sources", "runtime_search_results", "search_results"):
+        items = data.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and item.get("url"):
+                count += 1
+    return count
+
+
+def _source_discovery_runtime_tool_reasons(workspace: Path) -> list[str]:
+    sources = _load_workspace_yaml(workspace / "sources.yaml")
+    web_search = sources.get("web_search") if isinstance(sources.get("web_search"), dict) else {}
+    if not (web_search.get("enabled") and web_search.get("mode") == "runtime_tool"):
+        return []
+
+    candidates_path = workspace / "source_candidates.yaml"
+    if _contains_zero_runtime_search_observation(candidates_path):
+        return [
+            "Runtime WebSearch source discovery reported zero searches or zero observations; request human review instead of completing source-discovery."
+        ]
+    if _configured_evidence_source_count(sources, workspace) > 0:
+        return []
+    if (
+        _contains_positive_runtime_search_observation(candidates_path)
+        and _source_candidates_durable_entry_count(candidates_path) > 0
+    ):
+        return []
+    return [
+        "Cannot complete source-discovery: runtime_tool web search is enabled, but no evidence source, durable runtime search result URL, or positive runtime search observation is available. source_candidates.yaml is a source plan, not evidence."
+    ]
 
 
 def _completion_decision_gate_reasons(
@@ -1185,6 +1545,29 @@ def _finalize_report_reader_artifact_paths(workspace: Path, report: dict[str, An
     return unique
 
 
+def _finalize_report_delivery_artifact_reasons(workspace: Path, report: dict[str, Any]) -> list[str]:
+    artifacts = report.get("delivery_artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        return ["finalize_report.json delivery_artifacts must list the reader delivery bundle."]
+    reasons: list[str] = []
+    delivery_root = (workspace / "output" / "delivery").resolve()
+    for item in artifacts:
+        path = _resolve_report_artifact_path(workspace, item)
+        if path is None:
+            reasons.append("finalize_report.json contains an invalid delivery_artifacts entry.")
+            continue
+        if not path.exists():
+            reasons.append(f"finalize_report.json references missing delivery artifact: {path}.")
+            continue
+        try:
+            path.relative_to(delivery_root)
+        except ValueError:
+            reasons.append(
+                "finalize_report.json delivery_artifacts may only reference files under output/delivery."
+            )
+    return reasons
+
+
 def _finalize_completion_reasons(workspace: Path) -> list[str]:
     reasons: list[str] = []
     report_path = workspace / "output" / "intermediate" / "finalize_report.json"
@@ -1203,6 +1586,7 @@ def _finalize_completion_reasons(workspace: Path) -> list[str]:
     reader_clean = report.get("reader_clean")
     if not isinstance(reader_clean, dict) or reader_clean.get("status") != "pass":
         reasons.append("finalize_report.json reader_clean.status must be pass.")
+    reasons.extend(_finalize_report_delivery_artifact_reasons(workspace, report))
 
     artifact_paths = _finalize_report_reader_artifact_paths(workspace, report)
     missing = [path for path in artifact_paths if not path.exists()]
@@ -1363,6 +1747,7 @@ def check_runtime_state(
         initialize_runtime_state(workspace=ws, repo_workdir=repo_workdir, actor=actor)
 
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
+    _read_event_log_records(paths["event_log"])
     old_registry = _read_json_if_exists(paths["artifact_registry"])
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
@@ -1377,6 +1762,21 @@ def check_runtime_state(
         workflow=workflow,
         updated_at=now,
     )
+    frozen_reasons = _frozen_artifact_integrity_reasons(
+        old_registry=old_registry,
+        registry=registry,
+        workflow=workflow,
+        artifacts=artifacts,
+        stages=stages,
+        mutating_stage=str(workflow.get("current_stage") or ""),
+    )
+    if frozen_reasons:
+        _raise_completion_reasons(
+            message="Runtime state integrity check failed because a frozen artifact changed",
+            reasons=frozen_reasons,
+            error_code=E_TRANSACTION_INTEGRITY,
+            details={"stage_id": workflow.get("current_stage")},
+        )
     refreshed_workflow = _recompute_stage_state(
         workspace=ws,
         stages=stages,
@@ -1556,6 +1956,95 @@ def _workflow_after_completion(
     return updated
 
 
+def _artifact_registry_sha(
+    registry: dict[str, Any],
+    artifact_id: str,
+) -> str:
+    record = ((registry.get("artifacts") or {}).get(artifact_id) or {})
+    sha256 = str(record.get("sha256") or "")
+    if not sha256:
+        path = str(record.get("path") or artifact_id)
+        raise RuntimeStateError(
+            f"Artifact '{artifact_id}' has no frozen sha256 in artifact_registry.json.",
+            details={"artifact_id": artifact_id, "path": path},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return sha256
+
+
+def _artifact_registry_path(
+    registry: dict[str, Any],
+    artifact_id: str,
+    default: str,
+) -> str:
+    record = ((registry.get("artifacts") or {}).get(artifact_id) or {})
+    return str(record.get("path") or default)
+
+
+def _auditor_completion_metadata(
+    *,
+    workspace: Path,
+    registry: dict[str, Any],
+) -> dict[str, Any]:
+    ledger_sha = _artifact_registry_sha(registry, "claim_ledger")
+    audited_brief_sha = _artifact_registry_sha(registry, "audited_brief")
+    audit_sha = _artifact_registry_sha(registry, "audit_report")
+    ledger_path = workspace / _artifact_registry_path(
+        registry,
+        "claim_ledger",
+        "output/intermediate/claim_ledger.json",
+    )
+    audited_brief_path = workspace / _artifact_registry_path(
+        registry,
+        "audited_brief",
+        "output/intermediate/audited_brief.md",
+    )
+    audit_path = workspace / _artifact_registry_path(
+        registry,
+        "audit_report",
+        "output/intermediate/audit_report.json",
+    )
+    if _sha256_file(ledger_path) != ledger_sha:
+        raise RuntimeStateError(
+            "Claim Ledger changed before auditor completion could bind it.",
+            details={
+                "artifact_id": "claim_ledger",
+                "path": str(ledger_path),
+                "registry_sha256": ledger_sha,
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    if _sha256_file(audited_brief_path) != audited_brief_sha:
+        raise RuntimeStateError(
+            "Audited brief changed before auditor completion could bind it.",
+            details={
+                "artifact_id": "audited_brief",
+                "path": str(audited_brief_path),
+                "registry_sha256": audited_brief_sha,
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    if _sha256_file(audit_path) != audit_sha:
+        raise RuntimeStateError(
+            "Audit report changed before auditor completion could bind it.",
+            details={
+                "artifact_id": "audit_report",
+                "path": str(audit_path),
+                "registry_sha256": audit_sha,
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return {
+        "upstream_artifact_sha256": {
+            "claim_ledger": ledger_sha,
+            "audited_brief": audited_brief_sha,
+        },
+        "produced_artifact_sha256": {
+            "audit_report": audit_sha,
+        },
+    }
+
+
 def _append_transaction_events(
     *,
     workspace: Path,
@@ -1661,6 +2150,8 @@ def _complete_stage_transaction(
         stage=stage,
         artifacts_by_id=_artifact_map(artifacts),
     )
+    if stage_id == "source-discovery":
+        artifact_reasons.extend(_source_discovery_runtime_tool_reasons(ws))
     if artifact_reasons:
         code = E_REQUIRED_ARTIFACT_MISSING
         if any("invalid" in item.lower() for item in artifact_reasons):
@@ -1733,6 +2224,30 @@ def _complete_stage_transaction(
         workflow=next_workflow,
         updated_at=now,
     )
+    frozen_reasons = _frozen_artifact_integrity_reasons(
+        old_registry=old_registry,
+        registry=registry,
+        workflow=workflow,
+        artifacts=artifacts,
+        stages=stages,
+        mutating_stage=stage_id,
+    )
+    if frozen_reasons:
+        _raise_completion_reasons(
+            message="Completion transaction cannot proceed because a frozen upstream artifact changed",
+            reasons=frozen_reasons,
+            error_code=E_TRANSACTION_INTEGRITY,
+            details={"stage_id": stage_id},
+        )
+    if stage_id == "auditor":
+        statuses = dict(next_workflow.get("stage_statuses") or {})
+        auditor_status = dict(statuses.get("auditor") or {})
+        auditor_status["metadata"] = _auditor_completion_metadata(
+            workspace=ws,
+            registry=registry,
+        )
+        statuses["auditor"] = auditor_status
+        next_workflow["stage_statuses"] = statuses
     artifact_events = _changed_artifact_events(old_registry=old_registry, registry=registry)
 
     state_written = False
@@ -1767,12 +2282,53 @@ def _complete_stage_transaction(
 
     current_manifest = _read_json(paths["runtime_manifest"])
     _assert_manifest_extensions_preserved(before=preserved_extensions, after=current_manifest)
+    archive_result: dict[str, Any] | None = None
+    if finalize:
+        finalize_report = _read_json(paths["runtime_manifest"].parent / "finalize_report.json")
+        archive_result = _archive_finalized_state_if_needed(
+            workspace=ws,
+            manifest=current_manifest,
+            workflow=next_workflow,
+            artifact_registry=registry,
+            finalize_report=finalize_report,
+        )
+        try:
+            append_event(
+                workspace=ws,
+                run_id=run_id,
+                event_type="run_archived",
+                actor=actor,
+                stage_id=stage_id,
+                reason="Finalized run archived.",
+                metadata={
+                    "archive_path": _workspace_relative(ws, Path(str(archive_result["archive_path"]))),
+                    "archive_manifest": _workspace_relative(ws, Path(str(archive_result["archive_manifest"]))),
+                    "archive_manifest_sha256": archive_result["archive_manifest_sha256"],
+                    "file_count": archive_result["file_count"],
+                    "event_log_includes_run_archived": False,
+                    "transaction_id": transaction_id,
+                },
+            )
+        except RuntimeStateError as exc:
+            raise RuntimeStateError(
+                "Completion transaction archived the run but failed to append archive event.",
+                details={
+                    "transaction_id": transaction_id,
+                    "stage_id": stage_id,
+                    "archive_path": archive_result.get("archive_path"),
+                    "event_error": str(exc),
+                    "event_details": exc.details,
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from exc
     state = show_runtime_state(workspace=ws)
     state["transaction"] = {
         "transaction_id": transaction_id,
         "stage_id": stage_id,
         "decision": "finalize" if finalize else "continue",
     }
+    if archive_result is not None:
+        state["run_archive"] = archive_result
     return state
 
 

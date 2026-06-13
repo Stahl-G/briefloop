@@ -35,6 +35,8 @@ After each stage produces its expected artifact:
 
 Never treat `state stage-complete` as after-the-fact bookkeeping.
 It is the transaction that defines successful stage completion.
+After `stage-complete` succeeds, that stage's output artifacts are frozen for downstream stages. Later stages must not rewrite them in place.
+If a downstream stage finds a schema mismatch or invalid frozen upstream artifact, route repair back to the owner stage instead of editing the frozen artifact directly.
 
 Follow this sequence:
 
@@ -81,6 +83,8 @@ your editorial judgment.
      - Run `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml`.
      - Review `$ARGUMENTS/source_candidates.yaml`.
      - Run `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml --merge` after source approval.
+   - Treat `source_candidates.yaml` as a source plan only, not source evidence. Scout must extract candidate claims from actual source content or search results.
+   - If runtime WebSearch is used and it reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner and continue with stale or old sources.
    - If the workspace uses a configured non-`llm_decide` source profile, verify the configured `sources.yaml` source surface instead of running source proposal.
    - Check the expected artifact or source configuration evidence.
    - Run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage source-discovery --reason "Source discovery source surface was resolved."`.

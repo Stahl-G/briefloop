@@ -93,6 +93,74 @@ def _write_single_claim_ledger(path: Path, *, claim_id: str = "CL-001") -> None:
     path.write_text(json.dumps(claims, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_audit_control_chain(intermediate: Path) -> None:
+    ledger = intermediate / "claim_ledger.json"
+    audited = intermediate / "audited_brief.md"
+    audit_report = intermediate / "audit_report.json"
+    ledger_sha = _sha256_file(ledger)
+    audited_sha = _sha256_file(audited)
+    audit_sha = _sha256_file(audit_report)
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-artifact-registry/v1",
+                "run_id": "run-test",
+                "updated_at": "2026-06-11T00:00:00+00:00",
+                "artifacts": {
+                    "claim_ledger": {
+                        "artifact_id": "claim_ledger",
+                        "path": "output/intermediate/claim_ledger.json",
+                        "status": "valid",
+                        "sha256": ledger_sha,
+                    },
+                    "audited_brief": {
+                        "artifact_id": "audited_brief",
+                        "path": "output/intermediate/audited_brief.md",
+                        "status": "valid",
+                        "sha256": audited_sha,
+                    },
+                    "audit_report": {
+                        "artifact_id": "audit_report",
+                        "path": "output/intermediate/audit_report.json",
+                        "status": "valid",
+                        "sha256": audit_sha,
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-workflow-state/v1",
+                "current_stage": "finalize",
+                "stage_statuses": {
+                    "auditor": {
+                        "status": "complete",
+                        "reason": "auditor passed",
+                        "updated_at": "2026-06-11T00:00:00+00:00",
+                        "metadata": {
+                            "upstream_artifact_sha256": {
+                                "claim_ledger": ledger_sha,
+                                "audited_brief": audited_sha,
+                            },
+                            "produced_artifact_sha256": {
+                                "audit_report": audit_sha,
+                            },
+                        },
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     """Subagent-updated audited_brief.md must be the single source for final delivery."""
     output_dir = tmp_path / "output"
@@ -246,6 +314,7 @@ def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Pat
         ),
         encoding="utf-8",
     )
+    _write_audit_control_chain(intermediate)
 
     with pytest.raises(RuntimeError, match="Audit report binding check failed"):
         finalize_reader_outputs(
@@ -268,7 +337,7 @@ def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Pat
     )
 
 
-def test_finalize_records_audit_binding_metadata(tmp_path: Path):
+def test_finalize_verifies_python_audit_binding_without_updating_audit_report(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -293,6 +362,8 @@ def test_finalize_records_audit_binding_metadata(tmp_path: Path):
         ),
         encoding="utf-8",
     )
+    _write_audit_control_chain(intermediate)
+    original_audit = audit_report.read_text(encoding="utf-8")
 
     result = finalize_reader_outputs(
         output_dir=output_dir,
@@ -301,16 +372,233 @@ def test_finalize_records_audit_binding_metadata(tmp_path: Path):
         output_named_outputs=False,
     )
 
-    updated_audit = json.loads(audit_report.read_text(encoding="utf-8"))
-    binding = updated_audit["metadata"]["audit_binding"]
+    assert audit_report.read_text(encoding="utf-8") == original_audit
     assert result.audit_binding["status"] == "pass"
-    assert binding["status"] == "pass"
-    assert binding["claim_ledger_sha256"] == _sha256_file(ledger)
-    assert binding["audited_brief_sha256"] == hashlib.sha256(
-        audited.read_text(encoding="utf-8").encode("utf-8")
-    ).hexdigest()
-    assert binding["ledger_claim_count"] == 1
-    assert binding["audited_brief_cited_claim_count"] == 1
+    assert result.audit_binding["claim_ledger_sha256"] == _sha256_file(ledger)
+    assert result.audit_binding["audit_report_sha256"] == _sha256_file(audit_report)
+    assert result.audit_binding["ledger_claim_count"] == 1
+    assert result.audit_binding["audited_brief_cited_claim_count"] == 1
+
+
+def test_finalize_accepts_missing_legacy_audit_report_metadata_binding(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "CL-001 is ready for delivery.",
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+
+    assert result.audit_binding["status"] == "pass"
+
+
+def test_finalize_ignores_legacy_audit_report_metadata_binding(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    ledger = intermediate / "claim_ledger.json"
+    _write_single_claim_ledger(ledger)
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "CL-001 is ready for delivery.",
+                "findings": [],
+                "metadata": {
+                    "audit_binding": {
+                        "status": "pass",
+                        "claim_ledger_sha256": "legacy-wrong-sha",
+                        "claim_ledger_mtime": "2000-01-01T00:00:00+00:00",
+                        "ledger_claim_count": 999,
+                    }
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+
+    assert result.audit_binding["status"] == "pass"
+    assert any(
+        warning["kind"] == "legacy_audit_binding_ignored"
+        for warning in result.audit_binding["warnings"]
+    )
+
+
+def test_finalize_rejects_if_claim_ledger_changed_after_auditor_complete(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    ledger = intermediate / "claim_ledger.json"
+    _write_single_claim_ledger(ledger)
+    audit_report = intermediate / "audit_report.json"
+    audit_report.write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "CL-001 is ready for delivery.",
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+    _write_single_claim_ledger(ledger, claim_id="CL-001")
+    payload = json.loads(ledger.read_text(encoding="utf-8"))
+    payload[0]["statement"] = "ExampleCo changed after auditor completion."
+    ledger.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["audit_binding"]["status"] == "fail"
+    assert any(
+        finding["kind"] == "audit_binding_mismatch"
+        and finding["field"] == "claim_ledger_sha256"
+        for finding in report["audit_binding"]["findings"]
+    )
+
+
+def test_finalize_rejects_if_audited_brief_changed_after_auditor_complete(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    audit_report = intermediate / "audit_report.json"
+    audit_report.write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "CL-001 is ready for delivery.",
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+    audited.write_text(
+        "# Brief\n\nChanged after auditor completion but still cites the same claim. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert any(
+        finding["kind"] == "audit_binding_mismatch"
+        and finding["field"] == "audited_brief_sha256"
+        for finding in report["audit_binding"]["findings"]
+    )
+
+
+def test_finalize_rejects_if_audit_report_changed_after_auditor_complete(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    audit_report = intermediate / "audit_report.json"
+    audit_report.write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "CL-001 is ready for delivery.",
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+    audit_payload = json.loads(audit_report.read_text(encoding="utf-8"))
+    audit_payload["summary"] = "Changed after auditor completion."
+    audit_report.write_text(json.dumps(audit_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert any(
+        finding["kind"] == "audit_binding_mismatch"
+        and finding["field"] == "audit_report_sha256"
+        for finding in report["audit_binding"]["findings"]
+    )
 
 
 def test_finalize_legacy_source_map_skips_missing_ledger_without_failing(tmp_path: Path):

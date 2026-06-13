@@ -245,11 +245,6 @@ def finalize_reader_outputs(
             f"{total_count or finding_count} blocking residue findings. "
             f"See {report_path}."
         )
-    _update_audit_report_metadata(
-        intermediate_dir / "audit_report.json",
-        result,
-        named_brief_path=named_brief_path,
-    )
     return result
 
 
@@ -341,9 +336,11 @@ def _empty_audit_binding_report() -> dict[str, Any]:
         "status": "not_checked",
         "claim_ledger_sha256": "",
         "audited_brief_sha256": "",
+        "audit_report_sha256": "",
         "ledger_claim_count": 0,
         "audited_brief_cited_claim_count": 0,
         "findings": [],
+        "warnings": [],
     }
 
 
@@ -360,12 +357,15 @@ def _audit_binding_report(
     artifacts.
     """
     ledger_path = intermediate_dir / "claim_ledger.json"
+    audited_brief_path = intermediate_dir / "audited_brief.md"
     audit_report_path = intermediate_dir / "audit_report.json"
     cited_ids = cited_claim_ids(audited_markdown)
-    brief_sha = _sha256_text(audited_markdown)
     ledger_ids: set[str] = set()
     ledger_sha = ""
+    audited_brief_sha = _sha256_file(audited_brief_path) if audited_brief_path.exists() else ""
+    audit_sha = ""
     findings: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
 
     if ledger_path.exists():
         ledger_sha = _sha256_file(ledger_path)
@@ -378,14 +378,18 @@ def _audit_binding_report(
                     "message": f"Claim Ledger could not be read for audit binding: {exc}",
                 }
             )
+    if audit_report_path.exists():
+        audit_sha = _sha256_file(audit_report_path)
 
     report: dict[str, Any] = {
         "status": "pass",
         "claim_ledger_sha256": ledger_sha,
-        "audited_brief_sha256": brief_sha,
+        "audited_brief_sha256": audited_brief_sha,
+        "audit_report_sha256": audit_sha,
         "ledger_claim_count": len(ledger_ids),
         "audited_brief_cited_claim_count": len(cited_ids),
         "findings": findings,
+        "warnings": warnings,
     }
 
     if not audit_report_path.exists():
@@ -439,32 +443,24 @@ def _audit_binding_report(
         )
 
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    old_binding = metadata.get("audit_binding") if isinstance(metadata.get("audit_binding"), dict) else {}
-    if old_binding:
-        _compare_audit_binding_value(
-            findings,
-            old_binding,
-            key="claim_ledger_sha256",
-            expected=ledger_sha,
+    if isinstance(metadata.get("audit_binding"), dict):
+        warnings.append(
+            {
+                "kind": "legacy_audit_binding_ignored",
+                "message": (
+                    "audit_report.json metadata.audit_binding is deprecated and ignored; "
+                    "Python workflow_state/artifact_registry hashes are authoritative."
+                ),
+            }
         )
-        _compare_audit_binding_value(
-            findings,
-            old_binding,
-            key="audited_brief_sha256",
-            expected=brief_sha,
-        )
-        _compare_audit_binding_value(
-            findings,
-            old_binding,
-            key="ledger_claim_count",
-            expected=len(ledger_ids),
-        )
-        _compare_audit_binding_value(
-            findings,
-            old_binding,
-            key="audited_brief_cited_claim_count",
-            expected=len(cited_ids),
-        )
+
+    _append_python_audit_binding_findings(
+        findings=findings,
+        intermediate_dir=intermediate_dir,
+        current_claim_ledger_sha256=ledger_sha,
+        current_audited_brief_sha256=audited_brief_sha,
+        current_audit_report_sha256=audit_sha,
+    )
 
     mentioned_ids = set(_AUDIT_CLAIM_ID_RE.findall(json.dumps(payload, ensure_ascii=False)))
     unknown_ids = sorted(mentioned_ids - ledger_ids)
@@ -478,6 +474,7 @@ def _audit_binding_report(
         )
 
     report["findings"] = findings
+    report["warnings"] = warnings
     report["status"] = "fail" if findings else "pass"
     return report
 
@@ -500,64 +497,187 @@ def _claim_ids_from_ledger(path: Path) -> set[str]:
     return claim_ids
 
 
-def _compare_audit_binding_value(
+def _read_json_object_for_binding(
+    path: Path,
     findings: list[dict[str, Any]],
-    old_binding: dict[str, Any],
     *,
-    key: str,
-    expected: Any,
+    kind: str,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        findings.append(
+            {
+                "kind": "audit_binding_missing_control_chain",
+                "field": kind,
+                "message": f"{path.name} is required for Python audit binding verification.",
+            }
+        )
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        findings.append(
+            {
+                "kind": "audit_binding_malformed_control_chain",
+                "field": kind,
+                "message": f"{path.name} is not valid JSON: {exc}",
+            }
+        )
+        return None
+    if not isinstance(payload, dict):
+        findings.append(
+            {
+                "kind": "audit_binding_malformed_control_chain",
+                "field": kind,
+                "message": f"{path.name} must be a JSON object.",
+            }
+        )
+        return None
+    return payload
+
+
+def _control_chain_sha(
+    findings: list[dict[str, Any]],
+    *,
+    value: Any,
+    field: str,
+    source: str,
+) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        findings.append(
+            {
+                "kind": "audit_binding_missing_control_chain",
+                "field": field,
+                "source": source,
+                "message": f"{source} is missing required sha256 field {field}.",
+            }
+        )
+        return None
+    return value.strip()
+
+
+def _append_sha_binding_finding(
+    findings: list[dict[str, Any]],
+    *,
+    field: str,
+    registry_sha256: str | None,
+    workflow_sha256: str | None,
+    current_sha256: str,
 ) -> None:
-    if key not in old_binding:
+    if not registry_sha256 or not workflow_sha256:
         return
-    actual = old_binding.get(key)
-    if actual != expected:
+    if registry_sha256 != workflow_sha256 or registry_sha256 != current_sha256:
         findings.append(
             {
                 "kind": "audit_binding_mismatch",
-                "field": key,
-                "expected": expected,
-                "actual": actual,
+                "field": field,
+                "registry_sha256": registry_sha256,
+                "workflow_sha256": workflow_sha256,
+                "current_sha256": current_sha256,
+                "message": (
+                    f"{field} does not match Python control-chain binding; route repair "
+                    "back to the owner stage instead of downstream in-place changes."
+                ),
             }
         )
 
 
-def _sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
-def _update_audit_report_metadata(
-    audit_report_path: Path,
-    result: FinalizeResult,
+def _append_python_audit_binding_findings(
     *,
-    named_brief_path: Path | None,
+    findings: list[dict[str, Any]],
+    intermediate_dir: Path,
+    current_claim_ledger_sha256: str,
+    current_audited_brief_sha256: str,
+    current_audit_report_sha256: str,
 ) -> None:
-    if not audit_report_path.exists():
+    workflow = _read_json_object_for_binding(
+        intermediate_dir / "workflow_state.json",
+        findings,
+        kind="workflow_state",
+    )
+    registry = _read_json_object_for_binding(
+        intermediate_dir / "artifact_registry.json",
+        findings,
+        kind="artifact_registry",
+    )
+    if workflow is None or registry is None:
         return
-    try:
-        payload = json.loads(audit_report_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return
-    metadata = payload.setdefault("metadata", {})
-    metadata["reader_brief_artifact"] = result.reader_brief
-    metadata["delivery_markdown_artifact"] = result.delivery_markdown
-    metadata["delivery_artifacts"] = result.delivery_artifacts
-    metadata["delivery_artifact_sha256"] = result.delivery_artifact_sha256
-    metadata["audit_binding"] = result.audit_binding or _empty_audit_binding_report()
-    metadata["reader_brief_transform"] = "strip_claim_citations"
-    metadata["reader_brief_finalized"] = True
-    metadata["reader_brief_stripped_src_marker_count"] = result.stripped_src_marker_count
-    metadata["finalize_report_artifact"] = str(audit_report_path.parent / "finalize_report.json")
-    metadata["docx_generation"] = result.docx_generation
-    metadata["source_appendix_generation"] = result.source_appendix_generation
-    if result.source_appendix:
-        metadata["source_appendix_artifact"] = result.source_appendix
-    if result.reader_docx:
-        metadata["rendered_docx_path"] = result.reader_docx
-    if result.delivery_docx:
-        metadata["delivery_docx_artifact"] = result.delivery_docx
-    if named_brief_path:
-        metadata["named_reader_brief_artifact"] = str(named_brief_path)
-    audit_report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    artifacts = registry.get("artifacts") if isinstance(registry.get("artifacts"), dict) else {}
+    claim_record = artifacts.get("claim_ledger") if isinstance(artifacts.get("claim_ledger"), dict) else {}
+    audited_brief_record = artifacts.get("audited_brief") if isinstance(artifacts.get("audited_brief"), dict) else {}
+    audit_record = artifacts.get("audit_report") if isinstance(artifacts.get("audit_report"), dict) else {}
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    auditor = statuses.get("auditor") if isinstance(statuses.get("auditor"), dict) else {}
+    metadata = auditor.get("metadata") if isinstance(auditor.get("metadata"), dict) else {}
+    upstream = (
+        metadata.get("upstream_artifact_sha256")
+        if isinstance(metadata.get("upstream_artifact_sha256"), dict)
+        else {}
+    )
+    produced = (
+        metadata.get("produced_artifact_sha256")
+        if isinstance(metadata.get("produced_artifact_sha256"), dict)
+        else {}
+    )
+
+    registry_ledger_sha = _control_chain_sha(
+        findings,
+        value=claim_record.get("sha256"),
+        field="artifacts.claim_ledger.sha256",
+        source="artifact_registry.json",
+    )
+    workflow_ledger_sha = _control_chain_sha(
+        findings,
+        value=upstream.get("claim_ledger"),
+        field="stage_statuses.auditor.metadata.upstream_artifact_sha256.claim_ledger",
+        source="workflow_state.json",
+    )
+    registry_audited_brief_sha = _control_chain_sha(
+        findings,
+        value=audited_brief_record.get("sha256"),
+        field="artifacts.audited_brief.sha256",
+        source="artifact_registry.json",
+    )
+    workflow_audited_brief_sha = _control_chain_sha(
+        findings,
+        value=upstream.get("audited_brief"),
+        field="stage_statuses.auditor.metadata.upstream_artifact_sha256.audited_brief",
+        source="workflow_state.json",
+    )
+    registry_audit_sha = _control_chain_sha(
+        findings,
+        value=audit_record.get("sha256"),
+        field="artifacts.audit_report.sha256",
+        source="artifact_registry.json",
+    )
+    workflow_audit_sha = _control_chain_sha(
+        findings,
+        value=produced.get("audit_report"),
+        field="stage_statuses.auditor.metadata.produced_artifact_sha256.audit_report",
+        source="workflow_state.json",
+    )
+
+    _append_sha_binding_finding(
+        findings,
+        field="claim_ledger_sha256",
+        registry_sha256=registry_ledger_sha,
+        workflow_sha256=workflow_ledger_sha,
+        current_sha256=current_claim_ledger_sha256,
+    )
+    _append_sha_binding_finding(
+        findings,
+        field="audited_brief_sha256",
+        registry_sha256=registry_audited_brief_sha,
+        workflow_sha256=workflow_audited_brief_sha,
+        current_sha256=current_audited_brief_sha256,
+    )
+    _append_sha_binding_finding(
+        findings,
+        field="audit_report_sha256",
+        registry_sha256=registry_audit_sha,
+        workflow_sha256=workflow_audit_sha,
+        current_sha256=current_audit_report_sha256,
+    )
 
 
 def _source_appendix_request(

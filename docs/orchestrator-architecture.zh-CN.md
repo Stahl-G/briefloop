@@ -77,10 +77,10 @@ packaged public-safe eval fixtures。`.agents/`、`.claude/`、`.codex/`、
 属于 source-clone-only。
 
 在源码仓库中运行
-`multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all`
-可以把 workspace-local OpenCode/Claude Code commands、agents 和 skills 复制到业务
-workspace。安装后的 workspace kit 允许 runtime 在业务 workspace 内运行，而不必读取
-MABW source repo。
+`multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
+可以把 workspace-local OpenCode/Claude Code/Codex commands 或 custom agents 以及
+skills 复制到业务 workspace。安装后的 workspace kit 允许 runtime 在业务 workspace 内运行，
+而不必读取 MABW source repo。
 
 ## Reader-Facing Source Appendix
 

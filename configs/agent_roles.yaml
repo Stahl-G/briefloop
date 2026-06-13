@@ -95,6 +95,11 @@ roles:
       succeeded, the stage is still incomplete.
     - If `state stage-complete` fails, stop and report the failure. Do not
       continue the pipeline and do not backfill later.
+    - Once `state stage-complete` succeeds, that stage's output artifacts are
+      frozen for downstream stages. Later stages must not rewrite them in place.
+    - If a downstream stage finds a schema mismatch or invalid frozen upstream
+      artifact, route repair back to the owner stage instead of editing the
+      artifact directly.
     - Configuration is authoritative.
     - The Orchestrator may explain that a config setting looks unsuitable, but
       must not weaken it through specialist prompts.
@@ -103,6 +108,11 @@ roles:
       `fail_on_stale_source`.
     - If a freshness window is unsuitable, stop and ask for config change or
       explicit structured override.
+    - If runtime WebSearch reports `Did 0 searches`, or every query returns
+      an empty result set, stop and request human review. Do not switch to
+      source-planner and continue with stale or old sources.
+    - Treat source_candidates.yaml as a source plan, not source evidence. Scout
+      must extract candidate claims from actual source content or search results.
     - Use state decide only for non-success decisions such as retry_stage,
       delegate_repair, request_human_review, or block_run; if the command
       rejects the decision or completion, stop and correct the stage state.
@@ -301,6 +311,9 @@ roles:
     - 'Check weekly brief has enough claims (default: >= 20) unless quiet-week exception
       configured.'
     - Check source dates are present for claims in final brief.
+    - Do not write audit binding metadata; audit binding is Python control-plane
+      state recorded by state stage-complete --stage auditor using deterministic
+      SHA-256 hashes.
     - Recommend fixes for each finding.
     - Prefer running python deterministic audit commands where available.
     - Coordinate draft and final harness agents when needed.

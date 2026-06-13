@@ -21,6 +21,7 @@ Read workspace context -> read contract references -> identify the next stage ->
 2. Read `output/intermediate/audience_profile_snapshot.md` and summarize relevant taste guidance for delegated roles. Do not treat `audience_profile.md` as source evidence.
 3. Run `multi-agent-brief doctor --config <workspace>/config.yaml`.
 4. Run source discovery when configured.
+   If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 5. Run input governance when available.
 6. Create `output/intermediate/` when needed.
 7. Delegate child tasks in sequence.

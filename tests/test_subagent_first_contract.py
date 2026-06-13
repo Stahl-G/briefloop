@@ -104,6 +104,8 @@ def test_claude_generate_brief_requires_stage_complete_before_next_specialist():
     assert "Only after `stage-complete` succeeds may you dispatch the next specialist" in text
     assert "Do not call the next specialist" in text
     assert "Never treat `state stage-complete` as after-the-fact bookkeeping" in text
+    assert "output artifacts are frozen for downstream stages" in text
+    assert "route repair back to the owner stage" in text
 
 
 def test_claude_generate_brief_requires_source_discovery_transaction_for_all_profiles():
@@ -119,6 +121,7 @@ def test_claude_generate_brief_requires_source_discovery_transaction_for_all_pro
         in source_section
     )
     assert "after the `source-discovery` transaction succeeds" in source_section
+    assert "source plan only, not source evidence" in source_section
 
 
 def test_orchestrator_agent_treats_stage_completion_as_transaction_defined():
@@ -126,6 +129,8 @@ def test_orchestrator_agent_treats_stage_completion_as_transaction_defined():
     assert "Stage completion is transaction-defined, not artifact-defined." in text
     assert "not allowed to call the next specialist agent or tool" in text
     assert "If `state stage-complete` fails, stop" in text
+    assert "output artifacts are frozen for downstream stages" in text
+    assert "route repair back to the owner stage" in text
 
 
 def test_claude_generate_brief_does_not_weaken_config_freshness():
@@ -134,6 +139,14 @@ def test_claude_generate_brief_does_not_weaken_config_freshness():
     assert "Do not weaken or override `config.yaml` constraints" in text
     assert "Do not tell Screener that older sources may be retained" in text
     assert "stop and report the mismatch instead of relaxing the rule" in text
+
+
+def test_claude_generate_brief_blocks_zero_runtime_websearch():
+    text = _read(".claude/commands/generate-brief.md")
+    assert "Did 0 searches" in text
+    assert "every query returns an empty result set" in text
+    assert "stop and request human review" in text
+    assert "Do not switch to source-planner" in text
 
 
 def test_orchestrator_agent_does_not_turn_config_into_guidance():
@@ -145,10 +158,30 @@ def test_orchestrator_agent_does_not_turn_config_into_guidance():
     assert "fail_on_stale_source" in text
 
 
+def test_orchestrator_agent_blocks_zero_runtime_websearch():
+    text = _read(".claude/agents/orchestrator.md")
+    assert "Did 0 searches" in text
+    assert "every query returns an empty result set" in text
+    assert "request human review" in text
+    assert "Do not switch to source-planner" in text
+    assert "source plan, not source evidence" in text
+
+
 def test_screener_role_treats_freshness_config_as_authoritative():
     text = _read(".agents/skills/screener/SKILL.md")
     assert "Treat workspace config freshness settings as authoritative" in text
     assert "Do not silently relax the threshold" in text
+
+
+def test_auditor_prompt_does_not_require_audit_binding_metadata():
+    skill_text = _read(".agents/skills/auditor/SKILL.md")
+    role_text = _read("configs/agent_roles.yaml")
+    for text in (skill_text, role_text):
+        assert "metadata.audit_binding" not in text
+        assert "claim_ledger_mtime" not in text
+        assert "Do not write audit binding metadata" in text
+        assert "Python control-plane" in text
+        assert "state stage-complete --stage auditor" in text
 
 
 def test_claude_mabw_command_is_five_verb_writer_surface():

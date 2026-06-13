@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import tempfile
 from pathlib import Path
@@ -248,6 +249,17 @@ def _prepare_workspace_case(
             f"Workspace fixture not found for case: {case_id}",
             details={"workspace": str(source)},
         )
+    fixture_intermediate = source / "output" / "intermediate"
+    fixture_workflow = (
+        _load_json(fixture_intermediate / "workflow_state.json")
+        if (fixture_intermediate / "workflow_state.json").exists()
+        else None
+    )
+    fixture_registry = (
+        _load_json(fixture_intermediate / "artifact_registry.json")
+        if (fixture_intermediate / "artifact_registry.json").exists()
+        else None
+    )
     workspace = temp_root / case_id
     shutil.copytree(source, workspace)
     initialize_runtime_state(workspace=workspace, repo_workdir=repo_workdir, actor="system")
@@ -256,7 +268,140 @@ def _prepare_workspace_case(
         repo_workdir=repo_workdir,
         initial_stage=str(case.get("initial_stage") or ""),
     )
+    if fixture_registry:
+        registry_path = workspace / "output" / "intermediate" / "artifact_registry.json"
+        registry_path.write_text(
+            json.dumps(fixture_registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    if fixture_workflow:
+        _merge_fixture_workflow_metadata(
+            workspace=workspace,
+            fixture_workflow=fixture_workflow,
+        )
+    _ensure_fixture_audit_binding_control_chain(
+        workspace=workspace,
+        repo_workdir=repo_workdir,
+        initial_stage=str(case.get("initial_stage") or ""),
+    )
     return workspace
+
+
+def _merge_fixture_workflow_metadata(
+    *,
+    workspace: Path,
+    fixture_workflow: dict[str, Any],
+) -> None:
+    workflow_path = workspace / "output" / "intermediate" / "workflow_state.json"
+    workflow = _load_json(workflow_path)
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    fixture_statuses = (
+        fixture_workflow.get("stage_statuses")
+        if isinstance(fixture_workflow.get("stage_statuses"), dict)
+        else {}
+    )
+    for stage_id, fixture_entry in fixture_statuses.items():
+        if not isinstance(fixture_entry, dict):
+            continue
+        metadata = fixture_entry.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        current_entry = statuses.get(stage_id)
+        if not isinstance(current_entry, dict):
+            continue
+        current_entry["metadata"] = metadata
+        statuses[stage_id] = current_entry
+    workflow["stage_statuses"] = statuses
+    workflow_path.write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _ensure_fixture_audit_binding_control_chain(
+    *,
+    workspace: Path,
+    repo_workdir: Path,
+    initial_stage: str,
+) -> None:
+    stages = load_stage_specs(repo_workdir)
+    stage_ids = [str(stage.get("stage_id") or "") for stage in stages if stage.get("stage_id")]
+    if "auditor" not in stage_ids or initial_stage not in stage_ids:
+        return
+    if stage_ids.index(initial_stage) <= stage_ids.index("auditor"):
+        return
+    intermediate = workspace / "output" / "intermediate"
+    ledger_path = intermediate / "claim_ledger.json"
+    audited_brief_path = intermediate / "audited_brief.md"
+    audit_report_path = intermediate / "audit_report.json"
+    if not ledger_path.exists() or not audited_brief_path.exists() or not audit_report_path.exists():
+        return
+
+    ledger_sha = _sha256_file(ledger_path)
+    audited_brief_sha = _sha256_file(audited_brief_path)
+    audit_sha = _sha256_file(audit_report_path)
+    manifest = _load_json(intermediate / "runtime_manifest.json")
+    registry_path = intermediate / "artifact_registry.json"
+    registry = _load_json(registry_path) if registry_path.exists() else {}
+    artifacts = registry.get("artifacts") if isinstance(registry.get("artifacts"), dict) else {}
+    artifacts["claim_ledger"] = {
+        "artifact_id": "claim_ledger",
+        "path": "output/intermediate/claim_ledger.json",
+        "status": "valid",
+        "sha256": ledger_sha,
+    }
+    artifacts["audited_brief"] = {
+        "artifact_id": "audited_brief",
+        "path": "output/intermediate/audited_brief.md",
+        "status": "valid",
+        "sha256": audited_brief_sha,
+    }
+    artifacts["audit_report"] = {
+        "artifact_id": "audit_report",
+        "path": "output/intermediate/audit_report.json",
+        "status": "valid",
+        "sha256": audit_sha,
+    }
+    registry.update({
+        "schema_version": "multi-agent-brief-artifact-registry/v1",
+        "run_id": str(manifest.get("run_id") or "eval-fixture"),
+        "updated_at": str(manifest.get("created_at") or ""),
+        "artifacts": artifacts,
+    })
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    workflow_path = intermediate / "workflow_state.json"
+    workflow = _load_json(workflow_path)
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    auditor = statuses.get("auditor") if isinstance(statuses.get("auditor"), dict) else {}
+    if auditor.get("status") != "complete":
+        return
+    auditor["metadata"] = {
+        "upstream_artifact_sha256": {
+            "claim_ledger": ledger_sha,
+            "audited_brief": audited_brief_sha,
+        },
+        "produced_artifact_sha256": {
+            "audit_report": audit_sha,
+        },
+    }
+    statuses["auditor"] = auditor
+    workflow["stage_statuses"] = statuses
+    workflow_path.write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _advance_to_stage(

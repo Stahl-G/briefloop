@@ -33,6 +33,9 @@ Use after editor has completed audited_brief.md.
 
 - Check source support, orphan citations, unsupported numbers, missing dates, stale framing, advice language, process residue, and delivery readiness.
 - Run deterministic audit tools when available.
+- Do not write audit binding metadata. Audit binding is Python control-plane
+  state recorded by `state stage-complete --stage auditor` using deterministic
+  SHA-256 hashes.
 - Record blocking findings and recommended fixes.
 - Mark distribution readiness only after delivery gates are satisfied.
 

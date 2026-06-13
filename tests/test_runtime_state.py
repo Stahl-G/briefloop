@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     record_decision,
     show_runtime_state,
 )
+from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -56,6 +58,19 @@ def _intermediate(ws: Path) -> Path:
 
 def _write_json_artifact(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
+
+
+def _valid_claim_ledger_payload(claim_id: str = "CL-001", statement: str = "ExampleCo opened a demo facility.") -> str:
+    return json.dumps(
+        [
+            {
+                "claim_id": claim_id,
+                "statement": statement,
+                "source_id": "SRC-001",
+                "evidence_text": "Example evidence.",
+            }
+        ]
+    ) + "\n"
 
 
 def _event_records(ws: Path) -> list[dict]:
@@ -139,7 +154,12 @@ def _write_finalize_report(
     reader_clean_status: str = "pass",
 ) -> None:
     output = ws / "output"
-    (output / "brief.md").write_text("# Reader Brief\n\nClean reader text.\n", encoding="utf-8")
+    brief_text = "# Reader Brief\n\nClean reader text.\n"
+    (output / "brief.md").write_text(brief_text, encoding="utf-8")
+    delivery_dir = output / "delivery"
+    delivery_dir.mkdir(parents=True, exist_ok=True)
+    delivery_brief = delivery_dir / "brief.md"
+    delivery_brief.write_text(brief_text, encoding="utf-8")
     (_intermediate(ws) / "finalize_report.json").write_text(
         json.dumps({
             "status": status,
@@ -149,6 +169,12 @@ def _write_finalize_report(
             "reader_docx": "",
             "named_reader_docx": "",
             "source_appendix": "",
+            "delivery_markdown": str(delivery_brief),
+            "delivery_docx": "",
+            "delivery_artifacts": [str(delivery_brief)],
+            "delivery_artifact_sha256": {
+                str(delivery_brief): runtime_state._sha256_file(delivery_brief),
+            },
             "reader_clean": {
                 "status": reader_clean_status,
                 "src_marker_count": 0,
@@ -194,7 +220,7 @@ def _set_current_stage(ws: Path, stage_id: str) -> None:
 def _advance_to_finalize(ws: Path) -> None:
     _write_json_artifact(ws, "candidate_claims.json")
     _write_json_artifact(ws, "screened_candidates.json")
-    _write_json_artifact(ws, "claim_ledger.json")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
     _write_json_artifact(ws, "audit_report.json", "{}\n")
     _set_current_stage(ws, "finalize")
@@ -203,10 +229,22 @@ def _advance_to_finalize(ws: Path) -> None:
 def _advance_to_auditor(ws: Path) -> None:
     _write_json_artifact(ws, "candidate_claims.json")
     _write_json_artifact(ws, "screened_candidates.json")
-    _write_json_artifact(ws, "claim_ledger.json")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
     _write_json_artifact(ws, "audit_report.json", "{}\n")
     _set_current_stage(ws, "auditor")
+
+
+def _complete_finalized_workspace(ws: Path) -> dict:
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws)
+    _write_finalize_report(ws)
+    return complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized and clean",
+    )
 
 
 def test_state_init_creates_runtime_control_files_without_old_run_manifest(tmp_path):
@@ -318,6 +356,235 @@ def test_invalid_optional_expected_artifact_rejects_continue(tmp_path):
             stage_id="source-discovery",
             reason="source discovery complete",
         )
+
+
+def test_source_discovery_runtime_tool_without_sources_or_candidates_rejects_complete(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "runtime_tool web search is enabled" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_allows_local_source(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "input" / "source.md").write_text("source text\n", encoding="utf-8")
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - manual\n"
+        "    - web_search\n"
+        "manual:\n"
+        "  sources:\n"
+        "    - name: Local Source\n"
+        "      path: input/source.md\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        reason="source discovery complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "input-governance"
+
+
+def test_source_discovery_runtime_tool_rejects_source_candidates_plan_only(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    (ws / "source_candidates.yaml").write_text(
+        "recommended_sources:\n"
+        "  - name: Example Source\n"
+        "    url: https://example.com/source\n"
+        "    category: industry_media\n"
+        "    enabled: true\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "source_candidates.yaml is a source plan, not evidence" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_rejects_context_only_input(tmp_path):
+    ws = _write_workspace(tmp_path)
+    context_dir = ws / "input" / "context"
+    context_dir.mkdir(parents=True)
+    (context_dir / "style.md").write_text("Use concise prose.\n", encoding="utf-8")
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - manual\n"
+        "    - web_search\n"
+        "manual:\n"
+        "  sources:\n"
+        "    - name: Context Only\n"
+        "      path: input/context/style.md\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "no evidence source" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_rejects_zero_observation_fixture(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    (ws / "source_candidates.yaml").write_text(
+        "metadata:\n"
+        "  runtime_search_observation:\n"
+        "    message: Did 0 searches\n"
+        "recommended_sources: []\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "zero searches" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_rejects_positive_observation_without_durable_source(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    (ws / "source_candidates.yaml").write_text(
+        "metadata:\n"
+        "  runtime_search_observations:\n"
+        "    - query: useful query\n"
+        "      result_count: 2\n"
+        "recommended_sources: []\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "durable runtime search result URL" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_allows_partial_zero_observations_with_candidates(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    (ws / "source_candidates.yaml").write_text(
+        "metadata:\n"
+        "  runtime_search_observations:\n"
+        "    - query: empty query\n"
+        "      result_count: 0\n"
+        "    - query: useful query\n"
+        "      result_count: 2\n"
+        "recommended_sources:\n"
+        "  - name: Example Source\n"
+        "    url: https://example.com/source\n"
+        "    category: industry_media\n"
+        "    enabled: true\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        reason="source discovery complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "input-governance"
 
 
 def test_optional_feedback_artifacts_do_not_become_missing_after_auditor_complete(tmp_path):
@@ -601,6 +868,265 @@ def test_stage_complete_stale_gate_report_does_not_block_early_stage(tmp_path):
     assert state["workflow_state"]["current_stage"] == "screener"
 
 
+def test_claim_ledger_stage_complete_rejects_non_ledger_json_shape(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", '{"not_claims": []}\n')
+    before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    before_events = _event_records(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="claim ledger complete",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "claim_ledger_schema_error" in str(excinfo.value)
+    assert json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8")) == before_workflow
+    assert _event_records(ws) == before_events
+    assert not _state_file(ws, "artifact_registry").exists()
+
+
+def test_claim_ledger_stage_complete_rejects_invalid_claim_schema(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_ledger.json",
+        json.dumps(
+            [
+                {
+                    "claim_id": "CL-001",
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "claim_type": "unsupported_kind",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="claim ledger complete",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "claim_ledger_schema_error:claim[0].claim_type" in str(excinfo.value)
+
+
+def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "analyst"
+    registry = state["artifact_registry"]["artifacts"]
+    assert registry["claim_ledger"]["status"] == "valid"
+    assert registry["claim_ledger"]["validation_result"] == "valid_claim_ledger_schema"
+    assert registry["claim_ledger"]["sha256"]
+
+
+def test_claim_ledger_stage_complete_rejects_nested_meta_ai_shape(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_ledger.json",
+        json.dumps(
+            {
+                "claims": [
+                    {
+                        "claim_id": "CL-001",
+                        "claim_text": "ExampleCo opened a demo facility.",
+                        "evidence": {
+                            "source_id": "SRC-001",
+                            "source_url": "https://example.com/source",
+                            "text": "Example evidence.",
+                        },
+                        "metadata": {"confidence": "high"},
+                    }
+                ]
+            }
+        )
+        + "\n",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="claim ledger complete",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "claim_ledger_schema_error:claim[0].statement" in str(excinfo.value)
+
+
+def test_claim_ledger_stage_complete_rejects_missing_evidence_text(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_ledger.json",
+        json.dumps(
+            [
+                {
+                    "claim_id": "CL-001",
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="claim ledger complete",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "claim_ledger_schema_error:claim[0].evidence_text" in str(excinfo.value)
+
+
+def test_state_check_marks_malformed_claim_ledger_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    _write_json_artifact(ws, "candidate_claims.json")
+    _write_json_artifact(ws, "screened_candidates.json")
+    _write_json_artifact(ws, "claim_ledger.json", '{"not_claims": []}\n')
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    ledger_record = state["artifact_registry"]["artifacts"]["claim_ledger"]
+    assert ledger_record["status"] == "invalid"
+    assert ledger_record["validation_result"].startswith("claim_ledger_schema_error:")
+    assert state["workflow_state"]["blocked"] is True
+
+
+def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+    _write_json_artifact(
+        ws,
+        "claim_ledger.json",
+        _valid_claim_ledger_payload(
+            claim_id="CL-002",
+            statement="ExampleCo changed the already completed ledger.",
+        ),
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert "Frozen artifact" in str(excinfo.value)
+    assert "owner stage 'claim-ledger'" in str(excinfo.value)
+
+
+def test_state_check_accepts_unchanged_frozen_claim_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert state["artifact_registry"]["artifacts"]["claim_ledger"]["sha256"]
+
+
+def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    analyst_state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    analyst_sha = analyst_state["artifact_registry"]["artifacts"]["audited_brief"]["sha256"]
+
+    audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
+    editor_state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+
+    editor_sha = editor_state["artifact_registry"]["artifacts"]["audited_brief"]["sha256"]
+    assert editor_state["workflow_state"]["current_stage"] == "auditor"
+    assert editor_sha
+    assert editor_sha != analyst_sha
+
+
+def test_state_check_allows_append_only_event_log_after_frozen_artifact(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+    runtime_state.append_event(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        event_type="control_switchboard_warning",
+        actor="system",
+        reason="append-only event log is not a frozen artifact",
+        metadata={},
+    )
+
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert checked["artifact_registry"]["artifacts"]["claim_ledger"]["status"] == "valid"
+
+
 def test_auditor_stage_complete_requires_passing_quality_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -707,6 +1233,27 @@ def test_auditor_stage_complete_passes_with_clean_quality_gate_report(tmp_path):
     assert state["workflow_state"]["current_stage"] == "finalize"
 
 
+def test_auditor_stage_complete_records_ledger_and_audit_report_sha(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws)
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor and gates passed",
+    )
+
+    registry = state["artifact_registry"]["artifacts"]
+    auditor_status = state["workflow_state"]["stage_statuses"]["auditor"]
+    metadata = auditor_status["metadata"]
+    assert metadata["upstream_artifact_sha256"]["claim_ledger"] == registry["claim_ledger"]["sha256"]
+    assert metadata["upstream_artifact_sha256"]["audited_brief"] == registry["audited_brief"]["sha256"]
+    assert metadata["produced_artifact_sha256"]["audit_report"] == registry["audit_report"]["sha256"]
+
+
 def test_finalize_complete_rejects_forged_clean_report_with_dirty_artifact(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -748,6 +1295,169 @@ def test_finalize_complete_records_terminal_transaction(tmp_path):
         and (event.get("metadata") or {}).get("transaction_id") == transaction_id
         for event in _event_records(ws)
     )
+
+
+def test_finalize_complete_archives_delivery_intermediate_and_control_files(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = _complete_finalized_workspace(ws)
+    run_id = state["manifest"]["run_id"]
+    archive = ws / "output" / "runs" / run_id
+
+    assert (archive / "delivery" / "brief.md").exists()
+    assert (archive / "intermediate" / "claim_ledger.json").exists()
+    assert (archive / "intermediate" / "audit_report.json").exists()
+    assert (archive / "intermediate" / "finalize_report.json").exists()
+    assert (archive / "control" / "runtime_manifest.json").exists()
+    assert (archive / "control" / "workflow_state.json").exists()
+    assert (archive / "control" / "artifact_registry.json").exists()
+    assert (archive / "control" / "event_log.jsonl").exists()
+    assert any(event["event_type"] == "run_archived" for event in _event_records(ws))
+
+
+def test_run_archive_manifest_uses_workspace_relative_paths_only(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = _complete_finalized_workspace(ws)
+    manifest_path = ws / "output" / "runs" / state["manifest"]["run_id"] / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    for record in manifest["files"]:
+        assert not Path(record["archive_path"]).is_absolute()
+        assert not Path(record["original_path"]).is_absolute()
+        assert str(ws) not in record["archive_path"]
+        assert str(ws) not in record["original_path"]
+
+
+def test_run_archive_records_sha256_for_every_file(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+
+    assert manifest["schema_version"] == "mabw.run_archive.v1"
+    assert manifest["run_id"] == state["manifest"]["run_id"]
+    assert manifest["files"]
+    for record in manifest["files"]:
+        path = archive / record["archive_path"]
+        assert path.exists()
+        assert record["sha256"] == runtime_state._sha256_file(path)
+        assert record["size_bytes"] == path.stat().st_size
+
+
+def test_finalize_complete_archive_is_idempotent_when_content_matches(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = _complete_finalized_workspace(ws)
+    archive = state["run_archive"]
+    finalize_report = json.loads((_intermediate(ws) / "finalize_report.json").read_text(encoding="utf-8"))
+
+    result = archive_finalized_run(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        manifest=state["manifest"],
+        workflow=state["workflow_state"],
+        artifact_registry=state["artifact_registry"],
+        finalize_report=finalize_report,
+    )
+
+    assert result["archive_manifest_sha256"] == archive["archive_manifest_sha256"]
+    assert result["file_count"] == archive["file_count"]
+
+
+def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    run_id = initialized["manifest"]["run_id"]
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws)
+    _write_finalize_report(ws)
+    archive = ws / "output" / "runs" / run_id
+    (archive / "delivery").mkdir(parents=True)
+    (archive / "delivery" / "brief.md").write_text("conflicting archive content\n", encoding="utf-8")
+    (archive / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.run_archive.v1",
+                "run_id": run_id,
+                "archived_at": "2026-06-11T00:00:00Z",
+                "source": "finalize-complete",
+                "files": [
+                    {
+                        "role": "delivery",
+                        "archive_path": "delivery/brief.md",
+                        "original_path": "output/delivery/brief.md",
+                        "sha256": "not-the-real-sha",
+                        "size_bytes": 0,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_RUN_ARCHIVE_CONFLICT
+
+
+def test_reset_state_archives_finalized_run_before_new_run(tmp_path):
+    ws = _write_workspace(tmp_path)
+    first = _complete_finalized_workspace(ws)
+    old_run_id = first["manifest"]["run_id"]
+    shutil.rmtree(ws / "output" / "runs" / old_run_id)
+
+    second = initialize_runtime_state(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reset_state=True,
+    )
+
+    assert second["manifest"]["run_id"] != old_run_id
+    assert (ws / "output" / "runs" / old_run_id / "manifest.json").exists()
+
+
+def test_reset_state_does_not_require_archive_for_incomplete_run(tmp_path):
+    ws = _write_workspace(tmp_path)
+    first = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    second = initialize_runtime_state(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reset_state=True,
+    )
+
+    assert second["manifest"]["run_id"] != first["manifest"]["run_id"]
+    assert not (ws / "output" / "runs" / first["manifest"]["run_id"]).exists()
+
+
+def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delivery(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws)
+    _write_finalize_report(ws)
+    report_path = _intermediate(ws) / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifacts"] = [str(ws / "output" / "brief.md")]
+    report["delivery_artifact_sha256"] = {
+        str(ws / "output" / "brief.md"): runtime_state._sha256_file(ws / "output" / "brief.md"),
+    }
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert "output/delivery" in str(excinfo.value)
 
 
 def test_finalize_complete_accepts_reader_facing_quality_gate_report(tmp_path):
@@ -904,6 +1614,172 @@ def test_state_check_event_failure_leaves_state_unchanged(tmp_path, monkeypatch)
     after = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert after == before
     assert not _state_file(ws, "artifact_registry").exists()
+
+
+def test_state_check_rejects_unknown_event_type(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    event_log = _state_file(ws, "event_log")
+    event_log.write_text(
+        event_log.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "actor": "cli",
+                "event_id": "evt_fake",
+                "event_type": "stage_completed",
+                "reason": "model-written fake event",
+                "run_id": state["manifest"]["run_id"],
+                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "timestamp": "2026-06-12T00:00:00+00:00",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert "Unknown event type" in str(excinfo.value)
+
+
+def test_state_check_rejects_unknown_event_actor(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    event_log = _state_file(ws, "event_log")
+    event_log.write_text(
+        event_log.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "actor": "scout",
+                "event_id": "evt_fake",
+                "event_type": "decision_recorded",
+                "reason": "model-written fake event",
+                "run_id": state["manifest"]["run_id"],
+                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "timestamp": "2026-06-12T00:00:00+00:00",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert "Unknown event actor" in str(excinfo.value)
+
+
+def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    event_log = _state_file(ws, "event_log")
+    event_log.write_text(
+        event_log.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "actor": "scout",
+                "event_id": "evt_fake",
+                "event_type": "stage_completed",
+                "reason": "model-written fake event",
+                "run_id": state["manifest"]["run_id"],
+                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "timestamp": "2026-06-12T00:00:00+00:00",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main([
+        "state",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--strict",
+        "--json",
+    ])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 1
+    assert payload["ok"] is False
+    assert payload["error_code"] == runtime_state.E_TRANSACTION_INTEGRITY
+
+
+def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    event_log = _state_file(ws, "event_log")
+    event_log.write_text(
+        event_log.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "actor": "cli",
+                "event_id": "evt_fake",
+                "event_type": "decision_recorded",
+                "reason": "model-written incomplete event",
+                "run_id": state["manifest"]["run_id"],
+                "timestamp": "2026-06-12T00:00:00+00:00",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert "Unsupported event log schema" in str(excinfo.value)
+
+
+def test_state_check_rejects_non_newline_terminated_event_log(tmp_path):
+    ws = _write_workspace(tmp_path)
+    state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    event_log = _state_file(ws, "event_log")
+    event_log.write_text(
+        event_log.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "actor": "cli",
+                "event_id": "evt_fake",
+                "event_type": "decision_recorded",
+                "reason": "model-written unterminated event",
+                "run_id": state["manifest"]["run_id"],
+                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "timestamp": "2026-06-12T00:00:00+00:00",
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert "newline-terminated" in str(excinfo.value)
+
+
+def test_state_check_rejects_malformed_event_log_line(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    event_log = _state_file(ws, "event_log")
+    event_log.write_text(event_log.read_text(encoding="utf-8") + "{bad json}\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert "Invalid JSON event log line" in str(excinfo.value)
 
 
 def test_state_check_only_writes_changed_events_once(tmp_path):

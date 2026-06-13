@@ -29,6 +29,7 @@ Responsibilities:
 - Check [SRC:] or process residue remains in final text.
 - Check weekly brief has enough claims (default: >= 20) unless quiet-week exception configured.
 - Check source dates are present for claims in final brief.
+- Do not write audit binding metadata; audit binding is Python control-plane state recorded by state stage-complete --stage auditor using deterministic SHA-256 hashes.
 - Recommend fixes for each finding.
 - Prefer running python deterministic audit commands where available.
 - Coordinate draft and final harness agents when needed.

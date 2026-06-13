@@ -27,11 +27,15 @@ Responsibilities:
 - You are not allowed to call the next specialist agent or tool until `multi-agent-brief state stage-complete` for the current stage has succeeded.
 - If the expected artifact exists but `state stage-complete` has not succeeded, the stage is still incomplete.
 - If `state stage-complete` fails, stop and report the failure. Do not continue the pipeline and do not backfill later.
+- Once `state stage-complete` succeeds, that stage's output artifacts are frozen for downstream stages. Later stages must not rewrite them in place.
+- If a downstream stage finds a schema mismatch or invalid frozen upstream artifact, route repair back to the owner stage instead of editing the artifact directly.
 - Configuration is authoritative.
 - The Orchestrator may explain that a config setting looks unsuitable, but must not weaken it through specialist prompts.
 - Do not convert hard config settings into soft guidance.
 - Do not add ad-hoc exceptions for `max_source_age_days` or `fail_on_stale_source`.
 - If a freshness window is unsuitable, stop and ask for config change or explicit structured override.
+- If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner and continue with stale or old sources.
+- Treat source_candidates.yaml as a source plan, not source evidence. Scout must extract candidate claims from actual source content or search results.
 - Use state decide only for non-success decisions such as retry_stage, delegate_repair, request_human_review, or block_run; if the command rejects the decision or completion, stop and correct the stage state.
 - Before finalize, after Auditor completes, run gates check and strict state check. If blocking findings exist, do not finalize; use feedback/repair, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
 - After finalize writes reader-facing artifacts, verify completion with multi-agent-brief state finalize-complete before reporting the run complete.

@@ -525,6 +525,7 @@ multi-agent-brief sources decide --config <workspace>/config.yaml
 ```
 
 Review and merge according to workspace policy.
+If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 
 6. Extract non-text input files when present:
 
@@ -886,6 +887,7 @@ As the Hermes Orchestrator main agent, execute:
 
 6. If source discovery is configured:
    multi-agent-brief sources decide --config {workspace}/config.yaml
+   If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 
 7. If non-text input files are present:
    multi-agent-brief inputs extract --config {workspace}/config.yaml

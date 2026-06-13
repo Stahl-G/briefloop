@@ -19,6 +19,16 @@ Defines whether the workflow has progressed through required stages and whether 
 runtime control context files. They are not expected workflow artifacts, Claim
 Ledger evidence, reader-facing output, or default finalize gates.
 
+`source_candidates.yaml` is a source plan, not evidence. It can describe where
+the workflow intends to look for sources, but it cannot support a claim. Scout
+must extract candidate claims from actual source content or runtime search
+results.
+
+After `state stage-complete` succeeds, artifacts produced by that stage are
+frozen for downstream stages. If a later stage finds schema mismatch or invalid
+content in a frozen upstream artifact, the repair path goes back to the owner
+stage; downstream stages must not rewrite the artifact in place.
+
 ## Fact-Grounding / Evidence Contract
 
 Defines the expectation that important statements remain traceable to source-grounded evidence, and that unsupported or uncertain claims are not overstated.
