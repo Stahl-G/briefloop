@@ -11,12 +11,13 @@ from multi_agent_brief.capabilities.models import (
     CapabilityStatus,
     RequirementResult,
 )
+from multi_agent_brief.core.env import known_env_key_is_set
+from multi_agent_brief.sources.web_search import WebSearchProvider
 
 
-def check_env_var(var_name: str) -> RequirementResult:
+def check_env_var(var_name: str, workspace_dir: str | Path | None = None) -> RequirementResult:
     """Check if an environment variable is set and non-empty."""
-    value = os.environ.get(var_name, "")
-    if value:
+    if known_env_key_is_set(var_name, workspace_dir) or os.environ.get(var_name, ""):
         return RequirementResult(requirement=var_name, status="OK", message=f"{var_name} is set")
     return RequirementResult(requirement=var_name, status="ERROR", message=f"{var_name} not set")
 
@@ -67,6 +68,16 @@ def detect_readiness(
                     data = yaml.safe_load(sources_path.read_text(encoding="utf-8")) or {}
                     ws_config = data.get("web_search", {}) or {}
                     if ws_config.get("enabled") and ws_config.get("mode") == "runtime_tool":
+                        validation_errors = WebSearchProvider().validate_config(ws_config)
+                        if validation_errors:
+                            return [
+                                RequirementResult(
+                                    requirement="runtime_web_search",
+                                    status="ERROR",
+                                    message=error,
+                                )
+                                for error in validation_errors
+                            ]
                         results.append(RequirementResult(
                             requirement="runtime_web_search",
                             status="OK",
@@ -93,7 +104,7 @@ def detect_readiness(
         }
         any_key = False
         for backend, env_var in backends.items():
-            r = check_env_var(env_var)
+            r = check_env_var(env_var, workspace_dir)
             if r.status == "OK":
                 any_key = True
         if not any_key:
@@ -104,10 +115,10 @@ def detect_readiness(
             ))
 
     elif capability_id == "api_news":
-        results.append(check_env_var("NEWSAPI_API_KEY"))
+        results.append(check_env_var("NEWSAPI_API_KEY", workspace_dir))
 
     elif capability_id == "mineru":
-        results.append(check_env_var("MINERU_API_TOKEN"))
+        results.append(check_env_var("MINERU_API_TOKEN", workspace_dir))
 
     elif capability_id == "feishu":
         results.append(check_cli_tool("lark-cli"))

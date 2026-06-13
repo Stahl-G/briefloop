@@ -133,7 +133,7 @@ def collect_all_sources(
     config_map = {
         "manual": manual_config,
         "rss": source_config.rss,
-        "web_search": source_config.web_search,
+        "web_search": {**source_config.web_search, "_workspace_dir": source_config.config_dir},
         "api": source_config.api,
         "filings": source_config.api,  # filings share the api config section
         "mcp": source_config.mcp,
@@ -227,7 +227,7 @@ def validate_all_providers(source_config: SourceConfig) -> list[str]:
     config_map = {
         "manual": manual_config,
         "rss": source_config.rss,
-        "web_search": source_config.web_search,
+        "web_search": {**source_config.web_search, "_workspace_dir": source_config.config_dir},
         "api": source_config.api,
         "filings": source_config.api,
         "mcp": source_config.mcp,

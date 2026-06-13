@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from io import BytesIO
 
 
@@ -43,6 +44,30 @@ class FakeSearchBackend:
 
     def is_available(self):
         return True
+
+
+class EnvSearchBackend:
+    """Fake backend that behaves like real backends by reading os.environ."""
+    name = "env_fake"
+
+    def __init__(self, api_key_env: str = "TAVILY_API_KEY") -> None:
+        self._api_key_env = api_key_env
+
+    def search(self, query, max_results=10, *, domains=None, **kwargs):
+        if not os.environ.get(self._api_key_env):
+            return []
+        return [
+            SearchResult(
+                title="Workspace env result",
+                url="https://example.com/workspace-env",
+                snippet="Workspace .env backed search result.",
+                published_at="2026-06-01",
+                source_name="Env Fake Search",
+            )
+        ]
+
+    def is_available(self):
+        return bool(os.environ.get(self._api_key_env))
 
 
 # --- SourceConfig ---
@@ -259,6 +284,33 @@ def test_web_search_runtime_tool_collects_no_python_sources_without_error():
     items, errors = collect_all_sources(config)
     assert items == []
     assert errors == []
+
+
+def test_web_search_runtime_tool_rejects_backend_configuration():
+    errors = WebSearchProvider().validate_config(
+        {"enabled": True, "mode": "runtime_tool", "backend": "tavily"}
+    )
+
+    assert errors
+    assert "runtime_tool must not configure backend" in errors[0]
+
+
+def test_web_search_collect_uses_workspace_env_for_known_backend_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    (tmp_path / ".env").write_text(
+        "TAVILY_API_KEY=workspace-secret-for-collect\n",
+        encoding="utf-8",
+    )
+    provider = WebSearchProvider(backend=EnvSearchBackend())
+
+    items = provider.collect(
+        SourceQuery(keywords=["manufacturing"]),
+        {"enabled": True, "mode": "external_api", "backend": "tavily", "_workspace_dir": str(tmp_path)},
+    )
+
+    assert len(items) == 1
+    assert items[0].metadata["backend"] == "env_fake"
+    assert os.environ.get("TAVILY_API_KEY") is None
 
 
 # --- Non-stub providers (api_news, filings, mcp, cli) ---
@@ -1035,7 +1087,7 @@ def test_doctor_errors_on_mock_backend_removed(tmp_path):
 
     sources = {
         "source_strategy": {"profile": "research", "enabled_providers": ["web_search"]},
-        "web_search": {"enabled": True, "backend": "mock"},
+        "web_search": {"enabled": True, "mode": "external_api", "backend": "mock"},
     }
     (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
 
@@ -1055,7 +1107,7 @@ def test_doctor_tavily_errors_without_key(tmp_path, monkeypatch):
 
     sources = {
         "source_strategy": {"profile": "research", "enabled_providers": ["web_search"]},
-        "web_search": {"enabled": True, "backend": "tavily"},
+        "web_search": {"enabled": True, "mode": "external_api", "backend": "tavily"},
     }
     (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
 
@@ -1068,7 +1120,7 @@ def test_web_search_validate_uses_backend_default_env(monkeypatch):
     monkeypatch.delenv("EXA_API_KEY", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
-    errors = WebSearchProvider().validate_config({"enabled": True, "backend": "exa"})
+    errors = WebSearchProvider().validate_config({"enabled": True, "mode": "external_api", "backend": "exa"})
 
     assert any("EXA_API_KEY" in e for e in errors)
     assert all("TAVILY_API_KEY" not in e for e in errors)
@@ -1085,7 +1137,7 @@ def test_doctor_recognizes_exa_backend_without_key(tmp_path, monkeypatch):
 
     sources = {
         "source_strategy": {"profile": "research", "enabled_providers": ["web_search"]},
-        "web_search": {"enabled": True, "backend": "exa"},
+        "web_search": {"enabled": True, "mode": "external_api", "backend": "exa"},
     }
     (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
 
@@ -1104,13 +1156,28 @@ def test_doctor_errors_on_no_backend(tmp_path):
 
     sources = {
         "source_strategy": {"profile": "research", "enabled_providers": ["web_search"]},
-        "web_search": {"enabled": True},
+        "web_search": {"enabled": True, "mode": "external_api"},
     }
     (tmp_path / "sources.yaml").write_text(yaml.dump(sources), encoding="utf-8")
 
     results = run_doctor(config_path=config_path)
-    assert any("no python search backend" in r.message.lower() for r in results)
-    assert any(r.status == "WARN" for r in results)
+    assert any("requires backend" in r.message.lower() for r in results)
+    assert any(r.status == "ERROR" for r in results)
+
+
+def test_web_search_mode_backend_name_is_error():
+    errors = WebSearchProvider().validate_config({"enabled": True, "mode": "tavily"})
+
+    assert errors
+    assert "mode: external_api with backend: tavily" in errors[0]
+
+
+def test_web_search_enabled_requires_explicit_mode():
+    errors = WebSearchProvider().validate_config({"enabled": True, "backend": "tavily"})
+
+    assert errors
+    assert "web_search.mode must be one of" in errors[0]
+    assert "<missing>" in errors[0]
 
 
 # --- P1: WebSearch source_id stability ---

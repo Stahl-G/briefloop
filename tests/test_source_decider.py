@@ -306,6 +306,7 @@ def test_merge_candidates_normalizes_yaml_null_list_fields(tmp_path: Path):
         "rss": {"enabled": True, "feeds": None},
         "web_search": {
             "enabled": True,
+            "mode": "external_api",
             "backend": "tavily",
             "search_tasks": None,
         },

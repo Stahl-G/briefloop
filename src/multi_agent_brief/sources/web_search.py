@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import hashlib
+import os
+from contextlib import contextmanager
 from typing import Any
 
+from multi_agent_brief.core.env import KNOWN_WORKSPACE_ENV_KEYS, known_env_key_is_set, read_workspace_env_key
 from multi_agent_brief.sources.base import SourceItem, SourceProvider, SourceQuery
 from multi_agent_brief.sources.search_backends.base import SearchBackend, SearchResult
 
 
 # Registry of known backends that can be auto-instantiated from config.
 _KNOWN_BACKENDS: dict[str, type[SearchBackend]] = {}
+WEB_SEARCH_MODES = {"disabled", "runtime_tool", "external_api", "configure_later"}
 
 
 def _register_known_backends() -> None:
@@ -33,6 +37,36 @@ def backend_api_key_env(backend: SearchBackend, config: dict[str, Any] | None = 
     if config and config.get("api_key_env"):
         return str(config["api_key_env"])
     return str(getattr(backend, "_api_key_env", ""))
+
+
+@contextmanager
+def temporary_workspace_api_key_env(
+    backend: SearchBackend,
+    config: dict[str, Any],
+):
+    """Expose an allowlisted workspace .env key only during backend calls."""
+    api_key_env = backend_api_key_env(backend, config)
+    workspace_dir = config.get("_workspace_dir") or config.get("workspace_dir") or ""
+    if (
+        not api_key_env
+        or api_key_env not in KNOWN_WORKSPACE_ENV_KEYS
+        or os.environ.get(api_key_env)
+        or not workspace_dir
+    ):
+        yield
+        return
+
+    value = read_workspace_env_key(workspace_dir, api_key_env)
+    if not value:
+        yield
+        return
+
+    os.environ[api_key_env] = value
+    try:
+        yield
+    finally:
+        if os.environ.get(api_key_env) == value:
+            os.environ.pop(api_key_env, None)
 
 
 class WebSearchProvider(SourceProvider):
@@ -70,13 +104,33 @@ class WebSearchProvider(SourceProvider):
     def validate_config(self, config: dict[str, Any]) -> list[str]:
         if not config.get("enabled"):
             return []
-        if config.get("mode") == "runtime_tool":
+        mode = str(config.get("mode") or "")
+        if mode not in WEB_SEARCH_MODES:
+            if mode in {"tavily", "exa", "brave", "firecrawl", "serper"}:
+                return [
+                    "web_search.mode must be one of disabled, runtime_tool, external_api, configure_later; "
+                    f"got '{mode}'. Use mode: external_api with backend: {mode}."
+                ]
+            return [
+                "web_search.mode must be one of disabled, runtime_tool, external_api, configure_later; "
+                f"got '{mode or '<missing>'}'."
+            ]
+        if mode == "disabled":
+            return ["web_search.enabled is true but mode is disabled. Set enabled: false or choose another mode."]
+        if mode == "configure_later":
             return []
+        if mode == "runtime_tool":
+            if config.get("backend"):
+                return ["web_search.mode runtime_tool must not configure backend; remove backend or use mode: external_api."]
+            return []
+        # external_api
         backend_name = config.get("backend") or ""
         if not backend_name:
-            return []  # capability enabled but no backend; doctor handles this as WARN
+            return ["web_search.mode external_api requires backend: tavily|exa|brave|firecrawl|serper."]
 
         _register_known_backends()
+        if backend_name == "mock":
+            return ["web_search mock backend has been removed; use mode: runtime_tool or a real external_api backend."]
         if backend_name not in _KNOWN_BACKENDS:
             return [f"web_search: unknown backend '{backend_name}'. Supported: {', '.join(_KNOWN_BACKENDS)}"]
 
@@ -86,8 +140,15 @@ class WebSearchProvider(SourceProvider):
             return [str(exc)]
         if not backend.is_available():
             api_key_env = backend_api_key_env(backend, config)
+            workspace_dir = config.get("_workspace_dir") or config.get("workspace_dir") or ""
+            if api_key_env:
+                if api_key_env in KNOWN_WORKSPACE_ENV_KEYS:
+                    if known_env_key_is_set(api_key_env, workspace_dir):
+                        return []
+                elif os.environ.get(api_key_env):
+                    return []
             key_hint = f"env var {api_key_env}" if api_key_env else "a configured API key"
-            return [f"web_search: backend '{backend_name}' requires {key_hint} to be set. Copy your workspace .env.example to .env and fill in the key, or export it in your shell."]
+            return [f"web_search: backend '{backend_name}' requires {key_hint}, but it is missing. Copy your workspace .env.example to .env and fill in the key, or export it in your shell."]
         return []
 
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:
@@ -97,23 +158,24 @@ class WebSearchProvider(SourceProvider):
             return []
 
         backend = self._get_backend(config)
-        if not backend.is_available():
-            return []
+        with temporary_workspace_api_key_env(backend, config):
+            if not backend.is_available():
+                return []
 
-        backend_name = backend.name
-        all_items: list[SourceItem] = []
-        max_results = config.get("max_results", 20)
-        recency_days = config.get("recency_days")
+            backend_name = backend.name
+            all_items: list[SourceItem] = []
+            max_results = config.get("max_results", 20)
+            recency_days = config.get("recency_days")
 
-        # Build search queries from query keywords or config
-        queries, task_meta = self._build_queries(query, config)
+            # Build search queries from query keywords or config
+            queries, task_meta = self._build_queries(query, config)
 
-        for q, domains in queries:
-            results = backend.search(q, max_results=max_results, domains=domains, days=recency_days)
-            task_metadata = task_meta.get(q)
-            for r in results:
-                item = self._result_to_source_item(r, q, backend_name, task_metadata=task_metadata)
-                all_items.append(item)
+            for q, domains in queries:
+                results = backend.search(q, max_results=max_results, domains=domains, days=recency_days)
+                task_metadata = task_meta.get(q)
+                for r in results:
+                    item = self._result_to_source_item(r, q, backend_name, task_metadata=task_metadata)
+                    all_items.append(item)
 
         return all_items
 

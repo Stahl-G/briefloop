@@ -61,6 +61,7 @@ class TestDoctorAvailableButUnconfigured:
             "      path: input/\n"
             "web_search:\n"
             "  enabled: true\n"
+            "  mode: external_api\n"
             "  backend: tavily\n"
             "  api_key_env: TAVILY_API_KEY\n",
             encoding="utf-8",
@@ -117,8 +118,27 @@ class TestDoctorAvailableButUnconfigured:
         messages = [r.message for r in results]
 
         assert any("built-in search" in m and "no API key is required" in m for m in messages)
+
+    def test_runtime_tool_web_search_rejects_backend(self, workspace, monkeypatch):
+        sources = workspace / "sources.yaml"
+        sources.write_text(
+            "source_strategy:\n"
+            "  profile: research\n"
+            "  enabled_providers:\n"
+            "    - web_search\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: runtime_tool\n"
+            "  backend: tavily\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+
+        results = run_doctor(config_path=workspace / "config.yaml")
+        messages = [r.message for r in results]
+
+        assert any(r.status == "ERROR" and "runtime_tool must not configure backend" in r.message for r in results)
         assert not any("no backend configured" in m.lower() for m in messages)
-        assert not any(r.status == "ERROR" for r in results)
 
 
 class TestDoctorRootEnvExample:

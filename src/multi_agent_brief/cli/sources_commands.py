@@ -145,7 +145,11 @@ def _sources_decide(args: argparse.Namespace) -> int:
         return 0
 
     ws_config = load_sources_config(sources_path) if sources_path.exists() else None
-    web_search_config = ws_config.web_search if ws_config else {}
+    web_search_config = (
+        {**ws_config.web_search, "_workspace_dir": str(workspace)}
+        if ws_config
+        else {}
+    )
     backfill_config = web_search_config.get("initial_news_backfill") or {}
     use_daily_backfill = bool(args.daily_news_backfill) or bool(
         backfill_config.get("enabled")
@@ -228,76 +232,89 @@ def _sources_decide(args: argparse.Namespace) -> int:
         from multi_agent_brief.sources.web_search import (
             WebSearchProvider,
             backend_api_key_env,
+            temporary_workspace_api_key_env,
         )
 
         provider = WebSearchProvider()
         try:
-            backend = provider._get_backend(ws_config.web_search)
+            backend = provider._get_backend(web_search_config)
         except Exception as exc:
             print(
                 f"[error] Failed to initialize search backend: {exc}"
             )
             return 1
 
-        if not backend.is_available():
-            api_key_env = backend_api_key_env(
-                backend, ws_config.web_search
-            )
-            key_hint = f" Set {api_key_env}." if api_key_env else ""
-            print(
-                f"[error] Search backend '{backend.name}' is configured"
-                f" but not available.{key_hint}"
-            )
-            return 1
+        with temporary_workspace_api_key_env(backend, web_search_config):
+            if not backend.is_available():
+                api_key_env = backend_api_key_env(
+                    backend, web_search_config
+                )
+                key_hint = f" Set {api_key_env}." if api_key_env else ""
+                print(
+                    f"[error] Search backend '{backend.name}' is configured"
+                    f" but not available.{key_hint}"
+                )
+                return 1
 
-        print(
-            f"[sources] Executing {len(search_tasks)} search queries via"
-            f" backend: {backend.name}"
-        )
-        search_results = []
-        max_results = web_search_config.get("max_results", 10)
-        for task in search_tasks:
-            q = str(task.get("query", ""))
-            domains = task.get("domains") or None
-            task_max_results = int(task.get("max_results") or max_results)
-            try:
-                search_kwargs = {"domains": domains}
-                for key in ("topic", "vertical", "tbs"):
-                    if task.get(key):
-                        search_kwargs[key] = task[key]
-                if use_daily_backfill:
-                    search_kwargs["days"] = backfill_days
-                elif web_search_config.get("recency_days"):
-                    search_kwargs["days"] = web_search_config["recency_days"]
-                results = backend.search(
-                    q,
-                    max_results=task_max_results,
-                    **search_kwargs,
+            print(
+                f"[sources] Executing {len(search_tasks)} search queries via"
+                f" backend: {backend.name}"
+            )
+            search_results = []
+            attempted_searches = 0
+            successful_searches = 0
+            max_results = web_search_config.get("max_results", 10)
+            for task in search_tasks:
+                q = str(task.get("query", ""))
+                domains = task.get("domains") or None
+                task_max_results = int(task.get("max_results") or max_results)
+                attempted_searches += 1
+                try:
+                    search_kwargs = {"domains": domains}
+                    for key in ("topic", "vertical", "tbs"):
+                        if task.get(key):
+                            search_kwargs[key] = task[key]
+                    if use_daily_backfill:
+                        search_kwargs["days"] = backfill_days
+                    elif web_search_config.get("recency_days"):
+                        search_kwargs["days"] = web_search_config["recency_days"]
+                    results = backend.search(
+                        q,
+                        max_results=task_max_results,
+                        **search_kwargs,
+                    )
+                    search_results.append(
+                        {
+                            "query": q,
+                            "metadata": {
+                                key: value
+                                for key, value in task.items()
+                                if key not in ("query", "domains")
+                            },
+                            "results": [
+                                {
+                                    "title": r.title,
+                                    "url": r.url,
+                                    "snippet": r.snippet,
+                                    "published_at": r.published_at,
+                                    "source_name": r.source_name,
+                                }
+                                for r in results
+                            ],
+                        }
+                    )
+                    successful_searches += 1
+                    print(f"  [{len(results)} results] {q}")
+                except Exception as exc:
+                    print(f"  [error] Search failed for '{q}': {exc}")
+                    # Continue with remaining queries, but do not write normal
+                    # candidates if every backend request failed.
+            if attempted_searches and successful_searches == 0:
+                print(
+                    "[error] All configured search queries failed; "
+                    "source_candidates.yaml was not generated."
                 )
-                search_results.append(
-                    {
-                        "query": q,
-                        "metadata": {
-                            key: value
-                            for key, value in task.items()
-                            if key not in ("query", "domains")
-                        },
-                        "results": [
-                            {
-                                "title": r.title,
-                                "url": r.url,
-                                "snippet": r.snippet,
-                                "published_at": r.published_at,
-                                "source_name": r.source_name,
-                            }
-                            for r in results
-                        ],
-                    }
-                )
-                print(f"  [{len(results)} results] {q}")
-            except Exception as exc:
-                print(f"  [error] Search failed for '{q}': {exc}")
-                # Continue with remaining queries; errors are surfaced to user
+                return 1
 
     candidates = generate_source_candidates(discovery, search_results)
     candidates_path = workspace / "source_candidates.yaml"

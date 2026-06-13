@@ -123,7 +123,7 @@ class TestDoctorTavilyGuidance:
         (tmp_path / "sources.yaml").write_text(
             "source_strategy:\n  profile: research\n  enabled_providers:\n    - manual\n"
             "manual:\n  enabled: true\n  sources:\n    - name: Test\n      path: input/\n"
-            "web_search:\n  enabled: true\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n",
+            "web_search:\n  enabled: true\n  mode: external_api\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n",
             encoding="utf-8",
         )
 
@@ -141,7 +141,7 @@ class TestDoctorTavilyGuidance:
         (tmp_path / "sources.yaml").write_text(
             "source_strategy:\n  profile: research\n  enabled_providers:\n    - manual\n"
             "manual:\n  enabled: true\n  sources:\n    - name: Test\n      path: input/\n"
-            "web_search:\n  enabled: true\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n",
+            "web_search:\n  enabled: true\n  mode: external_api\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n",
             encoding="utf-8",
         )
 
@@ -161,13 +161,42 @@ class TestDoctorTavilyGuidance:
         (tmp_path / "sources.yaml").write_text(
             "source_strategy:\n  profile: research\n  enabled_providers:\n    - manual\n"
             "manual:\n  enabled: true\n  sources:\n    - name: Test\n      path: input/\n"
-            "web_search:\n  enabled: true\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n",
+            "web_search:\n  enabled: true\n  mode: external_api\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n",
             encoding="utf-8",
         )
 
         results = run_doctor(config_path=config_path)
         report = format_doctor_report(results)
         assert "super-secret" not in report
+        assert "tvly-" not in report
+
+    def test_doctor_reads_workspace_env_without_printing_value(self, tmp_path, monkeypatch):
+        """Doctor should treat workspace .env as a safe fallback for known keys."""
+        from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
+
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("project:\n  name: Test\n", encoding="utf-8")
+        (tmp_path / ".env").write_text(
+            "TAVILY_API_KEY=tvly-workspace-secret-123\n"
+            "UNRELATED_PRIVATE_KEY=should-not-be-read\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "sources.yaml").write_text(
+            "source_strategy:\n  profile: research\n  enabled_providers:\n    - manual\n    - web_search\n"
+            "manual:\n  enabled: true\n  sources:\n    - name: Test\n      path: input/\n"
+            "web_search:\n  enabled: true\n  mode: external_api\n  backend: tavily\n  api_key_env: TAVILY_API_KEY\n",
+            encoding="utf-8",
+        )
+
+        results = run_doctor(config_path=config_path)
+        report = format_doctor_report(results)
+
+        assert any(
+            r.status == "OK" and "TAVILY_API_KEY" in r.message and "detected" in r.message.lower()
+            for r in results
+        )
+        assert "workspace-secret" not in report
         assert "tvly-" not in report
 
 
@@ -235,7 +264,7 @@ class TestRunTavilyGuidance:
         sources_path = ws / "sources.yaml"
         sources = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
         sources["source_strategy"]["enabled_providers"] = ["manual", "web_search"]
-        sources["web_search"] = {"enabled": True, "backend": "exa"}
+        sources["web_search"] = {"enabled": True, "mode": "external_api", "backend": "exa"}
         sources_path.write_text(yaml.safe_dump(sources, sort_keys=False), encoding="utf-8")
 
         exit_code = main(["run", "--config", str(ws / "config.yaml"), "--skip-doctor"])

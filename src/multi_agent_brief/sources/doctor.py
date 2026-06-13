@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.core.env import KNOWN_WORKSPACE_ENV_KEYS, known_env_key_is_set
 from multi_agent_brief.sources.base import SourceConfig
 from multi_agent_brief.sources.registry import load_sources_config, validate_all_providers
 from multi_agent_brief.sources.web_search import WebSearchProvider, backend_api_key_env
@@ -77,22 +78,35 @@ def run_doctor(
     if source_config.web_search.get("enabled"):
         mode = source_config.web_search.get("mode") or ""
         backend_name = source_config.web_search.get("backend") or ""
+        web_search_config = {**source_config.web_search, "_workspace_dir": str(p.parent)}
         if mode == "runtime_tool":
-            results.append(CheckResult(
-                "OK",
-                "Web search uses the current runtime's built-in search tool; no API key is required. "
-                "Configure Tavily/Exa/Brave/Firecrawl/Serper only if you want a reproducible external search backend.",
-            ))
-        elif not backend_name:
+            validation_errors = WebSearchProvider().validate_config(web_search_config)
+            if validation_errors:
+                for error in validation_errors:
+                    results.append(CheckResult("ERROR", error))
+                backend_name = ""
+            else:
+                results.append(CheckResult(
+                    "OK",
+                    "Web search uses the current runtime's built-in search tool; no API key is required. "
+                    "Configure Tavily/Exa/Brave/Firecrawl/Serper only if you want a reproducible external search backend.",
+                ))
+        elif mode == "configure_later":
             results.append(CheckResult(
                 "WARN",
-                "web_search is enabled but no Python search backend is configured. "
-                "Use mode: runtime_tool for built-in runtime search, or configure an external backend "
-                "(tavily/exa/brave/firecrawl/serper) with its API key.",
+                "web_search is enabled with mode: configure_later. Configure mode: runtime_tool, "
+                "or mode: external_api with backend: tavily|exa|brave|firecrawl|serper before using web search.",
             ))
-        elif backend_name == "mock":
-            results.append(CheckResult("ERROR", "web_search: mock backend has been removed from runtime code"))
         else:
+            validation_errors = WebSearchProvider().validate_config(web_search_config)
+            for error in validation_errors:
+                results.append(CheckResult("ERROR", error))
+            if any("requires env var" in error for error in validation_errors):
+                results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))
+                results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
+            if validation_errors:
+                backend_name = ""
+        if backend_name:
             try:
                 backend = WebSearchProvider()._get_backend(source_config.web_search)
             except Exception as exc:
@@ -100,7 +114,13 @@ def run_doctor(
             else:
                 api_key_env = backend_api_key_env(backend, source_config.web_search)
                 backend_label = backend.name
-                if backend.is_available():
+                key_ready = bool(backend.is_available())
+                if not key_ready and api_key_env:
+                    if api_key_env in KNOWN_WORKSPACE_ENV_KEYS:
+                        key_ready = known_env_key_is_set(api_key_env, p.parent)
+                    else:
+                        key_ready = bool(os.environ.get(api_key_env))
+                if key_ready:
                     if api_key_env:
                         results.append(CheckResult("OK", f"Web search backend '{backend_label}' API key detected via {api_key_env}."))
                     else:

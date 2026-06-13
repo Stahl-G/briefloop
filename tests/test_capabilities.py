@@ -165,6 +165,60 @@ class TestDetect:
         assert status.state == "ENABLED_READY"
         assert "No search backend API key" not in status.notes
 
+    def test_assess_capability_runtime_tool_rejects_backend(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        (tmp_path / "sources.yaml").write_text(
+            "source_strategy:\n"
+            "  enabled_providers:\n"
+            "    - web_search\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: runtime_tool\n"
+            "  backend: tavily\n",
+            encoding="utf-8",
+        )
+
+        status = assess_capability(
+            "web_search",
+            workspace_dir=tmp_path,
+            enabled_providers={"web_search"},
+        )
+
+        assert status.state == "ENABLED_NEEDS_SETUP"
+        assert "runtime_tool must not configure backend" in status.notes
+
+    def test_assess_capability_reads_workspace_env_for_known_web_search_key(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        monkeypatch.delenv("EXA_API_KEY", raising=False)
+        monkeypatch.delenv("BRAVE_SEARCH_API_KEY", raising=False)
+        monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+        monkeypatch.delenv("SERPER_API_KEY", raising=False)
+        (tmp_path / ".env").write_text(
+            "TAVILY_API_KEY=tvly-workspace-secret-123\n"
+            "UNRELATED_PRIVATE_KEY=should-not-be-read\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "sources.yaml").write_text(
+            "source_strategy:\n"
+            "  enabled_providers:\n"
+            "    - web_search\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: external_api\n"
+            "  backend: tavily\n",
+            encoding="utf-8",
+        )
+
+        status = assess_capability(
+            "web_search",
+            workspace_dir=tmp_path,
+            enabled_providers={"web_search"},
+        )
+
+        assert status.state == "ENABLED_READY"
+        assert "workspace-secret" not in status.notes
+        assert "tvly-" not in status.notes
+
     def test_assess_capability_unknown(self):
         status = assess_capability("nonexistent")
         assert status.state == "UNAVAILABLE"

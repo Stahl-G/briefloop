@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 import yaml
 
+from multi_agent_brief.cli.main import main
+from multi_agent_brief.sources import web_search
 from multi_agent_brief.sources.decider import (
     build_search_queries,
     generate_source_candidates,
@@ -36,6 +39,42 @@ class FakeSearchBackend:
                 metadata={"backend": "fake"},
             )
         ]
+
+    def is_available(self):
+        return True
+
+
+class EnvCliSearchBackend:
+    """CLI fake backend that only works when the expected env var is visible."""
+    name = "tavily"
+
+    def __init__(self, api_key_env: str = "TAVILY_API_KEY") -> None:
+        self._api_key_env = api_key_env
+
+    def search(self, query, max_results=10, *, domains=None, **kwargs):
+        if not os.environ.get(self._api_key_env):
+            return []
+        return [
+            SearchResult(
+                title="Workspace env CLI result",
+                url="https://fake.example.com/workspace-env-cli",
+                snippet=f"CLI search result for {query}.",
+                published_at="2026-06-01",
+                source_name="Fake Backend",
+                metadata={"backend": "tavily"},
+            )
+        ]
+
+    def is_available(self):
+        return bool(os.environ.get(self._api_key_env))
+
+
+class FailingCliSearchBackend:
+    """CLI fake backend that is available but fails every query."""
+    name = "tavily"
+
+    def search(self, query, max_results=10, *, domains=None, **kwargs):
+        raise RuntimeError("simulated search outage")
 
     def is_available(self):
         return True
@@ -159,3 +198,72 @@ class TestB02CLISearchIntegration:
             assert "query" in src, (
                 "B02 FAIL: candidate source missing 'query' field"
             )
+
+    def test_sources_decide_search_uses_workspace_env_key(self, tmp_path, monkeypatch, capsys):
+        """CLI search must use the same workspace .env key path as provider validation."""
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", EnvCliSearchBackend)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / ".env").write_text("TAVILY_API_KEY=workspace-cli-secret\n", encoding="utf-8")
+        (ws / "config.yaml").write_text(
+            "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
+            encoding="utf-8",
+        )
+        (ws / "sources.yaml").write_text(
+            "source_strategy:\n"
+            "  profile: research\n"
+            "  enabled_providers: [web_search]\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: external_api\n"
+            "  backend: tavily\n"
+            "source_discovery:\n"
+            "  company: TestCo\n"
+            "  industry: manufacturing\n"
+            "  topics: [policy]\n"
+            "  queries:\n"
+            "    - test query\n",
+            encoding="utf-8",
+        )
+
+        rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
+
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "workspace-cli-secret" not in captured.out
+        assert "Workspace env CLI result" in (ws / "source_candidates.yaml").read_text(encoding="utf-8")
+        assert os.environ.get("TAVILY_API_KEY") is None
+
+    def test_sources_decide_search_all_queries_failed_writes_no_candidates(self, tmp_path, monkeypatch, capsys):
+        """If every backend request fails, the CLI must fail instead of writing a plan."""
+        monkeypatch.setitem(web_search._KNOWN_BACKENDS, "tavily", FailingCliSearchBackend)
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        (ws / "config.yaml").write_text(
+            "project:\n  name: test\ninput:\n  path: input\noutput:\n  path: output\n",
+            encoding="utf-8",
+        )
+        (ws / "sources.yaml").write_text(
+            "source_strategy:\n"
+            "  profile: research\n"
+            "  enabled_providers: [web_search]\n"
+            "web_search:\n"
+            "  enabled: true\n"
+            "  mode: external_api\n"
+            "  backend: tavily\n"
+            "source_discovery:\n"
+            "  company: TestCo\n"
+            "  industry: manufacturing\n"
+            "  topics: [policy]\n"
+            "  queries:\n"
+            "    - failing query\n",
+            encoding="utf-8",
+        )
+
+        rc = main(["sources", "decide", "--config", str(ws / "config.yaml"), "--search"])
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert "All configured search queries failed" in captured.out
+        assert not (ws / "source_candidates.yaml").exists()
