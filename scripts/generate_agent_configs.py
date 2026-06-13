@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -127,6 +128,23 @@ def _sensitive_check(text: str, context: str) -> list[str]:
     return hits
 
 
+def _toml_basic_string(value: str) -> str:
+    """Render a TOML basic string."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _toml_literal_multiline_string(value: str) -> str:
+    """Render a TOML literal multiline string.
+
+    Codex agent instructions intentionally contain Windows paths such as
+    `.\\scripts\\setup.ps1`; TOML basic multiline strings would parse those
+    backslashes as escapes. Literal strings keep the instructions byte-for-byte.
+    """
+    if "'''" in value:
+        raise ValueError("Codex developer_instructions cannot contain TOML literal string delimiter.")
+    return "'''\n" + value.rstrip() + "\n'''"
+
+
 # ---------------------------------------------------------------------------
 # Codex config.toml
 # ---------------------------------------------------------------------------
@@ -152,7 +170,7 @@ def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
     resp = "\n".join(f"        - {r}" for r in role["responsibilities"])
     rules = "\n".join(f"        - {r}" for r in role["hard_rules"])
     title = role_name.replace("-", " ").title()
-    desc = repr(role["description"])
+    desc = _toml_basic_string(str(role["description"]))
     trigger = role["trigger"]
 
     if role_name == "orchestrator":
@@ -177,12 +195,7 @@ def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
             "        - On Windows, use .\\scripts\\setup.ps1 and native PowerShell; WSL is optional.\n"
         )
 
-    return (
-        f"{AUTOGEN_HEADER_TOML}\n"
-        f"\n"
-        f'name = "{role_name}"\n'
-        f"description = {desc}\n"
-        f'developer_instructions = """\n'
+    instructions = (
         f"{role_intro}\n"
         f"\n"
         f"{workflow_title}\n"
@@ -199,7 +212,13 @@ def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
         f"\n"
         f"Repository rules:\n"
         f"{repository_rules}"
-        f'        """\n'
+    )
+    return (
+        f"{AUTOGEN_HEADER_TOML}\n"
+        f"\n"
+        f'name = "{role_name}"\n'
+        f"description = {desc}\n"
+        f"developer_instructions = {_toml_literal_multiline_string(instructions)}\n"
     )
 
 

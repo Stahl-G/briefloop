@@ -140,7 +140,7 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 Current version: **v0.7.4**
 
-MABW currently runs subagent-first workflows across Hermes / Claude Code / Codex / OpenCode, runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
+MABW currently ships installable runtime assets for Hermes / Claude Code / OpenCode, with Codex custom-agent assets available as Experimental, plus runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 

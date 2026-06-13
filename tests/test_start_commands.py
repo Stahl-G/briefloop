@@ -157,9 +157,16 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "Stage completion protocol" in text
     assert "MUST produce" in text
     assert "I completed the stage" in text
+    assert "source_candidates.yaml is a source plan only, not source evidence" in text
+    assert "output artifacts are frozen for downstream stages" in text
+    assert "must not rewrite them in place" in text
+    assert "route repair back to the owner stage" in text
     assert "REFERENCE_RUN_ORCHESTRATOR_PROTOCOL.md" in text
     assert "multi-agent-brief gates check --workspace <workspace>" in text
     assert "multi-agent-brief state check --workspace <workspace> --strict" in text
+    assert "Did 0 searches" in text
+    assert "every query returns an empty result set" in text
+    assert "Do not switch to source-planner" in text
     assert "Audit and quality gates passed" in text
     assert "do not finalize" in text
     assert "Quality gate controls are optional" not in text
@@ -376,6 +383,36 @@ def test_start_claude_output_contains_generate_brief(tmp_path, capsys):
     assert "/generate-brief" in captured.out
 
 
+def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
+    ws = _write_workspace(tmp_path)
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--runtime", "codex",
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    prompt = data["prompt"]
+    assert "/generate-brief" not in prompt
+    assert "root Codex session" in prompt
+    assert "You are the Orchestrator main agent" in prompt
+    assert "Spawn the named Codex custom agent" in prompt
+    assert "Do not invoke an orchestrator subagent" in prompt
+    assert ".codex/agents/scout.toml" in prompt
+    assert ".codex/agents/screener.toml" in prompt
+    assert ".codex/agents/claim-ledger.toml" in prompt
+    assert ".codex/agents/analyst.toml" in prompt
+    assert ".codex/agents/editor.toml" in prompt
+    assert ".codex/agents/auditor.toml" in prompt
+    assert "formatter/finalize -> Python finalize tool" in prompt
+    assert "state stage-complete" in prompt
+    assert "state finalize-complete" in prompt
+    assert "install Codex runtime assets" in prompt
+    _assert_orchestrator_contract_handoff(data)
+
+
 def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
     ws = _write_workspace(tmp_path)
     intermediate = ws / "output" / "intermediate"
@@ -517,6 +554,27 @@ def test_build_handoff_claude_has_generate_brief(tmp_path):
         run_doctor=False,
     )
     assert "/generate-brief" in handoff.prompt
+    _assert_orchestrator_contract_handoff(handoff.to_dict())
+
+
+def test_build_handoff_codex_maps_specialists_to_custom_agents(tmp_path):
+    ws = _write_workspace(tmp_path)
+    handoff = build_handoff(
+        workspace=ws,
+        repo_workdir=ROOT,
+        runtime="codex",
+        venv="/tmp/.venv/bin/activate",
+        run_doctor=False,
+    )
+    assert handoff.runtime == "codex"
+    assert "/generate-brief" not in handoff.prompt
+    assert "root Codex session" in handoff.prompt
+    assert "Spawn the named Codex custom agent" in handoff.prompt
+    assert ".codex/agents/scout.toml" in handoff.prompt
+    assert ".codex/agents/claim-ledger.toml" in handoff.prompt
+    assert "Do not call the next specialist until" in handoff.prompt
+    assert "state stage-complete" in handoff.prompt
+    assert "state finalize-complete" in handoff.prompt
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
 

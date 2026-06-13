@@ -6,7 +6,12 @@ from pathlib import Path
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.start_commands import CONTRACT_REFERENCES
-from multi_agent_brief.runtime_assets import INSTALL_MARKER, JSONC_INSTALL_MARKER
+from multi_agent_brief.runtime_assets import INSTALL_MARKER, JSONC_INSTALL_MARKER, TOML_INSTALL_MARKER
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    import tomli as tomllib  # type: ignore[no-redef]
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,7 +33,7 @@ def _all_text_files(root: Path) -> list[Path]:
     return [
         path
         for path in root.rglob("*")
-        if path.is_file() and path.suffix in {".md", ".jsonc"}
+        if path.is_file() and path.suffix in {".md", ".jsonc", ".toml"}
     ]
 
 
@@ -118,6 +123,46 @@ def test_runtime_install_claude_workspace_kit_is_local(tmp_path: Path, capsys) -
     assert "multi-agent-brief run --workspace" in combined
 
 
+def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+
+    rc = main([
+        "runtime",
+        "install",
+        "--workspace",
+        str(ws),
+        "--runtime",
+        "codex",
+        "--repo-workdir",
+        str(ROOT),
+    ])
+
+    assert rc == 0
+    assert "Installed workspace runtime kit for codex" in capsys.readouterr().out
+    assert (ws / "AGENTS.md").exists()
+    assert (ws / ".codex" / "config.toml").exists()
+    assert (ws / ".codex" / "agents" / "scout.toml").exists()
+    assert (ws / ".codex" / "agents" / "orchestrator.toml").exists()
+    assert (ws / ".codex" / "skills" / "multi-agent-brief-workflow" / "SKILL.md").exists()
+    assert (ws / ".codex" / "skills" / "multi-agent-brief-workflow" / "references" / "runtime-workflow.md").exists()
+    assert (ws / ".codex" / "config.toml").read_text(encoding="utf-8").startswith(
+        TOML_INSTALL_MARKER
+    )
+    scout = tomllib.loads((ws / ".codex" / "agents" / "scout.toml").read_text(encoding="utf-8"))
+    for key in ("name", "description", "developer_instructions"):
+        assert key in scout
+    assert scout["name"] == "scout"
+    assert "setup.ps1" in scout["developer_instructions"]
+    _assert_frontmatter_first(
+        ws / ".codex" / "skills" / "multi-agent-brief-workflow" / "SKILL.md"
+    )
+
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
+    assert ROOT.as_posix() not in combined
+    assert "multi-agent-brief run --workspace" in combined
+    assert "Do not assume this workspace" in combined
+
+
 def test_runtime_install_dry_run_does_not_write_files(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
 
@@ -134,10 +179,36 @@ def test_runtime_install_dry_run_does_not_write_files(tmp_path: Path, capsys) ->
     ])
 
     assert rc == 0
-    assert "would write" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "would write" in out
+    assert out.count("/AGENTS.md") == 1
     assert not (ws / "AGENTS.md").exists()
     assert not (ws / "CLAUDE.md").exists()
     assert not (ws / ".opencode").exists()
+    assert not (ws / ".codex").exists()
+
+
+def test_runtime_install_codex_dry_run_lists_assets(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+
+    rc = main([
+        "runtime",
+        "install",
+        "--workspace",
+        str(ws),
+        "--runtime",
+        "codex",
+        "--repo-workdir",
+        str(ROOT),
+        "--dry-run",
+    ])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "would write" in out
+    assert ".codex/config.toml" in out
+    assert ".codex/agents/scout.toml" in out
+    assert not (ws / ".codex").exists()
     assert not (ws / ".claude").exists()
 
 
@@ -160,6 +231,29 @@ def test_runtime_install_refuses_non_mabw_existing_file(tmp_path: Path, capsys) 
     out = capsys.readouterr().out
     assert "Refusing to overwrite existing non-MABW file without --force" in out
     assert (ws / "AGENTS.md").read_text(encoding="utf-8") == "User-owned agent notes.\n"
+
+
+def test_runtime_install_codex_refuses_non_mabw_agent_file(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    target = ws / ".codex" / "agents" / "scout.toml"
+    target.parent.mkdir(parents=True)
+    target.write_text("name = \"user-owned\"\n", encoding="utf-8")
+
+    rc = main([
+        "runtime",
+        "install",
+        "--workspace",
+        str(ws),
+        "--runtime",
+        "codex",
+        "--repo-workdir",
+        str(ROOT),
+    ])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "Refusing to overwrite existing non-MABW file without --force" in out
+    assert target.read_text(encoding="utf-8") == "name = \"user-owned\"\n"
 
 
 def test_runtime_install_refreshes_generated_files(tmp_path: Path) -> None:

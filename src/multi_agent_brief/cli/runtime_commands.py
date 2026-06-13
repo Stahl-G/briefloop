@@ -19,7 +19,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     install = actions.add_parser(
         "install",
-        help="Install OpenCode/Claude Code runtime kit files into a workspace.",
+        help="Install OpenCode/Claude Code/Codex runtime kit files into a workspace.",
     )
     install.add_argument(
         "--workspace",
@@ -29,7 +29,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     install.add_argument(
         "--runtime",
         required=True,
-        choices=("opencode", "claude", "all"),
+        choices=("opencode", "claude", "codex", "all"),
         help="Runtime kit to install.",
     )
     install.add_argument(

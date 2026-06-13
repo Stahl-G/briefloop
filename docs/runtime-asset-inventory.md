@@ -26,7 +26,7 @@ new workflow contract.
 | `.agents/hermes-skills/**` | Hand-maintained source asset | Source-clone-only | Hermes source plugin skill assets. |
 | `.claude/agents/**` | Generated source asset | Source-clone-only | Claude Code source-repo subagent assets. |
 | `.claude/commands/**` | Hand-maintained source asset | Source-clone-only | Source-repo slash commands. Use `runtime install` for workspace-local copies. |
-| `.codex/agents/**` | Generated source asset | Source-clone-only | Codex source-repo agent assets. |
+| `.codex/config.toml` and `.codex/agents/**` | Generated source asset | Source-clone-only | Codex source-repo custom-agent assets. Use `runtime install` for workspace-local copies. |
 | `.opencode/agents/**` | Generated source asset | Source-clone-only | OpenCode source-repo agent assets. |
 | `.opencode/commands/**` | Hand-maintained source asset | Source-clone-only | Source-repo commands. Use `runtime install` for workspace-local copies. |
 | `docs/agents/**` | Generated source/docs asset | Source-clone-only | Adapter documentation generated from role source. |
@@ -39,7 +39,7 @@ new workflow contract.
 
 | Install mode | CLI commands | Packaged contracts/eval cases | Source runtime assets | Workspace runtime kit |
 |---|---|---|---|---|
-| Source clone + editable install | Supported | Supported | Available | `multi-agent-brief runtime install --workspace <ws> --runtime opencode\|claude\|all` copies assets into the workspace. |
+| Source clone + editable install | Supported | Supported | Available | `multi-agent-brief runtime install --workspace <ws> --runtime opencode\|claude\|codex\|all` copies assets into the workspace. |
 | Wheel / sdist install | Supported | Supported | Not included | Source-clone-only unless `--repo-workdir` points to a source clone. |
 | PyPI install | Experimental | Supported when package data is present | Not included | Source-clone-only unless `--repo-workdir` points to a source clone. |
 | curl / PowerShell installer | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
@@ -49,16 +49,19 @@ new workflow contract.
 ## Workspace Runtime Kit
 
 `multi-agent-brief runtime install` creates workspace-local runtime assets for
-Claude Code and OpenCode:
+Claude Code, OpenCode, and Codex:
 
 ```bash
 multi-agent-brief runtime install --workspace <workspace> --runtime opencode
 multi-agent-brief runtime install --workspace <workspace> --runtime claude
+multi-agent-brief runtime install --workspace <workspace> --runtime codex
 multi-agent-brief runtime install --workspace <workspace> --runtime all
 ```
 
 The kit copies runtime-discoverable commands, agents, and a small
-`multi-agent-brief-workflow` project skill into the workspace. It does not
+`multi-agent-brief-workflow` project skill into the workspace. For Codex, it
+copies `.codex/config.toml` and `.codex/agents/*.toml` custom-agent files rather
+than slash commands. It does not
 reinitialize the workspace, does not overwrite user-owned files by default, and
 does not write absolute source-checkout paths into generated workspace files.
 

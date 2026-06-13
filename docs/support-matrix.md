@@ -37,7 +37,7 @@ validation unless that is stated separately.
 | `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
 | `multi-agent-brief state init/check/show/decide/stage-complete/finalize-complete` | Supported |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
-| `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|all` | Source-clone-only |
+| `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|codex\|all` | Source-clone-only |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
 | `multi-agent-brief gates check/show/validate` | Supported |
 | `multi-agent-brief provenance build/show/validate` | Supported |
@@ -74,19 +74,22 @@ Source appendices are reader-facing delivery artifacts generated during finalize
 | Hermes (`delegate_task` native pipeline + cron) | Supported |
 | Claude Code (`/mabw` five-verb writer entrypoint + `/generate-brief` compatibility; installable with `multi-agent-brief claude install`) | Supported |
 | OpenCode (subagent workflow) | Supported |
-| Codex (subagent workflow) | Supported |
+| Codex (custom-agent workflow via `runtime install`) | Experimental |
 | Manual (print workflow steps) | Supported |
 
 Claude Code is the first-class writer / five-verb path (`new`, `run`, `status`,
 `feedback`, `deliver`). Hermes remains a supported delegated/scheduled runtime
-path. Other runtimes keep their existing workflow entrypoints.
+path. Codex custom-agent assets are installable into a workspace, but Codex
+remains Experimental until a real Codex control-trace smoke validates the
+end-to-end specialist workflow. Other runtimes keep their existing workflow
+entrypoints.
 
 Runtime source assets under `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
 and `integrations/hermes-plugin/` are source-clone assets. Package-only installs
 ship the CLI, packaged contracts, and packaged eval fixtures, but they do not
 ship those source runtime directories as Python package data. Use
-`multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|all`
-from a source clone to copy OpenCode/Claude Code workspace-local runtime kits.
+`multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
+from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime kits.
 
 ## Source Providers
 
@@ -175,7 +178,7 @@ from a source clone to copy OpenCode/Claude Code workspace-local runtime kits.
 | `.agents/hermes-skills/**` | Supported | Source-clone-only |
 | `.claude/agents/**` and `.claude/commands/**` | Supported | Source-clone-only |
 | `.opencode/agents/**` and `.opencode/commands/**` | Supported | Source-clone-only |
-| `.codex/agents/**` | Supported | Source-clone-only |
+| `.codex/config.toml` and `.codex/agents/**` | Experimental | Source-clone-only; installable into a workspace with `runtime install --runtime codex` |
 | `integrations/hermes-plugin/**` | Supported | Source-clone-only |
 | `scripts/install.sh`, `scripts/install.ps1`, `Formula/` | Supported | Source-clone-only |
 

@@ -78,12 +78,20 @@ FINALIZE_GATE_NOTE = (
     "`multi-agent-brief state finalize-complete --workspace <workspace> --reason "
     "\"Reader artifacts finalized and clean.\"`."
 )
+RUNTIME_WEBSEARCH_ZERO_RESULT_NOTE = (
+    "Runtime WebSearch zero-result guard: if runtime WebSearch reports `Did 0 searches`, "
+    "or every query returns an empty result set, stop and request human review. "
+    "Do not switch to source-planner or continue with stale sources."
+)
 STAGE_COMPLETION_PROTOCOL_SCHEMA = "multi-agent-brief-stage-completion-protocol/v1"
 STAGE_COMPLETION_PROTOCOL_RULES = [
     "Stage completion is artifact-based, not statement-based.",
     "A natural-language acknowledgement such as 'I completed the stage' is not sufficient unless the required artifact paths are present and validated.",
     "Before moving to the next stage, verify required output artifacts exist at the declared paths and have the expected shape where validators exist.",
     "If a required artifact is missing, stale, or invalid, stop the stage and record retry_stage, request_human_review, or block_run instead of continuing.",
+    "source_candidates.yaml is a source plan only, not source evidence; Scout must extract candidates from actual source content or search results.",
+    "After state stage-complete succeeds, that stage's output artifacts are frozen for downstream stages; later stages must not rewrite them in place.",
+    "If a downstream stage finds schema mismatch or invalid frozen upstream artifacts, route repair back to the owner stage instead of editing the artifact directly.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
     "Record successful stage transitions with multi-agent-brief state stage-complete only after artifact-level completion evidence is available.",
     "Record finalize completion with multi-agent-brief state finalize-complete after delivery artifacts and finalize_report.json are clean.",
@@ -92,6 +100,8 @@ DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not claim stage completion based on prose acknowledgement alone.",
     "Do not proceed to the next stage without naming the produced artifact path.",
     "Do not mutate upstream input artifacts except through the stage's declared output artifacts.",
+    "Do not treat source_candidates.yaml as source evidence or use it to support claims.",
+    "Do not rewrite a previous stage's artifact after that stage has completed; schema mismatch must route back to the owner stage for repair.",
     "Do not invent source evidence, claim support, citations, or validation results.",
     "Do not bypass workflow_state.json next_allowed_decisions or skip state stage-complete/finalize-complete.",
 ]
@@ -282,26 +292,45 @@ def _opencode_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
 
 def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
     ws_path = str(workspace.resolve())
+    role_mapping = (
+        "Codex custom agent mapping:\n"
+        "- scout -> .codex/agents/scout.toml\n"
+        "- screener -> .codex/agents/screener.toml\n"
+        "- claim-ledger -> .codex/agents/claim-ledger.toml\n"
+        "- analyst -> .codex/agents/analyst.toml\n"
+        "- editor -> .codex/agents/editor.toml\n"
+        "- auditor -> .codex/agents/auditor.toml\n"
+        "- formatter/finalize -> Python finalize tool, not a drafting agent\n"
+    )
     return AgentHandoff(
         runtime=RUNTIME_CODEX,
         recipe=RUNTIME_RECIPE_FULL,
         workspace=ws_path,
         repo_workdir=str(repo.resolve()),
         venv_activate=venv,
-        next_steps=f"In Codex, invoke the Orchestrator-led agent workflow for {ws_path}.",
+        next_steps=(
+            f"In Codex, use the root session as the Orchestrator main agent for {ws_path}. "
+            "Spawn named Codex custom agents directly for specialist stages."
+        ),
         prompt=(
             f"Workspace: {ws_path}\n"
             f"Repository: {repo.resolve()}\n"
             f"Activate venv: source {venv}\n\n"
-            "Codex agent roles are in .codex/agents/. Use the Orchestrator main-agent workflow.\n"
+            "You are the Orchestrator main agent in the root Codex session.\n"
+            "Do not invoke an orchestrator subagent that then invokes other subagents; "
+            "Codex child-agent depth should stay at one.\n"
+            "Do not use the Claude/OpenCode slash-command workflow; that is not the Codex runtime path.\n"
+            "Codex custom agents are in .codex/agents/. Spawn the named Codex custom agent for each specialist stage.\n"
+            "If Codex cannot see these custom agents, stop and ask the user to install Codex runtime assets.\n\n"
             "Read contract references before delegation:\n"
             "- configs/orchestrator_contract.yaml\n"
             "- configs/stage_specs.yaml\n"
             "- configs/artifact_contracts.yaml\n"
             "- configs/policy_packs/default.yaml\n\n"
             f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n\n"
-            "Delegated stage order:\n"
-            "scout → screener → claim-ledger → analyst → editor → auditor → finalize.\n\n"
+            f"{role_mapping}\n"
+            "Do not call the next specialist until `multi-agent-brief state stage-complete` succeeds for the current stage.\n"
+            "Finalize is a Python delivery/rendering tool. After finalize writes delivery artifacts, record completion with `multi-agent-brief state finalize-complete`.\n\n"
             "Read runtime state files before selecting the next stage:\n"
             "- output/intermediate/runtime_manifest.json\n"
             "- output/intermediate/workflow_state.json\n"
@@ -320,6 +349,8 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
             "Codex agent configs are in .codex/agents/.",
+            "The root Codex session is the Orchestrator main agent; spawn specialist custom agents directly.",
+            "If Codex cannot see custom agents, run `multi-agent-brief runtime install --workspace <workspace> --runtime codex --repo-workdir <repo>` from a source clone.",
         ],
     )
 
@@ -363,6 +394,7 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Run each step in order, verifying each artifact before continuing:\n\n"
             f"1. multi-agent-brief doctor --config {ws_path}/config.yaml\n"
             f"2. multi-agent-brief sources decide --config {ws_path}/config.yaml  (if configured)\n"
+            "   If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.\n"
             f"3. multi-agent-brief inputs extract --config {ws_path}/config.yaml  (if PDF/DOCX/image inputs exist)\n"
             f"4. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
             "5. Use the 'scout' subagent to write output/intermediate/candidate_claims.json\n"
@@ -437,6 +469,7 @@ def build_handoff(
         if status == "passed":
             handoff.notes.insert(0, f"Doctor: passed")
 
+    handoff.notes.append(RUNTIME_WEBSEARCH_ZERO_RESULT_NOTE)
     handoff.notes.append(
         "Feedback loop controls are optional: feedback_issues.json and repair_plan.json are created only by multi-agent-brief feedback ingest/plan/resolve."
     )

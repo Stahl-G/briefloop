@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 
 import pytest
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    import tomli as tomllib  # type: ignore[no-redef]
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "configs" / "agent_roles.yaml"
@@ -93,16 +97,31 @@ def test_read_only_agents_no_edit_tools(manifest):
 
 def test_codex_config_valid_toml(manifest):
     content = render_codex_config(manifest)
+    parsed = tomllib.loads(content)
     assert "max_threads" in content
     assert "max_depth" in content
+    assert parsed["agents"]["max_depth"] == 1
 
 
 def test_codex_agents_have_required_fields(manifest):
     for name, role in manifest["roles"].items():
         content = render_codex_agent(name, role, manifest)
+        parsed = tomllib.loads(content)
         assert f'name = "{name}"' in content
         assert "description =" in content
         assert "developer_instructions" in content
+        assert parsed["name"] == name
+        for key in ("name", "description", "developer_instructions"):
+            assert key in parsed, (name, key)
+        assert parsed["developer_instructions"].strip()
+
+
+def test_checked_in_codex_agents_are_valid_toml():
+    for path in sorted((ROOT / ".codex" / "agents").glob("*.toml")):
+        parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+        for key in ("name", "description", "developer_instructions"):
+            assert key in parsed, (path, key)
+        assert parsed["developer_instructions"].strip()
 
 
 def test_claude_agents_have_frontmatter(manifest):
