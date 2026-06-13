@@ -93,6 +93,17 @@ def _event_records(ws: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def _fail_appending_event_type(monkeypatch: pytest.MonkeyPatch, event_type: str) -> None:
+    original = runtime_state._append_jsonl
+
+    def flaky_append(path: Path, payload: dict) -> None:
+        if payload.get("event_type") == event_type:
+            raise RuntimeStateError("forced event append failure")
+        original(path, payload)
+
+    monkeypatch.setattr(runtime_state, "_append_jsonl", flaky_append)
+
+
 def _write_quality_gate_report(
     ws: Path,
     *,
@@ -1032,6 +1043,8 @@ def test_stage_complete_duplicate_rejects_without_duplicate_event(tmp_path):
     assert contamination_events[0]["metadata"]["reason_code"] == "older_stage_replay"
     assert contamination_events[0]["metadata"]["reference_eligible"] is False
     assert contamination_events[0]["metadata"]["clean_single_shot"] is False
+    workflow_bytes_after_first_contamination = _state_file(ws, "workflow_state").read_bytes()
+    event_bytes_after_first_contamination = _state_file(ws, "event_log").read_bytes()
 
     with pytest.raises(RuntimeStateError):
         complete_stage_transaction(
@@ -1049,6 +1062,34 @@ def test_stage_complete_duplicate_rejects_without_duplicate_event(tmp_path):
     assert len(workflow["run_integrity"]["reasons"]) == 1
     assert len(contamination_events) == 1
     assert len(_event_records(ws)) == len(before_events) + 1
+    assert _state_file(ws, "workflow_state").read_bytes() == workflow_bytes_after_first_contamination
+    assert _state_file(ws, "event_log").read_bytes() == event_bytes_after_first_contamination
+
+
+def test_stage_complete_contamination_event_failure_rolls_back_workflow(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="doctor",
+        reason="doctor passed",
+    )
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+    _fail_appending_event_type(monkeypatch, "run_integrity_contaminated")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="doctor",
+            reason="doctor replay should fail atomically",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_PARTIAL_WRITE
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
 
 
 def test_stage_complete_missing_required_output_writes_nothing(tmp_path):
@@ -1337,6 +1378,37 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     ]
     assert len(contamination_events) == 1
     assert contamination_events[0]["metadata"]["reason_code"] == "frozen_artifact_changed"
+
+
+def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+    _write_json_artifact(
+        ws,
+        "claim_ledger.json",
+        _valid_claim_ledger_payload(
+            claim_id="CL-002",
+            statement="ExampleCo changed the already completed ledger.",
+        ),
+    )
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+    _fail_appending_event_type(monkeypatch, "run_integrity_contaminated")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_PARTIAL_WRITE
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
 
 
 def test_state_check_accepts_unchanged_frozen_claim_ledger(tmp_path):
@@ -1947,6 +2019,29 @@ def test_reset_state_does_not_require_archive_for_incomplete_run(tmp_path):
     ]
     assert len(contamination_events) == 1
     assert contamination_events[0]["metadata"]["reason_code"] == "run_reset"
+
+
+def test_reset_state_event_append_failure_rolls_back_control_files(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    first = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    old_run_id = first["manifest"]["run_id"]
+    before_manifest = _state_file(ws, "runtime_manifest").read_bytes()
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+    _fail_appending_event_type(monkeypatch, "run_reset")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        initialize_runtime_state(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reset_state=True,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_PARTIAL_WRITE
+    assert _state_file(ws, "runtime_manifest").read_bytes() == before_manifest
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+    assert not (ws / "output" / "intermediate" / f"event_log.{old_run_id}.jsonl").exists()
 
 
 def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delivery(tmp_path):

@@ -348,6 +348,71 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         ) from exc
 
 
+def _read_state_bytes(path: Path) -> bytes | None:
+    try:
+        if not path.exists():
+            return None
+        return path.read_bytes()
+    except OSError as exc:
+        raise RuntimeStateError(
+            f"Failed to snapshot state file: {path}",
+            details={"path": str(path), "reason": str(exc)},
+        ) from exc
+
+
+def _restore_state_bytes(path: Path, data: bytes | None) -> None:
+    try:
+        if data is None:
+            path.unlink(missing_ok=True)
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.rollback.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise RuntimeStateError(
+            f"Failed to restore state file after partial write: {path}",
+            details={"path": str(path), "reason": str(exc)},
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
+
+
+def _snapshot_state_files(paths: dict[str, Path], keys: tuple[str, ...]) -> dict[str, bytes | None]:
+    return {key: _read_state_bytes(paths[key]) for key in keys}
+
+
+def _restore_state_files(paths: dict[str, Path], snapshots: dict[str, bytes | None]) -> None:
+    rollback_errors: list[dict[str, str]] = []
+    for key, data in snapshots.items():
+        try:
+            _restore_state_bytes(paths[key], data)
+        except RuntimeStateError as exc:
+            rollback_errors.append({
+                "key": key,
+                "path": str(paths[key]),
+                "reason": str(exc),
+            })
+    if rollback_errors:
+        raise RuntimeStateError(
+            "Runtime state rollback failed after partial write.",
+            details={"rollback_errors": rollback_errors},
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        )
+
+
+def _remove_reset_archive_copy(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise RuntimeStateError(
+            "Failed to remove reset event-log archive after partial write.",
+            details={"path": str(path), "reason": str(exc)},
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
+
+
 def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
@@ -646,8 +711,9 @@ def _contaminate_run_integrity_with_event_flag(
         and item.get("artifact_id") == artifact_id
         for item in existing
     )
-    if not already_present:
-        existing = [*existing, reason]
+    if already_present:
+        return workflow, False
+    existing = [*existing, reason]
     integrity.update({
         "status": RUN_INTEGRITY_CONTAMINATED,
         "reference_eligible": False,
@@ -695,10 +761,13 @@ def _persist_run_contamination(
         artifact_id=artifact_id,
         metadata=metadata,
     )
+    if not reason_added:
+        return workflow
+    old_workflow_bytes = _read_state_bytes(paths["workflow_state"])
     _write_json_atomic(paths["workflow_state"], contaminated)
-    if reason_added:
-        reasons = (contaminated.get("run_integrity") or {}).get("reasons")
-        reason = reasons[-1] if isinstance(reasons, list) and reasons and isinstance(reasons[-1], dict) else {}
+    reasons = (contaminated.get("run_integrity") or {}).get("reasons")
+    reason = reasons[-1] if isinstance(reasons, list) and reasons and isinstance(reasons[-1], dict) else {}
+    try:
         append_event(
             workspace=workspace,
             run_id=run_id,
@@ -709,6 +778,32 @@ def _persist_run_contamination(
             reason=message,
             metadata=_run_integrity_contamination_event_metadata(reason),
         )
+    except RuntimeStateError as exc:
+        try:
+            _restore_state_bytes(paths["workflow_state"], old_workflow_bytes)
+        except RuntimeStateError as rollback_exc:
+            raise RuntimeStateError(
+                "Run integrity contamination partially wrote workflow_state.json and failed rollback.",
+                details={
+                    "reason_code": reason_code,
+                    "stage_id": stage_id,
+                    "artifact_id": artifact_id,
+                    "event_error": str(exc),
+                    "rollback_error": str(rollback_exc),
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from rollback_exc
+        raise RuntimeStateError(
+            "Run integrity contamination event append failed; workflow_state.json was restored.",
+            details={
+                "reason_code": reason_code,
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "event_error": str(exc),
+                "event_details": exc.details,
+            },
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
     return contaminated
 
 
@@ -855,6 +950,12 @@ def initialize_runtime_state(
             or paths["event_log"].exists()
         )
     )
+    reset_snapshots = (
+        _snapshot_state_files(paths, ("runtime_manifest", "workflow_state", "event_log"))
+        if reset_state
+        else {}
+    )
+    reset_archived_event_log_path: Path | None = None
 
     if reset_state:
         if old_manifest and _workflow_is_finalized(old_workflow):
@@ -890,6 +991,7 @@ def initialize_runtime_state(
                     f"event_log.{old_run_id}.{uuid.uuid4().hex[:8]}.jsonl"
                 )
             os.replace(paths["event_log"], archive)
+            reset_archived_event_log_path = archive
             archived_event_log = _workspace_relative(ws, archive)
     elif old_manifest and old_manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
         raise RuntimeStateError(
@@ -959,33 +1061,54 @@ def initialize_runtime_state(
                 },
             )
 
-    _write_json_atomic(paths["runtime_manifest"], manifest)
-    _write_json_atomic(paths["workflow_state"], workflow)
+    try:
+        _write_json_atomic(paths["runtime_manifest"], manifest)
+        _write_json_atomic(paths["workflow_state"], workflow)
 
-    if created:
-        append_event(
-            workspace=ws,
-            run_id=run_id,
-            event_type="run_reset" if reset_state else "run_initialized",
-            actor=actor,
-            reason="Runtime state reset." if reset_state else "Runtime state initialized.",
-            metadata={
-                "runtime": runtime,
-                "previous_run_id": previous_run_id,
-                "archived_event_log": archived_event_log,
-            } if reset_state else {"runtime": runtime},
-        )
-        if reset_state and reset_contamination_reason_added:
-            reasons = (workflow.get("run_integrity") or {}).get("reasons")
-            reason = reasons[-1] if isinstance(reasons, list) and reasons and isinstance(reasons[-1], dict) else {}
+        if created:
             append_event(
                 workspace=ws,
                 run_id=run_id,
-                event_type="run_integrity_contaminated",
+                event_type="run_reset" if reset_state else "run_initialized",
                 actor=actor,
-                reason=str(reason.get("message") or "Runtime state reset contaminated run integrity."),
-                metadata=_run_integrity_contamination_event_metadata(reason),
+                reason="Runtime state reset." if reset_state else "Runtime state initialized.",
+                metadata={
+                    "runtime": runtime,
+                    "previous_run_id": previous_run_id,
+                    "archived_event_log": archived_event_log,
+                } if reset_state else {"runtime": runtime},
             )
+            if reset_state and reset_contamination_reason_added:
+                reasons = (workflow.get("run_integrity") or {}).get("reasons")
+                reason = reasons[-1] if isinstance(reasons, list) and reasons and isinstance(reasons[-1], dict) else {}
+                append_event(
+                    workspace=ws,
+                    run_id=run_id,
+                    event_type="run_integrity_contaminated",
+                    actor=actor,
+                    reason=str(reason.get("message") or "Runtime state reset contaminated run integrity."),
+                    metadata=_run_integrity_contamination_event_metadata(reason),
+                )
+    except RuntimeStateError as exc:
+        if reset_state:
+            try:
+                _restore_state_files(paths, reset_snapshots)
+                _remove_reset_archive_copy(reset_archived_event_log_path)
+            except RuntimeStateError as rollback_exc:
+                raise RuntimeStateError(
+                    "Runtime state reset partially wrote control files and failed rollback.",
+                    details={
+                        "event_error": str(exc),
+                        "rollback_error": str(rollback_exc),
+                    },
+                    error_code=E_TRANSACTION_PARTIAL_WRITE,
+                ) from rollback_exc
+            raise RuntimeStateError(
+                "Runtime state reset event append failed; control files were restored.",
+                details={"event_error": str(exc), "event_details": exc.details},
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from exc
+        raise
 
     return show_runtime_state(workspace=ws)
 
