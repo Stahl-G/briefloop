@@ -15,17 +15,32 @@ MABW turns AI-assisted business briefing into an accountable loop with four step
 
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
-## 🚀 Try It In Two Minutes, No API Key
+## 🚀 Get Started
+
+**Install From Source**
 
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
-bash scripts/demo.sh            # control behavior on synthetic materials
-bash scripts/demo-deep-dive.sh  # walk the ledgers and gate records the run left behind
 ```
 
-The demo runs on synthetic materials and demonstrates control behavior and traceability: what gets recorded, what gets blocked, and what a human must approve. It does not claim output-quality improvement.
+**Create Your First Brief**
+
+```bash
+multi-agent-brief onboard
+multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ~/mabw-workspace
+```
+
+**Optional: Inspect The Demo**
+
+```bash
+bash scripts/demo.sh
+bash scripts/demo-deep-dive.sh
+```
+
+The demo is for reviewers and visitors who want to inspect the evidence chain on synthetic materials. Real use starts with onboarding and a workspace created for your own brief.
 
 1,000+ deterministic tests run in CI with zero LLM calls.
 

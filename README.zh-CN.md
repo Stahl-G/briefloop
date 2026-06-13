@@ -110,15 +110,32 @@ N 公司宣布其示例州工厂一期产线于本周投产，规划年产能 2G
 
 ## 快速开始
 
+**从源码安装**
+
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
+```
+
+**创建你的第一份简报工作区**
+
+```bash
+multi-agent-brief onboard
+multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ~/mabw-workspace
+```
+
+**可选：查看 demo**
+
+```bash
 bash scripts/demo.sh
 bash scripts/demo-deep-dive.sh
 ```
 
-如果你要跑自己的材料，再安装 Claude Code writer 入口：
+demo 是给 reviewer 和 GitHub 访客检查合成材料上的证据链，不是使用产品前的必经步骤。
+
+如果你使用 Claude Code writer 路径，再安装 writer 入口：
 
 ```bash
 source .venv/bin/activate

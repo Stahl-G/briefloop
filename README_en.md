@@ -109,15 +109,32 @@ In a contract-following run, important numbers in the delivered brief should lin
 
 ## Quick Start
 
+**Install From Source**
+
 ```bash
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
 cd multi-agent-brief-workflow
 bash scripts/setup.sh
+```
+
+**Create Your First Brief**
+
+```bash
+multi-agent-brief onboard
+multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ~/mabw-workspace
+```
+
+**Optional: Inspect The Demo**
+
+```bash
 bash scripts/demo.sh
 bash scripts/demo-deep-dive.sh
 ```
 
-If you want to run your own materials, install the Claude Code writer entrypoint:
+The demo is for reviewers and GitHub visitors who want to inspect the evidence chain on synthetic materials. It is not required before using the product.
+
+For the Claude Code writer path, install the writer entrypoint:
 
 ```bash
 source .venv/bin/activate
