@@ -143,13 +143,17 @@ def _read_text(path: Path) -> str | None:
 
 def _relative(path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(ROOT))
+        return path.resolve().relative_to(ROOT).as_posix()
     except ValueError:
-        return str(path)
+        return _portable_path(path)
+
+
+def _portable_path(path: Path | str) -> str:
+    return str(path).replace("\\", "/")
 
 
 def _allowed_fixture(path: Path, line: str, kind: str) -> bool:
-    rel = _relative(path)
+    rel = _portable_path(_relative(path))
     if rel == "scripts/check_public_safety.py":
         return True
     if rel in {

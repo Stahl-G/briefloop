@@ -182,6 +182,32 @@ def test_public_safety_scan_does_not_broadly_allow_tests_directory(tmp_path):
     assert sorted(finding.kind for finding in findings) == ["common_secret", "file_url", "user_path"]
 
 
+def test_public_safety_allowlist_handles_windows_style_relative_paths(monkeypatch):
+    module = _load_module()
+
+    monkeypatch.setattr(
+        module,
+        "_relative",
+        lambda path: "tests\\test_improvement_contract.py",
+    )
+    assert module._allowed_fixture(
+        Path("ignored"),
+        '"file:///Users/example/source.md",',  # PUBLIC_SAFETY_TEST_FIXTURE
+        "file_url",
+    )
+
+    monkeypatch.setattr(
+        module,
+        "_relative",
+        lambda path: "scripts\\check_public_safety.py",
+    )
+    assert module._allowed_fixture(
+        Path("ignored"),
+        'FILE_URL_RE = re.compile(r"file://[^\\s]+")',  # PUBLIC_SAFETY_TEST_FIXTURE
+        "file_url",
+    )
+
+
 def test_public_safety_default_scan_falls_back_for_source_archives(tmp_path, monkeypatch):
     module = _load_module()
     module.ROOT = tmp_path
