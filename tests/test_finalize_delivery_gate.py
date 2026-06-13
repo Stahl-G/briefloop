@@ -161,6 +161,19 @@ def _write_audit_control_chain(intermediate: Path) -> None:
     )
 
 
+def _passing_audit_payload(**overrides) -> dict:
+    payload = {
+        "audit_status": "pass",
+        "audit_score": 100,
+        "passed": True,
+        "recommendation": "approve",
+        "summary": "CL-001 is ready for delivery.",
+        "findings": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     """Subagent-updated audited_brief.md must be the single source for final delivery."""
     output_dir = tmp_path / "output"
@@ -303,12 +316,7 @@ def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Pat
     _write_single_claim_ledger(intermediate / "claim_ledger.json")
     (intermediate / "audit_report.json").write_text(
         json.dumps(
-            {
-                "passed": True,
-                "recommendation": "approve",
-                "summary": "Audited CL-001 and stale CL-002.",
-                "findings": [],
-            },
+            _passing_audit_payload(summary="Audited CL-001 and stale CL-002."),
             ensure_ascii=False,
             indent=2,
         ),
@@ -337,6 +345,179 @@ def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Pat
     )
 
 
+def test_finalize_allows_non_real_claim_placeholder_in_audit_report_text(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            _passing_audit_payload(
+                checks=[
+                    {
+                        "check_id": "citation_format",
+                        "status": "pass",
+                        "details": "Citations use the documented [src:<claim_id>] notation.",
+                    }
+                ],
+            ),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+
+    assert result.audit_binding["status"] == "pass"
+    assert not any(
+        finding["kind"] == "audit_mentions_unknown_claim_ids"
+        for finding in result.audit_binding["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("audit_status", "audit_score", "finding_severity", "expected_kind"),
+    [
+        ("fail", 40, "medium", "audit_status_failed"),
+        ("warning", 70, "high", "audit_high_severity_findings"),
+        ("pass", 100, "high", "audit_high_severity_findings"),
+    ],
+)
+def test_finalize_blocks_current_audit_report_failures(
+    tmp_path: Path,
+    audit_status: str,
+    audit_score: int,
+    finding_severity: str,
+    expected_kind: str,
+):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            _passing_audit_payload(
+                audit_status=audit_status,
+                audit_score=audit_score,
+                findings=[
+                    {
+                        "finding_id": "AUDIT-001",
+                        "severity": finding_severity,
+                        "finding_type": "source_support",
+                        "description": "Audit finding should block finalization when high severity.",
+                    }
+                ],
+            ),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert any(
+        finding["kind"] == expected_kind
+        for finding in report["audit_binding"]["findings"]
+    )
+
+
+def test_finalize_blocks_malformed_current_audit_report_contract(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "passed": True,
+                "recommendation": "approve",
+                "summary": "Legacy pass shape without current audit contract fields.",
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert any(
+        finding["kind"] == "malformed_audit_report_contract"
+        for finding in report["audit_binding"]["findings"]
+    )
+
+
+def test_finalize_preserves_legacy_passed_false_blocker(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            _passing_audit_payload(passed=False),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert any(
+        finding["kind"] == "audit_not_passed"
+        for finding in report["audit_binding"]["findings"]
+    )
+
+
 def test_finalize_verifies_python_audit_binding_without_updating_audit_report(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
@@ -351,12 +532,7 @@ def test_finalize_verifies_python_audit_binding_without_updating_audit_report(tm
     audit_report = intermediate / "audit_report.json"
     audit_report.write_text(
         json.dumps(
-            {
-                "passed": True,
-                "recommendation": "approve",
-                "summary": "CL-001 is ready for delivery.",
-                "findings": [],
-            },
+            _passing_audit_payload(),
             ensure_ascii=False,
             indent=2,
         ),
@@ -391,12 +567,7 @@ def test_finalize_accepts_missing_legacy_audit_report_metadata_binding(tmp_path:
     _write_single_claim_ledger(intermediate / "claim_ledger.json")
     (intermediate / "audit_report.json").write_text(
         json.dumps(
-            {
-                "passed": True,
-                "recommendation": "approve",
-                "summary": "CL-001 is ready for delivery.",
-                "findings": [],
-            },
+            _passing_audit_payload(),
             ensure_ascii=False,
             indent=2,
         ),
@@ -427,12 +598,8 @@ def test_finalize_ignores_legacy_audit_report_metadata_binding(tmp_path: Path):
     _write_single_claim_ledger(ledger)
     (intermediate / "audit_report.json").write_text(
         json.dumps(
-            {
-                "passed": True,
-                "recommendation": "approve",
-                "summary": "CL-001 is ready for delivery.",
-                "findings": [],
-                "metadata": {
+            _passing_audit_payload(
+                metadata={
                     "audit_binding": {
                         "status": "pass",
                         "claim_ledger_sha256": "legacy-wrong-sha",
@@ -440,7 +607,7 @@ def test_finalize_ignores_legacy_audit_report_metadata_binding(tmp_path: Path):
                         "ledger_claim_count": 999,
                     }
                 },
-            },
+            ),
             ensure_ascii=False,
             indent=2,
         ),
@@ -476,12 +643,7 @@ def test_finalize_rejects_if_claim_ledger_changed_after_auditor_complete(tmp_pat
     audit_report = intermediate / "audit_report.json"
     audit_report.write_text(
         json.dumps(
-            {
-                "passed": True,
-                "recommendation": "approve",
-                "summary": "CL-001 is ready for delivery.",
-                "findings": [],
-            },
+            _passing_audit_payload(),
             ensure_ascii=False,
             indent=2,
         ),
@@ -523,12 +685,7 @@ def test_finalize_rejects_if_audited_brief_changed_after_auditor_complete(tmp_pa
     audit_report = intermediate / "audit_report.json"
     audit_report.write_text(
         json.dumps(
-            {
-                "passed": True,
-                "recommendation": "approve",
-                "summary": "CL-001 is ready for delivery.",
-                "findings": [],
-            },
+            _passing_audit_payload(),
             ensure_ascii=False,
             indent=2,
         ),
@@ -569,12 +726,7 @@ def test_finalize_rejects_if_audit_report_changed_after_auditor_complete(tmp_pat
     audit_report = intermediate / "audit_report.json"
     audit_report.write_text(
         json.dumps(
-            {
-                "passed": True,
-                "recommendation": "approve",
-                "summary": "CL-001 is ready for delivery.",
-                "findings": [],
-            },
+            _passing_audit_payload(),
             ensure_ascii=False,
             indent=2,
         ),

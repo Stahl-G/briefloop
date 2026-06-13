@@ -74,6 +74,18 @@ def _valid_claim_ledger_payload(claim_id: str = "CL-001", statement: str = "Exam
     ) + "\n"
 
 
+def _valid_audit_report_payload() -> str:
+    return json.dumps(
+        {
+            "audit_status": "pass",
+            "audit_score": 100,
+            "passed": True,
+            "recommendation": "approve",
+            "findings": [],
+        }
+    ) + "\n"
+
+
 def _event_records(ws: Path) -> list[dict]:
     path = _state_file(ws, "event_log")
     if not path.exists() or not path.read_text(encoding="utf-8").strip():
@@ -239,7 +251,7 @@ def _advance_to_finalize(ws: Path) -> None:
     _write_json_artifact(ws, "screened_candidates.json")
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
-    _write_json_artifact(ws, "audit_report.json", "{}\n")
+    _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
     _set_current_stage(ws, "finalize")
 
 
@@ -248,7 +260,7 @@ def _advance_to_auditor(ws: Path) -> None:
     _write_json_artifact(ws, "screened_candidates.json")
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
-    _write_json_artifact(ws, "audit_report.json", "{}\n")
+    _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
     _set_current_stage(ws, "auditor")
 
 

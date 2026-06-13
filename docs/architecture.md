@@ -62,11 +62,11 @@ Converts screened candidates into stable, traceable claims with unique IDs and e
 
 ### Analyst
 
-Drafts brief sections using only Claim Ledger claims. Writes `audited_brief.md` with `[src:CLAIM_ID]` citations. No investment advice, no invented facts.
+Drafts brief sections using only Claim Ledger claims. Writes `audited_brief.md` with `[src:<claim_id>]` citations. No investment advice, no invented facts.
 
 ### Editor
 
-Improves structure, readability, and executive tone. Removes process residue (`[SRC:]` etc.), preserves valid `[src:CLAIM_ID]` citations. No new facts.
+Improves structure, readability, and executive tone. Removes process residue (`[SRC:]` etc.), preserves valid `[src:<claim_id>]` citations. No new facts.
 
 ### Auditor
 
@@ -74,7 +74,7 @@ Checks citation support, source freshness, number accuracy, investment advice la
 
 ### Formatter / finalize
 
-`multi-agent-brief finalize` generates reader-facing output from `audited_brief.md`, stripping `[src:CLAIM_ID]` markers, rendering Markdown/DOCX.
+`multi-agent-brief finalize` generates reader-facing output from `audited_brief.md`, stripping `[src:<claim_id>]` markers, rendering Markdown/DOCX.
 
 ## Quality Gates
 

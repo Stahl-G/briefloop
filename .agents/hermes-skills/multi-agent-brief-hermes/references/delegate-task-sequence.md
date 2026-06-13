@@ -72,7 +72,7 @@ Goal: Draft the audited MABW brief.
 Inputs: `user.md`, `config.yaml`, `output/intermediate/claim_ledger.json`  
 Write: `output/intermediate/audited_brief.md`
 
-Write a management-ready brief in the workspace language with valid `[src:CLAIM_ID]` citations. Use the Orchestrator-provided audience taste summary as style context, not as source evidence.
+Write a management-ready brief in the workspace language with valid `[src:<claim_id>]` citations that use real Claim Ledger IDs. Use the Orchestrator-provided audience taste summary as style context, not as source evidence.
 
 ### Editor
 

@@ -61,12 +61,12 @@ FINAL_CLEAN_PATTERNS: list[tuple[re.Pattern[str], str, str, str]] = [
      "Investment recommendation language found"),
 ]
 
-# Valid claim citation pattern: [src:CLAIM_ID] with stable alnum, underscore, or hyphen IDs.
+# Valid claim citation pattern: [src:<claim_id>] with stable alnum, underscore, or hyphen IDs.
 _VALID_SRC_REF = VALID_SRC_REF_PATTERN
 
 
 def clean_process_residue(text: str) -> str:
-    """Remove process residue while preserving valid [src:CLAIM_ID] citations.
+    """Remove process residue while preserving valid [src:<claim_id>] citations.
 
     Args:
         text: The markdown text to clean.
@@ -82,7 +82,7 @@ def clean_process_residue(text: str) -> str:
 
 
 def validate_citations_intact(original: str, cleaned: str) -> bool:
-    """Verify that all valid [src:CLAIM_ID] citations survive cleanup.
+    """Verify that all valid [src:<claim_id>] citations survive cleanup.
 
     Args:
         original: The original text before cleanup.
@@ -97,13 +97,13 @@ def validate_citations_intact(original: str, cleaned: str) -> bool:
 
 
 def strip_claim_citations(text: str) -> str:
-    """Remove all [src:CLAIM_ID] citations from text.
+    """Remove all [src:<claim_id>] citations from text.
 
     Human readers cannot parse these internal references.
     Call this before writing the final reader-facing brief.
 
     Args:
-        text: Markdown text with [src:CLAIM_ID] citations.
+        text: Markdown text with [src:<claim_id>] citations.
 
     Returns:
         Text with all [src:...] markers removed.

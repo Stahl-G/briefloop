@@ -88,7 +88,7 @@ def run_deterministic_audit(
                     severity="medium",
                     line_number=line_number,
                     description=f"Number-like value '{match.group(1)}' appears without a source reference on the same line.",
-                    recommendation="Attach a [src:CLAIM_ID] reference or remove the unsupported number.",
+                    recommendation="Attach a [src:<claim_id>] reference using a real Claim Ledger ID or remove the unsupported number.",
                     evidence=line.strip(),
                 )
             )

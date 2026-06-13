@@ -63,7 +63,7 @@ class SourceAppendixResult:
 
 
 def cited_claim_ids(markdown: str) -> list[str]:
-    """Return [src:CLAIM_ID] references in first-appearance order."""
+    """Return [src:<claim_id>] references in first-appearance order."""
     seen: set[str] = set()
     claim_ids: list[str] = []
     for match in _SRC_REF_RE.finditer(markdown):

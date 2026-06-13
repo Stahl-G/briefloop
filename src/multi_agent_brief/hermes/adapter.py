@@ -666,7 +666,7 @@ Write:
 
 Write a management-ready brief in the workspace language.
 Use Claim Ledger evidence for factual statements.
-Preserve valid [src:CLAIM_ID] citations.
+Preserve valid [src:<claim_id>] citations that use real Claim Ledger IDs.
 Include source dates where useful.
 Return a section summary and any source limitations.
 """,
@@ -685,7 +685,7 @@ Input: output/intermediate/audited_brief.md
 Write: output/intermediate/audited_brief.md
 
 Improve readability, structure, and executive tone.
-Preserve factual scope, uncertainty, and valid [src:CLAIM_ID] citations.
+Preserve factual scope, uncertainty, and valid [src:<claim_id>] citations that use real Claim Ledger IDs.
 Return edits made and any unresolved issues.
 """,
     toolsets=["file", "terminal"]

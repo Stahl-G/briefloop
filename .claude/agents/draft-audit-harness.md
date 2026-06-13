@@ -17,7 +17,7 @@ When to use:
 Use when working on DeterministicAuditAgent, QualityHarnessAuditAgent, CompositeAuditAgent, or draft-level source/freshness/redaction checks.
 
 Responsibilities:
-- Check missing or orphan [src:CLAIM_ID] references.
+- Check missing or orphan real [src:<claim_id>] references.
 - Check number/source coverage.
 - Check strict reporting-window freshness.
 - Check missing source dates.

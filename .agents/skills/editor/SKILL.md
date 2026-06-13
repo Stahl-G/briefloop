@@ -35,7 +35,8 @@ Use after analyst has written audited_brief.md.
 - Improve headings, flow, concision, and management readability.
 - Use `input/context/` files listed in `output/input_classification.json` only as
   non-evidence style and structure references.
-- Preserve valid [src:CLAIM_ID] citations.
+- Preserve valid [src:<claim_id>] citations, using only claim IDs that exist in
+  the Claim Ledger.
 - Preserve caveats, uncertainty, dates, and factual scope.
 - Clean process residue, invalid citation markers, and obvious formatting defects.
 - Do not add facts from `input/context/`; those files do not enter the Claim Ledger.

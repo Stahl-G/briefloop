@@ -35,7 +35,7 @@ Use after auditor has produced audit_report.json and audited_brief.md is ready f
 ## Work
 
 - Run or follow multi-agent-brief finalize --config <workspace>/config.yaml.
-- Strip internal [src:CLAIM_ID] markers from reader-facing delivery artifacts.
+- Strip internal [src:<claim_id>] markers from reader-facing delivery artifacts.
 - Generate configured `source_appendix.md` from cited Claim Ledger sources only as an audit/control copy.
 - Preserve the meaning and structure of the audited brief.
 - Do not expose raw claim IDs, source IDs, evidence text, local paths, or file URLs in delivery artifacts or source appendix audit copies.

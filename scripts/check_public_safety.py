@@ -52,6 +52,17 @@ TEXT_SUFFIXES = {
     ".yml",
 }
 
+EXCLUDED_ARCHIVE_DIRS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -62,14 +73,33 @@ class Finding:
 
 
 def _repo_tracked_files() -> list[Path]:
-    proc = subprocess.run(
-        ["git", "ls-files"],
-        cwd=ROOT,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files"],
+            cwd=ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return list(_iter_archive_files(ROOT))
     return [ROOT / line for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _has_excluded_dir(path: Path, root: Path) -> bool:
+    try:
+        parts = path.resolve().relative_to(root.resolve()).parts
+    except ValueError:
+        parts = path.parts
+    directory_parts = parts[:-1] if path.is_file() else parts
+    return any(part in EXCLUDED_ARCHIVE_DIRS for part in directory_parts)
+
+
+def _iter_archive_files(root: Path) -> Iterable[Path]:
+    for child in sorted(root.rglob("*")):
+        if child.is_file() and not _has_excluded_dir(child, root):
+            yield child
 
 
 def _iter_scan_files(paths: list[Path] | None) -> Iterable[Path]:
@@ -84,9 +114,7 @@ def _iter_scan_files(paths: list[Path] | None) -> Iterable[Path]:
             continue
         if not path.is_dir():
             continue
-        for child in sorted(path.rglob("*")):
-            if child.is_file() and ".git" not in child.parts:
-                yield child
+        yield from _iter_archive_files(path)
 
 
 def _banned_terms_from_env() -> list[str]:

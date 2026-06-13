@@ -272,8 +272,8 @@ roles:
     - Read output/input_classification.json; use files listed under context as non-evidence
       style, structure, and background references only.
     - Draft management-ready sections using only Claim Ledger material.
-    - Attach [src:CLAIM_ID] citations to every important statement.
-    - Preserve every [src:CLAIM_ID] citation exactly.
+    - Attach real [src:<claim_id>] citations from claim_ledger.json to every important statement.
+    - Preserve every real [src:<claim_id>] citation exactly.
     - Include source dates (published_at or retrieved_at) where available.
     - Preserve uncertainty and source limitations.
     - Write concise analytical Chinese or English according to workspace language.
@@ -287,7 +287,8 @@ roles:
       and structure only.
     - Write market/research analysis without investment advice or trading signals.
     - Cite only claim IDs that exist in the ledger.
-    - Preserve [src:CLAIM_ID] citations exactly.
+    - Preserve real [src:<claim_id>] citations exactly.
+    - Do not write the placeholder <claim_id> literally; use only claim IDs that exist in claim_ledger.json.
     - Always read claim_ledger.json before writing.
   auditor:
     stage: pipeline
@@ -298,9 +299,9 @@ roles:
       claim_ledger.json and enforce quality thresholds.
     responsibilities:
     - Review final brief against claim_ledger.json and audit_report.json.
-    - Check unsupported facts — every important statement must have a [src:CLAIM_ID].
+    - Check unsupported facts — every important statement must have a real [src:<claim_id>] citation.
     - Check missing citations — claims in ledger not cited in brief.
-    - Check orphan citations — [src:CLAIM_ID] in brief not found in ledger.
+    - Check orphan citations — real [src:<claim_id>] citations in the brief not found in the ledger.
     - Check stale sources — sources older than configured reporting window.
     - Check investment-advice language — no trading signals or investment recommendations.
     - Check redaction risks — no private identifiers, internal paths, or confidential
@@ -333,7 +334,7 @@ roles:
     - Read output/input_classification.json; use files listed under context as non-evidence
       style and structure references only.
     - Reduce repetition.
-    - Preserve all [src:CLAIM_ID] citations exactly.
+    - Preserve all real [src:<claim_id>] citations exactly.
     - Preserve uncertainty.
     - Remove internal residue when safe.
     - Remove [SRC:], [SOURCE:], empty [src:] markers.
@@ -346,7 +347,8 @@ roles:
     - Do not add facts from input/context; context files shape style and structure only.
     - Keep claim citations with supported statements.
     - Preserve caveats and uncertainty.
-    - Preserve [src:CLAIM_ID] citations exactly.
+    - Preserve real [src:<claim_id>] citations exactly.
+    - Do not write the placeholder <claim_id> literally; preserve only existing claim IDs.
   formatter:
     stage: pipeline
     tool_profile: edit_safe
@@ -359,7 +361,7 @@ roles:
     - Render the final delivery bundle under output/delivery/.
     - Keep output/source_appendix.md as an internal audit/control copy generated
       from cited Claim Ledger sources when enabled.
-    - Strip internal [src:CLAIM_ID] markers from reader-facing delivery artifacts.
+    - Strip internal [src:<claim_id>] markers from reader-facing delivery artifacts.
     - Preserve audited meaning and structure.
     - Report final artifact paths, audit status, and rendering limitations.
     hard_rules:
@@ -380,7 +382,7 @@ roles:
     trigger: Use when working on DeterministicAuditAgent, QualityHarnessAuditAgent,
       CompositeAuditAgent, or draft-level source/freshness/redaction checks.
     responsibilities:
-    - Check missing or orphan [src:CLAIM_ID] references.
+    - Check missing or orphan real [src:<claim_id>] references.
     - Check number/source coverage.
     - Check strict reporting-window freshness.
     - Check missing source dates.
@@ -461,7 +463,7 @@ roles:
     - Generate analysis_cards.json — each card must have supporting_claim_ids.
     - Write competitor analysis section for the brief using only AnalysisCards and
       Claim Ledger.
-    - Preserve [src:CLAIM_ID] citations for every source-backed statement.
+    - Preserve real [src:<claim_id>] citations for every source-backed statement.
     - Distinguish announced vs operational capacity in prose.
     - Flag evidence gaps clearly.
     hard_rules:

@@ -36,7 +36,8 @@ Use after claim-ledger has written claim_ledger.json.
 - Use claim ledger entries as the factual evidence base.
 - Use `input/context/` files listed in `output/input_classification.json` only as
   non-evidence style, structure, and background references.
-- Attach valid [src:CLAIM_ID] citations to important factual statements.
+- Attach valid [src:<claim_id>] citations to important factual statements, using
+  only claim IDs that exist in the Claim Ledger.
 - Include dates, numbers, locations, parties, and caveats when the ledger supports them.
 - Preserve uncertainty and source limitations.
 - Do not cite or introduce facts from `input/context/`; those files do not enter

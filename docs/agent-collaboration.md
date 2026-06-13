@@ -23,7 +23,7 @@ All external agents should exchange structured artifacts:
 SourcePacket
   -> CandidateItem
   -> Claim Ledger entry
-  -> Draft section with [src:CLAIM_ID]
+  -> Draft section with [src:<claim_id>]
   -> Audit Report finding
   -> Final brief artifact
 ```

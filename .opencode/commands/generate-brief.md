@@ -69,12 +69,12 @@ Stage sequence:
 10. Check `claim_ledger.json`, then delegate the **brief-analyst** subagent:
    - Write the final brief from `claim_ledger.json` and `user.md`.
    - Use only `claim_ledger.json` as source evidence.
-   - Preserve all valid [src:CLAIM_ID] citations.
+   - Preserve all valid [src:<claim_id>] citations that use real Claim Ledger IDs.
    - Write the auditable brief to `$ARGUMENTS/output/intermediate/audited_brief.md`.
 
 11. Check `audited_brief.md`, then delegate the **brief-editor** subagent:
     - Polish for management / research team readability.
-    - Preserve valid [src:CLAIM_ID] in `audited_brief.md`.
+    - Preserve valid [src:<claim_id>] in `audited_brief.md` that use real Claim Ledger IDs.
 
 12. Check edited `audited_brief.md`, then delegate the **brief-auditor** subagent:
     - Audit `$ARGUMENTS/output/intermediate/audited_brief.md` against `$ARGUMENTS/output/intermediate/claim_ledger.json`.
@@ -89,7 +89,7 @@ Stage sequence:
 14. Finalize only after the gates/state completion path passes:
     - Run: `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`
     - After finalize writes delivery artifacts, run: `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
-    - Confirm `output/delivery/brief.md` strips [src:CLAIM_ID].
+    - Confirm `output/delivery/brief.md` strips [src:<claim_id>].
     - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.
     - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.
     - Do not present Claim Ledger, Audit Report, Audited Brief, named Markdown, or source appendix audit copy as user delivery files.

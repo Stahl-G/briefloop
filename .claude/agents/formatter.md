@@ -20,7 +20,7 @@ Responsibilities:
 - Run or follow multi-agent-brief finalize --config <workspace>/config.yaml.
 - Render the final delivery bundle under output/delivery/.
 - Keep output/source_appendix.md as an internal audit/control copy generated from cited Claim Ledger sources when enabled.
-- Strip internal [src:CLAIM_ID] markers from reader-facing delivery artifacts.
+- Strip internal [src:<claim_id>] markers from reader-facing delivery artifacts.
 - Preserve audited meaning and structure.
 - Report final artifact paths, audit status, and rendering limitations.
 

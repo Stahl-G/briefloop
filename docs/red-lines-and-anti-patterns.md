@@ -12,7 +12,7 @@ This page records public-safe rationale for v0.6 control-surface regression chec
 - Do not tell users "the system learned this" unless the user approved it and it is inspectable in the Improvement Ledger.
 - Do not let future-stage artifacts or issues globally block a fresh workspace.
 - Do not let planned blocking issues be bypassed by `continue`.
-- Do not require reader-facing briefs to retain internal `[src:CLAIM_ID]` markers.
+- Do not require reader-facing briefs to retain internal `[src:<claim_id>]` markers.
 - Do not fetch live market data inside deterministic gate checks.
 - Do not present provenance projection as semantic proof that a source supports a claim.
 - Do not present a precision gate as sufficient by itself when it can be passed by omitting important information.

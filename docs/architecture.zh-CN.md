@@ -62,11 +62,11 @@ Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → cla
 
 ### 分析师（Analyst）
 
-只使用事实账本中的 claim 写草稿，生成带 `[src:CLAIM_ID]` 引用的 `audited_brief.md`。不写投资建议，不编造事实。
+只使用事实账本中的 claim 写草稿，生成带 `[src:<claim_id>]` 引用的 `audited_brief.md`。不写投资建议，不编造事实。
 
 ### 编辑师（Editor）
 
-改善结构、可读性和管理层表达。不发明新事实、不添加无支撑数字。清除 `[SRC:]` 等过程残留，保留有效 `[src:CLAIM_ID]`。
+改善结构、可读性和管理层表达。不发明新事实、不添加无支撑数字。清除 `[SRC:]` 等过程残留，保留有效 `[src:<claim_id>]`。
 
 ### 审计师（Auditor）
 
@@ -74,7 +74,7 @@ Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → cla
 
 ### 定稿器（Formatter / finalize）
 
-`multi-agent-brief finalize` 从 `audited_brief.md` 生成 reader-facing 输出，剥离 `[src:CLAIM_ID]`，渲染 Markdown/DOCX。
+`multi-agent-brief finalize` 从 `audited_brief.md` 生成 reader-facing 输出，剥离 `[src:<claim_id>]`，渲染 Markdown/DOCX。
 
 ## 质量门禁（Quality Gate）
 

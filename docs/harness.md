@@ -16,7 +16,7 @@ auditor subagent
 
 The current harness includes public-safe versions of local weekly pipeline gates:
 
-- Missing or orphan `[src:CLAIM_ID]` references
+- Missing or orphan `[src:<claim_id>]` references
 - Number-like values without same-line source references
 - Strict reporting-window freshness checks
 - Missing source dates under reporting-window mode

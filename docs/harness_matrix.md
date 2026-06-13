@@ -34,7 +34,7 @@ The current code exposes this through `FinalQualityAuditAgent`. It is intentiona
 
 | Gate | Target | Severity | Purpose |
 | --- | --- | --- | --- |
-| Source ID existence | Draft | Blocking | Every `[src:CLAIM_ID]` must resolve to the Claim Ledger. |
+| Source ID existence | Draft | Blocking | Every `[src:<claim_id>]` must resolve to the Claim Ledger. |
 | Number/source coverage | Draft | Warning or blocking by config | Important numbers need same-line source support. |
 | Source freshness | Draft | Warning or blocking by config | Stale sources cannot be framed as report-window developments. |
 | Redaction scan | Draft and final | Blocking | Credentials, private paths, and sensitive identifiers must not leak. |

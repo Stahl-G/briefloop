@@ -238,7 +238,7 @@ Claude Code:
 
 ## Tips
 
-- Preserve `[src:CLAIM_ID]` citations inside `audited_brief.md`.
+- Preserve `[src:<claim_id>]` citations inside `audited_brief.md`, using real Claim Ledger IDs.
 - Use CLI tools for deterministic setup, validation, audit, and rendering.
 - Use subagents for source extraction, screening, analysis, editing, and final review.
 - Check `output/intermediate/audit_report.json` before distributing a brief.

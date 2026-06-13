@@ -74,7 +74,7 @@ def handle(args: argparse.Namespace) -> int:
         print(f"[finalize] Source appendix audit copy: {result.source_appendix_generation}")
     print("[finalize] Audit records remain under output/intermediate/.")
     print(
-        "[finalize] Internal [src:CLAIM_ID] markers stripped from"
+        "[finalize] Internal [src:<claim_id>] markers stripped from"
         " reader-facing artifacts."
     )
     return 0

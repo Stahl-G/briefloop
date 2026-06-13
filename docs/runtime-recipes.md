@@ -56,7 +56,7 @@ The compact workflow compresses role assignment:
 run handoff
 → one runtime agent or human-assisted agent prepares candidate/screened claims
 → same agent or human-assisted pass creates claim_ledger.json
-→ same agent drafts/edits audited_brief.md with [src:CLAIM_ID]
+→ same agent drafts/edits audited_brief.md with [src:<claim_id>]
 → audit/gates/state review
 → finalize
 ```

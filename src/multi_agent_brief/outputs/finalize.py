@@ -8,6 +8,7 @@ from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
 from multi_agent_brief.outputs.naming import render_output_stem
 from multi_agent_brief.outputs.reader_final_gate import (
@@ -144,7 +145,7 @@ def finalize_reader_outputs(
     named_docx_path: Path | None = None
     if "docx" in formats:
         # Avoid leaving a stale rendered file that may still contain internal
-        # [src:CLAIM_ID] markers when regeneration fails or dependencies are missing.
+        # [src:<claim_id>] markers when regeneration fails or dependencies are missing.
         if docx_path.exists():
             docx_path.unlink()
         if named_brief_path is not None:
@@ -416,6 +417,54 @@ def _audit_binding_report(
         )
         report["status"] = "fail"
         return report
+
+    contract_violations = AuditReportContract.validate(payload)
+    contract_errors = [violation for violation in contract_violations if violation.severity == "error"]
+    if contract_errors:
+        findings.append(
+            {
+                "kind": "malformed_audit_report_contract",
+                "message": "audit_report.json does not satisfy the current AuditReport contract.",
+                "count": len(contract_errors),
+                "errors": [
+                    {
+                        "field": violation.field,
+                        "error": violation.error,
+                    }
+                    for violation in contract_errors[:10]
+                ],
+            }
+        )
+
+    audit_status = str(payload.get("audit_status") or "").strip().lower()
+    if audit_status == "fail":
+        findings.append(
+            {
+                "kind": "audit_status_failed",
+                "message": "audit_report.json records audit_status=fail.",
+            }
+        )
+
+    structured_findings = payload.get("findings")
+    if isinstance(structured_findings, list):
+        high_findings: list[dict[str, Any]] = [
+            finding
+            for finding in structured_findings
+            if isinstance(finding, dict) and str(finding.get("severity") or "").strip().lower() == "high"
+        ]
+        if high_findings:
+            findings.append(
+                {
+                    "kind": "audit_high_severity_findings",
+                    "message": "audit_report.json contains high-severity findings.",
+                    "count": len(high_findings),
+                    "finding_ids": [
+                        str(finding.get("finding_id") or "")
+                        for finding in high_findings[:10]
+                        if str(finding.get("finding_id") or "")
+                    ],
+                }
+            )
 
     if payload.get("passed") is False:
         findings.append(

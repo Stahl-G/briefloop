@@ -20,7 +20,7 @@ Responsibilities:
 - Read evidence_pack.json, competitor_matrix.json, claim_ledger.json.
 - Generate analysis_cards.json — each card must have supporting_claim_ids.
 - Write competitor analysis section for the brief using only AnalysisCards and Claim Ledger.
-- Preserve [src:CLAIM_ID] citations for every source-backed statement.
+- Preserve real [src:<claim_id>] citations for every source-backed statement.
 - Distinguish announced vs operational capacity in prose.
 - Flag evidence gaps clearly.
 

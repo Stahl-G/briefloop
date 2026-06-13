@@ -184,6 +184,36 @@ def test_auditor_prompt_does_not_require_audit_binding_metadata():
         assert "state stage-complete --stage auditor" in text
 
 
+def test_runtime_prompts_do_not_use_literal_claim_id_placeholder():
+    prompt_paths = [
+        "configs/agent_roles.yaml",
+        ".agents/skills/analyst/SKILL.md",
+        ".agents/skills/editor/SKILL.md",
+        ".agents/skills/formatter/SKILL.md",
+        ".agents/hermes-skills/multi-agent-brief-hermes/references/delegate-task-sequence.md",
+        ".claude/commands/generate-brief.md",
+        ".claude/agents/analyst.md",
+        ".claude/agents/auditor.md",
+        ".claude/agents/editor.md",
+        ".claude/agents/formatter.md",
+        ".codex/agents/analyst.toml",
+        ".codex/agents/auditor.toml",
+        ".codex/agents/editor.toml",
+        ".codex/agents/formatter.toml",
+        ".opencode/commands/generate-brief.md",
+        ".opencode/agents/brief-analyst.md",
+        ".opencode/agents/brief-auditor.md",
+        ".opencode/agents/brief-editor.md",
+        ".opencode/agents/brief-formatter.md",
+        "docs/agents/claude-code.md",
+        "docs/agents/codex.md",
+        "docs/agents/opencode.md",
+    ]
+    for path in prompt_paths:
+        text = _read(path)
+        assert "[src:CLAIM_ID]" not in text, f"literal placeholder leaked in {path}"
+
+
 def test_claude_mabw_command_is_five_verb_writer_surface():
     text = _read(".claude/commands/mabw.md")
     assert "Claude Code is the first-class writer / five-verb path." in text

@@ -27,9 +27,9 @@ Use before final delivery of any real brief. Must verify brief against claim_led
 
 Responsibilities:
 - Review final brief against claim_ledger.json and audit_report.json.
-- Check unsupported facts — every important statement must have a [src:CLAIM_ID].
+- Check unsupported facts — every important statement must have a real [src:<claim_id>] citation.
 - Check missing citations — claims in ledger not cited in brief.
-- Check orphan citations — [src:CLAIM_ID] in brief not found in ledger.
+- Check orphan citations — real [src:<claim_id>] citations in the brief not found in the ledger.
 - Check stale sources — sources older than configured reporting window.
 - Check investment-advice language — no trading signals or investment recommendations.
 - Check redaction risks — no private identifiers, internal paths, or confidential content.

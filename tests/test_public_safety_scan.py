@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -163,3 +164,26 @@ def test_public_safety_scan_does_not_broadly_allow_tests_directory(tmp_path):
     findings = module.scan([leak_path], banned_terms=[])
 
     assert sorted(finding.kind for finding in findings) == ["common_secret", "file_url", "user_path"]
+
+
+def test_public_safety_default_scan_falls_back_for_source_archives(tmp_path, monkeypatch):
+    module = _load_module()
+    module.ROOT = tmp_path
+    (tmp_path / "README.md").write_text("PRIVATE_ARCHIVE_TERM\n", encoding="utf-8")
+    build_dir = tmp_path / "build"
+    build_dir.mkdir()
+    (build_dir / "generated.md").write_text("PRIVATE_ARCHIVE_TERM\n", encoding="utf-8")
+    cache_dir = tmp_path / "__pycache__"
+    cache_dir.mkdir()
+    (cache_dir / "generated.py").write_text("PRIVATE_ARCHIVE_TERM\n", encoding="utf-8")
+
+    def fail_git(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=128, cmd=kwargs.get("args") or "git ls-files")
+
+    monkeypatch.setattr(module.subprocess, "run", fail_git)
+
+    findings = module.scan(None, banned_terms=["PRIVATE_ARCHIVE_TERM"])
+
+    assert [(finding.path.name, finding.kind) for finding in findings] == [
+        ("README.md", "banned_term")
+    ]

@@ -20,7 +20,7 @@ Responsibilities:
 - Improve readability and management tone.
 - Read output/input_classification.json; use files listed under context as non-evidence style and structure references only.
 - Reduce repetition.
-- Preserve all [src:CLAIM_ID] citations exactly.
+- Preserve all real [src:<claim_id>] citations exactly.
 - Preserve uncertainty.
 - Remove internal residue when safe.
 - Remove [SRC:], [SOURCE:], empty [src:] markers.
@@ -33,7 +33,8 @@ Guardrails:
 - Do not add facts from input/context; context files shape style and structure only.
 - Keep claim citations with supported statements.
 - Preserve caveats and uncertainty.
-- Preserve [src:CLAIM_ID] citations exactly.
+- Preserve real [src:<claim_id>] citations exactly.
+- Do not write the placeholder <claim_id> literally; preserve only existing claim IDs.
 
 Repository rules:
 - Preserve Screener, Claim Ledger, and audit gates.

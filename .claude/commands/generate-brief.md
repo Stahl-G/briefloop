@@ -132,7 +132,7 @@ your editorial judgment.
 10. Invoke the **analyst** subagent:
    - Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.
    - Write the auditable brief using Claim Ledger evidence.
-   - Preserve valid `[src:CLAIM_ID]` citations.
+   - Preserve valid `[src:<claim_id>]` citations that use real Claim Ledger IDs.
    - Include dates for news items.
    - Write `$ARGUMENTS/output/intermediate/audited_brief.md`.
    - Check the expected artifact.
@@ -142,7 +142,7 @@ your editorial judgment.
 11. Invoke the **editor** subagent:
     - Polish for management or research-team readability.
     - Clean invalid citation markers and process residue.
-    - Preserve valid `[src:CLAIM_ID]` citations in `audited_brief.md`.
+    - Preserve valid `[src:<claim_id>]` citations in `audited_brief.md` that use real Claim Ledger IDs.
     - Check the expected artifact.
     - Run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage editor --reason "Auditable brief was edited without changing evidence."`.
     - If the transaction fails, stop and report the failure. Do not invoke the next specialist.
