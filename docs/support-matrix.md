@@ -43,6 +43,7 @@ validation unless that is stated separately.
 | `multi-agent-brief provenance build/show/validate` | Supported |
 | `multi-agent-brief improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Supported |
 | `multi-agent-brief eval-cases list/validate/run` | Supported |
+| `multi-agent-brief experiments 080 validate-case` | Experimental |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -133,6 +134,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | Tool | Status |
 |---|---|
 | Packaged public-safe evaluation cases (`eval-cases`) | Supported |
+| MABW-080 experiment case validator (`experiments 080 validate-case`) | Experimental |
 | Workspace provenance projection (`provenance`) | Supported |
 | Runtime asset parity check (`scripts/check_runtime_asset_parity.py`) | Source-clone-only |
 | Private/commercial benchmark cases | Not shipped |

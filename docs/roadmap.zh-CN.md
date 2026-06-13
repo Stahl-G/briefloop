@@ -210,24 +210,26 @@ Non-goals:
 - 不把 raw prompt、raw log 或 private feedback 注入公开 prompts。
 - 不做完整 RAG platform 或 autonomous long-term-memory system。
 
-### v0.8 — Mode Registry, Policy Packs, And Runtime Parity
+### v0.8 — Measurement, Fast Rerun, Role Topology, And Evaluation
 
-目标：用 configurable policy packs 和 mode registry 支持不同简报场景与入口，同时保持不同 runtime 的行为一致，并定义 approved guidance 是否真正体现、是否造成回归的第一版评估协议。
+目标：先让 runtime trace 可测，再让同一事实层的重跑更便宜，随后在不削弱 accountable artifacts 的前提下收敛默认角色拓扑，并定义 approved guidance 是否真正体现、是否造成回归的第一版评估协议。
 
 公开范围：
 
-- 引入 mode registry，让同一套 司乐师 和 specialist roles 支持 full run、source-readiness check、audit-only、repair-planning-only、audience-profile update 和 final-render-only 等入口。
-- 引入 audience、industry、cadence、delivery expectations 相关的 policy-pack 概念。
-- 让 Hermes、Claude Code、Codex、OpenCode 和 manual fallback 对齐到同一组 artifact expectations。
-- 保证 CLI、Hermes GUI/plugin 和其他 runtime 入口都基于同一套 司乐师 契约 和 state files。
+- 新增 run-integrity 和 timing surfaces，让 runtime trace 能区分 clean、incomplete 和 contaminated run，避免在污染轨迹上做性能主张。
+- 规划 fast-rerun 基础设施：基于 hash-verified same-evidence rewrite，但不跳过 writer、auditor、gates、finalize-complete、human delivery 或 archive。
+- 收敛默认 role topology，同时保留同一套 accountable artifacts，包括 candidate claims、screened candidates、Claim Ledger、audit report、gate reports 和 delivery bundle。
+- policy-pack / recipe 工作先保持最小化：只支撑 fast-rerun 与 default/strict topology 选择，不先展开完整 mode registry。
 - 保持单一公开 support matrix。
 - 定义 guidance manifestation 和 guidance regression 评估口径，用真实 runtime traces 观察 approved guidance 是否被体现、是否造成事实或表达回归。`origin_runtime` 只用于分析，不用于 runtime filtering 或 routing。
 
 Non-goals:
 
 - 商业 policy-pack 内部规则稳定前不公开。
+- 最小 recipe / pack surface 被证明前，不展开完整 mode registry。
 - 不让 runtime-specific 细节分叉业务 artifact schema。
 - 不为 GUI 或 messaging 入口另写一套简化 pipeline。
+- 不做 `lite mode`，不做跳过 gates 的 fast path，不做部分 fact-layer import。
 - v0.8 协议实际执行前，不声称 v0.7 Improvement Memory 已经改善输出质量。
 
 ### v0.9 — Distribution And Reference Workflows

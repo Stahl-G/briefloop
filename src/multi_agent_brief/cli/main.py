@@ -35,6 +35,7 @@ from multi_agent_brief.cli import (
     controls_commands,
     runtime_commands,
     improve_commands,
+    experiments_commands,
 )
 
 
@@ -89,6 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Public-safe evaluation cases
     eval_cases_commands.register(subparsers)
+
+    # Experimental measurement harnesses
+    experiments_commands.register(subparsers)
 
     # Deterministic provenance projection
     provenance_commands.register(subparsers)
@@ -192,6 +196,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "eval-cases":
         return eval_cases_commands.handle(args)
+
+    if cmd == "experiments":
+        return experiments_commands.handle(args)
 
     if cmd == "provenance":
         return provenance_commands.handle(args)

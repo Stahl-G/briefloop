@@ -210,24 +210,26 @@ Non-goals:
 - no raw prompt, raw log, or private feedback injection into public prompts
 - no full RAG platform or autonomous long-term-memory system
 
-### v0.8 — Mode Registry, Policy Packs, And Runtime Parity
+### v0.8 — Measurement, Fast Rerun, Role Topology, And Evaluation
 
-Goal: support different brief contexts and entry modes through configurable policy packs while keeping runtime behavior consistent, and define the first evaluation protocol for whether approved guidance manifests without causing regressions.
+Goal: make the runtime trace measurable, make same-evidence reruns cheaper, simplify the default role topology without weakening accountable artifacts, and define the first evaluation protocol for whether approved guidance manifests without causing regressions.
 
 Public scope:
 
-- Introduce a mode registry so the same Orchestrator and specialist roles can support full runs, source-readiness checks, audit-only runs, repair-planning-only runs, audience-profile updates, and final-render-only flows.
-- Introduce policy-pack concepts for audience, industry, cadence, and delivery expectations.
-- Keep Hermes, Claude Code, Codex, OpenCode, and manual fallback aligned around the same artifact expectations.
-- Keep CLI, Hermes GUI/plugin, and other runtime entry points backed by the same Orchestrator contracts and state files.
+- Add run-integrity and timing surfaces so runtime traces can distinguish clean, incomplete, and contaminated runs before performance claims are made.
+- Add planned fast-rerun infrastructure for hash-verified same-evidence rewrites without skipping writer, auditor, gates, finalize-complete, human delivery, or archive.
+- Simplify the default role topology while preserving the same accountable artifact set, including candidate claims, screened candidates, Claim Ledger, audit report, gate reports, and delivery bundle.
+- Keep policy-pack and recipe work minimal at first: enough to support fast-rerun and default/strict topology choices, not a full mode-registry expansion.
 - Preserve a single public support matrix.
 - Define guidance manifestation and guidance regression measurements for real runtime traces. `origin_runtime` may be used for analysis, but not for runtime filtering or routing.
 
 Non-goals:
 
 - no disclosure of commercial policy-pack internals before they are stable
+- no full mode-registry expansion before minimal recipe/pack surfaces are proven
 - no runtime-specific artifact schema forks
 - no separate simplified pipeline for GUI or messaging entry points
+- no `lite mode`, no gate-skipping fast path, and no partial fact-layer imports
 - no claim that v0.7 Improvement Memory has already improved output quality before the v0.8 protocol is run
 
 ### v0.9 — Distribution And Reference Workflows
