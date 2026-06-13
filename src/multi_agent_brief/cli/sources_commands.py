@@ -211,6 +211,10 @@ def _sources_decide(args: argparse.Namespace) -> int:
 
         provider = WebSearchProvider()
         validation_errors = provider.validate_config(web_search_config)
+        if web_search_config.get("enabled") is not True:
+            validation_errors.append(
+                "--search requires web_search.enabled: true; disabled web_search is a no-op."
+            )
         if web_search_config.get("mode") != "external_api":
             validation_errors.append(
                 "--search requires web_search.mode: external_api; runtime_tool/configure_later/disabled modes are not Python-searchable."

@@ -261,6 +261,10 @@ class TestB02CLISearchIntegration:
             "  enabled: true\n"
             "  mode: disabled\n"
             "  backend: tavily\n",
+            "web_search:\n"
+            "  enabled: false\n"
+            "  mode: external_api\n"
+            "  backend: tavily\n",
         ]
         for idx, web_search_yaml in enumerate(invalid_configs):
             ws = tmp_path / f"ws-invalid-{idx}"
