@@ -94,8 +94,9 @@ def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, mo
     root = tmp_path
     (root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
     (root / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
-    (root / "README.md").write_text("当前版本：**v1.2.3**\n", encoding="utf-8")
+    (root / "README.md").write_text("Current version: **v1.2.3**\n", encoding="utf-8")
     (root / "README_en.md").write_text("Current version: **v1.2.3**\n", encoding="utf-8")
+    (root / "README.zh-CN.md").write_text("当前版本：**v1.2.3**\n", encoding="utf-8")
     (root / "CHANGELOG.md").write_text("## [1.2.3]\n", encoding="utf-8")
 
     package_dir = root / "src" / "multi_agent_brief"

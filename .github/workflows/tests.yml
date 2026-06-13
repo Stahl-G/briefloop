@@ -50,7 +50,14 @@ jobs:
           changed = [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
           def is_docs_path(path: str) -> bool:
-              root_docs = {"README.md", "README_en.md", "CHANGELOG.md", "AGENTS.md", "CLAUDE.md"}
+              root_docs = {
+                  "README.md",
+                  "README_en.md",
+                  "README.zh-CN.md",
+                  "CHANGELOG.md",
+                  "AGENTS.md",
+                  "CLAUDE.md",
+              }
               return path.startswith("docs/") or path in root_docs
 
           docs_only = bool(changed) and all(is_docs_path(path) for path in changed)
@@ -70,6 +77,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install docs safety dependencies
+        run: python -m pip install pyyaml
+
+      - name: Public safety check
+        run: python scripts/check_public_safety.py
+
+      - name: Terminology check
+        run: python scripts/check_terms.py
+
+      - name: Version consistency check
+        run: python scripts/check_version_consistency.py
+
+      - name: Release consistency check
+        run: python scripts/check_release_consistency.py --no-tag
 
       - name: Check roadmap docs
         shell: bash

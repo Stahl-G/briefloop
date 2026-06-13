@@ -5,10 +5,11 @@ Checks:
   1. pyproject.toml version == __init__.py __version__
   2. README.md current version line matches
   3. README_en.md current version line matches
-  4. CHANGELOG.md has a section for the current version
-  5. Latest git tag matches current version (skipped if no tags or --no-tag)
-  6. Generated agent configs are up to date (delegates to generate_agent_configs.py --check)
-  7. Public safety scan passes for tracked release files
+  4. README.zh-CN.md current version line matches
+  5. CHANGELOG.md has a section for the current version
+  6. Latest git tag matches current version (skipped if no tags or --no-tag)
+  7. Generated agent configs are up to date (delegates to generate_agent_configs.py --check)
+  8. Public safety scan passes for tracked release files
 
 Usage:
   python scripts/check_release_consistency.py [--strict] [--no-tag]
@@ -59,11 +60,13 @@ def extract_init_version() -> str:
     return ""
 
 
-def extract_readme_version(lang: str = "zh") -> str:
-    filename = "README.md" if lang == "zh" else "README_en.md"
+def extract_readme_version(filename: str) -> str:
     text = (REPO_ROOT / filename).read_text(encoding="utf-8")
-    # Match patterns like: 当前版本：**v0.4.0** or Current version: **v0.4.0**
-    m = re.search(r'(?:当前版本|Current version)[：:]\s*\*\*v?([^*]+)\*\*', text)
+    if filename == "README.zh-CN.md":
+        pattern = r'当前版本[：:]\s*\*\*v?([^*]+)\*\*'
+    else:
+        pattern = r'Current version[：:]\s*\*\*v?([^*]+)\*\*'
+    m = re.search(pattern, text)
     return m.group(1).strip() if m else ""
 
 
@@ -150,8 +153,9 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
 
     pyproject_ver = extract_pyproject_version()
     init_ver = extract_init_version()
-    readme_zh_ver = extract_readme_version("zh")
-    readme_en_ver = extract_readme_version("en")
+    readme_ver = extract_readme_version("README.md")
+    readme_en_ver = extract_readme_version("README_en.md")
+    readme_zh_cn_ver = extract_readme_version("README.zh-CN.md")
     changelog_ver = extract_changelog_latest()
 
     check("pyproject.toml version present", bool(pyproject_ver),
@@ -163,9 +167,9 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("pyproject.toml == __init__.py", pyproject_ver == init_ver,
               f"pyproject={pyproject_ver}, init={init_ver}")
 
-    if pyproject_ver and readme_zh_ver:
-        check("README.md current version", readme_zh_ver == pyproject_ver,
-              f"README={readme_zh_ver}, expected={pyproject_ver}")
+    if pyproject_ver and readme_ver:
+        check("README.md current version", readme_ver == pyproject_ver,
+              f"README={readme_ver}, expected={pyproject_ver}")
     elif strict:
         check("README.md current version", False, "could not extract version")
 
@@ -174,6 +178,12 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
               f"README_en={readme_en_ver}, expected={pyproject_ver}")
     elif strict:
         check("README_en.md current version", False, "could not extract version")
+
+    if pyproject_ver and readme_zh_cn_ver:
+        check("README.zh-CN.md current version", readme_zh_cn_ver == pyproject_ver,
+              f"README.zh-CN={readme_zh_cn_ver}, expected={pyproject_ver}")
+    elif strict:
+        check("README.zh-CN.md current version", False, "could not extract version")
 
     if pyproject_ver and changelog_ver:
         check("CHANGELOG.md has version section", changelog_ver == pyproject_ver,

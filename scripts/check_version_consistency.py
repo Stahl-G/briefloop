@@ -71,7 +71,7 @@ def main() -> int:
 
     # 3. README.md current version
     readme = _read(ROOT / "README.md")
-    if f"当前版本：**{tag}**" in readme:
+    if f"Current version: **{tag}**" in readme:
         _ok("README.md current version")
     else:
         _error(f"README.md current version does not match {tag}")
@@ -89,7 +89,20 @@ def main() -> int:
     else:
         _ok("README_en.md (not present)")
 
-    # 5. CHANGELOG top-level entry (matches both "[0.5.8]" and "0.5.8")
+    # 5. README.zh-CN.md
+    readme_zh_cn_path = ROOT / "README.zh-CN.md"
+    if readme_zh_cn_path.exists():
+        readme_zh_cn = _read(readme_zh_cn_path)
+        if f"当前版本：**{tag}**" in readme_zh_cn:
+            _ok("README.zh-CN.md current version")
+        else:
+            _error(f"README.zh-CN.md does not mention {tag}")
+            errors.append("README.zh-CN.md")
+    else:
+        _error("README.zh-CN.md missing")
+        errors.append("README.zh-CN.md")
+
+    # 6. CHANGELOG top-level entry (matches both "[0.5.8]" and "0.5.8")
     changelog = _read(ROOT / "CHANGELOG.md")
     version_no_v = version.lstrip("v")
     if re.search(rf"^##\s+\[?{re.escape(version_no_v)}\]?", changelog, re.MULTILINE):
@@ -98,9 +111,9 @@ def main() -> int:
         _error(f"CHANGELOG.md missing entry for {version}")
         errors.append("CHANGELOG.md")
 
-    # 6. Stale old versions in "current version" context
+    # 7. Stale old versions in "current version" context
     current_version_patterns = [
-        (r"当前版本[:：]\s*\*\*v?([0-9]+\.[0-9]+\.[0-9]+)\*\*", ["README.md", "README_en.md"]),
+        (r"当前版本[:：]\s*\*\*v?([0-9]+\.[0-9]+\.[0-9]+)\*\*", ["README.zh-CN.md"]),
         (r"Current version[:：]\s*\*\*v?([0-9]+\.[0-9]+\.[0-9]+)\*\*", ["README.md", "README_en.md", "docs/roadmap.md"]),
     ]
     for pat, files in current_version_patterns:
@@ -115,7 +128,7 @@ def main() -> int:
                     _error(f"{file} says current version {found}, expected {version}")
                     errors.append(f"{file}:{found}")
 
-    # 7. Hermes adapter
+    # 8. Hermes adapter
     adapter = _read(ROOT / "src" / "multi_agent_brief" / "hermes" / "adapter.py")
     hermes_ok = True
     if f'version="{tag}"' not in adapter:
@@ -129,7 +142,7 @@ def main() -> int:
     else:
         errors.append("hermes/adapter.py")
 
-    # 8. Hermes skill SKILL.md
+    # 9. Hermes skill SKILL.md
     skill_path = ROOT / ".agents" / "hermes-skills" / "multi-agent-brief-hermes" / "SKILL.md"
     if skill_path.exists():
         skill_text = _read(skill_path)

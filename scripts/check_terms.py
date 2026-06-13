@@ -32,6 +32,7 @@ SCAN_DIRS = [
 SCAN_FILES = [
     "README.md",
     "README_en.md",
+    "README.zh-CN.md",
     "AGENTS.md",
     "CLAUDE.md",
 ]
@@ -88,7 +89,10 @@ def check_forbidden_terms(files: list[Path], forbidden: list[str]) -> list[str]:
 def check_readme_command_snippets(files: list[Path], snippets: list[str]) -> list[str]:
     """Check that required command snippets appear in README files."""
     errors: list[str] = []
-    readme_files = [f for f in files if f.name in ("README.md", "README_en.md")]
+    readme_files = [
+        f for f in files
+        if f.name in ("README.md", "README_en.md", "README.zh-CN.md")
+    ]
     for snippet in snippets:
         found = False
         for readme in readme_files:

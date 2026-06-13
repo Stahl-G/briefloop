@@ -32,11 +32,11 @@ def main() -> int:
     # 3. README.md current version
     readme = ROOT / "README.md"
     readme_text = readme.read_text(encoding="utf-8")
-    if readme_text.count(f"当前版本：**{tag}**") != 1:
+    if readme_text.count(f"Current version: **{tag}**") != 1:
         import re
         new_text = re.sub(
-            r"当前版本：\*\*v?\d+\.\d+\.\d+\*\*[^\n]*",
-            f"当前版本：**{tag}**",
+            r"Current version: \*\*v?\d+\.\d+\.\d+\*\*[^\n]*",
+            f"Current version: **{tag}**",
             readme_text,
         )
         readme.write_text(new_text, encoding="utf-8")
@@ -57,7 +57,21 @@ def main() -> int:
         changed += 1
         print("  Updated README_en.md current version")
 
-    # 5. Hermes adapter
+    # 5. README.zh-CN.md current version
+    readme_zh_cn = ROOT / "README.zh-CN.md"
+    readme_zh_cn_text = readme_zh_cn.read_text(encoding="utf-8")
+    if readme_zh_cn_text.count(f"当前版本：**{tag}**") != 1:
+        import re
+        new_text = re.sub(
+            r"当前版本：\*\*v?\d+\.\d+\.\d+\*\*[^\n]*",
+            f"当前版本：**{tag}**",
+            readme_zh_cn_text,
+        )
+        readme_zh_cn.write_text(new_text, encoding="utf-8")
+        changed += 1
+        print("  Updated README.zh-CN.md current version")
+
+    # 6. Hermes adapter
     changed += _replace_in_file(
         ROOT / "src" / "multi_agent_brief" / "hermes" / "adapter.py",
         r'version="v\d+\.\d+\.\d+"',
@@ -77,7 +91,7 @@ def main() -> int:
         "hermes/adapter.py (default)",
     )
 
-    # 6. Hermes skill metadata
+    # 7. Hermes skill metadata
     changed += _replace_in_file(
         ROOT / ".agents" / "hermes-skills" / "multi-agent-brief-hermes" / "SKILL.md",
         r'version: \d+\.\d+\.\d+',
@@ -85,7 +99,7 @@ def main() -> int:
         "Hermes skill SKILL.md",
     )
 
-    # 7. Homebrew Formula (tag in URL)
+    # 8. Homebrew Formula (tag in URL)
     changed += _replace_in_file(
         ROOT / "Formula" / "multi-agent-brief.rb",
         r'refs/tags/v\d+\.\d+\.\d+',

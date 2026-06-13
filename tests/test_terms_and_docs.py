@@ -34,6 +34,7 @@ def test_forbidden_terms_not_in_public_docs():
     doc_files = [
         ROOT / "README.md",
         ROOT / "README_en.md",
+        ROOT / "README.zh-CN.md",
         ROOT / "AGENTS.md",
         ROOT / "CLAUDE.md",
     ]
@@ -67,7 +68,7 @@ def test_readme_mentions_documented_cli_commands():
     """README files should mention documented CLI commands."""
     config = _load_terminology()
     commands = config.get("cli_commands", [])
-    readme_files = [ROOT / "README.md", ROOT / "README_en.md"]
+    readme_files = [ROOT / "README.md", ROOT / "README_en.md", ROOT / "README.zh-CN.md"]
     for cmd in commands:
         for required in cmd.get("docs_should_contain", []):
             found = False
@@ -86,7 +87,7 @@ def test_required_readme_command_snippets_present():
     """Required command snippets should appear in at least one README."""
     config = _load_terminology()
     snippets = config.get("readme_command_snippets", [])
-    readme_files = [ROOT / "README.md", ROOT / "README_en.md"]
+    readme_files = [ROOT / "README.md", ROOT / "README_en.md", ROOT / "README.zh-CN.md"]
     for snippet in snippets:
         found = False
         for readme in readme_files:

@@ -9,8 +9,6 @@
 
 Current version: **v0.7.4**
 
-<!-- 当前版本：**v0.7.4** -->
-
 > When someone asks where a number came from, MABW does not ask the model to improvise an explanation. It opens the ledger.
 
 MABW turns AI-assisted business briefing into an accountable loop with four steps: **find and screen evidence -> freeze key facts into a Claim Ledger -> write only from the ledger -> audit independently.** A human delivers the final brief. Always.
