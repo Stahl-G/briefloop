@@ -1262,6 +1262,69 @@ def test_auditor_stage_complete_passes_with_clean_quality_gate_report(tmp_path):
     assert state["workflow_state"]["current_stage"] == "finalize"
 
 
+def test_auditor_stage_complete_rejects_audit_report_missing_audit_status(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    report = json.loads((_intermediate(ws) / "audit_report.json").read_text(encoding="utf-8"))
+    report.pop("audit_status")
+    _write_json_artifact(ws, "audit_report.json", json.dumps(report) + "\n")
+    _write_quality_gate_report(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="auditor and gates passed",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "audit_report_schema_error:audit_status" in str(excinfo.value)
+
+
+def test_auditor_stage_complete_rejects_audit_report_missing_audit_score(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    report = json.loads((_intermediate(ws) / "audit_report.json").read_text(encoding="utf-8"))
+    report.pop("audit_score")
+    _write_json_artifact(ws, "audit_report.json", json.dumps(report) + "\n")
+    _write_quality_gate_report(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="auditor and gates passed",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "audit_report_schema_error:audit_score" in str(excinfo.value)
+
+
+def test_auditor_stage_complete_rejects_non_integer_audit_score(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    report = json.loads((_intermediate(ws) / "audit_report.json").read_text(encoding="utf-8"))
+    report["audit_score"] = 99.5
+    _write_json_artifact(ws, "audit_report.json", json.dumps(report) + "\n")
+    _write_quality_gate_report(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="auditor and gates passed",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "audit_report_schema_error:audit_score" in str(excinfo.value)
+
+
 def test_auditor_stage_complete_records_ledger_and_audit_report_sha(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

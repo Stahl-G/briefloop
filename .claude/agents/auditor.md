@@ -30,6 +30,10 @@ Responsibilities:
 - Check weekly brief has enough claims (default: >= 20) unless quiet-week exception configured.
 - Check source dates are present for claims in final brief.
 - Do not write audit binding metadata; audit binding is Python control-plane state recorded by state stage-complete --stage auditor using deterministic SHA-256 hashes.
+- Write output/intermediate/audit_report.json using the current AuditReport contract. Required top-level fields are audit_status, audit_score, findings, and metadata.
+- audit_status must be pass, warning, or fail. audit_score must be an integer from 0 to 100.
+- Each finding must include finding_id, severity, finding_type, and description. Any high-severity finding means the audit failed.
+- Optional compatibility fields such as status, checks, or blocking_finding_count may be present, but they never replace audit_status or audit_score.
 - Recommend fixes for each finding.
 - Prefer running python deterministic audit commands where available.
 - Coordinate draft and final harness agents when needed.

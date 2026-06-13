@@ -230,6 +230,7 @@ def test_rebuild_projects_memory_only_and_sanitizes_evidence(tmp_path):
     assert projection["memory_path"] == IMPROVEMENT_MEMORY_FILE
     assert projection["memory_sha256"] == sha256_file(memory_path)
     assert memory_path.exists()
+    assert b"\r\n" not in memory_path.read_bytes()
     assert not (ws / "output" / "intermediate").exists()
     assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()

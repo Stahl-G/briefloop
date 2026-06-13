@@ -157,7 +157,7 @@ def freeze_improvement_memory_for_run(
 
 
 def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return hashlib.sha256(_text_bytes(text)).hexdigest()
 
 
 def sha256_file(path: Path) -> str:
@@ -422,7 +422,8 @@ def _require_workspace(workspace: str | Path) -> Path:
 
 
 def _write_text_if_changed(path: Path, text: str) -> bool:
-    if path.exists() and path.read_text(encoding="utf-8") == text:
+    data = _text_bytes(text)
+    if path.exists() and path.read_bytes() == data:
         return False
     _write_text_atomic(path, text)
     return True
@@ -432,13 +433,17 @@ def _write_text_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        tmp.write_text(text, encoding="utf-8")
+        tmp.write_bytes(_text_bytes(text))
         os.replace(tmp, path)
     finally:
         try:
             tmp.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def _text_bytes(text: str) -> bytes:
+    return text.encode("utf-8")
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:

@@ -36,6 +36,16 @@ Use after editor has completed audited_brief.md.
 - Do not write audit binding metadata. Audit binding is Python control-plane
   state recorded by `state stage-complete --stage auditor` using deterministic
   SHA-256 hashes.
+- Write `output/intermediate/audit_report.json` using the current AuditReport
+  contract. Required top-level fields are `audit_status`, `audit_score`,
+  `findings`, and `metadata`.
+- Use `audit_status` as one of `pass`, `warning`, or `fail`, and `audit_score`
+  as an integer from 0 to 100.
+- Each finding must include `finding_id`, `severity`, `finding_type`, and
+  `description`. Any `high` severity finding means the audit failed.
+- Optional compatibility fields such as `status`, `checks`, or
+  `blocking_finding_count` may be present, but they never replace
+  `audit_status` or `audit_score`.
 - Record blocking findings and recommended fixes.
 - Mark distribution readiness only after delivery gates are satisfied.
 

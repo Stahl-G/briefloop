@@ -64,8 +64,8 @@ class AuditReportContract(Contract):
 
         score = data.get("audit_score")
         if score is not None:
-            if not isinstance(score, (int, float)):
-                violations.append(FieldViolation(field="audit_score", error="must be a number"))
+            if not isinstance(score, int) or isinstance(score, bool):
+                violations.append(FieldViolation(field="audit_score", error="must be an integer"))
             elif not (0 <= score <= 100):
                 violations.append(FieldViolation(field="audit_score", error=f"score {score} out of range [0, 100]"))
 

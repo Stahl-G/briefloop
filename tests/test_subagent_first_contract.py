@@ -184,6 +184,23 @@ def test_auditor_prompt_does_not_require_audit_binding_metadata():
         assert "state stage-complete --stage auditor" in text
 
 
+def test_auditor_prompts_require_current_audit_report_contract_fields():
+    prompt_paths = [
+        "configs/agent_roles.yaml",
+        ".agents/skills/auditor/SKILL.md",
+        ".claude/agents/auditor.md",
+        ".codex/agents/auditor.toml",
+        ".opencode/agents/brief-auditor.md",
+    ]
+    for path in prompt_paths:
+        text = _read(path)
+        assert "audit_status" in text, f"audit_status missing in {path}"
+        assert "audit_score" in text, f"audit_score missing in {path}"
+        assert "findings" in text, f"findings missing in {path}"
+        assert "metadata" in text, f"metadata missing in {path}"
+        assert "never replace" in text, f"compatibility warning missing in {path}"
+
+
 def test_runtime_prompts_do_not_use_literal_claim_id_placeholder():
     prompt_paths = [
         "configs/agent_roles.yaml",
