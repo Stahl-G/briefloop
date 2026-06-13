@@ -154,7 +154,7 @@ class WebSearchProvider(SourceProvider):
     def collect(self, query: SourceQuery, config: dict[str, Any]) -> list[SourceItem]:
         if not config.get("enabled"):
             return []
-        if config.get("mode") == "runtime_tool":
+        if config.get("mode") in {"runtime_tool", "configure_later"}:
             return []
 
         backend = self._get_backend(config)

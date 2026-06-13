@@ -203,24 +203,31 @@ def _sources_decide(args: argparse.Namespace) -> int:
 
     search_results = None
     if args.search:
-        # Check if a real search backend is configured
-        has_backend = (
-            ws_config
-            and ws_config.web_search.get("enabled")
-            and ws_config.web_search.get("backend")
-            and ws_config.web_search.get("backend") != "mock"
+        from multi_agent_brief.sources.web_search import (
+            WebSearchProvider,
+            backend_api_key_env,
+            temporary_workspace_api_key_env,
         )
-        if not has_backend:
-            print(
-                "[error] --search requires a configured search backend."
+
+        provider = WebSearchProvider()
+        validation_errors = provider.validate_config(web_search_config)
+        if web_search_config.get("mode") != "external_api":
+            validation_errors.append(
+                "--search requires web_search.mode: external_api; runtime_tool/configure_later/disabled modes are not Python-searchable."
             )
+        if validation_errors:
+            print(
+                "[error] --search requires a valid external_api web_search configuration."
+            )
+            for error in validation_errors:
+                print(f"        {error}")
             print(
                 "        Supported backends: tavily, exa, brave, firecrawl,"
                 " serper."
             )
             print(
-                "        Enable web_search in sources.yaml with a real"
-                " backend and API key,"
+                "        Enable web_search in sources.yaml with mode:"
+                " external_api, a real backend, and API key,"
             )
             print(
                 "        or run without --search to generate template"
@@ -229,13 +236,6 @@ def _sources_decide(args: argparse.Namespace) -> int:
             return 1
 
         # Actually execute searches via the configured backend
-        from multi_agent_brief.sources.web_search import (
-            WebSearchProvider,
-            backend_api_key_env,
-            temporary_workspace_api_key_env,
-        )
-
-        provider = WebSearchProvider()
         try:
             backend = provider._get_backend(web_search_config)
         except Exception as exc:
@@ -263,6 +263,7 @@ def _sources_decide(args: argparse.Namespace) -> int:
             search_results = []
             attempted_searches = 0
             successful_searches = 0
+            total_result_count = 0
             max_results = web_search_config.get("max_results", 10)
             for task in search_tasks:
                 q = str(task.get("query", ""))
@@ -304,6 +305,7 @@ def _sources_decide(args: argparse.Namespace) -> int:
                         }
                     )
                     successful_searches += 1
+                    total_result_count += len(results)
                     print(f"  [{len(results)} results] {q}")
                 except Exception as exc:
                     print(f"  [error] Search failed for '{q}': {exc}")
@@ -312,6 +314,12 @@ def _sources_decide(args: argparse.Namespace) -> int:
             if attempted_searches and successful_searches == 0:
                 print(
                     "[error] All configured search queries failed; "
+                    "source_candidates.yaml was not generated."
+                )
+                return 1
+            if attempted_searches and total_result_count == 0:
+                print(
+                    "[error] All configured search queries returned zero results; "
                     "source_candidates.yaml was not generated."
                 )
                 return 1

@@ -262,17 +262,18 @@ def test_web_search_disabled_returns_empty():
     assert items == []
 
 
-def test_web_search_enabled_without_backend_returns_registry_error():
-    """web_search.enabled=true with no backend should produce a registry error."""
+def test_web_search_external_api_without_backend_returns_registry_error():
+    """web_search external_api with no backend should produce a registry error."""
     config = SourceConfig(
         enabled_providers=["web_search"],
-        web_search={"enabled": True},
+        web_search={"enabled": True, "mode": "external_api"},
     )
     items, errors = collect_all_sources(config)
     assert items == []
-    # At least 1 error from validation + collection for missing backend
-    assert len(errors) >= 1
-    assert any("no backend" in e.get("message", "").lower() for e in errors)
+    assert len(errors) == 1
+    assert errors[0]["provider"] == "web_search"
+    assert errors[0]["error_type"] == "ConfigValidationError"
+    assert any("requires backend" in e.get("message", "").lower() for e in errors)
 
 
 def test_web_search_runtime_tool_collects_no_python_sources_without_error():
@@ -280,6 +281,17 @@ def test_web_search_runtime_tool_collects_no_python_sources_without_error():
     config = SourceConfig(
         enabled_providers=["web_search"],
         web_search={"enabled": True, "mode": "runtime_tool"},
+    )
+    items, errors = collect_all_sources(config)
+    assert items == []
+    assert errors == []
+
+
+def test_web_search_configure_later_collects_no_python_sources_without_error():
+    """configure_later is a valid no-op until a backend is explicitly configured."""
+    config = SourceConfig(
+        enabled_providers=["web_search"],
+        web_search={"enabled": True, "mode": "configure_later"},
     )
     items, errors = collect_all_sources(config)
     assert items == []
@@ -1287,7 +1299,7 @@ def test_web_search_backend_error_captured_by_registry():
 
     config = SourceConfig(
         enabled_providers=["web_search"],
-        web_search={"enabled": True, "allow_generic_fallback": True},
+        web_search={"enabled": True, "mode": "external_api", "backend": "tavily", "allow_generic_fallback": True},
     )
     try:
         items, errors = collect_all_sources(config)
@@ -1295,6 +1307,32 @@ def test_web_search_backend_error_captured_by_registry():
         # At least 1 error from backend failure (now also gets validation error)
         assert len(errors) >= 1
         assert any("rate limit" in e.get("message", "") for e in errors)
+    finally:
+        if old_cls:
+            reg.PROVIDER_CLASSES["web_search"] = old_cls
+
+
+def test_collect_all_sources_skips_web_search_when_validation_fails():
+    """Invalid web_search config must not produce source items even if backend is injectable."""
+    import multi_agent_brief.sources.registry as reg
+
+    provider = WebSearchProvider(backend=FakeSearchBackend())
+    old_cls = reg.PROVIDER_CLASSES.get("web_search")
+    reg.PROVIDER_CLASSES["web_search"] = lambda: provider
+
+    config = SourceConfig(
+        enabled_providers=["web_search"],
+        web_search={"enabled": True, "backend": "tavily"},
+    )
+    try:
+        items, errors = collect_all_sources(config, SourceQuery(keywords=["policy"]))
+        assert items == []
+        assert any(
+            error["provider"] == "web_search"
+            and error["error_type"] == "ConfigValidationError"
+            and "web_search.mode" in error["message"]
+            for error in errors
+        )
     finally:
         if old_cls:
             reg.PROVIDER_CLASSES["web_search"] = old_cls

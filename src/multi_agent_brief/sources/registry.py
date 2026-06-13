@@ -146,17 +146,25 @@ def collect_all_sources(
         "local_signal": source_config.local_signal,
     }
 
-    # Run provider config validation before collecting (B08)
-    validation_errors = validate_all_providers(source_config)
-    for ve in validation_errors:
-        errors.append({
-            "provider": "validation",
-            "error_type": "ConfigValidationError",
-            "message": ve,
-        })
-
     for name, provider in providers.items():
         config = config_map.get(name, {})
+        try:
+            validation_errors = provider.validate_config(config)
+        except Exception as exc:
+            errors.append({
+                "provider": name,
+                "error_type": "ConfigValidationError",
+                "message": f"validation error: {exc}",
+            })
+            continue
+        if validation_errors:
+            for ve in validation_errors:
+                errors.append({
+                    "provider": name,
+                    "error_type": "ConfigValidationError",
+                    "message": ve,
+                })
+            continue
         try:
             items = provider.collect(query, config)
             all_items.extend(items)
