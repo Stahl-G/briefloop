@@ -37,6 +37,10 @@ def _all_text_files(root: Path) -> list[Path]:
     ]
 
 
+def _portable_output(text: str) -> str:
+    return text.replace("\\", "/")
+
+
 def _assert_frontmatter_first(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     assert text.startswith("---\n")
@@ -186,7 +190,7 @@ def test_runtime_install_dry_run_does_not_write_files(tmp_path: Path, capsys) ->
     ])
 
     assert rc == 0
-    out = capsys.readouterr().out
+    out = _portable_output(capsys.readouterr().out)
     assert "would write" in out
     assert out.count("/AGENTS.md") == 1
     assert not (ws / "AGENTS.md").exists()
@@ -211,7 +215,7 @@ def test_runtime_install_codex_dry_run_lists_assets(tmp_path: Path, capsys) -> N
     ])
 
     assert rc == 0
-    out = capsys.readouterr().out
+    out = _portable_output(capsys.readouterr().out)
     assert "would write" in out
     assert "open and trust this workspace in Codex" in out
     assert ".codex/config.toml" in out
