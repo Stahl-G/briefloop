@@ -167,6 +167,8 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     assert "Do not launch the interactive terminal onboarding wizard inside Codex chat" in skill_text
     assert "Source Mode Card" in skill_text
     assert "input/sources/" in skill_text
+    assert "URL, source title/name" in skill_text
+    assert "raw excerpt/snippet" in skill_text
     assert "Do not call `sources decide --search` unless `web_search.mode` is" in skill_text
     assert "Do not call `sources decide --merge` on `source_plan_only` artifacts" in skill_text
     assert "`source_candidates.yaml` is planning/review only, not evidence" in skill_text

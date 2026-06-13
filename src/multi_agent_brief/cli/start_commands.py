@@ -89,7 +89,8 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "A natural-language acknowledgement such as 'I completed the stage' is not sufficient unless the required artifact paths are present and validated.",
     "Before moving to the next stage, verify required output artifacts exist at the declared paths and have the expected shape where validators exist.",
     "If a required artifact is missing, stale, or invalid, stop the stage and record retry_stage, request_human_review, or block_run instead of continuing.",
-    "source_candidates.yaml is a source plan only, not source evidence; Scout must extract candidates from actual source content or search results.",
+    "source_candidates.yaml is a source plan only, not source evidence; Scout must extract candidates from actual source content or materialized source files.",
+    "Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet.",
     "After state stage-complete succeeds, that stage's output artifacts are frozen for downstream stages; later stages must not rewrite them in place.",
     "If a downstream stage finds schema mismatch or invalid frozen upstream artifacts, route repair back to the owner stage instead of editing the artifact directly.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
@@ -319,7 +320,9 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         "- After init or config inspection, show a Source Mode Card: manual local files enabled/disabled, "
         "runtime WebSearch enabled/disabled, external API search enabled/disabled, existing source files count, "
         "and demo-looking source files yes/no.\n"
-        "- If using Codex/runtime WebSearch, write collected public sources into input/sources/ as durable source files.\n"
+        "- If using Codex/runtime WebSearch, write collected public sources into input/sources/ as durable source files "
+        "with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet. Summary-only notes "
+        "are discovery hints, not evidence.\n"
         "- Do not call sources decide --search unless web_search.mode is external_api.\n"
         "- Do not call sources decide --merge on source_plan_only artifacts.\n"
         "- source_candidates.yaml is planning/review only, not evidence.\n"

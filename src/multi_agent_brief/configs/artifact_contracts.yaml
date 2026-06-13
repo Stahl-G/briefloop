@@ -29,8 +29,7 @@ artifacts:
     required: false
     producer_stage: source-discovery
     producer_role: source-planner
-    consumer_stages:
-      - scout
+    consumer_stages: []
     validation_result: reference_only
     blocking_reason: ""
     allowed_decisions:

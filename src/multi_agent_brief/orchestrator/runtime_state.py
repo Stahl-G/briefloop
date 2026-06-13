@@ -66,6 +66,15 @@ RUNTIME_STATE_FILES = {
 }
 PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe")
 NON_EVIDENCE_INPUT_SUBDIRS = {"context", "feedback", "instructions"}
+NON_EVIDENCE_INPUT_FILENAMES = {
+    ".ds_store",
+    ".gitkeep",
+    ".keep",
+    "readme",
+    "readme.md",
+    "readme.txt",
+}
+NON_EVIDENCE_INPUT_FILENAME_PARTS = ("placeholder", "template")
 
 EVENT_TYPES = {
     "run_initialized",
@@ -1307,6 +1316,19 @@ def _is_evidence_input_path(path: Path, workspace: Path) -> bool:
         return True
     if relative.parts and relative.parts[0] in NON_EVIDENCE_INPUT_SUBDIRS:
         return False
+    if any(part.startswith(".") for part in relative.parts):
+        return False
+    name = path.name.lower()
+    if name in NON_EVIDENCE_INPUT_FILENAMES:
+        return False
+    if any(part in name for part in NON_EVIDENCE_INPUT_FILENAME_PARTS):
+        return False
+    if path.is_file():
+        try:
+            if path.stat().st_size == 0:
+                return False
+        except OSError:
+            return False
     return True
 
 
@@ -1350,6 +1372,37 @@ def _configured_evidence_source_count(sources: dict[str, Any], workspace: Path) 
         for item in feeds
         if isinstance(item, dict) and item.get("enabled", True) and item.get("url")
     ])
+
+    cached = sources.get("cached_package") if isinstance(sources.get("cached_package"), dict) else {}
+    if cached.get("enabled"):
+        paths = cached.get("paths") if isinstance(cached.get("paths"), list) else []
+        for raw_path in paths:
+            source_path = Path(str(raw_path))
+            if not source_path.is_absolute():
+                source_path = workspace / source_path
+            count += _count_evidence_files(source_path, workspace)
+
+    filing_resolver = (
+        sources.get("filing_resolver")
+        if isinstance(sources.get("filing_resolver"), dict)
+        else {}
+    )
+    if filing_resolver.get("enabled"):
+        tickers = filing_resolver.get("tickers")
+        if isinstance(tickers, list):
+            count += len([item for item in tickers if item])
+
+    feishu = sources.get("feishu") if isinstance(sources.get("feishu"), dict) else {}
+    if feishu.get("enabled"):
+        feishu_sources = feishu.get("sources")
+        if isinstance(feishu_sources, list):
+            count += len([item for item in feishu_sources if item])
+
+    mcp = sources.get("mcp") if isinstance(sources.get("mcp"), dict) else {}
+    if mcp.get("enabled"):
+        servers = mcp.get("servers")
+        if isinstance(servers, list):
+            count += len([item for item in servers if item])
 
     input_dir = workspace / "input"
     if input_dir.exists():
@@ -1400,22 +1453,50 @@ def _contains_zero_runtime_search_observation(path: Path) -> bool:
     return has_observation and counts and all(count == 0 for count in counts)
 
 
-def _source_discovery_runtime_tool_reasons(workspace: Path) -> list[str]:
+def _source_candidates_is_plan_only(path: Path) -> bool:
+    if not path.exists():
+        return False
+    data = _load_workspace_yaml(path)
+    artifact_type = str(data.get("artifact_type") or "")
+    evidence_status = str(data.get("evidence_status") or "")
+    return artifact_type == "source_plan_only" or evidence_status == "not_evidence"
+
+
+def _source_discovery_evidence_reasons(workspace: Path) -> list[str]:
     sources = _load_workspace_yaml(workspace / "sources.yaml")
     web_search = sources.get("web_search") if isinstance(sources.get("web_search"), dict) else {}
-    if not (web_search.get("enabled") and web_search.get("mode") == "runtime_tool"):
-        return []
-
+    web_search_enabled = web_search.get("enabled") is True
+    web_search_mode = str(web_search.get("mode") or "")
     candidates_path = workspace / "source_candidates.yaml"
-    if _contains_zero_runtime_search_observation(candidates_path):
-        return [
+    evidence_count = _configured_evidence_source_count(sources, workspace)
+    has_evidence = evidence_count > 0
+
+    reasons: list[str] = []
+    if (
+        web_search_enabled
+        and web_search_mode == "runtime_tool"
+        and _contains_zero_runtime_search_observation(candidates_path)
+    ):
+        reasons.append(
             "Runtime WebSearch source discovery reported zero searches or zero observations; request human review instead of completing source-discovery."
-        ]
-    if _configured_evidence_source_count(sources, workspace) > 0:
-        return []
-    return [
-        "Cannot complete source-discovery: runtime_tool web search is enabled, but no evidence source is available. Runtime WebSearch results must be written as durable source files under input/sources/ or into supported source configuration. source_candidates.yaml is a source plan, not evidence."
-    ]
+        )
+
+    if has_evidence:
+        return reasons
+
+    if _source_candidates_is_plan_only(candidates_path):
+        reasons.append(
+            "source_candidates.yaml is a source plan, not evidence; materialize approved sources into input/sources/ or supported source configuration before completing source-discovery."
+        )
+    if web_search_enabled and web_search_mode == "configure_later":
+        reasons.append(
+            "Cannot complete source-discovery: web_search.mode is configure_later, and no durable evidence source is available."
+        )
+    if web_search_enabled and web_search_mode == "runtime_tool":
+        reasons.append(
+            "Cannot complete source-discovery: runtime_tool web search is enabled, but no evidence source is available. Runtime WebSearch results must be written as durable source files under input/sources/ or into supported source configuration. source_candidates.yaml is a source plan, not evidence."
+        )
+    return reasons
 
 
 def _completion_decision_gate_reasons(
@@ -2178,7 +2259,7 @@ def _complete_stage_transaction(
         artifacts_by_id=_artifact_map(artifacts),
     )
     if stage_id == "source-discovery":
-        artifact_reasons.extend(_source_discovery_runtime_tool_reasons(ws))
+        artifact_reasons.extend(_source_discovery_evidence_reasons(ws))
     if artifact_reasons:
         code = E_REQUIRED_ARTIFACT_MISSING
         if any("invalid" in item.lower() for item in artifact_reasons):

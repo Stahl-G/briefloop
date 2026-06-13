@@ -41,6 +41,9 @@ Use when sources.yaml uses llm_decide, or when the workspace needs source candid
   mergeable evidence.
 - If using runtime WebSearch, write collected public sources into
   `input/sources/` as durable source files before source-discovery completion.
+  Durable runtime-search source files must include URL, source title/name,
+  published date or retrieved_at, and raw excerpt/snippet. Summary-only notes
+  are discovery hints, not evidence.
 - Do not call `sources decide --search` unless `web_search.mode` is
   `external_api`.
 - Do not call `sources decide --merge` on `source_plan_only` artifacts.

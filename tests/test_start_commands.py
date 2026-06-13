@@ -158,6 +158,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "MUST produce" in text
     assert "I completed the stage" in text
     assert "source_candidates.yaml is a source plan only, not source evidence" in text
+    assert "URL, source title/name, published date or retrieved_at" in text
     assert "output artifacts are frozen for downstream stages" in text
     assert "must not rewrite them in place" in text
     assert "route repair back to the owner stage" in text
@@ -420,6 +421,7 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     assert "output/intermediate/runtime_manifest.json" in prompt
     assert "Source Mode Card" in prompt
     assert "input/sources/" in prompt
+    assert "raw excerpt/snippet" in prompt
     assert "Do not call sources decide --search unless web_search.mode is external_api" in prompt
     assert "Do not call sources decide --merge on source_plan_only artifacts" in prompt
     assert "source_candidates.yaml is planning/review only, not evidence" in prompt

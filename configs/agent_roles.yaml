@@ -112,7 +112,12 @@ roles:
       an empty result set, stop and request human review. Do not switch to
       source-planner and continue with stale or old sources.
     - Treat source_candidates.yaml as a source plan, not source evidence. Scout
-      must extract candidate claims from actual source content or search results.
+      must extract candidate claims from actual source content or materialized
+      source files.
+    - Runtime WebSearch results must be materialized before source-discovery
+      completion as durable source files with URL, source title/name, published
+      date or retrieved_at, and raw excerpt/snippet. Summary-only notes are
+      discovery hints, not evidence.
     - Use state decide only for non-success decisions such as retry_stage,
       delegate_repair, request_human_review, or block_run; if the command
       rejects the decision or completion, stop and correct the stage state.

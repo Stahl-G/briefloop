@@ -162,6 +162,17 @@ def test_artifact_contracts_match_stage_specs():
         assert set(artifact["allowed_decisions"]) <= EXPECTED_DECISIONS
 
 
+def test_source_candidates_is_reference_only_not_scout_input():
+    artifacts = _load_yaml(ARTIFACT_CONTRACTS)["artifacts"]
+    source_candidates = next(
+        artifact for artifact in artifacts if artifact["artifact_id"] == "source_candidates"
+    )
+
+    assert source_candidates["required"] is False
+    assert source_candidates["validation_result"] == "reference_only"
+    assert "scout" not in source_candidates["consumer_stages"]
+
+
 def test_artifact_contracts_preserve_future_provenance_fields():
     contract = _load_yaml(ARTIFACT_CONTRACTS)["artifact_contract"]
     required_fields = {

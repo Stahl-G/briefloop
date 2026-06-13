@@ -443,6 +443,72 @@ def test_source_discovery_runtime_tool_allows_local_source(tmp_path):
     assert state["workflow_state"]["current_stage"] == "input-governance"
 
 
+def test_source_discovery_configure_later_with_plan_only_rejects_complete(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: configure_later\n",
+        encoding="utf-8",
+    )
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_plan_only\n"
+        "evidence_status: not_evidence\n"
+        "recommended_sources:\n"
+        "  - name: Example Source\n"
+        "    url: https://example.com/source\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "source plan, not evidence" in str(excinfo.value)
+    assert "configure_later" in str(excinfo.value)
+
+
+def test_source_discovery_configure_later_allows_real_input_source(tmp_path):
+    ws = _write_workspace(tmp_path)
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True)
+    (source_dir / "example.md").write_text(
+        "Title: Example Source\nURL: https://example.com/source\nRetrieved: 2026-06-13\nExcerpt: Example evidence.\n",
+        encoding="utf-8",
+    )
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: configure_later\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        reason="source discovery complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "input-governance"
+
+
 def test_source_discovery_runtime_tool_rejects_source_candidates_plan_only(tmp_path):
     ws = _write_workspace(tmp_path)
     (ws / "sources.yaml").write_text(
@@ -475,6 +541,131 @@ def test_source_discovery_runtime_tool_rejects_source_candidates_plan_only(tmp_p
 
     assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
     assert "source_candidates.yaml is a source plan, not evidence" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_rejects_input_readme_only(tmp_path):
+    ws = _write_workspace(tmp_path)
+    (ws / "input" / "README.md").write_text("Put source files here.\n", encoding="utf-8")
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "no evidence source is available" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_rejects_input_sources_readme_only(tmp_path):
+    ws = _write_workspace(tmp_path)
+    sources_dir = ws / "input" / "sources"
+    sources_dir.mkdir(parents=True)
+    (sources_dir / "README.md").write_text("Put source files here.\n", encoding="utf-8")
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "no evidence source is available" in str(excinfo.value)
+
+
+def test_source_discovery_runtime_tool_allows_input_sources_file(tmp_path):
+    ws = _write_workspace(tmp_path)
+    sources_dir = ws / "input" / "sources"
+    sources_dir.mkdir(parents=True)
+    (sources_dir / "example.md").write_text(
+        "Title: Example Source\nURL: https://example.com/source\nRetrieved: 2026-06-13\nExcerpt: Example evidence.\n",
+        encoding="utf-8",
+    )
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        reason="source discovery complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "input-governance"
+
+
+def test_source_discovery_source_plan_only_allows_real_source_file(tmp_path):
+    ws = _write_workspace(tmp_path)
+    sources_dir = ws / "input" / "sources"
+    sources_dir.mkdir(parents=True)
+    (sources_dir / "example.md").write_text(
+        "Title: Example Source\nURL: https://example.com/source\nRetrieved: 2026-06-13\nExcerpt: Example evidence.\n",
+        encoding="utf-8",
+    )
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_plan_only\n"
+        "evidence_status: not_evidence\n"
+        "recommended_sources:\n"
+        "  - name: Example Source\n"
+        "    url: https://example.com/source\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        reason="source discovery complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "input-governance"
 
 
 def test_source_discovery_runtime_tool_rejects_context_only_input(tmp_path):

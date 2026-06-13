@@ -179,6 +179,8 @@ def test_codex_orchestrator_has_writer_flow_protocol():
     assert "Source Mode Card" in text
     assert "runtime WebSearch enabled/disabled" in text
     assert "input/sources/" in text
+    assert "URL, source title/name" in text
+    assert "raw excerpt/snippet" in text
     assert "Do not call sources decide --search unless web_search.mode is external_api" in text
     assert "Do not call sources decide --merge on source_plan_only artifacts" in text
     assert "source_candidates.yaml is planning/review only, not evidence" in text

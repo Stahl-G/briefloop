@@ -332,7 +332,9 @@ Codex writer flow:
   runtime WebSearch, external API search, source file count, and demo-looking
   source files.
 - If using Codex/runtime WebSearch, write collected public sources into
-  `input/sources/` as durable source files.
+  `input/sources/` as durable source files with URL, source title/name,
+  published date or retrieved_at, and raw excerpt/snippet. Summary-only notes
+  are discovery hints, not evidence.
 - Do not call `sources decide --search` unless `web_search.mode` is
   `external_api`.
 - Do not call `sources decide --merge` on `source_plan_only` artifacts.

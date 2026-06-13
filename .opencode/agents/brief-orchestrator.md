@@ -49,7 +49,8 @@ Responsibilities:
 - Do not add ad-hoc exceptions for `max_source_age_days` or `fail_on_stale_source`.
 - If a freshness window is unsuitable, stop and ask for config change or explicit structured override.
 - If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner and continue with stale or old sources.
-- Treat source_candidates.yaml as a source plan, not source evidence. Scout must extract candidate claims from actual source content or search results.
+- Treat source_candidates.yaml as a source plan, not source evidence. Scout must extract candidate claims from actual source content or materialized source files.
+- Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet. Summary-only notes are discovery hints, not evidence.
 - Use state decide only for non-success decisions such as retry_stage, delegate_repair, request_human_review, or block_run; if the command rejects the decision or completion, stop and correct the stage state.
 - Before finalize, after Auditor completes, run gates check and strict state check. If blocking findings exist, do not finalize; use feedback/repair, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
 - After finalize writes reader-facing artifacts, verify completion with multi-agent-brief state finalize-complete before reporting the run complete.

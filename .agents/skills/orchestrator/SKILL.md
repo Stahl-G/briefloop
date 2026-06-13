@@ -56,6 +56,9 @@ Use for runtime handoff, Orchestrator contract changes, generated adapter config
   dispatch Scout from source plans alone.
 - If using runtime WebSearch, ensure collected public sources are written into
   `input/sources/` as durable source files before source-discovery completion.
+  Durable runtime-search source files must include URL, source title/name,
+  published date or retrieved_at, and raw excerpt/snippet. Summary-only notes
+  are discovery hints, not evidence.
 - Do not call `sources decide --search` unless `web_search.mode` is
   `external_api`.
 - Check expected artifacts after each delegated stage.
