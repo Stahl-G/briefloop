@@ -304,6 +304,17 @@ def _wrap_archive_error(exc: RunArchiveError) -> RuntimeStateError:
     )
 
 
+def _checked_workflow_with_run_integrity(workflow: dict[str, Any], *, path: Path) -> dict[str, Any]:
+    try:
+        return _workflow_with_run_integrity(workflow)
+    except ValueError as exc:
+        raise RuntimeStateError(
+            "workflow_state.run_integrity is malformed.",
+            details={"path": str(path), "reason": str(exc)},
+            error_code=E_TRANSACTION_INTEGRITY,
+        ) from exc
+
+
 def _workflow_is_finalized(workflow: dict[str, Any] | None) -> bool:
     if not workflow:
         return False
@@ -956,7 +967,10 @@ def initialize_runtime_state(
                     "schema_version": old_workflow.get("schema_version"),
                 },
             )
-        workflow = _workflow_with_run_integrity(old_workflow)
+        workflow = _checked_workflow_with_run_integrity(
+            old_workflow,
+            path=paths["workflow_state"],
+        )
         workflow["updated_at"] = now
         workflow["run_id"] = run_id
     else:
@@ -1055,7 +1069,10 @@ def _load_manifest_and_workflow(workspace: str | Path) -> tuple[Path, dict[str, 
             "workflow_state.json has an unsupported schema.",
             details={"path": str(paths["workflow_state"]), "schema_version": workflow.get("schema_version")},
         )
-    workflow = _workflow_with_run_integrity(workflow)
+    workflow = _checked_workflow_with_run_integrity(
+        workflow,
+        path=paths["workflow_state"],
+    )
     if workflow.get("run_id") is not None:
         workflow["run_id"] = _validate_runtime_run_id(
             workflow.get("run_id"),

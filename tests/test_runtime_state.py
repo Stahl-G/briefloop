@@ -343,6 +343,22 @@ def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
     assert registry["finalize_quality_gate_report"]["validation_result"] == "not_checked"
 
 
+def test_state_check_rejects_malformed_run_integrity_without_rewrite(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    workflow_path = _state_file(ws, "workflow_state")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["run_integrity"] = "bad"
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    before = workflow_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert workflow_path.read_bytes() == before
+
+
 def test_state_check_strict_fresh_workspace_returns_zero(tmp_path):
     ws = _write_workspace(tmp_path)
 

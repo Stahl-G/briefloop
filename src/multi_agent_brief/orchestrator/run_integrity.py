@@ -22,7 +22,7 @@ def clean_run_integrity() -> dict[str, Any]:
     }
 
 
-def normalize_run_integrity(value: Any) -> dict[str, Any]:
+def normalize_run_integrity(value: Any, *, missing: bool = False) -> dict[str, Any]:
     """Normalize persisted run integrity without introducing derived statuses.
 
     v0.8.0 keeps persisted workflow state to ``clean`` or ``contaminated``.
@@ -30,11 +30,13 @@ def normalize_run_integrity(value: Any) -> dict[str, Any]:
     timing projections, not workflow_state.json.
     """
 
-    if not isinstance(value, dict):
+    if missing:
         return clean_run_integrity()
-    status = str(value.get("status") or RUN_INTEGRITY_CLEAN)
-    if status != RUN_INTEGRITY_CONTAMINATED:
-        status = RUN_INTEGRITY_CLEAN
+    if not isinstance(value, dict):
+        raise ValueError("workflow_state.run_integrity must be an object.")
+    status = value.get("status")
+    if status not in PERSISTED_RUN_INTEGRITY_STATUSES:
+        raise ValueError("workflow_state.run_integrity.status is invalid.")
     reasons = value.get("reasons")
     if not isinstance(reasons, list):
         reasons = []
@@ -76,7 +78,10 @@ def workflow_with_run_integrity(workflow: dict[str, Any]) -> dict[str, Any]:
     """Return a shallow workflow copy with normalized run integrity."""
 
     updated = dict(workflow)
-    updated["run_integrity"] = normalize_run_integrity(updated.get("run_integrity"))
+    updated["run_integrity"] = normalize_run_integrity(
+        updated.get("run_integrity"),
+        missing="run_integrity" not in updated,
+    )
     return updated
 
 
