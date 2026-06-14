@@ -8,6 +8,12 @@ from typing import Any
 
 from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_layer_import
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
+from multi_agent_brief.orchestrator.run_integrity import (
+    interpret_run_integrity,
+    project_for_read,
+    workflow_with_sticky_contamination_events,
+)
+from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 
 
@@ -55,10 +61,20 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     feedback_issues = _read_json(ws / INTERMEDIATE_DIR / "feedback_issues.json")
     repair_plan = _read_json(ws / INTERMEDIATE_DIR / "repair_plan.json")
 
+    event_log_path = ws / INTERMEDIATE_DIR / "event_log.jsonl"
+    event_records = _event_records_best_effort(event_log_path)
+    workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
+    if isinstance(workflow_payload, dict):
+        workflow = dict(workflow)
+        try:
+            workflow["payload"] = workflow_with_sticky_contamination_events(workflow_payload, event_records)
+        except RuntimeStateError:
+            workflow["payload"] = workflow_payload
+
     payload["runtime"] = _runtime_summary(manifest)
     payload["workflow"] = _workflow_summary(workflow)
     payload["artifacts"] = _artifact_summary(registry)
-    payload["events"] = _event_summary(ws / INTERMEDIATE_DIR / "event_log.jsonl")
+    payload["events"] = _event_summary(event_log_path)
     payload["quality_gate"] = _quality_gate_summary(
         _select_quality_gate_result(
             workflow=payload["workflow"],
@@ -78,7 +94,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         workspace=ws,
     )
     payload["timing"] = derive_control_timing_from_path(
-        ws / INTERMEDIATE_DIR / "event_log.jsonl",
+        event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
         expected_run_id=(manifest_payload or {}).get("run_id") if isinstance(manifest_payload, dict) else None,
     )
@@ -355,6 +371,24 @@ def _event_summary(path: Path) -> dict[str, Any]:
         "corrupt_count": corrupt,
         "recent_events": recent[-5:],
     }
+
+
+def _event_records_best_effort(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError:
+        return []
+    records: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            records.append(event)
+    return records
 
 
 def _quality_gate_summary(result: dict[str, Any]) -> dict[str, Any]:

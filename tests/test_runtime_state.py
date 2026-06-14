@@ -2351,6 +2351,85 @@ def test_finalize_complete_records_terminal_transaction(tmp_path):
     )
 
 
+def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
+    workflow_path = _state_file(ws, "workflow_state")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["run_integrity"] = {
+        "status": "clean",
+        "reference_eligible": True,
+        "clean_single_shot": True,
+        "reasons": [],
+    }
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    runtime_state.append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="run_integrity_contaminated",
+        actor="orchestrator",
+        reason="Synthetic contamination event must remain sticky.",
+        metadata={
+            "reason_code": "synthetic_contamination",
+            "message": "Synthetic contamination event must remain sticky.",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+        },
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    integrity = state["workflow_state"]["run_integrity"]
+    persisted = json.loads(workflow_path.read_text(encoding="utf-8"))["run_integrity"]
+
+    assert integrity["status"] == "contaminated"
+    assert integrity["reference_eligible"] is False
+    assert integrity["clean_single_shot"] is False
+    assert integrity["reasons"][0]["reason_code"] == "synthetic_contamination"
+    assert persisted == integrity
+
+
+def test_finalize_complete_keeps_contaminated_run_out_of_reference_pack(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
+    runtime_state.append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="run_integrity_contaminated",
+        actor="orchestrator",
+        stage_id="auditor",
+        reason="Prior repair contaminated this run.",
+        metadata={
+            "reason_code": "prior_repair",
+            "message": "Prior repair contaminated this run.",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "stage_id": "auditor",
+        },
+    )
+
+    state = complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized after repair",
+    )
+
+    integrity = state["workflow_state"]["run_integrity"]
+    archive_manifest = json.loads(
+        (ws / "output" / "runs" / manifest["run_id"] / "manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert integrity["status"] == "contaminated_repaired"
+    assert integrity["reference_eligible"] is False
+    assert integrity["clean_single_shot"] is False
+    assert archive_manifest["run_integrity"]["status"] == "contaminated_repaired"
+    assert archive_manifest["run_integrity"]["reference_eligible"] is False
+
+
 def test_finalize_complete_archives_delivery_intermediate_and_control_files(tmp_path):
     ws = _write_workspace(tmp_path)
     state = _complete_finalized_workspace(ws)

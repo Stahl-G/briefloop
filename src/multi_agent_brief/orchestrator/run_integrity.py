@@ -9,8 +9,13 @@ from typing import Any
 
 RUN_INTEGRITY_CLEAN = "clean"
 RUN_INTEGRITY_CONTAMINATED = "contaminated"
+RUN_INTEGRITY_CONTAMINATED_REPAIRED = "contaminated_repaired"
 RUN_INTEGRITY_UNKNOWN = "unknown"
-PERSISTED_RUN_INTEGRITY_STATUSES = {RUN_INTEGRITY_CLEAN, RUN_INTEGRITY_CONTAMINATED}
+PERSISTED_RUN_INTEGRITY_STATUSES = {
+    RUN_INTEGRITY_CLEAN,
+    RUN_INTEGRITY_CONTAMINATED,
+    RUN_INTEGRITY_CONTAMINATED_REPAIRED,
+}
 
 
 @dataclass(frozen=True)
@@ -113,17 +118,17 @@ def interpret_run_integrity(
     if value.get("reference_eligible", False) is not False:
         return _degraded(
             "run_integrity_contaminated_reference_eligible",
-            "workflow_state.run_integrity contaminated runs must not be reference eligible.",
+            "workflow_state.run_integrity non-clean runs must not be reference eligible.",
         )
     if value.get("clean_single_shot", False) is not False:
         return _degraded(
             "run_integrity_contaminated_single_shot",
-            "workflow_state.run_integrity contaminated runs must not be clean single-shot.",
+            "workflow_state.run_integrity non-clean runs must not be clean single-shot.",
         )
     return RunIntegrityVerdict(
         kind="canonical",
         value={
-            "status": RUN_INTEGRITY_CONTAMINATED,
+            "status": status,
             "reference_eligible": False,
             "clean_single_shot": False,
             "reasons": reasons,
@@ -169,6 +174,108 @@ def workflow_with_persistable_run_integrity(workflow: dict[str, Any], *, path: s
         ),
         path=path,
     )
+    return updated
+
+
+def workflow_with_sticky_contamination_events(
+    workflow: dict[str, Any],
+    event_records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Return workflow with run-integrity contamination replayed from events."""
+
+    updated = workflow_with_persistable_run_integrity(
+        workflow,
+        path="workflow_state.run_integrity",
+    )
+    contamination_events = [
+        event
+        for event in event_records
+        if isinstance(event, dict) and event.get("event_type") == "run_integrity_contaminated"
+    ]
+    if not contamination_events:
+        return updated
+
+    integrity = require_persistable(
+        interpret_run_integrity(updated.get("run_integrity"), field_present=True),
+        path="workflow_state.run_integrity",
+    )
+    existing = integrity.get("reasons") if isinstance(integrity.get("reasons"), list) else []
+    reasons = [item for item in existing if isinstance(item, dict)]
+    seen = {
+        (
+            str(item.get("reason_code") or ""),
+            str(item.get("message") or ""),
+            str(item.get("stage_id") or ""),
+            str(item.get("artifact_id") or ""),
+        )
+        for item in reasons
+    }
+
+    for event in contamination_events:
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        reason = {
+            "reason_code": str(metadata.get("reason_code") or "run_integrity_contaminated"),
+            "message": str(
+                metadata.get("message")
+                or event.get("reason")
+                or "Run integrity contamination event was recorded."
+            ),
+            "created_at": str(event.get("created_at") or ""),
+        }
+        stage_id = metadata.get("stage_id") or event.get("stage_id")
+        artifact_id = metadata.get("artifact_id") or event.get("artifact_id")
+        if stage_id:
+            reason["stage_id"] = str(stage_id)
+        if artifact_id:
+            reason["artifact_id"] = str(artifact_id)
+        details = metadata.get("details")
+        if isinstance(details, dict) and details:
+            reason["metadata"] = details
+        marker = (
+            reason["reason_code"],
+            reason["message"],
+            str(reason.get("stage_id") or ""),
+            str(reason.get("artifact_id") or ""),
+        )
+        if marker in seen:
+            continue
+        seen.add(marker)
+        reasons.append(reason)
+
+    sticky_status = (
+        RUN_INTEGRITY_CONTAMINATED
+        if integrity.get("status") == RUN_INTEGRITY_CLEAN
+        else str(integrity.get("status"))
+    )
+    integrity.update({
+        "status": sticky_status,
+        "reference_eligible": False,
+        "clean_single_shot": False,
+        "reasons": reasons,
+    })
+    updated["run_integrity"] = integrity
+    return updated
+
+
+def finalize_run_integrity(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Mark a completed contaminated run as repaired but not reference-eligible."""
+
+    updated = workflow_with_persistable_run_integrity(
+        workflow,
+        path="workflow_state.run_integrity",
+    )
+    integrity = require_persistable(
+        interpret_run_integrity(updated.get("run_integrity"), field_present=True),
+        path="workflow_state.run_integrity",
+    )
+    if integrity.get("status") == RUN_INTEGRITY_CLEAN:
+        return updated
+    integrity.update({
+        "status": RUN_INTEGRITY_CONTAMINATED_REPAIRED,
+        "reference_eligible": False,
+        "clean_single_shot": False,
+    })
+    updated["run_integrity"] = integrity
     return updated
 
 
