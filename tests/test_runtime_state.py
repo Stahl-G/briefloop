@@ -100,14 +100,14 @@ def _event_records(ws: Path) -> list[dict]:
 
 
 def _fail_appending_event_type(monkeypatch: pytest.MonkeyPatch, event_type: str) -> None:
-    original = runtime_state._append_jsonl
+    original = runtime_state._impl._append_jsonl
 
     def flaky_append(path: Path, payload: dict) -> None:
         if payload.get("event_type") == event_type:
             raise RuntimeStateError("forced event append failure")
         original(path, payload)
 
-    monkeypatch.setattr(runtime_state, "_append_jsonl", flaky_append)
+    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", flaky_append)
 
 
 def _write_quality_gate_report(
@@ -402,7 +402,7 @@ def test_state_check_rejects_malformed_run_integrity_without_rewrite(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert workflow_path.read_bytes() == before
 
 
@@ -423,7 +423,7 @@ def test_state_show_rejects_invalid_run_integrity_status_without_rewrite(tmp_pat
     with pytest.raises(RuntimeStateError) as excinfo:
         show_runtime_state(workspace=ws)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert workflow_path.read_bytes() == before
 
 
@@ -449,7 +449,7 @@ def test_stage_complete_rejects_invalid_run_integrity_status_without_rewrite(tmp
             reason="doctor complete",
         )
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert workflow_path.read_bytes() == before
 
 
@@ -1197,7 +1197,7 @@ def test_stage_complete_contamination_event_failure_rolls_back_workflow(tmp_path
             reason="doctor replay should fail atomically",
         )
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_PARTIAL_WRITE
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_PARTIAL_WRITE
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
 
@@ -1253,7 +1253,7 @@ def test_stage_complete_event_append_failure_is_detectable_partial_write(tmp_pat
     def fail_append(*args, **kwargs):
         raise RuntimeStateError("event append failed")
 
-    monkeypatch.setattr(runtime_state, "_append_jsonl", fail_append)
+    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", fail_append)
 
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_stage_transaction(
@@ -1475,7 +1475,7 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert "Frozen artifact" in str(excinfo.value)
     assert "owner stage 'claim-ledger'" in str(excinfo.value)
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
@@ -1516,7 +1516,7 @@ def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, m
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_PARTIAL_WRITE
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_PARTIAL_WRITE
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
 
@@ -2223,7 +2223,7 @@ def test_existing_archive_rejects_corrupted_fact_layer_projection(tmp_path):
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     finalize_report = json.loads((_intermediate(ws) / "finalize_report.json").read_text(encoding="utf-8"))
 
-    with pytest.raises(runtime_state.RunArchiveError) as excinfo:
+    with pytest.raises(runtime_state._impl.RunArchiveError) as excinfo:
         archive_finalized_run(
             workspace=ws,
             run_id=state["manifest"]["run_id"],
@@ -2233,7 +2233,7 @@ def test_existing_archive_rejects_corrupted_fact_layer_projection(tmp_path):
             finalize_report=finalize_report,
         )
 
-    assert excinfo.value.error_code == runtime_state.E_RUN_ARCHIVE_CONFLICT
+    assert excinfo.value.error_code == runtime_state._impl.E_RUN_ARCHIVE_CONFLICT
     assert "fact_layer projection differs" in str(excinfo.value)
 
 
@@ -2260,7 +2260,7 @@ def test_import_fact_layer_transaction_copies_archive_and_marks_upstream_stages(
     assert manifest["recipe"] == "fast-rerun"
     assert manifest["runtime"] == "codex"
     import_record = manifest["fact_layer_import"]
-    assert import_record["schema_version"] == runtime_state.FACT_LAYER_IMPORT_SCHEMA
+    assert import_record["schema_version"] == runtime_state._impl.FACT_LAYER_IMPORT_SCHEMA
     assert import_record["source_run_id"] == finalized["manifest"]["run_id"]
     assert import_record["source_archive_manifest"] == f"output/runs/{finalized['manifest']['run_id']}/manifest.json"
     assert str(source_ws) not in json.dumps(import_record)
@@ -2382,7 +2382,7 @@ input:
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
     assert "Fast-rerun imported fact layer is stale at target delivery time" in str(excinfo.value)
     assert not (target_ws / "output" / "runs").exists()
 
@@ -2449,7 +2449,7 @@ input:
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
     assert "freshness cannot be verified at target delivery time" in str(excinfo.value)
     assert not (target_ws / "output" / "runs").exists()
 
@@ -2503,7 +2503,7 @@ input:
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
     assert "claim_publication_dates_missing" in str(excinfo.value)
     assert not (target_ws / "output" / "runs").exists()
 
@@ -3200,7 +3200,7 @@ def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state.E_RUN_ARCHIVE_CONFLICT
+    assert excinfo.value.error_code == runtime_state._impl.E_RUN_ARCHIVE_CONFLICT
     after_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert after_workflow == before_workflow
     assert after_workflow["current_stage"] == "finalize"
@@ -3284,7 +3284,7 @@ def test_reset_state_event_append_failure_rolls_back_control_files(tmp_path, mon
             reset_state=True,
         )
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_PARTIAL_WRITE
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_PARTIAL_WRITE
     assert _state_file(ws, "runtime_manifest").read_bytes() == before_manifest
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
@@ -3312,7 +3312,7 @@ def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delive
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
     assert "output/delivery" in str(excinfo.value)
 
 
@@ -3436,7 +3436,7 @@ def test_state_decide_event_failure_leaves_workflow_unchanged(tmp_path, monkeypa
     def fail_append(*args, **kwargs):
         raise RuntimeStateError("event append failed")
 
-    monkeypatch.setattr(runtime_state, "_append_jsonl", fail_append)
+    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", fail_append)
 
     with pytest.raises(RuntimeStateError):
         record_decision(
@@ -3480,7 +3480,7 @@ def test_state_check_event_failure_leaves_state_unchanged(tmp_path, monkeypatch)
     def fail_append(*args, **kwargs):
         raise RuntimeStateError("event append failed")
 
-    monkeypatch.setattr(runtime_state, "_append_jsonl", fail_append)
+    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", fail_append)
 
     with pytest.raises(RuntimeStateError):
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -3503,7 +3503,7 @@ def test_state_check_rejects_unknown_event_type(tmp_path):
                 "event_type": "stage_completed",
                 "reason": "model-written fake event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3515,7 +3515,7 @@ def test_state_check_rejects_unknown_event_type(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert "Unknown event type" in str(excinfo.value)
 
 
@@ -3532,7 +3532,7 @@ def test_state_check_rejects_unknown_event_actor(tmp_path):
                 "event_type": "decision_recorded",
                 "reason": "model-written fake event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3544,7 +3544,7 @@ def test_state_check_rejects_unknown_event_actor(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert "Unknown event actor" in str(excinfo.value)
 
 
@@ -3561,7 +3561,7 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
                 "event_type": "stage_completed",
                 "reason": "model-written fake event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3584,7 +3584,7 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
 
     assert rc == 1
     assert payload["ok"] is False
-    assert payload["error_code"] == runtime_state.E_TRANSACTION_INTEGRITY
+    assert payload["error_code"] == runtime_state._impl.E_TRANSACTION_INTEGRITY
 
 
 def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
@@ -3611,7 +3611,7 @@ def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert "Unsupported event log schema" in str(excinfo.value)
 
 
@@ -3628,7 +3628,7 @@ def test_state_check_rejects_non_newline_terminated_event_log(tmp_path):
                 "event_type": "decision_recorded",
                 "reason": "model-written unterminated event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3639,7 +3639,7 @@ def test_state_check_rejects_non_newline_terminated_event_log(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert "newline-terminated" in str(excinfo.value)
 
 
@@ -3652,7 +3652,7 @@ def test_state_check_rejects_malformed_event_log_line(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
     assert "Invalid JSON event log line" in str(excinfo.value)
 
 
