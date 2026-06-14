@@ -114,7 +114,7 @@ Hermes 使用 `delegate_task` 原生子代理管线：scout → screener → cla
 | DOCX output | Supported |
 | PDF output | Experimental |
 | Feishu delivery | Experimental |
-| Slack delivery | Interface Only |
-| Email delivery | Interface Only |
+| Slack delivery | Not shipped |
+| Email delivery | Not shipped |
 | Homebrew formula | CLI-only |
 | curl installer | CLI-only |
