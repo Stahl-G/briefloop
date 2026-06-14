@@ -17,6 +17,7 @@ from multi_agent_brief.cli.start_commands import (
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
+from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
 from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
 from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
@@ -62,6 +63,91 @@ manual:
         encoding="utf-8",
     )
     return ws
+
+
+def _mark_fact_layer_imported(ws: Path) -> None:
+    paths = runtime_state_paths(ws)
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "source-001.md").write_text("# Source\n\nExample evidence.\n", encoding="utf-8")
+    output_dir = ws / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "input_classification.json").write_text(
+        json.dumps(
+            {
+                "evidence": [{"path": "input/sources/source-001.md", "name": "source-001.md"}],
+                "feedback": [],
+                "instruction": [],
+                "context": [],
+                "skipped": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True, exist_ok=True)
+    (intermediate / "candidate_claims.json").write_text("[]\n", encoding="utf-8")
+    (intermediate / "screened_candidates.json").write_text("[]\n", encoding="utf-8")
+    (intermediate / "claim_ledger.json").write_text(
+        json.dumps(
+            [
+                {
+                    "claim_id": "CL-001",
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest = json.loads(paths["runtime_manifest"].read_text(encoding="utf-8"))
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    fact_layer_sha256 = "c" * 64
+    source_run_id = "mabw-20260614T010000Z-source"
+    satisfied_stage_ids = [
+        "doctor",
+        "source-discovery",
+        "input-governance",
+        "scout",
+        "screener",
+        "claim-ledger",
+    ]
+    manifest["recipe"] = "fast-rerun"
+    manifest["fact_layer_import"] = {
+        "schema_version": "mabw.fact_layer_import.v1",
+        "source_run_id": source_run_id,
+        "source_archive_manifest": f"output/runs/{source_run_id}/manifest.json",
+        "source_archive_manifest_sha256": "d" * 64,
+        "fact_layer_sha256": fact_layer_sha256,
+        "imported_file_count": 5,
+        "satisfied_stage_ids": satisfied_stage_ids,
+    }
+    statuses = dict(workflow.get("stage_statuses") or {})
+    for stage_id in satisfied_stage_ids:
+        statuses[stage_id] = {
+            "status": "complete",
+            "reason": "Satisfied by frozen fact layer import.",
+            "updated_at": "2026-06-14T01:00:00+00:00",
+            "metadata": {
+                "satisfied_by_import": True,
+                "fact_layer_import_sha256": fact_layer_sha256,
+                "source_run_id": source_run_id,
+            },
+        }
+    statuses["analyst"] = {
+        "status": "ready",
+        "reason": "",
+        "updated_at": "2026-06-14T01:00:00+00:00",
+    }
+    workflow["current_stage"] = "analyst"
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["stage_statuses"] = statuses
+    paths["runtime_manifest"].write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
@@ -435,13 +521,29 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     _assert_orchestrator_contract_handoff(data)
 
 
-def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
+def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
-    intermediate = ws / "output" / "intermediate"
-    intermediate.mkdir(parents=True)
-    (intermediate / "candidate_claims.json").write_text("[]\n", encoding="utf-8")
-    (intermediate / "screened_candidates.json").write_text("[]\n", encoding="utf-8")
-    (intermediate / "claim_ledger.json").write_text("[]\n", encoding="utf-8")
+
+    rc = main([
+        "run",
+        "--workspace", str(ws),
+        "--runtime", "claude",
+        "--recipe", "fast-rerun",
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "E_FAST_RERUN_IMPORT_REQUIRED" in out
+    assert "multi-agent-brief state import-fact-layer" in out
+    assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
+
+
+def test_run_fast_rerun_recipe_uses_imported_fact_layer_handoff(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, runtime="claude", repo_workdir=ROOT, recipe="fast-rerun")
+    _mark_fact_layer_imported(ws)
 
     rc = main([
         "run",
@@ -458,6 +560,7 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
     text = data["prompt"] + "\n" + "\n".join(data["notes"])
     assert data["recipe"] == "fast-rerun"
     assert manifest["recipe"] == "fast-rerun"
+    assert manifest["fact_layer_import"]["source_run_id"] == "mabw-20260614T010000Z-source"
     assert main([
         "state",
         "check",
@@ -476,27 +579,30 @@ def test_run_fast_rerun_recipe_adds_guidance_without_generating_brief(tmp_path):
     after_switchboard = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
     assert after_switchboard["recipe"] == "fast-rerun"
     assert "Runtime recipe: fast-rerun" in text
+    assert "same frozen evidence, new writing -- verified by hash" in text
+    assert "Source run: mabw-20260614T010000Z-source" in text
+    assert "Imported fact-layer hash" in text
     assert "Start model-backed content work at Analyst" in text
-    assert "Do not rerun source discovery, Scout, Screener, or Claim Ledger" in text
-    assert "state stage-complete" in text
+    assert "Do not regenerate source-discovery, input-governance, Scout, Screener, or Claim Ledger" in text
+    assert "Do not synthesize or backfill upstream stage-complete" in text
+    assert "Then record the pre-analyst successful completions" not in text
     assert not (ws / "output" / "brief.md").exists()
 
 
-def test_fast_rerun_recipe_warns_when_frozen_artifacts_missing(tmp_path):
+def test_build_handoff_fast_rerun_requires_import_manifest(tmp_path):
     ws = _write_workspace(tmp_path)
 
-    handoff = build_handoff(
-        workspace=ws,
-        repo_workdir=ROOT,
-        runtime="claude",
-        recipe="fast-rerun",
-        run_doctor=False,
-    )
-
-    text = handoff.prompt + "\n" + "\n".join(handoff.notes)
-    assert handoff.recipe == "fast-rerun"
-    assert "Missing required frozen artifacts at handoff creation" in text
-    assert "claim_ledger.json" in text
+    try:
+        build_handoff(
+            workspace=ws,
+            repo_workdir=ROOT,
+            runtime="claude",
+            recipe="fast-rerun",
+            run_doctor=False,
+        )
+        assert False, "fast-rerun handoff without import should fail"
+    except ValueError as exc:
+        assert "E_FAST_RERUN_IMPORT_REQUIRED" in str(exc)
 
 
 def test_start_manual_handoff_contains_artifact_contract(tmp_path):

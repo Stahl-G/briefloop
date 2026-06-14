@@ -50,6 +50,7 @@ from multi_agent_brief.orchestrator.run_archive import (
     archive_finalized_run,
     preflight_finalized_run_archive,
 )
+from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_layer_import
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
     RUN_INTEGRITY_CONTAMINATED,
@@ -1770,7 +1771,7 @@ def show_runtime_state(*, workspace: str | Path) -> dict[str, Any]:
             event_count = sum(1 for _ in paths["event_log"].open(encoding="utf-8"))
         except OSError:
             event_count = 0
-    return {
+    state = {
         "ok": True,
         "workspace": str(ws),
         "runtime_state_files": dict(RUNTIME_STATE_FILES),
@@ -1779,6 +1780,8 @@ def show_runtime_state(*, workspace: str | Path) -> dict[str, Any]:
         "artifact_registry": registry,
         "event_count": event_count,
     }
+    state["fact_layer_import"] = summarize_fact_layer_import(manifest, workflow)
+    return state
 
 
 def append_event(

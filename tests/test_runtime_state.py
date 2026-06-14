@@ -2260,7 +2260,45 @@ def test_import_fact_layer_transaction_copies_archive_and_marks_upstream_stages(
 
     checked = check_runtime_state(workspace=target_ws, repo_workdir=ROOT)
     assert checked["manifest"]["fact_layer_import"] == import_record
+    assert checked["fact_layer_import"]["status"] == "valid"
+    assert checked["fact_layer_import"]["source_run_id"] == finalized["manifest"]["run_id"]
+    assert all(
+        stage["display_status"] == "complete via import"
+        for stage in checked["fact_layer_import"]["imported_stages"]
+    )
     assert checked["workflow_state"]["stage_statuses"]["claim-ledger"]["metadata"]["satisfied_by_import"] is True
+
+    shown = show_runtime_state(workspace=target_ws)
+    assert shown["fact_layer_import"]["status"] == "valid"
+    assert shown["fact_layer_import"]["next_stage"] == "analyst"
+
+
+def test_state_show_human_output_reports_imported_stages(tmp_path, capsys):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        runtime="codex",
+        repo_workdir=ROOT,
+    )
+
+    rc = main(["state", "show", "--workspace", str(target_ws)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[state show] fact_layer_import: valid" in out
+    assert "[state show] imported_satisfied_stages:" in out
+    assert "source-discovery: complete via import" in out
+    assert "claim-ledger: complete via import" in out
+    assert "[state show] next_runtime_stage: analyst" in out
 
 
 def test_import_fact_layer_transaction_rejects_incomplete_fact_layer(tmp_path):

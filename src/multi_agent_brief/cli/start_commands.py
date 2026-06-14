@@ -24,6 +24,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     load_artifact_contracts,
     load_stage_specs,
 )
+from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
 from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
 from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
@@ -625,33 +626,38 @@ def _protocol_paths(items: list[dict[str, Any]]) -> str:
 
 
 def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
-    required = [
-        "output/intermediate/candidate_claims.json",
-        "output/intermediate/screened_candidates.json",
-        "output/intermediate/claim_ledger.json",
-    ]
-    optional_reuse = [
-        "source_candidates.yaml",
-        "output/input_classification.json",
-    ]
-    missing = [rel for rel in required if not (workspace / rel).exists()]
+    summary = require_fast_rerun_handoff_ready(workspace)
+    imported_stages = ", ".join(
+        f"{stage.get('stage_id')}={stage.get('display_status')}"
+        for stage in summary.get("imported_stages") or []
+    )
     guidance = [
         "Runtime recipe: fast-rerun.",
-        "Use this only for controlled reruns where source and fact-layer artifacts are intentionally frozen.",
-        "Do not rerun source discovery, Scout, Screener, or Claim Ledger when their existing artifacts are present and valid.",
-        "First run `multi-agent-brief state check --workspace <workspace> --strict` to refresh artifact status.",
-        "Then record the pre-analyst successful completions with `multi-agent-brief state stage-complete` in order: doctor, source-discovery, input-governance, scout, screener, claim-ledger.",
-        "If any required frozen artifact is missing or invalid, stop; do not silently fall back to a full run.",
-        "Start model-backed content work at Analyst, then continue Editor, Auditor, required gates/state review, and Finalize.",
-        "This recipe is for instrumentation and manifestation testing; it is not quality-equivalent to the full subagent workflow.",
-        f"Frozen required artifacts: {', '.join(required)}.",
-        f"Reusable context artifacts when present: {', '.join(optional_reuse)}.",
+        "same frozen evidence, new writing -- verified by hash.",
+        f"Source run: {summary.get('source_run_id')}",
+        f"Imported fact-layer hash: {summary.get('fact_layer_sha256')}",
+        f"Source archive manifest hash: {summary.get('source_archive_manifest_sha256')}",
+        f"Imported files: {summary.get('imported_file_count')}",
+        f"Imported-satisfied upstream stages: {imported_stages}.",
+        "Start model-backed content work at Analyst.",
+        "Do not regenerate source-discovery, input-governance, Scout, Screener, or Claim Ledger.",
+        "Do not synthesize or backfill upstream stage-complete, decision_recorded, "
+        "or stage_status_changed events for imported stages.",
+        "Do not add facts outside the imported Claim Ledger.",
+        "Continue through Analyst, Editor, Auditor, gates, finalize, finalize-complete, human delivery, and archive.",
+        "Timing comparability is downstream_only: upstream fact-layer stages were "
+        "satisfied by import and must not be compared directly with full runs.",
+        "If runtime_manifest.fact_layer_import is missing or invalid, stop and run "
+        "`multi-agent-brief state import-fact-layer` first; do not silently fall back to a full run.",
+        "This recipe is Experimental/internal in v0.8.1 and is not quality-equivalent to a full workflow.",
     ]
-    if missing:
-        guidance.append(f"Missing required frozen artifacts at handoff creation: {', '.join(missing)}. Stop until they are restored.")
     text = "\n".join(guidance)
     handoff.prompt = f"{handoff.prompt}\n\n{text}"
     handoff.notes.append(text)
+    handoff.next_steps = (
+        "Use this fast-rerun handoff only after the imported fact layer is valid. "
+        "Start at Analyst; do not rerun imported upstream fact-layer stages."
+    )
 
 
 def render_handoff_cli(handoff: AgentHandoff) -> str:

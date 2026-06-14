@@ -257,6 +257,7 @@ def _is_blocked(state: dict[str, Any]) -> bool:
 def _print_human_summary(label: str, state: dict[str, Any]) -> None:
     manifest = state.get("manifest") or {}
     workflow = state.get("workflow_state") or {}
+    fact_layer_import = state.get("fact_layer_import") or {}
     print(f"[{label}] run_id: {manifest.get('run_id', '')}")
     print(f"[{label}] current_stage: {workflow.get('current_stage')}")
     print(f"[{label}] blocked: {workflow.get('blocked')}")
@@ -265,6 +266,26 @@ def _print_human_summary(label: str, state: dict[str, Any]) -> None:
     print(f"[{label}] runtime_state_files:")
     for key, rel_path in (state.get("runtime_state_files") or {}).items():
         print(f"  - {key}: {rel_path}")
+    _print_fact_layer_import_summary(label, fact_layer_import)
+
+
+def _print_fact_layer_import_summary(label: str, summary: dict[str, Any]) -> None:
+    if not summary:
+        return
+    if summary.get("status") == "missing":
+        return
+    print(f"[{label}] fact_layer_import: {summary.get('status')}")
+    if summary.get("status") == "valid":
+        print(f"[{label}] source_run_id: {summary.get('source_run_id', '')}")
+        print(f"[{label}] fact_layer_sha256: {summary.get('fact_layer_sha256', '')}")
+        print(f"[{label}] timing_comparability: {summary.get('timing_comparability', '')}")
+        print(f"[{label}] imported_satisfied_stages:")
+        for stage in summary.get("imported_stages") or []:
+            print(f"  - {stage.get('stage_id')}: {stage.get('display_status')}")
+        print(f"[{label}] next_runtime_stage: {summary.get('next_stage')}")
+    else:
+        for reason in summary.get("errors") or []:
+            print(f"[{label}] fact_layer_import_error: {reason}")
 
 
 def _print_error(exc: RuntimeStateError, *, as_json: bool) -> None:

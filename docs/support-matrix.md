@@ -32,6 +32,7 @@ validation unless that is stated separately.
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
+| `multi-agent-brief run --workspace <path> --recipe fast-rerun` | Experimental |
 | `multi-agent-brief status --workspace <path>` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target local` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
@@ -73,7 +74,10 @@ Fast-rerun fact-layer import is an experimental control transaction. It can
 import a complete, clean, archived frozen fact layer into a new runtime run for
 downstream rerun inspection. It does not register 080 experiment runs, score
 output quality, summarize experiments, scaffold conditions, or prove semantic
-truth.
+truth. `run --recipe fast-rerun` requires an existing valid
+`runtime_manifest.fact_layer_import`; it writes runtime handoff guidance from
+Analyst onward and must not synthesize upstream source-discovery, Scout,
+Screener, or Claim Ledger execution history.
 
 ## Runtimes
 

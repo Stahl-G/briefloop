@@ -20,6 +20,53 @@ def _minimal_workspace(path: Path) -> Path:
     return path
 
 
+def _mark_fact_layer_imported(ws: Path) -> None:
+    paths = runtime_state_paths(ws)
+    manifest = json.loads(paths["runtime_manifest"].read_text(encoding="utf-8"))
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    fact_layer_sha256 = "a" * 64
+    manifest["recipe"] = "fast-rerun"
+    manifest["fact_layer_import"] = {
+        "schema_version": "mabw.fact_layer_import.v1",
+        "source_run_id": "mabw-20260614T000000Z-source",
+        "source_archive_manifest": "output/runs/mabw-20260614T000000Z-source/manifest.json",
+        "source_archive_manifest_sha256": "b" * 64,
+        "fact_layer_sha256": fact_layer_sha256,
+        "imported_file_count": 5,
+        "satisfied_stage_ids": [
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+        ],
+    }
+    statuses = dict(workflow.get("stage_statuses") or {})
+    for stage_id in manifest["fact_layer_import"]["satisfied_stage_ids"]:
+        statuses[stage_id] = {
+            "status": "complete",
+            "reason": "Satisfied by frozen fact layer import.",
+            "updated_at": "2026-06-14T00:00:00+00:00",
+            "metadata": {
+                "satisfied_by_import": True,
+                "fact_layer_import_sha256": fact_layer_sha256,
+                "source_run_id": manifest["fact_layer_import"]["source_run_id"],
+            },
+        }
+    statuses["analyst"] = {
+        "status": "ready",
+        "reason": "",
+        "updated_at": "2026-06-14T00:00:00+00:00",
+    }
+    workflow["current_stage"] = "analyst"
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["stage_statuses"] = statuses
+    paths["runtime_manifest"].write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
@@ -99,6 +146,38 @@ def test_status_command_reports_contaminated_run_integrity(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[status] run_integrity: contaminated reference_eligible=False" in out
     assert "[status] timing: contaminated; elapsed buckets are not clean evidence" in out
+
+
+def test_status_command_reports_fact_layer_import_summary(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    _mark_fact_layer_imported(ws)
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["fact_layer_import"]
+    assert summary["status"] == "valid"
+    assert summary["source_run_id"] == "mabw-20260614T000000Z-source"
+    assert summary["fact_layer_sha256"] == "a" * 64
+    assert summary["next_stage"] == "analyst"
+    assert all(stage["display_status"] == "complete via import" for stage in summary["imported_stages"])
+    assert payload["suggested_next_command"] == f"multi-agent-brief run --workspace {ws} --recipe fast-rerun --skip-doctor"
+
+
+def test_status_command_human_output_reports_fact_layer_import(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    _mark_fact_layer_imported(ws)
+
+    rc = main(["status", "--workspace", str(ws)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[status] fact_layer_import: valid" in out
+    assert "source_run=mabw-20260614T000000Z-source" in out
+    assert "satisfied=complete via import" in out
 
 
 def test_status_command_reports_malformed_run_integrity_as_unknown(tmp_path, capsys):

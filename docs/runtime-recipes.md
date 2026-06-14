@@ -101,22 +101,38 @@ Not allowed:
 
 ## Fast Rerun Recipe
 
-Use when a workspace already has a frozen fact layer and the operator wants to
-rerun the writing/audit side, usually to test approved Improvement Memory
-guidance or reader-facing changes.
+Use when a fresh workspace has already imported a complete archived frozen fact
+layer with `state import-fact-layer`, and the operator wants to rerun the
+writing/audit side against the same evidence.
+
+Product rule:
+
+```text
+same frozen evidence, new writing -- verified by hash
+```
+
+Import first:
+
+```bash
+multi-agent-brief state import-fact-layer \
+  --workspace <new_workspace> \
+  --archive <source_workspace>/output/runs/<run_id>/manifest.json
+```
 
 Create handoff:
 
 ```bash
-multi-agent-brief run --workspace <workspace> --recipe fast-rerun
+multi-agent-brief run --workspace <new_workspace> --recipe fast-rerun
 ```
 
-This recipe is handoff guidance only. It does not make Python execute stages,
-skip stages, or generate the brief.
+This recipe is handoff guidance only. It does not import the fact layer by
+itself, make Python execute writing stages, or generate the brief.
 
-Required frozen artifacts:
+Required imported fact-layer artifacts:
 
 ```text
+input/sources/*
+output/input_classification.json
 output/intermediate/candidate_claims.json
 output/intermediate/screened_candidates.json
 output/intermediate/claim_ledger.json
@@ -125,9 +141,8 @@ output/intermediate/claim_ledger.json
 Runtime Orchestrator behavior:
 
 ```text
-run handoff
-→ state check --strict
-→ record pre-analyst state decisions for already-valid frozen artifacts
+state import-fact-layer
+→ run --recipe fast-rerun
 → analyst
 → editor
 → auditor
@@ -137,17 +152,21 @@ run handoff
 
 Allowed:
 
-- Reuse the existing source/candidate/screened/claim-ledger artifacts when they
-  are present and valid.
+- Reuse only the hash-verified fact-layer artifacts copied from the archive by
+  `state import-fact-layer`.
 - Start model-backed content work at Analyst.
 - Use this recipe for private instrumentation and manifestation reruns.
 
 Not allowed:
 
-- Do not silently fall back to a full run if a frozen required artifact is
-  missing or invalid.
-- Do not regenerate Scout, Screener, or Claim Ledger outputs unless the operator
-  intentionally abandons the fast rerun.
+- Do not run `run --recipe fast-rerun` without a valid
+  `runtime_manifest.fact_layer_import`.
+- Do not silently fall back to a full run if the import is missing or invalid.
+- Do not regenerate source-discovery, input-governance, Scout, Screener, or
+  Claim Ledger outputs inside the fast-rerun path.
+- Do not synthesize upstream `stage-complete` or `decision_recorded` events for
+  imported stages.
+- Do not add facts outside the imported Claim Ledger.
 - Do not use this as proof of output-quality improvement.
 - Do not expose `improvement/memory.md`; use only the frozen per-run snapshot
   when present.

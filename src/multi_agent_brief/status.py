@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_layer_import
 from multi_agent_brief.orchestrator.run_integrity import classify_run_integrity
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 
@@ -34,6 +35,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "reader_clean": {},
         "improvement": {},
         "feedback": {},
+        "fact_layer_import": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -70,6 +72,10 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["feedback"] = _feedback_summary(feedback_issues, repair_plan)
     workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
     manifest_payload = manifest.get("payload") if manifest.get("status") == "present" else None
+    payload["fact_layer_import"] = summarize_fact_layer_import(
+        manifest_payload if isinstance(manifest_payload, dict) else None,
+        workflow_payload if isinstance(workflow_payload, dict) else None,
+    )
     payload["timing"] = derive_control_timing_from_path(
         ws / INTERMEDIATE_DIR / "event_log.jsonl",
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -119,6 +125,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     gate = status.get("quality_gate") or {}
     reader = status.get("reader_clean") or {}
     feedback = status.get("feedback") or {}
+    fact_layer_import = status.get("fact_layer_import") or {}
     improvement = status.get("improvement") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
@@ -144,6 +151,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
                 f"expected={artifacts.get('expected_count', 0)}"
             ),
             f"[status] events: count={events.get('event_count', 0)} corrupt={events.get('corrupt_count', 0)}",
+            _format_fact_layer_import_line(fact_layer_import),
             _format_timing_line(timing),
             f"[status] quality_gate: {gate.get('status') or 'unknown'}",
             f"[status] reader_clean: {reader.get('status') or 'unknown'}",
@@ -178,6 +186,23 @@ def _format_timing_line(timing: dict[str, Any]) -> str:
     if status == "contaminated":
         return "[status] timing: contaminated; elapsed buckets are not clean evidence"
     return f"[status] timing: {status}"
+
+
+def _format_fact_layer_import_line(summary: dict[str, Any]) -> str:
+    if summary.get("status") == "valid":
+        return (
+            "[status] fact_layer_import: valid "
+            f"source_run={summary.get('source_run_id') or 'unknown'} "
+            f"fact_layer_sha256={(summary.get('fact_layer_sha256') or '')[:12]} "
+            f"next={summary.get('next_stage') or 'analyst'} "
+            "satisfied=complete via import"
+        )
+    if summary.get("present"):
+        return (
+            "[status] fact_layer_import: invalid "
+            f"errors={len(summary.get('errors') or [])}"
+        )
+    return "[status] fact_layer_import: missing"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -418,11 +443,14 @@ def _feedback_summary(issues_result: dict[str, Any], plan_result: dict[str, Any]
 def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     workflow = status.get("workflow") or {}
     gate = status.get("quality_gate") or {}
+    fact_layer_import = status.get("fact_layer_import") or {}
     if not (status.get("runtime") or {}).get("present"):
         return f"multi-agent-brief run --workspace {workspace} --runtime claude"
     if workflow.get("blocked"):
         return f"multi-agent-brief state show --workspace {workspace} --json"
     current_stage = workflow.get("current_stage")
+    if fact_layer_import.get("status") == "valid" and current_stage == "analyst":
+        return f"multi-agent-brief run --workspace {workspace} --recipe fast-rerun --skip-doctor"
     if current_stage == "finalize":
         return f"/mabw deliver {workspace}"
     if current_stage == "auditor" and gate.get("status") != "pass":

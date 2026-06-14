@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from multi_agent_brief.cli.start_commands import (
+    RUNTIME_RECIPE_FAST_RERUN,
     VALID_RUNTIMES,
     VALID_RUNTIME_RECIPES,
     AgentHandoff,
@@ -13,6 +14,7 @@ from multi_agent_brief.cli.start_commands import (
     render_handoff_cli,
     write_handoff_artifacts,
 )
+from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
 from multi_agent_brief.audience_memory import (
     create_audience_profile_snapshot,
     profile_data_from_workspace_config,
@@ -201,14 +203,26 @@ def _run_launcher(args: argparse.Namespace) -> int:
         print(f"{prefix} {exc}")
         return 1
 
-    handoff = build_handoff(
-        workspace=workspace_path,
-        repo_workdir=repo_workdir,
-        runtime=args.runtime,
-        recipe=getattr(args, "recipe", "full"),
-        venv=getattr(args, "venv", None),
-        run_doctor=not getattr(args, "skip_doctor", False),
-    )
+    recipe = getattr(args, "recipe", "full")
+    if recipe == RUNTIME_RECIPE_FAST_RERUN:
+        try:
+            require_fast_rerun_handoff_ready(workspace_path)
+        except ValueError as exc:
+            print(f"{prefix} {exc}")
+            return 1
+
+    try:
+        handoff = build_handoff(
+            workspace=workspace_path,
+            repo_workdir=repo_workdir,
+            runtime=args.runtime,
+            recipe=recipe,
+            venv=getattr(args, "venv", None),
+            run_doctor=not getattr(args, "skip_doctor", False),
+        )
+    except ValueError as exc:
+        print(f"{prefix} {exc}")
+        return 1
 
     written = _write_handoff_and_state(
         handoff=handoff,
@@ -250,14 +264,26 @@ def _run_handoff(args: argparse.Namespace) -> int:
         print(f"[handoff] {exc}")
         return 1
 
-    handoff = build_handoff(
-        workspace=workspace,
-        repo_workdir=repo_workdir,
-        runtime=args.runtime,
-        recipe=getattr(args, "recipe", "full"),
-        venv=getattr(args, "venv", None),
-        run_doctor=not getattr(args, "skip_doctor", False),
-    )
+    recipe = getattr(args, "recipe", "full")
+    if recipe == RUNTIME_RECIPE_FAST_RERUN:
+        try:
+            require_fast_rerun_handoff_ready(workspace)
+        except ValueError as exc:
+            print(f"[handoff] {exc}")
+            return 1
+
+    try:
+        handoff = build_handoff(
+            workspace=workspace,
+            repo_workdir=repo_workdir,
+            runtime=args.runtime,
+            recipe=recipe,
+            venv=getattr(args, "venv", None),
+            run_doctor=not getattr(args, "skip_doctor", False),
+        )
+    except ValueError as exc:
+        print(f"[handoff] {exc}")
+        return 1
 
     written = _write_handoff_and_state(
         handoff=handoff,
@@ -315,11 +341,12 @@ def _write_handoff_and_state(
             handoff.notes.append(
                 "Audience profile was missing; a default audience_profile.md and frozen snapshot were created for this run."
             )
-        _record_doctor_state(
-            handoff=handoff,
-            workspace=workspace,
-            repo_workdir=repo_workdir,
-        )
+        if handoff.recipe != RUNTIME_RECIPE_FAST_RERUN:
+            _record_doctor_state(
+                handoff=handoff,
+                workspace=workspace,
+                repo_workdir=repo_workdir,
+            )
         build_control_switchboard(
             workspace=workspace,
             repo_workdir=repo_workdir,
