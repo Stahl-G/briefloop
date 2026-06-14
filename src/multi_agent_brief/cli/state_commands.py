@@ -11,6 +11,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
     complete_finalize_transaction,
     complete_stage_transaction,
+    import_fact_layer_transaction,
     initialize_runtime_state,
     record_decision,
     show_runtime_state,
@@ -124,6 +125,33 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     finalize_complete_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
+    import_fact_layer_parser = actions.add_parser(
+        "import-fact-layer",
+        help="Import a complete archived frozen fact layer into a new fast-rerun runtime state.",
+    )
+    import_fact_layer_parser.add_argument("--workspace", required=True, help="Path to target workspace directory.")
+    import_fact_layer_parser.add_argument(
+        "--archive",
+        required=True,
+        help="Path to an output/runs/<run_id>/ archive directory or its manifest.json.",
+    )
+    import_fact_layer_parser.add_argument(
+        "--runtime",
+        default="hermes",
+        help="Runtime name recorded in the new runtime_manifest.json (default: hermes).",
+    )
+    import_fact_layer_parser.add_argument(
+        "--repo-workdir",
+        help="Repository or packaged contract base (default: auto-detect).",
+    )
+    import_fact_layer_parser.add_argument(
+        "--actor",
+        default="cli",
+        choices=("cli", "orchestrator", "runtime", "system"),
+        help="Actor recorded in event_log.jsonl.",
+    )
+    import_fact_layer_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
 
 def handle(args: argparse.Namespace) -> int:
     try:
@@ -196,6 +224,23 @@ def handle(args: argparse.Namespace) -> int:
                 print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
             else:
                 _print_human_summary("state finalize-complete", state)
+            return 0
+
+        if args.state_action == "import-fact-layer":
+            state = import_fact_layer_transaction(
+                workspace=args.workspace,
+                archive=args.archive,
+                runtime=getattr(args, "runtime", "hermes"),
+                repo_workdir=getattr(args, "repo_workdir", None),
+                actor=getattr(args, "actor", "cli"),
+            )
+            if getattr(args, "json", False):
+                print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                _print_human_summary("state import-fact-layer", state)
+                imported = state.get("fact_layer_import") or {}
+                print(f"[state import-fact-layer] imported_file_count: {imported.get('imported_file_count', 0)}")
+                print(f"[state import-fact-layer] source_run_id: {imported.get('source_run_id', '')}")
             return 0
     except RuntimeStateError as exc:
         _print_error(exc, as_json=getattr(args, "json", False))

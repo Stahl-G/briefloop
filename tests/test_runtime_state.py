@@ -17,6 +17,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     complete_finalize_transaction,
     complete_stage_transaction,
     initialize_runtime_state,
+    import_fact_layer_transaction,
     record_decision,
     show_runtime_state,
 )
@@ -2213,6 +2214,450 @@ def test_existing_archive_rejects_corrupted_fact_layer_projection(tmp_path):
 
     assert excinfo.value.error_code == runtime_state.E_RUN_ARCHIVE_CONFLICT
     assert "fact_layer projection differs" in str(excinfo.value)
+
+
+def test_import_fact_layer_transaction_copies_archive_and_marks_upstream_stages(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+
+    state = import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        runtime="codex",
+        repo_workdir=ROOT,
+    )
+
+    manifest = state["manifest"]
+    workflow = state["workflow_state"]
+    assert manifest["recipe"] == "fast-rerun"
+    assert manifest["runtime"] == "codex"
+    import_record = manifest["fact_layer_import"]
+    assert import_record["schema_version"] == runtime_state.FACT_LAYER_IMPORT_SCHEMA
+    assert import_record["source_run_id"] == finalized["manifest"]["run_id"]
+    assert import_record["source_archive_manifest"] == f"output/runs/{finalized['manifest']['run_id']}/manifest.json"
+    assert str(source_ws) not in json.dumps(import_record)
+    assert import_record["imported_file_count"] >= 4
+    assert workflow["current_stage"] == "analyst"
+    for stage_id in ("doctor", "source-discovery", "input-governance", "scout", "screener", "claim-ledger"):
+        status = workflow["stage_statuses"][stage_id]
+        assert status["status"] == "complete"
+        assert status["metadata"]["satisfied_by_import"] is True
+    assert (target_ws / "input" / "sources" / "source-001.md").exists()
+    assert (target_ws / "output" / "input_classification.json").exists()
+    assert (_intermediate(target_ws) / "candidate_claims.json").exists()
+    assert (_intermediate(target_ws) / "screened_candidates.json").exists()
+    assert (_intermediate(target_ws) / "claim_ledger.json").exists()
+    events = _event_records(target_ws)
+    assert [event["event_type"] for event in events].count("fact_layer_imported") == 1
+    assert not any(event["event_type"] == "decision_recorded" for event in events)
+
+    checked = check_runtime_state(workspace=target_ws, repo_workdir=ROOT)
+    assert checked["manifest"]["fact_layer_import"] == import_record
+    assert checked["workflow_state"]["stage_statuses"]["claim-ledger"]["metadata"]["satisfied_by_import"] is True
+
+
+def test_import_fact_layer_transaction_rejects_incomplete_fact_layer(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "incomplete" in str(excinfo.value)
+
+
+def test_import_fact_layer_transaction_rejects_contaminated_archive(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    manifest["run_integrity"] = {
+        "status": "contaminated",
+        "reference_eligible": False,
+        "clean_single_shot": False,
+        "reasons": [{"reason_code": "test"}],
+    }
+    archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "clean reference-eligible" in str(excinfo.value)
+
+
+def test_import_fact_layer_transaction_rejects_archive_hash_mismatch(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_root = source_ws / "output" / "runs" / finalized["manifest"]["run_id"]
+    archive_manifest = archive_root / "manifest.json"
+    (archive_root / "fact_layer" / "output" / "intermediate" / "claim_ledger.json").write_text(
+        "corrupted\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "hash does not match manifest" in str(excinfo.value)
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_existing_source_target(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    existing_source = target_ws / "input" / "sources" / "source-001.md"
+    existing_source.parent.mkdir(parents=True, exist_ok=True)
+    existing_source.write_text("user source that must not be overwritten\n", encoding="utf-8")
+    before = existing_source.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "already exist" in str(excinfo.value)
+    assert existing_source.read_bytes() == before
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_existing_intermediate_target(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    existing_ledger = _intermediate(target_ws) / "claim_ledger.json"
+    existing_ledger.write_text(_valid_claim_ledger_payload("CL-LOCAL"), encoding="utf-8")
+    before = existing_ledger.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "already exist" in str(excinfo.value)
+    assert existing_ledger.read_bytes() == before
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_uses_code_required_artifacts_not_manifest_claim(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    fact_layer = manifest["fact_layer"]
+    fact_layer["required_artifact_ids"] = [
+        item for item in fact_layer["required_artifact_ids"] if item != "claim_ledger"
+    ]
+    fact_layer["artifacts"] = [
+        item for item in fact_layer["artifacts"] if item.get("artifact_id") != "claim_ledger"
+    ]
+    archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert excinfo.value.details["missing_artifact_ids"] == ["claim_ledger"]
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_self_consistent_invalid_claim_ledger(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_root = source_ws / "output" / "runs" / finalized["manifest"]["run_id"]
+    archive_manifest = archive_root / "manifest.json"
+    bad_ledger = archive_root / "fact_layer" / "output" / "intermediate" / "claim_ledger.json"
+    bad_ledger.write_text("{not json}\n", encoding="utf-8")
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    for artifact in manifest["fact_layer"]["artifacts"]:
+        if artifact.get("artifact_id") == "claim_ledger":
+            artifact["sha256"] = runtime_state._sha256_file(bad_ledger)
+            artifact["size_bytes"] = bad_ledger.stat().st_size
+    archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "claim_ledger" in str(excinfo.value)
+    assert not (_intermediate(target_ws) / "claim_ledger.json").exists()
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_source_candidates_fact_layer_artifact(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_root = source_ws / "output" / "runs" / finalized["manifest"]["run_id"]
+    archive_manifest = archive_root / "manifest.json"
+    source_candidates = archive_root / "fact_layer" / "source_candidates.yaml"
+    source_candidates.write_text("artifact_type: source_plan_only\n", encoding="utf-8")
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    manifest["fact_layer"]["artifacts"].append({
+        "artifact_id": "source_candidates",
+        "fact_role": "fact_layer_artifact",
+        "archive_path": "fact_layer/source_candidates.yaml",
+        "original_path": "source_candidates.yaml",
+        "sha256": runtime_state._sha256_file(source_candidates),
+        "size_bytes": source_candidates.stat().st_size,
+    })
+    archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "source_candidates" in str(excinfo.value)
+    assert not (target_ws / "source_candidates.yaml").exists()
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_source_candidates_inside_source_pack(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_root = source_ws / "output" / "runs" / finalized["manifest"]["run_id"]
+    archive_manifest = archive_root / "manifest.json"
+    source_candidates = archive_root / "fact_layer" / "input" / "sources" / "source_candidates.yaml"
+    source_candidates.parent.mkdir(parents=True, exist_ok=True)
+    source_candidates.write_text("artifact_type: source_plan_only\n", encoding="utf-8")
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    for artifact in manifest["fact_layer"]["artifacts"]:
+        if artifact.get("artifact_id") == "durable_source_evidence_or_source_pack":
+            artifact["files"].append({
+                "archive_path": "fact_layer/input/sources/source_candidates.yaml",
+                "original_path": "input/sources/source_candidates.yaml",
+                "sha256": runtime_state._sha256_file(source_candidates),
+                "size_bytes": source_candidates.stat().st_size,
+            })
+            artifact["file_count"] = len(artifact["files"])
+    archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "source_candidates.yaml" in str(excinfo.value)
+    assert not (target_ws / "input" / "sources" / "source_candidates.yaml").exists()
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_duplicate_non_pack_artifact_id(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    claim_record = next(
+        item for item in manifest["fact_layer"]["artifacts"] if item.get("artifact_id") == "claim_ledger"
+    )
+    duplicate = dict(claim_record)
+    duplicate["original_path"] = "output/intermediate/claim_ledger_duplicate.json"
+    manifest["fact_layer"]["artifacts"].append(duplicate)
+    archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "duplicate non-pack artifact" in str(excinfo.value)
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_duplicate_workspace_target(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_root = source_ws / "output" / "runs" / finalized["manifest"]["run_id"]
+    archive_manifest = archive_root / "manifest.json"
+    extra_source = archive_root / "fact_layer" / "input" / "sources" / "source-duplicate.md"
+    extra_source.parent.mkdir(parents=True, exist_ok=True)
+    extra_source.write_text("# duplicate target source\n", encoding="utf-8")
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    for artifact in manifest["fact_layer"]["artifacts"]:
+        if artifact.get("artifact_id") == "durable_source_evidence_or_source_pack":
+            artifact["files"].append({
+                "archive_path": "fact_layer/input/sources/source-duplicate.md",
+                "original_path": "input/sources/source-001.md",
+                "sha256": runtime_state._sha256_file(extra_source),
+                "size_bytes": extra_source.stat().st_size,
+            })
+            artifact["file_count"] = len(artifact["files"])
+    archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "duplicate import targets" in str(excinfo.value)
+    assert excinfo.value.details["duplicate_targets"][0]["workspace_path"] == "input/sources/source-001.md"
+    assert not _state_file(target_ws, "runtime_manifest").exists()
+
+
+def test_import_fact_layer_transaction_rejects_existing_runtime_state(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    initialize_runtime_state(workspace=target_ws, repo_workdir=ROOT)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        import_fact_layer_transaction(
+            workspace=target_ws,
+            archive=archive_manifest,
+            repo_workdir=ROOT,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_FACT_LAYER_IMPORT_INVALID
+    assert "without existing runtime state" in str(excinfo.value)
+
+
+def test_state_import_fact_layer_cli_outputs_json(tmp_path, capsys):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace(source_ws)
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+
+    rc = main([
+        "state",
+        "import-fact-layer",
+        "--workspace",
+        str(target_ws),
+        "--archive",
+        str(archive_manifest),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["manifest"]["recipe"] == "fast-rerun"
+    assert payload["fact_layer_import"]["source_run_id"] == finalized["manifest"]["run_id"]
 
 
 def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
