@@ -7,7 +7,7 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Current version: **v0.7.5**
+Current version: **v0.8.1**
 
 > When someone asks where a number came from, MABW does not ask the model to improvise an explanation. It opens the ledger.
 
@@ -139,7 +139,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 
 - **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
-- **[v0.7.5 release notes](docs/releases/v0.7.5.md)**: runtime integrity, stage-scoped gates, source-discovery hardening, and deterministic repair routing.
+- **[v0.8.1 release notes](docs/releases/v0.8.1.md)**: fast-rerun fact-layer import, timing projection, and MABW-080 run registration.
 
 We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.
 

@@ -22,7 +22,7 @@ MABW 是一个面向商业、研究、市场、政策、公司跟踪和管理层
   <a href="#快速开始">🚀 快速开始</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md">🔬 公开运行摘要</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md">🧯 失败研究</a> ·
-  <a href="docs/releases/v0.7.5.md">📦 v0.7.5 Release</a>
+  <a href="docs/releases/v0.8.1.md">📦 v0.8.1 Release</a>
 </p>
 
 ## 为什么值得看 👀
@@ -66,7 +66,7 @@ MABW 的用户心智模型不是“有多少个控制面”，而是每次简报
 
 * [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)：展示 Improvement Memory materialization、门禁执行、控制面闭环。它是 integration reference，不是输出质量提升或严格因果效果证明。
 * [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。MABW 当前能追溯错误传播链，但还不能证明每个来源语义支持每个子主张。
-* [v0.7.5 release note](docs/releases/v0.7.5.md)：runtime integrity、stage-scoped gates、source-discovery hardening 和 deterministic repair routing。
+* [v0.8.1 release note](docs/releases/v0.8.1.md)：fast-rerun fact-layer import、timing projection 和 MABW-080 run registration。
 
 我们公开失败分析，因为问责也适用于这个项目自己。
 
@@ -180,7 +180,7 @@ multi-agent-brief claude install --repo-workdir .
 
 ## 产品承诺与边界 🧱
 
-当前版本：**v0.7.5**
+当前版本：**v0.8.1**
 
 MABW 现在能跑 subagent-first 工作流（Hermes / Claude Code / Codex / OpenCode）、运行时状态文件、事实账本、确定性质量门禁、反馈与修复计划、溯源投影、受众画像快照、受控的改进账本 / 改进记忆，以及 Markdown / Word 输出。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
 
@@ -346,7 +346,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [每周使用脚本](docs/weekly-use.zh-CN.md) ·
 [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
 [失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md) ·
-[v0.7.5 Release](docs/releases/v0.7.5.md) ·
+[v0.8.1 Release](docs/releases/v0.8.1.md) ·
 [发布验证清单](docs/launch-validation.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·
 [安全](docs/security.md) ·

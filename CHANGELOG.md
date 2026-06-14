@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-06-14
+
+### Added
+
+- **Control-trace timing projection**: status and run archives now expose event-log-derived timing buckets for completed, incomplete, unknown, or contaminated traces without mutating runtime state or claiming exact model runtime.
+- **Fast-rerun frozen fact-layer archive and import**: finalized run archives now include a hash-verified frozen fact layer, and `state import-fact-layer` can import a complete archived fact layer into a new workspace for same-evidence downstream reruns.
+- **Fast-rerun runtime handoff**: `run --recipe fast-rerun` now requires a valid imported fact layer, starts from Analyst, and explicitly avoids replaying source-discovery, Scout, Screener, or Claim Ledger history.
+- **Fast-rerun freshness and public fixture coverage**: imported fact layers are checked against the target workspace freshness window at delivery time, and public-safe fixtures cover clean import, no-delivery import state, and source-plan rejection.
+- **MABW-080 run registration**: `experiments 080 register-run` registers completed workspace runs into existing MABW-080 cases as `run_record.json` experiment metadata.
+
+### Changed
+
+- **Run integrity normalization is shared and fail-closed on malformed persisted state**: read surfaces may project unknown/non-reference status for invalid control state, while persisted workflow integrity remains `clean` or `contaminated`.
+- **Run archive manifests now preserve fact-layer and timing projections**: archives record source evidence packs, input classification, candidate claims, screened candidates, Claim Ledger, timing, and fast-rerun freshness projections by hash.
+- **Experiment registration verifies archive bytes**: MABW-080 registration validates archived fact-layer file hashes and source-pack hashes before comparing the archive with the case frozen fact layer.
+
+### Boundaries
+
+- v0.8.1 adds measurement infrastructure and fast-rerun control transactions. It does not score output quality, prove semantic truth, run 080 summaries, scaffold experimental conditions, or promote Codex to supported parity.
+- Fast-rerun is Experimental. It supports hash-verified same-evidence downstream rerun inspection; it is not a gate-skipping lite mode.
+- MABW-080 remains Experimental. `register-run` records run metadata only; `score-run`, `summarize`, manifestation assessment import, and condition scaffolding are not shipped in v0.8.1.
+
 ## [0.7.5] — 2026-06-13
 
 ### Added

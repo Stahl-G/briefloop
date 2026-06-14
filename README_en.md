@@ -21,7 +21,7 @@ It is built for:
   <a href="#quick-start">🚀 Quick Start</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
-  <a href="docs/releases/v0.7.5.md">📦 v0.7.5 Release</a>
+  <a href="docs/releases/v0.8.1.md">📦 v0.8.1 Release</a>
 </p>
 
 ## Why It Is Worth Looking At 👀
@@ -65,7 +65,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. MABW traced how errors propagated; it did not prove semantic correctness.
-- [v0.7.5 release note](docs/releases/v0.7.5.md): runtime integrity, stage-scoped gates, source-discovery hardening, and deterministic repair routing.
+- [v0.8.1 release note](docs/releases/v0.8.1.md): fast-rerun fact-layer import, timing projection, and MABW-080 run registration.
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -179,7 +179,7 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 ## Product Boundary 🧱
 
-Current version: **v0.7.5**
+Current version: **v0.8.1**
 
 MABW currently ships installable runtime assets for Hermes / Claude Code / OpenCode, with Codex custom-agent assets available as Experimental, plus runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
 
@@ -344,7 +344,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Improvement Ledger](docs/modules/improvement.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
-[v0.7.5 Release](docs/releases/v0.7.5.md) ·
+[v0.8.1 Release](docs/releases/v0.8.1.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·
 [Migration guide](docs/MIGRATION.md)
