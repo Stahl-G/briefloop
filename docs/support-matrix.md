@@ -167,8 +167,8 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | Named output copies | Supported |
 | PDF | Experimental |
 | Feishu delivery | Experimental |
-| Slack delivery | Interface Only |
-| Email delivery | Interface Only |
+| Slack delivery | Not shipped |
+| Email delivery | Not shipped |
 
 ## Analysis Tooling
 

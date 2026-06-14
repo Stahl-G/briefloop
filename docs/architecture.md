@@ -114,7 +114,7 @@ Both registered via `analysis_modules/registry.py`.
 | DOCX output | Supported |
 | PDF output | Experimental |
 | Feishu delivery | Experimental |
-| Slack delivery | Interface Only |
-| Email delivery | Interface Only |
+| Slack delivery | Not shipped |
+| Email delivery | Not shipped |
 | Homebrew formula | CLI-only |
 | curl installer | CLI-only |
