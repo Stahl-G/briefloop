@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
+import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
     RUNTIME_STATE_FILES,
@@ -100,14 +101,14 @@ def _event_records(ws: Path) -> list[dict]:
 
 
 def _fail_appending_event_type(monkeypatch: pytest.MonkeyPatch, event_type: str) -> None:
-    original = runtime_state._impl._append_jsonl
+    original = runtime_event_log._append_jsonl
 
     def flaky_append(path: Path, payload: dict) -> None:
         if payload.get("event_type") == event_type:
             raise RuntimeStateError("forced event append failure")
         original(path, payload)
 
-    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", flaky_append)
+    monkeypatch.setattr(runtime_event_log, "_append_jsonl", flaky_append)
 
 
 def _write_quality_gate_report(
@@ -1253,7 +1254,7 @@ def test_stage_complete_event_append_failure_is_detectable_partial_write(tmp_pat
     def fail_append(*args, **kwargs):
         raise RuntimeStateError("event append failed")
 
-    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", fail_append)
+    monkeypatch.setattr(runtime_event_log, "_append_jsonl", fail_append)
 
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_stage_transaction(
@@ -3436,7 +3437,7 @@ def test_state_decide_event_failure_leaves_workflow_unchanged(tmp_path, monkeypa
     def fail_append(*args, **kwargs):
         raise RuntimeStateError("event append failed")
 
-    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", fail_append)
+    monkeypatch.setattr(runtime_event_log, "_append_jsonl", fail_append)
 
     with pytest.raises(RuntimeStateError):
         record_decision(
@@ -3480,7 +3481,7 @@ def test_state_check_event_failure_leaves_state_unchanged(tmp_path, monkeypatch)
     def fail_append(*args, **kwargs):
         raise RuntimeStateError("event append failed")
 
-    monkeypatch.setattr(runtime_state._impl, "_append_jsonl", fail_append)
+    monkeypatch.setattr(runtime_event_log, "_append_jsonl", fail_append)
 
     with pytest.raises(RuntimeStateError):
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
