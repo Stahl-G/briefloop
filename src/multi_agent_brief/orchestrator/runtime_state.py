@@ -492,6 +492,12 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def read_event_log_records_strict(path: str | Path) -> list[dict[str, Any]]:
+    """Read event log records with the runtime transaction-integrity checks."""
+
+    return _read_event_log_records(Path(path))
+
+
 def _preflight_transaction_files(paths: dict[str, Path]) -> list[dict[str, Any]]:
     paths["runtime_manifest"].parent.mkdir(parents=True, exist_ok=True)
     for key in ("runtime_manifest", "workflow_state"):

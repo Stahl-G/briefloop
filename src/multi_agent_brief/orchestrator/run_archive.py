@@ -408,6 +408,7 @@ def _timing_for_manifest(workspace: Path, workflow: dict[str, Any]) -> dict[str,
     timing = derive_control_timing_from_path(
         workspace / "output" / "intermediate" / "event_log.jsonl",
         workflow_state=workflow,
+        expected_run_id=workflow.get("run_id") if isinstance(workflow.get("run_id"), str) else None,
     )
     return {
         "schema_version": timing.get("schema_version"),

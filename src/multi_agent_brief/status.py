@@ -69,9 +69,11 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["improvement"] = _improvement_summary(ws, manifest)
     payload["feedback"] = _feedback_summary(feedback_issues, repair_plan)
     workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
+    manifest_payload = manifest.get("payload") if manifest.get("status") == "present" else None
     payload["timing"] = derive_control_timing_from_path(
         ws / INTERMEDIATE_DIR / "event_log.jsonl",
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
+        expected_run_id=(manifest_payload or {}).get("run_id") if isinstance(manifest_payload, dict) else None,
     )
 
     stale = payload["stale_or_unknown"]

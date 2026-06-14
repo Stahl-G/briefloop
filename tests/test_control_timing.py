@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from multi_agent_brief.orchestrator.timing import derive_control_timing, derive_control_timing_from_path
 
 
@@ -109,7 +111,36 @@ def test_control_timing_marks_non_object_event_log_line_invalid(tmp_path):
     timing = derive_control_timing_from_path(event_log)
 
     assert timing["status"] == "invalid_event_log"
-    assert any("must be a JSON object" in warning for warning in timing["warnings"])
+    assert any("must contain an object" in warning for warning in timing["warnings"])
+
+
+def test_control_timing_marks_invalid_schema_event_log_line_invalid(tmp_path):
+    event_log = tmp_path / "event_log.jsonl"
+    event_log.write_text(
+        '{"schema_version":"bad","event_id":"e0","run_id":"run-test","event_type":"run_initialized","actor":"cli"}\n',
+        encoding="utf-8",
+    )
+
+    timing = derive_control_timing_from_path(event_log)
+
+    assert timing["status"] == "invalid_event_log"
+    assert any("Unsupported event log schema" in warning for warning in timing["warnings"])
+
+
+def test_control_timing_rejects_cross_run_event_records(tmp_path):
+    event_log = tmp_path / "event_log.jsonl"
+    records = [
+        _event("e0", "run_initialized", "2026-06-14T00:00:00Z", run_id="other-run"),
+        _completion("e1", "2026-06-14T00:01:00Z", "doctor"),
+    ]
+    event_log.write_text("".join(json.dumps(record, sort_keys=True) + "\n" for record in records), encoding="utf-8")
+    workflow = _workflow(finalized=False)
+    workflow["run_id"] = "run-test"
+
+    timing = derive_control_timing_from_path(event_log, workflow_state=workflow, expected_run_id="run-test")
+
+    assert timing["status"] == "invalid_event_log"
+    assert any("run_id mismatch" in warning for warning in timing["warnings"])
 
 
 def test_control_timing_missing_completion_for_completed_stage_is_incomplete():

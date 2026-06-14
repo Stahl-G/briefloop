@@ -6,7 +6,6 @@ runtime control events; it does not infer exact LLM or subagent wall-clock time.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,23 +27,40 @@ def derive_control_timing(
     workflow_state: dict[str, Any] | None = None,
     run_integrity: dict[str, Any] | None = None,
     stage_order: list[str] | None = None,
+    expected_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Return a deterministic timing projection from control events."""
 
-    workflow = workflow_state if isinstance(workflow_state, dict) else {}
+    workflow_supplied = isinstance(workflow_state, dict)
+    workflow = workflow_state if workflow_supplied else {}
     if isinstance(run_integrity, dict):
         integrity = classify_run_integrity(run_integrity)
-    else:
+    elif workflow_supplied:
         integrity = classify_run_integrity(
             workflow.get("run_integrity"),
             missing="run_integrity" not in workflow,
         )
+    else:
+        integrity = classify_run_integrity(None)
+    expected = expected_run_id if isinstance(expected_run_id, str) and expected_run_id.strip() else workflow.get("run_id")
+    warnings: list[str] = []
+    if expected:
+        mismatch = _event_run_id_mismatch(event_records, str(expected))
+        if mismatch:
+            warnings.append(mismatch)
+            return _timing_payload(
+                status="invalid_event_log",
+                stages=[],
+                finalize=None,
+                warnings=warnings,
+                run_integrity=integrity,
+                total_elapsed_seconds=None,
+            )
     stages = [
         stage_id
         for stage_id in (stage_order or _stage_order_from_workflow(workflow) or _stage_order_from_events(event_records))
         if stage_id != "finalize"
     ]
-    warnings: list[str] = []
     if not event_records:
         warnings.append("event_log_missing_or_empty")
         return _timing_payload(
@@ -167,13 +183,14 @@ def derive_control_timing_from_path(
     workflow_state: dict[str, Any] | None = None,
     run_integrity: dict[str, Any] | None = None,
     stage_order: list[str] | None = None,
+    expected_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Read an event log path and return a timing projection without writing."""
 
     path = Path(event_log_path)
     try:
         records = _read_event_records(path)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+    except Exception as exc:
         if isinstance(run_integrity, dict):
             integrity = classify_run_integrity(run_integrity)
         elif isinstance(workflow_state, dict):
@@ -196,6 +213,7 @@ def derive_control_timing_from_path(
         workflow_state=workflow_state,
         run_integrity=run_integrity,
         stage_order=stage_order,
+        expected_run_id=expected_run_id,
     )
 
 
@@ -226,17 +244,17 @@ def _timing_payload(
 
 
 def _read_event_records(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    records: list[dict[str, Any]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        if not isinstance(payload, dict):
-            raise ValueError(f"event_log line {line_number} must be a JSON object")
-        records.append(payload)
-    return records
+    from multi_agent_brief.orchestrator.runtime_state import read_event_log_records_strict
+
+    return read_event_log_records_strict(path)
+
+
+def _event_run_id_mismatch(event_records: list[dict[str, Any]], expected_run_id: str) -> str:
+    for idx, event in enumerate(event_records, start=1):
+        run_id = event.get("run_id")
+        if run_id != expected_run_id:
+            return f"event_log line {idx} run_id mismatch: expected {expected_run_id}, got {run_id}"
+    return ""
 
 
 def _stage_order_from_workflow(workflow: dict[str, Any]) -> list[str]:

@@ -136,6 +136,62 @@ def test_status_command_does_not_initialize_missing_runtime_state(tmp_path, caps
         assert not path.exists()
 
 
+def test_status_timing_is_unknown_when_workflow_state_missing_even_with_event_log(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    paths = runtime_state_paths(ws)
+    paths["event_log"].parent.mkdir(parents=True, exist_ok=True)
+    paths["event_log"].write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "schema_version": "multi-agent-brief-event-log/v1",
+                        "event_id": "e0",
+                        "run_id": "run-test",
+                        "created_at": "2026-06-14T00:00:00Z",
+                        "event_type": "run_initialized",
+                        "actor": "cli",
+                        "stage_id": None,
+                        "artifact_id": None,
+                        "decision": None,
+                        "reason": "",
+                        "metadata": {},
+                    },
+                    sort_keys=True,
+                ),
+                json.dumps(
+                    {
+                        "schema_version": "multi-agent-brief-event-log/v1",
+                        "event_id": "e1",
+                        "run_id": "run-test",
+                        "created_at": "2026-06-14T00:01:00Z",
+                        "event_type": "decision_recorded",
+                        "actor": "cli",
+                        "stage_id": "doctor",
+                        "artifact_id": None,
+                        "decision": "continue",
+                        "reason": "complete",
+                        "metadata": {"transaction_id": "tx-e1"},
+                    },
+                    sort_keys=True,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["workflow"]["present"] is False
+    assert payload["timing"]["status"] == "unknown"
+    assert payload["timing"]["run_integrity"]["status"] == "unknown"
+    assert payload["timing"]["run_integrity"]["reference_eligible"] is False
+    assert "run_integrity_unknown" in payload["timing"]["warnings"]
+
+
 def test_status_command_reports_corrupt_event_log_without_writing(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     event_log = ws / "output" / "intermediate" / "event_log.jsonl"
