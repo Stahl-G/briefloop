@@ -176,6 +176,26 @@ def test_experiment_080_unknown_condition_rejects():
     assert "unknown_condition" in _codes(diagnostics)
 
 
+def test_experiment_080_guidance_manifested_claim_does_not_require_prompt_only():
+    manifest = _valid_case_manifest()
+    manifest["conditions"] = ["baseline", "memory"]
+    manifest["allowed_claims"] = {"guidance_manifested": True}
+
+    diagnostics = validate_case_manifest(manifest)
+
+    assert "mechanism_claim_requires_prompt_only" not in _codes(diagnostics)
+
+
+def test_experiment_080_mechanism_claim_requires_prompt_only_condition():
+    manifest = _valid_case_manifest()
+    manifest["conditions"] = ["baseline", "memory"]
+    manifest["allowed_claims"] = {"memory_mechanism_adds_over_prompt": True}
+
+    diagnostics = validate_case_manifest(manifest)
+
+    assert "mechanism_claim_requires_prompt_only" in _codes(diagnostics)
+
+
 def test_experiment_080_requires_baseline_and_memory_conditions():
     manifest = _valid_case_manifest()
     manifest["conditions"] = ["baseline"]
@@ -239,10 +259,110 @@ def test_experiment_080_scorecard_manifestation_score_four_rejects():
     assert "invalid_manifestation_score" in _codes(diagnostics)
 
 
+def test_experiment_080_accepts_invalid_incomplete_and_fact_layer_mismatch():
+    for validity_class in ("invalid_incomplete", "invalid_fact_layer_mismatch"):
+        scorecard = _valid_scorecard()
+        scorecard["validity_class"] = validity_class
+        scorecard["control_integrity"]["terminal_workflow"] = False
+        scorecard["frozen_fact_layer"]["matches_case"] = False
+
+        diagnostics = validate_scorecard(scorecard)
+
+        assert "invalid_validity_class" not in _codes(diagnostics)
+        assert "a_controlled_requirements_not_met" not in _codes(diagnostics)
+
+
+def test_experiment_080_rejects_old_agent_assisted_method():
+    scorecard = _valid_scorecard()
+    scorecard["guidance_scores"][0]["assessment_method"] = "agent_assisted"
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "invalid_assessment_method" in _codes(diagnostics)
+
+
+def test_experiment_080_a_controlled_rejects_llm_only_guidance_score():
+    scorecard = _valid_scorecard()
+    scorecard["guidance_scores"][0]["assessment_method"] = "llm_only"
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "a_controlled_requires_human_assessment" in _codes(diagnostics)
+
+
+def test_experiment_080_a_controlled_rejects_string_false_requirement_values():
+    scorecard = _valid_scorecard()
+    scorecard["control_integrity"] = {
+        "terminal_workflow": "false",
+        "run_integrity_clean": "false",
+        "artifact_registry_valid": "false",
+        "quality_gates_passed": "false",
+        "archive_present": "false",
+    }
+    scorecard["frozen_fact_layer"]["matches_case"] = "false"
+    scorecard["reader_clean"]["pass"] = "false"
+
+    diagnostics = validate_scorecard(scorecard)
+
+    codes = _codes(diagnostics)
+    assert "invalid_a_controlled_requirement_type" in codes
+    assert "a_controlled_requirements_not_met" in codes
+
+
+def test_experiment_080_scorecard_requires_non_empty_guidance_scores():
+    scorecard = _valid_scorecard()
+    scorecard["guidance_scores"] = []
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "empty_guidance_scores" in _codes(diagnostics)
+
+
+def test_experiment_080_scorecard_rejects_duplicate_guidance_score_entry_ids():
+    scorecard = _valid_scorecard()
+    scorecard["guidance_scores"].append(dict(scorecard["guidance_scores"][0]))
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "duplicate_guidance_score_entry_id" in _codes(diagnostics)
+
+
+def test_experiment_080_score_three_requires_overapplication_true():
+    scorecard = _valid_scorecard()
+    scorecard["guidance_scores"][0]["manifestation_score"] = 3
+    scorecard["guidance_scores"][0]["overapplication"] = False
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "overapplication_score_mismatch" in _codes(diagnostics)
+
+
+def test_experiment_080_overapplication_true_requires_score_three():
+    scorecard = _valid_scorecard()
+    scorecard["guidance_scores"][0]["manifestation_score"] = 2
+    scorecard["guidance_scores"][0]["overapplication"] = True
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "overapplication_score_mismatch" in _codes(diagnostics)
+
+
 def test_experiment_080_valid_run_record_passes():
     diagnostics = validate_run_record(_valid_run_record())
 
     assert diagnostics == []
+
+
+def test_experiment_080_contaminated_run_record_cannot_be_reference_eligible():
+    run_record = _valid_run_record()
+    run_record["run_integrity"] = {
+        "status": "contaminated",
+        "reference_eligible": True,
+    }
+
+    diagnostics = validate_run_record(run_record)
+
+    assert "contaminated_run_reference_eligible" in _codes(diagnostics)
 
 
 def test_experiment_080_a_controlled_requires_matching_fact_layer():

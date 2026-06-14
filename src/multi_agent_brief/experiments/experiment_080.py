@@ -24,10 +24,17 @@ SCORECARD_SCHEMA = "mabw.experiment_080.scorecard.v1"
 CASE_VALIDATION_SCHEMA = "mabw.experiment_080.case_validation.v1"
 
 ALLOWED_CONDITIONS = {"baseline", "memory", "prompt_only"}
-ALLOWED_VALIDITY_CLASSES = {"A_controlled", "B_integration", "invalid_contaminated"}
+ALLOWED_VALIDITY_CLASSES = {
+    "A_controlled",
+    "B_integration",
+    "invalid_contaminated",
+    "invalid_incomplete",
+    "invalid_fact_layer_mismatch",
+}
 ALLOWED_RUN_INTEGRITY_STATUSES = {"clean", "contaminated"}
 ALLOWED_GUIDANCE_SOURCES = {"improvement_ledger", "manual", "prompt_only"}
-ALLOWED_ASSESSMENT_METHODS = {"human", "agent_assisted", "not_assessed"}
+ALLOWED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review", "llm_only"}
+A_CONTROLLED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review"}
 
 REQUIRED_FACT_ARTIFACT_IDS = {
     "durable_source_evidence_or_source_pack",
@@ -171,6 +178,15 @@ def validate_case_manifest(payload: dict[str, Any]) -> list[Experiment080Diagnos
             "invalid_allowed_claims",
             "case_manifest.allowed_claims must be an object when present.",
         ))
+        allowed_claims = {}
+    if isinstance(allowed_claims, dict) and allowed_claims.get("memory_mechanism_adds_over_prompt") is True:
+        missing_prompt_conditions = {"baseline", "memory", "prompt_only"} - seen_conditions
+        if missing_prompt_conditions:
+            diagnostics.append(_diag(
+                "mechanism_claim_requires_prompt_only",
+                "memory_mechanism_adds_over_prompt requires baseline, memory, and prompt_only conditions.",
+                path="case_manifest.allowed_claims.memory_mechanism_adds_over_prompt",
+            ))
     return diagnostics
 
 
@@ -424,17 +440,34 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             path="scorecard.guidance_scores",
         ))
         guidance_scores = []
+    elif not guidance_scores:
+        diagnostics.append(_diag(
+            "empty_guidance_scores",
+            "scorecard.guidance_scores must contain at least one guidance score.",
+            path="scorecard.guidance_scores",
+        ))
+    seen_guidance_score_ids: set[str] = set()
     for idx, score in enumerate(guidance_scores):
         path = f"scorecard.guidance_scores[{idx}]"
         if not isinstance(score, dict):
             diagnostics.append(_diag("invalid_guidance_score", f"{path} must be an object.", path=path))
             continue
+        entry_id = score.get("entry_id")
+        if isinstance(entry_id, str):
+            if entry_id in seen_guidance_score_ids:
+                diagnostics.append(_diag(
+                    "duplicate_guidance_score_entry_id",
+                    f"{path}.entry_id is duplicated: {entry_id}.",
+                    path=f"{path}.entry_id",
+                ))
+            seen_guidance_score_ids.add(entry_id)
         _validate_guidance_score(score, diagnostics, path=path)
 
     if validity == "A_controlled":
         _validate_a_controlled_scorecard(
             control=control,
             fact_layer=fact_layer,
+            guidance_scores=guidance_scores,
             reader_clean=reader_clean,
             diagnostics=diagnostics,
         )
@@ -495,24 +528,48 @@ def _validate_a_controlled_scorecard(
     *,
     control: dict[str, Any],
     fact_layer: dict[str, Any],
+    guidance_scores: list[Any],
     reader_clean: dict[str, Any],
     diagnostics: list[Experiment080Diagnostic],
 ) -> None:
-    required_true = {
-        "control_integrity.terminal_workflow": bool(control.get("terminal_workflow")),
-        "control_integrity.run_integrity_clean": bool(control.get("run_integrity_clean")),
-        "control_integrity.artifact_registry_valid": bool(control.get("artifact_registry_valid")),
-        "control_integrity.quality_gates_passed": bool(control.get("quality_gates_passed")),
-        "control_integrity.archive_present": bool(control.get("archive_present")),
-        "frozen_fact_layer.matches_case": bool(fact_layer.get("matches_case")),
-        "reader_clean.pass": bool(reader_clean.get("pass")),
+    required_values = {
+        "control_integrity.terminal_workflow": control.get("terminal_workflow"),
+        "control_integrity.run_integrity_clean": control.get("run_integrity_clean"),
+        "control_integrity.artifact_registry_valid": control.get("artifact_registry_valid"),
+        "control_integrity.quality_gates_passed": control.get("quality_gates_passed"),
+        "control_integrity.archive_present": control.get("archive_present"),
+        "frozen_fact_layer.matches_case": fact_layer.get("matches_case"),
+        "reader_clean.pass": reader_clean.get("pass"),
     }
+    invalid_types = [field for field, value in required_values.items() if not isinstance(value, bool)]
+    if invalid_types:
+        diagnostics.append(_diag(
+            "invalid_a_controlled_requirement_type",
+            f"A_controlled requirement fields must be booleans: {invalid_types}.",
+            path="scorecard.validity_class",
+        ))
+    required_true = {field: value is True for field, value in required_values.items()}
     failed = [field for field, ok in required_true.items() if not ok]
     if failed:
         diagnostics.append(_diag(
             "a_controlled_requirements_not_met",
             f"A_controlled scorecards require these fields to be true: {failed}.",
             path="scorecard.validity_class",
+        ))
+    invalid_methods: list[str] = []
+    for idx, score in enumerate(guidance_scores):
+        if not isinstance(score, dict):
+            continue
+        if score.get("relevant") is not True:
+            continue
+        method = score.get("assessment_method")
+        if method not in A_CONTROLLED_ASSESSMENT_METHODS:
+            invalid_methods.append(f"guidance_scores[{idx}].assessment_method={method!r}")
+    if invalid_methods:
+        diagnostics.append(_diag(
+            "a_controlled_requires_human_assessment",
+            "A_controlled scorecards require relevant guidance scores to use human or llm_assisted_human_review assessment.",
+            path="scorecard.guidance_scores",
         ))
 
 
@@ -548,6 +605,20 @@ def _validate_guidance_score(
             f"{path}.overapplication must be a boolean.",
             path=f"{path}.overapplication",
         ))
+    elif isinstance(manifestation, int) and manifestation in {0, 1, 2, 3}:
+        overapplication = bool(score.get("overapplication"))
+        if manifestation == 3 and not overapplication:
+            diagnostics.append(_diag(
+                "overapplication_score_mismatch",
+                f"{path}.overapplication must be true when manifestation_score is 3.",
+                path=f"{path}.overapplication",
+            ))
+        if overapplication and manifestation != 3:
+            diagnostics.append(_diag(
+                "overapplication_score_mismatch",
+                f"{path}.manifestation_score must be 3 when overapplication is true.",
+                path=f"{path}.manifestation_score",
+            ))
     method = score.get("assessment_method")
     if method not in ALLOWED_ASSESSMENT_METHODS:
         diagnostics.append(_diag(
@@ -577,6 +648,12 @@ def _validate_run_integrity(
         diagnostics.append(_diag(
             "invalid_reference_eligible",
             f"{path}.reference_eligible must be a boolean when present.",
+            path=f"{path}.reference_eligible",
+        ))
+    if status == "contaminated" and value.get("reference_eligible") is True:
+        diagnostics.append(_diag(
+            "contaminated_run_reference_eligible",
+            f"{path}.reference_eligible must be false or omitted when status is contaminated.",
             path=f"{path}.reference_eligible",
         ))
 
