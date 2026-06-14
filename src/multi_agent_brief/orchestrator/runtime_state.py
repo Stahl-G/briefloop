@@ -13,7 +13,7 @@ import os
 import re
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -343,6 +343,7 @@ def _archive_finalized_state_if_needed(
     workflow: dict[str, Any],
     artifact_registry: dict[str, Any],
     finalize_report: dict[str, Any],
+    fast_rerun_freshness_at_finalize: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     run_id = _validate_runtime_run_id(manifest.get("run_id") or "")
     try:
@@ -353,6 +354,7 @@ def _archive_finalized_state_if_needed(
             workflow=workflow,
             artifact_registry=artifact_registry,
             finalize_report=finalize_report,
+            fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
         )
     except RunArchiveError as exc:
         raise _wrap_archive_error(exc) from exc
@@ -864,6 +866,173 @@ def _imported_required_artifact_reasons(registry: dict[str, Any]) -> list[str]:
     return reasons
 
 
+def _parse_control_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt, width in (("%Y-%m-%d", 10), ("%Y%m%d", 8)):
+        try:
+            return datetime.strptime(text[:width], fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _fast_rerun_report_freshness_settings(workspace: Path) -> dict[str, Any]:
+    config = _load_workspace_yaml(workspace / "config.yaml")
+    report = config.get("report") if isinstance(config.get("report"), dict) else {}
+    report_date = str(report.get("date") or "")
+    max_age_raw = report.get("max_source_age_days")
+    max_source_age_days: int | None = None
+    if max_age_raw is not None:
+        try:
+            max_source_age_days = int(max_age_raw)
+        except (TypeError, ValueError):
+            max_source_age_days = None
+    return {
+        "report_date": report_date,
+        "max_source_age_days": max_source_age_days,
+        "fail_on_stale_source": report.get("fail_on_stale_source"),
+    }
+
+
+def _fast_rerun_import_freshness_snapshot(workspace: Path, *, checked_at: str) -> dict[str, Any]:
+    settings = _fast_rerun_report_freshness_settings(workspace)
+    ledger_path = workspace / "output" / "intermediate" / "claim_ledger.json"
+    report_day = _parse_control_date(settings["report_date"])
+    max_age = settings["max_source_age_days"]
+    dates: list[dict[str, Any]] = []
+    missing_date_claim_ids: list[str] = []
+    stale_claims: list[dict[str, Any]] = []
+    try:
+        ledger = ClaimLedger.import_json(ledger_path)
+    except Exception as exc:
+        return {
+            "schema_version": "mabw.fact_layer_import.freshness.v1",
+            "checked_at": checked_at,
+            "status": "unknown",
+            "reason": "claim_ledger_unreadable",
+            "error": str(exc),
+            **settings,
+        }
+
+    for claim in ledger:
+        date_text = str(
+            claim.metadata.get("published_at")
+            or claim.metadata.get("publication_date")
+            or ""
+        )
+        source_day = _parse_control_date(date_text)
+        if source_day is None:
+            missing_date_claim_ids.append(claim.claim_id)
+            continue
+        dates.append({
+            "claim_id": claim.claim_id,
+            "source_date": source_day.isoformat(),
+            "source_date_text": date_text,
+        })
+        if report_day is not None and max_age is not None:
+            age_days = (report_day - source_day).days
+            if age_days > max_age:
+                stale_claims.append({
+                    "claim_id": claim.claim_id,
+                    "source_date": source_day.isoformat(),
+                    "age_days": age_days,
+                })
+
+    if report_day is None or max_age is None:
+        status = "unknown"
+        reason = "report_date_or_max_source_age_missing"
+    elif missing_date_claim_ids:
+        status = "unknown"
+        reason = "claim_publication_dates_missing"
+    elif stale_claims:
+        status = "stale"
+        reason = "source_age_exceeds_target_window"
+    else:
+        status = "within_window"
+        reason = ""
+
+    sorted_dates = sorted(item["source_date"] for item in dates)
+    return {
+        "schema_version": "mabw.fact_layer_import.freshness.v1",
+        "checked_at": checked_at,
+        "status": status,
+        "reason": reason,
+        "report_date": settings["report_date"],
+        "max_source_age_days": max_age,
+        "fail_on_stale_source": settings["fail_on_stale_source"],
+        "claim_count": len(ledger),
+        "dated_claim_count": len(dates),
+        "missing_date_claim_count": len(missing_date_claim_ids),
+        "missing_date_claim_ids": missing_date_claim_ids[:10],
+        "oldest_source_date": sorted_dates[0] if sorted_dates else "",
+        "newest_source_date": sorted_dates[-1] if sorted_dates else "",
+        "stale_claim_count": len(stale_claims),
+        "stale_claims": stale_claims[:10],
+    }
+
+
+def _fast_rerun_finalize_freshness_snapshot(
+    workspace: Path,
+    manifest: dict[str, Any],
+    *,
+    checked_at: str,
+) -> dict[str, Any]:
+    record = manifest.get("fact_layer_import") if isinstance(manifest.get("fact_layer_import"), dict) else None
+    if not record:
+        return {}
+    return _fast_rerun_import_freshness_snapshot(workspace, checked_at=checked_at)
+
+
+def _manifest_with_fast_rerun_freshness_at_finalize(
+    manifest: dict[str, Any],
+    freshness_at_finalize: dict[str, Any] | None,
+) -> dict[str, Any]:
+    record = manifest.get("fact_layer_import") if isinstance(manifest.get("fact_layer_import"), dict) else None
+    if not record or not freshness_at_finalize:
+        return manifest
+    next_manifest = dict(manifest)
+    next_record = dict(record)
+    next_record["freshness_at_finalize"] = freshness_at_finalize
+    next_manifest["fact_layer_import"] = next_record
+    return next_manifest
+
+
+def _fast_rerun_import_freshness_reasons(snapshot: dict[str, Any]) -> list[str]:
+    if not snapshot:
+        return []
+    status = snapshot.get("status")
+    if status == "within_window":
+        return []
+    stale_claims = snapshot.get("stale_claims") if isinstance(snapshot.get("stale_claims"), list) else []
+    sample = ", ".join(
+        f"{item.get('claim_id')} ({item.get('age_days')}d)"
+        for item in stale_claims[:5]
+        if isinstance(item, dict)
+    )
+    if status == "stale":
+        return [
+            "Fast-rerun imported fact layer is stale at target delivery time "
+            f"(report_date={snapshot.get('report_date')}, "
+            f"max_source_age_days={snapshot.get('max_source_age_days')}, "
+            f"stale_claim_count={snapshot.get('stale_claim_count')}"
+            + (f", sample={sample}" if sample else "")
+            + ")."
+        ]
+    return [
+        "Fast-rerun imported fact layer freshness cannot be verified at target delivery time "
+        f"(status={status or 'unknown'}, reason={snapshot.get('reason') or 'unknown'}, "
+        f"report_date={snapshot.get('report_date')}, max_source_age_days={snapshot.get('max_source_age_days')}"
+        + ")."
+    ]
+
+
 def import_fact_layer_transaction(
     *,
     workspace: str | Path,
@@ -932,6 +1101,8 @@ def import_fact_layer_transaction(
             "required_artifact_ids": import_plan["required_artifact_ids"],
             "imported_file_count": len(imported_file_records),
             "imported_files": imported_file_records,
+            "freshness_at_import": _fast_rerun_import_freshness_snapshot(ws, checked_at=now),
+            "timing_comparability": "downstream_only",
         }
 
         manifest = dict(manifest)
@@ -2631,6 +2802,8 @@ def _finalize_completion_reasons(
     *,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
+    runtime_manifest: dict[str, Any] | None = None,
+    fast_rerun_freshness_at_finalize: dict[str, Any] | None = None,
 ) -> list[str]:
     reasons: list[str] = []
     reasons.extend(
@@ -2686,6 +2859,21 @@ def _finalize_completion_reasons(
                     f"finalize_report.json audit_binding.{field} does not match current artifact bytes."
                 )
     reasons.extend(_finalize_report_delivery_artifact_reasons(workspace, report))
+    if runtime_manifest is None:
+        manifest_path = workspace / "output" / "intermediate" / "runtime_manifest.json"
+        try:
+            runtime_manifest = _read_json(manifest_path)
+        except RuntimeStateError as exc:
+            reasons.append(f"runtime_manifest.json could not be read for fast-rerun freshness check: {exc}")
+            runtime_manifest = None
+    if runtime_manifest is not None:
+        if fast_rerun_freshness_at_finalize is None:
+            fast_rerun_freshness_at_finalize = _fast_rerun_finalize_freshness_snapshot(
+                workspace,
+                runtime_manifest,
+                checked_at=utc_now(),
+            )
+        reasons.extend(_fast_rerun_import_freshness_reasons(fast_rerun_freshness_at_finalize))
 
     artifact_paths = _finalize_report_reader_artifact_paths(workspace, report)
     missing = [path for path in artifact_paths if not path.exists()]
@@ -3322,8 +3510,25 @@ def _complete_stage_transaction(
             details={"stage_id": stage_id},
         )
 
+    fast_rerun_freshness_at_finalize: dict[str, Any] | None = None
+    manifest_for_completion = manifest
     if finalize:
-        finalize_reasons = _finalize_completion_reasons(ws, stages=stages, artifacts=artifacts)
+        fast_rerun_freshness_at_finalize = _fast_rerun_finalize_freshness_snapshot(
+            ws,
+            manifest,
+            checked_at=utc_now(),
+        )
+        manifest_for_completion = _manifest_with_fast_rerun_freshness_at_finalize(
+            manifest,
+            fast_rerun_freshness_at_finalize,
+        )
+        finalize_reasons = _finalize_completion_reasons(
+            ws,
+            stages=stages,
+            artifacts=artifacts,
+            runtime_manifest=manifest_for_completion,
+            fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
+        )
         if finalize_reasons:
             _raise_completion_reasons(
                 message="Cannot complete finalize stage",
@@ -3335,7 +3540,7 @@ def _complete_stage_transaction(
     transaction_id = uuid.uuid4().hex
     now = utc_now()
     run_id = str(manifest["run_id"])
-    preserved_extensions = _preserved_manifest_extensions(manifest)
+    preserved_extensions = _preserved_manifest_extensions(manifest_for_completion)
     next_workflow = _workflow_after_completion(
         workflow=workflow,
         stages=stages,
@@ -3395,10 +3600,11 @@ def _complete_stage_transaction(
             preflight_finalized_run_archive(
                 workspace=ws,
                 run_id=run_id,
-                manifest=manifest,
+                manifest=manifest_for_completion,
                 workflow=next_workflow,
                 artifact_registry=registry,
                 finalize_report=finalize_report,
+                fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
             )
         except RunArchiveError as exc:
             raise _wrap_archive_error(exc) from exc
@@ -3406,6 +3612,9 @@ def _complete_stage_transaction(
 
     state_written = False
     try:
+        if manifest_for_completion != manifest:
+            _write_json_atomic(paths["runtime_manifest"], manifest_for_completion)
+            state_written = True
         _write_json_atomic(paths["artifact_registry"], registry)
         state_written = True
         _write_json_atomic(paths["workflow_state"], next_workflow)
@@ -3444,6 +3653,7 @@ def _complete_stage_transaction(
             workflow=next_workflow,
             artifact_registry=registry,
             finalize_report=finalize_report or _read_json(paths["runtime_manifest"].parent / "finalize_report.json"),
+            fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
         )
         try:
             append_event(

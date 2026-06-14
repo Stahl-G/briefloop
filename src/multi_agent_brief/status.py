@@ -191,10 +191,13 @@ def _format_timing_line(timing: dict[str, Any]) -> str:
 
 def _format_fact_layer_import_line(summary: dict[str, Any]) -> str:
     if summary.get("status") == "valid":
+        freshness = summary.get("freshness_at_import") if isinstance(summary.get("freshness_at_import"), dict) else {}
+        freshness_status = freshness.get("status") or "unknown"
         return (
             "[status] fact_layer_import: valid "
             f"source_run={summary.get('source_run_id') or 'unknown'} "
             f"fact_layer_sha256={(summary.get('fact_layer_sha256') or '')[:12]} "
+            f"freshness_at_import={freshness_status} "
             f"next={summary.get('next_stage') or 'analyst'} "
             "satisfied=complete via import"
         )

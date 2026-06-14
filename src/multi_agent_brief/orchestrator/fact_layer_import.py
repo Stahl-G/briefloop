@@ -65,6 +65,7 @@ def summarize_fact_layer_import(
     source_archive_manifest_sha256 = str(record.get("source_archive_manifest_sha256") or "")
     imported_file_count = record.get("imported_file_count")
     satisfied_stage_ids = [str(item) for item in (record.get("satisfied_stage_ids") or [])]
+    freshness_at_import = record.get("freshness_at_import") if isinstance(record.get("freshness_at_import"), dict) else {}
 
     if not source_run_id:
         errors.append("runtime_manifest.fact_layer_import.source_run_id is required.")
@@ -103,6 +104,7 @@ def summarize_fact_layer_import(
         "source_archive_manifest_sha256": source_archive_manifest_sha256,
         "fact_layer_sha256": fact_layer_sha256,
         "imported_file_count": imported_file_count,
+        "freshness_at_import": freshness_at_import,
         "satisfied_stage_ids": satisfied_stage_ids,
         "required_satisfied_stage_ids": list(IMPORT_SATISFIED_STAGE_IDS),
         "imported_stages": imported_stages,

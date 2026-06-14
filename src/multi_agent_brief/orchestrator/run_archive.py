@@ -64,6 +64,7 @@ def archive_finalized_run(
     workflow: dict[str, Any],
     artifact_registry: dict[str, Any],
     finalize_report: dict[str, Any],
+    fast_rerun_freshness_at_finalize: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create or verify the immutable archive for a finalized run."""
     ws = workspace.expanduser().resolve()
@@ -74,6 +75,10 @@ def archive_finalized_run(
         artifact_registry=artifact_registry,
     )
     files = archive_plan["files"]
+    fast_rerun = _fast_rerun_for_manifest(
+        manifest,
+        freshness_at_finalize=fast_rerun_freshness_at_finalize,
+    )
     archive_manifest = {
         "schema_version": RUN_ARCHIVE_SCHEMA,
         "run_id": run_id,
@@ -83,6 +88,7 @@ def archive_finalized_run(
         "workflow_current_stage": workflow.get("current_stage"),
         "run_integrity": _run_integrity_for_manifest(workflow),
         "timing": _timing_for_manifest(ws, workflow),
+        "fast_rerun": fast_rerun,
         "fact_layer": archive_plan["fact_layer"],
         "event_log_semantics": "copied_before_current_archive_event",
         "files": files,
@@ -92,6 +98,7 @@ def archive_finalized_run(
             archive_root=archive_root,
             planned_files=files,
             planned_fact_layer=archive_plan["fact_layer"],
+            planned_fast_rerun=fast_rerun,
         )
         return _archive_result(archive_root)
 
@@ -130,6 +137,7 @@ def preflight_finalized_run_archive(
     workflow: dict[str, Any],
     artifact_registry: dict[str, Any],
     finalize_report: dict[str, Any],
+    fast_rerun_freshness_at_finalize: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate whether the finalized run archive can be created without mutating state."""
     ws = workspace.expanduser().resolve()
@@ -140,11 +148,16 @@ def preflight_finalized_run_archive(
         artifact_registry=artifact_registry,
     )
     files = archive_plan["files"]
+    fast_rerun = _fast_rerun_for_manifest(
+        manifest,
+        freshness_at_finalize=fast_rerun_freshness_at_finalize,
+    )
     if archive_root.exists():
         return _verify_existing_archive_matches_plan(
             archive_root=archive_root,
             planned_files=files,
             planned_fact_layer=archive_plan["fact_layer"],
+            planned_fast_rerun=fast_rerun,
         )
     return {
         "archive_path": str(archive_root),
@@ -155,6 +168,7 @@ def preflight_finalized_run_archive(
         "workflow_current_stage": workflow.get("current_stage"),
         "run_integrity": _run_integrity_for_manifest(workflow),
         "timing": _timing_for_manifest(ws, workflow),
+        "fast_rerun": fast_rerun,
         "fact_layer": archive_plan["fact_layer"],
     }
 
@@ -470,6 +484,7 @@ def _verify_existing_archive_matches_plan(
     archive_root: Path,
     planned_files: list[dict[str, Any]],
     planned_fact_layer: dict[str, Any],
+    planned_fast_rerun: dict[str, Any],
 ) -> dict[str, Any]:
     result = _verify_existing_archive(archive_root=archive_root)
     existing_files = result["manifest"].get("files")
@@ -534,6 +549,16 @@ def _verify_existing_archive_matches_plan(
             },
             error_code=E_RUN_ARCHIVE_CONFLICT,
         )
+    existing_fast_rerun = result["manifest"].get("fast_rerun")
+    if existing_fast_rerun != planned_fast_rerun:
+        raise RunArchiveError(
+            "Existing run archive fast_rerun projection differs from the current finalized run.",
+            details={
+                "archive_path": _workspaceish(archive_root),
+                "field": "fast_rerun",
+            },
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
     return result
 
 
@@ -581,6 +606,35 @@ def _timing_for_manifest(workspace: Path, workflow: dict[str, Any]) -> dict[str,
         "total_elapsed_seconds": timing.get("total_elapsed_seconds"),
         "warnings": timing.get("warnings") or [],
     }
+
+
+def _fast_rerun_for_manifest(
+    manifest: dict[str, Any],
+    *,
+    freshness_at_finalize: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    record = manifest.get("fact_layer_import")
+    if not isinstance(record, dict):
+        return {}
+    projected = {
+        "schema_version": "mabw.run_archive.fast_rerun.v1",
+        "source_run_id": record.get("source_run_id", ""),
+        "source_archive_manifest": record.get("source_archive_manifest", ""),
+        "source_archive_manifest_sha256": record.get("source_archive_manifest_sha256", ""),
+        "fact_layer_sha256": record.get("fact_layer_sha256", ""),
+        "freshness_at_import": (
+            record.get("freshness_at_import") if isinstance(record.get("freshness_at_import"), dict) else {}
+        ),
+        "satisfied_stage_ids": (
+            record.get("satisfied_stage_ids") if isinstance(record.get("satisfied_stage_ids"), list) else []
+        ),
+        "timing_comparability": record.get("timing_comparability") or "downstream_only",
+    }
+    if isinstance(freshness_at_finalize, dict):
+        projected["freshness_at_finalize"] = freshness_at_finalize
+    elif isinstance(record.get("freshness_at_finalize"), dict):
+        projected["freshness_at_finalize"] = record["freshness_at_finalize"]
+    return projected
 
 
 def _sha256_file(path: Path) -> str:

@@ -631,6 +631,8 @@ def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
         f"{stage.get('stage_id')}={stage.get('display_status')}"
         for stage in summary.get("imported_stages") or []
     )
+    freshness = summary.get("freshness_at_import") if isinstance(summary.get("freshness_at_import"), dict) else {}
+    freshness_status = freshness.get("status") or "unknown"
     guidance = [
         "Runtime recipe: fast-rerun.",
         "same frozen evidence, new writing -- verified by hash.",
@@ -638,6 +640,7 @@ def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
         f"Imported fact-layer hash: {summary.get('fact_layer_sha256')}",
         f"Source archive manifest hash: {summary.get('source_archive_manifest_sha256')}",
         f"Imported files: {summary.get('imported_file_count')}",
+        f"Freshness at import: {freshness_status}; target delivery freshness is checked again at finalize-complete.",
         f"Imported-satisfied upstream stages: {imported_stages}.",
         "Start model-backed content work at Analyst.",
         "Do not regenerate source-discovery, input-governance, Scout, Screener, or Claim Ledger.",

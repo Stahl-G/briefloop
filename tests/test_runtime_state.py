@@ -62,7 +62,11 @@ def _write_json_artifact(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
 
 
-def _valid_claim_ledger_payload(claim_id: str = "CL-001", statement: str = "ExampleCo opened a demo facility.") -> str:
+def _valid_claim_ledger_payload(
+    claim_id: str = "CL-001",
+    statement: str = "ExampleCo opened a demo facility.",
+    metadata: dict[str, object] | None = None,
+) -> str:
     return json.dumps(
         [
             {
@@ -70,6 +74,7 @@ def _valid_claim_ledger_payload(claim_id: str = "CL-001", statement: str = "Exam
                 "statement": statement,
                 "source_id": "SRC-001",
                 "evidence_text": "Example evidence.",
+                "metadata": metadata or {},
             }
         ]
     ) + "\n"
@@ -314,6 +319,22 @@ def _advance_to_auditor(ws: Path) -> None:
 def _complete_finalized_workspace(ws: Path) -> dict:
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    return complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized and clean",
+    )
+
+
+def _complete_finalized_workspace_with_claim_metadata(ws: Path, metadata: dict[str, object]) -> dict:
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    (_intermediate(ws) / "claim_ledger.json").write_text(
+        _valid_claim_ledger_payload(metadata=metadata),
+        encoding="utf-8",
+    )
     _write_quality_gate_report(ws, stage_id="finalize")
     _write_finalize_report(ws)
     return complete_finalize_transaction(
@@ -2271,6 +2292,344 @@ def test_import_fact_layer_transaction_copies_archive_and_marks_upstream_stages(
     shown = show_runtime_state(workspace=target_ws)
     assert shown["fact_layer_import"]["status"] == "valid"
     assert shown["fact_layer_import"]["next_stage"] == "analyst"
+
+
+def test_import_fact_layer_transaction_records_target_freshness_snapshot(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    target_ws.joinpath("config.yaml").write_text(
+        """
+project:
+  name: "Runtime State Test"
+report:
+  date: "2026-06-20"
+  max_source_age_days: 14
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace_with_claim_metadata(
+        source_ws,
+        {"published_at": "2026-05-01"},
+    )
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+
+    state = import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
+
+    freshness = state["manifest"]["fact_layer_import"]["freshness_at_import"]
+    assert freshness["schema_version"] == "mabw.fact_layer_import.freshness.v1"
+    assert freshness["status"] == "stale"
+    assert freshness["report_date"] == "2026-06-20"
+    assert freshness["max_source_age_days"] == 14
+    assert freshness["stale_claim_count"] == 1
+    assert freshness["stale_claims"][0]["claim_id"] == "CL-001"
+
+
+def test_fast_rerun_finalize_complete_rejects_stale_imported_fact_layer(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    target_ws.joinpath("config.yaml").write_text(
+        """
+project:
+  name: "Runtime State Test"
+report:
+  date: "2026-06-20"
+  max_source_age_days: 14
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace_with_claim_metadata(
+        source_ws,
+        {"published_at": "2026-05-01"},
+    )
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
+    (target_ws / "output" / "intermediate" / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
+    _write_json_artifact(target_ws, "audit_report.json", _valid_audit_report_payload())
+    _set_current_stage(target_ws, "finalize")
+    _write_quality_gate_report(target_ws, stage_id="finalize")
+    _write_finalize_report(target_ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=target_ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert "Fast-rerun imported fact layer is stale at target delivery time" in str(excinfo.value)
+    assert not (target_ws / "output" / "runs").exists()
+
+
+@pytest.mark.parametrize(
+    "report_yaml",
+    [
+        """
+report:
+  date: "not-a-date"
+  max_source_age_days: 14
+""",
+        """
+report:
+  date: "2026-06-20"
+  max_source_age_days: "not-a-number"
+""",
+        """
+report:
+  max_source_age_days: 14
+""",
+    ],
+)
+def test_fast_rerun_finalize_complete_rejects_unknown_target_freshness_window(tmp_path, report_yaml):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    target_ws.joinpath("config.yaml").write_text(
+        f"""
+project:
+  name: "Runtime State Test"
+{report_yaml}
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace_with_claim_metadata(
+        source_ws,
+        {"published_at": "2026-06-10"},
+    )
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
+    (target_ws / "output" / "intermediate" / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
+    _write_json_artifact(target_ws, "audit_report.json", _valid_audit_report_payload())
+    _set_current_stage(target_ws, "finalize")
+    _write_quality_gate_report(target_ws, stage_id="finalize")
+    _write_finalize_report(target_ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=target_ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert "freshness cannot be verified at target delivery time" in str(excinfo.value)
+    assert not (target_ws / "output" / "runs").exists()
+
+
+def test_fast_rerun_finalize_complete_rejects_retrieved_at_as_publication_freshness(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    target_ws.joinpath("config.yaml").write_text(
+        """
+project:
+  name: "Runtime State Test"
+report:
+  date: "2026-06-20"
+  max_source_age_days: 14
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace_with_claim_metadata(
+        source_ws,
+        {"retrieved_at": "2026-06-19"},
+    )
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    import_state = import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
+    import_freshness = import_state["manifest"]["fact_layer_import"]["freshness_at_import"]
+    assert import_freshness["status"] == "unknown"
+    assert import_freshness["reason"] == "claim_publication_dates_missing"
+
+    (target_ws / "output" / "intermediate" / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
+    _write_json_artifact(target_ws, "audit_report.json", _valid_audit_report_payload())
+    _set_current_stage(target_ws, "finalize")
+    _write_quality_gate_report(target_ws, stage_id="finalize")
+    _write_finalize_report(target_ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=target_ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_READER_FINAL_GATE_FAILED
+    assert "claim_publication_dates_missing" in str(excinfo.value)
+    assert not (target_ws / "output" / "runs").exists()
+
+
+def test_fast_rerun_archive_records_source_relationship(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    target_ws.joinpath("config.yaml").write_text(
+        """
+project:
+  name: "Runtime State Test"
+report:
+  date: "2026-06-20"
+  max_source_age_days: 14
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace_with_claim_metadata(
+        source_ws,
+        {"published_at": "2026-06-10"},
+    )
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    import_state = import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
+    (target_ws / "output" / "intermediate" / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
+    _write_json_artifact(target_ws, "audit_report.json", _valid_audit_report_payload())
+    _set_current_stage(target_ws, "finalize")
+    _write_quality_gate_report(target_ws, stage_id="finalize")
+    _write_finalize_report(target_ws)
+
+    state = complete_finalize_transaction(
+        workspace=target_ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized and clean",
+    )
+
+    archive_manifest_path = target_ws / "output" / "runs" / state["manifest"]["run_id"] / "manifest.json"
+    manifest = json.loads(archive_manifest_path.read_text(encoding="utf-8"))
+    fast_rerun = manifest["fast_rerun"]
+    assert fast_rerun["schema_version"] == "mabw.run_archive.fast_rerun.v1"
+    assert fast_rerun["source_run_id"] == finalized["manifest"]["run_id"]
+    assert fast_rerun["fact_layer_sha256"] == import_state["manifest"]["fact_layer_import"]["fact_layer_sha256"]
+    assert fast_rerun["freshness_at_finalize"]["status"] == "within_window"
+    assert fast_rerun["timing_comparability"] == "downstream_only"
+
+
+def test_fast_rerun_archive_records_finalize_time_freshness(tmp_path):
+    source_root = tmp_path / "source"
+    target_root = tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    source_ws = _write_workspace(source_root)
+    target_ws = _write_workspace(target_root)
+    target_ws.joinpath("config.yaml").write_text(
+        """
+project:
+  name: "Runtime State Test"
+report:
+  date: "2026-06-20"
+  max_source_age_days: 14
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_fact_layer_inputs(source_ws)
+    finalized = _complete_finalized_workspace_with_claim_metadata(
+        source_ws,
+        {"published_at": "2026-05-01"},
+    )
+    archive_manifest = source_ws / "output" / "runs" / finalized["manifest"]["run_id"] / "manifest.json"
+    import_fact_layer_transaction(
+        workspace=target_ws,
+        archive=archive_manifest,
+        repo_workdir=ROOT,
+    )
+    target_ws.joinpath("config.yaml").write_text(
+        """
+project:
+  name: "Runtime State Test"
+report:
+  date: "2026-05-10"
+  max_source_age_days: 14
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        encoding="utf-8",
+    )
+    (target_ws / "output" / "intermediate" / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
+    _write_json_artifact(target_ws, "audit_report.json", _valid_audit_report_payload())
+    _set_current_stage(target_ws, "finalize")
+    _write_quality_gate_report(target_ws, stage_id="finalize")
+    _write_finalize_report(target_ws)
+
+    state = complete_finalize_transaction(
+        workspace=target_ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized and clean",
+    )
+
+    archive_manifest_path = target_ws / "output" / "runs" / state["manifest"]["run_id"] / "manifest.json"
+    manifest = json.loads(archive_manifest_path.read_text(encoding="utf-8"))
+    fast_rerun = manifest["fast_rerun"]
+    runtime_manifest = json.loads((target_ws / "output" / "intermediate" / "runtime_manifest.json").read_text())
+    persisted_freshness = runtime_manifest["fact_layer_import"]["freshness_at_finalize"]
+    assert fast_rerun["freshness_at_import"]["status"] == "stale"
+    assert fast_rerun["freshness_at_import"]["report_date"] == "2026-06-20"
+    assert fast_rerun["freshness_at_finalize"]["status"] == "within_window"
+    assert fast_rerun["freshness_at_finalize"]["report_date"] == "2026-05-10"
+    assert persisted_freshness == fast_rerun["freshness_at_finalize"]
 
 
 def test_state_show_human_output_reports_imported_stages(tmp_path, capsys):

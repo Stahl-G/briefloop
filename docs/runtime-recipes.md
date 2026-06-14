@@ -155,6 +155,8 @@ Allowed:
 - Reuse only the hash-verified fact-layer artifacts copied from the archive by
   `state import-fact-layer`.
 - Start model-backed content work at Analyst.
+- Expect finalize completion to re-check imported fact-layer freshness against
+  the target workspace reporting window before archiving the rerun.
 - Use this recipe for private instrumentation and manifestation reruns.
 
 Not allowed:
