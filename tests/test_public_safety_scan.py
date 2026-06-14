@@ -229,3 +229,15 @@ def test_public_safety_default_scan_falls_back_for_source_archives(tmp_path, mon
     assert [(finding.path.name, finding.kind) for finding in findings] == [
         ("README.md", "banned_term")
     ]
+
+
+def test_public_safety_scan_covers_fast_rerun_public_fixtures():
+    module = _load_module()
+    fixtures = [
+        ROOT / "tests" / "fixtures" / "fast_rerun_clean_archive",
+        ROOT / "tests" / "fixtures" / "fast_rerun_source_candidates_only_archive",
+    ]
+
+    findings = module.scan(fixtures, banned_terms=[])
+
+    assert findings == []

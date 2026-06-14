@@ -1,0 +1,134 @@
+{
+  "archived_at": "2026-06-14T00:00:00Z",
+  "event_log_semantics": "fixture_minimal_archive",
+  "fact_layer": {
+    "artifact_count": 5,
+    "artifacts": [
+      {
+        "artifact_id": "durable_source_evidence_or_source_pack",
+        "fact_role": "durable_source_evidence_pack",
+        "file_count": 1,
+        "files": [
+          {
+            "archive_path": "fact_layer/input/sources/source-001.md",
+            "original_path": "input/sources/source-001.md",
+            "sha256": "e1e86bdfe1300dbcbff32e08a3e4dd1f539beb0630871fedf5201b59d033bbd1",
+            "size_bytes": 289
+          }
+        ],
+        "pack_sha256": "8f4697eaba7bae5bedcd6cd00fee0f3ba154e37699caf3dc6cf452bc3f784a51"
+      },
+      {
+        "archive_path": "fact_layer/output/input_classification.json",
+        "artifact_id": "input_classification",
+        "fact_role": "fact_layer_artifact",
+        "original_path": "output/input_classification.json",
+        "sha256": "00159d53c9e45b91746fb25b3199f78217f5d211e9eb339338e5bec6479c9b47",
+        "size_bytes": 184
+      },
+      {
+        "archive_path": "fact_layer/output/intermediate/candidate_claims.json",
+        "artifact_id": "candidate_claims",
+        "fact_role": "fact_layer_artifact",
+        "original_path": "output/intermediate/candidate_claims.json",
+        "sha256": "eb041a3b85128b59a83a1cf181027df5f585c6dc3d84d9fcb38f4d6b75a17c76",
+        "size_bytes": 249
+      },
+      {
+        "archive_path": "fact_layer/output/intermediate/screened_candidates.json",
+        "artifact_id": "screened_candidates",
+        "fact_role": "fact_layer_artifact",
+        "original_path": "output/intermediate/screened_candidates.json",
+        "sha256": "65ed2d08eacdf62d404109e757bf21cca06af0019d830e4591e13fce066d74bd",
+        "size_bytes": 248
+      },
+      {
+        "archive_path": "fact_layer/output/intermediate/claim_ledger.json",
+        "artifact_id": "claim_ledger",
+        "fact_role": "fact_layer_artifact",
+        "original_path": "output/intermediate/claim_ledger.json",
+        "sha256": "e0aa5c5e8ea6126252f2d1234c5363e0d23c8a5addda71b5716bbd6ad93cc04c",
+        "size_bytes": 376
+      }
+    ],
+    "completion_semantics": "required_fact_files_present_and_source_paths_pass_evidence_filter",
+    "excluded": [],
+    "missing_artifact_ids": [],
+    "required_artifact_ids": [
+      "durable_source_evidence_or_source_pack",
+      "input_classification",
+      "candidate_claims",
+      "screened_candidates",
+      "claim_ledger"
+    ],
+    "schema_version": "mabw.run_archive.fact_layer.v1",
+    "source_evidence_count": 1,
+    "status": "complete"
+  },
+  "fast_rerun": {},
+  "files": [
+    {
+      "archive_path": "delivery/brief.md",
+      "original_path": "output/delivery/brief.md",
+      "role": "delivery",
+      "sha256": "9abc1c9eeb9424c300bf1fc637557bb32f6b850137206fc1dd9484276dc31d5c",
+      "size_bytes": 90
+    },
+    {
+      "archive_path": "fact_layer/input/sources/source-001.md",
+      "artifact_id": "durable_source_evidence_or_source_pack",
+      "original_path": "input/sources/source-001.md",
+      "role": "fact_layer",
+      "sha256": "e1e86bdfe1300dbcbff32e08a3e4dd1f539beb0630871fedf5201b59d033bbd1",
+      "size_bytes": 289
+    },
+    {
+      "archive_path": "fact_layer/output/input_classification.json",
+      "artifact_id": "input_classification",
+      "original_path": "output/input_classification.json",
+      "role": "fact_layer",
+      "sha256": "00159d53c9e45b91746fb25b3199f78217f5d211e9eb339338e5bec6479c9b47",
+      "size_bytes": 184
+    },
+    {
+      "archive_path": "fact_layer/output/intermediate/candidate_claims.json",
+      "artifact_id": "candidate_claims",
+      "original_path": "output/intermediate/candidate_claims.json",
+      "role": "fact_layer",
+      "sha256": "eb041a3b85128b59a83a1cf181027df5f585c6dc3d84d9fcb38f4d6b75a17c76",
+      "size_bytes": 249
+    },
+    {
+      "archive_path": "fact_layer/output/intermediate/screened_candidates.json",
+      "artifact_id": "screened_candidates",
+      "original_path": "output/intermediate/screened_candidates.json",
+      "role": "fact_layer",
+      "sha256": "65ed2d08eacdf62d404109e757bf21cca06af0019d830e4591e13fce066d74bd",
+      "size_bytes": 248
+    },
+    {
+      "archive_path": "fact_layer/output/intermediate/claim_ledger.json",
+      "artifact_id": "claim_ledger",
+      "original_path": "output/intermediate/claim_ledger.json",
+      "role": "fact_layer",
+      "sha256": "e0aa5c5e8ea6126252f2d1234c5363e0d23c8a5addda71b5716bbd6ad93cc04c",
+      "size_bytes": 376
+    }
+  ],
+  "run_id": "mabw-20260614T000000Z-public0001",
+  "run_integrity": {
+    "clean_single_shot": true,
+    "reasons": [],
+    "reference_eligible": true,
+    "status": "clean"
+  },
+  "runtime_manifest_run_id": "mabw-20260614T000000Z-public0001",
+  "schema_version": "mabw.run_archive.v1",
+  "source": "finalize-complete",
+  "timing": {
+    "run_recipe": "full",
+    "schema_version": "mabw.control_timing.v1",
+    "status": "available"
+  },
+  "workflow_current_stage": null
+}

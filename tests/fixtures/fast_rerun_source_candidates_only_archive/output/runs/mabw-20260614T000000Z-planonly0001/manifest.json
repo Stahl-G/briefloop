@@ -1,0 +1,53 @@
+{
+  "archived_at": "2026-06-14T00:00:00Z",
+  "event_log_semantics": "fixture_invalid_source_plan_only",
+  "fact_layer": {
+    "artifact_count": 1,
+    "artifacts": [
+      {
+        "archive_path": "fact_layer/source_candidates.yaml",
+        "artifact_id": "source_candidates",
+        "fact_role": "fact_layer_artifact",
+        "original_path": "source_candidates.yaml",
+        "sha256": "6590938af86e26947ec7876ff97574d261161e3adcfc50844496f0e6b6828004",
+        "size_bytes": 62
+      }
+    ],
+    "completion_semantics": "invalid_fixture_source_plan_only",
+    "excluded": [],
+    "missing_artifact_ids": [],
+    "required_artifact_ids": [
+      "source_candidates"
+    ],
+    "schema_version": "mabw.run_archive.fact_layer.v1",
+    "source_evidence_count": 0,
+    "status": "complete"
+  },
+  "fast_rerun": {},
+  "files": [
+    {
+      "archive_path": "fact_layer/source_candidates.yaml",
+      "artifact_id": "source_candidates",
+      "original_path": "source_candidates.yaml",
+      "role": "fact_layer",
+      "sha256": "6590938af86e26947ec7876ff97574d261161e3adcfc50844496f0e6b6828004",
+      "size_bytes": 62
+    }
+  ],
+  "run_id": "mabw-20260614T000000Z-planonly0001",
+  "run_integrity": {
+    "clean_single_shot": true,
+    "reasons": [],
+    "reference_eligible": true,
+    "status": "clean"
+  },
+  "runtime_manifest_run_id": "mabw-20260614T000000Z-planonly0001",
+  "schema_version": "mabw.run_archive.v1",
+  "source": "finalize-complete",
+  "timing": {
+    "run_recipe": "full",
+    "schema_version": "mabw.control_timing.v1",
+    "status": "available"
+  },
+  "workflow_current_stage": null
+}

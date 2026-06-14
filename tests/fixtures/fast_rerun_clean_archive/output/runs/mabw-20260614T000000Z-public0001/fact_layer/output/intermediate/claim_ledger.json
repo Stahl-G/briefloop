@@ -1,0 +1,12 @@
+[
+  {
+    "claim_id": "CL-001",
+    "evidence_text": "ExampleCo reported a synthetic pilot facility opening for public fixture validation.",
+    "metadata": {
+      "published_at": "2026-06-10",
+      "source_url": "https://example.com/mabw/fixture/source-001"
+    },
+    "source_id": "SRC-001",
+    "statement": "ExampleCo reported a synthetic pilot facility opening."
+  }
+]
