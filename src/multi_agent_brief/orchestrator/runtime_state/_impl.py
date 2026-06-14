@@ -32,7 +32,6 @@ from multi_agent_brief.quality_gates.contract import (
 )
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
 from multi_agent_brief.orchestrator_contract import (
-    CONTRACT_REFERENCES,
     DECISION_VOCABULARY,
     resolve_repo_workdir,
 )
@@ -60,7 +59,6 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_COMPLETION_TRANSACTION_REQUIRED,
     E_FACT_LAYER_IMPORT_INVALID,
     E_ILLEGAL_TRANSITION,
-    E_MANIFEST_EXTENSION_LOST,
     E_QUALITY_GATE_REQUIRED,
     E_READER_FINAL_GATE_FAILED,
     E_REQUIRED_ARTIFACT_MISSING,
@@ -75,17 +73,42 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
 )
 from multi_agent_brief.orchestrator.runtime_state.identity import (
     _safe_previous_run_id,
-    _source_or_package_version,
     _unsafe_runtime_run_id,
     _validate_runtime_run_id,
     new_run_id,
     utc_now,
+)
+from multi_agent_brief.orchestrator.runtime_state.manifest import (
+    PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS,
+    RUNTIME_MANIFEST_SCHEMA,
+    _assert_manifest_extensions_preserved,
+    _preserved_manifest_extensions,
+    _runtime_manifest,
 )
 from multi_agent_brief.orchestrator.runtime_state.paths import (
     RUNTIME_STATE_FILES,
     _require_workspace,
     _workspace_relative,
     runtime_state_paths,
+)
+from multi_agent_brief.orchestrator.runtime_state.workflow import (
+    STAGE_BLOCKED,
+    STAGE_COMPLETE,
+    STAGE_PENDING,
+    STAGE_READY,
+    STAGE_SKIPPED,
+    WORKFLOW_STATE_SCHEMA,
+    _allowed_decisions_for_stage,
+    _changed_workflow_events,
+    _current_stage_index,
+    _initial_workflow_state,
+    _next_stage_id,
+    _required_consumed_artifacts,
+    _stage_is_complete_or_skipped,
+    _stage_status,
+    _status_entry,
+    _workflow_after_completion,
+    _workflow_is_finalized,
 )
 from multi_agent_brief.orchestrator.run_archive import (
     E_RUN_ARCHIVE_CONFLICT,
@@ -99,7 +122,6 @@ from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_laye
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
     RUN_INTEGRITY_CONTAMINATED,
-    clean_run_integrity as _clean_run_integrity,
     contamination_event_metadata as _run_integrity_contamination_event_metadata,
     contaminate_run_integrity_with_event_flag as _contaminate_run_integrity_with_event_flag,
     normalize_run_integrity as _normalize_run_integrity,
@@ -138,12 +160,9 @@ __all__ = [
 ]
 
 
-RUNTIME_MANIFEST_SCHEMA = "multi-agent-brief-runtime-manifest/v1"
-WORKFLOW_STATE_SCHEMA = "multi-agent-brief-workflow-state/v1"
 ARTIFACT_REGISTRY_SCHEMA = "multi-agent-brief-artifact-registry/v1"
 EVENT_LOG_SCHEMA = "multi-agent-brief-event-log/v1"
 
-PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe", "fact_layer_import")
 FACT_LAYER_IMPORT_SCHEMA = "mabw.fact_layer_import.v1"
 FACT_LAYER_IMPORT_REQUIRED_ARTIFACT_IDS = (
     "durable_source_evidence_or_source_pack",
@@ -201,12 +220,6 @@ EVENT_TYPES = {
 
 ACTORS = {"cli", "orchestrator", "runtime", "system"}
 
-STAGE_PENDING = "pending"
-STAGE_READY = "ready"
-STAGE_COMPLETE = "complete"
-STAGE_BLOCKED = "blocked"
-STAGE_SKIPPED = "skipped"
-
 ARTIFACT_EXPECTED = "expected"
 ARTIFACT_MISSING = "missing"
 ARTIFACT_PRESENT = "present"
@@ -222,15 +235,6 @@ def _checked_workflow_with_run_integrity(workflow: dict[str, Any], *, path: Path
             details={"path": str(path), "reason": str(exc)},
             error_code=E_TRANSACTION_INTEGRITY,
         ) from exc
-
-
-def _workflow_is_finalized(workflow: dict[str, Any] | None) -> bool:
-    if not workflow:
-        return False
-    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
-    finalize_status = statuses.get("finalize") if isinstance(statuses.get("finalize"), dict) else {}
-    return workflow.get("current_stage") is None and finalize_status.get("status") == STAGE_COMPLETE
-
 
 def _archive_finalized_state_if_needed(
     *,
@@ -1224,19 +1228,6 @@ def _completion_transaction_integrity_reason(
     )
 
 
-def _initial_stage_statuses(stages: list[dict[str, Any]], *, now: str) -> dict[str, dict[str, Any]]:
-    statuses: dict[str, dict[str, Any]] = {}
-    first = True
-    for stage_id in _stage_ids(stages):
-        statuses[stage_id] = {
-            "status": STAGE_READY if first else STAGE_PENDING,
-            "reason": "",
-            "updated_at": now,
-        }
-        first = False
-    return statuses
-
-
 def _contaminate_run_integrity(
     workflow: dict[str, Any],
     *,
@@ -1358,77 +1349,6 @@ def _older_stage_replay_message(
         f"Stage-complete was attempted for older stage '{stage_id}' after downstream "
         f"stage '{downstream_touched[0]}' already existed."
     )
-
-
-def _initial_workflow_state(
-    *,
-    run_id: str,
-    stages: list[dict[str, Any]],
-    created_at: str,
-    updated_at: str,
-) -> dict[str, Any]:
-    stage_statuses = _initial_stage_statuses(stages, now=updated_at)
-    current_stage = _stage_ids(stages)[0] if stages else None
-    return {
-        "schema_version": WORKFLOW_STATE_SCHEMA,
-        "run_id": run_id,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "current_stage": current_stage,
-        "blocked": False,
-        "blocking_reason": "",
-        "stage_statuses": stage_statuses,
-        "last_decision": None,
-        "next_allowed_decisions": _allowed_decisions_for_stage(stages, current_stage),
-        "run_integrity": _clean_run_integrity(),
-    }
-
-
-def _allowed_decisions_for_stage(
-    stages: list[dict[str, Any]],
-    stage_id: str | None,
-) -> list[str]:
-    if stage_id is None:
-        return []
-    for stage in stages:
-        if stage.get("stage_id") == stage_id:
-            decisions = stage.get("allowed_decisions") or []
-            return [str(decision) for decision in decisions]
-    return []
-
-
-def _runtime_manifest(
-    *,
-    run_id: str,
-    created_at: str,
-    updated_at: str,
-    runtime: str,
-    stages: list[dict[str, Any]],
-    artifacts: list[dict[str, Any]],
-) -> dict[str, Any]:
-    manifest = {
-        "schema_version": RUNTIME_MANIFEST_SCHEMA,
-        "run_id": run_id,
-        "created_at": created_at,
-        "updated_at": updated_at,
-        "workspace": ".",
-        "runtime": runtime,
-        "mabw_version": _source_or_package_version(),
-        "contract_references": dict(CONTRACT_REFERENCES),
-        "runtime_state_files": dict(RUNTIME_STATE_FILES),
-        "stage_order": _stage_ids(stages),
-        "expected_artifacts": [
-            {
-                "artifact_id": artifact.get("artifact_id", ""),
-                "path": artifact.get("path", ""),
-                "required": bool(artifact.get("required", False)),
-                "producer_stage": artifact.get("producer_stage", ""),
-                "consumer_stages": artifact.get("consumer_stages", []),
-            }
-            for artifact in artifacts
-        ],
-    }
-    return manifest
 
 
 def initialize_runtime_state(
@@ -1849,32 +1769,6 @@ def _validate_audit_report_payload(payload: Any) -> tuple[str, str]:
     return ARTIFACT_VALID, "valid_audit_report_schema"
 
 
-def _current_stage_index(stages: list[dict[str, Any]], stage_id: str | None) -> int | None:
-    ids = _stage_ids(stages)
-    if stage_id in ids:
-        return ids.index(str(stage_id))
-    return None
-
-
-def _next_stage_id(stages: list[dict[str, Any]], stage_id: str) -> str | None:
-    ids = _stage_ids(stages)
-    if stage_id not in ids:
-        return None
-    idx = ids.index(stage_id)
-    if idx + 1 >= len(ids):
-        return None
-    return ids[idx + 1]
-
-
-def _stage_status(workflow: dict[str, Any], stage_id: str) -> str:
-    stage = (workflow.get("stage_statuses") or {}).get(stage_id) or {}
-    return str(stage.get("status") or STAGE_PENDING)
-
-
-def _stage_is_complete_or_skipped(workflow: dict[str, Any], stage_id: str) -> bool:
-    return _stage_status(workflow, stage_id) in {STAGE_COMPLETE, STAGE_SKIPPED}
-
-
 def _artifact_record(
     *,
     workspace: Path,
@@ -2055,85 +1949,6 @@ def _changed_artifact_events(
                 },
             })
     return events
-
-
-def _stage_entry(workflow: dict[str, Any], stage_id: str | None) -> dict[str, Any]:
-    if stage_id is None:
-        return {}
-    return ((workflow.get("stage_statuses") or {}).get(stage_id) or {})
-
-
-def _changed_workflow_events(
-    *,
-    old_workflow: dict[str, Any],
-    workflow: dict[str, Any],
-) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    current_stage = workflow.get("current_stage")
-    old_current_stage = old_workflow.get("current_stage")
-    old_entry = _stage_entry(old_workflow, str(current_stage) if current_stage else None)
-    new_entry = _stage_entry(workflow, str(current_stage) if current_stage else None)
-    stage_changed = (
-        current_stage != old_current_stage
-        or old_entry.get("status") != new_entry.get("status")
-        or old_entry.get("reason") != new_entry.get("reason")
-    )
-    if current_stage and stage_changed:
-        events.append({
-            "event_type": "stage_status_changed",
-            "stage_id": str(current_stage),
-            "reason": str(workflow.get("blocking_reason") or ""),
-            "metadata": {"status": new_entry.get("status")},
-        })
-
-    run_block_changed = (
-        bool(workflow.get("blocked")) is True
-        and (
-            bool(old_workflow.get("blocked")) is not True
-            or old_workflow.get("blocking_reason") != workflow.get("blocking_reason")
-            or old_current_stage != current_stage
-        )
-    )
-    if run_block_changed:
-        events.append({
-            "event_type": "run_blocked",
-            "stage_id": str(current_stage) if current_stage else None,
-            "reason": str(workflow.get("blocking_reason") or ""),
-            "metadata": {},
-        })
-    return events
-
-
-def _required_consumed_artifacts(
-    *,
-    stage: dict[str, Any],
-    artifacts_by_id: dict[str, dict[str, Any]],
-) -> list[str]:
-    consumed = stage.get("consumes") or []
-    required: list[str] = []
-    for item in consumed:
-        artifact_id = str(item)
-        contract = artifacts_by_id.get(artifact_id)
-        if contract and bool(contract.get("required", False)):
-            required.append(artifact_id)
-    return required
-
-
-def _status_entry(
-    status: str,
-    reason: str,
-    updated_at: str,
-    *,
-    metadata: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    entry = {
-        "status": status,
-        "reason": reason,
-        "updated_at": updated_at,
-    }
-    if metadata:
-        entry["metadata"] = metadata
-    return entry
 
 
 def _completion_artifact_gate_reasons(
@@ -2933,46 +2748,6 @@ def _validate_completion_target(
     return stage
 
 
-def _workflow_after_completion(
-    *,
-    workflow: dict[str, Any],
-    stages: list[dict[str, Any]],
-    stage_id: str,
-    reason: str,
-    now: str,
-    transaction_id: str,
-    finalize: bool,
-) -> dict[str, Any]:
-    decision = "finalize" if finalize else "continue"
-    next_stage = _next_stage_id(stages, stage_id)
-    current_stage = None if finalize else next_stage
-    statuses = dict(workflow.get("stage_statuses") or {})
-    statuses[stage_id] = _status_entry(STAGE_COMPLETE, reason, now)
-    if current_stage:
-        statuses[current_stage] = _status_entry(STAGE_READY, "", now)
-    updated = dict(workflow)
-    updated["updated_at"] = now
-    updated["current_stage"] = current_stage
-    updated["blocked"] = False
-    updated["blocking_reason"] = ""
-    updated["stage_statuses"] = statuses
-    updated["last_decision"] = {
-        "stage_id": stage_id,
-        "decision": decision,
-        "reason": reason,
-        "created_at": now,
-    }
-    updated["last_completion_transaction"] = {
-        "transaction_id": transaction_id,
-        "stage_id": stage_id,
-        "decision": decision,
-        "reason": reason,
-        "created_at": now,
-    }
-    updated["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, current_stage)
-    return updated
-
-
 def _artifact_registry_sha(
     registry: dict[str, Any],
     artifact_id: str,
@@ -3110,32 +2885,6 @@ def _append_transaction_events(
             },
             error_code=E_TRANSACTION_PARTIAL_WRITE,
         ) from exc
-
-
-def _preserved_manifest_extensions(manifest: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: manifest[key]
-        for key in PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS
-        if key in manifest
-    }
-
-
-def _assert_manifest_extensions_preserved(
-    *,
-    before: dict[str, Any],
-    after: dict[str, Any],
-) -> None:
-    missing = [
-        key
-        for key, value in before.items()
-        if key not in after or after.get(key) != value
-    ]
-    if missing:
-        raise RuntimeStateError(
-            "Registered runtime_manifest extension keys were lost.",
-            details={"missing_extensions": missing},
-            error_code=E_MANIFEST_EXTENSION_LOST,
-        )
 
 
 def _complete_stage_transaction(
