@@ -36,6 +36,7 @@ validation unless that is stated separately.
 | `multi-agent-brief deliver --workspace <path> --target local` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
 | `multi-agent-brief state init/check/show/decide/stage-complete/finalize-complete` | Supported |
+| `multi-agent-brief state import-fact-layer` | Experimental |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
 | `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|codex\|all` | Source-clone-only |
 | `multi-agent-brief feedback ingest/plan/resolve/show/validate` | Supported |
@@ -67,6 +68,12 @@ Improvement Ledger files are human-governed workspace memory controls. Approved 
 Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
+
+Fast-rerun fact-layer import is an experimental control transaction. It can
+import a complete, clean, archived frozen fact layer into a new runtime run for
+downstream rerun inspection. It does not register 080 experiment runs, score
+output quality, summarize experiments, scaffold conditions, or prove semantic
+truth.
 
 ## Runtimes
 

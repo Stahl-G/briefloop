@@ -11,10 +11,12 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.orchestrator.run_integrity import classify_run_integrity
+from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 
 
 RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
+RUN_ARCHIVE_FACT_LAYER_SCHEMA = "mabw.run_archive.fact_layer.v1"
 E_RUN_ARCHIVE_CONFLICT = "E_RUN_ARCHIVE_CONFLICT"
 E_RUN_ARCHIVE_FAILED = "E_RUN_ARCHIVE_FAILED"
 
@@ -35,6 +37,14 @@ _CONTROL_FILES = (
     "artifact_registry.json",
     "event_log.jsonl",
 )
+_FACT_LAYER_REQUIRED_ARTIFACTS: dict[str, str] = {
+    "input_classification": "output/input_classification.json",
+    "candidate_claims": "output/intermediate/candidate_claims.json",
+    "screened_candidates": "output/intermediate/screened_candidates.json",
+    "claim_ledger": "output/intermediate/claim_ledger.json",
+}
+_FACT_LAYER_SOURCE_ARTIFACT_ID = "durable_source_evidence_or_source_pack"
+_SOURCE_PLAN_EXCLUDED_ARTIFACT_ID = "source_candidates"
 
 
 class RunArchiveError(Exception):
@@ -58,11 +68,12 @@ def archive_finalized_run(
     """Create or verify the immutable archive for a finalized run."""
     ws = workspace.expanduser().resolve()
     archive_root = ws / "output" / "runs" / run_id
-    files = _archive_file_plan(
+    archive_plan = _archive_plan(
         workspace=ws,
         finalize_report=finalize_report,
         artifact_registry=artifact_registry,
     )
+    files = archive_plan["files"]
     archive_manifest = {
         "schema_version": RUN_ARCHIVE_SCHEMA,
         "run_id": run_id,
@@ -72,11 +83,16 @@ def archive_finalized_run(
         "workflow_current_stage": workflow.get("current_stage"),
         "run_integrity": _run_integrity_for_manifest(workflow),
         "timing": _timing_for_manifest(ws, workflow),
+        "fact_layer": archive_plan["fact_layer"],
         "event_log_semantics": "copied_before_current_archive_event",
         "files": files,
     }
     if archive_root.exists():
-        _verify_existing_archive_matches_plan(archive_root=archive_root, planned_files=files)
+        _verify_existing_archive_matches_plan(
+            archive_root=archive_root,
+            planned_files=files,
+            planned_fact_layer=archive_plan["fact_layer"],
+        )
         return _archive_result(archive_root)
 
     tmp_root = ws / "output" / "runs" / f".tmp-{run_id}-{uuid.uuid4().hex}"
@@ -118,15 +134,17 @@ def preflight_finalized_run_archive(
     """Validate whether the finalized run archive can be created without mutating state."""
     ws = workspace.expanduser().resolve()
     archive_root = ws / "output" / "runs" / run_id
-    files = _archive_file_plan(
+    archive_plan = _archive_plan(
         workspace=ws,
         finalize_report=finalize_report,
         artifact_registry=artifact_registry,
     )
+    files = archive_plan["files"]
     if archive_root.exists():
         return _verify_existing_archive_matches_plan(
             archive_root=archive_root,
             planned_files=files,
+            planned_fact_layer=archive_plan["fact_layer"],
         )
     return {
         "archive_path": str(archive_root),
@@ -137,15 +155,16 @@ def preflight_finalized_run_archive(
         "workflow_current_stage": workflow.get("current_stage"),
         "run_integrity": _run_integrity_for_manifest(workflow),
         "timing": _timing_for_manifest(ws, workflow),
+        "fact_layer": archive_plan["fact_layer"],
     }
 
 
-def _archive_file_plan(
+def _archive_plan(
     *,
     workspace: Path,
     finalize_report: dict[str, Any],
     artifact_registry: dict[str, Any],
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     seen_archive_paths: set[str] = set()
     delivery_count = 0
@@ -212,6 +231,12 @@ def _archive_file_plan(
             artifact_id=str(artifact_id),
         )
 
+    fact_layer = _add_fact_layer_records(
+        records=records,
+        seen_archive_paths=seen_archive_paths,
+        workspace=workspace,
+    )
+
     for name in _CONTROL_FILES:
         source = intermediate_dir / name
         if source.exists() and source.is_file():
@@ -223,7 +248,126 @@ def _archive_file_plan(
                 original_path=_workspace_relative(workspace, source),
                 archive_path=Path("control") / name,
             )
-    return records
+    return {"files": records, "fact_layer": fact_layer}
+
+
+def _add_fact_layer_records(
+    *,
+    records: list[dict[str, Any]],
+    seen_archive_paths: set[str],
+    workspace: Path,
+) -> dict[str, Any]:
+    artifacts: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    missing: list[str] = []
+
+    source_files = _iter_durable_source_files(workspace)
+    if not source_files:
+        missing.append(_FACT_LAYER_SOURCE_ARTIFACT_ID)
+    source_pack_files: list[dict[str, Any]] = []
+    for source in source_files:
+        original_path = _workspace_relative(workspace, source)
+        record = _add_file_record(
+            records,
+            seen_archive_paths,
+            role="fact_layer",
+            source=source,
+            original_path=original_path,
+            archive_path=Path("fact_layer") / original_path,
+            artifact_id=_FACT_LAYER_SOURCE_ARTIFACT_ID,
+        )
+        if record is not None:
+            source_pack_files.append(_fact_layer_file_record(record))
+    if source_pack_files:
+        artifacts.append({
+            "artifact_id": _FACT_LAYER_SOURCE_ARTIFACT_ID,
+            "fact_role": "durable_source_evidence_pack",
+            "file_count": len(source_pack_files),
+            "files": source_pack_files,
+            "pack_sha256": _sha256_json(source_pack_files),
+        })
+
+    for artifact_id, rel_path in _FACT_LAYER_REQUIRED_ARTIFACTS.items():
+        source = workspace / rel_path
+        if not source.exists() or not source.is_file():
+            missing.append(artifact_id)
+            continue
+        record = _add_file_record(
+            records,
+            seen_archive_paths,
+            role="fact_layer",
+            source=source,
+            original_path=rel_path,
+            archive_path=Path("fact_layer") / rel_path,
+            artifact_id=artifact_id,
+        )
+        if record is not None:
+            artifacts.append(_fact_layer_artifact_record(
+                record,
+                artifact_id=artifact_id,
+                fact_role="fact_layer_artifact",
+            ))
+
+    source_candidates = workspace / "source_candidates.yaml"
+    if source_candidates.exists() and source_candidates.is_file():
+        excluded.append({
+            "artifact_id": _SOURCE_PLAN_EXCLUDED_ARTIFACT_ID,
+            "original_path": "source_candidates.yaml",
+            "reason": "source_plan_not_evidence",
+            "sha256": _sha256_file(source_candidates),
+            "size_bytes": source_candidates.stat().st_size,
+        })
+
+    return {
+        "schema_version": RUN_ARCHIVE_FACT_LAYER_SCHEMA,
+        "status": "complete" if not missing else "incomplete",
+        "completion_semantics": "required_fact_files_present_and_source_paths_pass_evidence_filter",
+        "required_artifact_ids": [
+            _FACT_LAYER_SOURCE_ARTIFACT_ID,
+            *_FACT_LAYER_REQUIRED_ARTIFACTS.keys(),
+        ],
+        "missing_artifact_ids": missing,
+        "artifact_count": len(artifacts),
+        "source_evidence_count": len(source_files),
+        "artifacts": artifacts,
+        "excluded": excluded,
+    }
+
+
+def _iter_durable_source_files(workspace: Path) -> list[Path]:
+    source_dir = workspace / "input" / "sources"
+    if not source_dir.exists() or not source_dir.is_dir():
+        return []
+    return [
+        path
+        for path in sorted(source_dir.rglob("*"))
+        if path.is_file() and is_evidence_input_path(path, workspace)
+    ]
+
+
+def _fact_layer_artifact_record(
+    record: dict[str, Any],
+    *,
+    artifact_id: str,
+    fact_role: str,
+) -> dict[str, Any]:
+    return {
+        "artifact_id": artifact_id,
+        "fact_role": fact_role,
+        "archive_path": record["archive_path"],
+        "original_path": record["original_path"],
+        "sha256": record["sha256"],
+        "size_bytes": record["size_bytes"],
+    }
+
+
+def _fact_layer_file_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "archive_path": record["archive_path"],
+        "original_path": record["original_path"],
+        "sha256": record["sha256"],
+        "size_bytes": record["size_bytes"],
+    }
 
 
 def _add_file_record(
@@ -235,10 +379,10 @@ def _add_file_record(
     original_path: str,
     archive_path: Path,
     artifact_id: str | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     archive_rel = archive_path.as_posix()
     if archive_rel in seen_archive_paths:
-        return
+        return None
     seen_archive_paths.add(archive_rel)
     record: dict[str, Any] = {
         "role": role,
@@ -250,6 +394,7 @@ def _add_file_record(
     if artifact_id:
         record["artifact_id"] = artifact_id
     records.append(record)
+    return record
 
 
 def _resolve_workspace_file(workspace: Path, raw_path: Any) -> Path:
@@ -324,6 +469,7 @@ def _verify_existing_archive_matches_plan(
     *,
     archive_root: Path,
     planned_files: list[dict[str, Any]],
+    planned_fact_layer: dict[str, Any],
 ) -> dict[str, Any]:
     result = _verify_existing_archive(archive_root=archive_root)
     existing_files = result["manifest"].get("files")
@@ -378,6 +524,16 @@ def _verify_existing_archive_matches_plan(
                     },
                     error_code=E_RUN_ARCHIVE_CONFLICT,
                 )
+    existing_fact_layer = result["manifest"].get("fact_layer")
+    if existing_fact_layer != planned_fact_layer:
+        raise RunArchiveError(
+            "Existing run archive fact_layer projection differs from the current finalized run.",
+            details={
+                "archive_path": _workspaceish(archive_root),
+                "field": "fact_layer",
+            },
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
     return result
 
 
@@ -395,6 +551,12 @@ def _archive_result(archive_root: Path) -> dict[str, Any]:
 def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     text = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     path.write_text(text, encoding="utf-8")
+
+
+def _sha256_json(payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _run_integrity_for_manifest(workflow: dict[str, Any]) -> dict[str, Any]:
