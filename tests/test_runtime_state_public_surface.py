@@ -9,11 +9,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_STATE_MODULE = "multi_agent_brief.orchestrator.runtime_state"
+PINNED_EXTRA_EXPORTS = {"new_run_id"}
 
 
 def test_runtime_state_all_matches_in_repo_from_imports():
     runtime_state = importlib.import_module(RUNTIME_STATE_MODULE)
-    expected = _runtime_state_from_imports()
+    expected = _runtime_state_from_imports() | PINNED_EXTRA_EXPORTS
 
     assert set(runtime_state.__all__) == expected
     assert runtime_state.__all__ == sorted(runtime_state.__all__)
@@ -26,7 +27,7 @@ def test_runtime_state_facade_does_not_proxy_impl_internals():
     assert hasattr(runtime_state, "_impl")
     assert hasattr(runtime_state, "_append_jsonl")
     assert hasattr(runtime_state, "_sha256_file")
-    assert not hasattr(runtime_state, "new_run_id")
+    assert hasattr(runtime_state, "new_run_id")
     assert not hasattr(runtime_state, "EVENT_TYPES")
     assert not hasattr(runtime_state, "E_TRANSACTION_INTEGRITY")
 

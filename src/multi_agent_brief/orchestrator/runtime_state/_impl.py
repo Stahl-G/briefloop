@@ -31,11 +31,61 @@ from multi_agent_brief.quality_gates.contract import (
     validate_quality_gate_report_payload,
 )
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
-from multi_agent_brief import __version__
 from multi_agent_brief.orchestrator_contract import (
     CONTRACT_REFERENCES,
     DECISION_VOCABULARY,
     resolve_repo_workdir,
+)
+from multi_agent_brief.orchestrator.runtime_state._io import (
+    _append_jsonl,
+    _load_workspace_yaml,
+    _read_json,
+    _read_json_if_exists,
+    _read_state_bytes,
+    _restore_state_bytes,
+    _restore_state_files,
+    _sha256_file,
+    _snapshot_state_files,
+    _write_json_atomic,
+)
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+    _artifact_ids,
+    _artifact_map,
+    _stage_ids,
+    load_artifact_contracts,
+    load_stage_specs,
+)
+from multi_agent_brief.orchestrator.runtime_state.errors import (
+    E_ARTIFACT_INVALID,
+    E_COMPLETION_TRANSACTION_REQUIRED,
+    E_FACT_LAYER_IMPORT_INVALID,
+    E_ILLEGAL_TRANSITION,
+    E_MANIFEST_EXTENSION_LOST,
+    E_QUALITY_GATE_REQUIRED,
+    E_READER_FINAL_GATE_FAILED,
+    E_REQUIRED_ARTIFACT_MISSING,
+    E_RUN_ARCHIVE_FAILED,
+    E_RUNTIME_STATE_NOT_INITIALIZED,
+    E_STAGE_ALREADY_COMPLETED,
+    E_STAGE_MISMATCH,
+    E_TRANSACTION_INTEGRITY,
+    E_TRANSACTION_PARTIAL_WRITE,
+    RuntimeStateError,
+    _wrap_archive_error,
+)
+from multi_agent_brief.orchestrator.runtime_state.identity import (
+    _safe_previous_run_id,
+    _source_or_package_version,
+    _unsafe_runtime_run_id,
+    _validate_runtime_run_id,
+    new_run_id,
+    utc_now,
+)
+from multi_agent_brief.orchestrator.runtime_state.paths import (
+    RUNTIME_STATE_FILES,
+    _require_workspace,
+    _workspace_relative,
+    runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.run_archive import (
     E_RUN_ARCHIVE_CONFLICT,
@@ -78,6 +128,7 @@ __all__ = [
     "initialize_runtime_state",
     "load_artifact_contracts",
     "load_stage_specs",
+    "new_run_id",
     "read_event_log_records_strict",
     "record_decision",
     "record_handoff_written",
@@ -92,12 +143,6 @@ WORKFLOW_STATE_SCHEMA = "multi-agent-brief-workflow-state/v1"
 ARTIFACT_REGISTRY_SCHEMA = "multi-agent-brief-artifact-registry/v1"
 EVENT_LOG_SCHEMA = "multi-agent-brief-event-log/v1"
 
-RUNTIME_STATE_FILES = {
-    "runtime_manifest": "output/intermediate/runtime_manifest.json",
-    "workflow_state": "output/intermediate/workflow_state.json",
-    "artifact_registry": "output/intermediate/artifact_registry.json",
-    "event_log": "output/intermediate/event_log.jsonl",
-}
 PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe", "fact_layer_import")
 FACT_LAYER_IMPORT_SCHEMA = "mabw.fact_layer_import.v1"
 FACT_LAYER_IMPORT_REQUIRED_ARTIFACT_IDS = (
@@ -167,174 +212,6 @@ ARTIFACT_MISSING = "missing"
 ARTIFACT_PRESENT = "present"
 ARTIFACT_VALID = "valid"
 ARTIFACT_INVALID = "invalid"
-
-E_STAGE_ALREADY_COMPLETED = "E_STAGE_ALREADY_COMPLETED"
-E_STAGE_MISMATCH = "E_STAGE_MISMATCH"
-E_REQUIRED_ARTIFACT_MISSING = "E_REQUIRED_ARTIFACT_MISSING"
-E_ARTIFACT_INVALID = "E_ARTIFACT_INVALID"
-E_ILLEGAL_TRANSITION = "E_ILLEGAL_TRANSITION"
-E_MANIFEST_EXTENSION_LOST = "E_MANIFEST_EXTENSION_LOST"
-E_TRANSACTION_PARTIAL_WRITE = "E_TRANSACTION_PARTIAL_WRITE"
-E_TRANSACTION_INTEGRITY = "E_TRANSACTION_INTEGRITY"
-E_RUNTIME_STATE_NOT_INITIALIZED = "E_RUNTIME_STATE_NOT_INITIALIZED"
-E_RUN_ARCHIVE_FAILED = "E_RUN_ARCHIVE_FAILED"
-E_FACT_LAYER_IMPORT_INVALID = "E_FACT_LAYER_IMPORT_INVALID"
-E_QUALITY_GATE_REQUIRED = "E_QUALITY_GATE_REQUIRED"
-E_READER_FINAL_GATE_FAILED = "E_READER_FINAL_GATE_FAILED"
-E_COMPLETION_TRANSACTION_REQUIRED = "E_COMPLETION_TRANSACTION_REQUIRED"
-
-MAX_RUN_ID_LENGTH = 200
-_RUN_ID_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_RUN_ID_WINDOWS_ABSOLUTE_RE = re.compile(r"\b[A-Za-z]:[\\/]")
-_RUN_ID_TOKEN_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
-    re.compile(r"ghp_[A-Za-z0-9_]{16,}"),
-    re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
-    re.compile(r"AKIA[0-9A-Z]{16}"),
-    re.compile(r"\b[A-Za-z0-9_-]{40,}\b"),
-]
-_RUN_ID_FORBIDDEN_PATH_FRAGMENTS = ("/Users/", "/home/", "/var/", "file://")
-_RUN_ID_INJECTION_PHRASES = ("system:", "developer:", "assistant:", "ignore previous", "ignore all previous")
-
-
-class RuntimeStateError(Exception):
-    """Raised when runtime state cannot be read or written safely."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        details: dict[str, Any] | None = None,
-        error_code: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.details = details or {}
-        self.error_code = error_code
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = {
-            "ok": False,
-            "error": str(self),
-            "details": self.details,
-        }
-        if self.error_code:
-            payload["error_code"] = self.error_code
-        return payload
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
-def new_run_id() -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"mabw-{stamp}-{uuid.uuid4().hex[:8]}"
-
-
-def _validate_runtime_run_id(value: Any, *, path: Path | None = None) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise RuntimeStateError(
-            "runtime run_id is required.",
-            details={"path": str(path) if path is not None else None},
-        )
-    text = value.strip()
-    if _unsafe_runtime_run_id(text):
-        raise RuntimeStateError(
-            "runtime run_id is unsafe.",
-            details={"path": str(path) if path is not None else None},
-        )
-    return text
-
-
-def _safe_previous_run_id(value: Any) -> str | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    text = value.strip()
-    if _unsafe_runtime_run_id(text):
-        return "unsafe-run-id"
-    return text
-
-
-def _unsafe_runtime_run_id(text: str) -> bool:
-    lower = text.lower()
-    return (
-        len(text) > MAX_RUN_ID_LENGTH
-        or "\n" in text
-        or "\r" in text
-        or "/" in text
-        or "\\" in text
-        or text.lstrip().startswith("#")
-        or "```" in text
-        or "~~~" in text
-        or "<!--" in text
-        or "-->" in text
-        or bool(_RUN_ID_CONTROL_CHAR_RE.search(text))
-        or bool(_RUN_ID_WINDOWS_ABSOLUTE_RE.search(text))
-        or any(fragment.lower() in lower for fragment in _RUN_ID_FORBIDDEN_PATH_FRAGMENTS)
-        or any(pattern.search(text) for pattern in _RUN_ID_TOKEN_PATTERNS)
-        or any(phrase in lower for phrase in _RUN_ID_INJECTION_PHRASES)
-    )
-
-
-def _source_or_package_version() -> str:
-    for parent in Path(__file__).resolve().parents:
-        version_file = parent / "VERSION"
-        if version_file.exists():
-            text = version_file.read_text(encoding="utf-8").strip()
-            if text:
-                return text
-    return __version__
-
-
-def runtime_state_paths(workspace: str | Path) -> dict[str, Path]:
-    ws = Path(workspace).expanduser().resolve()
-    return {key: ws / rel_path for key, rel_path in RUNTIME_STATE_FILES.items()}
-
-
-def _require_workspace(workspace: str | Path) -> Path:
-    ws = Path(workspace).expanduser().resolve()
-    if not (ws / "config.yaml").exists():
-        raise RuntimeStateError(
-            f"Workspace config.yaml not found: {ws / 'config.yaml'}",
-            details={"workspace": str(ws)},
-        )
-    return ws
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise RuntimeStateError(
-            f"Invalid JSON state file: {path}",
-            details={"path": str(path), "reason": str(exc)},
-        ) from exc
-    except OSError as exc:
-        raise RuntimeStateError(
-            f"Failed to read state file: {path}",
-            details={"path": str(path), "reason": str(exc)},
-        ) from exc
-    if not isinstance(data, dict):
-        raise RuntimeStateError(
-            f"State file must contain a JSON object: {path}",
-            details={"path": str(path)},
-        )
-    return data
-
-
-def _read_json_if_exists(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        return None
-    return _read_json(path)
-
-
-def _wrap_archive_error(exc: RunArchiveError) -> RuntimeStateError:
-    return RuntimeStateError(
-        str(exc),
-        details=exc.details,
-        error_code=exc.error_code or E_RUN_ARCHIVE_FAILED,
-    )
-
 
 def _checked_workflow_with_run_integrity(workflow: dict[str, Any], *, path: Path) -> dict[str, Any]:
     try:
@@ -1217,77 +1094,6 @@ def import_fact_layer_transaction(
     return state
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    text += "\n"
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError as exc:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise RuntimeStateError(
-            f"Failed to write state file: {path}",
-            details={"path": str(path), "reason": str(exc)},
-        ) from exc
-
-
-def _read_state_bytes(path: Path) -> bytes | None:
-    try:
-        if not path.exists():
-            return None
-        return path.read_bytes()
-    except OSError as exc:
-        raise RuntimeStateError(
-            f"Failed to snapshot state file: {path}",
-            details={"path": str(path), "reason": str(exc)},
-        ) from exc
-
-
-def _restore_state_bytes(path: Path, data: bytes | None) -> None:
-    try:
-        if data is None:
-            path.unlink(missing_ok=True)
-            return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.rollback.tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, path)
-    except OSError as exc:
-        raise RuntimeStateError(
-            f"Failed to restore state file after partial write: {path}",
-            details={"path": str(path), "reason": str(exc)},
-            error_code=E_TRANSACTION_PARTIAL_WRITE,
-        ) from exc
-
-
-def _snapshot_state_files(paths: dict[str, Path], keys: tuple[str, ...]) -> dict[str, bytes | None]:
-    return {key: _read_state_bytes(paths[key]) for key in keys}
-
-
-def _restore_state_files(paths: dict[str, Path], snapshots: dict[str, bytes | None]) -> None:
-    rollback_errors: list[dict[str, str]] = []
-    for key, data in snapshots.items():
-        try:
-            _restore_state_bytes(paths[key], data)
-        except RuntimeStateError as exc:
-            rollback_errors.append({
-                "key": key,
-                "path": str(paths[key]),
-                "reason": str(exc),
-            })
-    if rollback_errors:
-        raise RuntimeStateError(
-            "Runtime state rollback failed after partial write.",
-            details={"rollback_errors": rollback_errors},
-            error_code=E_TRANSACTION_PARTIAL_WRITE,
-        )
-
-
 def _remove_reset_archive_copy(path: Path | None) -> None:
     if path is None:
         return
@@ -1298,19 +1104,6 @@ def _remove_reset_archive_copy(path: Path | None) -> None:
             "Failed to remove reset event-log archive after partial write.",
             details={"path": str(path), "reason": str(exc)},
             error_code=E_TRANSACTION_PARTIAL_WRITE,
-        ) from exc
-
-
-def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
-    try:
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
-    except OSError as exc:
-        raise RuntimeStateError(
-            f"Failed to append event log: {path}",
-            details={"path": str(path), "reason": str(exc)},
         ) from exc
 
 
@@ -1429,75 +1222,6 @@ def _completion_transaction_integrity_reason(
         "Last completion transaction is missing its decision_recorded event: "
         f"{transaction_id}."
     )
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise RuntimeStateError(
-            f"Invalid YAML contract file: {path}",
-            details={"path": str(path), "reason": str(exc)},
-        ) from exc
-    except OSError as exc:
-        raise RuntimeStateError(
-            f"Failed to read contract file: {path}",
-            details={"path": str(path), "reason": str(exc)},
-        ) from exc
-    if not isinstance(data, dict):
-        raise RuntimeStateError(
-            f"Contract file must contain a mapping: {path}",
-            details={"path": str(path)},
-        )
-    return data
-
-
-def _contract_file(repo_workdir: Path, rel_path: str) -> Path:
-    path = repo_workdir / rel_path
-    if not path.exists():
-        raise RuntimeStateError(
-            f"Contract file not found: {path}",
-            details={"contract": rel_path, "repo_workdir": str(repo_workdir)},
-        )
-    return path
-
-
-def load_stage_specs(repo_workdir: str | Path) -> list[dict[str, Any]]:
-    repo = Path(repo_workdir).expanduser().resolve()
-    data = _load_yaml(_contract_file(repo, CONTRACT_REFERENCES["stage_specs"]))
-    stages = ((data.get("workflow") or {}).get("stages") or [])
-    if not isinstance(stages, list):
-        raise RuntimeStateError("stage_specs.yaml workflow.stages must be a list")
-    return [stage for stage in stages if isinstance(stage, dict)]
-
-
-def load_artifact_contracts(repo_workdir: str | Path) -> list[dict[str, Any]]:
-    repo = Path(repo_workdir).expanduser().resolve()
-    data = _load_yaml(_contract_file(repo, CONTRACT_REFERENCES["artifact_contracts"]))
-    artifacts = data.get("artifacts") or []
-    if not isinstance(artifacts, list):
-        raise RuntimeStateError("artifact_contracts.yaml artifacts must be a list")
-    return [artifact for artifact in artifacts if isinstance(artifact, dict)]
-
-
-def _stage_ids(stages: list[dict[str, Any]]) -> list[str]:
-    return [str(stage["stage_id"]) for stage in stages if stage.get("stage_id")]
-
-
-def _artifact_ids(artifacts: list[dict[str, Any]]) -> set[str]:
-    return {
-        str(artifact["artifact_id"])
-        for artifact in artifacts
-        if artifact.get("artifact_id")
-    }
-
-
-def _artifact_map(artifacts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {
-        str(artifact["artifact_id"]): artifact
-        for artifact in artifacts
-        if artifact.get("artifact_id")
-    }
 
 
 def _initial_stage_statuses(stages: list[dict[str, Any]], *, now: str) -> dict[str, dict[str, Any]]:
@@ -2037,22 +1761,6 @@ def record_handoff_written(
     )
 
 
-def _workspace_relative(workspace: Path, path: Path) -> str:
-    resolved = path.expanduser().resolve()
-    try:
-        return resolved.relative_to(workspace).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str, str]:
     if not path.exists():
         return ARTIFACT_EXPECTED, "not_checked"
@@ -2452,16 +2160,6 @@ def _completion_artifact_gate_reasons(
                 f"Optional expected artifact '{artifact_id}' at '{rel_path}' is invalid ({validation_result})."
             )
     return reasons
-
-
-def _load_workspace_yaml(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def _count_evidence_files(path: Path, workspace: Path) -> int:
