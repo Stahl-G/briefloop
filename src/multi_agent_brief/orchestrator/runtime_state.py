@@ -56,6 +56,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
     normalize_run_integrity as _normalize_run_integrity,
     workflow_with_run_integrity as _workflow_with_run_integrity,
 )
+from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -75,16 +76,6 @@ RUNTIME_STATE_FILES = {
     "event_log": "output/intermediate/event_log.jsonl",
 }
 PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe")
-NON_EVIDENCE_INPUT_SUBDIRS = {"context", "feedback", "instructions"}
-NON_EVIDENCE_INPUT_FILENAMES = {
-    ".ds_store",
-    ".gitkeep",
-    ".keep",
-    "readme",
-    "readme.md",
-    "readme.txt",
-}
-NON_EVIDENCE_INPUT_FILENAME_PARTS = ("placeholder", "template")
 
 EVENT_TYPES = {
     "run_initialized",
@@ -1591,33 +1582,8 @@ def _load_workspace_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _is_evidence_input_path(path: Path, workspace: Path) -> bool:
-    input_dir = (workspace / "input").resolve()
-    resolved = path.resolve()
-    try:
-        relative = resolved.relative_to(input_dir)
-    except ValueError:
-        return True
-    if relative.parts and relative.parts[0] in NON_EVIDENCE_INPUT_SUBDIRS:
-        return False
-    if any(part.startswith(".") for part in relative.parts):
-        return False
-    name = path.name.lower()
-    if name in NON_EVIDENCE_INPUT_FILENAMES:
-        return False
-    if any(part in name for part in NON_EVIDENCE_INPUT_FILENAME_PARTS):
-        return False
-    if path.is_file():
-        try:
-            if path.stat().st_size == 0:
-                return False
-        except OSError:
-            return False
-    return True
-
-
 def _count_evidence_files(path: Path, workspace: Path) -> int:
-    if not path.exists() or not _is_evidence_input_path(path, workspace):
+    if not path.exists() or not is_evidence_input_path(path, workspace):
         return 0
     if path.is_file():
         return 1
@@ -1625,7 +1591,7 @@ def _count_evidence_files(path: Path, workspace: Path) -> int:
         return sum(
             1
             for item in path.rglob("*")
-            if item.is_file() and _is_evidence_input_path(item, workspace)
+            if item.is_file() and is_evidence_input_path(item, workspace)
         )
     return 0
 
@@ -1693,7 +1659,7 @@ def _configured_evidence_source_count(sources: dict[str, Any], workspace: Path) 
         count += sum(
             1
             for item in input_dir.rglob("*")
-            if item.is_file() and _is_evidence_input_path(item, workspace)
+            if item.is_file() and is_evidence_input_path(item, workspace)
         )
     return count
 

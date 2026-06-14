@@ -241,6 +241,31 @@ def _write_finalize_report(
     )
 
 
+def _write_fact_layer_inputs(ws: Path) -> None:
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "source-001.md").write_text(
+        "# Source 001\n\nExample evidence for the archived fact layer.\n",
+        encoding="utf-8",
+    )
+    (source_dir / "README.md").write_text(
+        "This README is not source evidence.\n",
+        encoding="utf-8",
+    )
+    output_dir = ws / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "input_classification.json").write_text(
+        json.dumps({
+            "evidence": [{"path": str(source_dir / "source-001.md"), "name": "source-001.md"}],
+            "feedback": [],
+            "instruction": [],
+            "context": [],
+            "skipped": [],
+        }),
+        encoding="utf-8",
+    )
+
+
 def _set_current_stage(ws: Path, stage_id: str) -> None:
     stages = runtime_state.load_stage_specs(ROOT)
     stage_ids = [str(stage.get("stage_id") or "") for stage in stages if stage.get("stage_id")]
@@ -1960,6 +1985,166 @@ def test_run_archive_records_sha256_for_every_file(tmp_path):
         assert record["size_bytes"] == path.stat().st_size
 
 
+def test_run_archive_manifest_records_complete_fact_layer(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_fact_layer_inputs(ws)
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    fact_layer = manifest["fact_layer"]
+
+    assert fact_layer["schema_version"] == "mabw.run_archive.fact_layer.v1"
+    assert fact_layer["status"] == "complete"
+    assert fact_layer["missing_artifact_ids"] == []
+    assert fact_layer["source_evidence_count"] == 1
+    fact_artifact_ids = {record["artifact_id"] for record in fact_layer["artifacts"]}
+    assert {
+        "durable_source_evidence_or_source_pack",
+        "input_classification",
+        "candidate_claims",
+        "screened_candidates",
+        "claim_ledger",
+    } <= fact_artifact_ids
+    assert len(fact_artifact_ids) == len(fact_layer["artifacts"])
+    for record in fact_layer["artifacts"]:
+        if record["artifact_id"] == "durable_source_evidence_or_source_pack":
+            assert record["fact_role"] == "durable_source_evidence_pack"
+            assert record["file_count"] == 1
+            assert len(record["files"]) == 1
+            for file_record in record["files"]:
+                path = archive / file_record["archive_path"]
+                assert path.exists()
+                assert file_record["sha256"] == runtime_state._sha256_file(path)
+                assert not Path(file_record["archive_path"]).is_absolute()
+                assert not Path(file_record["original_path"]).is_absolute()
+        else:
+            path = archive / record["archive_path"]
+            assert path.exists()
+            assert record["sha256"] == runtime_state._sha256_file(path)
+            assert not Path(record["archive_path"]).is_absolute()
+            assert not Path(record["original_path"]).is_absolute()
+
+
+def test_run_archive_manifest_groups_multiple_source_files_as_one_source_pack(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_fact_layer_inputs(ws)
+    second = ws / "input" / "sources" / "source-002.md"
+    second.write_text("# Source 002\n\nSecond evidence file.\n", encoding="utf-8")
+
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    fact_layer = manifest["fact_layer"]
+    artifacts = {
+        record["artifact_id"]: record
+        for record in fact_layer["artifacts"]
+    }
+    source_pack = artifacts["durable_source_evidence_or_source_pack"]
+
+    assert fact_layer["status"] == "complete"
+    assert fact_layer["source_evidence_count"] == 2
+    assert len(artifacts) == len(fact_layer["artifacts"])
+    assert source_pack["file_count"] == 2
+    assert len(source_pack["files"]) == 2
+    assert {record["original_path"] for record in source_pack["files"]} == {
+        "input/sources/source-001.md",
+        "input/sources/source-002.md",
+    }
+    for file_record in source_pack["files"]:
+        path = archive / file_record["archive_path"]
+        assert path.exists()
+        assert file_record["sha256"] == runtime_state._sha256_file(path)
+
+
+def test_run_archive_excludes_source_candidates_from_fact_layer(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_fact_layer_inputs(ws)
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_plan_only\n"
+        "evidence_status: not_evidence\n",
+        encoding="utf-8",
+    )
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    fact_layer = manifest["fact_layer"]
+
+    assert {
+        "artifact_id": "source_candidates",
+        "original_path": "source_candidates.yaml",
+        "reason": "source_plan_not_evidence",
+        "sha256": runtime_state._sha256_file(ws / "source_candidates.yaml"),
+        "size_bytes": (ws / "source_candidates.yaml").stat().st_size,
+    } in fact_layer["excluded"]
+    assert all(record["original_path"] != "source_candidates.yaml" for record in manifest["files"])
+    assert not (archive / "fact_layer" / "source_candidates.yaml").exists()
+
+
+def test_run_archive_marks_fact_layer_incomplete_when_source_evidence_missing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    output_dir = ws / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "input_classification.json").write_text(
+        json.dumps({"evidence": [], "feedback": [], "instruction": [], "context": [], "skipped": []}),
+        encoding="utf-8",
+    )
+
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    fact_layer = manifest["fact_layer"]
+
+    assert fact_layer["status"] == "incomplete"
+    assert "durable_source_evidence_or_source_pack" in fact_layer["missing_artifact_ids"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("empty.md", ""),
+        ("template.md", "# Template\n\nFill this in later.\n"),
+        ("placeholder.json", '{"placeholder": true}\n'),
+        ("readme.txt", "Source directory notes.\n"),
+        (".gitkeep", "keep\n"),
+    ],
+)
+def test_run_archive_uses_source_discovery_evidence_filter_for_fact_layer_sources(
+    tmp_path,
+    filename: str,
+    content: str,
+):
+    ws = _write_workspace(tmp_path)
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / filename).write_text(content, encoding="utf-8")
+    output_dir = ws / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "input_classification.json").write_text(
+        json.dumps({
+            "evidence": [{"path": str(source_dir / filename), "name": filename}],
+            "feedback": [],
+            "instruction": [],
+            "context": [],
+            "skipped": [],
+        }),
+        encoding="utf-8",
+    )
+
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    fact_layer = manifest["fact_layer"]
+
+    assert fact_layer["status"] == "incomplete"
+    assert fact_layer["source_evidence_count"] == 0
+    assert "durable_source_evidence_or_source_pack" in fact_layer["missing_artifact_ids"]
+    assert all(
+        record["artifact_id"] != "durable_source_evidence_or_source_pack"
+        for record in fact_layer["artifacts"]
+    )
+
+
 def test_run_archive_manifest_marks_malformed_run_integrity_unknown(tmp_path):
     ws = _write_workspace(tmp_path)
     state = _complete_finalized_workspace(ws)
@@ -1999,6 +2184,35 @@ def test_finalize_complete_archive_is_idempotent_when_content_matches(tmp_path):
 
     assert result["archive_manifest_sha256"] == archive["archive_manifest_sha256"]
     assert result["file_count"] == archive["file_count"]
+
+
+def test_existing_archive_rejects_corrupted_fact_layer_projection(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_fact_layer_inputs(ws)
+    state = _complete_finalized_workspace(ws)
+    archive_root = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest_path = archive_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["fact_layer"] = {
+        "schema_version": "mabw.run_archive.fact_layer.v1",
+        "status": "complete",
+        "artifacts": [],
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    finalize_report = json.loads((_intermediate(ws) / "finalize_report.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(runtime_state.RunArchiveError) as excinfo:
+        archive_finalized_run(
+            workspace=ws,
+            run_id=state["manifest"]["run_id"],
+            manifest=state["manifest"],
+            workflow=state["workflow_state"],
+            artifact_registry=state["artifact_registry"],
+            finalize_report=finalize_report,
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_RUN_ARCHIVE_CONFLICT
+    assert "fact_layer projection differs" in str(excinfo.value)
 
 
 def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
