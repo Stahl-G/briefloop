@@ -1,19 +1,26 @@
-"""MABW-080 experiment harness schema validation.
+"""MABW-080 experiment harness validation and metadata registration.
 
 080 validates whether approved Improvement Memory guidance manifests under a
-frozen fact layer. These helpers are intentionally side-effect free: they do
-not touch workspaces, runtime state, agent assets, or Improvement Ledger files.
+frozen fact layer. Schema validators are side-effect free. ``register-run``
+writes only the requested experiment metadata output and must not mutate
+workspace runtime state, archive files, case files, agent assets, or
+Improvement Ledger files.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from multi_agent_brief.orchestrator.run_integrity import PERSISTED_RUN_INTEGRITY_STATUSES
+from multi_agent_brief.orchestrator.run_integrity import (
+    PERSISTED_RUN_INTEGRITY_STATUSES,
+    classify_run_integrity,
+)
 
 
 EXPERIMENT_080_ID = "MABW-080"
@@ -24,6 +31,7 @@ GUIDANCE_SET_SCHEMA = "mabw.experiment_080.guidance_set.v1"
 RUN_RECORD_SCHEMA = "mabw.experiment_080.run_record.v1"
 SCORECARD_SCHEMA = "mabw.experiment_080.scorecard.v1"
 CASE_VALIDATION_SCHEMA = "mabw.experiment_080.case_validation.v1"
+RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
 
 ALLOWED_CONDITIONS = {"baseline", "memory", "prompt_only"}
 ALLOWED_VALIDITY_CLASSES = {
@@ -370,6 +378,16 @@ def validate_run_record(payload: dict[str, Any]) -> list[Experiment080Diagnostic
                 ))
             _require_non_empty_string(model.get("value"), diagnostics, path="run_record.model.value")
     _validate_run_integrity(payload.get("run_integrity"), diagnostics, path="run_record.run_integrity")
+    timing = payload.get("timing")
+    if not isinstance(timing, dict):
+        diagnostics.append(_diag(
+            "invalid_timing",
+            "run_record.timing must be an object.",
+            path="run_record.timing",
+        ))
+    else:
+        _require_non_empty_string(timing.get("schema_version"), diagnostics, path="run_record.timing.schema_version")
+        _require_non_empty_string(timing.get("status"), diagnostics, path="run_record.timing.status")
     imported = payload.get("imported_fact_layer")
     if not isinstance(imported, dict):
         diagnostics.append(_diag(
@@ -384,6 +402,149 @@ def validate_run_record(payload: dict[str, Any]) -> list[Experiment080Diagnostic
             path="run_record.imported_fact_layer.matches_case_frozen_fact_layer",
         ))
     return diagnostics
+
+
+def register_run_record(
+    *,
+    case_dir: str | Path,
+    condition: str,
+    workspace: str | Path,
+    output: str | Path,
+    repo_workdir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Register a completed workspace run into an 080 case.
+
+    This writes only the requested run record. It does not mutate workspace
+    runtime state, archive files, case files, or normal workflow artifacts.
+    """
+
+    case_root = Path(case_dir).expanduser().resolve()
+    ws = Path(workspace).expanduser().resolve()
+    output_path = Path(output).expanduser()
+    if not output_path.is_absolute():
+        output_path = (Path.cwd() / output_path).resolve()
+    else:
+        output_path = output_path.resolve()
+
+    case_validation = validate_case_dir(case_root)
+    if not case_validation.get("ok"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_CASE_INVALID",
+            "MABW-080 case validation failed.",
+            errors=case_validation.get("errors") or [],
+            warnings=case_validation.get("warnings") or [],
+        )
+
+    case_manifest = _load_json_object(case_root / "case_manifest.json", label="case_manifest")
+    frozen_fact_layer = _load_json_object(case_root / "frozen_fact_layer.json", label="frozen_fact_layer")
+    conditions = case_manifest.get("conditions") if isinstance(case_manifest.get("conditions"), list) else []
+    if condition not in conditions:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_CONDITION_INVALID",
+            f"Condition {condition!r} is not declared by case_manifest.conditions.",
+            condition=condition,
+            allowed_conditions=[item for item in conditions if item in ALLOWED_CONDITIONS],
+        )
+
+    intermediate = ws / "output" / "intermediate"
+    runtime_manifest = _load_json_object(intermediate / "runtime_manifest.json", label="runtime_manifest")
+    workflow_state = _load_json_object(intermediate / "workflow_state.json", label="workflow_state")
+    run_id = _require_text(runtime_manifest.get("run_id"), "runtime_manifest.run_id")
+    workflow_run_id = _require_text(workflow_state.get("run_id"), "workflow_state.run_id")
+    if workflow_run_id != run_id:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_ID_MISMATCH",
+            "runtime_manifest.run_id and workflow_state.run_id do not match.",
+            runtime_manifest_run_id=run_id,
+            workflow_state_run_id=workflow_run_id,
+        )
+
+    _validate_terminal_workflow(workflow_state)
+    archive_manifest_path = ws / "output" / "runs" / run_id / "manifest.json"
+    archive_manifest = _load_json_object(archive_manifest_path, label="run_archive_manifest")
+    _validate_archive_manifest_ids(archive_manifest, run_id=run_id)
+
+    workflow_integrity = _registered_run_integrity(
+        workflow_state,
+        path="workflow_state.run_integrity",
+    )
+    archive_integrity = _registered_run_integrity(
+        archive_manifest,
+        path="run_archive_manifest.run_integrity",
+    )
+    _validate_run_integrity_consistency(workflow_integrity, archive_integrity)
+
+    archive_fact_layer = archive_manifest.get("fact_layer")
+    if not isinstance(archive_fact_layer, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_INVALID",
+            "run archive manifest.fact_layer must be an object.",
+        )
+    if archive_fact_layer.get("status") != "complete":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_INCOMPLETE",
+            "run archive fact_layer.status must be complete.",
+            status=archive_fact_layer.get("status"),
+        )
+    imported_fact_layer = _compare_case_fact_layer_to_archive(
+        frozen_fact_layer=frozen_fact_layer,
+        archive_fact_layer=archive_fact_layer,
+        archive_root=archive_manifest_path.parent,
+    )
+
+    timing = archive_manifest.get("timing")
+    if not isinstance(timing, dict) or not timing.get("schema_version") or not timing.get("status"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_TIMING_MISSING",
+            "run archive manifest.timing must contain schema_version and status.",
+        )
+
+    repo_commit, repo_commit_source = _registration_repo_commit(
+        case_manifest=case_manifest,
+        repo_workdir=repo_workdir,
+    )
+    runtime = _require_text(runtime_manifest.get("runtime"), "runtime_manifest.runtime")
+
+    run_record: dict[str, Any] = {
+        "schema_version": RUN_RECORD_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": case_manifest["case_id"],
+        "condition": condition,
+        "run_id": run_id,
+        "workspace_path": "<redacted-workspace>",
+        "run_archive_path": _workspace_relative(ws, archive_manifest_path),
+        "repo_commit": repo_commit,
+        "repo_commit_source": repo_commit_source,
+        "runtime": runtime,
+        "run_integrity": workflow_integrity,
+        "timing": timing,
+        "imported_fact_layer": imported_fact_layer,
+    }
+    model = _model_identity(runtime_manifest, workflow_state)
+    if model is not None:
+        run_record["model"] = model
+
+    diagnostics = validate_run_record(run_record)
+    if diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_RECORD_INVALID",
+            "Generated run_record.json failed schema validation.",
+            errors=[diagnostic.to_dict() for diagnostic in diagnostics],
+        )
+
+    record_bytes = _json_bytes(run_record)
+    written = _write_run_record_idempotently(output_path, record_bytes)
+    return {
+        "ok": True,
+        "schema_version": RUN_RECORD_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": case_manifest["case_id"],
+        "condition": condition,
+        "run_id": run_id,
+        "output": str(output_path),
+        "written": written,
+        "run_record": run_record,
+    }
 
 
 def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]:
@@ -524,6 +685,497 @@ def validate_case_dir(case_dir: str | Path) -> dict[str, Any]:
         "errors": [error.to_dict() for error in errors],
         "warnings": [warning.to_dict() for warning in warnings],
     }
+
+
+def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_INPUT_MISSING",
+            f"{label} is missing.",
+            path=str(path),
+        )
+    except json.JSONDecodeError as exc:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_INPUT_INVALID",
+            f"{label} is not valid JSON: {exc}",
+            path=str(path),
+        )
+    except OSError as exc:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_INPUT_READ_FAILED",
+            f"Failed to read {label}: {exc}",
+            path=str(path),
+        )
+    if not isinstance(payload, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_INPUT_INVALID",
+            f"{label} must contain a JSON object.",
+            path=str(path),
+        )
+    return payload
+
+
+def _require_text(value: Any, path: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_INPUT_INVALID",
+            f"{path} must be a non-empty string.",
+            path=path,
+        )
+    return value
+
+
+def _validate_terminal_workflow(workflow_state: dict[str, Any]) -> None:
+    if workflow_state.get("current_stage") is not None:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_NOT_TERMINAL",
+            "Workspace run is not terminal; workflow_state.current_stage must be null.",
+            current_stage=workflow_state.get("current_stage"),
+        )
+    statuses = workflow_state.get("stage_statuses")
+    finalize = statuses.get("finalize") if isinstance(statuses, dict) and isinstance(statuses.get("finalize"), dict) else {}
+    if finalize.get("status") != "complete":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_NOT_FINALIZED",
+            "Workspace run is not finalized; stage_statuses.finalize.status must be complete.",
+            finalize_status=finalize.get("status"),
+        )
+
+
+def _validate_archive_manifest_ids(archive_manifest: dict[str, Any], *, run_id: str) -> None:
+    if archive_manifest.get("schema_version") != RUN_ARCHIVE_SCHEMA:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_INVALID",
+            f"run archive schema_version must be {RUN_ARCHIVE_SCHEMA}.",
+            schema_version=archive_manifest.get("schema_version"),
+        )
+    archive_run_id = archive_manifest.get("run_id")
+    runtime_manifest_run_id = archive_manifest.get("runtime_manifest_run_id")
+    if archive_run_id != run_id or runtime_manifest_run_id != run_id:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_ID_MISMATCH",
+            "runtime_manifest.run_id and archive run ids do not match.",
+            runtime_manifest_run_id=run_id,
+            archive_run_id=archive_run_id,
+            archive_runtime_manifest_run_id=runtime_manifest_run_id,
+        )
+
+
+def _registered_run_integrity(container: dict[str, Any], *, path: str) -> dict[str, Any]:
+    if "run_integrity" not in container:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_INTEGRITY_INVALID",
+            f"{path} is required for run registration.",
+            path=path,
+        )
+    projection = classify_run_integrity(container.get("run_integrity"), missing=False)
+    if projection.get("status") not in ALLOWED_RUN_INTEGRITY_STATUSES:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_INTEGRITY_INVALID",
+            f"{path} must be clean or contaminated, not malformed or unknown.",
+            path=path,
+            run_integrity=projection,
+        )
+    if projection.get("status") == "contaminated" and projection.get("reference_eligible") is True:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_INTEGRITY_INVALID",
+            f"{path}.reference_eligible must be false for contaminated runs.",
+            path=path,
+        )
+    return projection
+
+
+def _validate_run_integrity_consistency(workflow: dict[str, Any], archive: dict[str, Any]) -> None:
+    fields = ("status", "reference_eligible", "clean_single_shot")
+    mismatches = [
+        field
+        for field in fields
+        if workflow.get(field) != archive.get(field)
+    ]
+    if mismatches:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_INTEGRITY_MISMATCH",
+            "workflow_state.run_integrity and archive run_integrity do not match.",
+            mismatches=mismatches,
+        )
+
+
+def _compare_case_fact_layer_to_archive(
+    *,
+    frozen_fact_layer: dict[str, Any],
+    archive_fact_layer: dict[str, Any],
+    archive_root: Path,
+) -> dict[str, Any]:
+    case_shas = _case_fact_layer_shas(frozen_fact_layer)
+    archive_shas = _archive_fact_layer_shas(archive_fact_layer, archive_root=archive_root)
+    missing = sorted(REQUIRED_FACT_ARTIFACT_IDS - set(archive_shas))
+    if missing:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "run archive fact_layer is missing required artifact ids.",
+            missing_artifact_ids=missing,
+        )
+    mismatches: list[dict[str, Any]] = []
+    for artifact_id in sorted(REQUIRED_FACT_ARTIFACT_IDS):
+        case_sha = case_shas.get(artifact_id)
+        archive_sha = archive_shas.get(artifact_id)
+        if case_sha != archive_sha:
+            mismatches.append({
+                "artifact_id": artifact_id,
+                "case_sha256": case_sha,
+                "archive_sha256": archive_sha,
+            })
+    return {
+        "matches_case_frozen_fact_layer": not mismatches,
+        "comparison_semantics": "case_sha256_vs_archive_sha256_or_source_pack_sha256",
+        "mismatches": mismatches,
+    }
+
+
+def _case_fact_layer_shas(frozen_fact_layer: dict[str, Any]) -> dict[str, str]:
+    artifacts = frozen_fact_layer.get("artifacts") if isinstance(frozen_fact_layer.get("artifacts"), list) else []
+    shas: dict[str, str] = {}
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        artifact_id = artifact.get("artifact_id")
+        sha = artifact.get("sha256")
+        if isinstance(artifact_id, str) and isinstance(sha, str):
+            shas[artifact_id] = sha
+    return shas
+
+
+def _archive_fact_layer_shas(archive_fact_layer: dict[str, Any], *, archive_root: Path) -> dict[str, str]:
+    if archive_fact_layer.get("schema_version") != "mabw.run_archive.fact_layer.v1":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "run archive fact_layer.schema_version is unsupported.",
+            schema_version=archive_fact_layer.get("schema_version"),
+        )
+    artifacts = archive_fact_layer.get("artifacts")
+    if not isinstance(artifacts, list):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "run archive fact_layer.artifacts must be a list.",
+        )
+    shas: dict[str, str] = {}
+    seen: set[str] = set()
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+                "run archive fact_layer.artifacts entries must be objects.",
+                index=index,
+            )
+        artifact_id = str(artifact.get("artifact_id") or "")
+        _reject_source_plan_archive_artifact(artifact, artifact_id=artifact_id, index=index)
+        if not artifact_id:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+                "run archive fact_layer artifact_id is required.",
+                index=index,
+            )
+        if artifact_id not in REQUIRED_FACT_ARTIFACT_IDS:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+                "run archive fact_layer contains an artifact id outside the 080 required fact layer.",
+                artifact_id=artifact_id,
+                index=index,
+            )
+        if artifact_id in seen:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+                "run archive fact_layer contains duplicate artifact ids.",
+                artifact_id=artifact_id,
+            )
+        seen.add(artifact_id)
+        if artifact_id == "durable_source_evidence_or_source_pack":
+            files = artifact.get("files")
+            if not isinstance(files, list) or not files:
+                _raise_experiment_error(
+                    "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+                    "durable source evidence pack must provide files[].",
+                    artifact_id=artifact_id,
+                )
+            normalized_files = []
+            for file_index, file_record in enumerate(files):
+                if not isinstance(file_record, dict):
+                    _raise_experiment_error(
+                        "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+                        "durable source evidence pack files[] entries must be objects.",
+                        artifact_id=artifact_id,
+                        file_index=file_index,
+                    )
+                normalized_files.append(_validated_archive_file_record(
+                    archive_root=archive_root,
+                    record=file_record,
+                    context=f"{artifact_id}.files[{file_index}]",
+                ))
+            actual_pack_sha = _sha256_json(normalized_files)
+            manifest_pack_sha = artifact.get("pack_sha256")
+            if manifest_pack_sha != actual_pack_sha:
+                _raise_experiment_error(
+                    "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+                    "durable source evidence pack hash does not match files[].",
+                    artifact_id=artifact_id,
+                    expected_sha256=manifest_pack_sha,
+                    actual_sha256=actual_pack_sha,
+                )
+            shas[artifact_id] = actual_pack_sha
+            continue
+        normalized = _validated_archive_file_record(
+            archive_root=archive_root,
+            record=artifact,
+            context=artifact_id,
+        )
+        shas[artifact_id] = normalized["sha256"]
+    return shas
+
+
+def _validated_archive_file_record(
+    *,
+    archive_root: Path,
+    record: dict[str, Any],
+    context: str,
+) -> dict[str, Any]:
+    archive_path = record.get("archive_path")
+    original_path = record.get("original_path")
+    sha256 = record.get("sha256")
+    size_bytes = record.get("size_bytes")
+    if not isinstance(archive_path, str) or not archive_path.strip():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file record archive_path is required.",
+            context=context,
+        )
+    if not isinstance(original_path, str) or not original_path.strip():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file record original_path is required.",
+            context=context,
+        )
+    if not isinstance(sha256, str) or not _SHA256_RE.match(sha256):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file record sha256 is invalid.",
+            context=context,
+        )
+    if not isinstance(size_bytes, int) or size_bytes < 0:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file record size_bytes is invalid.",
+            context=context,
+        )
+    if _unsafe_relative_archive_path(archive_path):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file record archive_path must be relative and safe.",
+            context=context,
+            archive_path=archive_path,
+        )
+    file_path = (archive_root / archive_path).resolve()
+    try:
+        file_path.relative_to(archive_root.resolve())
+    except ValueError:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file record archive_path escapes archive.",
+            context=context,
+            archive_path=archive_path,
+        )
+    if not file_path.exists() or not file_path.is_file():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file is missing.",
+            context=context,
+            archive_path=archive_path,
+        )
+    actual_size = file_path.stat().st_size
+    if actual_size != size_bytes:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file size does not match manifest.",
+            context=context,
+            archive_path=archive_path,
+            expected_size_bytes=size_bytes,
+            actual_size_bytes=actual_size,
+        )
+    actual_sha = _sha256_file(file_path)
+    if actual_sha != sha256:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "archive fact-layer file hash does not match manifest.",
+            context=context,
+            archive_path=archive_path,
+            expected_sha256=sha256,
+            actual_sha256=actual_sha,
+        )
+    return {
+        "archive_path": archive_path,
+        "original_path": original_path,
+        "sha256": sha256,
+        "size_bytes": size_bytes,
+    }
+
+
+def _unsafe_relative_archive_path(path_text: str) -> bool:
+    return (
+        not path_text
+        or path_text.startswith("/")
+        or Path(path_text).is_absolute()
+        or PurePosixPath(path_text).is_absolute()
+        or PureWindowsPath(path_text).is_absolute()
+        or ".." in Path(path_text).parts
+        or ".." in PurePosixPath(path_text).parts
+        or ".." in PureWindowsPath(path_text).parts
+    )
+
+
+def _reject_source_plan_archive_artifact(artifact: dict[str, Any], *, artifact_id: str, index: int) -> None:
+    path_values: list[str] = []
+    for key in ("archive_path", "original_path", "path"):
+        value = artifact.get(key)
+        if isinstance(value, str):
+            path_values.append(value)
+    files = artifact.get("files")
+    if isinstance(files, list):
+        for file_record in files:
+            if not isinstance(file_record, dict):
+                continue
+            for key in ("archive_path", "original_path", "path"):
+                value = file_record.get(key)
+                if isinstance(value, str):
+                    path_values.append(value)
+    if artifact_id in SOURCE_PLAN_ARTIFACT_IDS or any(path.endswith("source_candidates.yaml") for path in path_values):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "source_candidates/source-plan artifacts cannot be registered as frozen fact evidence.",
+            artifact_id=artifact_id,
+            index=index,
+        )
+
+
+def _registration_repo_commit(
+    *,
+    case_manifest: dict[str, Any],
+    repo_workdir: str | Path | None,
+) -> tuple[str, str]:
+    if repo_workdir is not None:
+        return _current_repo_commit(repo_workdir)
+    return str(case_manifest.get("repo_commit") or ""), "case_manifest"
+
+
+def _current_repo_commit(repo_workdir: str | Path) -> tuple[str, str]:
+    root = Path(repo_workdir).expanduser().resolve()
+    if not (root / "pyproject.toml").exists() or not (root / "src" / "multi_agent_brief").exists():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_REPO_WORKDIR_INVALID",
+            "--repo-workdir must point to a MABW source checkout.",
+            repo_workdir=str(root),
+        )
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=str(root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_REPO_WORKDIR_INVALID",
+            "--repo-workdir must be a readable git checkout.",
+            repo_workdir=str(root),
+        )
+    if dirty.stdout.strip():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_REPO_WORKDIR_DIRTY",
+            "--repo-workdir must be clean before using git commit provenance.",
+            repo_workdir=str(root),
+        )
+    commit = result.stdout.strip()
+    if not commit:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_REPO_WORKDIR_INVALID",
+            "--repo-workdir did not produce a git commit.",
+            repo_workdir=str(root),
+        )
+    return commit, "git"
+
+
+def _model_identity(*containers: dict[str, Any]) -> dict[str, str] | None:
+    for container in containers:
+        model = container.get("model") if isinstance(container, dict) else None
+        if isinstance(model, str) and model.strip():
+            return {"epistemic_status": "operator_reported", "value": model.strip()}
+        if isinstance(model, dict):
+            value = model.get("value")
+            if isinstance(value, str) and value.strip():
+                return {"epistemic_status": "operator_reported", "value": value.strip()}
+    return None
+
+
+def _write_run_record_idempotently(path: Path, payload: bytes) -> bool:
+    if path.exists():
+        if not path.is_file():
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_OUTPUT_EXISTS",
+                "run_record output path exists but is not a file.",
+                output=str(path),
+            )
+        existing = path.read_bytes()
+        if existing == payload:
+            return False
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_OUTPUT_EXISTS",
+            "run_record output path already exists with different content.",
+            output=str(path),
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return True
+
+
+def _json_bytes(payload: dict[str, Any]) -> bytes:
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_json(payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _workspace_relative(workspace: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(workspace.resolve()).as_posix()
+    except ValueError:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_OUTPUT_INVALID",
+            "Path is not workspace-relative.",
+            path=str(path),
+        )
+
+
+def _raise_experiment_error(code: str, message: str, **details: Any) -> None:
+    raise Experiment080Error(message, details={"code": code, **details})
 
 
 def _validate_a_controlled_scorecard(

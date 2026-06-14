@@ -46,6 +46,7 @@ validation unless that is stated separately.
 | `multi-agent-brief improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Supported |
 | `multi-agent-brief eval-cases list/validate/run` | Supported |
 | `multi-agent-brief experiments 080 validate-case` | Experimental |
+| `multi-agent-brief experiments 080 register-run` | Experimental |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -78,6 +79,11 @@ truth. `run --recipe fast-rerun` requires an existing valid
 `runtime_manifest.fact_layer_import`; it writes runtime handoff guidance from
 Analyst onward and must not synthesize upstream source-discovery, Scout,
 Screener, or Claim Ledger execution history.
+
+MABW-080 run registration is experimental experiment metadata tooling. It
+registers completed workspace runs into an existing 080 case as `run_record.json`.
+It does not score guidance manifestation, summarize experiments, scaffold
+conditions, run workflow stages, or prove output quality.
 
 ## Runtimes
 

@@ -6,7 +6,7 @@ import argparse
 import json
 from typing import Any
 
-from multi_agent_brief.experiments import validate_case_dir
+from multi_agent_brief.experiments import Experiment080Error, register_run_record, validate_case_dir
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -29,18 +29,62 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     validate.add_argument("case_dir", help="Path to experiments/080/cases/<case_id>.")
     validate.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
+    register_run = exp080_sub.add_parser(
+        "register-run",
+        help="Register a completed workspace run into an MABW-080 case.",
+    )
+    register_run.add_argument("--case", required=True, dest="case_dir", help="Path to experiments/080/cases/<case_id>.")
+    register_run.add_argument(
+        "--condition",
+        required=True,
+        choices=("baseline", "memory", "prompt_only"),
+        help="080 condition for this run.",
+    )
+    register_run.add_argument("--workspace", required=True, help="Completed MABW workspace to register.")
+    register_run.add_argument("--output", required=True, help="Path to write run_record.json.")
+    register_run.add_argument(
+        "--repo-workdir",
+        help="Optional explicit MABW source checkout for git commit provenance. Defaults to case_manifest.repo_commit.",
+    )
+    register_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
 
 def handle(args: argparse.Namespace) -> int:
     if args.experiments_action != "080":
         return 1
-    if args.experiment_080_action != "validate-case":
+    if args.experiment_080_action == "validate-case":
+        payload = validate_case_dir(args.case_dir)
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            _print_validate_case(payload)
+        return 0 if payload.get("ok") else 1
+    if args.experiment_080_action != "register-run":
         return 1
-    payload = validate_case_dir(args.case_dir)
+    try:
+        payload = register_run_record(
+            case_dir=args.case_dir,
+            condition=args.condition,
+            workspace=args.workspace,
+            output=args.output,
+            repo_workdir=args.repo_workdir,
+        )
+    except Experiment080Error as exc:
+        payload = exc.to_dict()
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(f"[experiments 080 register-run] ok: False")
+            details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+            code = details.get("code")
+            suffix = f" ({code})" if code else ""
+            print(f"  - {payload.get('error')}{suffix}")
+        return 1
     if getattr(args, "json", False):
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     else:
-        _print_validate_case(payload)
-    return 0 if payload.get("ok") else 1
+        _print_register_run(payload)
+    return 0
 
 
 def _print_validate_case(payload: dict[str, Any]) -> None:
@@ -56,3 +100,11 @@ def _print_validate_case(payload: dict[str, Any]) -> None:
     for warning in payload.get("warnings") or []:
         location = f" ({warning.get('path')})" if warning.get("path") else ""
         print(f"  - warning {warning.get('code')}: {warning.get('message')}{location}")
+
+
+def _print_register_run(payload: dict[str, Any]) -> None:
+    print(f"[experiments 080 register-run] ok: {payload.get('ok')}")
+    print(f"[experiments 080 register-run] case_id: {payload.get('case_id')}")
+    print(f"[experiments 080 register-run] condition: {payload.get('condition')}")
+    print(f"[experiments 080 register-run] run_id: {payload.get('run_id')}")
+    print(f"[experiments 080 register-run] output: {payload.get('output')}")

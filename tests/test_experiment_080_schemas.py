@@ -134,6 +134,10 @@ def _valid_run_record() -> dict:
             "status": "clean",
             "reference_eligible": True,
         },
+        "timing": {
+            "schema_version": "mabw.control_timing.v1",
+            "status": "available",
+        },
         "imported_fact_layer": {
             "matches_case_frozen_fact_layer": True,
         },
