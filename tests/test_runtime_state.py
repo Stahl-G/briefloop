@@ -1885,6 +1885,10 @@ def test_run_archive_records_sha256_for_every_file(tmp_path):
         "clean_single_shot": True,
         "reasons": [],
     }
+    assert manifest["timing"]["schema_version"] == "mabw.control_timing.v1"
+    assert manifest["timing"]["source"] == "event_log"
+    assert manifest["timing"]["precision"] == "control_trace_bucket"
+    assert manifest["timing"]["status"] in {"available", "partial", "incomplete", "contaminated", "unknown"}
     assert manifest["files"]
     for record in manifest["files"]:
         path = archive / record["archive_path"]

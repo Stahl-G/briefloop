@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.orchestrator.run_integrity import normalize_run_integrity
+from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
+
 
 INTERMEDIATE_DIR = Path("output/intermediate")
 
@@ -31,6 +34,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "reader_clean": {},
         "improvement": {},
         "feedback": {},
+        "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
     }
@@ -64,6 +68,11 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["reader_clean"] = _reader_clean_summary(finalize_report)
     payload["improvement"] = _improvement_summary(ws, manifest)
     payload["feedback"] = _feedback_summary(feedback_issues, repair_plan)
+    workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
+    payload["timing"] = derive_control_timing_from_path(
+        ws / INTERMEDIATE_DIR / "event_log.jsonl",
+        workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
+    )
 
     stale = payload["stale_or_unknown"]
     for label, result in (
@@ -110,6 +119,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     feedback = status.get("feedback") or {}
     improvement = status.get("improvement") or {}
     events = status.get("events") or {}
+    timing = status.get("timing") or {}
 
     lines.extend(
         [
@@ -132,6 +142,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
                 f"expected={artifacts.get('expected_count', 0)}"
             ),
             f"[status] events: count={events.get('event_count', 0)} corrupt={events.get('corrupt_count', 0)}",
+            _format_timing_line(timing),
             f"[status] quality_gate: {gate.get('status') or 'unknown'}",
             f"[status] reader_clean: {reader.get('status') or 'unknown'}",
             (
@@ -152,6 +163,19 @@ def format_workspace_status(status: dict[str, Any]) -> str:
         lines.append(f"[status] stale_or_unknown: {marker}")
     lines.append(f"[status] suggested_next: {status.get('suggested_next_command')}")
     return "\n".join(lines)
+
+
+def _format_timing_line(timing: dict[str, Any]) -> str:
+    status = timing.get("status") or "unknown"
+    if status == "available":
+        elapsed = timing.get("total_elapsed_seconds")
+        stages = timing.get("stages") if isinstance(timing.get("stages"), list) else []
+        finalized = timing.get("finalize") if isinstance(timing.get("finalize"), dict) else None
+        stage_count = len(stages) + (1 if finalized else 0)
+        return f"[status] timing: available total_elapsed={elapsed}s stages={stage_count}"
+    if status == "contaminated":
+        return "[status] timing: contaminated; elapsed buckets are not clean evidence"
+    return f"[status] timing: {status}"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -199,23 +223,7 @@ def _workflow_summary(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_integrity_summary(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        return {
-            "status": "clean",
-            "reference_eligible": True,
-            "clean_single_shot": True,
-            "reasons": [],
-        }
-    status = str(value.get("status") or "clean")
-    if status != "contaminated":
-        status = "clean"
-    reasons = value.get("reasons") if isinstance(value.get("reasons"), list) else []
-    return {
-        "status": status,
-        "reference_eligible": False if status == "contaminated" else bool(value.get("reference_eligible", True)),
-        "clean_single_shot": False if status == "contaminated" else bool(value.get("clean_single_shot", True)),
-        "reasons": [item for item in reasons if isinstance(item, dict)],
-    }
+    return normalize_run_integrity(value)
 
 
 def _artifact_summary(result: dict[str, Any]) -> dict[str, Any]:

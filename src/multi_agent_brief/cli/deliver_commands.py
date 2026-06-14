@@ -19,6 +19,10 @@ from multi_agent_brief.orchestrator.runtime_state import (
     append_event,
     runtime_state_paths,
 )
+from multi_agent_brief.orchestrator.run_integrity import (
+    normalize_run_integrity,
+    unknown_run_integrity,
+)
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -513,12 +517,10 @@ def _delivery_run_id(workspace: Path) -> str:
 def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
     paths = runtime_state_paths(workspace)
     if not paths["workflow_state"].exists():
-        return {
-            "status": "unknown",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "workflow_state_missing", "message": "workflow_state.json is missing."}],
-        }
+        return unknown_run_integrity(
+            reason_code="workflow_state_missing",
+            message="workflow_state.json is missing.",
+        )
     try:
         workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -531,24 +533,7 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
             "workflow_state.json must contain an object; cannot verify run integrity.",
             error_code=E_DELIVERY_EVENT_FAILED,
         )
-    value = workflow.get("run_integrity") if isinstance(workflow, dict) else None
-    if not isinstance(value, dict):
-        return {
-            "status": "clean",
-            "reference_eligible": True,
-            "clean_single_shot": True,
-            "reasons": [],
-        }
-    status = str(value.get("status") or "clean")
-    if status != "contaminated":
-        status = "clean"
-    reasons = value.get("reasons") if isinstance(value.get("reasons"), list) else []
-    return {
-        "status": status,
-        "reference_eligible": False if status == "contaminated" else bool(value.get("reference_eligible", True)),
-        "clean_single_shot": False if status == "contaminated" else bool(value.get("clean_single_shot", True)),
-        "reasons": [item for item in reasons if isinstance(item, dict)],
-    }
+    return normalize_run_integrity(workflow.get("run_integrity"))
 
 
 def _print_run_integrity_warning(payload: dict[str, Any]) -> None:

@@ -59,6 +59,10 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     assert payload["workflow"]["current_stage"] == "doctor"
     assert payload["workflow"]["run_integrity"]["status"] == "clean"
     assert payload["workflow"]["run_integrity"]["reference_eligible"] is True
+    assert payload["timing"]["schema_version"] == "mabw.control_timing.v1"
+    assert payload["timing"]["source"] == "event_log"
+    assert payload["timing"]["precision"] == "control_trace_bucket"
+    assert payload["timing"]["status"] == "unknown"
     assert payload["artifacts"]["expected_count"] == 1
     assert payload["events"]["event_count"] == before_event_count
     assert "stage-complete" not in payload["suggested_next_command"]
@@ -94,6 +98,7 @@ def test_status_command_reports_contaminated_run_integrity(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "[status] run_integrity: contaminated reference_eligible=False" in out
+    assert "[status] timing: contaminated; elapsed buckets are not clean evidence" in out
 
 
 def test_status_command_does_not_initialize_missing_runtime_state(tmp_path, capsys):
@@ -124,6 +129,7 @@ def test_status_command_reports_corrupt_event_log_without_writing(tmp_path, caps
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["events"]["corrupt_count"] == 1
+    assert payload["timing"]["status"] == "invalid_event_log"
     assert "event_log contains unreadable records" in payload["stale_or_unknown"]
     assert event_log.read_bytes() == before
     assert event_log.stat().st_mtime_ns == before_mtime

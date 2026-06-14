@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from multi_agent_brief.orchestrator.run_integrity import PERSISTED_RUN_INTEGRITY_STATUSES
+
 
 EXPERIMENT_080_ID = "MABW-080"
 
@@ -31,7 +33,7 @@ ALLOWED_VALIDITY_CLASSES = {
     "invalid_incomplete",
     "invalid_fact_layer_mismatch",
 }
-ALLOWED_RUN_INTEGRITY_STATUSES = {"clean", "contaminated"}
+ALLOWED_RUN_INTEGRITY_STATUSES = PERSISTED_RUN_INTEGRITY_STATUSES
 ALLOWED_GUIDANCE_SOURCES = {"improvement_ledger", "manual", "prompt_only"}
 ALLOWED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review", "llm_only"}
 A_CONTROLLED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review"}
