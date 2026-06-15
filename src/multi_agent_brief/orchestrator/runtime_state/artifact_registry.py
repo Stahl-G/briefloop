@@ -257,14 +257,18 @@ def interpret_frozen_artifact_integrity(
         if artifact_id in mutating_stage_produces:
             continue
         producer_stage = str(artifact.get("producer_stage") or "")
-        producer_projection = project_stage_completion_for_read(
-            interpret_stage_completion(workflow, producer_stage)
-        )
-        if producer_projection.get("complete_or_skipped") is not True:
-            continue
         old_record = old_records.get(artifact_id) or {}
         old_sha = old_record.get("sha256")
         if not old_sha:
+            continue
+        producer_verdict = interpret_stage_completion(workflow, producer_stage)
+        if producer_verdict.kind != "canonical":
+            return _degraded_frozen_artifact_integrity(
+                f"Cannot verify frozen artifact '{artifact_id}' because producer stage "
+                f"'{producer_stage}' status is malformed: {' '.join(producer_verdict.reasons)}"
+            )
+        producer_projection = project_stage_completion_for_read(producer_verdict)
+        if producer_projection.get("complete_or_skipped") is not True:
             continue
         new_record = new_records.get(artifact_id) or {}
         new_sha = new_record.get("sha256")

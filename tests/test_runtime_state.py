@@ -12,6 +12,7 @@ import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import interpret_frozen_artifact_integrity
 from multi_agent_brief.orchestrator.runtime_state import (
     RUNTIME_STATE_FILES,
     RuntimeStateError,
@@ -1532,6 +1533,40 @@ def test_state_check_rejects_malformed_registry_before_frozen_integrity_launderi
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "artifact_registry.json artifacts must be an object" in str(excinfo.value)
     assert json.loads(registry_path.read_text(encoding="utf-8"))["artifacts"] == "not-an-object"
+
+
+def test_frozen_artifact_interpreter_rejects_malformed_producer_stage_status():
+    verdict = interpret_frozen_artifact_integrity(
+        old_registry={
+            "artifacts": {
+                "claim_ledger": {
+                    "artifact_id": "claim_ledger",
+                    "path": "output/intermediate/claim_ledger.json",
+                    "sha256": "a" * 64,
+                }
+            }
+        },
+        registry={
+            "artifacts": {
+                "claim_ledger": {
+                    "artifact_id": "claim_ledger",
+                    "path": "output/intermediate/claim_ledger.json",
+                    "status": "valid",
+                    "sha256": "a" * 64,
+                }
+            }
+        },
+        workflow={"stage_statuses": {"claim-ledger": {"status": "finished"}}},
+        artifacts=[{
+            "artifact_id": "claim_ledger",
+            "path": "output/intermediate/claim_ledger.json",
+            "producer_stage": "claim-ledger",
+        }],
+        stages=[{"stage_id": "claim-ledger", "produces": ["claim_ledger"]}],
+    )
+
+    assert verdict.kind == "degraded"
+    assert "producer stage 'claim-ledger' status is malformed" in verdict.reasons[0]
 
 
 def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, monkeypatch):
