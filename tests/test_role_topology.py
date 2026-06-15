@@ -28,7 +28,7 @@ from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_default_policy_pack_selects_combined_scout_screening_hook():
+def test_default_policy_pack_selects_default_topology_without_active_satisfaction_until_assets_sync():
     rules = stage_satisfaction_rules_for_topology(
         stages=_stage_specs(),
         policy_pack=_default_policy_pack(),
@@ -38,11 +38,7 @@ def test_default_policy_pack_selects_combined_scout_screening_hook():
     assert _role_topology_from_policy_pack(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
     assert ROLE_TOPOLOGY_VALUES == frozenset({"default", "strict", "human_assisted"})
     assert ROLE_TOPOLOGY_SATISFIER_VALUES == frozenset({"scout", "writer"})
-    assert rules["screener"] == {
-        "topology": "default",
-        "satisfied_by": "scout",
-        "required_artifacts": ["candidate_claims", "screened_candidates"],
-    }
+    assert "screener" not in rules
 
 
 def test_strict_topology_keeps_independent_screener_stage():
@@ -85,7 +81,7 @@ def test_missing_role_topology_defaults_to_default():
     policy_pack = {"policy_pack": {"name": "legacy"}}
 
     assert resolve_role_topology(policy_pack) == "default"
-    assert "screener" in stage_satisfaction_rules_for_topology(
+    assert "screener" not in stage_satisfaction_rules_for_topology(
         stages=_stage_specs(),
         policy_pack=policy_pack,
     )
@@ -117,13 +113,13 @@ def test_unknown_topology_satisfier_fails_contract_validation(tmp_path: Path):
         for stage in stage_specs["workflow"]["stages"]
         if stage["stage_id"] == "screener"
     )
-    screener["topology_satisfaction"]["default"]["satisfied_by"] = "typo_writer"
+    screener["topology_satisfaction"]["human_assisted"]["satisfied_by"] = "typo_writer"
     stage_specs_path.write_text(yaml.safe_dump(stage_specs, sort_keys=False), encoding="utf-8")
 
     violations = validate_contract_registry(ContractRegistry.from_config_dir(config_dir))
 
     assert any(
-        item.field == "stages.screener.topology_satisfaction.default.satisfied_by"
+        item.field == "stages.screener.topology_satisfaction.human_assisted.satisfied_by"
         and "unknown topology satisfier: typo_writer" in item.error
         for item in violations
     )
@@ -138,7 +134,7 @@ def test_unknown_topology_required_artifact_fails_contract_validation(tmp_path: 
         for stage in stage_specs["workflow"]["stages"]
         if stage["stage_id"] == "screener"
     )
-    screener["topology_satisfaction"]["default"]["required_artifacts"] = [
+    screener["topology_satisfaction"]["human_assisted"]["required_artifacts"] = [
         "candidate_claims",
         "missing_topology_artifact",
     ]
@@ -147,7 +143,7 @@ def test_unknown_topology_required_artifact_fails_contract_validation(tmp_path: 
     violations = validate_contract_registry(ContractRegistry.from_config_dir(config_dir))
 
     assert any(
-        item.field == "stages.screener.topology_satisfaction.default.required_artifacts"
+        item.field == "stages.screener.topology_satisfaction.human_assisted.required_artifacts"
         and "unknown artifact: missing_topology_artifact" in item.error
         for item in violations
     )
@@ -162,13 +158,13 @@ def test_topology_required_artifacts_must_be_a_list(tmp_path: Path):
         for stage in stage_specs["workflow"]["stages"]
         if stage["stage_id"] == "screener"
     )
-    screener["topology_satisfaction"]["default"]["required_artifacts"] = 123
+    screener["topology_satisfaction"]["human_assisted"]["required_artifacts"] = 123
     stage_specs_path.write_text(yaml.safe_dump(stage_specs, sort_keys=False), encoding="utf-8")
 
     violations = validate_contract_registry(ContractRegistry.from_config_dir(config_dir))
 
     assert any(
-        item.field == "stages.screener.topology_satisfaction.default.required_artifacts"
+        item.field == "stages.screener.topology_satisfaction.human_assisted.required_artifacts"
         and item.error == "must be a list of artifact ids"
         for item in violations
     )
@@ -183,7 +179,7 @@ def test_topology_required_artifacts_must_contain_strings(tmp_path: Path):
         for stage in stage_specs["workflow"]["stages"]
         if stage["stage_id"] == "screener"
     )
-    screener["topology_satisfaction"]["default"]["required_artifacts"] = [
+    screener["topology_satisfaction"]["human_assisted"]["required_artifacts"] = [
         "candidate_claims",
         {"artifact_id": "screened_candidates"},
     ]
@@ -192,7 +188,7 @@ def test_topology_required_artifacts_must_contain_strings(tmp_path: Path):
     violations = validate_contract_registry(ContractRegistry.from_config_dir(config_dir))
 
     assert any(
-        item.field == "stages.screener.topology_satisfaction.default.required_artifacts"
+        item.field == "stages.screener.topology_satisfaction.human_assisted.required_artifacts"
         and item.error == "must contain only non-empty artifact id strings"
         for item in violations
     )

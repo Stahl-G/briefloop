@@ -36,6 +36,7 @@ from multi_agent_brief.orchestrator.runtime_state._io import (
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     _artifact_map,
     _stage_ids,
+    load_default_policy_pack,
     load_artifact_contracts,
     load_stage_specs,
 )
@@ -46,7 +47,10 @@ from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
     _finalize_completion_reasons,
     _quality_gate_pass_reasons,
     _raise_completion_reasons,
+    _role_topology_from_policy_pack,
     _source_discovery_evidence_reasons,
+    _topology_satisfaction_artifact_reasons,
+    _topology_satisfaction_rules,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ARTIFACT_INVALID,
@@ -1724,6 +1728,158 @@ def _auditor_completion_metadata(
     }
 
 
+def _topology_satisfier_aliases(*, stage_id: str, topology: str) -> set[str]:
+    aliases = {stage_id}
+    if topology == "human_assisted" and stage_id in {"analyst", "editor", "writer"}:
+        aliases.add("writer")
+    return aliases
+
+
+def _topology_satisfaction_targets_for_completion(
+    *,
+    stages: list[dict[str, Any]],
+    policy_pack: dict[str, Any],
+    stage_id: str,
+) -> list[tuple[str, dict[str, Any]]]:
+    try:
+        topology = _role_topology_from_policy_pack(policy_pack)
+        rules = _topology_satisfaction_rules(stages=stages, policy_pack=policy_pack)
+    except ValueError as exc:
+        raise RuntimeStateError(
+            "policy.role_topology is invalid for stage satisfaction.",
+            details={"reason": str(exc)},
+            error_code=E_TRANSACTION_INTEGRITY,
+        ) from exc
+
+    satisfiers = _topology_satisfier_aliases(stage_id=stage_id, topology=topology)
+    targets: list[tuple[str, dict[str, Any]]] = []
+    current = _next_stage_id(stages, stage_id)
+    while current:
+        rule = rules.get(current)
+        if not rule:
+            break
+        if str(rule.get("satisfied_by") or "") not in satisfiers:
+            break
+        targets.append((current, rule))
+        current = _next_stage_id(stages, current)
+    return targets
+
+
+def _topology_satisfaction_required_reasons(
+    *,
+    workspace: Path,
+    targets: list[tuple[str, dict[str, Any]]],
+    artifacts_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    for target_stage_id, rule in targets:
+        reasons.extend(
+            _topology_satisfaction_artifact_reasons(
+                workspace=workspace,
+                stage_id=target_stage_id,
+                rule=rule,
+                artifacts_by_id=artifacts_by_id,
+            )
+        )
+    return reasons
+
+
+def _topology_satisfaction_target_blocking_reasons(
+    *,
+    workspace: Path,
+    targets: list[tuple[str, dict[str, Any]]],
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    for target_stage_id, _rule in targets:
+        reasons.extend(
+            current_stage_feedback_blocking_reasons(
+                workspace=workspace,
+                current_stage=target_stage_id,
+                stages=stages,
+                artifacts=artifacts,
+            )
+        )
+        reasons.extend(
+            current_stage_quality_gate_blocking_reasons(
+                workspace=workspace,
+                current_stage=target_stage_id,
+                stages=stages,
+                artifacts=artifacts,
+            )
+        )
+    return reasons
+
+
+def _workflow_with_topology_satisfaction(
+    *,
+    workflow: dict[str, Any],
+    stages: list[dict[str, Any]],
+    targets: list[tuple[str, dict[str, Any]]],
+    trigger_stage_id: str,
+    now: str,
+    transaction_id: str,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if not targets:
+        return workflow, []
+
+    updated = dict(workflow)
+    statuses = dict(updated.get("stage_statuses") or {})
+    topology_events: list[dict[str, Any]] = []
+    current_stage = updated.get("current_stage")
+
+    for target_stage_id, rule in targets:
+        if current_stage != target_stage_id:
+            raise RuntimeStateError(
+                "Topology satisfaction target does not match the current workflow stage.",
+                details={
+                    "target_stage_id": target_stage_id,
+                    "current_stage": current_stage,
+                    "trigger_stage_id": trigger_stage_id,
+                },
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        topology = str(rule.get("topology") or "")
+        satisfied_by = str(rule.get("satisfied_by") or "")
+        required_artifacts = [
+            str(item)
+            for item in (rule.get("required_artifacts") or [])
+            if item
+        ]
+        reason = f"Stage satisfied by {satisfied_by} under {topology} role topology."
+        metadata = {
+            "satisfied_by_topology": True,
+            "topology": topology,
+            "satisfied_by": satisfied_by,
+            "satisfied_by_stage": trigger_stage_id,
+            "required_artifacts": required_artifacts,
+            "transaction_id": transaction_id,
+        }
+        statuses[target_stage_id] = _status_entry(
+            STAGE_COMPLETE,
+            reason,
+            now,
+            metadata=metadata,
+        )
+        topology_events.append({
+            "event_type": "stage_satisfied_by_topology",
+            "stage_id": target_stage_id,
+            "reason": reason,
+            "metadata": metadata,
+        })
+        current_stage = _next_stage_id(stages, target_stage_id)
+        if current_stage:
+            statuses[current_stage] = _status_entry(STAGE_READY, "", now)
+
+    updated["current_stage"] = current_stage
+    updated["blocked"] = False
+    updated["blocking_reason"] = ""
+    updated["stage_statuses"] = statuses
+    updated["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, current_stage)
+    return updated, topology_events
+
+
 def _append_transaction_events(
     *,
     workspace: Path,
@@ -1735,9 +1891,10 @@ def _append_transaction_events(
     reason: str,
     next_stage: str | None,
     artifact_events: list[dict[str, Any]],
+    topology_events: list[dict[str, Any]] | None = None,
 ) -> None:
     try:
-        for event in artifact_events:
+        for event in [*artifact_events, *(topology_events or [])]:
             metadata = dict(event.get("metadata") or {})
             metadata["transaction_id"] = transaction_id
             append_event(
@@ -1790,6 +1947,8 @@ def _complete_stage_transaction(
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
+    policy_pack = load_default_policy_pack(repo)
+    artifacts_by_id = _artifact_map(artifacts)
     stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
     replay_message = _older_stage_replay_message(
         stage_id=stage_id,
@@ -1818,7 +1977,19 @@ def _complete_stage_transaction(
     artifact_reasons = _completion_artifact_gate_reasons(
         workspace=ws,
         stage=stage,
-        artifacts_by_id=_artifact_map(artifacts),
+        artifacts_by_id=artifacts_by_id,
+    )
+    topology_targets = _topology_satisfaction_targets_for_completion(
+        stages=stages,
+        policy_pack=policy_pack,
+        stage_id=stage_id,
+    )
+    artifact_reasons.extend(
+        _topology_satisfaction_required_reasons(
+            workspace=ws,
+            targets=topology_targets,
+            artifacts_by_id=artifacts_by_id,
+        )
     )
     if stage_id == "source-discovery":
         artifact_reasons.extend(_source_discovery_evidence_reasons(ws))
@@ -1831,6 +2002,20 @@ def _complete_stage_transaction(
             reasons=artifact_reasons,
             error_code=code,
             details={"stage_id": stage_id},
+        )
+
+    topology_target_reasons = _topology_satisfaction_target_blocking_reasons(
+        workspace=ws,
+        targets=topology_targets,
+        stages=stages,
+        artifacts=artifacts,
+    )
+    if topology_target_reasons:
+        _raise_completion_reasons(
+            message=f"Cannot complete stage '{stage_id}' because a topology-satisfied downstream stage is blocked",
+            reasons=topology_target_reasons,
+            error_code=E_ILLEGAL_TRANSITION,
+            details={"stage_id": stage_id, "topology_target_stages": [target for target, _rule in topology_targets]},
         )
 
     feedback_reasons = current_stage_feedback_blocking_reasons(
@@ -1902,6 +2087,14 @@ def _complete_stage_transaction(
         now=now,
         transaction_id=transaction_id,
         finalize=finalize,
+    )
+    next_workflow, topology_events = _workflow_with_topology_satisfaction(
+        workflow=next_workflow,
+        stages=stages,
+        targets=topology_targets,
+        trigger_stage_id=stage_id,
+        now=now,
+        transaction_id=transaction_id,
     )
     old_registry = _read_json_if_exists(paths["artifact_registry"])
     registry = _build_artifact_registry(
@@ -2000,6 +2193,7 @@ def _complete_stage_transaction(
         reason=reason,
         next_stage=next_workflow.get("current_stage"),
         artifact_events=artifact_events,
+        topology_events=topology_events,
     )
 
     current_manifest = _read_json(paths["runtime_manifest"])

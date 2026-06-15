@@ -105,7 +105,7 @@ def derive_control_timing(
             elapsed = max(0.0, (completed_at - boundary_time).total_seconds())
             entry = {
                 "stage_id": stage_id,
-                "status": "complete",
+                "status": _completion_status(completion),
                 "started_at": _format_dt(boundary_time),
                 "completed_at": _event_timestamp(completion),
                 "elapsed_seconds": elapsed,
@@ -113,6 +113,7 @@ def derive_control_timing(
                 "start_event_id": boundary_event_id,
                 "completion_event_id": completion.get("event_id"),
             }
+            entry.update(_completion_metadata(completion))
             if completion.get("decision") == "finalize":
                 finalize_entry = entry
             else:
@@ -272,7 +273,7 @@ def _stage_order_from_workflow(workflow: dict[str, Any]) -> list[str]:
 def _stage_order_from_events(event_records: list[dict[str, Any]]) -> list[str]:
     stage_ids: list[str] = []
     for event in event_records:
-        if not _is_completion_transaction_event(event):
+        if not _is_completion_event(event):
             continue
         stage_id = event.get("stage_id")
         if isinstance(stage_id, str) and stage_id and stage_id not in stage_ids:
@@ -283,7 +284,7 @@ def _stage_order_from_events(event_records: list[dict[str, Any]]) -> list[str]:
 def _completion_events_by_stage(event_records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     completions: dict[str, dict[str, Any]] = {}
     for event in event_records:
-        if not _is_completion_transaction_event(event):
+        if not _is_completion_event(event):
             continue
         stage_id = event.get("stage_id")
         if not isinstance(stage_id, str) or not stage_id:
@@ -292,12 +293,43 @@ def _completion_events_by_stage(event_records: list[dict[str, Any]]) -> dict[str
     return completions
 
 
+def _is_completion_event(event: dict[str, Any]) -> bool:
+    return _is_completion_transaction_event(event) or _is_topology_satisfaction_event(event)
+
+
 def _is_completion_transaction_event(event: dict[str, Any]) -> bool:
     if event.get("event_type") != "decision_recorded" or event.get("decision") not in _COMPLETION_DECISIONS:
         return False
     metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
     transaction_id = metadata.get("transaction_id")
     return isinstance(transaction_id, str) and bool(transaction_id.strip())
+
+
+def _is_topology_satisfaction_event(event: dict[str, Any]) -> bool:
+    if event.get("event_type") != "stage_satisfied_by_topology":
+        return False
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    transaction_id = metadata.get("transaction_id")
+    return isinstance(transaction_id, str) and bool(transaction_id.strip())
+
+
+def _completion_status(event: dict[str, Any]) -> str:
+    if _is_topology_satisfaction_event(event):
+        return "satisfied_by_topology"
+    return "complete"
+
+
+def _completion_metadata(event: dict[str, Any]) -> dict[str, Any]:
+    if not _is_topology_satisfaction_event(event):
+        return {}
+    metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+    return {
+        "completion_event_type": "stage_satisfied_by_topology",
+        "topology": metadata.get("topology"),
+        "satisfied_by": metadata.get("satisfied_by"),
+        "satisfied_by_stage": metadata.get("satisfied_by_stage"),
+        "required_artifacts": metadata.get("required_artifacts") if isinstance(metadata.get("required_artifacts"), list) else [],
+    }
 
 
 def _workflow_stage_status(workflow: dict[str, Any], stage_id: str) -> str:

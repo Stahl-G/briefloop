@@ -26,6 +26,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
+from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
 
@@ -52,6 +53,38 @@ input:
     return ws
 
 
+def _repo_with_role_topology(
+    tmp_path: Path,
+    topology: str,
+    *,
+    enable_default_screener_satisfaction: bool = False,
+) -> Path:
+    repo = tmp_path / f"repo-{topology}"
+    shutil.copytree(ROOT / "configs", repo / "configs")
+    (repo / "pyproject.toml").write_text("[project]\nname = \"mabw-test\"\n", encoding="utf-8")
+    (repo / "src" / "multi_agent_brief").mkdir(parents=True)
+    policy_path = repo / "configs" / "policy_packs" / "default.yaml"
+    import yaml
+
+    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
+    policy.setdefault("policy", {})["role_topology"] = topology
+    policy_path.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
+    if enable_default_screener_satisfaction:
+        stage_specs_path = repo / "configs" / "stage_specs.yaml"
+        stage_specs = yaml.safe_load(stage_specs_path.read_text(encoding="utf-8"))
+        screener = next(
+            stage
+            for stage in stage_specs["workflow"]["stages"]
+            if stage["stage_id"] == "screener"
+        )
+        screener.setdefault("topology_satisfaction", {})["default"] = {
+            "satisfied_by": "scout",
+            "required_artifacts": ["candidate_claims", "screened_candidates"],
+        }
+        stage_specs_path.write_text(yaml.safe_dump(stage_specs, sort_keys=False), encoding="utf-8")
+    return repo
+
+
 def _state_file(ws: Path, key: str) -> Path:
     return ws / RUNTIME_STATE_FILES[key]
 
@@ -64,6 +97,39 @@ def _intermediate(ws: Path) -> Path:
 
 def _write_json_artifact(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
+
+
+def _write_feedback_issue(ws: Path, *, stage_id: str, artifact_id: str, status: str = "open") -> None:
+    out = _intermediate(ws)
+    (out / "feedback_issues.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-feedback-issues/v1",
+                "created_at": "2026-06-15T00:00:00+00:00",
+                "updated_at": "2026-06-15T00:00:00+00:00",
+                "issues": [
+                    {
+                        "issue_id": "FB-TOPOLOGY-001",
+                        "source": "human",
+                        "status": status,
+                        "severity": "blocking",
+                        "stage_id": stage_id,
+                        "artifact_id": artifact_id,
+                        "category": "coverage_gap",
+                        "feedback_excerpt": "Downstream stage requires repair before satisfaction.",
+                        "raw_feedback_ref": "feedback.txt",
+                        "source_artifact": "feedback.txt",
+                        "metadata": {},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _valid_claim_ledger_payload(
@@ -1310,6 +1376,190 @@ def test_stage_complete_stale_gate_report_does_not_block_early_stage(tmp_path):
     )
 
     assert state["workflow_state"]["current_stage"] == "screener"
+
+
+def test_current_default_topology_keeps_screener_independent_until_assets_sync(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="scout",
+        reason="scout complete",
+    )
+
+    workflow = state["workflow_state"]
+    assert workflow["current_stage"] == "screener"
+    assert workflow["stage_statuses"]["screener"]["status"] == "ready"
+    assert "metadata" not in workflow["stage_statuses"]["screener"]
+
+
+def test_default_topology_scout_completion_requires_screened_candidates(tmp_path):
+    repo = _repo_with_role_topology(
+        tmp_path,
+        "default",
+        enable_default_screener_satisfaction=True,
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json")
+    before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    before_events = _event_records(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="scout complete",
+        )
+
+    assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
+    assert "Required topology artifact for stage 'screener' 'screened_candidates'" in str(excinfo.value)
+    assert json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8")) == before_workflow
+    assert _event_records(ws) == before_events
+
+
+def test_default_topology_scout_completion_satisfies_screener(tmp_path):
+    repo = _repo_with_role_topology(
+        tmp_path,
+        "default",
+        enable_default_screener_satisfaction=True,
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json")
+    _write_json_artifact(ws, "screened_candidates.json")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="scout complete",
+    )
+
+    workflow = state["workflow_state"]
+    screener_status = workflow["stage_statuses"]["screener"]
+    assert workflow["current_stage"] == "claim-ledger"
+    assert screener_status["status"] == "complete"
+    assert screener_status["metadata"]["satisfied_by_topology"] is True
+    assert screener_status["metadata"]["topology"] == "default"
+    assert screener_status["metadata"]["satisfied_by"] == "scout"
+    assert screener_status["metadata"]["satisfied_by_stage"] == "scout"
+    assert screener_status["metadata"]["required_artifacts"] == [
+        "candidate_claims",
+        "screened_candidates",
+    ]
+    events = _event_records(ws)
+    topology_events = [
+        event
+        for event in events
+        if event.get("event_type") == "stage_satisfied_by_topology"
+    ]
+    assert len(topology_events) == 1
+    assert topology_events[0]["stage_id"] == "screener"
+    assert topology_events[0]["metadata"]["satisfied_by"] == "scout"
+    timing_workflow = {
+        "run_id": state["manifest"]["run_id"],
+        "current_stage": workflow["current_stage"],
+        "stage_statuses": {
+            "scout": workflow["stage_statuses"]["scout"],
+            "screener": workflow["stage_statuses"]["screener"],
+        },
+        "run_integrity": workflow["run_integrity"],
+    }
+    timing = derive_control_timing_from_path(
+        _state_file(ws, "event_log"),
+        workflow_state=timing_workflow,
+        stage_order=["scout", "screener"],
+        expected_run_id=state["manifest"]["run_id"],
+    )
+    assert timing["status"] == "available"
+    screener_timing = next(stage for stage in timing["stages"] if stage["stage_id"] == "screener")
+    assert screener_timing["status"] == "satisfied_by_topology"
+
+
+def test_topology_satisfaction_respects_target_stage_feedback_blockers(tmp_path):
+    repo = _repo_with_role_topology(
+        tmp_path,
+        "default",
+        enable_default_screener_satisfaction=True,
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json")
+    _write_json_artifact(ws, "screened_candidates.json")
+    _write_feedback_issue(ws, stage_id="screener", artifact_id="screened_candidates")
+    before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    before_events = _event_records(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="scout complete",
+        )
+
+    assert excinfo.value.error_code == "E_ILLEGAL_TRANSITION"
+    assert "Current stage 'screener' has unresolved blocking feedback issues" in str(excinfo.value)
+    assert json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8")) == before_workflow
+    assert _event_records(ws) == before_events
+
+
+def test_strict_topology_keeps_screener_independent(tmp_path):
+    repo = _repo_with_role_topology(tmp_path, "strict")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="scout complete",
+    )
+
+    workflow = state["workflow_state"]
+    assert workflow["current_stage"] == "screener"
+    assert workflow["stage_statuses"]["screener"]["status"] == "ready"
+    assert "metadata" not in workflow["stage_statuses"]["screener"]
+    assert not [
+        event
+        for event in _event_records(ws)
+        if event.get("event_type") == "stage_satisfied_by_topology"
+    ]
+
+
+def test_human_assisted_topology_analyst_completion_satisfies_editor(tmp_path):
+    repo = _repo_with_role_topology(tmp_path, "human_assisted")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "analyst")
+    (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nWriter draft.\n", encoding="utf-8")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="analyst",
+        reason="writer complete",
+    )
+
+    workflow = state["workflow_state"]
+    editor_status = workflow["stage_statuses"]["editor"]
+    assert workflow["current_stage"] == "auditor"
+    assert editor_status["status"] == "complete"
+    assert editor_status["metadata"]["satisfied_by_topology"] is True
+    assert editor_status["metadata"]["topology"] == "human_assisted"
+    assert editor_status["metadata"]["satisfied_by"] == "writer"
+    assert editor_status["metadata"]["satisfied_by_stage"] == "analyst"
 
 
 def test_claim_ledger_stage_complete_rejects_non_ledger_json_shape(tmp_path):

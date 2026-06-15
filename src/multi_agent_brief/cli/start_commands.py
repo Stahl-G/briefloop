@@ -9,6 +9,7 @@ manual) can continue from a known state.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -158,10 +159,19 @@ def _run_doctor(workspace: Path) -> tuple[int, str]:
     if not config.exists():
         return 1, "no_config"
     import subprocess
+    env = os.environ.copy()
+    package_root = Path(__file__).resolve().parents[2]
+    current_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        f"{package_root}{os.pathsep}{current_pythonpath}"
+        if current_pythonpath
+        else str(package_root)
+    )
     result = subprocess.run(
         [sys.executable, "-m", "multi_agent_brief.cli.main", "doctor", "--config", str(config)],
         capture_output=True, text=True,
         cwd=str(workspace),
+        env=env,
     )
     output = result.stdout + result.stderr
     if result.returncode == 0 and "FAIL" not in output:

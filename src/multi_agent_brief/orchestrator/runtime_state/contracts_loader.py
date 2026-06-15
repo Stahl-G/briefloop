@@ -38,6 +38,14 @@ def load_artifact_contracts(repo_workdir: str | Path) -> list[dict[str, Any]]:
     return [artifact for artifact in artifacts if isinstance(artifact, dict)]
 
 
+def load_default_policy_pack(repo_workdir: str | Path) -> dict[str, Any]:
+    repo = Path(repo_workdir).expanduser().resolve()
+    data = _load_yaml(_contract_file(repo, CONTRACT_REFERENCES["default_policy_pack"]))
+    if not isinstance(data, dict):
+        raise RuntimeStateError("policy_packs/default.yaml must contain an object")
+    return data
+
+
 def _stage_ids(stages: list[dict[str, Any]]) -> list[str]:
     return [str(stage["stage_id"]) for stage in stages if stage.get("stage_id")]
 

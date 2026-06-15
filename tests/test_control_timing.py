@@ -34,6 +34,22 @@ def _completion(event_id: str, created_at: str, stage_id: str, decision: str = "
     )
 
 
+def _topology_satisfied(event_id: str, created_at: str, stage_id: str, *, trigger_stage: str):
+    return _event(
+        event_id,
+        "stage_satisfied_by_topology",
+        created_at,
+        stage_id=stage_id,
+        metadata={
+            "transaction_id": f"tx-{event_id}",
+            "topology": "default",
+            "satisfied_by": "scout",
+            "satisfied_by_stage": trigger_stage,
+            "required_artifacts": ["candidate_claims", "screened_candidates"],
+        },
+    )
+
+
 def _workflow(*, contaminated: bool = False, finalized: bool = True):
     workflow = {
         "current_stage": None if finalized else "source-discovery",
@@ -102,6 +118,42 @@ def test_control_timing_ignores_non_transaction_decision_events():
     assert timing["status"] == "incomplete"
     assert any(stage["stage_id"] == "doctor" and stage["status"] == "incomplete" for stage in timing["stages"])
     assert "completion_events_missing" in timing["warnings"]
+
+
+def test_control_timing_projects_topology_satisfied_stage_without_fake_completion():
+    workflow = {
+        "current_stage": "claim-ledger",
+        "stage_statuses": {
+            "scout": {"status": "complete"},
+            "screener": {
+                "status": "complete",
+                "metadata": {"satisfied_by_topology": True},
+            },
+            "claim-ledger": {"status": "ready"},
+        },
+        "run_integrity": {
+            "status": "clean",
+            "reference_eligible": True,
+            "clean_single_shot": True,
+            "reasons": [],
+        },
+    }
+    records = [
+        _event("e0", "run_initialized", "2026-06-14T00:00:00Z"),
+        _completion("e1", "2026-06-14T00:01:00Z", "scout"),
+        _topology_satisfied("e2", "2026-06-14T00:01:01Z", "screener", trigger_stage="scout"),
+    ]
+
+    timing = derive_control_timing(event_records=records, workflow_state=workflow)
+
+    assert timing["status"] == "available"
+    screener = next(stage for stage in timing["stages"] if stage["stage_id"] == "screener")
+    assert screener["status"] == "satisfied_by_topology"
+    assert screener["completion_event_type"] == "stage_satisfied_by_topology"
+    assert screener["topology"] == "default"
+    assert screener["satisfied_by"] == "scout"
+    assert screener["satisfied_by_stage"] == "scout"
+    assert "screener: completion event missing" not in timing["warnings"]
 
 
 def test_control_timing_marks_non_object_event_log_line_invalid(tmp_path):

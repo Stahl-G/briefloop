@@ -37,6 +37,7 @@ EVENT_TYPES = {
     "artifact_observed",
     "artifact_validated",
     "stage_status_changed",
+    "stage_satisfied_by_topology",
     "decision_recorded",
     "feedback_issue_created",
     "feedback_issue_planned",

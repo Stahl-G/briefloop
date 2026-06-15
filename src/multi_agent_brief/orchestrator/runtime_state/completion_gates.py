@@ -63,10 +63,49 @@ def _completion_artifact_gate_reasons(
     stage: dict[str, Any],
     artifacts_by_id: dict[str, dict[str, Any]],
 ) -> list[str]:
+    return _artifact_gate_reasons_for_ids(
+        workspace=workspace,
+        artifact_ids=[str(item) for item in (stage.get("expected_artifacts") or [])],
+        artifacts_by_id=artifacts_by_id,
+        reason_prefix="Required expected artifact",
+        optional_prefix="Optional expected artifact",
+    )
+
+
+def _topology_satisfaction_artifact_reasons(
+    *,
+    workspace: Path,
+    stage_id: str,
+    rule: dict[str, Any],
+    artifacts_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    artifact_ids = [
+        str(item)
+        for item in (rule.get("required_artifacts") or [])
+        if item
+    ]
+    return _artifact_gate_reasons_for_ids(
+        workspace=workspace,
+        artifact_ids=artifact_ids,
+        artifacts_by_id=artifacts_by_id,
+        reason_prefix=f"Required topology artifact for stage '{stage_id}'",
+        optional_prefix=f"Optional topology artifact for stage '{stage_id}'",
+    )
+
+
+def _artifact_gate_reasons_for_ids(
+    *,
+    workspace: Path,
+    artifact_ids: list[str],
+    artifacts_by_id: dict[str, dict[str, Any]],
+    reason_prefix: str,
+    optional_prefix: str,
+) -> list[str]:
     reasons: list[str] = []
-    for artifact_id in stage.get("expected_artifacts") or []:
+    for artifact_id in artifact_ids:
         contract = artifacts_by_id.get(str(artifact_id))
         if not contract:
+            reasons.append(f"{reason_prefix} '{artifact_id}' is not declared in artifact contracts.")
             continue
         rel_path = str(contract.get("path") or "")
         fmt = str(contract.get("format") or "")
@@ -74,11 +113,11 @@ def _completion_artifact_gate_reasons(
         required = bool(contract.get("required", False))
         if required and status != ARTIFACT_VALID:
             reasons.append(
-                f"Required expected artifact '{artifact_id}' at '{rel_path}' is {status} ({validation_result})."
+                f"{reason_prefix} '{artifact_id}' at '{rel_path}' is {status} ({validation_result})."
             )
         elif not required and status == ARTIFACT_INVALID:
             reasons.append(
-                f"Optional expected artifact '{artifact_id}' at '{rel_path}' is invalid ({validation_result})."
+                f"{optional_prefix} '{artifact_id}' at '{rel_path}' is invalid ({validation_result})."
             )
     return reasons
 
