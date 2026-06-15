@@ -364,6 +364,15 @@ def interpret_finalize_audit_binding(
         return _degraded_finalize_audit_binding("finalize_report.json audit_binding.status must be pass.")
     if binding.get("status") != "pass":
         return _degraded_finalize_audit_binding("finalize_report.json audit_binding.status must be pass.")
+    findings = binding.get("findings", [])
+    if not isinstance(findings, list):
+        return _degraded_finalize_audit_binding(
+            "finalize_report.json audit_binding.findings must be a list when present."
+        )
+    if findings:
+        return _degraded_finalize_audit_binding(
+            "finalize_report.json audit_binding.findings must be empty when audit_binding.status is pass."
+        )
 
     ws = Path(workspace).expanduser().resolve()
     reasons: list[str] = []

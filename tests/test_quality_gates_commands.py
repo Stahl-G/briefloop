@@ -159,6 +159,27 @@ def test_quality_gate_binding_interpreter_rejects_pass_status_with_blocking_find
     assert any("blocking findings" in reason for reason in require_quality_gate_binding_pass(verdict))
 
 
+def test_quality_gate_binding_interpreter_rejects_pass_status_with_blocking_gate_result(tmp_path):
+    ws = _write_workspace(tmp_path)
+    report_path = quality_gate_report_path_for_stage(ws, "auditor")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _quality_gate_payload(status="pass", stage_id="auditor")
+    payload["gate_results"][1]["blocking"] = True
+    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    verdict = interpret_quality_gate_binding(
+        workspace=ws,
+        stage_id="auditor",
+        expected_brief="output/intermediate/audited_brief.md",
+        expected_ledger="output/intermediate/claim_ledger.json",
+        stages=runtime_state.load_stage_specs(ROOT),
+        artifacts=runtime_state.load_artifact_contracts(ROOT),
+    )
+
+    assert verdict.kind == "degraded"
+    assert any("blocking gate_results" in reason for reason in require_quality_gate_binding_pass(verdict))
+
+
 def _set_current_stage(ws: Path, stage_id: str) -> None:
     stages = runtime_state.load_stage_specs(ROOT)
     stage_ids = [str(stage.get("stage_id") or "") for stage in stages if stage.get("stage_id")]

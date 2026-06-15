@@ -490,6 +490,13 @@ def _quality_gate_binding_reasons(
     )
     if failed_gate_ids:
         return [f"Quality gate report has failing gate_results: {', '.join(failed_gate_ids)}."]
+    blocking_gate_ids = sorted(
+        str(result.get("gate_id") or "")
+        for result in payload.get("gate_results") or []
+        if isinstance(result, dict) and result.get("blocking") is True
+    )
+    if blocking_gate_ids:
+        return [f"Quality gate report has blocking gate_results: {', '.join(blocking_gate_ids)}."]
     blocking_findings = [
         str(finding.get("finding_id") or "")
         for finding in payload.get("findings") or []
