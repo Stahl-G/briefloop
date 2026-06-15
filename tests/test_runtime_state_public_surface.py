@@ -24,9 +24,12 @@ def test_runtime_state_all_matches_in_repo_from_imports():
 def test_runtime_state_facade_does_not_proxy_impl_internals():
     runtime_state = importlib.import_module(RUNTIME_STATE_MODULE)
 
-    assert hasattr(runtime_state, "_impl")
-    assert hasattr(runtime_state, "_append_jsonl")
-    assert hasattr(runtime_state, "_sha256_file")
+    assert not hasattr(runtime_state, "_impl")
+    assert hasattr(runtime_state, "operations")
+    assert "operations" not in runtime_state.__all__
+    assert not hasattr(runtime_state, "_append_jsonl")
+    assert not hasattr(runtime_state, "_sha256_file")
+    assert not hasattr(runtime_state, "_allowed_decisions_for_stage")
     assert hasattr(runtime_state, "new_run_id")
     assert not hasattr(runtime_state, "EVENT_TYPES")
     assert not hasattr(runtime_state, "E_TRANSACTION_INTEGRITY")

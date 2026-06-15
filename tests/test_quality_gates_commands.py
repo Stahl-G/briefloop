@@ -14,6 +14,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
     initialize_runtime_state,
 )
+from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.quality_gates import state as quality_gate_state
 
 
@@ -150,7 +151,7 @@ def _set_current_stage(ws: Path, stage_id: str) -> None:
     workflow["blocked"] = False
     workflow["blocking_reason"] = ""
     workflow["stage_statuses"] = statuses
-    workflow["next_allowed_decisions"] = runtime_state._allowed_decisions_for_stage(stages, stage_id)
+    workflow["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, stage_id)
     workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 

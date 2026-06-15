@@ -11,6 +11,7 @@ import pytest
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state import (
     RUNTIME_STATE_FILES,
     RuntimeStateError,
@@ -22,6 +23,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     record_decision,
     show_runtime_state,
 )
+from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
@@ -214,17 +216,17 @@ def _write_finalize_report(
             "delivery_docx": "",
             "delivery_artifacts": [str(delivery_brief)],
             "delivery_artifact_sha256": {
-                str(delivery_brief): runtime_state._sha256_file(delivery_brief),
+                str(delivery_brief): _sha256_file(delivery_brief),
             },
             "audit_binding": {
                 "status": "pass",
-                "claim_ledger_sha256": runtime_state._sha256_file(
+                "claim_ledger_sha256": _sha256_file(
                     _intermediate(ws) / "claim_ledger.json"
                 ),
-                "audited_brief_sha256": runtime_state._sha256_file(
+                "audited_brief_sha256": _sha256_file(
                     _intermediate(ws) / "audited_brief.md"
                 ),
-                "audit_report_sha256": runtime_state._sha256_file(
+                "audit_report_sha256": _sha256_file(
                     _intermediate(ws) / "audit_report.json"
                 ),
                 "ledger_claim_count": 1,
@@ -292,7 +294,7 @@ def _set_current_stage(ws: Path, stage_id: str) -> None:
     workflow["blocked"] = False
     workflow["blocking_reason"] = ""
     workflow["stage_statuses"] = statuses
-    workflow["next_allowed_decisions"] = runtime_state._allowed_decisions_for_stage(stages, stage_id)
+    workflow["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, stage_id)
     _state_file(ws, "workflow_state").write_text(
         json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -403,7 +405,7 @@ def test_state_check_rejects_malformed_run_integrity_without_rewrite(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert workflow_path.read_bytes() == before
 
 
@@ -424,7 +426,7 @@ def test_state_show_rejects_invalid_run_integrity_status_without_rewrite(tmp_pat
     with pytest.raises(RuntimeStateError) as excinfo:
         show_runtime_state(workspace=ws)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert workflow_path.read_bytes() == before
 
 
@@ -450,7 +452,7 @@ def test_stage_complete_rejects_invalid_run_integrity_status_without_rewrite(tmp
             reason="doctor complete",
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert workflow_path.read_bytes() == before
 
 
@@ -1198,7 +1200,7 @@ def test_stage_complete_contamination_event_failure_rolls_back_workflow(tmp_path
             reason="doctor replay should fail atomically",
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_PARTIAL_WRITE
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_PARTIAL_WRITE
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
 
@@ -1476,7 +1478,7 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Frozen artifact" in str(excinfo.value)
     assert "owner stage 'claim-ledger'" in str(excinfo.value)
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
@@ -1517,7 +1519,7 @@ def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, m
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_PARTIAL_WRITE
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_PARTIAL_WRITE
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
 
@@ -1730,14 +1732,14 @@ def test_finalize_gate_does_not_mutate_frozen_auditor_gate_report(tmp_path):
     )
     auditor_report = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     auditor_sha = auditor_state["artifact_registry"]["artifacts"]["auditor_quality_gate_report"]["sha256"]
-    assert auditor_sha == runtime_state._sha256_file(auditor_report)
+    assert auditor_sha == _sha256_file(auditor_report)
 
     _write_finalize_report(ws)
     _write_quality_gate_report(ws, stage_id="finalize")
     finalize_report = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
 
     assert finalize_report.exists()
-    assert runtime_state._sha256_file(auditor_report) == auditor_sha
+    assert _sha256_file(auditor_report) == auditor_sha
 
     state = complete_finalize_transaction(
         workspace=ws,
@@ -1747,7 +1749,7 @@ def test_finalize_gate_does_not_mutate_frozen_auditor_gate_report(tmp_path):
 
     registry = state["artifact_registry"]["artifacts"]
     assert registry["auditor_quality_gate_report"]["sha256"] == auditor_sha
-    assert registry["finalize_quality_gate_report"]["sha256"] == runtime_state._sha256_file(finalize_report)
+    assert registry["finalize_quality_gate_report"]["sha256"] == _sha256_file(finalize_report)
     assert state["workflow_state"]["current_stage"] is None
 
 
@@ -2004,7 +2006,7 @@ def test_run_archive_records_sha256_for_every_file(tmp_path):
     for record in manifest["files"]:
         path = archive / record["archive_path"]
         assert path.exists()
-        assert record["sha256"] == runtime_state._sha256_file(path)
+        assert record["sha256"] == _sha256_file(path)
         assert record["size_bytes"] == path.stat().st_size
 
 
@@ -2037,13 +2039,13 @@ def test_run_archive_manifest_records_complete_fact_layer(tmp_path):
             for file_record in record["files"]:
                 path = archive / file_record["archive_path"]
                 assert path.exists()
-                assert file_record["sha256"] == runtime_state._sha256_file(path)
+                assert file_record["sha256"] == _sha256_file(path)
                 assert not Path(file_record["archive_path"]).is_absolute()
                 assert not Path(file_record["original_path"]).is_absolute()
         else:
             path = archive / record["archive_path"]
             assert path.exists()
-            assert record["sha256"] == runtime_state._sha256_file(path)
+            assert record["sha256"] == _sha256_file(path)
             assert not Path(record["archive_path"]).is_absolute()
             assert not Path(record["original_path"]).is_absolute()
 
@@ -2076,7 +2078,7 @@ def test_run_archive_manifest_groups_multiple_source_files_as_one_source_pack(tm
     for file_record in source_pack["files"]:
         path = archive / file_record["archive_path"]
         assert path.exists()
-        assert file_record["sha256"] == runtime_state._sha256_file(path)
+        assert file_record["sha256"] == _sha256_file(path)
 
 
 def test_run_archive_excludes_source_candidates_from_fact_layer(tmp_path):
@@ -2097,7 +2099,7 @@ def test_run_archive_excludes_source_candidates_from_fact_layer(tmp_path):
         "artifact_id": "source_candidates",
         "original_path": "source_candidates.yaml",
         "reason": "source_plan_not_evidence",
-        "sha256": runtime_state._sha256_file(ws / "source_candidates.yaml"),
+        "sha256": _sha256_file(ws / "source_candidates.yaml"),
         "size_bytes": (ws / "source_candidates.yaml").stat().st_size,
     } in fact_layer["excluded"]
     assert all(record["original_path"] != "source_candidates.yaml" for record in manifest["files"])
@@ -2224,7 +2226,7 @@ def test_existing_archive_rejects_corrupted_fact_layer_projection(tmp_path):
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     finalize_report = json.loads((_intermediate(ws) / "finalize_report.json").read_text(encoding="utf-8"))
 
-    with pytest.raises(runtime_state._impl.RunArchiveError) as excinfo:
+    with pytest.raises(runtime_state.operations.RunArchiveError) as excinfo:
         archive_finalized_run(
             workspace=ws,
             run_id=state["manifest"]["run_id"],
@@ -2234,7 +2236,7 @@ def test_existing_archive_rejects_corrupted_fact_layer_projection(tmp_path):
             finalize_report=finalize_report,
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_RUN_ARCHIVE_CONFLICT
+    assert excinfo.value.error_code == runtime_state.operations.E_RUN_ARCHIVE_CONFLICT
     assert "fact_layer projection differs" in str(excinfo.value)
 
 
@@ -2261,7 +2263,7 @@ def test_import_fact_layer_transaction_copies_archive_and_marks_upstream_stages(
     assert manifest["recipe"] == "fast-rerun"
     assert manifest["runtime"] == "codex"
     import_record = manifest["fact_layer_import"]
-    assert import_record["schema_version"] == runtime_state._impl.FACT_LAYER_IMPORT_SCHEMA
+    assert import_record["schema_version"] == runtime_state.operations.FACT_LAYER_IMPORT_SCHEMA
     assert import_record["source_run_id"] == finalized["manifest"]["run_id"]
     assert import_record["source_archive_manifest"] == f"output/runs/{finalized['manifest']['run_id']}/manifest.json"
     assert str(source_ws) not in json.dumps(import_record)
@@ -2383,7 +2385,7 @@ input:
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state.operations.E_READER_FINAL_GATE_FAILED
     assert "Fast-rerun imported fact layer is stale at target delivery time" in str(excinfo.value)
     assert not (target_ws / "output" / "runs").exists()
 
@@ -2450,7 +2452,7 @@ input:
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state.operations.E_READER_FINAL_GATE_FAILED
     assert "freshness cannot be verified at target delivery time" in str(excinfo.value)
     assert not (target_ws / "output" / "runs").exists()
 
@@ -2504,7 +2506,7 @@ input:
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state.operations.E_READER_FINAL_GATE_FAILED
     assert "claim_publication_dates_missing" in str(excinfo.value)
     assert not (target_ws / "output" / "runs").exists()
 
@@ -2843,7 +2845,7 @@ def test_import_fact_layer_transaction_rejects_self_consistent_invalid_claim_led
     manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
     for artifact in manifest["fact_layer"]["artifacts"]:
         if artifact.get("artifact_id") == "claim_ledger":
-            artifact["sha256"] = runtime_state._sha256_file(bad_ledger)
+            artifact["sha256"] = _sha256_file(bad_ledger)
             artifact["size_bytes"] = bad_ledger.stat().st_size
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -2879,7 +2881,7 @@ def test_import_fact_layer_transaction_rejects_source_candidates_fact_layer_arti
         "fact_role": "fact_layer_artifact",
         "archive_path": "fact_layer/source_candidates.yaml",
         "original_path": "source_candidates.yaml",
-        "sha256": runtime_state._sha256_file(source_candidates),
+        "sha256": _sha256_file(source_candidates),
         "size_bytes": source_candidates.stat().st_size,
     })
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2916,7 +2918,7 @@ def test_import_fact_layer_transaction_rejects_unknown_delivery_artifact(tmp_pat
         "fact_role": "fact_layer_artifact",
         "archive_path": "delivery/brief.md",
         "original_path": "output/delivery/brief.md",
-        "sha256": runtime_state._sha256_file(delivery_brief),
+        "sha256": _sha256_file(delivery_brief),
         "size_bytes": delivery_brief.stat().st_size,
     })
     archive_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2952,7 +2954,7 @@ def test_import_fact_layer_transaction_rejects_source_pack_file_outside_sources(
             artifact["files"].append({
                 "archive_path": "delivery/brief.md",
                 "original_path": "output/delivery/brief.md",
-                "sha256": runtime_state._sha256_file(delivery_brief),
+                "sha256": _sha256_file(delivery_brief),
                 "size_bytes": delivery_brief.stat().st_size,
             })
             artifact["file_count"] = len(artifact["files"])
@@ -2991,7 +2993,7 @@ def test_import_fact_layer_transaction_rejects_source_candidates_inside_source_p
             artifact["files"].append({
                 "archive_path": "fact_layer/input/sources/source_candidates.yaml",
                 "original_path": "input/sources/source_candidates.yaml",
-                "sha256": runtime_state._sha256_file(source_candidates),
+                "sha256": _sha256_file(source_candidates),
                 "size_bytes": source_candidates.stat().st_size,
             })
             artifact["file_count"] = len(artifact["files"])
@@ -3061,7 +3063,7 @@ def test_import_fact_layer_transaction_rejects_duplicate_workspace_target(tmp_pa
             artifact["files"].append({
                 "archive_path": "fact_layer/input/sources/source-duplicate.md",
                 "original_path": "input/sources/source-001.md",
-                "sha256": runtime_state._sha256_file(extra_source),
+                "sha256": _sha256_file(extra_source),
                 "size_bytes": extra_source.stat().st_size,
             })
             artifact["file_count"] = len(artifact["files"])
@@ -3201,7 +3203,7 @@ def test_finalize_complete_rejects_archive_conflict_for_same_run_id(tmp_path):
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_RUN_ARCHIVE_CONFLICT
+    assert excinfo.value.error_code == runtime_state.operations.E_RUN_ARCHIVE_CONFLICT
     after_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert after_workflow == before_workflow
     assert after_workflow["current_stage"] == "finalize"
@@ -3285,7 +3287,7 @@ def test_reset_state_event_append_failure_rolls_back_control_files(tmp_path, mon
             reset_state=True,
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_PARTIAL_WRITE
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_PARTIAL_WRITE
     assert _state_file(ws, "runtime_manifest").read_bytes() == before_manifest
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
@@ -3302,7 +3304,7 @@ def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delive
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["delivery_artifacts"] = [str(ws / "output" / "brief.md")]
     report["delivery_artifact_sha256"] = {
-        str(ws / "output" / "brief.md"): runtime_state._sha256_file(ws / "output" / "brief.md"),
+        str(ws / "output" / "brief.md"): _sha256_file(ws / "output" / "brief.md"),
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -3313,7 +3315,7 @@ def test_archive_rejects_finalize_report_delivery_artifact_outside_output_delive
             reason="reader artifacts finalized and clean",
         )
 
-    assert excinfo.value.error_code == runtime_state._impl.E_READER_FINAL_GATE_FAILED
+    assert excinfo.value.error_code == runtime_state.operations.E_READER_FINAL_GATE_FAILED
     assert "output/delivery" in str(excinfo.value)
 
 
@@ -3504,7 +3506,7 @@ def test_state_check_rejects_unknown_event_type(tmp_path):
                 "event_type": "stage_completed",
                 "reason": "model-written fake event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state.operations.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3516,7 +3518,7 @@ def test_state_check_rejects_unknown_event_type(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Unknown event type" in str(excinfo.value)
 
 
@@ -3533,7 +3535,7 @@ def test_state_check_rejects_unknown_event_actor(tmp_path):
                 "event_type": "decision_recorded",
                 "reason": "model-written fake event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state.operations.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3545,7 +3547,7 @@ def test_state_check_rejects_unknown_event_actor(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Unknown event actor" in str(excinfo.value)
 
 
@@ -3562,7 +3564,7 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
                 "event_type": "stage_completed",
                 "reason": "model-written fake event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state.operations.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3585,7 +3587,7 @@ def test_state_check_strict_json_reports_event_log_integrity_error(tmp_path, cap
 
     assert rc == 1
     assert payload["ok"] is False
-    assert payload["error_code"] == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert payload["error_code"] == runtime_state.operations.E_TRANSACTION_INTEGRITY
 
 
 def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
@@ -3612,7 +3614,7 @@ def test_state_check_rejects_event_log_missing_schema_version(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Unsupported event log schema" in str(excinfo.value)
 
 
@@ -3629,7 +3631,7 @@ def test_state_check_rejects_non_newline_terminated_event_log(tmp_path):
                 "event_type": "decision_recorded",
                 "reason": "model-written unterminated event",
                 "run_id": state["manifest"]["run_id"],
-                "schema_version": runtime_state._impl.EVENT_LOG_SCHEMA,
+                "schema_version": runtime_state.operations.EVENT_LOG_SCHEMA,
                 "timestamp": "2026-06-12T00:00:00+00:00",
             },
             sort_keys=True,
@@ -3640,7 +3642,7 @@ def test_state_check_rejects_non_newline_terminated_event_log(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "newline-terminated" in str(excinfo.value)
 
 
@@ -3653,7 +3655,7 @@ def test_state_check_rejects_malformed_event_log_line(tmp_path):
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == runtime_state._impl.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Invalid JSON event log line" in str(excinfo.value)
 
 
