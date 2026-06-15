@@ -14,6 +14,10 @@ from multi_agent_brief.quality_gates.contract import (
     interpret_quality_gate_binding,
     require_quality_gate_binding_pass,
 )
+from multi_agent_brief.orchestrator.role_topology import (
+    resolve_role_topology,
+    stage_satisfaction_rules_for_topology,
+)
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _load_workspace_yaml,
     _read_json,
@@ -35,6 +39,22 @@ from multi_agent_brief.outputs.reader_final_gate import (
     detect_reader_residue,
     detect_reader_residue_in_docx,
 )
+
+
+def _role_topology_from_policy_pack(policy_pack: dict[str, Any] | None) -> str:
+    """Return the configured role topology for Layer-D gate logic."""
+
+    return resolve_role_topology(policy_pack)
+
+
+def _topology_satisfaction_rules(
+    *,
+    stages: list[dict[str, Any]],
+    policy_pack: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Return declared satisfaction hooks without applying stage progress."""
+
+    return stage_satisfaction_rules_for_topology(stages=stages, policy_pack=policy_pack)
 
 
 def _completion_artifact_gate_reasons(
