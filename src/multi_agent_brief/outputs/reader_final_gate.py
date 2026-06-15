@@ -138,6 +138,7 @@ def detect_reader_residue(
     findings: list[ReaderResidueFinding] = []
     in_citation_section = False
     citation_table_header: list[str] | None = None
+    source_table_header: list[str] | None = None
 
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         heading = _HEADING_RE.match(line)
@@ -145,6 +146,7 @@ def detect_reader_residue(
             title = heading.group(2).strip().lower()
             in_citation_section = any(marker in title for marker in _CITATION_SECTION_TITLES)
             citation_table_header = None
+            source_table_header = None
 
         _collect_regex_findings(
             findings,
@@ -207,9 +209,25 @@ def detect_reader_residue(
             artifact=artifact,
             allow_compliance_footer=allow_compliance_footer,
         )
-        if in_citation_section:
-            cells = _table_cells(line)
-            if cells and not _TABLE_SEPARATOR_RE.match(line.strip()):
+        cells = _table_cells(line)
+        if cells is None:
+            source_table_header = None
+        elif not _TABLE_SEPARATOR_RE.match(line.strip()):
+            if not in_citation_section:
+                if source_table_header is None:
+                    if _has_citation_id_header(cells):
+                        source_table_header = cells
+                elif _has_blank_citation_id_cell(source_table_header, cells):
+                    findings.append(
+                        ReaderResidueFinding(
+                            kind="blank_citation_row",
+                            text=_shorten(line.strip()),
+                            line=line_number,
+                            artifact=artifact,
+                            message="Reader-facing table contains a blank source/reference cell.",
+                        )
+                    )
+            if in_citation_section:
                 if citation_table_header is None:
                     citation_table_header = cells
                 elif _is_blank_citation_row_cells(cells):
@@ -381,6 +399,10 @@ def _has_blank_citation_id_cell(header_cells: list[str], row_cells: list[str]) -
         if _is_citation_id_header(header) and row_cells[index].strip().lower() in _BLANK_CELL_VALUES:
             return True
     return False
+
+
+def _has_citation_id_header(header_cells: list[str]) -> bool:
+    return any(_is_citation_id_header(header) for header in header_cells)
 
 
 def _is_citation_id_header(header: str) -> bool:

@@ -42,6 +42,8 @@ class SourceAppendixResult:
     warnings: list[str] = field(default_factory=list)
     markdown: str = ""
     records: list[SourceAppendixRecord] = field(default_factory=list)
+    citation_labels: dict[str, str] = field(default_factory=dict)
+    claim_source_map: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def to_report_fields(
         self,
@@ -59,6 +61,7 @@ class SourceAppendixResult:
             "source_appendix_cited_claim_count": self.cited_claim_count,
             "source_appendix_resolved_claim_count": self.resolved_claim_count,
             "source_appendix_warnings": list(self.warnings),
+            "source_appendix_claim_map": dict(self.claim_source_map),
         }
 
 
@@ -85,6 +88,7 @@ def build_source_appendix(
     warnings: list[str] = []
     ledger = ClaimLedger.import_json(ledger_path)
     records_by_key: dict[str, SourceAppendixRecord] = {}
+    claim_source_keys: dict[str, str] = {}
     order: list[str] = []
     resolved_claim_count = 0
 
@@ -101,10 +105,21 @@ def build_source_appendix(
             order.append(key)
             records_by_key[key] = source_record
         records_by_key[key].claim_count += 1
+        claim_source_keys[claim_id] = key
 
     records = [records_by_key[key] for key in order]
     for idx, record in enumerate(records, start=1):
         record.label = f"S{idx}"
+    citation_labels = {
+        claim_id: records_by_key[key].label
+        for claim_id, key in claim_source_keys.items()
+        if key in records_by_key and records_by_key[key].label
+    }
+    claim_source_map = {
+        claim_id: _claim_source_map_record(records_by_key[key])
+        for claim_id, key in claim_source_keys.items()
+        if key in records_by_key and records_by_key[key].label
+    }
 
     status = "generated_with_warnings" if warnings else "generated"
     markdown = render_source_appendix(records, warnings=warnings)
@@ -116,7 +131,25 @@ def build_source_appendix(
         warnings=warnings,
         markdown=markdown,
         records=records,
+        citation_labels=citation_labels,
+        claim_source_map=claim_source_map,
     )
+
+
+def replace_claim_citations_with_labels(
+    markdown: str,
+    citation_labels: dict[str, str],
+) -> str:
+    """Replace internal claim citations with reader-facing source labels."""
+
+    def _replace(match: re.Match[str]) -> str:
+        label = citation_labels.get(match.group(1).strip())
+        return f"[{label}]" if label else ""
+
+    text = _SRC_REF_RE.sub(_replace, markdown)
+    text = re.compile(r"\[src:[^\]]*\]").sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def render_source_appendix(
@@ -205,6 +238,18 @@ def _record_from_claim(claim: Claim) -> tuple[SourceAppendixRecord, list[str]]:
         ),
         warnings,
     )
+
+
+def _claim_source_map_record(record: SourceAppendixRecord) -> dict[str, str]:
+    return {
+        "source_label": record.label,
+        "source_url": record.url,
+        "evidence_title": record.title,
+        "source_title": record.title,
+        "source_published_at": record.published_at,
+        "retrieved_at": record.retrieved_at,
+        "source_type": record.source_type,
+    }
 
 
 def _source_key(claim: Claim, record: SourceAppendixRecord) -> str:

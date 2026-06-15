@@ -6,6 +6,7 @@ from pathlib import Path
 from multi_agent_brief.outputs.source_appendix import (
     build_source_appendix,
     cited_claim_ids,
+    replace_claim_citations_with_labels,
 )
 
 
@@ -94,6 +95,31 @@ def test_source_appendix_uses_only_cited_claims_and_dedupes_sources(tmp_path: Pa
     assert "SYN_CLAIM_" not in result.markdown
     assert "SYN_SRC_" not in result.markdown
     assert "Evidence for" not in result.markdown
+    assert result.citation_labels == {
+        "SYN_CLAIM_002": "S1",
+        "SYN_CLAIM_001": "S1",
+    }
+    assert result.claim_source_map["SYN_CLAIM_001"]["source_label"] == "S1"
+    assert result.claim_source_map["SYN_CLAIM_001"]["source_url"] == "https://example.com/shared"
+    assert result.claim_source_map["SYN_CLAIM_001"]["source_title"] == "Shared Source"
+
+
+def test_replace_claim_citations_with_reader_source_labels():
+    markdown = (
+        "Alpha [src:claim-001]\n"
+        "Beta [src:claim-missing]\n"
+        "Gamma [src:claim-002]\n"
+    )
+
+    reader = replace_claim_citations_with_labels(
+        markdown,
+        {"claim-001": "S1", "claim-002": "S2"},
+    )
+
+    assert "Alpha [S1]" in reader
+    assert "Gamma [S2]" in reader
+    assert "[src:" not in reader
+    assert "claim-missing" not in reader
 
 
 def test_source_appendix_missing_cited_claim_warns_without_reader_leak(tmp_path: Path):

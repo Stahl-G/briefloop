@@ -20,6 +20,7 @@ from multi_agent_brief.outputs.source_appendix import (
     SourceAppendixResult,
     build_source_appendix,
     cited_claim_ids,
+    replace_claim_citations_with_labels,
 )
 
 _SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
@@ -52,6 +53,7 @@ class FinalizeResult:
     source_appendix_cited_claim_count: int = 0
     source_appendix_resolved_claim_count: int = 0
     source_appendix_warnings: list[str] | None = None
+    source_appendix_claim_map: dict[str, dict[str, str]] = field(default_factory=dict)
     delivery_markdown: str = ""
     delivery_docx: str = ""
     delivery_artifacts: list[str] = field(default_factory=list)
@@ -87,8 +89,9 @@ def finalize_reader_outputs(
     Agent-assisted workflows write or rewrite ``output/intermediate/audited_brief.md``
     before reader-facing delivery artifacts are rendered.
     This function is the final delivery gate: it preserves the cited audited
-    artifact for auditability, then writes reader-facing Markdown/DOCX outputs as
-    deterministic ``strip_claim_citations(audited_brief)`` derivatives.
+    artifact for auditability, then writes reader-facing Markdown/DOCX outputs
+    with internal claim citations rendered as reader-facing source labels when
+    Claim Ledger evidence is available.
     """
     out = Path(output_dir)
     intermediate_dir = out / "intermediate"
@@ -104,9 +107,6 @@ def finalize_reader_outputs(
 
     audited_markdown = audited_path.read_text(encoding="utf-8")
     stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
-    base_reader_markdown = _strip_internal_reader_sections(
-        strip_claim_citations(audited_markdown)
-    )
     formats = set(output_formats or ["markdown"])
     appendix_request = _source_appendix_request(
         output_formats=formats,
@@ -122,6 +122,20 @@ def finalize_reader_outputs(
         requested_by=appendix_request["requested_by"],
         explicit=bool(appendix_request["explicit"]),
     )
+    appendix_requested_by = (
+        "cited_claims"
+        if appendix_request["requested_by"] == "none" and appendix_result.source_count
+        else str(appendix_request["requested_by"])
+    )
+    reader_source_markdown = (
+        replace_claim_citations_with_labels(
+            audited_markdown,
+            appendix_result.citation_labels,
+        )
+        if appendix_result.citation_labels
+        else strip_claim_citations(audited_markdown)
+    )
+    base_reader_markdown = _strip_internal_reader_sections(reader_source_markdown)
     reader_markdown = base_reader_markdown
     if appendix_result.markdown and appendix_result.source_count:
         reader_markdown = base_reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
@@ -183,12 +197,13 @@ def finalize_reader_outputs(
         stripped_src_marker_count=stripped_count,
         source_appendix=str(appendix_path) if appendix_result.markdown and appendix_path.exists() else "",
         source_appendix_generation=appendix_result.status,
-        source_appendix_requested_by=str(appendix_request["requested_by"]),
+        source_appendix_requested_by=appendix_requested_by,
         source_appendix_mode=str(appendix_request["mode"]),
         source_appendix_source_count=appendix_result.source_count,
         source_appendix_cited_claim_count=appendix_result.cited_claim_count,
         source_appendix_resolved_claim_count=appendix_result.resolved_claim_count,
         source_appendix_warnings=appendix_result.warnings,
+        source_appendix_claim_map=appendix_result.claim_source_map,
         audit_binding=_audit_binding_report(
             intermediate_dir=intermediate_dir,
             audited_markdown=audited_markdown,
@@ -859,7 +874,9 @@ def _maybe_generate_source_appendix(
     requested_by: str,
     explicit: bool,
 ) -> SourceAppendixResult:
-    if requested_by == "none":
+    cited_ids = cited_claim_ids(audited_markdown)
+    auto_from_citations = requested_by == "none" and bool(cited_ids) and ledger_path.exists()
+    if requested_by == "none" and not auto_from_citations:
         return SourceAppendixResult(status="not_requested")
     if not ledger_path.exists():
         if explicit:

@@ -144,9 +144,11 @@ from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
     contamination_event_metadata as _run_integrity_contamination_event_metadata,
     contaminate_run_integrity_with_event_flag as _contaminate_run_integrity_with_event_flag,
+    finalize_run_integrity as _finalize_run_integrity,
     interpret_run_integrity as _interpret_run_integrity,
     project_for_read as _project_run_integrity_for_read,
     workflow_with_persistable_run_integrity as _workflow_with_persistable_run_integrity,
+    workflow_with_sticky_contamination_events as _workflow_with_sticky_contamination_events,
 )
 
 
@@ -1339,6 +1341,10 @@ def _load_manifest_and_workflow(workspace: str | Path) -> tuple[Path, dict[str, 
         stages=load_stage_specs(repo),
         path=paths["workflow_state"],
     )
+    workflow = _workflow_with_sticky_contamination_events(
+        workflow,
+        _read_event_log_records(paths["event_log"]),
+    )
     if workflow.get("run_id") is not None:
         workflow["run_id"] = _validate_runtime_run_id(
             workflow.get("run_id"),
@@ -1667,7 +1673,6 @@ def _validate_completion_target(
             error_code=E_ILLEGAL_TRANSITION,
         )
     return stage
-
 
 def _auditor_completion_metadata(
     *,
@@ -2101,6 +2106,8 @@ def _complete_stage_transaction(
             transaction_id=transaction_id,
             finalize=finalize,
         )
+        if finalize:
+            next_workflow = _finalize_run_integrity(next_workflow)
         next_workflow, topology_events = _workflow_with_topology_satisfaction(
             workflow=next_workflow,
             stages=stages,

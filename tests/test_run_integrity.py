@@ -6,6 +6,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
     require_persistable,
+    workflow_with_sticky_contamination_events,
 )
 from multi_agent_brief.orchestrator.runtime_state import RuntimeStateError
 
@@ -104,3 +105,45 @@ def test_interpret_run_integrity_canonicalizes_valid_contaminated_payload():
     assert persisted["reference_eligible"] is False
     assert persisted["clean_single_shot"] is False
     assert persisted["reasons"] == [{"reason_code": "run_reset"}]
+
+
+def test_interpret_run_integrity_canonicalizes_valid_contaminated_repaired_payload():
+    verdict = interpret_run_integrity({
+        "status": "contaminated_repaired",
+        "reference_eligible": False,
+        "clean_single_shot": False,
+        "reasons": [{"reason_code": "repair_completed"}],
+    }, field_present=True)
+    persisted = require_persistable(verdict)
+
+    assert persisted["status"] == "contaminated_repaired"
+    assert persisted["reference_eligible"] is False
+    assert persisted["clean_single_shot"] is False
+    assert persisted["reasons"] == [{"reason_code": "repair_completed"}]
+
+
+def test_sticky_contamination_event_keeps_repaired_terminal_status():
+    workflow = {
+        "run_integrity": {
+            "status": "contaminated_repaired",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [],
+        }
+    }
+    event_records = [
+        {
+            "event_type": "run_integrity_contaminated",
+            "created_at": "2026-06-14T00:00:00+00:00",
+            "metadata": {
+                "reason_code": "prior_repair",
+                "message": "Repair happened before finalization.",
+            },
+        }
+    ]
+
+    updated = workflow_with_sticky_contamination_events(workflow, event_records)
+
+    assert updated["run_integrity"]["status"] == "contaminated_repaired"
+    assert updated["run_integrity"]["reference_eligible"] is False
+    assert updated["run_integrity"]["reasons"][0]["reason_code"] == "prior_repair"

@@ -347,6 +347,15 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert report["source_appendix_cited_claim_count"] == 2
     assert report["source_appendix_resolved_claim_count"] == 1
     assert report["source_appendix_mode"] == "separate"
+    assert report["source_appendix_claim_map"]["SYN_CLAIM_001"] == {
+        "source_label": "S1",
+        "source_url": "https://example.com/exampleco-demo",
+        "evidence_title": "ExampleCo Opens Demo Facility",
+        "source_title": "ExampleCo Opens Demo Facility",
+        "source_published_at": "2026-06-01",
+        "retrieved_at": "",
+        "source_type": "web_search",
+    }
     assert "ExampleCo Opens Demo Facility" in appendix
     assert "Unused Source" not in appendix
     assert "SYN_CLAIM" not in appendix
@@ -364,6 +373,73 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert report["delivery_artifacts"] == [str(output_dir / "delivery" / "brief.md")]
     assert not (output_dir / "delivery" / "source_appendix.md").exists()
     assert not (output_dir / "delivery" / "claim_ledger.json").exists()
+
+
+def test_finalize_maps_src_claim_to_reader_source_label(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "ExampleCo opened a public demo facility. [src:claim-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="claim-001")
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    delivery = (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8")
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+
+    assert "ExampleCo opened a public demo facility. [S1]" in reader
+    assert "### [S1] ExampleCo Opens Demo Facility" in reader
+    assert "ExampleCo opened a public demo facility. [S1]" in delivery
+    assert "[src:" not in reader
+    assert "claim-001" not in reader
+    assert report["source_appendix_source_count"] == 1
+    assert report["source_appendix_claim_map"]["claim-001"]["source_label"] == "S1"
+    assert report["source_appendix_claim_map"]["claim-001"]["source_url"] == "https://example.com/exampleco-demo"
+    assert report["reader_clean"]["status"] == "pass"
+    assert report["reader_clean"]["blank_citation_row_count"] == 0
+
+
+def test_finalize_auto_renders_source_labels_for_markdown_only_output(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "| Item | Source |\n"
+        "| --- | --- |\n"
+        "| Demo facility | [src:claim-001] |\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="claim-001")
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+
+    assert result.source_appendix_generation == "generated"
+    assert result.source_appendix_requested_by == "cited_claims"
+    assert "| Demo facility | [S1] |" in reader
+    assert "### [S1] ExampleCo Opens Demo Facility" in reader
+    assert "[src:" not in reader
+    assert report["source_appendix_claim_map"]["claim-001"]["source_url"] == "https://example.com/exampleco-demo"
+    assert report["reader_clean"]["status"] == "pass"
+    assert report["reader_clean"]["blank_citation_row_count"] == 0
 
 
 def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Path):
@@ -855,7 +931,7 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
         )
 
 
-def test_finalize_not_requested_removes_stale_source_appendix(tmp_path: Path):
+def test_finalize_markdown_only_regenerates_stale_source_appendix_from_citations(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -882,10 +958,11 @@ def test_finalize_not_requested_removes_stale_source_appendix(tmp_path: Path):
     )
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
 
-    assert second.source_appendix_generation == "not_requested"
-    assert second.source_appendix == ""
-    assert report["source_appendix"] == ""
-    assert not (output_dir / "source_appendix.md").exists()
+    assert second.source_appendix_generation == "generated"
+    assert second.source_appendix_requested_by == "cited_claims"
+    assert report["source_appendix_requested_by"] == "cited_claims"
+    assert report["source_appendix_claim_map"]["SYN_CLAIM_001"]["source_label"] == "S1"
+    assert (output_dir / "source_appendix.md").exists()
 
 
 def test_finalize_legacy_missing_ledger_removes_stale_source_appendix(tmp_path: Path):
@@ -1288,6 +1365,35 @@ def test_finalize_fails_on_blank_source_index_id_cell(tmp_path: Path):
     assert reader_clean["status"] == "fail"
     assert reader_clean["blank_citation_row_count"] == 1
     assert "blank ID/source/reference cell" in reader_clean["sample_findings"][0]["message"]
+
+
+def test_finalize_fails_on_blank_source_column_in_reader_table(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Reader-safe content.\n\n"
+        "## Market Signals\n\n"
+        "| Signal | Source | Notes |\n"
+        "| --- | --- | --- |\n"
+        "| Policy change |  | Needs a source label |\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert reader_clean["status"] == "fail"
+    assert reader_clean["blank_citation_row_count"] == 1
+    assert "blank source/reference cell" in reader_clean["sample_findings"][0]["message"]
 
 
 def test_finalize_cli_reports_reader_clean_failure_without_traceback(

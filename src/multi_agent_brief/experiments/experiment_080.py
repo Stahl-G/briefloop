@@ -776,14 +776,14 @@ def _registered_run_integrity(container: dict[str, Any], *, path: str) -> dict[s
     if verdict.kind != "canonical" or projection.get("status") not in ALLOWED_RUN_INTEGRITY_STATUSES:
         _raise_experiment_error(
             "E_EXPERIMENT_080_RUN_INTEGRITY_INVALID",
-            f"{path} must be clean or contaminated, not malformed or unknown.",
+            f"{path} must be a persisted run-integrity status, not malformed or unknown.",
             path=path,
             run_integrity=projection,
         )
-    if projection.get("status") == "contaminated" and projection.get("reference_eligible") is True:
+    if projection.get("status") != "clean" and projection.get("reference_eligible") is True:
         _raise_experiment_error(
             "E_EXPERIMENT_080_RUN_INTEGRITY_INVALID",
-            f"{path}.reference_eligible must be false for contaminated runs.",
+            f"{path}.reference_eligible must be false for non-clean runs.",
             path=path,
         )
     return projection
@@ -1306,10 +1306,10 @@ def _validate_run_integrity(
             f"{path}.reference_eligible must be a boolean when present.",
             path=f"{path}.reference_eligible",
         ))
-    if status == "contaminated" and value.get("reference_eligible") is True:
+    if status != "clean" and value.get("reference_eligible") is True:
         diagnostics.append(_diag(
             "contaminated_run_reference_eligible",
-            f"{path}.reference_eligible must be false or omitted when status is contaminated.",
+            f"{path}.reference_eligible must be false or omitted when status is not clean.",
             path=f"{path}.reference_eligible",
         ))
 

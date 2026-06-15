@@ -17,11 +17,13 @@ from multi_agent_brief.orchestrator.runtime_state import (
     E_RUNTIME_STATE_NOT_INITIALIZED,
     RuntimeStateError,
     append_event,
+    read_event_log_records_strict,
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
+    workflow_with_sticky_contamination_events,
 )
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
@@ -539,6 +541,13 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
             "workflow_state.json must contain an object; cannot verify run integrity.",
             error_code=E_DELIVERY_EVENT_FAILED,
         )
+    try:
+        workflow = workflow_with_sticky_contamination_events(
+            workflow,
+            read_event_log_records_strict(paths["event_log"]),
+        )
+    except RuntimeStateError:
+        pass
     return project_for_read(
         interpret_run_integrity(
             workflow.get("run_integrity"),
@@ -549,9 +558,9 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
 
 def _print_run_integrity_warning(payload: dict[str, Any]) -> None:
     integrity = payload.get("run_integrity")
-    if not isinstance(integrity, dict) or integrity.get("status") != "contaminated":
+    if not isinstance(integrity, dict) or integrity.get("reference_eligible") is not False:
         return
-    print("[deliver] Run integrity: contaminated", file=sys.stderr)
+    print(f"[deliver] Run integrity: {integrity.get('status') or 'unknown'}", file=sys.stderr)
     print("[deliver] Reference eligible: no", file=sys.stderr)
     reasons = integrity.get("reasons") if isinstance(integrity.get("reasons"), list) else []
     if reasons:
