@@ -12,7 +12,7 @@
 
 MABW 是一个面向商业、研究、市场、政策、公司跟踪和管理层汇报的 **agent briefing workflow**。它不是“让 AI 写得更快”的 prompt，而是把简报拆成可追溯、可审计、可交付的工作循环：找来源、建事实账本、让 agent 写作、用门禁把关、由人定稿交付。
 
-在 `main` 上，下一条 v0.8.2 线已经缩短默认角色分配：Scout 默认同时完成发现和筛选。但问责骨架没有变短：`candidate_claims.json`、`screened_candidates.json`、Claim Ledger、可审计草稿、门禁报告、audit report、event log 和交付包仍然是彼此独立的记录。需要独立 Screener 时，可以切到 strict topology。
+v0.8.2 release 已经缩短默认角色分配：Scout 默认同时完成发现和筛选。但问责骨架没有变短：`candidate_claims.json`、`screened_candidates.json`、Claim Ledger、可审计草稿、门禁报告、audit report、event log 和交付包仍然是彼此独立的记录。需要独立 Screener 时，可以切到 strict topology。
 
 它适合这些人：
 
@@ -24,7 +24,7 @@ MABW 是一个面向商业、研究、市场、政策、公司跟踪和管理层
   <a href="#快速开始">🚀 快速开始</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md">🔬 公开运行摘要</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md">🧯 失败研究</a> ·
-  <a href="docs/releases/v0.8.1.md">📦 v0.8.1 Release</a>
+  <a href="docs/releases/v0.8.2.md">📦 v0.8.2 Release</a>
 </p>
 
 ## 为什么值得看 👀
@@ -68,7 +68,7 @@ MABW 的用户心智模型不是“有多少个控制面”，而是每次简报
 
 * [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)：展示 Improvement Memory materialization、门禁执行、控制面闭环。它是 integration reference，不是输出质量提升或严格因果效果证明。
 * [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。MABW 当前能追溯错误传播链，但还不能证明每个来源语义支持每个子主张。
-* [v0.8.1 release note](docs/releases/v0.8.1.md)：fast-rerun fact-layer import、timing projection 和 MABW-080 run registration。
+* [v0.8.2 release note](docs/releases/v0.8.2.md)：default / strict role topology、topology-satisfied stage recording、editor-new-fact gate 和 runtime-state safety cleanup。
 
 我们公开失败分析，因为问责也适用于这个项目自己。
 
@@ -182,9 +182,9 @@ multi-agent-brief claude install --repo-workdir .
 
 ## 产品承诺与边界 🧱
 
-当前版本：**v0.8.1**
+当前版本：**v0.8.2**
 
-v0.8.1 release 提供 Hermes / Claude Code / OpenCode 的可安装 runtime assets，Codex custom-agent assets 仍为 Experimental；同时提供运行时状态文件、事实账本、确定性质量门禁、反馈与修复计划、溯源投影、受众画像快照、受控的改进账本 / 改进记忆，以及 Markdown / Word 输出。`main` 上的下一条 v0.8.2 线还包括 default / strict role topology selector 和 editor-new-fact gate。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
+v0.8.2 release 提供 Hermes / Claude Code / OpenCode 的可安装 runtime assets，Codex custom-agent assets 仍为 Experimental；同时提供运行时状态文件、事实账本、确定性质量门禁、反馈与修复计划、溯源投影、受众画像快照、受控的改进账本 / 改进记忆、Markdown / Word 输出、default / strict role topology selector 和 editor-new-fact gate。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
 
 它仍然不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统，也不是投资建议工具、交易信号生成器或人工审核替代品。详见 [当前架构状态](docs/architecture-status.zh-CN.md)、[路线图](docs/roadmap.zh-CN.md) 和 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
 
@@ -348,7 +348,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [每周使用脚本](docs/weekly-use.zh-CN.md) ·
 [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
 [失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md) ·
-[v0.8.1 Release](docs/releases/v0.8.1.md) ·
+[v0.8.2 Release](docs/releases/v0.8.2.md) ·
 [发布验证清单](docs/launch-validation.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·
 [安全](docs/security.md) ·

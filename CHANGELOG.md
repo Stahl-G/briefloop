@@ -7,21 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] — 2026-06-15
+
 ### Added
 
 - **Role topology selector**: policy packs can select `default`, `strict`, or `human_assisted` role topology while preserving one canonical stage spec and the same accountable artifacts.
 - **Topology-satisfied stage recording**: default topology lets Scout write both `candidate_claims.json` and `screened_candidates.json`, then records Screener as satisfied by topology instead of fabricating an independent Screener execution history. Strict topology remains available for independent screening.
 - **Editor-new-fact quality gate**: stage-scoped quality gates now include a soft-by-default `editor_new_fact` check, backed by a Python-written Analyst draft snapshot, that flags editor-introduced numbers, claim references, and simple entity phrases. `--strict` can make those findings blocking.
+- **Topology-aware status output**: human `status` output now shows topology-satisfied stages such as `screener complete via scout`, without changing the JSON schema or runtime state.
+- **Packaged topology handoff smoke**: CI now verifies package-installed `init`/`run --workspace` handoff behavior for default topology and a strict-topology contract-base override.
 
 ### Changed
 
 - **Role source and generated assets aligned with topology**: Scout/Screener and Delivery Editor wording now reflects default/strict topology while keeping Claim Ledger, auditable draft, audit report, gate reports, event log, and delivery artifacts separate.
 - **Public docs aligned with topology**: README and support matrix wording now state that the default role assignment is shorter, but the accountability spine is not.
+- **Runtime-state decomposition completed for v0.8.2 foundations**: the runtime-state facade now exposes a pinned surface while helpers are split into manifest/workflow, artifact registry, event log, completion gates, and operations modules.
+- **Control-surface interpreters guarded**: run integrity, audit binding, quality gate binding, frozen artifact integrity, and stage-completion interpretation now have explicit structural tests to prevent helper drift.
+- **Legacy dead code removed**: orphaned connector/model/history/source-map modules and channel stubs were removed without changing the supported runtime path.
 
 ### Boundaries
 
 - Role topology convergence is not a speed-improvement claim and does not remove Claim Ledger, gate reports, audit report, event log, archive, or human-triggered delivery.
 - `editor_new_fact` is deterministic lexical detection, not semantic proof that every edit is supported.
+- The packaged topology smoke tests runtime handoff construction only. It does not bundle source-clone runtime kits or promote packaged `runtime install` beyond the existing support matrix.
 
 ## [0.8.1] — 2026-06-14
 
