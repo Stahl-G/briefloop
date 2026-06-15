@@ -47,6 +47,30 @@ def test_root_and_packaged_contract_configs_match():
     assert violations == []
 
 
+def test_audited_brief_ownership_contract_is_editor_scoped():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        audited = registry.artifact("audited_brief")
+        snapshot = registry.artifact("analyst_draft_snapshot")
+        analyst = registry.stage("analyst")
+        editor = registry.stage("editor")
+        assert audited is not None
+        assert snapshot is not None
+        assert analyst is not None
+        assert editor is not None
+        assert audited.producer_stage == "editor"
+        assert audited.producer_role == "editor"
+        assert "audited_brief" in editor.produces
+        assert "audited_brief" in editor.expected_artifacts
+        assert snapshot.producer_kind == "control_tool"
+        assert snapshot.producer_stage == "analyst"
+        assert snapshot.producer_role == "python_tool"
+        assert "analyst_draft_snapshot" in analyst.produces
+        assert "analyst_draft_snapshot" in analyst.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"
@@ -104,4 +128,3 @@ def _copy_configs(tmp_path: Path) -> Path:
     config_dir = tmp_path / "configs"
     shutil.copytree(ROOT / "configs", config_dir)
     return config_dir
-

@@ -94,7 +94,7 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["repair_owner"] == "analyst"
+    assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
     assert "output/intermediate/audit_report.json" in payload["blocked_direct_edits"]
@@ -235,7 +235,7 @@ def test_repair_route_prefers_target_relevance_metadata(tmp_path, capsys):
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["repair_owner"] == "analyst"
+    assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
 
@@ -261,7 +261,7 @@ def test_repair_route_prefers_target_priority_metadata(tmp_path, capsys):
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["repair_owner"] == "analyst"
+    assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
@@ -286,8 +286,35 @@ def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "editor"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+
+
+def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_ANALYST_001",
+            "finding_type": "summary_scope_gap",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "analyst",
+            "repair_stage_id": "analyst",
+            "message": "Analyst draft needs a scoped rewrite before Delivery Editor review.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
     assert payload["repair_owner"] == "analyst"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert "output/intermediate/analyst_draft_snapshot.md" not in payload["allowed_artifacts"]
+    assert "output/intermediate/analyst_draft_snapshot.md" in payload["blocked_direct_edits"]
+    assert payload["must_rerun_from"] == "editor"
 
 
 def test_repair_route_rejects_invalid_gate_report_json(tmp_path, capsys):

@@ -54,7 +54,7 @@ RERUN_FROM_BY_OWNER = {
     "scout": "screener",
     "screener": "claim-ledger",
     "claim-ledger": "analyst",
-    "analyst": "auditor",
+    "analyst": "editor",
     "editor": "auditor",
     "auditor": "gates",
     "finalize": "finalize",
@@ -72,10 +72,12 @@ DOWNSTREAM_BLOCKED_EDITS = {
         "output/intermediate/audit_report.json",
     ],
     "analyst": [
+        "output/intermediate/analyst_draft_snapshot.md",
         "output/intermediate/claim_ledger.json",
         "output/intermediate/audit_report.json",
     ],
     "editor": [
+        "output/intermediate/analyst_draft_snapshot.md",
         "output/intermediate/claim_ledger.json",
         "output/intermediate/audit_report.json",
     ],
@@ -234,7 +236,7 @@ def _route_for_finding(finding: dict[str, Any]) -> dict[str, Any] | None:
 
     if _is_audited_brief_binding_issue(finding_type, artifact_id):
         return _route(
-            repair_owner="analyst",
+            repair_owner="editor",
             allowed_artifacts=["output/intermediate/audited_brief.md"],
             must_rerun_from="auditor",
             blocked_direct_edits=[
@@ -252,6 +254,8 @@ def _explicit_repair_route(finding: dict[str, Any]) -> dict[str, Any] | None:
     if owner is None:
         return None
     repair_artifact = _repair_artifact_path(finding.get("repair_artifact_id"))
+    if owner == "analyst" and repair_artifact == "output/intermediate/audited_brief.md":
+        owner = "editor"
     if owner == "source-discovery":
         allowed_artifacts = STAGE_REPAIR_ARTIFACTS[owner]
     else:

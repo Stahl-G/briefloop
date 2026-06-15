@@ -109,10 +109,9 @@ artifacts:
     path: output/intermediate/audited_brief.md
     format: markdown
     required: true
-    producer_stage: analyst
-    producer_role: analyst
+    producer_stage: editor
+    producer_role: editor
     consumer_stages:
-      - editor
       - auditor
       - finalize
     validation_result: reference_only
@@ -127,7 +126,7 @@ artifacts:
   - artifact_id: analyst_draft_snapshot
     path: output/intermediate/analyst_draft_snapshot.md
     format: markdown
-    required: false
+    required: true
     producer_kind: control_tool
     producer_stage: analyst
     producer_role: python_tool

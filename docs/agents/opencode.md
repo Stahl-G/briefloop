@@ -12,7 +12,7 @@
 - `brief-scout.md` — Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.
 - `brief-screener.md` — Strict-topology independent screening role that filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
 - `brief-claim-ledger.md` — Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.
-- `brief-analyst.md` — Drafts executive-readable brief sections using only Claim Ledger entries.
+- `brief-analyst.md` — Drafts the Analyst working brief from Claim Ledger entries; Python freezes that draft into analyst_draft_snapshot at analyst stage-complete.
 - `brief-auditor.md` — Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures.
 - `brief-editor.md` — Delivery Editor alias for the editor stage; improves clarity, structure, tone, and executive readability without adding facts.
 - `brief-formatter.md` — Renders the final reader delivery bundle from audited_brief.md and audit_report.json through finalize.

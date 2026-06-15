@@ -115,9 +115,9 @@ workflow:
         - user_profile
         - input_classification
       produces:
-        - audited_brief
+        - analyst_draft_snapshot
       expected_artifacts:
-        - audited_brief
+        - analyst_draft_snapshot
       allowed_decisions:
         - continue
         - retry_stage
@@ -133,7 +133,7 @@ workflow:
           required_artifacts:
             - audited_brief
       consumes:
-        - audited_brief
+        - analyst_draft_snapshot
         - claim_ledger
         - user_profile
         - input_classification

@@ -1979,107 +1979,6 @@ def _complete_stage_transaction(
         finalize=finalize,
     )
 
-    artifact_reasons = _completion_artifact_gate_reasons(
-        workspace=ws,
-        stage=stage,
-        artifacts_by_id=artifacts_by_id,
-    )
-    topology_targets = _topology_satisfaction_targets_for_completion(
-        stages=stages,
-        policy_pack=policy_pack,
-        stage_id=stage_id,
-    )
-    artifact_reasons.extend(
-        _topology_satisfaction_required_reasons(
-            workspace=ws,
-            targets=topology_targets,
-            artifacts_by_id=artifacts_by_id,
-        )
-    )
-    if stage_id == "source-discovery":
-        artifact_reasons.extend(_source_discovery_evidence_reasons(ws))
-    if artifact_reasons:
-        code = E_REQUIRED_ARTIFACT_MISSING
-        if any("invalid" in item.lower() for item in artifact_reasons):
-            code = E_ARTIFACT_INVALID
-        _raise_completion_reasons(
-            message=f"Cannot complete stage '{stage_id}'",
-            reasons=artifact_reasons,
-            error_code=code,
-            details={"stage_id": stage_id},
-        )
-
-    topology_target_reasons = _topology_satisfaction_target_blocking_reasons(
-        workspace=ws,
-        targets=topology_targets,
-        stages=stages,
-        artifacts=artifacts,
-    )
-    if topology_target_reasons:
-        _raise_completion_reasons(
-            message=f"Cannot complete stage '{stage_id}' because a topology-satisfied downstream stage is blocked",
-            reasons=topology_target_reasons,
-            error_code=E_ILLEGAL_TRANSITION,
-            details={"stage_id": stage_id, "topology_target_stages": [target for target, _rule in topology_targets]},
-        )
-
-    feedback_reasons = current_stage_feedback_blocking_reasons(
-        workspace=ws,
-        current_stage=stage_id,
-        stages=stages,
-        artifacts=artifacts,
-    )
-    if feedback_reasons:
-        _raise_completion_reasons(
-            message=f"Cannot complete stage '{stage_id}'",
-            reasons=feedback_reasons,
-            error_code=E_ILLEGAL_TRANSITION,
-            details={"stage_id": stage_id},
-        )
-
-    quality_reasons = current_stage_quality_gate_blocking_reasons(
-        workspace=ws,
-        current_stage=stage_id,
-        stages=stages,
-        artifacts=artifacts,
-    )
-    if stage_id == "auditor":
-        quality_reasons.extend(_quality_gate_pass_reasons(workspace=ws, stages=stages, artifacts=artifacts))
-    if quality_reasons:
-        _raise_completion_reasons(
-            message=f"Cannot complete stage '{stage_id}'",
-            reasons=quality_reasons,
-            error_code=E_QUALITY_GATE_REQUIRED,
-            details={"stage_id": stage_id},
-        )
-
-    fast_rerun_freshness_at_finalize: dict[str, Any] | None = None
-    manifest_for_completion = manifest
-    if finalize:
-        fast_rerun_freshness_at_finalize = _fast_rerun_finalize_freshness_snapshot(
-            ws,
-            manifest,
-            checked_at=utc_now(),
-        )
-        manifest_for_completion = _manifest_with_fast_rerun_freshness_at_finalize(
-            manifest,
-            fast_rerun_freshness_at_finalize,
-        )
-        finalize_reasons = _finalize_completion_reasons(
-            ws,
-            stages=stages,
-            artifacts=artifacts,
-            runtime_manifest=manifest_for_completion,
-            fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
-        )
-        if finalize_reasons:
-            _raise_completion_reasons(
-                message="Cannot complete finalize stage",
-                reasons=finalize_reasons,
-                error_code=E_READER_FINAL_GATE_FAILED,
-                details={"stage_id": stage_id},
-            )
-
     transaction_id = uuid.uuid4().hex
     now = utc_now()
     run_id = str(manifest["run_id"])
@@ -2088,6 +1987,110 @@ def _complete_stage_transaction(
         analyst_snapshot_before = _snapshot_file_paths([ws / ANALYST_DRAFT_SNAPSHOT_PATH])
         _snapshot_analyst_draft(ws)
     try:
+        artifact_reasons = _completion_artifact_gate_reasons(
+            workspace=ws,
+            stage=stage,
+            artifacts_by_id=artifacts_by_id,
+        )
+        topology_targets = _topology_satisfaction_targets_for_completion(
+            stages=stages,
+            policy_pack=policy_pack,
+            stage_id=stage_id,
+        )
+        artifact_reasons.extend(
+            _topology_satisfaction_required_reasons(
+                workspace=ws,
+                targets=topology_targets,
+                artifacts_by_id=artifacts_by_id,
+            )
+        )
+        if stage_id == "source-discovery":
+            artifact_reasons.extend(_source_discovery_evidence_reasons(ws))
+        if artifact_reasons:
+            code = E_REQUIRED_ARTIFACT_MISSING
+            if any("invalid" in item.lower() for item in artifact_reasons):
+                code = E_ARTIFACT_INVALID
+            _raise_completion_reasons(
+                message=f"Cannot complete stage '{stage_id}'",
+                reasons=artifact_reasons,
+                error_code=code,
+                details={"stage_id": stage_id},
+            )
+
+        topology_target_reasons = _topology_satisfaction_target_blocking_reasons(
+            workspace=ws,
+            targets=topology_targets,
+            stages=stages,
+            artifacts=artifacts,
+        )
+        if topology_target_reasons:
+            _raise_completion_reasons(
+                message=f"Cannot complete stage '{stage_id}' because a topology-satisfied downstream stage is blocked",
+                reasons=topology_target_reasons,
+                error_code=E_ILLEGAL_TRANSITION,
+                details={
+                    "stage_id": stage_id,
+                    "topology_target_stages": [target for target, _rule in topology_targets],
+                },
+            )
+
+        feedback_reasons = current_stage_feedback_blocking_reasons(
+            workspace=ws,
+            current_stage=stage_id,
+            stages=stages,
+            artifacts=artifacts,
+        )
+        if feedback_reasons:
+            _raise_completion_reasons(
+                message=f"Cannot complete stage '{stage_id}'",
+                reasons=feedback_reasons,
+                error_code=E_ILLEGAL_TRANSITION,
+                details={"stage_id": stage_id},
+            )
+
+        quality_reasons = current_stage_quality_gate_blocking_reasons(
+            workspace=ws,
+            current_stage=stage_id,
+            stages=stages,
+            artifacts=artifacts,
+        )
+        if stage_id == "auditor":
+            quality_reasons.extend(_quality_gate_pass_reasons(workspace=ws, stages=stages, artifacts=artifacts))
+        if quality_reasons:
+            _raise_completion_reasons(
+                message=f"Cannot complete stage '{stage_id}'",
+                reasons=quality_reasons,
+                error_code=E_QUALITY_GATE_REQUIRED,
+                details={"stage_id": stage_id},
+            )
+
+        fast_rerun_freshness_at_finalize: dict[str, Any] | None = None
+        manifest_for_completion = manifest
+        if finalize:
+            fast_rerun_freshness_at_finalize = _fast_rerun_finalize_freshness_snapshot(
+                ws,
+                manifest,
+                checked_at=utc_now(),
+            )
+            manifest_for_completion = _manifest_with_fast_rerun_freshness_at_finalize(
+                manifest,
+                fast_rerun_freshness_at_finalize,
+            )
+            finalize_reasons = _finalize_completion_reasons(
+                ws,
+                stages=stages,
+                artifacts=artifacts,
+                runtime_manifest=manifest_for_completion,
+                fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
+            )
+            if finalize_reasons:
+                _raise_completion_reasons(
+                    message="Cannot complete finalize stage",
+                    reasons=finalize_reasons,
+                    error_code=E_READER_FINAL_GATE_FAILED,
+                    details={"stage_id": stage_id},
+                )
+
         preserved_extensions = _preserved_manifest_extensions(manifest_for_completion)
         next_workflow = _workflow_after_completion(
             workflow=workflow,

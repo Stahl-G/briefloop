@@ -236,7 +236,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     editor_inputs = {
         item["artifact_id"] for item in protocol_stages["editor"]["required_input_artifacts"]
     }
-    assert {"audited_brief", "claim_ledger", "input_classification"} <= editor_inputs
+    assert {"analyst_draft_snapshot", "claim_ledger", "input_classification"} <= editor_inputs
     assert protocol_stages["editor"]["context_inputs"] == ["user_profile"]
     assert any("prose acknowledgement" in item for item in protocol_stages["auditor"]["forbidden_actions"])
     for rel_path in data["runtime_state_files"].values():

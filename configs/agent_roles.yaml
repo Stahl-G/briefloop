@@ -316,8 +316,8 @@ roles:
   analyst:
     stage: pipeline
     tool_profile: edit_safe
-    description: Drafts executive-readable brief sections using only Claim Ledger
-      entries.
+    description: Drafts the Analyst working brief from Claim Ledger entries; Python
+      freezes that draft into analyst_draft_snapshot at analyst stage-complete.
     trigger: Use after the claim-ledger subagent or validator has produced claim_ledger.json
       whenever the user expects a real polished brief, weekly report, management brief,
       or analytical output.
@@ -326,6 +326,9 @@ roles:
     - Read output/input_classification.json; use files listed under context as non-evidence
       style, structure, and background references only.
     - Draft management-ready sections using only Claim Ledger material.
+    - Write output/intermediate/audited_brief.md as the Analyst working draft;
+      Python freezes it into output/intermediate/analyst_draft_snapshot.md during
+      analyst stage-complete.
     - Attach real [src:<claim_id>] citations from claim_ledger.json to every important statement.
     - Preserve every real [src:<claim_id>] citation exactly.
     - Include source dates (published_at or retrieved_at) where available.
@@ -344,6 +347,8 @@ roles:
     - Preserve real [src:<claim_id>] citations exactly.
     - Do not write the placeholder <claim_id> literally; use only claim IDs that exist in claim_ledger.json.
     - Always read claim_ledger.json before writing.
+    - Do not edit output/intermediate/analyst_draft_snapshot.md; it is written by
+      Python control tooling during stage-complete.
   auditor:
     stage: pipeline
     tool_profile: audit_edit
@@ -403,6 +408,8 @@ roles:
       scope.
     responsibilities:
     - Improve readability and management tone.
+    - Own the final auditable output/intermediate/audited_brief.md that Auditor
+      and finalize consume.
     - Read output/input_classification.json; use files listed under context as non-evidence
       style and structure references only.
     - Reduce repetition.
@@ -414,11 +421,14 @@ roles:
       audit in background).
     - Keep editorial changes within existing facts.
     - Keep claim IDs unchanged.
-    - 'Treat the Analyst draft as the factual boundary: restructure and clarify,
-      but do not introduce new numbers, named entities, dates, causal claims, or
-      new [src:<claim_id>] references.'
+    - 'Treat output/intermediate/analyst_draft_snapshot.md as the factual boundary:
+      restructure and clarify output/intermediate/audited_brief.md, but do not
+      introduce new numbers, named entities, dates, causal claims, or new [src:<claim_id>]
+      references.'
     hard_rules:
     - Edit existing claims and prose only.
+    - Own output/intermediate/audited_brief.md after editing; do not modify
+      output/intermediate/analyst_draft_snapshot.md.
     - Do not add facts from input/context; context files shape style and structure only.
     - Do not add new facts, numbers, named entities, dates, causal claims, or citations.
     - Keep claim citations with supported statements.

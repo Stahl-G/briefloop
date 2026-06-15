@@ -53,7 +53,7 @@ Toolsets: `file`, `terminal`, `web` when source access is enabled.
 
 Goal: Screen and rank MABW candidate claims.
 
-Input: `output/intermediate/candidate_claims.json`  
+Input: `output/intermediate/candidate_claims.json`
 Write: `output/intermediate/screened_candidates.json`
 
 Use only when `role_topology: strict` keeps screening independent, or when the Orchestrator explicitly routes a screening repair/review task. Rank, deduplicate, freshness-check, and capacity-cap candidates while preserving source evidence and exclusion reasons.
@@ -62,7 +62,7 @@ Use only when `role_topology: strict` keeps screening independent, or when the O
 
 Goal: Build the MABW Claim Ledger.
 
-Input: `output/intermediate/screened_candidates.json`  
+Input: `output/intermediate/screened_candidates.json`
 Write: `output/intermediate/claim_ledger.json`
 
 Create stable claim IDs and preserve evidence text, source URL/path, publication date, retrieved date, topic, claim type, and confidence.
@@ -71,16 +71,17 @@ Create stable claim IDs and preserve evidence text, source URL/path, publication
 
 Goal: Draft the audited MABW brief.
 
-Inputs: `user.md`, `config.yaml`, `output/intermediate/claim_ledger.json`  
-Write: `output/intermediate/audited_brief.md`
+Inputs: `user.md`, `config.yaml`, `output/intermediate/claim_ledger.json`
+Write: `output/intermediate/audited_brief.md` as the Analyst working draft
 
-Write a management-ready brief in the workspace language with valid `[src:<claim_id>]` citations that use real Claim Ledger IDs. Use the Orchestrator-provided audience taste summary as style context, not as source evidence.
+Write a management-ready brief in the workspace language with valid `[src:<claim_id>]` citations that use real Claim Ledger IDs. Use the Orchestrator-provided audience taste summary as style context, not as source evidence. Do not write `analyst_draft_snapshot.md`; Python freezes it during analyst stage-complete.
 
 ### Editor / Delivery Editor
 
 Goal: Polish the audited MABW brief without adding facts.
 
-Input and output: `output/intermediate/audited_brief.md`
+Inputs: `output/intermediate/analyst_draft_snapshot.md`, `output/intermediate/audited_brief.md`
+Write: `output/intermediate/audited_brief.md` as the Editor-owned final auditable brief
 
 Improve readability, structure, and executive tone while preserving factual scope, caveats, uncertainty, and valid citations. Do not introduce new numbers, named entities, dates, causal claims, or citations.
 
@@ -88,7 +89,7 @@ Improve readability, structure, and executive tone while preserving factual scop
 
 Goal: Audit the MABW brief against the Claim Ledger.
 
-Inputs: `output/intermediate/audited_brief.md`, `output/intermediate/claim_ledger.json`  
+Inputs: `output/intermediate/audited_brief.md`, `output/intermediate/claim_ledger.json`
 Write: `output/intermediate/audit_report.json`
 
 Check source support, orphan citations, unsupported numbers, missing dates, stale framing, process residue, advice language, and delivery readiness.

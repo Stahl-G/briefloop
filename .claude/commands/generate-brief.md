@@ -135,10 +135,11 @@ your editorial judgment.
 
 10. Invoke the **analyst** subagent:
    - Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.
-   - Write the auditable brief using Claim Ledger evidence.
+   - Write the Analyst working auditable brief using Claim Ledger evidence.
    - Preserve valid `[src:<claim_id>]` citations that use real Claim Ledger IDs.
    - Include dates for news items.
    - Write `$ARGUMENTS/output/intermediate/audited_brief.md`.
+   - Do not write `$ARGUMENTS/output/intermediate/analyst_draft_snapshot.md`; Python freezes it during analyst stage-complete.
    - Check the expected artifact.
    - Run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage analyst --reason "Auditable brief was drafted from the Claim Ledger."`.
    - If the transaction fails, stop and report the failure. Do not invoke the next specialist.
@@ -146,6 +147,8 @@ your editorial judgment.
 11. Invoke the **editor** subagent:
     - Polish for management or research-team readability.
     - Clean invalid citation markers and process residue.
+    - Read `$ARGUMENTS/output/intermediate/analyst_draft_snapshot.md` as the frozen factual boundary.
+    - Own the final `$ARGUMENTS/output/intermediate/audited_brief.md` consumed by Auditor and finalize.
     - Preserve valid `[src:<claim_id>]` citations in `audited_brief.md` that use real Claim Ledger IDs.
     - Check the expected artifact.
     - Run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage editor --reason "Auditable brief was edited without changing evidence."`.

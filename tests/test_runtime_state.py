@@ -373,6 +373,7 @@ def _advance_to_finalize(ws: Path) -> None:
     _write_json_artifact(ws, "screened_candidates.json")
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
+    (_intermediate(ws) / "analyst_draft_snapshot.md").write_text("# Brief\n", encoding="utf-8")
     _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
     _set_current_stage(ws, "finalize")
 
@@ -382,6 +383,7 @@ def _advance_to_auditor(ws: Path) -> None:
     _write_json_artifact(ws, "screened_candidates.json")
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n", encoding="utf-8")
+    (_intermediate(ws) / "analyst_draft_snapshot.md").write_text("# Brief\n", encoding="utf-8")
     _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
     _set_current_stage(ws, "auditor")
 
@@ -1866,10 +1868,15 @@ def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
         stage_id="analyst",
         reason="analyst complete",
     )
-    analyst_sha = analyst_state["artifact_registry"]["artifacts"]["audited_brief"]["sha256"]
+    analyst_audited_record = analyst_state["artifact_registry"]["artifacts"]["audited_brief"]
+    analyst_sha = analyst_audited_record["sha256"]
+    assert analyst_audited_record["producer_stage"] == "editor"
     snapshot = _intermediate(ws) / "analyst_draft_snapshot.md"
     assert snapshot.read_text(encoding="utf-8") == analyst_text
-    assert analyst_state["artifact_registry"]["artifacts"]["analyst_draft_snapshot"]["sha256"] == _sha256_file(snapshot)
+    snapshot_record = analyst_state["artifact_registry"]["artifacts"]["analyst_draft_snapshot"]
+    assert snapshot_record["producer_stage"] == "analyst"
+    assert snapshot_record["producer_role"] == "python_tool"
+    assert snapshot_record["sha256"] == _sha256_file(snapshot)
 
     audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
     editor_state = complete_stage_transaction(
@@ -1885,6 +1892,40 @@ def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
     assert editor_sha != analyst_sha
     assert snapshot.read_text(encoding="utf-8") == analyst_text
     assert editor_state["artifact_registry"]["artifacts"]["analyst_draft_snapshot"]["sha256"] == _sha256_file(snapshot)
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    assert checked["workflow_state"]["run_integrity"]["status"] == "clean"
+
+
+def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+
+    audited.write_text("# Brief\n\nChanged after editor completion. [src:CL-001]\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "owner stage 'editor'" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["run_integrity"]["status"] == "contaminated"
+    assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
 
 
 def test_analyst_snapshot_rolls_back_when_stage_completion_fails_after_snapshot(tmp_path, monkeypatch):

@@ -73,12 +73,15 @@ Stage sequence:
 10. Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.
 
 11. Check `claim_ledger.json`, then delegate the **brief-analyst** subagent:
-   - Write the final brief from `claim_ledger.json` and `user.md`.
+   - Write the Analyst working draft from `claim_ledger.json` and `user.md`.
    - Use only `claim_ledger.json` as source evidence.
    - Preserve all valid [src:<claim_id>] citations that use real Claim Ledger IDs.
-   - Write the auditable brief to `$ARGUMENTS/output/intermediate/audited_brief.md`.
+   - Write the working auditable brief to `$ARGUMENTS/output/intermediate/audited_brief.md`.
+   - Do not write `$ARGUMENTS/output/intermediate/analyst_draft_snapshot.md`; Python freezes it during analyst stage-complete.
 
-12. Check `audited_brief.md`, then delegate the **brief-editor** / Delivery Editor subagent:
+12. After analyst stage-complete freezes `analyst_draft_snapshot.md`, delegate the **brief-editor** / Delivery Editor subagent:
+    - Read `$ARGUMENTS/output/intermediate/analyst_draft_snapshot.md` as the frozen factual boundary.
+    - Own the Editor-owned final auditable brief at `$ARGUMENTS/output/intermediate/audited_brief.md`.
     - Polish for management / research team readability.
     - Do not add new facts, numbers, named entities, dates, causal claims, or citations.
     - Preserve valid [src:<claim_id>] in `audited_brief.md` that use real Claim Ledger IDs.

@@ -152,7 +152,7 @@ def _quality_gate_payload(*, status: str, stage_id: str) -> dict:
                 "severity": "high",
                 "blocking_level": "blocking",
                 "blocking": True,
-                "repair_owner": "analyst",
+                "repair_owner": "editor",
                 "stage_id": stage_id,
                 "artifact_id": artifact_id,
                 "gate_stage_id": stage_id,
@@ -287,9 +287,9 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     blocker = next(finding for finding in report["findings"] if finding["finding_type"] == "number_without_source")
     assert blocker["gate_stage_id"] == "auditor"
     assert blocker["gate_artifact_id"] == "auditor_quality_gate_report"
-    assert blocker["stage_id"] == "analyst"
+    assert blocker["stage_id"] == "editor"
     assert blocker["artifact_id"] == "audited_brief"
-    assert blocker["repair_stage_id"] == "analyst"
+    assert blocker["repair_stage_id"] == "editor"
     assert blocker["repair_artifact_id"] == "audited_brief"
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -388,7 +388,7 @@ def test_gate_report_can_be_explicitly_ingested_as_audit_feedback(tmp_path, caps
     issue = json.loads(capsys.readouterr().out)["feedback_issues"]["issues"][0]
     assert issue["source"] == "audit"
     assert issue["status"] == "open"
-    assert issue["stage_id"] == "analyst"
+    assert issue["stage_id"] == "editor"
     assert issue["artifact_id"] == "audited_brief"
     assert issue["category"] == "unsupported_claim"
     assert issue["metadata"]["source_finding_id"].startswith("QG_")
@@ -635,7 +635,7 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     gap = next(finding for finding in report["findings"] if finding["finding_type"] == "target_relevance_gap")
     assert gap["gate_stage_id"] == "finalize"
     assert gap["gate_artifact_id"] == "finalize_quality_gate_report"
-    assert gap["stage_id"] == "analyst"
+    assert gap["stage_id"] == "editor"
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     assert state["workflow_state"]["current_stage"] == "finalize"

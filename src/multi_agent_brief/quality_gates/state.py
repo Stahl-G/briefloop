@@ -321,13 +321,13 @@ def _map_audit_finding(
     related_claim_id = finding.related_claim_id or None
     source_stage = _stage_or_none(stages, "source-discovery")
     claim_stage = _stage_or_none(stages, "claim-ledger")
-    analyst_stage = _stage_or_none(stages, "analyst")
+    editor_stage = _stage_or_none(stages, "editor")
     audited_artifact = _artifact_or_none(artifacts, "audited_brief")
     ledger_artifact = _artifact_or_none(artifacts, "claim_ledger")
 
-    stage_id = analyst_stage
+    stage_id = editor_stage
     artifact_id = audited_artifact
-    repair_owner = "analyst"
+    repair_owner = "editor"
     category = "unsupported_claim"
     default_blocking = False
 
@@ -684,7 +684,7 @@ def _target_relevance_findings(
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    stage_id = _stage_or_none(stages, "analyst")
+    stage_id = _stage_or_none(stages, "editor")
     artifact_id = _artifact_or_none(artifacts, "audited_brief")
     terms = _target_terms(workspace, config)
     if not terms:
@@ -715,7 +715,7 @@ def _target_relevance_findings(
                 finding_type="target_relevance_gap",
                 severity="high",
                 blocking_level="blocking",
-                repair_owner="analyst",
+                repair_owner="editor",
                 stage_id=stage_id,
                 artifact_id=artifact_id,
                 description="Executive summary does not mention the configured target entity or topic.",
@@ -741,7 +741,7 @@ def _target_relevance_findings(
                     finding_type="target_priority_claim_missing_from_summary",
                     severity="high",
                     blocking_level="blocking",
-                    repair_owner="analyst",
+                    repair_owner="editor",
                     stage_id=stage_id,
                     artifact_id=artifact_id,
                     claim_id=target_claims[0].claim_id,

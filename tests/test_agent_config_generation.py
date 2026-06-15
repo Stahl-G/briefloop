@@ -200,7 +200,27 @@ def test_generated_editor_uses_delivery_editor_alias(manifest):
 
     assert "Delivery Editor alias" in rendered
     assert "stage id remains editor" in rendered
+    assert "Own the final auditable output/intermediate/audited_brief.md" in rendered
+    assert "output/intermediate/analyst_draft_snapshot.md as the factual boundary" in rendered
     assert "Do not add new facts, numbers, named entities, dates, causal claims, or citations" in rendered
+
+
+def test_generated_analyst_and_editor_explain_audited_brief_ownership(manifest):
+    analyst = manifest["roles"]["analyst"]
+    editor = manifest["roles"]["editor"]
+    rendered = "\n".join([
+        render_codex_agent("analyst", analyst, manifest),
+        render_claude_agent("analyst", analyst, manifest),
+        render_opencode_agent("analyst", analyst, manifest),
+        render_codex_agent("editor", editor, manifest),
+        render_claude_agent("editor", editor, manifest),
+        render_opencode_agent("editor", editor, manifest),
+    ])
+
+    assert "Analyst working draft" in rendered
+    assert "Python freezes it into output/intermediate/analyst_draft_snapshot.md" in rendered
+    assert "Do not edit output/intermediate/analyst_draft_snapshot.md" in rendered
+    assert "Own the final auditable output/intermediate/audited_brief.md" in rendered
 
 
 def test_generated_orchestrator_separates_runtime_and_repo_development_modes(manifest):
@@ -384,6 +404,9 @@ def test_opencode_command_has_correct_agent(manifest):
     assert "selection is not execution" in content
     assert "Do not treat `audience_profile.md` as source evidence" in content
     assert "retry_stage" in content
+    assert "Analyst working draft" in content
+    assert "analyst_draft_snapshot.md" in content
+    assert "Editor-owned final auditable brief" in content
 
 
 def test_opencode_jsonc_is_valid(manifest):
