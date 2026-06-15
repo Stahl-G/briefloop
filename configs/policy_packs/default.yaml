@@ -9,6 +9,8 @@ policy_pack:
     - process_artifact
     - fact_grounding_evidence
     - quality_audience
+policy:
+  role_topology: default
 stage_overrides: {}
 source_rules:
   source_style: workspace_default

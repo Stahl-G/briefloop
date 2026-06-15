@@ -66,6 +66,17 @@ workflow:
     - stage_id: screener
       owner: screener
       category: candidate_screening
+      topology_satisfaction:
+        default:
+          satisfied_by: scout
+          required_artifacts:
+            - candidate_claims
+            - screened_candidates
+        human_assisted:
+          satisfied_by: scout
+          required_artifacts:
+            - candidate_claims
+            - screened_candidates
       consumes:
         - candidate_claims
       produces:
@@ -94,6 +105,11 @@ workflow:
     - stage_id: analyst
       owner: analyst
       category: drafting
+      topology_satisfaction:
+        human_assisted:
+          satisfied_by: writer
+          required_artifacts:
+            - audited_brief
       consumes:
         - claim_ledger
         - user_profile
@@ -111,6 +127,11 @@ workflow:
     - stage_id: editor
       owner: editor
       category: editorial_refinement
+      topology_satisfaction:
+        human_assisted:
+          satisfied_by: writer
+          required_artifacts:
+            - audited_brief
       consumes:
         - audited_brief
         - claim_ledger
