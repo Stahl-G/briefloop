@@ -13,6 +13,8 @@ Current version: **v0.8.1**
 
 MABW turns AI-assisted business briefing into an accountable loop with four steps: **find and screen evidence -> freeze key facts into a Claim Ledger -> write only from the ledger -> audit independently.** A human delivers the final brief. Always.
 
+On `main`, the next v0.8.2 line shortens the default role assignment: Scout finds and screens in one stage. The accountability spine is not shorter. `candidate_claims.json`, `screened_candidates.json`, the Claim Ledger, gate reports, audit report, event log, and delivery bundle remain distinct artifacts. Strict topology can still keep Screener as an independent role.
+
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
 ## 🚀 Get Started
@@ -70,7 +72,7 @@ Advanced Windows installer: `irm https://raw.githubusercontent.com/Stahl-G/multi
 
 ## 🧯 What Broke, And What Didn't
 
-I'm a management trainee at a manufacturer. Two months into the job, I was writing real weekly briefings for executives and doing what everyone does: orchestrating seven carefully prompted agents: scout, screeners, analysts, an editor, and an auditor.
+I'm a management trainee at a manufacturer. Two months into the job, I was writing real weekly briefings for executives and doing what everyone does: orchestrating a carefully prompted role chain for finding, screening, analysis, editing, and audit.
 
 The deterministic parts never broke. Everything entrusted to prompts eventually did. Facts mutated in handoffs. Weak sources became confident conclusions. The system needed so much human re-verification that it was no better than one long prompt.
 
@@ -188,11 +190,11 @@ I build and use MABW as part of my actual weekly briefing work at a listed manuf
 
 ## 🎼 Why The Orchestrator Is Called 司乐师
 
-The runtime orchestrator is named after the office in the Chinese ritual-music tradition responsible for keeping ensembles in time and in order. It does not write; it dispatches the scout, screener, analyst, editor, and auditor, and holds them to their contracts. Not a strict historical reconstruction: a project term for the thing that maintains tempo, boundaries, and delivery discipline.
+The runtime orchestrator is named after the office in the Chinese ritual-music tradition responsible for keeping ensembles in time and in order. It does not write; it dispatches the specialist roles and holds them to their contracts. In the default topology, Scout also performs screening while keeping screened candidates as a separate artifact; strict topology keeps Screener independent. Not a strict historical reconstruction: a project term for the thing that maintains tempo, boundaries, and delivery discipline.
 
 ## 🗺️ Roadmap
 
-**v0.8**: evaluation experiments against single-prompt baselines, evidence schema upgrade with raw excerpts / source tiers / graded support vocabulary, and a second policy pack.
+**v0.8**: measurement, fast-rerun, role topology, and evaluation — timing projection, same-evidence reruns, default/strict topology choices, and controlled experiment tooling without weakening accountable artifacts.
 
 **v0.9**: distribution and reference workflows.
 

@@ -8,7 +8,9 @@
 - `multi-agent-brief run` 生成 运行交接单 artifacts，而不是自己生成完整 brief。
 - 运行交接单 会初始化最小 runtime state 和 artifact registry control files。
 - Feedback issues 和 bounded repair plans 可以被结构化、校验和记录，但不会自动执行 repair。
-- Deterministic material-fact、freshness 和 target-relevance gates 可以写入 质量门禁 report，但不会自动找源、改稿或 repair。
+- 默认 role topology 允许 Scout 同时完成发现和筛选，同时保持 `candidate_claims.json` 与 `screened_candidates.json` 作为独立 artifacts；strict topology 仍可保留独立 Screener。
+- topology-satisfied stages 会记录在 workflow state 和 event log 中；它们不会伪造下游 stage 的独立执行历史。
+- Deterministic material-fact、freshness、target-relevance 和 editor-new-fact gates 可以写入 stage-scoped 质量门禁 reports，但不会自动找源、改稿或 repair。
 - Packaged public-safe evaluation cases 可以验证 gates、feedback、runtime blocker 和 Hermes path 相关回归，用于开发和 CI。
 - 可选 deterministic 溯源投影 可以基于已有 control files 写入 workspace-local audit/debug graph。
 - Workspace-local `audience_profile.md` 可以记录 reader taste；`run`、`start` 和 `handoff` 会创建或复用 frozen per-run `output/intermediate/audience_profile_snapshot.md`，并通过 handoff 暴露为 runtime context。

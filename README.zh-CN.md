@@ -12,6 +12,8 @@
 
 MABW 是一个面向商业、研究、市场、政策、公司跟踪和管理层汇报的 **agent briefing workflow**。它不是“让 AI 写得更快”的 prompt，而是把简报拆成可追溯、可审计、可交付的工作循环：找来源、建事实账本、让 agent 写作、用门禁把关、由人定稿交付。
 
+在 `main` 上，下一条 v0.8.2 线已经缩短默认角色分配：Scout 默认同时完成发现和筛选。但问责骨架没有变短：`candidate_claims.json`、`screened_candidates.json`、Claim Ledger、可审计草稿、门禁报告、audit report、event log 和交付包仍然是彼此独立的记录。需要独立 Screener 时，可以切到 strict topology。
+
 它适合这些人：
 
 * 每周要写行业周报、竞品跟踪、政策简报、IR/管理层材料的人；
@@ -41,8 +43,8 @@ MABW 的核心承诺很窄，也很硬：**traceability, not semantic proof yet*
 |---|---|---|
 | 🔎 找来源 | 从本地材料、缓存源包或搜索后端整理候选信息 | 避免一上来就让模型凭空写 |
 | 🧾 建事实账本 | 把关键事实登记成 Claim Ledger | 让数字、日期、公司、来源有账可查 |
-| ✍️ Agent 协作写作 | Scout、Screener、Analyst、Editor、Auditor 分工执行 | 把“写作”拆成有边界的 stage |
-| 🚦 门禁把关 | freshness、material fact、target relevance、reader-final gate | 能确定性检查的东西不交给 prompt 记忆 |
+| ✍️ Agent 协作写作 | 默认 topology 下 Scout 同时发现和筛选；strict topology 保留独立 Screener；Analyst、Delivery Editor、Auditor 分工执行 | 把“写作”拆成有边界的 stage |
+| 🚦 门禁把关 | freshness、material fact、target relevance、editor-new-fact、reader-final gate | 能确定性检查的东西不交给 prompt 记忆 |
 | 📦 交付与复盘 | 输出 Markdown / Word，并保留事件轨迹和改进账本 | 人类定稿，系统留痕，后续可改进 |
 
 一句话：**聪明的无权，有权的确定，生效的过人，过人的留痕。**
@@ -182,7 +184,7 @@ multi-agent-brief claude install --repo-workdir .
 
 当前版本：**v0.8.1**
 
-MABW 现在能跑 subagent-first 工作流（Hermes / Claude Code / Codex / OpenCode）、运行时状态文件、事实账本、确定性质量门禁、反馈与修复计划、溯源投影、受众画像快照、受控的改进账本 / 改进记忆，以及 Markdown / Word 输出。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
+v0.8.1 release 提供 Hermes / Claude Code / OpenCode 的可安装 runtime assets，Codex custom-agent assets 仍为 Experimental；同时提供运行时状态文件、事实账本、确定性质量门禁、反馈与修复计划、溯源投影、受众画像快照、受控的改进账本 / 改进记忆，以及 Markdown / Word 输出。`main` 上的下一条 v0.8.2 线还包括 default / strict role topology selector 和 editor-new-fact gate。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
 
 它仍然不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统，也不是投资建议工具、交易信号生成器或人工审核替代品。详见 [当前架构状态](docs/architecture-status.zh-CN.md)、[路线图](docs/roadmap.zh-CN.md) 和 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
 
@@ -196,7 +198,7 @@ MABW 现在能跑 subagent-first 工作流（Hermes / Claude Code / Codex / Open
 
 ### 为什么叫「司乐师」？
 
-英文 orchestrator 来自管弦乐编配与协调的语境，在软件工程中常译为“编排器”。MABW 选择译作「司乐师」：它不直接替各个角色写作，而是调度信息侦察员、筛选师、分析师、编辑师和审计师，让不同声部按契约合奏。
+英文 orchestrator 来自管弦乐编配与协调的语境，在软件工程中常译为“编排器”。MABW 选择译作「司乐师」：它不直接替各个角色写作，而是调度专业角色按契约合奏。默认 topology 下 Scout 同时承担发现和筛选，但 `screened_candidates.json` 仍是独立 artifact；strict topology 仍可保留独立筛选师。
 
 「司乐」也借用了中国礼乐传统中掌管乐政、乐教的意象。这里不是对古代官职的严格复原，而是一个项目术语：负责维持节奏、边界、秩序和交付。
 
@@ -328,7 +330,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 ## 路线图（摘要）
 
 * **v0.7**：改进账本（Improvement Ledger）——把人工撰写、人工批准的读者偏好按运行冻结为 Improvement Memory snapshot；不做自动学习、FrictionStore 自动检测或输出质量承诺。
-* **v0.8**：评估实验与策略包——定义 guidance manifestation / regression 评估协议，对照单模型基线，并推进 mode registry 与第二个 policy pack。
+* **v0.8**：measurement、fast-rerun、role topology 与 evaluation——计时投影、同证据 rerun、default / strict topology 选择，以及不削弱问责 artifacts 的受控实验工具。
 * **v0.9**：分发与参考工作流——零 API key 快速上手、参考运行、文档整顿。
 * **v1.0**：稳定基线——schema 冻结、CLI 表面冻结、安全威胁模型、明确支持边界。
 
