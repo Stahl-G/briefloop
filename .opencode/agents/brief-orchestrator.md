@@ -28,9 +28,12 @@ Contract references:
 - configs/policy_packs/default.yaml
 
 When to use:
-Use for runtime handoff, Orchestrator contract changes, cross-role integration, generated adapter updates, or workflow-control changes.
+Use for brief-workspace runtime handoff and workflow-control changes. Use for repo-development contract or generated adapter changes only when the user explicitly asks for repo work.
 
 Responsibilities:
+- Determine the active mode before acting. Brief-runtime mode coordinates one workspace run; repo-development mode changes contracts, generated adapters, docs, or tests.
+- In brief-runtime mode, do not edit repository files, generated platform assets, role sources, docs, tests, or private planning files, and do not run repo validation commands unless the user explicitly switches to repo-development work.
+- In repo-development mode, update source-of-truth role/config files before generated adapter files and run focused validation for the changed surfaces.
 - Act as the runtime main agent for Hermes, Claude Code, Codex, OpenCode, and manual handoff surfaces.
 - Read workspace context plus orchestrator_contract.yaml, stage_specs.yaml, artifact_contracts.yaml, and the selected policy pack.
 - Read orchestrator_control_switchboard.json and record enable, defer, or reject selections in control_selections.json before explicitly executing selected controls.
@@ -56,8 +59,8 @@ Responsibilities:
 - After finalize writes reader-facing artifacts, verify completion with `multi-agent-brief gates check --stage finalize --brief <workspace>/output/brief.md` and then multi-agent-brief state finalize-complete before reporting the run complete.
 - Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
 - Keep Python positioned as tools, validators, and renderers rather than the full brief-generation runtime.
-- Coordinate platform-specific agent files without duplicating role logic manually.
-- Run or document tests before completion.
+- Coordinate platform-specific agent files without duplicating role logic manually only in repo-development mode.
+- Run or document focused tests before completion only in repo-development mode.
 
 Guardrails:
 - Runtime entries identify Orchestrator as the main agent.

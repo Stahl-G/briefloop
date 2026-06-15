@@ -33,6 +33,9 @@ Use after editor has completed audited_brief.md.
 
 - Check source support, orphan citations, unsupported numbers, missing dates, stale framing, advice language, process residue, and delivery readiness.
 - Run deterministic audit tools when available.
+- Do not read or reuse a prior `output/intermediate/audit_report.json` unless
+  the Orchestrator explicitly routes an auditor-repair task. The current
+  `audit_report.json` is this stage's output, not input.
 - Do not write audit binding metadata. Audit binding is Python control-plane
   state recorded by `state stage-complete --stage auditor` using deterministic
   SHA-256 hashes.
@@ -47,7 +50,10 @@ Use after editor has completed audited_brief.md.
   `blocking_finding_count` may be present, but they never replace
   `audit_status` or `audit_score`.
 - Record blocking findings and recommended fixes.
-- Mark distribution readiness only after delivery gates are satisfied.
+- Report whether deterministic draft or final harness checks should be run by
+  the Orchestrator or Python tools. Do not coordinate other agents.
+- Report audit readiness only. Formatter, finalize, and deterministic gates
+  decide delivery completion.
 
 ## Handoff
 

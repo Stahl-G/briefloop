@@ -168,6 +168,39 @@ def test_generated_source_planner_stays_lightweight_plan_only(manifest):
     assert "Ensures all sources are public, citable, and timestamped" not in rendered
 
 
+def test_generated_orchestrator_separates_runtime_and_repo_development_modes(manifest):
+    role = manifest["roles"]["orchestrator"]
+    rendered = "\n".join([
+        render_codex_agent("orchestrator", role, manifest),
+        render_claude_agent("orchestrator", role, manifest),
+        render_opencode_agent("orchestrator", role, manifest),
+    ])
+
+    assert "Determine the active mode before acting" in rendered
+    assert "Brief-runtime mode coordinates one workspace run" in rendered
+    assert "repo-development mode changes contracts" in rendered
+    assert "In brief-runtime mode, do not edit repository files" in rendered
+    assert "run repo validation commands unless the user explicitly switches" in rendered
+    assert "only in repo-development mode" in rendered
+
+
+def test_generated_auditor_does_not_treat_audit_report_as_input_or_coordinator(manifest):
+    role = manifest["roles"]["auditor"]
+    rendered = "\n".join([
+        render_codex_agent("auditor", role, manifest),
+        render_claude_agent("auditor", role, manifest),
+        render_opencode_agent("auditor", role, manifest),
+    ])
+
+    assert "Review output/intermediate/audited_brief.md against claim_ledger.json" in rendered
+    assert "current audit_report.json is this stage's output, not input" in rendered
+    assert "Do not coordinate other agents" in rendered
+    assert "Report audit readiness only" in rendered
+    assert "Review final brief against claim_ledger.json and audit_report.json" not in rendered
+    assert "Coordinate draft and final harness agents" not in rendered
+    assert "Mark reports distribution-ready" not in rendered
+
+
 def test_claude_read_only_agents_no_edit_tools(manifest):
     profiles = manifest["tool_profiles"]
     for name, role in manifest["roles"].items():
