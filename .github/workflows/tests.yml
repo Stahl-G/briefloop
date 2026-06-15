@@ -268,6 +268,9 @@ jobs:
           test ! -f /tmp/mabw-ci-smoke/output/brief.md
           test ! -f /tmp/mabw-ci-smoke/output/source_appendix.md
 
+      - name: Packaged topology handoff smoke
+        run: python scripts/ci/smoke_packaged_topology_handoff.py
+
       - name: Package-only runtime asset boundary
         run: |
           cd /tmp
