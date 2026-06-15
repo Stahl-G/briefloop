@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,8 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
     RuntimeStateError,
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import (
-    STAGE_COMPLETE,
-    STAGE_SKIPPED,
+    project_stage_completion_for_read,
+    interpret_stage_completion,
     _stage_is_complete_or_skipped,
 )
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
@@ -35,6 +36,16 @@ ARTIFACT_MISSING = "missing"
 ARTIFACT_PRESENT = "present"
 ARTIFACT_VALID = "valid"
 ARTIFACT_INVALID = "invalid"
+
+
+@dataclass(frozen=True)
+class FrozenArtifactIntegrityVerdict:
+    """Single interpretation of frozen artifact integrity."""
+
+    kind: str
+    value: dict[str, Any]
+    reasons: tuple[str, ...] = ()
+    contaminates_run: bool = False
 
 
 def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str, str]:
@@ -210,7 +221,7 @@ def _build_artifact_registry(
     }
 
 
-def _frozen_artifact_integrity_reasons(
+def interpret_frozen_artifact_integrity(
     *,
     old_registry: dict[str, Any] | None,
     registry: dict[str, Any],
@@ -218,11 +229,22 @@ def _frozen_artifact_integrity_reasons(
     artifacts: list[dict[str, Any]],
     stages: list[dict[str, Any]],
     mutating_stage: str | None = None,
-) -> list[str]:
-    old_records = ((old_registry or {}).get("artifacts") or {})
-    new_records = registry.get("artifacts") or {}
+) -> FrozenArtifactIntegrityVerdict:
     reasons: list[str] = []
-    statuses = workflow.get("stage_statuses") or {}
+    if old_registry is not None:
+        old_records_raw = old_registry.get("artifacts")
+        if not isinstance(old_records_raw, dict):
+            return _degraded_frozen_artifact_integrity(
+                "artifact_registry.json artifacts must be an object before frozen integrity can be verified."
+            )
+        old_records = old_records_raw
+    else:
+        old_records = {}
+    new_records = registry.get("artifacts")
+    if not isinstance(new_records, dict):
+        return _degraded_frozen_artifact_integrity(
+            "artifact_registry.json artifacts must be an object before frozen integrity can be verified."
+        )
     mutating_stage_produces = {
         str(item)
         for stage in stages
@@ -236,12 +258,18 @@ def _frozen_artifact_integrity_reasons(
         if artifact_id in mutating_stage_produces:
             continue
         producer_stage = str(artifact.get("producer_stage") or "")
-        producer_status = ((statuses.get(producer_stage) or {}).get("status") or "")
-        if producer_status not in {STAGE_COMPLETE, STAGE_SKIPPED}:
-            continue
         old_record = old_records.get(artifact_id) or {}
         old_sha = old_record.get("sha256")
         if not old_sha:
+            continue
+        producer_verdict = interpret_stage_completion(workflow, producer_stage)
+        if producer_verdict.kind != "canonical":
+            return _degraded_frozen_artifact_integrity(
+                f"Cannot verify frozen artifact '{artifact_id}' because producer stage "
+                f"'{producer_stage}' status is malformed: {' '.join(producer_verdict.reasons)}"
+            )
+        producer_projection = project_stage_completion_for_read(producer_verdict)
+        if producer_projection.get("complete_or_skipped") is not True:
             continue
         new_record = new_records.get(artifact_id) or {}
         new_sha = new_record.get("sha256")
@@ -254,7 +282,39 @@ def _frozen_artifact_integrity_reasons(
             reasons.append(
                 f"Frozen artifact '{path}' from owner stage '{producer_stage}' changed after stage-complete; route repair back to the owner stage instead of downstream in-place conversion."
             )
-    return reasons
+    if reasons:
+        return FrozenArtifactIntegrityVerdict(
+            kind="degraded",
+            value={"status": "changed", "matched": False, "contaminates_run": True, "reasons": reasons},
+            reasons=tuple(reasons),
+            contaminates_run=True,
+        )
+    return FrozenArtifactIntegrityVerdict(
+        kind="canonical",
+        value={"status": "matched", "matched": True, "contaminates_run": False, "reasons": []},
+    )
+
+
+def project_frozen_artifact_integrity_for_read(verdict: FrozenArtifactIntegrityVerdict) -> dict[str, Any]:
+    """Return the read-side projection for frozen artifact integrity."""
+
+    return dict(verdict.value)
+
+
+def require_frozen_artifact_integrity_pass(verdict: FrozenArtifactIntegrityVerdict) -> list[str]:
+    """Return integrity blockers for write paths; empty means pass."""
+
+    if verdict.kind == "canonical":
+        return []
+    return list(verdict.reasons)
+
+
+def _degraded_frozen_artifact_integrity(reason: str) -> FrozenArtifactIntegrityVerdict:
+    return FrozenArtifactIntegrityVerdict(
+        kind="degraded",
+        value={"status": "unknown", "matched": False, "contaminates_run": False, "reasons": [reason]},
+        reasons=(reason,),
+    )
 
 
 def _changed_artifact_events(

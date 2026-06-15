@@ -75,7 +75,8 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     _artifact_registry_sha,
     _build_artifact_registry,
     _changed_artifact_events,
-    _frozen_artifact_integrity_reasons,
+    interpret_frozen_artifact_integrity,
+    require_frozen_artifact_integrity_pass,
 )
 from multi_agent_brief.orchestrator.runtime_state.event_log import (
     ACTORS,
@@ -124,6 +125,7 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     _status_entry,
     _workflow_after_completion,
     _workflow_is_finalized,
+    workflow_with_persistable_stage_completions,
 )
 from multi_agent_brief.orchestrator.run_archive import (
     E_RUN_ARCHIVE_CONFLICT,
@@ -1322,6 +1324,12 @@ def _load_manifest_and_workflow(workspace: str | Path) -> tuple[Path, dict[str, 
         workflow,
         path=paths["workflow_state"],
     )
+    repo = resolve_repo_workdir(None, workspace=ws)
+    workflow = workflow_with_persistable_stage_completions(
+        workflow,
+        stages=load_stage_specs(repo),
+        path=paths["workflow_state"],
+    )
     if workflow.get("run_id") is not None:
         workflow["run_id"] = _validate_runtime_run_id(
             workflow.get("run_id"),
@@ -1481,7 +1489,7 @@ def check_runtime_state(
         workflow=workflow,
         updated_at=now,
     )
-    frozen_reasons = _frozen_artifact_integrity_reasons(
+    frozen_verdict = interpret_frozen_artifact_integrity(
         old_registry=old_registry,
         registry=registry,
         workflow=workflow,
@@ -1489,20 +1497,26 @@ def check_runtime_state(
         stages=stages,
         mutating_stage=str(workflow.get("current_stage") or ""),
     )
+    frozen_reasons = require_frozen_artifact_integrity_pass(frozen_verdict)
     if frozen_reasons:
-        workflow = _persist_run_contamination(
-            workspace=ws,
-            paths=paths,
-            run_id=run_id,
-            workflow=workflow,
-            reason_code="frozen_artifact_changed",
-            message=" ".join(frozen_reasons),
-            actor=actor,
-            stage_id=str(workflow.get("current_stage") or ""),
-            metadata={"blocking_reasons": frozen_reasons},
-        )
+        if frozen_verdict.contaminates_run:
+            workflow = _persist_run_contamination(
+                workspace=ws,
+                paths=paths,
+                run_id=run_id,
+                workflow=workflow,
+                reason_code="frozen_artifact_changed",
+                message=" ".join(frozen_reasons),
+                actor=actor,
+                stage_id=str(workflow.get("current_stage") or ""),
+                metadata={"blocking_reasons": frozen_reasons},
+            )
         _raise_completion_reasons(
-            message="Runtime state integrity check failed because a frozen artifact changed",
+            message=(
+                "Runtime state integrity check failed because a frozen artifact changed"
+                if frozen_verdict.contaminates_run
+                else "Runtime state integrity check failed because frozen artifact integrity could not be verified"
+            ),
             reasons=frozen_reasons,
             error_code=E_TRANSACTION_INTEGRITY,
             details={"stage_id": workflow.get("current_stage")},
@@ -1897,7 +1911,7 @@ def _complete_stage_transaction(
         workflow=next_workflow,
         updated_at=now,
     )
-    frozen_reasons = _frozen_artifact_integrity_reasons(
+    frozen_verdict = interpret_frozen_artifact_integrity(
         old_registry=old_registry,
         registry=registry,
         workflow=workflow,
@@ -1905,20 +1919,26 @@ def _complete_stage_transaction(
         stages=stages,
         mutating_stage=stage_id,
     )
+    frozen_reasons = require_frozen_artifact_integrity_pass(frozen_verdict)
     if frozen_reasons:
-        workflow = _persist_run_contamination(
-            workspace=ws,
-            paths=paths,
-            run_id=run_id,
-            workflow=workflow,
-            reason_code="frozen_artifact_changed",
-            message=" ".join(frozen_reasons),
-            actor=actor,
-            stage_id=stage_id,
-            metadata={"blocking_reasons": frozen_reasons},
-        )
+        if frozen_verdict.contaminates_run:
+            workflow = _persist_run_contamination(
+                workspace=ws,
+                paths=paths,
+                run_id=run_id,
+                workflow=workflow,
+                reason_code="frozen_artifact_changed",
+                message=" ".join(frozen_reasons),
+                actor=actor,
+                stage_id=stage_id,
+                metadata={"blocking_reasons": frozen_reasons},
+            )
         _raise_completion_reasons(
-            message="Completion transaction cannot proceed because a frozen upstream artifact changed",
+            message=(
+                "Completion transaction cannot proceed because a frozen upstream artifact changed"
+                if frozen_verdict.contaminates_run
+                else "Completion transaction cannot proceed because frozen artifact integrity could not be verified"
+            ),
             reasons=frozen_reasons,
             error_code=E_TRANSACTION_INTEGRITY,
             details={"stage_id": stage_id},

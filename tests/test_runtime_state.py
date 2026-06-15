@@ -12,6 +12,7 @@ import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import interpret_frozen_artifact_integrity
 from multi_agent_brief.orchestrator.runtime_state import (
     RUNTIME_STATE_FILES,
     RuntimeStateError,
@@ -453,6 +454,23 @@ def test_stage_complete_rejects_invalid_run_integrity_status_without_rewrite(tmp
         )
 
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert workflow_path.read_bytes() == before
+
+
+def test_state_check_rejects_invalid_stage_status_without_rewrite(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    workflow_path = _state_file(ws, "workflow_state")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["stage_statuses"]["doctor"]["status"] = "finished"
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    before = workflow_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "stage_statuses" in str(excinfo.value.details)
     assert workflow_path.read_bytes() == before
 
 
@@ -1491,6 +1509,71 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     ]
     assert len(contamination_events) == 1
     assert contamination_events[0]["metadata"]["reason_code"] == "frozen_artifact_changed"
+
+
+def test_state_check_rejects_malformed_registry_before_frozen_integrity_laundering(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+    registry_path = _state_file(ws, "artifact_registry")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["artifacts"] = "not-an-object"
+    registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    workflow_path = _state_file(ws, "workflow_state")
+    event_log_path = _state_file(ws, "event_log")
+    before_workflow = workflow_path.read_bytes()
+    before_events = event_log_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "artifact_registry.json artifacts must be an object" in str(excinfo.value)
+    assert workflow_path.read_bytes() == before_workflow
+    assert event_log_path.read_bytes() == before_events
+    assert json.loads(registry_path.read_text(encoding="utf-8"))["artifacts"] == "not-an-object"
+
+
+def test_frozen_artifact_interpreter_rejects_malformed_producer_stage_status():
+    verdict = interpret_frozen_artifact_integrity(
+        old_registry={
+            "artifacts": {
+                "claim_ledger": {
+                    "artifact_id": "claim_ledger",
+                    "path": "output/intermediate/claim_ledger.json",
+                    "sha256": "a" * 64,
+                }
+            }
+        },
+        registry={
+            "artifacts": {
+                "claim_ledger": {
+                    "artifact_id": "claim_ledger",
+                    "path": "output/intermediate/claim_ledger.json",
+                    "status": "valid",
+                    "sha256": "a" * 64,
+                }
+            }
+        },
+        workflow={"stage_statuses": {"claim-ledger": {"status": "finished"}}},
+        artifacts=[{
+            "artifact_id": "claim_ledger",
+            "path": "output/intermediate/claim_ledger.json",
+            "producer_stage": "claim-ledger",
+        }],
+        stages=[{"stage_id": "claim-ledger", "produces": ["claim_ledger"]}],
+    )
+
+    assert verdict.kind == "degraded"
+    assert verdict.contaminates_run is False
+    assert "producer stage 'claim-ledger' status is malformed" in verdict.reasons[0]
 
 
 def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, monkeypatch):
