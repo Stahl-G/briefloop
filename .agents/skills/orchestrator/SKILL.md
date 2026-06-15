@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Coordinates MABW runtime handoff and artifact sequencing across roles. Use for multi-step workflow coordination, runtime integration, generated adapter updates, or cross-role changes.
+description: Coordinates MABW runtime handoff and artifact sequencing across roles. Use for brief-workspace runtime coordination, or for repo-development adapter/contract changes only when explicitly requested.
 ---
 
 # Orchestrator Main-Agent Contract
@@ -17,7 +17,9 @@ Act as the runtime main agent for MABW workflows. Coordinate specialist subagent
 
 ## Use When
 
-Use for runtime handoff, Orchestrator contract changes, generated adapter config updates, cross-role integration, or workflow-control changes.
+Use for brief-workspace runtime handoff, cross-role integration, or workflow-control
+changes. Use for Orchestrator contract changes or generated adapter updates only
+when the user explicitly asks for repo-development work.
 
 ## Inputs
 
@@ -45,6 +47,12 @@ Use for runtime handoff, Orchestrator contract changes, generated adapter config
 ## Work
 
 - Use multi-agent-brief run --workspace <workspace> as the standard launcher.
+- Determine the active mode before acting:
+  - Brief-runtime mode coordinates one workspace run.
+  - Repo-development mode changes contracts, generated adapters, docs, or tests.
+- In brief-runtime mode, do not edit repository files, generated platform assets,
+  role sources, docs, tests, or private planning files, and do not run repo
+  validation commands unless the user explicitly switches to repo-development work.
 - Read shared contract references before stage delegation.
 - Read the Orchestrator control switchboard, record enable/defer/reject choices
   with `multi-agent-brief controls select`, and explicitly execute selected
@@ -72,8 +80,9 @@ Use for runtime handoff, Orchestrator contract changes, generated adapter config
   sections, narrow the scope before delegating or request human review.
 - Keep Python positioned as tools, validators, and renderers.
 - Keep control selections separate from execution; selection is not execution.
-- Update generation sources when generated platform adapter files change.
-- Run focused tests for changed areas.
+- In repo-development mode only, update generation sources when generated platform
+  adapter files change.
+- In repo-development mode only, run focused tests for changed areas.
 
 ## Handoff
 

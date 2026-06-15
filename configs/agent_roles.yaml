@@ -70,9 +70,19 @@ roles:
     tool_profile: edit_safe
     description: Acts as the runtime main agent that controls delegated MABW stages,
       contract references, decisions, and artifact handoffs.
-    trigger: Use for runtime handoff, Orchestrator contract changes, cross-role integration,
-      generated adapter updates, or workflow-control changes.
+    trigger: Use for brief-workspace runtime handoff and workflow-control changes.
+      Use for repo-development contract or generated adapter changes only when the
+      user explicitly asks for repo work.
     responsibilities:
+    - Determine the active mode before acting. Brief-runtime mode coordinates one
+      workspace run; repo-development mode changes contracts, generated adapters,
+      docs, or tests.
+    - In brief-runtime mode, do not edit repository files, generated platform
+      assets, role sources, docs, tests, or private planning files, and do not
+      run repo validation commands unless the user explicitly switches to repo-development
+      work.
+    - In repo-development mode, update source-of-truth role/config files before
+      generated adapter files and run focused validation for the changed surfaces.
     - Act as the runtime main agent for Hermes, Claude Code, Codex, OpenCode, and
       manual handoff surfaces.
     - Read workspace context plus orchestrator_contract.yaml, stage_specs.yaml,
@@ -137,8 +147,9 @@ roles:
       review.
     - Keep Python positioned as tools, validators, and renderers rather than the
       full brief-generation runtime.
-    - Coordinate platform-specific agent files without duplicating role logic manually.
-    - Run or document tests before completion.
+    - Coordinate platform-specific agent files without duplicating role logic manually
+      only in repo-development mode.
+    - Run or document focused tests before completion only in repo-development mode.
     hard_rules:
     - Runtime entries identify Orchestrator as the main agent.
     - Handoffs remain artifact-based and reference the shared contract sources.
@@ -313,10 +324,11 @@ roles:
     tool_profile: audit_edit
     description: Audits source support, freshness, unsupported numbers, redaction
       risk, duplicate claims, placeholders, and harness failures.
-    trigger: Use before final delivery of any real brief. Must verify brief against
-      claim_ledger.json and enforce quality thresholds.
+    trigger: Use before final delivery of any real brief. Must verify audited_brief.md
+      against claim_ledger.json and enforce audit thresholds.
     responsibilities:
-    - Review final brief against claim_ledger.json and audit_report.json.
+    - Review output/intermediate/audited_brief.md against claim_ledger.json and
+      config.yaml.
     - Check unsupported facts — every important statement must have a real [src:<claim_id>] citation.
     - Check missing citations — claims in ledger not cited in brief.
     - Check orphan citations — real [src:<claim_id>] citations in the brief not found in the ledger.
@@ -330,6 +342,9 @@ roles:
     - 'Check weekly brief has enough claims (default: >= 20) unless quiet-week exception
       configured.'
     - Check source dates are present for claims in final brief.
+    - Do not read or reuse a prior audit_report.json unless the Orchestrator explicitly
+      routes an auditor-repair task. The current audit_report.json is this stage's
+      output, not input.
     - Do not write audit binding metadata; audit binding is Python control-plane
       state recorded by state stage-complete --stage auditor using deterministic
       SHA-256 hashes.
@@ -345,11 +360,13 @@ roles:
       or audit_score.
     - Recommend fixes for each finding.
     - Prefer running python deterministic audit commands where available.
-    - Coordinate draft and final harness agents when needed.
+    - Report whether deterministic draft or final harness checks should be run
+      by the Orchestrator or Python tools. Do not coordinate other agents.
     hard_rules:
     - Preserve audit gates while fixing failures.
     - Treat model judgment as analysis, not source evidence.
-    - Mark reports distribution-ready only after gates pass.
+    - Report audit readiness only. Formatter, finalize, and deterministic gates
+      decide delivery completion.
   editor:
     stage: pipeline
     tool_profile: edit_safe
