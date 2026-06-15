@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Role topology selector**: policy packs can select `default`, `strict`, or `human_assisted` role topology while preserving one canonical stage spec and the same accountable artifacts.
+- **Topology-satisfied stage recording**: default topology lets Scout write both `candidate_claims.json` and `screened_candidates.json`, then records Screener as satisfied by topology instead of fabricating an independent Screener execution history. Strict topology remains available for independent screening.
+- **Editor-new-fact quality gate**: stage-scoped quality gates now include a soft-by-default `editor_new_fact` check, backed by a Python-written Analyst draft snapshot, that flags editor-introduced numbers, claim references, and simple entity phrases. `--strict` can make those findings blocking.
+
+### Changed
+
+- **Role source and generated assets aligned with topology**: Scout/Screener and Delivery Editor wording now reflects default/strict topology while keeping Claim Ledger, auditable draft, audit report, gate reports, event log, and delivery artifacts separate.
+- **Public docs aligned with topology**: README and support matrix wording now state that the default role assignment is shorter, but the accountability spine is not.
+
+### Boundaries
+
+- Role topology convergence is not a speed-improvement claim and does not remove Claim Ledger, gate reports, audit report, event log, archive, or human-triggered delivery.
+- `editor_new_fact` is deterministic lexical detection, not semantic proof that every edit is supported.
+
 ## [0.8.1] — 2026-06-14
 
 ### Added

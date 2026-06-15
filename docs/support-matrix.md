@@ -20,7 +20,8 @@ validation unless that is stated separately.
 
 | Capability | Status |
 |---|---|
-| Subagent workflow (Scout → Screener → Claim Ledger → Analyst → Editor → Auditor) | Supported |
+| Subagent workflow (default topology: Scout finds + screens; strict topology: independent Screener; Claim Ledger → Analyst → Delivery Editor → Auditor) | Supported |
+| Role topology selector (`policy.role_topology`: `default`, `strict`, `human_assisted`) with topology-satisfied stages recorded in workflow state and event log | Supported |
 | Runtime handoff (`agent_handoff.md` + `agent_handoff.json`) | Supported |
 | Runtime state control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Supported |
 | Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
@@ -57,7 +58,7 @@ validation unless that is stated separately.
 
 Feedback commands structure issues and repair plans for the Orchestrator. They do not automatically edit brief artifacts or execute repair.
 
-Quality gate commands write deterministic gate reports and can block unsafe current-stage continue/finalize decisions. They do not fetch sources, rewrite briefs, execute repair, or create feedback issues automatically.
+Quality gate commands write deterministic gate reports and can block unsafe current-stage continue/finalize decisions. They include material-fact, freshness, target-relevance, and editor-new-fact checks. They do not fetch sources, rewrite briefs, execute repair, or create feedback issues automatically.
 
 Evaluation cases are developer/CI regression checks for control-surface behavior. They do not create workflow artifacts, run subagents, fetch sources, score prose, call an LLM judge, or execute repair.
 
@@ -68,6 +69,13 @@ Audience profile files are workspace-local runtime context. The active run uses 
 Improvement Ledger files are human-governed workspace memory controls. Approved materializable guidance is projected into `improvement/memory.md` and frozen into `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff`. The snapshot is taste/audience guidance only; it is not evidence, source material, Claim Ledger input, repair instruction, semantic proof, or an output-quality guarantee.
 
 Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
+
+Role topology controls runtime role assignment, not the accountable artifact set.
+The default topology lets Scout write both `candidate_claims.json` and
+`screened_candidates.json`; strict topology keeps Screener independent. Both
+paths still require the Claim Ledger, auditable draft, stage-scoped gate
+reports, audit report, event log, archive, and human-triggered delivery. This is
+not a speed-improvement claim.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
@@ -144,7 +152,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | Limitation Hygiene | Supported |
 | Draft Audit Harness | Supported |
 | Rendered Output Harness | Supported |
-| Material-Fact / Freshness / Target-Relevance Gates | Supported |
+| Material-Fact / Freshness / Target-Relevance / Editor-New-Fact Gates | Supported |
 
 ## Evaluation & Regression Tooling
 

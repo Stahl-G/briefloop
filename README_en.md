@@ -11,6 +11,8 @@ MABW: A Process-Accountable Business Briefing Loop
 
 MABW is an **agent briefing workflow** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns briefing into an accountable loop: collect sources, build a Claim Ledger, let agents draft, run gates, and have a human deliver the final brief.
 
+On `main`, the next v0.8.2 line shortens the default role assignment: Scout finds and screens in one stage. The accountable artifacts do not shrink. Candidate claims, screened candidates, the Claim Ledger, auditable draft, gate reports, audit report, event log, and delivery bundle remain separate records. Strict topology can still keep Screener as an independent role.
+
 It is built for:
 
 - people who produce weekly market briefs, competitor tracking, policy notes, IR drafts, or leadership updates;
@@ -40,8 +42,8 @@ The core claim is deliberately narrow: **traceability, not semantic proof yet**.
 |---|---|---|
 | 🔎 Source collection | Gather candidate evidence from local files, cached packs, or search providers | The model does not start from empty context |
 | 🧾 Claim Ledger | Register important facts with source and date metadata | Numbers, dates, entities, and sources become inspectable |
-| ✍️ Agent drafting | Scout, Screener, Analyst, Editor, and Auditor do bounded work | Writing is split into stages with contracts |
-| 🚦 Gates | Freshness, material-fact, target-relevance, and reader-final checks | Deterministic checks do not rely on prompt memory |
+| ✍️ Agent drafting | Default topology lets Scout find and screen; strict topology keeps Screener independent; Analyst, Delivery Editor, and Auditor do bounded work | Writing is split into stages with contracts |
+| 🚦 Gates | Freshness, material-fact, target-relevance, editor-new-fact, and reader-final checks | Deterministic checks do not rely on prompt memory |
 | 📦 Delivery and learning | Render Markdown / Word and preserve trace, feedback, and approved preferences | Humans deliver; the system records what happened |
 
 One-line architecture rule: **smart parts have no authority; authoritative parts are deterministic; effective changes require humans; human decisions leave traces.**
@@ -181,7 +183,7 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 Current version: **v0.8.1**
 
-MABW currently ships installable runtime assets for Hermes / Claude Code / OpenCode, with Codex custom-agent assets available as Experimental, plus runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. 1000+ deterministic tests run in CI without LLM calls.
+The v0.8.1 release ships installable runtime assets for Hermes / Claude Code / OpenCode, with Codex custom-agent assets available as Experimental, plus runtime state files, Claim Ledger, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, and Markdown / Word output. On `main`, the next v0.8.2 line also includes a default/strict role-topology selector and editor-new-fact gate. 1000+ deterministic tests run in CI without LLM calls.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -328,7 +330,7 @@ This project is developed from real manufacturing and briefing work. It needs mo
 ## Roadmap Summary
 
 - **v0.7**: Improvement Ledger — freeze human-authored, human-approved reader preferences into per-run Improvement Memory snapshots; no automatic learning, FrictionStore auto-detection, or output-quality guarantee.
-- **v0.8**: evaluation experiments and policy packs — define guidance manifestation / regression evaluation, compare against single-model baselines, and advance the mode registry plus a second policy pack.
+- **v0.8**: measurement, fast-rerun, role topology, and evaluation — timing projection, same-evidence reruns, default/strict topology choices, and controlled experiment tooling without weakening accountable artifacts.
 - **v0.9**: distribution and reference workflows — easier no-API-key setup, reference runs, and documentation cleanup.
 - **v1.0**: stable baseline — frozen schemas, stable CLI surfaces, security threat model, and clear support boundaries.
 

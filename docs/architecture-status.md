@@ -8,7 +8,9 @@ This page separates current implementation state from roadmap goals. Use it befo
 - `multi-agent-brief run` creates runtime handoff artifacts rather than generating a full brief by itself.
 - Runtime handoff now initializes minimum runtime state and artifact registry control files.
 - Feedback issues and bounded repair plans can be structured, validated, and recorded without executing repair.
-- Deterministic material-fact, freshness, and target-relevance gates can write a quality gate report without fetching sources or rewriting briefs.
+- The default role topology lets Scout perform discovery and screening while keeping `candidate_claims.json` and `screened_candidates.json` as distinct artifacts; strict topology can keep Screener independent.
+- Topology-satisfied stages are recorded in workflow state and event log; they do not synthesize a separate downstream stage execution history.
+- Deterministic material-fact, freshness, target-relevance, and editor-new-fact gates can write stage-scoped quality gate reports without fetching sources, rewriting briefs, or executing repair.
 - Packaged public-safe evaluation cases can validate known gates, feedback, runtime blocker, and Hermes path regressions for development and CI.
 - Optional deterministic provenance projection can write a workspace-local audit/debug graph from existing control files.
 - Workspace-local audience taste profiles can be frozen into per-run snapshots and exposed through runtime handoff as context.
