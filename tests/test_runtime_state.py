@@ -1526,12 +1526,18 @@ def test_state_check_rejects_malformed_registry_before_frozen_integrity_launderi
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     registry["artifacts"] = "not-an-object"
     registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    workflow_path = _state_file(ws, "workflow_state")
+    event_log_path = _state_file(ws, "event_log")
+    before_workflow = workflow_path.read_bytes()
+    before_events = event_log_path.read_bytes()
 
     with pytest.raises(RuntimeStateError) as excinfo:
         check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "artifact_registry.json artifacts must be an object" in str(excinfo.value)
+    assert workflow_path.read_bytes() == before_workflow
+    assert event_log_path.read_bytes() == before_events
     assert json.loads(registry_path.read_text(encoding="utf-8"))["artifacts"] == "not-an-object"
 
 
@@ -1566,6 +1572,7 @@ def test_frozen_artifact_interpreter_rejects_malformed_producer_stage_status():
     )
 
     assert verdict.kind == "degraded"
+    assert verdict.contaminates_run is False
     assert "producer stage 'claim-ledger' status is malformed" in verdict.reasons[0]
 
 

@@ -45,6 +45,7 @@ class FrozenArtifactIntegrityVerdict:
     kind: str
     value: dict[str, Any]
     reasons: tuple[str, ...] = ()
+    contaminates_run: bool = False
 
 
 def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str, str]:
@@ -284,12 +285,13 @@ def interpret_frozen_artifact_integrity(
     if reasons:
         return FrozenArtifactIntegrityVerdict(
             kind="degraded",
-            value={"status": "changed", "matched": False, "reasons": reasons},
+            value={"status": "changed", "matched": False, "contaminates_run": True, "reasons": reasons},
             reasons=tuple(reasons),
+            contaminates_run=True,
         )
     return FrozenArtifactIntegrityVerdict(
         kind="canonical",
-        value={"status": "matched", "matched": True, "reasons": []},
+        value={"status": "matched", "matched": True, "contaminates_run": False, "reasons": []},
     )
 
 
@@ -310,7 +312,7 @@ def require_frozen_artifact_integrity_pass(verdict: FrozenArtifactIntegrityVerdi
 def _degraded_frozen_artifact_integrity(reason: str) -> FrozenArtifactIntegrityVerdict:
     return FrozenArtifactIntegrityVerdict(
         kind="degraded",
-        value={"status": "unknown", "matched": False, "reasons": [reason]},
+        value={"status": "unknown", "matched": False, "contaminates_run": False, "reasons": [reason]},
         reasons=(reason,),
     )
 
