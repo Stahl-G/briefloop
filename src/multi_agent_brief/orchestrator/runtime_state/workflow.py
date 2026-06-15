@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from multi_agent_brief.orchestrator.run_integrity import clean_run_integrity as _clean_run_integrity
+from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, require_persistable
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import _stage_ids
 
 
@@ -58,7 +58,10 @@ def _initial_workflow_state(
         "stage_statuses": stage_statuses,
         "last_decision": None,
         "next_allowed_decisions": _allowed_decisions_for_stage(stages, current_stage),
-        "run_integrity": _clean_run_integrity(),
+        "run_integrity": require_persistable(
+            interpret_run_integrity(None, field_present=False),
+            path="workflow_state.run_integrity",
+        ),
     }
 
 

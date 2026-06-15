@@ -136,11 +136,11 @@ from multi_agent_brief.orchestrator.run_archive import (
 from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_layer_import
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
-    RUN_INTEGRITY_CONTAMINATED,
     contamination_event_metadata as _run_integrity_contamination_event_metadata,
     contaminate_run_integrity_with_event_flag as _contaminate_run_integrity_with_event_flag,
-    normalize_run_integrity as _normalize_run_integrity,
-    workflow_with_run_integrity as _workflow_with_run_integrity,
+    interpret_run_integrity as _interpret_run_integrity,
+    project_for_read as _project_run_integrity_for_read,
+    workflow_with_persistable_run_integrity as _workflow_with_persistable_run_integrity,
 )
 
 
@@ -185,16 +185,6 @@ FACT_LAYER_IMPORT_SINGLETON_PATHS = {
     "screened_candidates": "output/intermediate/screened_candidates.json",
     "claim_ledger": "output/intermediate/claim_ledger.json",
 }
-
-def _checked_workflow_with_run_integrity(workflow: dict[str, Any], *, path: Path) -> dict[str, Any]:
-    try:
-        return _workflow_with_run_integrity(workflow)
-    except ValueError as exc:
-        raise RuntimeStateError(
-            "workflow_state.run_integrity is malformed.",
-            details={"path": str(path), "reason": str(exc)},
-            error_code=E_TRANSACTION_INTEGRITY,
-        ) from exc
 
 def _archive_finalized_state_if_needed(
     *,
@@ -464,8 +454,11 @@ def _read_fact_layer_import_plan(
             },
             error_code=E_FACT_LAYER_IMPORT_INVALID,
         )
-    integrity = archive_manifest.get("run_integrity") if isinstance(archive_manifest.get("run_integrity"), dict) else {}
+    integrity_verdict = _interpret_run_integrity(archive_manifest.get("run_integrity"), field_present=True)
+    integrity = _project_run_integrity_for_read(integrity_verdict)
     if (
+        integrity_verdict.kind != "canonical"
+        or
         integrity.get("status") != RUN_INTEGRITY_CLEAN
         or integrity.get("reference_eligible") is not True
         or integrity.get("clean_single_shot") is not True
@@ -1223,7 +1216,7 @@ def initialize_runtime_state(
                     "schema_version": old_workflow.get("schema_version"),
                 },
             )
-        workflow = _checked_workflow_with_run_integrity(
+        workflow = _workflow_with_persistable_run_integrity(
             old_workflow,
             path=paths["workflow_state"],
         )
@@ -1325,7 +1318,7 @@ def _load_manifest_and_workflow(workspace: str | Path) -> tuple[Path, dict[str, 
             "workflow_state.json has an unsupported schema.",
             details={"path": str(paths["workflow_state"]), "schema_version": workflow.get("schema_version")},
         )
-    workflow = _checked_workflow_with_run_integrity(
+    workflow = _workflow_with_persistable_run_integrity(
         workflow,
         path=paths["workflow_state"],
     )

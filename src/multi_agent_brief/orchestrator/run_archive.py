@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.orchestrator.run_integrity import classify_run_integrity
+from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 
@@ -585,9 +585,11 @@ def _sha256_json(payload: Any) -> str:
 
 
 def _run_integrity_for_manifest(workflow: dict[str, Any]) -> dict[str, Any]:
-    return classify_run_integrity(
-        workflow.get("run_integrity"),
-        missing="run_integrity" not in workflow,
+    return project_for_read(
+        interpret_run_integrity(
+            workflow.get("run_integrity"),
+            field_present="run_integrity" in workflow,
+        )
     )
 
 

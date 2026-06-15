@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -11,7 +13,17 @@ RUN_INTEGRITY_UNKNOWN = "unknown"
 PERSISTED_RUN_INTEGRITY_STATUSES = {RUN_INTEGRITY_CLEAN, RUN_INTEGRITY_CONTAMINATED}
 
 
-def clean_run_integrity() -> dict[str, Any]:
+@dataclass(frozen=True)
+class RunIntegrityVerdict:
+    """Single interpreter result for persisted and read-side run integrity."""
+
+    kind: str
+    value: dict[str, Any]
+    reason_code: str | None = None
+    message: str | None = None
+
+
+def _clean_run_integrity() -> dict[str, Any]:
     """Return the canonical clean run-integrity payload."""
 
     return {
@@ -22,65 +34,140 @@ def clean_run_integrity() -> dict[str, Any]:
     }
 
 
-def normalize_run_integrity(value: Any, *, missing: bool = False) -> dict[str, Any]:
-    """Normalize persisted run integrity without introducing derived statuses.
+def _unknown_run_integrity(*, reason_code: str, message: str) -> dict[str, Any]:
+    """Return a derived unknown integrity payload for read-only surfaces."""
 
-    v0.8.0 keeps persisted workflow state to ``clean`` or ``contaminated``.
-    Derived states such as ``unknown`` and ``incomplete`` belong to status and
-    timing projections, not workflow_state.json.
-    """
-
-    if missing:
-        return clean_run_integrity()
-    if not isinstance(value, dict):
-        raise ValueError("workflow_state.run_integrity must be an object.")
-    status = value.get("status")
-    if status not in PERSISTED_RUN_INTEGRITY_STATUSES:
-        raise ValueError("workflow_state.run_integrity.status is invalid.")
-    reasons = value.get("reasons")
-    if not isinstance(reasons, list):
-        reasons = []
-    normalized_reasons = [item for item in reasons if isinstance(item, dict)]
     return {
-        "status": status,
-        "reference_eligible": False if status == RUN_INTEGRITY_CONTAMINATED else bool(value.get("reference_eligible", True)),
-        "clean_single_shot": False if status == RUN_INTEGRITY_CONTAMINATED else bool(value.get("clean_single_shot", True)),
-        "reasons": normalized_reasons,
+        "status": RUN_INTEGRITY_UNKNOWN,
+        "reference_eligible": False,
+        "clean_single_shot": False,
+        "reasons": [{"reason_code": reason_code, "message": message}],
     }
 
 
-def classify_run_integrity(value: Any, *, missing: bool = False) -> dict[str, Any]:
-    """Return a read-side run-integrity projection.
+def _degraded(reason_code: str, message: str) -> RunIntegrityVerdict:
+    return RunIntegrityVerdict(
+        kind="degraded",
+        value=_unknown_run_integrity(reason_code=reason_code, message=message),
+        reason_code=reason_code,
+        message=message,
+    )
 
-    Missing legacy ``run_integrity`` fields can be treated as clean for
-    backcompat. Malformed persisted values are not reference-clean evidence and
-    are classified as derived ``unknown`` without writing that status back to
-    workflow_state.json.
+
+def interpret_run_integrity(
+    value: Any,
+    *,
+    field_present: bool,
+    unavailable_reason: dict[str, str] | None = None,
+) -> RunIntegrityVerdict:
+    """Interpret a run_integrity field once for read and write adapters.
+
+    Missing legacy fields are backcompat-clean. Present malformed fields are
+    degraded for read surfaces and rejected by ``require_persistable``.
     """
 
-    if missing:
-        return clean_run_integrity()
+    if unavailable_reason:
+        return _degraded(
+            unavailable_reason.get("reason_code") or "run_integrity_unavailable",
+            unavailable_reason.get("message") or "workflow_state.run_integrity is unavailable.",
+        )
+    if not field_present:
+        return RunIntegrityVerdict(kind="canonical", value=_clean_run_integrity())
     if not isinstance(value, dict):
-        return unknown_run_integrity(
-            reason_code="run_integrity_malformed",
-            message="workflow_state.run_integrity is missing or not an object.",
+        return _degraded(
+            "run_integrity_malformed",
+            "workflow_state.run_integrity is missing or not an object.",
         )
     status = value.get("status")
     if status not in PERSISTED_RUN_INTEGRITY_STATUSES:
-        return unknown_run_integrity(
-            reason_code="run_integrity_invalid_status",
-            message="workflow_state.run_integrity.status is invalid.",
+        return _degraded(
+            "run_integrity_invalid_status",
+            "workflow_state.run_integrity.status is invalid.",
         )
-    return normalize_run_integrity(value)
+    reasons = value.get("reasons", [])
+    if not isinstance(reasons, list) or any(not isinstance(item, dict) for item in reasons):
+        return _degraded(
+            "run_integrity_invalid_reasons",
+            "workflow_state.run_integrity.reasons must be a list of objects.",
+        )
+    if status == RUN_INTEGRITY_CLEAN:
+        if value.get("reference_eligible", True) is not True:
+            return _degraded(
+                "run_integrity_clean_not_reference_eligible",
+                "workflow_state.run_integrity clean runs must be reference eligible.",
+            )
+        if value.get("clean_single_shot", True) is not True:
+            return _degraded(
+                "run_integrity_clean_not_single_shot",
+                "workflow_state.run_integrity clean runs must be clean single-shot.",
+            )
+        return RunIntegrityVerdict(
+            kind="canonical",
+            value={
+                "status": RUN_INTEGRITY_CLEAN,
+                "reference_eligible": True,
+                "clean_single_shot": True,
+                "reasons": reasons,
+            },
+        )
+    if value.get("reference_eligible", False) is not False:
+        return _degraded(
+            "run_integrity_contaminated_reference_eligible",
+            "workflow_state.run_integrity contaminated runs must not be reference eligible.",
+        )
+    if value.get("clean_single_shot", False) is not False:
+        return _degraded(
+            "run_integrity_contaminated_single_shot",
+            "workflow_state.run_integrity contaminated runs must not be clean single-shot.",
+        )
+    return RunIntegrityVerdict(
+        kind="canonical",
+        value={
+            "status": RUN_INTEGRITY_CONTAMINATED,
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": reasons,
+        },
+    )
 
 
-def workflow_with_run_integrity(workflow: dict[str, Any]) -> dict[str, Any]:
-    """Return a shallow workflow copy with normalized run integrity."""
+def project_for_read(verdict: RunIntegrityVerdict) -> dict[str, Any]:
+    """Return the read-side projection for a run-integrity verdict."""
+
+    return dict(verdict.value)
+
+
+def require_persistable(
+    verdict: RunIntegrityVerdict,
+    *,
+    path: str | Path = "workflow_state.json",
+) -> dict[str, Any]:
+    """Return canonical persisted payload or fail closed for malformed fields."""
+
+    if verdict.kind != "canonical":
+        from multi_agent_brief.orchestrator.runtime_state.errors import (
+            E_TRANSACTION_INTEGRITY,
+            RuntimeStateError,
+        )
+
+        raise RuntimeStateError(
+            "workflow_state.run_integrity is malformed.",
+            details={"path": str(path), "reason": verdict.message or verdict.reason_code or "invalid run_integrity"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return dict(verdict.value)
+
+
+def workflow_with_persistable_run_integrity(workflow: dict[str, Any], *, path: str | Path) -> dict[str, Any]:
+    """Return a shallow workflow copy with write-safe run integrity."""
 
     updated = dict(workflow)
-    updated["run_integrity"] = normalize_run_integrity(
-        updated.get("run_integrity"),
-        missing="run_integrity" not in updated,
+    updated["run_integrity"] = require_persistable(
+        interpret_run_integrity(
+            updated.get("run_integrity"),
+            field_present="run_integrity" in updated,
+        ),
+        path=path,
     )
     return updated
 
@@ -98,8 +185,11 @@ def contaminate_run_integrity_with_event_flag(
 ) -> tuple[dict[str, Any], bool]:
     """Mark a workflow contaminated and report whether a new reason was added."""
 
-    updated = workflow_with_run_integrity(workflow)
-    integrity = normalize_run_integrity(updated.get("run_integrity"))
+    updated = workflow_with_persistable_run_integrity(workflow, path="workflow_state.run_integrity")
+    integrity = require_persistable(
+        interpret_run_integrity(updated.get("run_integrity"), field_present=True),
+        path="workflow_state.run_integrity",
+    )
     reason: dict[str, Any] = {
         "reason_code": reason_code,
         "message": message,
@@ -146,23 +236,4 @@ def contamination_event_metadata(reason: dict[str, Any]) -> dict[str, Any]:
         "stage_id": reason.get("stage_id"),
         "artifact_id": reason.get("artifact_id"),
         "details": reason.get("metadata") if isinstance(reason.get("metadata"), dict) else {},
-    }
-
-
-def is_reference_eligible(value: Any) -> bool:
-    return bool(classify_run_integrity(value).get("reference_eligible"))
-
-
-def is_clean_single_shot(value: Any) -> bool:
-    return bool(classify_run_integrity(value).get("clean_single_shot"))
-
-
-def unknown_run_integrity(*, reason_code: str, message: str) -> dict[str, Any]:
-    """Return a derived unknown integrity payload for read-only surfaces."""
-
-    return {
-        "status": "unknown",
-        "reference_eligible": False,
-        "clean_single_shot": False,
-        "reasons": [{"reason_code": reason_code, "message": message}],
     }

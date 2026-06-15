@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_layer_import
-from multi_agent_brief.orchestrator.run_integrity import classify_run_integrity
+from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 
 
@@ -130,6 +130,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     improvement = status.get("improvement") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
+    run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
 
     lines.extend(
         [
@@ -141,8 +142,8 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"[status] blocking_reason: {workflow.get('blocking_reason') or ''}",
             (
                 "[status] run_integrity: "
-                f"{(workflow.get('run_integrity') or {}).get('status') or 'unknown'} "
-                f"reference_eligible={(workflow.get('run_integrity') or {}).get('reference_eligible')}"
+                f"{run_integrity.get('status') or 'unknown'} "
+                f"reference_eligible={run_integrity.get('reference_eligible')}"
             ),
             (
                 "[status] artifacts: "
@@ -254,9 +255,11 @@ def _workflow_summary(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_integrity_summary(workflow: dict[str, Any]) -> dict[str, Any]:
-    return classify_run_integrity(
-        workflow.get("run_integrity"),
-        missing="run_integrity" not in workflow,
+    return project_for_read(
+        interpret_run_integrity(
+            workflow.get("run_integrity"),
+            field_present="run_integrity" in workflow,
+        )
     )
 
 

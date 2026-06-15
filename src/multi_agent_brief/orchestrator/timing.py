@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.orchestrator.run_integrity import classify_run_integrity
+from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 
 
 CONTROL_TIMING_SCHEMA = "mabw.control_timing.v1"
@@ -33,15 +33,10 @@ def derive_control_timing(
 
     workflow_supplied = isinstance(workflow_state, dict)
     workflow = workflow_state if workflow_supplied else {}
-    if isinstance(run_integrity, dict):
-        integrity = classify_run_integrity(run_integrity)
-    elif workflow_supplied:
-        integrity = classify_run_integrity(
-            workflow.get("run_integrity"),
-            missing="run_integrity" not in workflow,
-        )
-    else:
-        integrity = classify_run_integrity(None)
+    integrity = _run_integrity_projection(
+        run_integrity=run_integrity,
+        workflow_state=workflow if workflow_supplied else None,
+    )
     expected = expected_run_id if isinstance(expected_run_id, str) and expected_run_id.strip() else workflow.get("run_id")
     warnings: list[str] = []
     if expected:
@@ -191,15 +186,10 @@ def derive_control_timing_from_path(
     try:
         records = _read_event_records(path)
     except Exception as exc:
-        if isinstance(run_integrity, dict):
-            integrity = classify_run_integrity(run_integrity)
-        elif isinstance(workflow_state, dict):
-            integrity = classify_run_integrity(
-                workflow_state.get("run_integrity"),
-                missing="run_integrity" not in workflow_state,
-            )
-        else:
-            integrity = classify_run_integrity(None)
+        integrity = _run_integrity_projection(
+            run_integrity=run_integrity,
+            workflow_state=workflow_state if isinstance(workflow_state, dict) else None,
+        )
         return _timing_payload(
             status="invalid_event_log",
             stages=[],
@@ -215,6 +205,23 @@ def derive_control_timing_from_path(
         stage_order=stage_order,
         expected_run_id=expected_run_id,
     )
+
+
+def _run_integrity_projection(
+    *,
+    run_integrity: dict[str, Any] | None = None,
+    workflow_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if isinstance(run_integrity, dict):
+        return project_for_read(interpret_run_integrity(run_integrity, field_present=True))
+    if isinstance(workflow_state, dict):
+        return project_for_read(
+            interpret_run_integrity(
+                workflow_state.get("run_integrity"),
+                field_present="run_integrity" in workflow_state,
+            )
+        )
+    return project_for_read(interpret_run_integrity(None, field_present=True))
 
 
 def _timing_payload(

@@ -7,7 +7,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.orchestrator.run_integrity import workflow_with_run_integrity as _workflow_with_run_integrity
+from multi_agent_brief.orchestrator.run_integrity import (
+    workflow_with_persistable_run_integrity as _workflow_with_persistable_run_integrity,
+)
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _append_jsonl,
     _read_json_if_exists,
@@ -202,14 +204,7 @@ def _load_handoff_runtime_state(workspace: str | Path) -> tuple[Path, dict[str, 
             "workflow_state.json has an unsupported schema.",
             details={"path": str(paths["workflow_state"]), "schema_version": workflow.get("schema_version")},
         )
-    try:
-        _workflow_with_run_integrity(workflow)
-    except ValueError as exc:
-        raise RuntimeStateError(
-            "workflow_state.run_integrity is malformed.",
-            details={"path": str(paths["workflow_state"]), "reason": str(exc)},
-            error_code=E_TRANSACTION_INTEGRITY,
-        ) from exc
+    _workflow_with_persistable_run_integrity(workflow, path=paths["workflow_state"])
     if workflow.get("run_id") is not None:
         _validate_runtime_run_id(
             workflow.get("run_id"),

@@ -20,8 +20,8 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.run_integrity import (
-    classify_run_integrity,
-    unknown_run_integrity,
+    interpret_run_integrity,
+    project_for_read,
 )
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
@@ -517,9 +517,15 @@ def _delivery_run_id(workspace: Path) -> str:
 def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
     paths = runtime_state_paths(workspace)
     if not paths["workflow_state"].exists():
-        return unknown_run_integrity(
-            reason_code="workflow_state_missing",
-            message="workflow_state.json is missing.",
+        return project_for_read(
+            interpret_run_integrity(
+                None,
+                field_present=True,
+                unavailable_reason={
+                    "reason_code": "workflow_state_missing",
+                    "message": "workflow_state.json is missing.",
+                },
+            )
         )
     try:
         workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
@@ -533,9 +539,11 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
             "workflow_state.json must contain an object; cannot verify run integrity.",
             error_code=E_DELIVERY_EVENT_FAILED,
         )
-    return classify_run_integrity(
-        workflow.get("run_integrity"),
-        missing="run_integrity" not in workflow,
+    return project_for_read(
+        interpret_run_integrity(
+            workflow.get("run_integrity"),
+            field_present="run_integrity" in workflow,
+        )
     )
 
 

@@ -19,7 +19,8 @@ from typing import Any
 
 from multi_agent_brief.orchestrator.run_integrity import (
     PERSISTED_RUN_INTEGRITY_STATUSES,
-    classify_run_integrity,
+    interpret_run_integrity,
+    project_for_read,
 )
 
 
@@ -770,8 +771,9 @@ def _registered_run_integrity(container: dict[str, Any], *, path: str) -> dict[s
             f"{path} is required for run registration.",
             path=path,
         )
-    projection = classify_run_integrity(container.get("run_integrity"), missing=False)
-    if projection.get("status") not in ALLOWED_RUN_INTEGRITY_STATUSES:
+    verdict = interpret_run_integrity(container.get("run_integrity"), field_present=True)
+    projection = project_for_read(verdict)
+    if verdict.kind != "canonical" or projection.get("status") not in ALLOWED_RUN_INTEGRITY_STATUSES:
         _raise_experiment_error(
             "E_EXPERIMENT_080_RUN_INTEGRITY_INVALID",
             f"{path} must be clean or contaminated, not malformed or unknown.",
