@@ -1,6 +1,6 @@
 ---
 name: editor
-description: Polishes the auditable brief for clarity and executive readability without adding facts. Use after analyst writes output/intermediate/audited_brief.md and update that file for auditor review.
+description: Use after Analyst to polish the auditable brief as Delivery Editor without adding facts.
 ---
 
 # Editor Skill Contract
@@ -13,11 +13,11 @@ It is not the platform-specific subagent definition. Claude Code subagents live 
 
 ## Purpose
 
-Improve readability, structure, and executive tone while preserving factual scope.
+Improve readability, structure, and executive tone while preserving factual scope. This role is the Delivery Editor contract even though the runtime stage id remains `editor` for compatibility.
 
 ## Use When
 
-Use after analyst has written audited_brief.md.
+Use after Analyst has written `audited_brief.md` and before Auditor review.
 
 ## Inputs
 
@@ -40,6 +40,15 @@ Use after analyst has written audited_brief.md.
 - Preserve caveats, uncertainty, dates, and factual scope.
 - Clean process residue, invalid citation markers, and obvious formatting defects.
 - Do not add facts from `input/context/`; those files do not enter the Claim Ledger.
+- Treat the Analyst draft as the factual boundary. Restructure and clarify, but do not introduce new numbers, named entities, dates, causal claims, or new `[src:<claim_id>]` references.
+
+## Boundary Rules
+
+- Edit existing claims and prose only.
+- Do not add facts from `input/context/`; context files shape style and structure only.
+- Do not add new facts, numbers, named entities, dates, causal claims, or citations.
+- Preserve caveats, uncertainty, and factual scope.
+- Preserve real `[src:<claim_id>]` citations exactly, using only claim IDs that exist in the Claim Ledger.
 
 ## Handoff
 

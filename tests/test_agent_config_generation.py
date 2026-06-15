@@ -168,6 +168,41 @@ def test_generated_source_planner_stays_lightweight_plan_only(manifest):
     assert "Ensures all sources are public, citable, and timestamped" not in rendered
 
 
+def test_generated_scout_and_screener_are_topology_aware(manifest):
+    scout_role = manifest["roles"]["scout"]
+    screener_role = manifest["roles"]["screener"]
+    scout_rendered = "\n".join([
+        render_codex_agent("scout", scout_role, manifest),
+        render_claude_agent("scout", scout_role, manifest),
+        render_opencode_agent("scout", scout_role, manifest),
+    ])
+    screener_rendered = "\n".join([
+        render_codex_agent("screener", screener_role, manifest),
+        render_claude_agent("screener", screener_role, manifest),
+        render_opencode_agent("screener", screener_role, manifest),
+    ])
+
+    assert "In default topology, produce both candidate_claims.json and screened_candidates.json" in scout_rendered
+    assert "also output screened_candidates.json before Scout stage completion" in scout_rendered
+    assert "Strict: Scout -> Screener" in scout_rendered
+    assert "Use only when role_topology is strict" in screener_rendered
+    assert "Default topology uses Scout to perform screening" in screener_rendered
+    assert "Do not rediscover source material" in screener_rendered
+
+
+def test_generated_editor_uses_delivery_editor_alias(manifest):
+    role = manifest["roles"]["editor"]
+    rendered = "\n".join([
+        render_codex_agent("editor", role, manifest),
+        render_claude_agent("editor", role, manifest),
+        render_opencode_agent("editor", role, manifest),
+    ])
+
+    assert "Delivery Editor alias" in rendered
+    assert "stage id remains editor" in rendered
+    assert "Do not add new facts, numbers, named entities, dates, causal claims, or citations" in rendered
+
+
 def test_generated_orchestrator_separates_runtime_and_repo_development_modes(manifest):
     role = manifest["roles"]["orchestrator"]
     rendered = "\n".join([

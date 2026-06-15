@@ -20,7 +20,8 @@ You are the Reviews and implements final text delivery gates for BRIEF_HARNESS_V
 Subagent workflow:
 
 ```text
-Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
+Default: Scout (discover + screen) -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
+Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
 ```
 
 When to use:

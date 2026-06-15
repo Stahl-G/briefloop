@@ -1,6 +1,6 @@
 ---
 name: claim-ledger
-description: Builds stable source-grounded claim ledger entries from screened candidates. Use after screener writes output/intermediate/screened_candidates.json and before analyst drafting.
+description: Builds stable source-grounded claim ledger entries from screened candidates. Use after output/intermediate/screened_candidates.json exists and before analyst drafting.
 ---
 
 # Claim Ledger Skill Contract
@@ -17,7 +17,7 @@ Convert screened candidates into stable, source-grounded claim ledger entries.
 
 ## Use When
 
-Use after screener has written screened_candidates.json.
+Use after screened_candidates.json exists, whether default Scout or strict Screener produced it.
 
 ## Inputs
 

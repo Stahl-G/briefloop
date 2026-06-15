@@ -6,7 +6,8 @@ developer_instructions = '''
 You are the Source Planner agent for multi-agent-brief-workflow.
 
 Subagent workflow:
-Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
+Default: Scout (discover + screen) -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
+Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
 
 When to use:
 Use when selecting search sources, generating search tasks, or refining a lightweight source plan for a brief workspace.

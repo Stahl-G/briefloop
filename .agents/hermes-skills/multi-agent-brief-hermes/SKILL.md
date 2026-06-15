@@ -87,17 +87,18 @@ multi-agent-brief hermes prompt --config <workspace>/config.yaml
 ## Delegated Brief Run
 
 ```text
-doctor
-→ source discovery when configured
-→ input governance
-→ delegate_task scout
-→ delegate_task screener
-→ delegate_task claim-ledger
-→ delegate_task analyst
-→ delegate_task editor
-→ delegate_task auditor
-→ gates check + state check + state stage-complete → finalize → state finalize-complete
+doctor → source discovery → input governance
+→ scout (default: discovery+screening; strict: discovery only)
+→ screener (strict or repair/review only) → claim-ledger → analyst
+→ editor / Delivery Editor → auditor
+→ gates check + state check + state stage-complete → finalize → finalize-complete
 ```
+
+Read `configs/policy_packs/default.yaml` before delegating. In default topology,
+Scout writes both `candidate_claims.json` and `screened_candidates.json`, then
+`stage-complete --stage scout` satisfies Screener by topology. In strict topology,
+Scout writes only `candidate_claims.json` and independent Screener writes
+`screened_candidates.json`. Both artifacts remain required before Claim Ledger.
 
 If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 

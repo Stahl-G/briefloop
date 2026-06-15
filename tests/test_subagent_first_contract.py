@@ -108,6 +108,25 @@ def test_claude_generate_brief_requires_stage_complete_before_next_specialist():
     assert "route repair back to the owner stage" in text
 
 
+def test_claude_generate_brief_is_topology_aware_for_scout_and_screener():
+    text = _read(".claude/commands/generate-brief.md")
+    assert "With `role_topology=default`, Scout writes both `candidate_claims.json`" in text
+    assert "`screened_candidates.json` before `stage-complete --stage scout`" in text
+    assert "Do not delegate Screener in default topology." in text
+    assert "Strict topology only: invoke the **screener** subagent" in text
+    assert "With `role_topology=strict`, Scout writes only `candidate_claims.json`" in text
+    assert "strict topology delegates Screener separately after Scout completion" in text
+
+
+def test_claim_ledger_skill_accepts_screened_candidates_from_any_topology():
+    text = _read(".agents/skills/claim-ledger/SKILL.md")
+    assert "after screener writes" not in text.lower()
+    assert "after screener has written" not in text.lower()
+    assert "screened_candidates.json exists" in text
+    assert "default Scout" in text
+    assert "strict Screener" in text
+
+
 def test_claude_generate_brief_requires_source_discovery_transaction_for_all_profiles():
     text = _read(".claude/commands/generate-brief.md")
     source_section = text.split("**Source discovery transaction (all source profiles):**", 1)[1].split(

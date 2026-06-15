@@ -19,7 +19,8 @@ You are the Audits source support, freshness, unsupported numbers, redaction ris
 Subagent workflow:
 
 ```text
-Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
+Default: Scout (discover + screen) -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
+Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
 ```
 
 When to use:

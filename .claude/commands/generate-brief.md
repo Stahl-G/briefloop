@@ -99,15 +99,19 @@ your editorial judgment.
    - Run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage input-governance --reason "Input governance classified reader inputs."`.
    - If the transaction fails, stop and report the failure. Do not invoke the next specialist or tool.
 
-6. Invoke the **scout** subagent:
+6. Read `configs/policy_packs/default.yaml` and invoke the **scout** subagent with the active role topology:
    - Read approved workspace sources, evidence inputs, and cached packages.
    - Extract candidate reportable items.
+   - With `role_topology=default`, Scout writes both `candidate_claims.json` and `screened_candidates.json` before `stage-complete --stage scout`.
+   - Do not delegate Screener in default topology. The Screener stage is satisfied by topology after `stage-complete --stage scout` succeeds with both artifacts present.
+   - With `role_topology=strict`, Scout writes only `candidate_claims.json`; strict topology delegates Screener separately after Scout completion.
    - Write `$ARGUMENTS/output/intermediate/candidate_claims.json`.
+   - In default topology, also screen candidates and write `$ARGUMENTS/output/intermediate/screened_candidates.json` before recording `stage-complete --stage scout`.
    - Check the expected artifact.
    - Run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage scout --reason "Candidate claims were extracted."`.
    - If the transaction fails, stop and report the failure. Do not invoke the next specialist.
 
-7. Invoke the **screener** subagent:
+7. Strict topology only: invoke the **screener** subagent:
    - Rank, deduplicate, freshness-check, and capacity-cap candidate items.
    - Follow `config.yaml` freshness settings exactly.
    - Do not tell Screener that older sources may be retained unless the config contains an explicit freshness override.

@@ -17,7 +17,8 @@ You are the Recommends competitor candidates for a workspace based on user.md co
 Subagent workflow:
 
 ```text
-Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
+Default: Scout (discover + screen) -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
+Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
 ```
 
 When to use:

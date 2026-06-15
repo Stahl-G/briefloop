@@ -67,6 +67,11 @@ workflow:
       owner: screener
       category: candidate_screening
       topology_satisfaction:
+        default:
+          satisfied_by: scout
+          required_artifacts:
+            - candidate_claims
+            - screened_candidates
         human_assisted:
           satisfied_by: scout
           required_artifacts:

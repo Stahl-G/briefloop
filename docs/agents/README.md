@@ -31,7 +31,8 @@
         ## Subagent workflow
 
         ```text
-        Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
+        Default: Scout (discover + screen) -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
+Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
         ```
 
         ## Roles
@@ -39,12 +40,12 @@
         - **orchestrator** (coordination): Acts as the runtime main agent that controls delegated MABW stages, contract references, decisions, and artifact handoffs.
 - **source-provider** (coordination): Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
 - **source-planner** (coordination): Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
-- **scout** (pipeline): Extracts candidate reportable items from local markdown, text, JSON, and future connector sources.
-- **screener** (pipeline): Filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
+- **scout** (pipeline): Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.
+- **screener** (pipeline): Strict-topology independent screening role that filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
 - **claim-ledger** (pipeline): Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.
 - **analyst** (pipeline): Drafts executive-readable brief sections using only Claim Ledger entries.
 - **auditor** (pipeline): Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures.
-- **editor** (pipeline): Improves clarity, structure, tone, and executive readability without adding facts.
+- **editor** (pipeline): Delivery Editor alias for the editor stage; improves clarity, structure, tone, and executive readability without adding facts.
 - **formatter** (pipeline): Renders the final reader delivery bundle from audited_brief.md and audit_report.json through finalize.
 - **draft-audit-harness** (harness): Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks.
 - **final-quality-harness** (harness): Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target.

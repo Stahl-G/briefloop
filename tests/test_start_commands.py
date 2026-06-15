@@ -200,6 +200,24 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
             "format": "json",
         }
     ]
+    screener_protocol = protocol_stages["screener"]
+    assert screener_protocol["topology_satisfaction"]["default"]["satisfied_by"] == "scout"
+    assert screener_protocol["topology_satisfaction"]["default"]["required_artifacts"] == [
+        {
+            "artifact_id": "candidate_claims",
+            "path": "output/intermediate/candidate_claims.json",
+            "required": True,
+            "format": "json",
+        },
+        {
+            "artifact_id": "screened_candidates",
+            "path": "output/intermediate/screened_candidates.json",
+            "required": True,
+            "format": "json",
+        },
+    ]
+    assert screener_protocol["topology_satisfaction"]["human_assisted"]["satisfied_by"] == "scout"
+    assert screener_protocol["independent_completion_topologies"] == ["strict"]
     assert protocol_stages["analyst"]["required_input_artifacts"] == [
         {
             "artifact_id": "claim_ledger",
@@ -266,6 +284,14 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "next_allowed_decisions" in text
     assert "Stage completion protocol" in text
     assert "MUST produce" in text
+    assert "topology satisfaction: default: satisfied by scout" in text
+    assert "independent MUST produce (strict): screened_candidates at output/intermediate/screened_candidates.json" in text
+    assert (
+        "- screener:\n"
+        "  required input artifacts: candidate_claims at output/intermediate/candidate_claims.json\n"
+        "  context inputs: none\n"
+        "  MUST produce: screened_candidates at output/intermediate/screened_candidates.json"
+    ) not in str(data.get("prompt", ""))
     assert "I completed the stage" in text
     assert "source_candidates.yaml is a source plan only, not source evidence" in text
     assert "URL, source title/name, published date or retrieved_at" in text
@@ -516,6 +542,8 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     assert "Do not invoke an orchestrator subagent" in prompt
     assert ".codex/agents/scout.toml" in prompt
     assert ".codex/agents/screener.toml" in prompt
+    assert "default: discovery + screening" in prompt
+    assert "strict topology or explicit repair/review only" in prompt
     assert ".codex/agents/claim-ledger.toml" in prompt
     assert ".codex/agents/analyst.toml" in prompt
     assert ".codex/agents/editor.toml" in prompt
@@ -523,6 +551,7 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     assert "formatter/finalize -> Python finalize tool" in prompt
     assert "state stage-complete" in prompt
     assert "state finalize-complete" in prompt
+    assert "With role_topology=default, Scout performs discovery and screening in one role" in prompt
     assert "workspace is trusted in Codex" in prompt
     assert "install Codex runtime assets" in prompt
     assert "Codex writer flow protocol" in prompt
@@ -715,6 +744,8 @@ def test_build_handoff_hermes_has_delegate_task(tmp_path):
     assert handoff.runtime == "hermes"
     assert "delegate_task" in handoff.prompt
     assert "scout" in handoff.prompt
+    assert "default topology" in handoff.prompt
+    assert "screened_candidates.json" in handoff.prompt
     assert "auditor" in handoff.prompt
     assert "/generate-brief" not in handoff.prompt
     _assert_orchestrator_contract_handoff(handoff.to_dict())
@@ -730,6 +761,8 @@ def test_build_handoff_claude_has_generate_brief(tmp_path):
         run_doctor=False,
     )
     assert "/generate-brief" in handoff.prompt
+    assert "With role_topology=default, Scout performs discovery and screening in one role" in handoff.prompt
+    assert "strict: scout → screener" in handoff.prompt
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
 
@@ -747,6 +780,8 @@ def test_build_handoff_codex_maps_specialists_to_custom_agents(tmp_path):
     assert "root Codex session" in handoff.prompt
     assert "Spawn the named Codex custom agent" in handoff.prompt
     assert ".codex/agents/scout.toml" in handoff.prompt
+    assert "default: discovery + screening" in handoff.prompt
+    assert "strict topology or explicit repair/review only" in handoff.prompt
     assert ".codex/agents/claim-ledger.toml" in handoff.prompt
     assert "Do not call the next specialist until" in handoff.prompt
     assert "state stage-complete" in handoff.prompt
