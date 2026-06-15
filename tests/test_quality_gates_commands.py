@@ -16,6 +16,11 @@ from multi_agent_brief.orchestrator.runtime_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.quality_gates import state as quality_gate_state
+from multi_agent_brief.quality_gates.contract import (
+    interpret_quality_gate_binding,
+    quality_gate_report_path_for_stage,
+    require_quality_gate_binding_pass,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -130,6 +135,49 @@ def _quality_gate_payload(*, status: str, stage_id: str) -> dict:
 def _events(ws: Path) -> list[dict[str, object]]:
     path = ws / "output" / "intermediate" / "event_log.jsonl"
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_quality_gate_binding_interpreter_rejects_pass_status_with_blocking_finding(tmp_path):
+    ws = _write_workspace(tmp_path)
+    report_path = quality_gate_report_path_for_stage(ws, "auditor")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _quality_gate_payload(status="pass", stage_id="auditor")
+    blocking_payload = _quality_gate_payload(status="fail", stage_id="auditor")
+    payload["findings"] = blocking_payload["findings"]
+    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    verdict = interpret_quality_gate_binding(
+        workspace=ws,
+        stage_id="auditor",
+        expected_brief="output/intermediate/audited_brief.md",
+        expected_ledger="output/intermediate/claim_ledger.json",
+        stages=runtime_state.load_stage_specs(ROOT),
+        artifacts=runtime_state.load_artifact_contracts(ROOT),
+    )
+
+    assert verdict.kind == "degraded"
+    assert any("blocking findings" in reason for reason in require_quality_gate_binding_pass(verdict))
+
+
+def test_quality_gate_binding_interpreter_rejects_pass_status_with_blocking_gate_result(tmp_path):
+    ws = _write_workspace(tmp_path)
+    report_path = quality_gate_report_path_for_stage(ws, "auditor")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = _quality_gate_payload(status="pass", stage_id="auditor")
+    payload["gate_results"][1]["blocking"] = True
+    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    verdict = interpret_quality_gate_binding(
+        workspace=ws,
+        stage_id="auditor",
+        expected_brief="output/intermediate/audited_brief.md",
+        expected_ledger="output/intermediate/claim_ledger.json",
+        stages=runtime_state.load_stage_specs(ROOT),
+        artifacts=runtime_state.load_artifact_contracts(ROOT),
+    )
+
+    assert verdict.kind == "degraded"
+    assert any("blocking gate_results" in reason for reason in require_quality_gate_binding_pass(verdict))
 
 
 def _set_current_stage(ws: Path, stage_id: str) -> None:

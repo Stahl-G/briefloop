@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.outputs.finalize import finalize_reader_outputs
+from multi_agent_brief.outputs.finalize import (
+    finalize_reader_outputs,
+    interpret_finalize_audit_binding,
+    require_finalize_audit_binding_pass,
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -172,6 +176,63 @@ def _passing_audit_payload(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+def test_finalize_audit_binding_interpreter_rejects_pass_status_with_stale_hash(tmp_path: Path):
+    ws = tmp_path
+    output_dir = ws / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    ledger = intermediate / "claim_ledger.json"
+    audited = intermediate / "audited_brief.md"
+    audit_report = intermediate / "audit_report.json"
+    _write_single_claim_ledger(ledger)
+    audited.write_text("# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n", encoding="utf-8")
+    audit_report.write_text(json.dumps(_passing_audit_payload(), ensure_ascii=False, indent=2), encoding="utf-8")
+    report = {
+        "audit_binding": {
+            "status": "pass",
+            "claim_ledger_sha256": "0" * 64,
+            "audited_brief_sha256": _sha256_file(audited),
+            "audit_report_sha256": _sha256_file(audit_report),
+        }
+    }
+
+    verdict = interpret_finalize_audit_binding(workspace=ws, finalize_report=report)
+
+    assert verdict.kind == "degraded"
+    assert require_finalize_audit_binding_pass(verdict) == [
+        "finalize_report.json audit_binding.claim_ledger_sha256 does not match current artifact bytes."
+    ]
+
+
+def test_finalize_audit_binding_interpreter_rejects_pass_status_with_findings(tmp_path: Path):
+    ws = tmp_path
+    output_dir = ws / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    ledger = intermediate / "claim_ledger.json"
+    audited = intermediate / "audited_brief.md"
+    audit_report = intermediate / "audit_report.json"
+    _write_single_claim_ledger(ledger)
+    audited.write_text("# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n", encoding="utf-8")
+    audit_report.write_text(json.dumps(_passing_audit_payload(), ensure_ascii=False, indent=2), encoding="utf-8")
+    report = {
+        "audit_binding": {
+            "status": "pass",
+            "claim_ledger_sha256": _sha256_file(ledger),
+            "audited_brief_sha256": _sha256_file(audited),
+            "audit_report_sha256": _sha256_file(audit_report),
+            "findings": [{"kind": "audit_binding_mismatch"}],
+        }
+    }
+
+    verdict = interpret_finalize_audit_binding(workspace=ws, finalize_report=report)
+
+    assert verdict.kind == "degraded"
+    assert require_finalize_audit_binding_pass(verdict) == [
+        "finalize_report.json audit_binding.findings must be empty when audit_binding.status is pass."
+    ]
 
 
 def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):

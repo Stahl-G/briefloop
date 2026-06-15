@@ -345,6 +345,100 @@ def _empty_audit_binding_report() -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class FinalizeAuditBindingVerdict:
+    """Single interpretation of finalize_report audit binding."""
+
+    kind: str
+    value: dict[str, Any]
+    reasons: tuple[str, ...] = ()
+
+
+def interpret_finalize_audit_binding(
+    *,
+    workspace: str | Path,
+    finalize_report: dict[str, Any],
+) -> FinalizeAuditBindingVerdict:
+    binding = finalize_report.get("audit_binding")
+    if not isinstance(binding, dict):
+        return _degraded_finalize_audit_binding("finalize_report.json audit_binding.status must be pass.")
+    if binding.get("status") != "pass":
+        return _degraded_finalize_audit_binding("finalize_report.json audit_binding.status must be pass.")
+    findings = binding.get("findings", [])
+    if not isinstance(findings, list):
+        return _degraded_finalize_audit_binding(
+            "finalize_report.json audit_binding.findings must be a list when present."
+        )
+    if findings:
+        return _degraded_finalize_audit_binding(
+            "finalize_report.json audit_binding.findings must be empty when audit_binding.status is pass."
+        )
+
+    ws = Path(workspace).expanduser().resolve()
+    reasons: list[str] = []
+    audit_binding_paths = {
+        "claim_ledger_sha256": ws / "output" / "intermediate" / "claim_ledger.json",
+        "audited_brief_sha256": ws / "output" / "intermediate" / "audited_brief.md",
+        "audit_report_sha256": ws / "output" / "intermediate" / "audit_report.json",
+    }
+    for field, path in audit_binding_paths.items():
+        value = binding.get(field)
+        if not isinstance(value, str) or not value.strip():
+            reasons.append(f"finalize_report.json audit_binding.{field} is required.")
+            continue
+        if not path.exists():
+            reasons.append(f"finalize_report.json audit_binding.{field} target is missing: {path}.")
+            continue
+        try:
+            current_sha256 = _sha256_file(path)
+        except OSError as exc:
+            reasons.append(f"finalize_report.json audit_binding.{field} target could not be read: {exc}")
+            continue
+        if value != current_sha256:
+            reasons.append(f"finalize_report.json audit_binding.{field} does not match current artifact bytes.")
+    if reasons:
+        return FinalizeAuditBindingVerdict(
+            kind="degraded",
+            value=_finalize_audit_binding_projection(binding, status="blocked"),
+            reasons=tuple(reasons),
+        )
+    return FinalizeAuditBindingVerdict(
+        kind="canonical",
+        value=_finalize_audit_binding_projection(binding, status="pass"),
+    )
+
+
+def project_finalize_audit_binding_for_read(verdict: FinalizeAuditBindingVerdict) -> dict[str, Any]:
+    return dict(verdict.value)
+
+
+def require_finalize_audit_binding_pass(verdict: FinalizeAuditBindingVerdict) -> list[str]:
+    if verdict.kind == "canonical":
+        return []
+    return list(verdict.reasons)
+
+
+def _degraded_finalize_audit_binding(reason: str) -> FinalizeAuditBindingVerdict:
+    return FinalizeAuditBindingVerdict(
+        kind="degraded",
+        value={
+            "status": "blocked",
+            "binding_status": "unknown",
+        },
+        reasons=(reason,),
+    )
+
+
+def _finalize_audit_binding_projection(binding: dict[str, Any], *, status: str) -> dict[str, Any]:
+    return {
+        "status": status,
+        "binding_status": binding.get("status"),
+        "claim_ledger_sha256": binding.get("claim_ledger_sha256"),
+        "audited_brief_sha256": binding.get("audited_brief_sha256"),
+        "audit_report_sha256": binding.get("audit_report_sha256"),
+    }
+
+
 def _audit_binding_report(
     *,
     intermediate_dir: Path,

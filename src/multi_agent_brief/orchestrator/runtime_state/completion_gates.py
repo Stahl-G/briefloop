@@ -11,15 +11,12 @@ import yaml
 
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.quality_gates.contract import (
-    QualityGateContractError,
-    load_quality_gate_report_for_stage,
-    quality_gate_report_path_for_stage,
-    validate_quality_gate_report_payload,
+    interpret_quality_gate_binding,
+    require_quality_gate_binding_pass,
 )
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _load_workspace_yaml,
     _read_json,
-    _sha256_file,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_INVALID,
@@ -29,6 +26,10 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.identity import utc_now
 from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
+from multi_agent_brief.outputs.finalize import (
+    interpret_finalize_audit_binding,
+    require_finalize_audit_binding_pass,
+)
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -238,66 +239,15 @@ def _stage_quality_gate_pass_reasons(
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[str]:
-    try:
-        payload = load_quality_gate_report_for_stage(workspace, stage_id, allow_legacy=False)
-    except QualityGateContractError as exc:
-        return [f"Quality gate report is invalid: {exc}"]
-    if payload is None:
-        report_path = quality_gate_report_path_for_stage(workspace, stage_id)
-        try:
-            rel_path = report_path.relative_to(workspace).as_posix()
-        except ValueError:
-            rel_path = str(report_path)
-        return [f"{rel_path} is required before completing stage '{stage_id}'."]
-
-    errors = validate_quality_gate_report_payload(payload, stages=stages, artifacts=artifacts)
-    if errors:
-        return [f"Quality gate report is invalid: {' '.join(errors)}"]
-    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-    gate_stage_id = str(metadata.get("gate_stage_id") or metadata.get("stage_id") or "")
-    if gate_stage_id != stage_id:
-        return [
-            f"Quality gate report must be generated for {stage_id} completion "
-            f"(metadata.gate_stage_id='{stage_id}'); got {gate_stage_id or '<missing>'}."
-        ]
-    brief_ref = str(metadata.get("brief") or metadata.get("audited_brief") or "")
-    ledger_ref = str(metadata.get("ledger") or metadata.get("claim_ledger") or "")
-    if brief_ref != expected_brief:
-        return [f"Quality gate report brief metadata must be {expected_brief}; got {brief_ref}."]
-    if ledger_ref != expected_ledger:
-        return [f"Quality gate report ledger metadata must be {expected_ledger}; got {ledger_ref}."]
-    gate_ids = {
-        str(result.get("gate_id") or "")
-        for result in payload.get("gate_results") or []
-        if isinstance(result, dict)
-    }
-    required_gate_ids = {"material_fact", "freshness", "target_relevance"}
-    missing_gate_ids = sorted(required_gate_ids - gate_ids)
-    if missing_gate_ids:
-        return [
-            "Quality gate report must include material_fact, freshness, and target_relevance gate_results; "
-            f"missing: {', '.join(missing_gate_ids)}."
-        ]
-    if payload.get("status") == "fail":
-        return ["Quality gate report status is fail."]
-    failed_gate_ids = sorted(
-        str(result.get("gate_id") or "")
-        for result in payload.get("gate_results") or []
-        if isinstance(result, dict) and result.get("status") == "fail"
+    verdict = interpret_quality_gate_binding(
+        workspace=workspace,
+        stage_id=stage_id,
+        expected_brief=expected_brief,
+        expected_ledger=expected_ledger,
+        stages=stages,
+        artifacts=artifacts,
     )
-    if failed_gate_ids:
-        return [f"Quality gate report has failing gate_results: {', '.join(failed_gate_ids)}."]
-    blocking_findings = [
-        str(finding.get("finding_id") or "")
-        for finding in payload.get("findings") or []
-        if isinstance(finding, dict) and finding.get("blocking_level") == "blocking"
-    ]
-    if blocking_findings:
-        return [
-            "Quality gate report has blocking findings: "
-            + ", ".join(finding for finding in blocking_findings if finding)
-        ]
-    return []
+    return require_quality_gate_binding_pass(verdict)
 
 
 def _quality_gate_pass_reasons(
@@ -568,34 +518,14 @@ def _finalize_completion_reasons(
     reader_clean = report.get("reader_clean")
     if not isinstance(reader_clean, dict) or reader_clean.get("status") != "pass":
         reasons.append("finalize_report.json reader_clean.status must be pass.")
-    audit_binding = report.get("audit_binding")
-    if not isinstance(audit_binding, dict) or audit_binding.get("status") != "pass":
-        reasons.append("finalize_report.json audit_binding.status must be pass.")
-    else:
-        audit_binding_paths = {
-            "claim_ledger_sha256": workspace / "output" / "intermediate" / "claim_ledger.json",
-            "audited_brief_sha256": workspace / "output" / "intermediate" / "audited_brief.md",
-            "audit_report_sha256": workspace / "output" / "intermediate" / "audit_report.json",
-        }
-        for field, path in audit_binding_paths.items():
-            value = audit_binding.get(field)
-            if not isinstance(value, str) or not value.strip():
-                reasons.append(f"finalize_report.json audit_binding.{field} is required.")
-                continue
-            if not path.exists():
-                reasons.append(f"finalize_report.json audit_binding.{field} target is missing: {path}.")
-                continue
-            try:
-                current_sha256 = _sha256_file(path)
-            except OSError as exc:
-                reasons.append(
-                    f"finalize_report.json audit_binding.{field} target could not be read: {exc}"
-                )
-                continue
-            if value != current_sha256:
-                reasons.append(
-                    f"finalize_report.json audit_binding.{field} does not match current artifact bytes."
-                )
+    reasons.extend(
+        require_finalize_audit_binding_pass(
+            interpret_finalize_audit_binding(
+                workspace=workspace,
+                finalize_report=report,
+            )
+        )
+    )
     reasons.extend(_finalize_report_delivery_artifact_reasons(workspace, report))
     if runtime_manifest is None:
         manifest_path = workspace / "output" / "intermediate" / "runtime_manifest.json"
