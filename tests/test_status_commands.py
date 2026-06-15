@@ -121,6 +121,60 @@ def _mark_fact_layer_imported(ws: Path) -> None:
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _event(event_id: str, event_type: str, created_at: str, *, run_id: str, **extra: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": "multi-agent-brief-event-log/v1",
+        "event_id": event_id,
+        "run_id": run_id,
+        "created_at": created_at,
+        "event_type": event_type,
+        "actor": "cli",
+        "stage_id": None,
+        "artifact_id": None,
+        "decision": None,
+        "reason": "",
+        "metadata": {},
+    }
+    payload.update(extra)
+    return payload
+
+
+def _completion(event_id: str, created_at: str, stage_id: str, *, run_id: str) -> dict[str, object]:
+    return _event(
+        event_id,
+        "decision_recorded",
+        created_at,
+        run_id=run_id,
+        stage_id=stage_id,
+        decision="continue",
+        metadata={"transaction_id": f"tx-{event_id}"},
+    )
+
+
+def _topology_satisfied(
+    event_id: str,
+    created_at: str,
+    stage_id: str,
+    *,
+    run_id: str,
+    trigger_stage: str,
+) -> dict[str, object]:
+    return _event(
+        event_id,
+        "stage_satisfied_by_topology",
+        created_at,
+        run_id=run_id,
+        stage_id=stage_id,
+        metadata={
+            "transaction_id": f"tx-{event_id}",
+            "topology": "default",
+            "satisfied_by": trigger_stage,
+            "satisfied_by_stage": trigger_stage,
+            "required_artifacts": ["candidate_claims", "screened_candidates"],
+        },
+    )
+
+
 def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
@@ -248,6 +302,52 @@ def test_status_command_human_output_reports_fact_layer_import(tmp_path, capsys)
     assert "[status] fact_layer_import: valid" in out
     assert "source_run=mabw-20260614T000000Z-source" in out
     assert "satisfied=complete via import" in out
+
+
+def test_status_command_human_output_reports_topology_satisfied_stage(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    paths = runtime_state_paths(ws)
+    manifest = json.loads(paths["runtime_manifest"].read_text(encoding="utf-8"))
+    run_id = manifest["run_id"]
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["current_stage"] = "claim-ledger"
+    workflow["stage_statuses"] = {
+        "scout": {"status": "complete"},
+        "screener": {
+            "status": "complete",
+            "metadata": {"satisfied_by_topology": True},
+        },
+        "claim-ledger": {"status": "ready"},
+    }
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    paths["event_log"].write_text(
+        "\n".join(
+            json.dumps(event, sort_keys=True)
+            for event in (
+                _event("e0", "run_initialized", "2026-06-14T00:00:00Z", run_id=run_id),
+                _completion("e1", "2026-06-14T00:01:00Z", "scout", run_id=run_id),
+                _topology_satisfied(
+                    "e2",
+                    "2026-06-14T00:01:01Z",
+                    "screener",
+                    run_id=run_id,
+                    trigger_stage="scout",
+                ),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["status", "--workspace", str(ws)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert (
+        "[status] topology: screener complete via scout "
+        "(default; required=candidate_claims,screened_candidates)"
+    ) in out
 
 
 def test_status_command_reports_malformed_run_integrity_as_unknown(tmp_path, capsys):

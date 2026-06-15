@@ -155,6 +155,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"[status] events: count={events.get('event_count', 0)} corrupt={events.get('corrupt_count', 0)}",
             _format_fact_layer_import_line(fact_layer_import),
             _format_timing_line(timing),
+            *_format_topology_satisfaction_lines(timing),
             f"[status] quality_gate: {gate.get('status') or 'unknown'}",
             f"[status] reader_clean: {reader.get('status') or 'unknown'}",
             (
@@ -175,6 +176,25 @@ def format_workspace_status(status: dict[str, Any]) -> str:
         lines.append(f"[status] stale_or_unknown: {marker}")
     lines.append(f"[status] suggested_next: {status.get('suggested_next_command')}")
     return "\n".join(lines)
+
+
+def _format_topology_satisfaction_lines(timing: dict[str, Any]) -> list[str]:
+    stages = timing.get("stages") if isinstance(timing.get("stages"), list) else []
+    lines: list[str] = []
+    for stage in stages:
+        if not isinstance(stage, dict) or stage.get("status") != "satisfied_by_topology":
+            continue
+        stage_id = str(stage.get("stage_id") or "unknown")
+        satisfied_by = str(stage.get("satisfied_by") or stage.get("satisfied_by_stage") or "unknown")
+        topology = str(stage.get("topology") or "unknown")
+        required = stage.get("required_artifacts")
+        required_ids = [str(item) for item in required if item] if isinstance(required, list) else []
+        required_text = ",".join(required_ids) if required_ids else "unknown"
+        lines.append(
+            f"[status] topology: {stage_id} complete via {satisfied_by} "
+            f"({topology}; required={required_text})"
+        )
+    return lines
 
 
 def _format_timing_line(timing: dict[str, Any]) -> str:
