@@ -10,6 +10,7 @@ projection; authoritative runtime checks use stage-scoped reports.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,15 @@ class QualityGateContractError(Exception):
             "error": str(self),
             "details": self.details,
         }
+
+
+@dataclass(frozen=True)
+class QualityGateBindingVerdict:
+    """Single interpretation of a stage-scoped quality-gate binding."""
+
+    kind: str
+    value: dict[str, Any]
+    reasons: tuple[str, ...] = ()
 
 
 def quality_gate_paths(workspace: str | Path) -> dict[str, Path]:
@@ -348,6 +358,149 @@ def _rollup_quality_gate_status(statuses: Any) -> str | None:
     if "pass" in values:
         return "pass"
     return None
+
+
+def interpret_quality_gate_binding(
+    *,
+    workspace: str | Path,
+    stage_id: str,
+    expected_brief: str,
+    expected_ledger: str,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> QualityGateBindingVerdict:
+    """Interpret whether a stage-scoped gate report authorizes stage progress."""
+
+    ws = Path(workspace).expanduser().resolve()
+    try:
+        payload = load_quality_gate_report_for_stage(ws, stage_id, allow_legacy=False)
+    except QualityGateContractError as exc:
+        return _degraded_quality_gate_binding(f"Quality gate report is invalid: {exc}")
+    if payload is None:
+        report_path = quality_gate_report_path_for_stage(ws, stage_id)
+        try:
+            rel_path = report_path.relative_to(ws).as_posix()
+        except ValueError:
+            rel_path = str(report_path)
+        return _degraded_quality_gate_binding(
+            f"{rel_path} is required before completing stage '{stage_id}'."
+        )
+
+    reasons = _quality_gate_binding_reasons(
+        payload=payload,
+        stage_id=stage_id,
+        expected_brief=expected_brief,
+        expected_ledger=expected_ledger,
+        stages=stages,
+        artifacts=artifacts,
+    )
+    if reasons:
+        return QualityGateBindingVerdict(
+            kind="degraded",
+            value=_quality_gate_binding_projection(payload, status="blocked"),
+            reasons=tuple(reasons),
+        )
+    return QualityGateBindingVerdict(
+        kind="canonical",
+        value=_quality_gate_binding_projection(payload, status="pass"),
+    )
+
+
+def project_quality_gate_binding_for_read(verdict: QualityGateBindingVerdict) -> dict[str, Any]:
+    return dict(verdict.value)
+
+
+def require_quality_gate_binding_pass(verdict: QualityGateBindingVerdict) -> list[str]:
+    if verdict.kind == "canonical":
+        return []
+    return list(verdict.reasons)
+
+
+def _degraded_quality_gate_binding(reason: str) -> QualityGateBindingVerdict:
+    return QualityGateBindingVerdict(
+        kind="degraded",
+        value={
+            "status": "blocked",
+            "gate_status": "unknown",
+            "blocking_findings": 0,
+        },
+        reasons=(reason,),
+    )
+
+
+def _quality_gate_binding_projection(payload: dict[str, Any], *, status: str) -> dict[str, Any]:
+    findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    blocking_count = sum(
+        1
+        for finding in findings
+        if isinstance(finding, dict) and finding.get("blocking_level") == "blocking"
+    )
+    return {
+        "status": status,
+        "gate_status": payload.get("status"),
+        "gate_stage_id": metadata.get("gate_stage_id") or metadata.get("stage_id"),
+        "blocking_findings": blocking_count,
+    }
+
+
+def _quality_gate_binding_reasons(
+    *,
+    payload: dict[str, Any],
+    stage_id: str,
+    expected_brief: str,
+    expected_ledger: str,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
+    errors = validate_quality_gate_report_payload(payload, stages=stages, artifacts=artifacts)
+    if errors:
+        return [f"Quality gate report is invalid: {' '.join(errors)}"]
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    gate_stage_id = str(metadata.get("gate_stage_id") or metadata.get("stage_id") or "")
+    if gate_stage_id != stage_id:
+        return [
+            f"Quality gate report must be generated for {stage_id} completion "
+            f"(metadata.gate_stage_id='{stage_id}'); got {gate_stage_id or '<missing>'}."
+        ]
+    brief_ref = str(metadata.get("brief") or metadata.get("audited_brief") or "")
+    ledger_ref = str(metadata.get("ledger") or metadata.get("claim_ledger") or "")
+    if brief_ref != expected_brief:
+        return [f"Quality gate report brief metadata must be {expected_brief}; got {brief_ref}."]
+    if ledger_ref != expected_ledger:
+        return [f"Quality gate report ledger metadata must be {expected_ledger}; got {ledger_ref}."]
+    gate_ids = {
+        str(result.get("gate_id") or "")
+        for result in payload.get("gate_results") or []
+        if isinstance(result, dict)
+    }
+    required_gate_ids = {"material_fact", "freshness", "target_relevance"}
+    missing_gate_ids = sorted(required_gate_ids - gate_ids)
+    if missing_gate_ids:
+        return [
+            "Quality gate report must include material_fact, freshness, and target_relevance gate_results; "
+            f"missing: {', '.join(missing_gate_ids)}."
+        ]
+    if payload.get("status") == "fail":
+        return ["Quality gate report status is fail."]
+    failed_gate_ids = sorted(
+        str(result.get("gate_id") or "")
+        for result in payload.get("gate_results") or []
+        if isinstance(result, dict) and result.get("status") == "fail"
+    )
+    if failed_gate_ids:
+        return [f"Quality gate report has failing gate_results: {', '.join(failed_gate_ids)}."]
+    blocking_findings = [
+        str(finding.get("finding_id") or "")
+        for finding in payload.get("findings") or []
+        if isinstance(finding, dict) and finding.get("blocking_level") == "blocking"
+    ]
+    if blocking_findings:
+        return [
+            "Quality gate report has blocking findings: "
+            + ", ".join(finding for finding in blocking_findings if finding)
+        ]
+    return []
 
 
 def current_stage_quality_gate_blocking_reasons(
