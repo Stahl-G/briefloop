@@ -1,6 +1,6 @@
 ---
 name: source-planner
-description: Plans public, citable source discovery for a workspace. Use when sources.yaml uses llm_decide or when a workspace needs source_candidates.yaml before source validation.
+description: Chooses lightweight public, citable source-discovery categories and search tasks for a workspace. Use when sources.yaml uses llm_decide or when a workspace needs a source_candidates.yaml plan before source validation.
 ---
 
 # Source Planner Skill Contract
@@ -13,7 +13,8 @@ It is not the platform-specific subagent definition. Claude Code subagents live 
 
 ## Purpose
 
-Plan public, citable source discovery for a workspace.
+Choose public, citable source-discovery categories, domains, and search tasks
+for a workspace.
 
 ## Use When
 
@@ -34,21 +35,32 @@ Use when sources.yaml uses llm_decide, or when the workspace needs source candid
 
 ## Work
 
-- Understand company, industry, audience, cadence, focus areas, and source preference.
-- Propose public, citable, timestamped sources.
+- Understand company, industry, audience, cadence, focus areas, freshness window,
+  and source preference.
+- Propose public, citable source categories, domains, and search tasks.
 - Align sources with selected source profile and runtime search mode.
 - Prepare candidates for review. Do not treat `source_plan_only` candidates as
   mergeable evidence.
-- If using runtime WebSearch, write collected public sources into
-  `input/sources/` as durable source files before source-discovery completion.
+- List existing `input/sources/` filenames for planning context. Do not read
+  full source files unless `source_candidates.yaml` is missing or clearly
+  inconsistent.
+- Keep the plan lightweight: record the source window, available local source
+  filenames, planned search categories/domains, and blocking gaps only when
+  source discovery lacks a plausible source path.
+- Do not judge claim support, rank reportable items, screen stale facts, or
+  write source caveats that belong to Scout, Screener, Auditor, or gates.
+- If runtime WebSearch is needed, produce the search plan and hand off to the
+  Orchestrator/source-provider path to materialize durable source files.
   Durable runtime-search source files must include URL, source title/name,
   published date or retrieved_at, and raw excerpt/snippet. Summary-only notes
   are discovery hints, not evidence.
 - Do not call `sources decide --search` unless `web_search.mode` is
   `external_api`.
 - Do not call `sources decide --merge` on `source_plan_only` artifacts.
+- Do not decide whether source-discovery is complete, and do not call
+  `state stage-complete`.
 
 ## Handoff
 
-After approved sources exist as durable files or supported source configuration,
-pass source configuration to doctor/source-provider.
+After the search plan is ready, pass it to the Orchestrator/source-provider for
+materialization or source configuration review.

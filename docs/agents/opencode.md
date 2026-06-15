@@ -8,7 +8,7 @@
 
         - `brief-orchestrator.md` — Acts as the runtime main agent that controls delegated MABW stages, contract references, decisions, and artifact handoffs.
 - `brief-source-provider.md` — Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
-- `brief-source-planner.md` — Reads user.md, config.yaml, and sources.yaml to generate or refine source_candidates.yaml and search_tasks. Ensures all sources are public, citable, and timestamped.
+- `brief-source-planner.md` — Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
 - `brief-scout.md` — Extracts candidate reportable items from local markdown, text, JSON, and future connector sources.
 - `brief-screener.md` — Filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
 - `brief-claim-ledger.md` — Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.

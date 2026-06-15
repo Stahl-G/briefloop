@@ -151,6 +151,23 @@ def test_generated_orchestrator_is_main_agent(manifest):
     assert "You are the Orchestrator subagent" not in claude
 
 
+def test_generated_source_planner_stays_lightweight_plan_only(manifest):
+    role = manifest["roles"]["source-planner"]
+    rendered = "\n".join([
+        render_codex_agent("source-planner", role, manifest),
+        render_claude_agent("source-planner", role, manifest),
+        render_opencode_agent("source-planner", role, manifest),
+    ])
+
+    assert "lightweight" in rendered
+    assert "source plan, not evidence" in rendered
+    assert "Do not read full input/sources/* files" in rendered
+    assert "Do not decide whether source-discovery is complete" in rendered
+    assert "Do not judge claim support" in rendered
+    assert "Orchestrator/source-provider" in rendered
+    assert "Ensures all sources are public, citable, and timestamped" not in rendered
+
+
 def test_claude_read_only_agents_no_edit_tools(manifest):
     profiles = manifest["tool_profiles"]
     for name, role in manifest["roles"].items():
