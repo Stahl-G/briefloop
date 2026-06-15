@@ -66,6 +66,31 @@ def test_interpret_run_integrity_rejects_conflicting_contaminated_flags():
     assert verdict.reason_code == "run_integrity_contaminated_reference_eligible"
 
 
+@pytest.mark.parametrize(
+    ("field", "reason_code"),
+    [
+        ("reference_eligible", "run_integrity_clean_not_reference_eligible"),
+        ("clean_single_shot", "run_integrity_clean_not_single_shot"),
+    ],
+)
+def test_interpret_run_integrity_rejects_conflicting_clean_flags(field: str, reason_code: str):
+    payload = {
+        "status": "clean",
+        "reference_eligible": True,
+        "clean_single_shot": True,
+        "reasons": [],
+    }
+    payload[field] = False
+
+    verdict = interpret_run_integrity(payload, field_present=True)
+
+    assert verdict.kind == "degraded"
+    assert project_for_read(verdict)["status"] == "unknown"
+    assert verdict.reason_code == reason_code
+    with pytest.raises(RuntimeStateError):
+        require_persistable(verdict)
+
+
 def test_interpret_run_integrity_canonicalizes_valid_contaminated_payload():
     verdict = interpret_run_integrity({
         "status": "contaminated",
