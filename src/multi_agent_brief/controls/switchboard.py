@@ -524,7 +524,7 @@ def _control_quality_gates(*, current_stage: str | None, files: dict[str, bool])
     required = current_stage in {"auditor", "finalize"} or files["audited_brief"] or files["brief"]
     recommendation = "required" if required else "recommended"
     reason = (
-        "Auditor/finalize path should run material-fact, freshness, and target-relevance gates before delivery."
+        "Auditor/finalize path should run material-fact, freshness, target-relevance, and editor-new-fact gates before delivery."
         if required
         else "Quality gates are available when auditable draft and claim ledger artifacts exist."
     )

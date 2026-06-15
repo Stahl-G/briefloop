@@ -24,6 +24,7 @@ _KNOWN_INTERMEDIATE_FILES = (
     "candidate_claims.json",
     "screened_candidates.json",
     "claim_ledger.json",
+    "analyst_draft_snapshot.md",
     "audited_brief.md",
     "audit_report.json",
     "gates/auditor_quality_gate_report.json",
