@@ -6,7 +6,8 @@ developer_instructions = '''
 You are the Final Quality Harness agent for multi-agent-brief-workflow.
 
 Subagent workflow:
-Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
+Default: Scout (discover + screen) -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
+Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
 
 When to use:
 Use when working on FinalQualityAuditAgent, final Markdown quality gates, report depth, metadata, summary bullet separation, stale-current framing, or publication readiness.

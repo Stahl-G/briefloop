@@ -218,48 +218,73 @@ roles:
   scout:
     stage: pipeline
     tool_profile: read_only
-    description: Extracts candidate reportable items from local markdown, text, JSON,
-      and future connector sources.
-    trigger: Use when inspecting source inputs or extracting candidate items before
-      screening.
+    description: Discovers source-grounded candidate items and, in default topology,
+      screens them in one stage while keeping candidate_claims and screened_candidates
+      as distinct artifacts.
+    trigger: Use after source discovery, doctor, and input governance have identified
+      evidence material. In default topology, produce both candidate_claims.json and
+      screened_candidates.json; in strict topology, stop after candidate_claims.json
+      and hand off to Screener.
     responsibilities:
-    - Read source packages, Tavily/RSS outputs, and evidence files in `input/sources/`
-      (and `input/` root for backward compatibility).
+    - Read source packages, runtime-search materialized source files, and evidence
+      files in `input/sources/` (and `input/` root for backward compatibility).
     - Do NOT extract claims from `input/feedback/`, `input/instructions/`, or `input/context/`
       — these are editorial guidance, not factual evidence.
     - Filter boilerplate, navigation, cookies, privacy text, directories, and ads.
-    - Extract structured claims from source content.
+    - Step 1 discovery always extracts structured candidate claims from source content
+      and writes output/intermediate/candidate_claims.json as the complete found universe.
     - 'Each claim must include: statement, evidence_text, source_url, published_at
       or retrieved_at, topic, claim_type, confidence.'
     - Preserve source path, source ID, source date, and evidence text.
     - Mark vague, stale-looking, duplicate-looking, or low-confidence items.
-    - Return candidates, not final analysis.
+    - Do not pre-filter by relevance or capacity during discovery; screening discards
+      must remain auditable.
+    - In default topology, read the frozen candidate_claims.json, rank and deduplicate
+      candidates, apply freshness and capacity policy, then write output/intermediate/screened_candidates.json.
+    - screened_candidates.json must contain selected candidates, excluded or deprioritized
+      candidates with reasons, and the screening_policy snapshot actually applied.
+    - In strict topology, return candidate_claims.json only and hand off to the independent
+      Screener.
+    - Return candidates and screening output, not final analysis.
     - Ground every candidate in source material.
     hard_rules:
-    - Output candidate claims only; leave prose drafting to Analyst.
-    - Leave ranking and capacity caps to Screener.
+    - Output candidate_claims.json first. This is the frozen found universe for screening.
+    - In default topology, also output screened_candidates.json before Scout stage completion.
+    - In strict topology, do not screen; pass candidate_claims.json to Screener.
+    - The control boundary is the artifact boundary, not the agent boundary.
+    - Do not revise candidate_claims.json once screening begins.
+    - Leave prose drafting to Analyst.
     - Create only source-supported items.
     - Extract claims that are present in the source material.
     - Only extract claims from evidence files in `input/sources/`, `input/` root,
       and approved external source packages.
     - Skip `input/feedback/`, `input/instructions/`, and `input/context/` entirely.
+    - Never mint claim_id values; the downstream Claim Ledger freeze transaction owns
+      claim IDs.
   screener:
     stage: pipeline
     tool_profile: edit_safe
-    description: Filters, ranks, deduplicates, freshness-checks, and capacity-caps
-      Scout candidates before Claim Ledger.
-    trigger: Use when implementing or reviewing novelty scoring, source-tier ranking,
-      topic caps, stale source filtering, or previous-report deduplication.
+    description: Strict-topology independent screening role that filters, ranks,
+      deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim
+      Ledger.
+    trigger: Use only when role_topology is strict, or when the Orchestrator explicitly
+      routes a screening repair/review task. Default topology uses Scout to perform
+      screening and write screened_candidates.json.
     responsibilities:
+    - Read output/intermediate/candidate_claims.json written by Scout.
     - Filter and rank Scout candidates.
     - Deduplicate exact and near-duplicate items.
     - Enforce topic capacity caps.
     - Detect previous-report overlap.
     - Exclude stale or low-confidence candidates according to config.
     - Preserve source identity and evidence for included candidates.
-    - Record exclusion reasons when practical.
+    - Record exclusion reasons for dropped or deprioritized candidates.
+    - Write screened_candidates.json with selected candidates, excluded candidates
+      with reasons, and screening_policy.
     hard_rules:
     - Screen existing Scout candidates only.
+    - Do not rediscover source material or add new candidates from sources.
+    - Do not rewrite candidate_claims.json.
     - Apply reporting-window freshness rules from config.
     - Treat workspace config freshness settings as authoritative.
     - Do not retain stale sources beyond `max_source_age_days` when
@@ -370,10 +395,12 @@ roles:
   editor:
     stage: pipeline
     tool_profile: edit_safe
-    description: Improves clarity, structure, tone, and executive readability without
-      adding facts.
-    trigger: Use after the analyst subagent and before final DOCX rendering. Must
-      remove process residue while preserving valid citations.
+    description: Delivery Editor alias for the editor stage; improves clarity, structure,
+      tone, and executive readability without adding facts.
+    trigger: Use after Analyst and before Auditor/final rendering. Treat this role
+      as Delivery Editor even though the stage id remains editor for compatibility.
+      It must remove process residue while preserving valid citations and factual
+      scope.
     responsibilities:
     - Improve readability and management tone.
     - Read output/input_classification.json; use files listed under context as non-evidence
@@ -387,9 +414,13 @@ roles:
       audit in background).
     - Keep editorial changes within existing facts.
     - Keep claim IDs unchanged.
+    - 'Treat the Analyst draft as the factual boundary: restructure and clarify,
+      but do not introduce new numbers, named entities, dates, causal claims, or
+      new [src:<claim_id>] references.'
     hard_rules:
     - Edit existing claims and prose only.
     - Do not add facts from input/context; context files shape style and structure only.
+    - Do not add new facts, numbers, named entities, dates, causal claims, or citations.
     - Keep claim citations with supported statements.
     - Preserve caveats and uncertainty.
     - Preserve real [src:<claim_id>] citations exactly.

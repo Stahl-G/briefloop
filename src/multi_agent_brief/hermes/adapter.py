@@ -184,7 +184,8 @@ def build_hermes_cron_plan(
                 "- output/intermediate/provenance_graph.json\n\n"
                 f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n"
                 "Run doctor, then use Hermes delegate_task children for:\n"
-                "scout -> screener -> claim-ledger -> analyst -> editor -> auditor.\n"
+                "default topology: scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
+                "strict topology: scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
                 f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
                 f"multi-agent-brief gates check --workspace {workspace_path} --stage auditor\n"
@@ -237,7 +238,8 @@ def build_hermes_cron_plan(
                 f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n"
                 "Favor month-level patterns over daily noise.\n"
                 "Run doctor, then use Hermes delegate_task children for:\n"
-                "scout -> screener -> claim-ledger -> analyst -> editor -> auditor.\n"
+                "default topology: scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
+                "strict topology: scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
                 f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
                 f"multi-agent-brief gates check --workspace {workspace_path} --stage auditor\n"
@@ -409,7 +411,8 @@ Read workspace context -> read contract references -> identify the next stage ->
 Brief generation follows the MABW subagent workflow:
 
 ```text
-scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> finalize
+default: scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize
+strict: scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize
 ```
 
 ## Setup Workflow
@@ -463,7 +466,8 @@ Version: <version>
 Doctor: passed
 
 I can continue generating the brief inside Hermes. The next step uses the Hermes Orchestrator main agent with delegate_task children for:
-scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> finalize.
+default topology uses scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize.
+strict topology uses scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize.
 ```
 
 ## Daily Source Cache Workflow
@@ -601,7 +605,9 @@ Provenance projection is not semantic proof and is not required before finalize.
 
 #### 1. Scout child
 
-Use `delegate_task` to extract candidate reportable items:
+Use `delegate_task` to extract candidate reportable items. In default topology,
+the same Scout child also screens those candidates and writes
+`screened_candidates.json`; in strict topology, Scout stops after discovery.
 
 ```python
 delegate_task(
@@ -609,19 +615,22 @@ delegate_task(
     context="""
 Workspace: <workspace>
 Read approved evidence inputs, cached source packages, local source files, and source config.
-Write: <workspace>/output/intermediate/candidate_claims.json
+Write:
+- <workspace>/output/intermediate/candidate_claims.json
+- default topology only: <workspace>/output/intermediate/screened_candidates.json
 
-Output candidate reportable items only.
+Discovery output must capture the found universe before screening.
 Each item should preserve source path or URL, source date if available, evidence text, topic, claim type, and confidence.
-Return a summary with item count and source gaps.
+In default topology, also rank, dedupe, freshness-check, capacity-cap, and write selected/excluded candidates with reasons plus a screening_policy snapshot.
+Return a summary with candidate count, selected count, excluded count, and source gaps.
 """,
     toolsets=["file", "terminal", "web"]
 )
 ```
 
-For independent source clusters, the parent may use batch delegation with up to 3 scout children, then merge their outputs into one `candidate_claims.json`.
+For independent source clusters, the parent may use batch delegation with up to 3 scout children, then merge their outputs into one `candidate_claims.json` before the default Scout screening step or strict Screener handoff.
 
-#### 2. Screener child
+#### 2. Screener child (strict topology or explicit repair/review)
 
 ```python
 delegate_task(
@@ -917,11 +926,12 @@ As the Hermes Orchestrator main agent, execute:
 11. Repair guidance is bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 
 12. Delegate scout child via delegate_task:
-   Goal: "Extract candidate reportable items for a MABW brief"
+   Goal: "Extract candidate reportable items for a MABW brief; in default topology, screen them in the same Scout stage"
    Write: output/intermediate/candidate_claims.json
+   Default topology also writes: output/intermediate/screened_candidates.json
    toolsets: ["file", "terminal", "web"]
 
-13. After candidate_claims.json exists and is non-empty, delegate screener child:
+13. If role_topology is `strict`, after candidate_claims.json exists and is non-empty, delegate screener child. If role_topology is `default`, Scout must already have written screened_candidates.json and the screener stage is satisfied by topology:
    Goal: "Screen and rank MABW candidate claims"
    Input: output/intermediate/candidate_claims.json
    Write: output/intermediate/screened_candidates.json
@@ -939,8 +949,8 @@ As the Hermes Orchestrator main agent, execute:
    Write: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 
-16. After audited_brief.md exists, delegate editor child:
-   Goal: "Polish the audited MABW brief"
+16. After audited_brief.md exists, delegate editor / Delivery Editor child:
+   Goal: "Polish the audited MABW brief without adding facts"
    Input and output: output/intermediate/audited_brief.md
    toolsets: ["file", "terminal"]
 

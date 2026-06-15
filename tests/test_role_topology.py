@@ -28,8 +28,12 @@ from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_default_policy_pack_selects_default_topology_without_active_satisfaction_until_assets_sync():
+def test_default_policy_pack_selects_default_scout_satisfies_screener():
     rules = stage_satisfaction_rules_for_topology(
+        stages=_stage_specs(),
+        policy_pack=_default_policy_pack(),
+    )
+    layer_d_rules = _topology_satisfaction_rules(
         stages=_stage_specs(),
         policy_pack=_default_policy_pack(),
     )
@@ -38,7 +42,12 @@ def test_default_policy_pack_selects_default_topology_without_active_satisfactio
     assert _role_topology_from_policy_pack(_default_policy_pack()) == ROLE_TOPOLOGY_DEFAULT
     assert ROLE_TOPOLOGY_VALUES == frozenset({"default", "strict", "human_assisted"})
     assert ROLE_TOPOLOGY_SATISFIER_VALUES == frozenset({"scout", "writer"})
-    assert "screener" not in rules
+    assert rules["screener"] == {
+        "topology": "default",
+        "satisfied_by": "scout",
+        "required_artifacts": ["candidate_claims", "screened_candidates"],
+    }
+    assert layer_d_rules == rules
 
 
 def test_strict_topology_keeps_independent_screener_stage():
@@ -81,10 +90,10 @@ def test_missing_role_topology_defaults_to_default():
     policy_pack = {"policy_pack": {"name": "legacy"}}
 
     assert resolve_role_topology(policy_pack) == "default"
-    assert "screener" not in stage_satisfaction_rules_for_topology(
+    assert stage_satisfaction_rules_for_topology(
         stages=_stage_specs(),
         policy_pack=policy_pack,
-    )
+    )["screener"]["satisfied_by"] == "scout"
 
 
 def test_unknown_role_topology_raises_for_layer_d_projection():

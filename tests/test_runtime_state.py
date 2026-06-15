@@ -1366,6 +1366,7 @@ def test_stage_complete_stale_gate_report_does_not_block_early_stage(tmp_path):
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "scout")
     _write_json_artifact(ws, "candidate_claims.json")
+    _write_json_artifact(ws, "screened_candidates.json")
     _write_quality_gate_report(ws, blocking=True, stage_id="auditor")
 
     state = complete_stage_transaction(
@@ -1375,33 +1376,13 @@ def test_stage_complete_stale_gate_report_does_not_block_early_stage(tmp_path):
         reason="scout complete",
     )
 
-    assert state["workflow_state"]["current_stage"] == "screener"
-
-
-def test_current_default_topology_keeps_screener_independent_until_assets_sync(tmp_path):
-    ws = _write_workspace(tmp_path)
-    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    _set_current_stage(ws, "scout")
-    _write_json_artifact(ws, "candidate_claims.json")
-
-    state = complete_stage_transaction(
-        workspace=ws,
-        repo_workdir=ROOT,
-        stage_id="scout",
-        reason="scout complete",
-    )
-
-    workflow = state["workflow_state"]
-    assert workflow["current_stage"] == "screener"
-    assert workflow["stage_statuses"]["screener"]["status"] == "ready"
-    assert "metadata" not in workflow["stage_statuses"]["screener"]
+    assert state["workflow_state"]["current_stage"] == "claim-ledger"
 
 
 def test_default_topology_scout_completion_requires_screened_candidates(tmp_path):
     repo = _repo_with_role_topology(
         tmp_path,
         "default",
-        enable_default_screener_satisfaction=True,
     )
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=repo)
@@ -1428,7 +1409,6 @@ def test_default_topology_scout_completion_satisfies_screener(tmp_path):
     repo = _repo_with_role_topology(
         tmp_path,
         "default",
-        enable_default_screener_satisfaction=True,
     )
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=repo)
@@ -1488,7 +1468,6 @@ def test_topology_satisfaction_respects_target_stage_feedback_blockers(tmp_path)
     repo = _repo_with_role_topology(
         tmp_path,
         "default",
-        enable_default_screener_satisfaction=True,
     )
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=repo)

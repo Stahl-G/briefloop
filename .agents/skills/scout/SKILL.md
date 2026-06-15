@@ -1,6 +1,6 @@
 ---
 name: scout
-description: Extracts candidate reportable items from approved workspace source files and cached source packages. Use when a MABW brief workspace needs source evidence converted into output/intermediate/candidate_claims.json before screening.
+description: Use when source evidence must be converted into candidate_claims.json; in default topology, also screen into screened_candidates.json.
 ---
 
 # Scout Skill Contract
@@ -13,7 +13,13 @@ It is not the platform-specific subagent definition. Claude Code subagents live 
 
 ## Purpose
 
-Extract source-grounded candidate reportable items from approved evidence inputs.
+Discover source-grounded candidate reportable items from approved evidence, then screen them down to the reportable set in default topology without removing the artifact boundary between discovery and screening.
+
+## Topology
+
+- `role_topology: default`: do both discovery and screening. Write `candidate_claims.json` first, then write `screened_candidates.json`.
+- `role_topology: strict`: do discovery only. Write `candidate_claims.json`, then hand off to the independent Screener.
+- The control boundary is the artifact boundary, not the agent boundary. The merge removes a handoff, not the discard audit.
 
 ## Use When
 
@@ -25,24 +31,55 @@ Use after source discovery, doctor, and input governance have identified evidenc
 - `sources.yaml`
 - `user.md`
 - `input/sources/` (evidence files only, including `.mineru.md` files produced by `multi-agent-brief inputs extract`; also `input/` root files for backward compatibility)
-- `input/hermes_cache/ when present`
+- `input/hermes_cache/` when present
 - approved source packages or evidence input lists
 - `output/intermediate/input_classification.json` (classify result, if available)
 
 ## Outputs
 
-- `output/intermediate/candidate_claims.json`
+- `output/intermediate/candidate_claims.json` (always; found universe, written first)
+- `output/intermediate/screened_candidates.json` (default topology; selected + excluded + screening policy)
 
 ## Work
 
+### Step 1: Discovery
+
 - Read approved source files from `input/sources/` (and `input/` root for backward compatibility), cached source packages, and evidence input lists. If users provided PDF/DOCX/image evidence, read the extracted `.mineru.md` file, not the raw binary document.
-- Do NOT read or extract claims from `input/feedback/`, `input/instructions/`, or `input/context/` — these contain editorial direction, task requirements, and background context, not factual evidence.
+- Do NOT read or extract claims from `input/feedback/`, `input/instructions/`, or `input/context/` -- these contain editorial direction, task requirements, and background context, not factual evidence.
 - If `input_classification.json` is available, use it as the authoritative file list.
+- Discover broadly. Do not pre-filter by relevance, capacity, freshness, or ranking during discovery.
 - Extract candidate reportable items with source identity, evidence text, source date, topic, claim type, and confidence.
-- Mark vague, stale-looking, duplicate-looking, or low-confidence candidates.
+- Mark vague, stale-looking, duplicate-looking, or low-confidence candidates without dropping them.
 - Keep source wording and evidence traceable.
-- Return candidates, not final analysis.
+- Write the complete `candidate_claims.json` before screening starts.
+
+### Step 2: Screening
+
+- In default topology, read the just-written `candidate_claims.json` as the authoritative found universe.
+- Rank by relevance, freshness, source quality, and user focus.
+- Deduplicate exact and near-duplicate candidates.
+- Apply topic capacity caps and reporting-window rules from config.
+- Write `screened_candidates.json` with:
+  - `selected`: reportable candidates with source identity and evidence preserved.
+  - `excluded`: every dropped or deprioritized candidate with a reason such as `duplicate`, `stale`, `capacity_capped`, `off_focus`, or `low_tier`.
+  - `screening_policy`: the applied policy snapshot, including capacity cap, freshness window, authority preference, dedupe strategy, and pack parameters when available.
+- In strict topology, stop after `candidate_claims.json` and hand off to Screener.
+
+## Freshness Policy
+
+- Treat workspace config freshness settings as authoritative.
+- Do not retain stale sources beyond `max_source_age_days` when `fail_on_stale_source` is true, unless the input artifact/config contains an explicit structured override.
+- If the configured freshness window leaves too few candidates, report this as a screening blocker or needs-human-review condition. Do not silently relax the threshold.
+- Screening rationale may explain staleness, but explanation is not approval.
+
+## Boundary Rules
+
+- `candidate_claims.json` is write-once for this stage: Step 2 reads it, never rewrites it.
+- Screening judgment must not leak into discovery. Discovery captures the found universe; screening records the discard audit.
+- Never mint `claim_id` values. Claim Ledger owns claim IDs.
+- Do not write prose analysis.
 
 ## Handoff
 
-Pass candidate_claims.json to screener.
+- default: pass `screened_candidates.json` to claim-ledger.
+- strict: pass `candidate_claims.json` to the independent Screener.

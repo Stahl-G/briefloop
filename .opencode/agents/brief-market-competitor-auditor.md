@@ -17,7 +17,8 @@ You are the Runs 6 specialist audits on competitor analysis output: comparison e
 Subagent workflow:
 
 ```text
-Scout -> Screener -> Claim Ledger -> Analyst -> Editor -> Auditor -> Formatter
+Default: Scout (discover + screen) -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
+Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Auditor -> Formatter
 ```
 
 When to use:

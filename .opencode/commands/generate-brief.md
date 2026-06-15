@@ -51,42 +51,49 @@ Stage sequence:
    - Run: `multi-agent-brief inputs classify --config $ARGUMENTS/config.yaml`
    - Pass only evidence inputs to the scout subagent.
 
-6. Delegate the **brief-scout** subagent:
+6. Read `configs/policy_packs/default.yaml` and apply role topology:
+   - `default`: Scout performs discovery + screening and writes both `candidate_claims.json` and `screened_candidates.json`.
+   - `strict`: Scout writes only `candidate_claims.json`; then Screener writes `screened_candidates.json`.
+   - In all modes both artifacts are required before Claim Ledger.
+
+7. Delegate the **brief-scout** subagent:
    - Read approved source materials, evidence inputs, and cached packages.
    - Extract candidate reportable items.
    - Write `$ARGUMENTS/output/intermediate/candidate_claims.json`.
+   - In default topology, screen candidates and write `$ARGUMENTS/output/intermediate/screened_candidates.json` before recording `stage-complete --stage scout`.
 
-7. Check `candidate_claims.json`, then delegate the **brief-screener** subagent:
+8. Strict topology only: check `candidate_claims.json`, then delegate the **brief-screener** subagent:
    - Dedupe, rank, freshness-check, and cap candidates.
    - Write `$ARGUMENTS/output/intermediate/screened_candidates.json`.
 
-8. Check `screened_candidates.json`, then delegate the **brief-claim-ledger** subagent:
+9. Check `screened_candidates.json`, then delegate the **brief-claim-ledger** subagent:
    - Convert screened candidates into source-grounded claims.
    - Write `$ARGUMENTS/output/intermediate/claim_ledger.json`.
 
-9. Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.
+10. Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.
 
-10. Check `claim_ledger.json`, then delegate the **brief-analyst** subagent:
+11. Check `claim_ledger.json`, then delegate the **brief-analyst** subagent:
    - Write the final brief from `claim_ledger.json` and `user.md`.
    - Use only `claim_ledger.json` as source evidence.
    - Preserve all valid [src:<claim_id>] citations that use real Claim Ledger IDs.
    - Write the auditable brief to `$ARGUMENTS/output/intermediate/audited_brief.md`.
 
-11. Check `audited_brief.md`, then delegate the **brief-editor** subagent:
+12. Check `audited_brief.md`, then delegate the **brief-editor** / Delivery Editor subagent:
     - Polish for management / research team readability.
+    - Do not add new facts, numbers, named entities, dates, causal claims, or citations.
     - Preserve valid [src:<claim_id>] in `audited_brief.md` that use real Claim Ledger IDs.
 
-12. Check edited `audited_brief.md`, then delegate the **brief-auditor** subagent:
+13. Check edited `audited_brief.md`, then delegate the **brief-auditor** subagent:
     - Audit `$ARGUMENTS/output/intermediate/audited_brief.md` against `$ARGUMENTS/output/intermediate/claim_ledger.json`.
 
-13. Check `audit_report.json`, then run quality gates and refresh runtime state before finalize:
+14. Check `audit_report.json`, then run quality gates and refresh runtime state before finalize:
     - Confirm quality gate selection in `control_selections.json`, or record it with `multi-agent-brief controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason "Use quality gates before finalize."`
     - Run: `multi-agent-brief gates check --workspace $ARGUMENTS --stage auditor`
     - Run: `multi-agent-brief state check --workspace $ARGUMENTS --strict`
     - If state is not blocked, run: `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage auditor --reason "Audit and quality gates passed."`
     - If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
 
-14. Finalize only after the gates/state completion path passes:
+15. Finalize only after the gates/state completion path passes:
     - Run: `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`
     - After finalize writes delivery artifacts, run: `multi-agent-brief gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.
     - Then run: `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
@@ -96,7 +103,7 @@ Stage sequence:
     - Do not present Claim Ledger, Audit Report, Audited Brief, named Markdown, or source appendix audit copy as user delivery files.
     - Remember: finalize is not a quality-gate executor.
 
-15. Optional audit/debug provenance projection after runtime state exists:
+16. Optional audit/debug provenance projection after runtime state exists:
     - Run: `multi-agent-brief provenance build --workspace $ARGUMENTS`
     - Run: `multi-agent-brief provenance show --workspace $ARGUMENTS --json`
     - Run: `multi-agent-brief provenance validate --workspace $ARGUMENTS`

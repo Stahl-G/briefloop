@@ -516,6 +516,8 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     assert "Do not invoke an orchestrator subagent" in prompt
     assert ".codex/agents/scout.toml" in prompt
     assert ".codex/agents/screener.toml" in prompt
+    assert "default: discovery + screening" in prompt
+    assert "strict topology or explicit repair/review only" in prompt
     assert ".codex/agents/claim-ledger.toml" in prompt
     assert ".codex/agents/analyst.toml" in prompt
     assert ".codex/agents/editor.toml" in prompt
@@ -523,6 +525,7 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     assert "formatter/finalize -> Python finalize tool" in prompt
     assert "state stage-complete" in prompt
     assert "state finalize-complete" in prompt
+    assert "With role_topology=default, Scout performs discovery and screening in one role" in prompt
     assert "workspace is trusted in Codex" in prompt
     assert "install Codex runtime assets" in prompt
     assert "Codex writer flow protocol" in prompt
@@ -715,6 +718,8 @@ def test_build_handoff_hermes_has_delegate_task(tmp_path):
     assert handoff.runtime == "hermes"
     assert "delegate_task" in handoff.prompt
     assert "scout" in handoff.prompt
+    assert "default topology" in handoff.prompt
+    assert "screened_candidates.json" in handoff.prompt
     assert "auditor" in handoff.prompt
     assert "/generate-brief" not in handoff.prompt
     _assert_orchestrator_contract_handoff(handoff.to_dict())
@@ -730,6 +735,8 @@ def test_build_handoff_claude_has_generate_brief(tmp_path):
         run_doctor=False,
     )
     assert "/generate-brief" in handoff.prompt
+    assert "With role_topology=default, Scout performs discovery and screening in one role" in handoff.prompt
+    assert "strict: scout → screener" in handoff.prompt
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
 
@@ -747,6 +754,8 @@ def test_build_handoff_codex_maps_specialists_to_custom_agents(tmp_path):
     assert "root Codex session" in handoff.prompt
     assert "Spawn the named Codex custom agent" in handoff.prompt
     assert ".codex/agents/scout.toml" in handoff.prompt
+    assert "default: discovery + screening" in handoff.prompt
+    assert "strict topology or explicit repair/review only" in handoff.prompt
     assert ".codex/agents/claim-ledger.toml" in handoff.prompt
     assert "Do not call the next specialist until" in handoff.prompt
     assert "state stage-complete" in handoff.prompt

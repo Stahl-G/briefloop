@@ -9,12 +9,12 @@
         - `orchestrator.toml` — Acts as the runtime main agent that controls delegated MABW stages, contract references, decisions, and artifact handoffs.
 - `source-provider.toml` — Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
 - `source-planner.toml` — Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
-- `scout.toml` — Extracts candidate reportable items from local markdown, text, JSON, and future connector sources.
-- `screener.toml` — Filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
+- `scout.toml` — Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.
+- `screener.toml` — Strict-topology independent screening role that filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
 - `claim-ledger.toml` — Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.
 - `analyst.toml` — Drafts executive-readable brief sections using only Claim Ledger entries.
 - `auditor.toml` — Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures.
-- `editor.toml` — Improves clarity, structure, tone, and executive readability without adding facts.
+- `editor.toml` — Delivery Editor alias for the editor stage; improves clarity, structure, tone, and executive readability without adding facts.
 - `formatter.toml` — Renders the final reader delivery bundle from audited_brief.md and audit_report.json through finalize.
 - `draft-audit-harness.toml` — Reviews and implements the draft-level audit harness: deterministic source checks plus QualityHarnessAuditAgent checks.
 - `final-quality-harness.toml` — Reviews and implements final text delivery gates for BRIEF_HARNESS_V2 final target.

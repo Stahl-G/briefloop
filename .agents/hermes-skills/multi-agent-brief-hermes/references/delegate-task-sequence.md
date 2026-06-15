@@ -36,25 +36,27 @@ Read workspace context -> read contract references -> identify the next stage ->
 
 ### Scout
 
-Goal: Extract candidate reportable items for a MABW brief.
+Goal: Extract candidate reportable items for a MABW brief. In default topology, screen them in the same Scout stage.
 
 Context should include:
 
 - Workspace path
 - Approved evidence inputs, cached source packages, local source files, and source config
 - Write path: `output/intermediate/candidate_claims.json`
+- Default topology write path: `output/intermediate/screened_candidates.json`
 - Required fields: source path or URL, source date, evidence text, topic, claim type, confidence
+- Default topology screening fields: selected candidates, excluded candidates with reasons, and screening policy snapshot
 
 Toolsets: `file`, `terminal`, `web` when source access is enabled.
 
-### Screener
+### Screener (strict topology or explicit repair/review)
 
 Goal: Screen and rank MABW candidate claims.
 
 Input: `output/intermediate/candidate_claims.json`  
 Write: `output/intermediate/screened_candidates.json`
 
-Rank, deduplicate, freshness-check, and capacity-cap candidates while preserving source evidence and exclusion reasons.
+Use only when `role_topology: strict` keeps screening independent, or when the Orchestrator explicitly routes a screening repair/review task. Rank, deduplicate, freshness-check, and capacity-cap candidates while preserving source evidence and exclusion reasons.
 
 ### Claim Ledger
 
@@ -74,13 +76,13 @@ Write: `output/intermediate/audited_brief.md`
 
 Write a management-ready brief in the workspace language with valid `[src:<claim_id>]` citations that use real Claim Ledger IDs. Use the Orchestrator-provided audience taste summary as style context, not as source evidence.
 
-### Editor
+### Editor / Delivery Editor
 
-Goal: Polish the audited MABW brief.
+Goal: Polish the audited MABW brief without adding facts.
 
 Input and output: `output/intermediate/audited_brief.md`
 
-Improve readability, structure, and executive tone while preserving factual scope, caveats, uncertainty, and valid citations.
+Improve readability, structure, and executive tone while preserving factual scope, caveats, uncertainty, and valid citations. Do not introduce new numbers, named entities, dates, causal claims, or citations.
 
 ### Auditor
 
