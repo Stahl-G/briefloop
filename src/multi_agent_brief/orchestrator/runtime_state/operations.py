@@ -75,7 +75,8 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     _artifact_registry_sha,
     _build_artifact_registry,
     _changed_artifact_events,
-    _frozen_artifact_integrity_reasons,
+    interpret_frozen_artifact_integrity,
+    require_frozen_artifact_integrity_pass,
 )
 from multi_agent_brief.orchestrator.runtime_state.event_log import (
     ACTORS,
@@ -124,6 +125,7 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     _status_entry,
     _workflow_after_completion,
     _workflow_is_finalized,
+    workflow_with_persistable_stage_completions,
 )
 from multi_agent_brief.orchestrator.run_archive import (
     E_RUN_ARCHIVE_CONFLICT,
@@ -1322,6 +1324,12 @@ def _load_manifest_and_workflow(workspace: str | Path) -> tuple[Path, dict[str, 
         workflow,
         path=paths["workflow_state"],
     )
+    repo = resolve_repo_workdir(None, workspace=ws)
+    workflow = workflow_with_persistable_stage_completions(
+        workflow,
+        stages=load_stage_specs(repo),
+        path=paths["workflow_state"],
+    )
     if workflow.get("run_id") is not None:
         workflow["run_id"] = _validate_runtime_run_id(
             workflow.get("run_id"),
@@ -1481,13 +1489,15 @@ def check_runtime_state(
         workflow=workflow,
         updated_at=now,
     )
-    frozen_reasons = _frozen_artifact_integrity_reasons(
-        old_registry=old_registry,
-        registry=registry,
-        workflow=workflow,
-        artifacts=artifacts,
-        stages=stages,
-        mutating_stage=str(workflow.get("current_stage") or ""),
+    frozen_reasons = require_frozen_artifact_integrity_pass(
+        interpret_frozen_artifact_integrity(
+            old_registry=old_registry,
+            registry=registry,
+            workflow=workflow,
+            artifacts=artifacts,
+            stages=stages,
+            mutating_stage=str(workflow.get("current_stage") or ""),
+        )
     )
     if frozen_reasons:
         workflow = _persist_run_contamination(
@@ -1897,13 +1907,15 @@ def _complete_stage_transaction(
         workflow=next_workflow,
         updated_at=now,
     )
-    frozen_reasons = _frozen_artifact_integrity_reasons(
-        old_registry=old_registry,
-        registry=registry,
-        workflow=workflow,
-        artifacts=artifacts,
-        stages=stages,
-        mutating_stage=stage_id,
+    frozen_reasons = require_frozen_artifact_integrity_pass(
+        interpret_frozen_artifact_integrity(
+            old_registry=old_registry,
+            registry=registry,
+            workflow=workflow,
+            artifacts=artifacts,
+            stages=stages,
+            mutating_stage=stage_id,
+        )
     )
     if frozen_reasons:
         workflow = _persist_run_contamination(

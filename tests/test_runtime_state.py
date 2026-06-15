@@ -456,6 +456,23 @@ def test_stage_complete_rejects_invalid_run_integrity_status_without_rewrite(tmp
     assert workflow_path.read_bytes() == before
 
 
+def test_state_check_rejects_invalid_stage_status_without_rewrite(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    workflow_path = _state_file(ws, "workflow_state")
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["stage_statuses"]["doctor"]["status"] = "finished"
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    before = workflow_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "stage_statuses" in str(excinfo.value.details)
+    assert workflow_path.read_bytes() == before
+
+
 def test_state_check_strict_fresh_workspace_returns_zero(tmp_path):
     ws = _write_workspace(tmp_path)
 
@@ -1491,6 +1508,30 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     ]
     assert len(contamination_events) == 1
     assert contamination_events[0]["metadata"]["reason_code"] == "frozen_artifact_changed"
+
+
+def test_state_check_rejects_malformed_registry_before_frozen_integrity_laundering(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+    registry_path = _state_file(ws, "artifact_registry")
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["artifacts"] = "not-an-object"
+    registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "artifact_registry.json artifacts must be an object" in str(excinfo.value)
+    assert json.loads(registry_path.read_text(encoding="utf-8"))["artifacts"] == "not-an-object"
 
 
 def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, monkeypatch):

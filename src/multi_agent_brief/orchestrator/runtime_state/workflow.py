@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, require_persistable
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import _stage_ids
+from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY, RuntimeStateError
 
 
 WORKFLOW_STATE_SCHEMA = "multi-agent-brief-workflow-state/v1"
@@ -15,14 +18,25 @@ STAGE_READY = "ready"
 STAGE_COMPLETE = "complete"
 STAGE_BLOCKED = "blocked"
 STAGE_SKIPPED = "skipped"
+PERSISTED_STAGE_STATUSES = {STAGE_PENDING, STAGE_READY, STAGE_COMPLETE, STAGE_BLOCKED, STAGE_SKIPPED}
+
+
+@dataclass(frozen=True)
+class StageCompletionVerdict:
+    """Single interpretation of one persisted stage status."""
+
+    kind: str
+    value: dict[str, Any]
+    reasons: tuple[str, ...] = ()
 
 
 def _workflow_is_finalized(workflow: dict[str, Any] | None) -> bool:
     if not workflow:
         return False
-    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
-    finalize_status = statuses.get("finalize") if isinstance(statuses.get("finalize"), dict) else {}
-    return workflow.get("current_stage") is None and finalize_status.get("status") == STAGE_COMPLETE
+    finalize = project_stage_completion_for_read(
+        interpret_stage_completion(workflow, "finalize")
+    )
+    return workflow.get("current_stage") is None and finalize.get("complete") is True
 
 
 def _initial_stage_statuses(stages: list[dict[str, Any]], *, now: str) -> dict[str, dict[str, Any]]:
@@ -96,12 +110,120 @@ def _next_stage_id(stages: list[dict[str, Any]], stage_id: str) -> str | None:
 
 
 def _stage_status(workflow: dict[str, Any], stage_id: str) -> str:
-    stage = (workflow.get("stage_statuses") or {}).get(stage_id) or {}
-    return str(stage.get("status") or STAGE_PENDING)
+    projection = project_stage_completion_for_read(interpret_stage_completion(workflow, stage_id))
+    return str(projection.get("status") or STAGE_PENDING)
 
 
 def _stage_is_complete_or_skipped(workflow: dict[str, Any], stage_id: str) -> bool:
-    return _stage_status(workflow, stage_id) in {STAGE_COMPLETE, STAGE_SKIPPED}
+    projection = project_stage_completion_for_read(interpret_stage_completion(workflow, stage_id))
+    return bool(projection.get("complete_or_skipped"))
+
+
+def interpret_stage_completion(workflow: Any, stage_id: str) -> StageCompletionVerdict:
+    """Interpret one stage status once for read and write adapters."""
+
+    stage_label = stage_id or "<missing>"
+    if not isinstance(workflow, dict):
+        return _degraded_stage_completion(stage_label, "workflow_state.json must be an object.")
+    statuses = workflow.get("stage_statuses")
+    if not isinstance(statuses, dict):
+        return _degraded_stage_completion(stage_label, "workflow_state.stage_statuses must be an object.")
+    if stage_id not in statuses:
+        return _degraded_stage_completion(stage_label, f"workflow_state.stage_statuses.{stage_label} is missing.")
+    entry = statuses.get(stage_id)
+    if not isinstance(entry, dict):
+        return _degraded_stage_completion(stage_label, f"workflow_state.stage_statuses.{stage_label} must be an object.")
+    raw_status = entry.get("status")
+    if not isinstance(raw_status, str) or not raw_status.strip():
+        return _degraded_stage_completion(stage_label, f"workflow_state.stage_statuses.{stage_label}.status is required.")
+    status = raw_status.strip()
+    if status not in PERSISTED_STAGE_STATUSES:
+        return _degraded_stage_completion(
+            stage_label,
+            f"workflow_state.stage_statuses.{stage_label}.status is invalid: {status}.",
+        )
+    return StageCompletionVerdict(
+        kind="canonical",
+        value=_stage_completion_projection(stage_label, status=status),
+    )
+
+
+def project_stage_completion_for_read(verdict: StageCompletionVerdict) -> dict[str, Any]:
+    """Return the read-side projection for a stage-completion verdict."""
+
+    return dict(verdict.value)
+
+
+def require_stage_completion_persistable(
+    verdict: StageCompletionVerdict,
+    *,
+    path: str | Path,
+) -> dict[str, Any]:
+    """Return canonical stage-completion projection or fail closed."""
+
+    if verdict.kind != "canonical":
+        raise RuntimeStateError(
+            "workflow_state.stage_statuses is malformed.",
+            details={"path": str(path), "reasons": list(verdict.reasons)},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return dict(verdict.value)
+
+
+def workflow_with_persistable_stage_completions(
+    workflow: dict[str, Any],
+    *,
+    stages: list[dict[str, Any]],
+    path: str | Path,
+) -> dict[str, Any]:
+    """Return a shallow workflow copy after validating persisted stage statuses."""
+
+    if not isinstance(workflow.get("stage_statuses"), dict):
+        raise RuntimeStateError(
+            "workflow_state.stage_statuses is malformed.",
+            details={"path": str(path), "reason": "workflow_state.stage_statuses must be an object."},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    stage_ids = _stage_ids(stages)
+    current_stage = workflow.get("current_stage")
+    if current_stage is not None and str(current_stage) not in stage_ids:
+        raise RuntimeStateError(
+            "workflow_state.current_stage is invalid.",
+            details={"path": str(path), "current_stage": current_stage},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    for stage_id in stage_ids:
+        require_stage_completion_persistable(
+            interpret_stage_completion(workflow, stage_id),
+            path=f"{path}.stage_statuses.{stage_id}",
+        )
+    if current_stage is None:
+        finalize = project_stage_completion_for_read(interpret_stage_completion(workflow, "finalize"))
+        if finalize.get("complete") is not True:
+            raise RuntimeStateError(
+                "workflow_state.current_stage is null but finalize is not complete.",
+                details={"path": str(path), "finalize_status": finalize.get("status")},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+    return dict(workflow)
+
+
+def _stage_completion_projection(stage_id: str, *, status: str) -> dict[str, Any]:
+    return {
+        "stage_id": stage_id,
+        "status": status,
+        "complete": status == STAGE_COMPLETE,
+        "skipped": status == STAGE_SKIPPED,
+        "complete_or_skipped": status in {STAGE_COMPLETE, STAGE_SKIPPED},
+    }
+
+
+def _degraded_stage_completion(stage_id: str, reason: str) -> StageCompletionVerdict:
+    return StageCompletionVerdict(
+        kind="degraded",
+        value=_stage_completion_projection(stage_id, status=STAGE_PENDING),
+        reasons=(reason,),
+    )
 
 
 def _stage_entry(workflow: dict[str, Any], stage_id: str | None) -> dict[str, Any]:
