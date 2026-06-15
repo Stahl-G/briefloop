@@ -43,6 +43,19 @@ from multi_agent_brief.quality_gates.contract import (
 
 GATE_EVENT_ACTOR = "cli"
 CURRENT_WORDS = re.compile(r"\b(this week|current|latest|newly|本周|本期|当前|最新|新增)\b", re.IGNORECASE)
+ANALYST_DRAFT_SNAPSHOT_FILE = "output/intermediate/analyst_draft_snapshot.md"
+FACT_NUMBER_RE = re.compile(
+    r"(?<![\w])(?:[$€¥£]\s*)?\d+(?:[,.]\d+)*(?:\.\d+)?%?(?:\s*(?:million|billion|trillion|thousand|mn|bn|mw|gw|gwh|mwh|%))?",
+    re.IGNORECASE,
+)
+ENTITY_RE = re.compile(
+    r"\b(?:[A-Z][A-Za-z0-9&.-]*|[A-Z]{2,})(?:[ \t]+(?:[A-Z][A-Za-z0-9&.-]*|[A-Z]{2,})){1,5}\b"
+)
+ENTITY_STOP_PHRASES = {
+    "Executive Summary",
+    "Key Takeaways",
+    "Important Notes",
+}
 
 
 def _require_workspace(workspace: str | Path) -> Path:
@@ -444,6 +457,119 @@ def _freshness_findings(
     return findings
 
 
+def _normalize_fact_token(value: str) -> str:
+    return " ".join(value.strip().split()).strip(".,;:()[]{}").lower()
+
+
+def _token_map(pattern: re.Pattern[str], text: str) -> dict[str, str]:
+    tokens: dict[str, str] = {}
+    for match in pattern.finditer(text):
+        raw = match.group(0).strip()
+        normalized = _normalize_fact_token(raw.replace(",", ""))
+        if normalized:
+            tokens.setdefault(normalized, raw)
+    return tokens
+
+
+def _claim_ref_map(text: str) -> dict[str, str]:
+    return {claim_id.lower(): claim_id for claim_id in SRC_REF_PATTERN.findall(text)}
+
+
+def _entity_map(text: str) -> dict[str, str]:
+    entities: dict[str, str] = {}
+    in_code_block = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        line_body = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", stripped)
+        entities.update(_token_map(ENTITY_RE, line_body))
+    stop = {_normalize_fact_token(item): item for item in ENTITY_STOP_PHRASES}
+    return {key: value for key, value in entities.items() if key not in stop}
+
+
+def _line_number_for_token(text: str, token: str) -> int | None:
+    normalized_token = token.lower()
+    for idx, line in enumerate(text.splitlines(), start=1):
+        if normalized_token in line.lower():
+            return idx
+    return None
+
+
+def _editor_introduced_new_fact_findings(
+    *,
+    workspace: Path,
+    markdown: str,
+    strict: bool,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    snapshot_path = workspace / ANALYST_DRAFT_SNAPSHOT_FILE
+    if not snapshot_path.exists():
+        return []
+    try:
+        analyst_markdown = snapshot_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeStateError(
+            f"Failed to read Analyst draft snapshot: {snapshot_path}",
+            details={"path": str(snapshot_path), "reason": str(exc)},
+        ) from exc
+
+    introduced_numbers = sorted(
+        set(_token_map(FACT_NUMBER_RE, markdown)) - set(_token_map(FACT_NUMBER_RE, analyst_markdown))
+    )
+    introduced_claim_ids = sorted(set(_claim_ref_map(markdown)) - set(_claim_ref_map(analyst_markdown)))
+    introduced_entities = sorted(set(_entity_map(markdown)) - set(_entity_map(analyst_markdown)))
+    if not introduced_numbers and not introduced_claim_ids and not introduced_entities:
+        return []
+
+    number_values = _token_map(FACT_NUMBER_RE, markdown)
+    claim_values = _claim_ref_map(markdown)
+    entity_values = _entity_map(markdown)
+    samples = {
+        "numbers": [number_values[item] for item in introduced_numbers[:5]],
+        "claim_ids": [claim_values[item] for item in introduced_claim_ids[:5]],
+        "entities": [entity_values[item] for item in introduced_entities[:5]],
+    }
+    sample_text = ", ".join(value for values in samples.values() for value in values)
+    first_sample = next((value for values in samples.values() for value in values), "")
+    blocking_level = _blocking_level(default_blocking=False, strict=strict)
+    return [
+        _finding(
+            finding_id="QG_EDITOR_NEW_FACT_001",
+            gate_id="editor_new_fact",
+            finding_type="editor_introduced_new_fact",
+            severity="high" if blocking_level == "blocking" else "medium",
+            blocking_level=blocking_level,
+            repair_owner="editor",
+            stage_id=_stage_or_none(stages, "editor"),
+            artifact_id=_artifact_or_none(artifacts, "audited_brief"),
+            line_number=_line_number_for_token(markdown, first_sample) if first_sample else None,
+            description=(
+                "Delivery Editor introduced factual tokens that were absent from the Analyst draft"
+                + (f": {sample_text}." if sample_text else ".")
+            ),
+            recommendation=(
+                "Remove the editor-introduced fact, or route the intended factual addition back through "
+                "Analyst and Claim Ledger before editing."
+            ),
+            category="editorial_governance",
+            metadata={
+                "analyst_draft_snapshot": ANALYST_DRAFT_SNAPSHOT_FILE,
+                "introduced_numbers": samples["numbers"],
+                "introduced_claim_ids": samples["claim_ids"],
+                "introduced_entities": samples["entities"],
+                "strict": strict,
+            },
+        )
+    ]
+
+
 def _market_quote_metadata_findings(
     *,
     ledger: ClaimLedger,
@@ -697,6 +823,13 @@ def check_quality_gates(
             ledger=claim_ledger,
             report_date=report_date,
             max_source_age_days=max_source_age_days,
+            strict=strict,
+            stages=stages,
+            artifacts=artifacts,
+        )
+        gate_findings["editor_new_fact"] = _editor_introduced_new_fact_findings(
+            workspace=ws,
+            markdown=markdown,
             strict=strict,
             stages=stages,
             artifacts=artifacts,

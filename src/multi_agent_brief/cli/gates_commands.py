@@ -24,7 +24,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     check_parser = actions.add_parser(
         "check",
-        help="Run material-fact, freshness, and target-relevance gates.",
+        help="Run material-fact, freshness, target-relevance, and editor-new-fact gates.",
     )
     check_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
     check_parser.add_argument(
@@ -41,7 +41,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     check_parser.add_argument(
         "--strict",
         action="store_true",
-        help="Escalate high-severity freshness/material warnings into blocking findings.",
+        help="Escalate high-severity freshness/material/editor-new-fact warnings into blocking findings.",
     )
     check_parser.add_argument("--repo-workdir", help="Repository or packaged contract base.")
     check_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")

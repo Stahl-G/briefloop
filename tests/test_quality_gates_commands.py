@@ -81,6 +81,50 @@ def _write_reader_brief(ws: Path, text: str) -> None:
     (output / "brief.md").write_text(text, encoding="utf-8")
 
 
+def _write_supported_target_ledger(ws: Path) -> None:
+    _write_ledger(
+        ws,
+        [
+            {
+                "claim_id": "CL-001",
+                "statement": "TargetCo opened a demo facility and reported 42 deployments.",
+                "source_id": "SRC-001",
+                "evidence_text": "TargetCo opened a demo facility and reported 42 deployments.",
+                "source_url": "https://example.com/targetco-demo",
+                "source_type": "web_search",
+                "metadata": {
+                    "source_title": "TargetCo Demo Facility",
+                    "publisher": "Example News",
+                    "published_at": "2026-06-01",
+                    "importance": "high",
+                },
+            }
+        ],
+    )
+
+
+def _prepare_editor_gate_workspace(tmp_path: Path, *, analyst_text: str, editor_text: str) -> Path:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_supported_target_ledger(ws)
+    _set_current_stage(ws, "analyst")
+    _write_audited_brief(ws, analyst_text)
+    runtime_state.complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    _write_audited_brief(ws, editor_text)
+    runtime_state.complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    return ws
+
+
 def _quality_gate_payload(*, status: str, stage_id: str) -> dict:
     artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
     return {
@@ -900,6 +944,156 @@ def test_quality_gate_blocker_enforced_by_state_check_and_decide(tmp_path, capsy
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
     assert payload["details"]["required_command"] == "stage-complete"
+
+
+def test_editor_new_fact_gate_warns_when_editor_adds_number(tmp_path, capsys):
+    ws = _prepare_editor_gate_workspace(
+        tmp_path,
+        analyst_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+        editor_text="## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
+    editor_finding = next(finding for finding in report["findings"] if finding["finding_type"] == "editor_introduced_new_fact")
+    assert report["status"] == "warning"
+    assert editor_result["status"] == "warning"
+    assert editor_result["blocking"] is False
+    assert editor_finding["blocking_level"] == "warning"
+    assert editor_finding["repair_owner"] == "editor"
+    assert editor_finding["metadata"]["introduced_numbers"] == ["42"]
+
+
+def test_editor_new_fact_gate_allows_pure_restructuring(tmp_path, capsys):
+    ws = _prepare_editor_gate_workspace(
+        tmp_path,
+        analyst_text=(
+            "## Executive Summary\n"
+            "- TargetCo opened a demo facility. [src:CL-001]\n"
+            "- TargetCo reported 42 deployments. [src:CL-001]\n"
+        ),
+        editor_text=(
+            "## Executive Summary\n"
+            "- TargetCo reported 42 deployments. [src:CL-001]\n"
+            "- TargetCo opened a demo facility. [src:CL-001]\n"
+        ),
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    finding_types = {finding["finding_type"] for finding in report["findings"]}
+    editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
+    assert "editor_introduced_new_fact" not in finding_types
+    assert editor_result["status"] == "pass"
+    assert editor_result["blocking"] is False
+
+
+def test_editor_new_fact_gate_allows_added_markdown_heading_in_strict_mode(tmp_path, capsys):
+    ws = _prepare_editor_gate_workspace(
+        tmp_path,
+        analyst_text="TargetCo opened a demo facility. [src:CL-001]\nNo wording changes.\n",
+        editor_text="## Market Update\nTargetCo opened a demo facility. [src:CL-001]\nNo wording changes.\n",
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--strict",
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    finding_types = {finding["finding_type"] for finding in report["findings"]}
+    editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
+    assert "editor_introduced_new_fact" not in finding_types
+    assert editor_result["status"] == "pass"
+    assert editor_result["blocking"] is False
+
+
+def test_editor_new_fact_gate_blocks_added_entity_in_bullet_strict_mode(tmp_path, capsys):
+    ws = _prepare_editor_gate_workspace(
+        tmp_path,
+        analyst_text="- TargetCo opened a demo facility. [src:CL-001]\n",
+        editor_text=(
+            "- TargetCo opened a demo facility. [src:CL-001]\n"
+            "- NewCo Holdings opened a plant. [src:CL-001]\n"
+        ),
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--strict",
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
+    editor_finding = next(finding for finding in report["findings"] if finding["finding_type"] == "editor_introduced_new_fact")
+    assert report["status"] == "fail"
+    assert editor_result["status"] == "fail"
+    assert editor_result["blocking"] is True
+    assert editor_finding["blocking_level"] == "blocking"
+    assert "NewCo Holdings" in editor_finding["metadata"]["introduced_entities"]
+
+
+def test_editor_new_fact_gate_blocks_in_strict_mode(tmp_path, capsys):
+    ws = _prepare_editor_gate_workspace(
+        tmp_path,
+        analyst_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+        editor_text="## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--strict",
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
+    editor_finding = next(finding for finding in report["findings"] if finding["finding_type"] == "editor_introduced_new_fact")
+    assert report["status"] == "fail"
+    assert editor_result["status"] == "fail"
+    assert editor_result["blocking"] is True
+    assert editor_finding["blocking_level"] == "blocking"
 
 
 def test_high_severity_warning_does_not_block_by_default(tmp_path):

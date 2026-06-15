@@ -1858,7 +1858,8 @@ def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
-    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    analyst_text = "# Brief\n\nAnalyst draft. [src:CL-001]\n"
+    audited.write_text(analyst_text, encoding="utf-8")
     analyst_state = complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -1866,6 +1867,9 @@ def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
         reason="analyst complete",
     )
     analyst_sha = analyst_state["artifact_registry"]["artifacts"]["audited_brief"]["sha256"]
+    snapshot = _intermediate(ws) / "analyst_draft_snapshot.md"
+    assert snapshot.read_text(encoding="utf-8") == analyst_text
+    assert analyst_state["artifact_registry"]["artifacts"]["analyst_draft_snapshot"]["sha256"] == _sha256_file(snapshot)
 
     audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
     editor_state = complete_stage_transaction(
@@ -1879,6 +1883,87 @@ def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
     assert editor_state["workflow_state"]["current_stage"] == "auditor"
     assert editor_sha
     assert editor_sha != analyst_sha
+    assert snapshot.read_text(encoding="utf-8") == analyst_text
+    assert editor_state["artifact_registry"]["artifacts"]["analyst_draft_snapshot"]["sha256"] == _sha256_file(snapshot)
+
+
+def test_analyst_snapshot_rolls_back_when_stage_completion_fails_after_snapshot(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    snapshot = _intermediate(ws) / "analyst_draft_snapshot.md"
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    def fail_registry_build(*args, **kwargs):
+        raise RuntimeStateError(
+            "registry build failed after snapshot",
+            error_code=runtime_state.operations.E_TRANSACTION_INTEGRITY,
+        )
+
+    monkeypatch.setattr(runtime_state.operations, "_build_artifact_registry", fail_registry_build)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="analyst",
+            reason="analyst complete should fail after snapshot",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert not snapshot.exists()
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+
+
+def test_analyst_snapshot_rolls_back_when_state_write_fails_after_snapshot(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    snapshot = _intermediate(ws) / "analyst_draft_snapshot.md"
+    before_manifest = _state_file(ws, "runtime_manifest").read_bytes()
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+    before_registry = (
+        _state_file(ws, "artifact_registry").read_bytes()
+        if _state_file(ws, "artifact_registry").exists()
+        else None
+    )
+    original_write_json_atomic = runtime_state.operations._write_json_atomic
+
+    def fail_artifact_registry_write(path: Path, payload: dict) -> None:
+        if path.name == "artifact_registry.json":
+            raise RuntimeStateError(
+                "artifact registry write failed after snapshot",
+                error_code=runtime_state.operations.E_TRANSACTION_INTEGRITY,
+            )
+        original_write_json_atomic(path, payload)
+
+    monkeypatch.setattr(runtime_state.operations, "_write_json_atomic", fail_artifact_registry_write)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="analyst",
+            reason="analyst complete should fail during state write",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert excinfo.value.details["restored"] is True
+    assert not snapshot.exists()
+    assert _state_file(ws, "runtime_manifest").read_bytes() == before_manifest
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+    if before_registry is None:
+        assert not _state_file(ws, "artifact_registry").exists()
+    else:
+        assert _state_file(ws, "artifact_registry").read_bytes() == before_registry
 
 
 def test_state_check_allows_append_only_event_log_after_frozen_artifact(tmp_path):

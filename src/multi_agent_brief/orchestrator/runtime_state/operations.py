@@ -176,6 +176,7 @@ __all__ = [
 
 
 FACT_LAYER_IMPORT_SCHEMA = "mabw.fact_layer_import.v1"
+ANALYST_DRAFT_SNAPSHOT_PATH = Path("output/intermediate/analyst_draft_snapshot.md")
 FACT_LAYER_IMPORT_REQUIRED_ARTIFACT_IDS = (
     "durable_source_evidence_or_source_pack",
     "input_classification",
@@ -600,7 +601,11 @@ def _snapshot_file_paths(paths: list[Path]) -> dict[Path, bytes | None]:
     return {path: _read_state_bytes(path) for path in paths}
 
 
-def _restore_file_paths(snapshots: dict[Path, bytes | None]) -> None:
+def _restore_file_paths(
+    snapshots: dict[Path, bytes | None],
+    *,
+    rollback_message: str = "Fact layer import rollback failed after partial write.",
+) -> None:
     rollback_errors: list[dict[str, str]] = []
     for path, data in snapshots.items():
         try:
@@ -609,7 +614,7 @@ def _restore_file_paths(snapshots: dict[Path, bytes | None]) -> None:
             rollback_errors.append({"path": str(path), "reason": str(exc)})
     if rollback_errors:
         raise RuntimeStateError(
-            "Fact layer import rollback failed after partial write.",
+            rollback_message,
             details={"rollback_errors": rollback_errors},
             error_code=E_TRANSACTION_PARTIAL_WRITE,
         )
@@ -2078,91 +2083,104 @@ def _complete_stage_transaction(
     transaction_id = uuid.uuid4().hex
     now = utc_now()
     run_id = str(manifest["run_id"])
-    preserved_extensions = _preserved_manifest_extensions(manifest_for_completion)
-    next_workflow = _workflow_after_completion(
-        workflow=workflow,
-        stages=stages,
-        stage_id=stage_id,
-        reason=reason,
-        now=now,
-        transaction_id=transaction_id,
-        finalize=finalize,
-    )
-    next_workflow, topology_events = _workflow_with_topology_satisfaction(
-        workflow=next_workflow,
-        stages=stages,
-        targets=topology_targets,
-        trigger_stage_id=stage_id,
-        now=now,
-        transaction_id=transaction_id,
-    )
-    old_registry = _read_json_if_exists(paths["artifact_registry"])
-    registry = _build_artifact_registry(
-        workspace=ws,
-        run_id=run_id,
-        artifacts=artifacts,
-        workflow=next_workflow,
-        updated_at=now,
-    )
-    frozen_verdict = interpret_frozen_artifact_integrity(
-        old_registry=old_registry,
-        registry=registry,
-        workflow=workflow,
-        artifacts=artifacts,
-        stages=stages,
-        mutating_stage=stage_id,
-    )
-    frozen_reasons = require_frozen_artifact_integrity_pass(frozen_verdict)
-    if frozen_reasons:
-        if frozen_verdict.contaminates_run:
-            workflow = _persist_run_contamination(
-                workspace=ws,
-                paths=paths,
-                run_id=run_id,
-                workflow=workflow,
-                reason_code="frozen_artifact_changed",
-                message=" ".join(frozen_reasons),
-                actor=actor,
-                stage_id=stage_id,
-                metadata={"blocking_reasons": frozen_reasons},
-            )
-        _raise_completion_reasons(
-            message=(
-                "Completion transaction cannot proceed because a frozen upstream artifact changed"
-                if frozen_verdict.contaminates_run
-                else "Completion transaction cannot proceed because frozen artifact integrity could not be verified"
-            ),
-            reasons=frozen_reasons,
-            error_code=E_TRANSACTION_INTEGRITY,
-            details={"stage_id": stage_id},
+    analyst_snapshot_before: dict[Path, bytes | None] | None = None
+    if stage_id == "analyst":
+        analyst_snapshot_before = _snapshot_file_paths([ws / ANALYST_DRAFT_SNAPSHOT_PATH])
+        _snapshot_analyst_draft(ws)
+    try:
+        preserved_extensions = _preserved_manifest_extensions(manifest_for_completion)
+        next_workflow = _workflow_after_completion(
+            workflow=workflow,
+            stages=stages,
+            stage_id=stage_id,
+            reason=reason,
+            now=now,
+            transaction_id=transaction_id,
+            finalize=finalize,
         )
-    if stage_id == "auditor":
-        statuses = dict(next_workflow.get("stage_statuses") or {})
-        auditor_status = dict(statuses.get("auditor") or {})
-        auditor_status["metadata"] = _auditor_completion_metadata(
+        next_workflow, topology_events = _workflow_with_topology_satisfaction(
+            workflow=next_workflow,
+            stages=stages,
+            targets=topology_targets,
+            trigger_stage_id=stage_id,
+            now=now,
+            transaction_id=transaction_id,
+        )
+        old_registry = _read_json_if_exists(paths["artifact_registry"])
+        registry = _build_artifact_registry(
             workspace=ws,
-            registry=registry,
+            run_id=run_id,
+            artifacts=artifacts,
+            workflow=next_workflow,
+            updated_at=now,
         )
-        statuses["auditor"] = auditor_status
-        next_workflow["stage_statuses"] = statuses
-    finalize_report: dict[str, Any] | None = None
-    if finalize:
-        finalize_report = _read_json(paths["runtime_manifest"].parent / "finalize_report.json")
-        try:
-            preflight_finalized_run_archive(
-                workspace=ws,
-                run_id=run_id,
-                manifest=manifest_for_completion,
-                workflow=next_workflow,
-                artifact_registry=registry,
-                finalize_report=finalize_report,
-                fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
+        frozen_verdict = interpret_frozen_artifact_integrity(
+            old_registry=old_registry,
+            registry=registry,
+            workflow=workflow,
+            artifacts=artifacts,
+            stages=stages,
+            mutating_stage=stage_id,
+        )
+        frozen_reasons = require_frozen_artifact_integrity_pass(frozen_verdict)
+        if frozen_reasons:
+            if frozen_verdict.contaminates_run:
+                workflow = _persist_run_contamination(
+                    workspace=ws,
+                    paths=paths,
+                    run_id=run_id,
+                    workflow=workflow,
+                    reason_code="frozen_artifact_changed",
+                    message=" ".join(frozen_reasons),
+                    actor=actor,
+                    stage_id=stage_id,
+                    metadata={"blocking_reasons": frozen_reasons},
+                )
+            _raise_completion_reasons(
+                message=(
+                    "Completion transaction cannot proceed because a frozen upstream artifact changed"
+                    if frozen_verdict.contaminates_run
+                    else "Completion transaction cannot proceed because frozen artifact integrity could not be verified"
+                ),
+                reasons=frozen_reasons,
+                error_code=E_TRANSACTION_INTEGRITY,
+                details={"stage_id": stage_id},
             )
-        except RunArchiveError as exc:
-            raise _wrap_archive_error(exc) from exc
-    artifact_events = _changed_artifact_events(old_registry=old_registry, registry=registry)
+        if stage_id == "auditor":
+            statuses = dict(next_workflow.get("stage_statuses") or {})
+            auditor_status = dict(statuses.get("auditor") or {})
+            auditor_status["metadata"] = _auditor_completion_metadata(
+                workspace=ws,
+                registry=registry,
+            )
+            statuses["auditor"] = auditor_status
+            next_workflow["stage_statuses"] = statuses
+        finalize_report: dict[str, Any] | None = None
+        if finalize:
+            finalize_report = _read_json(paths["runtime_manifest"].parent / "finalize_report.json")
+            try:
+                preflight_finalized_run_archive(
+                    workspace=ws,
+                    run_id=run_id,
+                    manifest=manifest_for_completion,
+                    workflow=next_workflow,
+                    artifact_registry=registry,
+                    finalize_report=finalize_report,
+                    fast_rerun_freshness_at_finalize=fast_rerun_freshness_at_finalize,
+                )
+            except RunArchiveError as exc:
+                raise _wrap_archive_error(exc) from exc
+        artifact_events = _changed_artifact_events(old_registry=old_registry, registry=registry)
+    except RuntimeStateError:
+        if analyst_snapshot_before is not None:
+            _restore_file_paths(
+                analyst_snapshot_before,
+                rollback_message="Stage completion rollback failed after Analyst snapshot write.",
+            )
+        raise
 
     state_written = False
+    state_snapshots = _snapshot_state_files(paths, ("runtime_manifest", "artifact_registry", "workflow_state"))
     try:
         if manifest_for_completion != manifest:
             _write_json_atomic(paths["runtime_manifest"], manifest_for_completion)
@@ -2171,14 +2189,35 @@ def _complete_stage_transaction(
         state_written = True
         _write_json_atomic(paths["workflow_state"], next_workflow)
     except RuntimeStateError as exc:
+        try:
+            _restore_state_files(paths, state_snapshots)
+            if analyst_snapshot_before is not None:
+                _restore_file_paths(
+                    analyst_snapshot_before,
+                    rollback_message="Stage completion rollback failed after state write failure.",
+                )
+        except RuntimeStateError as rollback_exc:
+            raise RuntimeStateError(
+                "Completion transaction partially wrote files and failed rollback.",
+                details={
+                    "transaction_id": transaction_id,
+                    "stage_id": stage_id,
+                    "state_error": str(exc),
+                    "state_details": exc.details,
+                    "rollback_error": str(rollback_exc),
+                    "rollback_details": rollback_exc.details,
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from rollback_exc
         code = E_TRANSACTION_PARTIAL_WRITE if state_written else exc.error_code
         raise RuntimeStateError(
-            "Completion transaction failed while writing state files.",
+            "Completion transaction failed while writing state files; control files were restored.",
             details={
                 "transaction_id": transaction_id,
                 "stage_id": stage_id,
                 "state_error": str(exc),
                 "state_details": exc.details,
+                "restored": True,
             },
             error_code=code,
         ) from exc
@@ -2246,6 +2285,38 @@ def _complete_stage_transaction(
     if archive_result is not None:
         state["run_archive"] = archive_result
     return state
+
+
+def _snapshot_analyst_draft(workspace: Path) -> None:
+    source = workspace / "output/intermediate/audited_brief.md"
+    target = workspace / ANALYST_DRAFT_SNAPSHOT_PATH
+    if not source.exists():
+        raise RuntimeStateError(
+            "Cannot snapshot Analyst draft because audited_brief.md is missing.",
+            details={"path": _workspace_relative(workspace, source)},
+            error_code=E_REQUIRED_ARTIFACT_MISSING,
+        )
+    try:
+        data = source.read_bytes()
+    except OSError as exc:
+        raise RuntimeStateError(
+            "Cannot read Analyst draft for snapshot.",
+            details={"path": _workspace_relative(workspace, source), "reason": str(exc)},
+        ) from exc
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise RuntimeStateError(
+            "Cannot write Analyst draft snapshot.",
+            details={"path": _workspace_relative(workspace, target), "reason": str(exc)},
+        ) from exc
 
 
 def complete_stage_transaction(

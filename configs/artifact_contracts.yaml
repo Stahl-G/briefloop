@@ -124,6 +124,24 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: delegate_repair
+  - artifact_id: analyst_draft_snapshot
+    path: output/intermediate/analyst_draft_snapshot.md
+    format: markdown
+    required: false
+    producer_kind: control_tool
+    producer_stage: analyst
+    producer_role: python_tool
+    consumer_stages:
+      - editor
+      - auditor
+    validation_result: editor_gate_snapshot
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - delegate_repair
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: delegate_repair
   - artifact_id: audit_report
     path: output/intermediate/audit_report.json
     format: json
