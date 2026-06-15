@@ -1,46 +1,134 @@
 # MABW Charter
 
 This charter defines the architecture and operating disciplines for Multi-Agent
-Brief Workflow. It is written in Chinese because it originated from the
-project's internal architecture rulings. Public capability claims still depend
-on implemented code, tests, docs, and the support matrix.
+Brief Workflow. It is an arbitration manual for humans and development agents
+when a design, implementation, runtime behavior, or public claim reaches a
+boundary dispute. Public capability claims still depend on implemented code,
+tests, docs, and the support matrix.
 
 ## MABW Architecture Charters
 
-### 1. 聪明的无权，有权的确定，生效的过人，过人的留痕。
+### 1. Smart agents have no authority; authority is deterministic; effects require human approval; approved effects leave records.
 
-LLM / agent 可以理解、建议、拆分、起草，但不能直接生效；真正写状态、推进流程、冻结证据、通过门禁的，必须是确定性控制面。任何影响后续运行的东西都要人类确认，并留下记录。
+LLMs and agents may understand, suggest, split, summarize, and draft, but they
+must not directly take effect. Persistent state writes, workflow advancement,
+evidence freezing, and gate passage belong to deterministic control surfaces.
+Anything that changes future runs requires human confirmation and a record.
 
-### 2. 机器能管的，不交给记忆。
+Decision test: if a proposal lets an agent directly write persistent state,
+advance a stage, freeze evidence, pass a gate, approve delivery, or modify
+content that future runs will read, treat it as overreach by default. Move it to
+a deterministic CLI, validator, or transaction, or make it a recorded effect
+after human approval.
 
-schema、validator、gate、transaction、event log 这些机器强制的部分可靠；只写在 prompt、handoff、口头规则里的东西，在真实 run 里迟早会漂移。凡是能被确定性检查捕获的规则，就不应停留在 guidance。
+### 2. If a machine can enforce it, do not leave it to memory.
 
-### 3. 同一个字段只许有一个写者。
+Schema, validators, gates, transactions, event logs, and tests are the reliable
+parts of the system. Rules that live only in prompts, handoffs, oral guidance,
+or memory will drift in real runs. If a rule can be captured by deterministic
+checks, it should not remain guidance.
 
-每个控制面字段必须有唯一权威写入方。Python 写状态、账本、事件、哈希、门禁；LLM 写内容草稿；人类批准偏好和最终交付。多个模块“顺手更新”同一字段，会破坏审计、回滚和归因。
+Decision test: if a rule can be checked through a schema field, artifact hash,
+path existence, status transition, gate result, event presence, reader-residue
+pattern, or test, it must move into schema, validator, gate, transaction, or
+test. If it depends on semantic judgment, an agent may propose, explain, or
+summarize it, but must not present it as a mandatory control-plane obligation;
+it belongs in a typed finding, candidate, human review, or approved record.
+Mixed rules must be split: the checkable part goes into the machine layer, and
+the semantic remainder stays in the agent or human layer.
 
-### 4. 有来源，不等于被支持；能追溯，不等于被证明。
+### 3. One field has one writer.
 
-一条来源记录只证明某个 claim 在何时、从何处、经由哪一步进入流程；它不自动证明该来源在语义上支持这个 claim。检索计划、source candidates、模型摘要、搜索摘要只能作为发现线索，不能作为事实证据。证据支持必须按强度、来源层级和新鲜度分开记录；新鲜不等于权威，有链接不等于被证明。
+Every control-plane field must have exactly one authoritative writer. Python
+writes state, ledgers, events, hashes, gates, and deterministic projections.
+Agents draft content. Humans approve preferences and delivery. Multiple modules
+"helpfully" updating the same field breaks auditability, rollback, and
+attribution.
 
-### 5. 冻住的不许改；要变就新增，要坏就标脏。
+Decision test: if two modules, commands, agents, or projections want to write
+the same field, assign exactly one authoritative writer. The other side may
+read, request a transaction, or write its own derived artifact. Any
+"backfill", "reinitialize", or "sync while we are here" implementation for the
+same field should be treated as a likely single-writer violation.
 
-一件 artifact 一旦被确定性控制面冻结，就不能被静默覆盖。合法变化必须表现为新的 revision、新的 artifact、新的 event，或显式的 supersede / revert / contamination 记录；不能把旧冻结物原地改写成“好像一直如此”。同一字段的唯一写者也不能回头改写已经冻结的历史。
+### 4. A source is not support; traceability is not proof.
 
-### 6. 冲突按层级，不按聪明。
+A source record only shows when, where, and through which step a claim entered
+the workflow. It does not prove that the source semantically supports the claim.
+Search plans, source candidates, model summaries, and search snippets are
+discovery material, not factual evidence. Evidence support must be separated by
+support strength, source tier, and freshness. Fresh does not mean authoritative;
+a link does not mean proven. A material claim may enter reader-facing delivery
+only if it satisfies the gate for its claim class, scope, support strength, and
+evidence contract; otherwise it must be downgraded, blocked, or sent to human
+review.
 
-当用户请求、agent 建议、audience preference、improvement memory、repair plan、gate、schema、contract 彼此冲突时，系统不靠模型解释谁更合理，而靠预先声明的 precedence 决定谁赢。事实契约和确定性 gate 高于风格偏好；本 run 的 repair 高于跨 run 的 taste memory；控制面义务不被 prompt、handoff 或用户临时请求覆盖。
+Decision test: if a claim is supported only by a link, search plan, source
+candidate, search summary, or model summary, do not mark it as supported. If a
+claim's qualifiers, numbers, timing, attribution, scope, or freshness exceed
+the evidence contract, downgrade it, block it, or send it to human review. Do
+not use "traceable" as a substitute for "supported".
+
+### 5. Frozen artifacts are not rewritten; gaps are not hidden.
+
+Once a deterministic control surface freezes an artifact, it must not be
+silently overwritten. Legal change must appear as a new revision, new artifact,
+new event, explicit supersede or revert, or contamination record. Do not rewrite
+a frozen artifact in place so that it looks as if it was always correct. Even
+the single authoritative writer may not go back and edit frozen history.
+Missing artifacts, unaudited evidence, failed gates, failed transactions,
+rejected claims, and human-decision gaps must become findings, blockers,
+contamination, human-review records, or events. They must not be hidden as prose
+caveats or disappear from the narrative.
+
+Decision test: if an implementation needs to change a frozen artifact, it must
+create a new revision, artifact, event, supersede, revert, or contamination
+record instead of overwriting in place. If a negative result cannot be found
+three days later through grep, schema query, event log, or run archive, that is
+not merely poor recordkeeping; it violates this charter.
+
+### 6. Conflicts are resolved by precedence, not persuasion.
+
+When user requests, agent suggestions, audience preferences, improvement memory,
+repair plans, gates, schemas, and contracts conflict, the system does not ask a
+model to explain which one sounds more reasonable. Declared precedence decides.
+Fact contracts and deterministic gates outrank style preferences. Current-run
+repair outranks cross-run taste memory. Control-plane duties cannot be skipped
+by a prompt, handoff, or temporary user request. Brief objective, reader,
+time window, source policy, and delivery standard are the run direction. Agents
+may suggest changes, but must not silently change direction during a run.
+Direction changes must become an explicit user decision, config change, or new
+run.
+
+Decision test: if two instructions or artifacts conflict, do not let the model
+adjudicate by persuasion. Check the declared precedence. If the conflict touches
+brief objective, reader, time window, source policy, or delivery standard, record
+it as an explicit user decision, config change, or new run. Do not let it drift
+silently inside the current run.
 
 ## MABW Operating Disciplines
 
-### Product Spine: 加速不偷问责。
+### Product Spine: speed must not steal accountability.
 
-MABW 可以通过复用冻结证据、减少重复推理、改善引导路径、并行非依赖工作来变快；但不能通过减少 ledger、gate、人类确认、event、snapshot、archive 来变快。轻量化只能轻外壳，不能抽脊柱。
+MABW may become faster by reusing frozen evidence, reducing repeated inference,
+improving onboarding, and parallelizing independent work. It must not become
+faster by removing ledgers, gates, human approvals, events, snapshots, archives,
+or human delivery. Lightweight paths may lighten the shell, not remove the
+spine.
 
-### Public Claims Discipline: 不说 artifact 支撑不了的话。
+### Public Claims Discipline: do not say what artifacts cannot support.
 
-MABW 的公开文档、README、release note、demo、论文草稿和推广帖，不能宣称超过当前 artifacts 能证明的能力。未测量就写 NOT MEASURED；只能追溯就说 traceability；不能把人工核查发现的错误包装成模型自证；失败案例如果影响能力边界，应作为系统证据的一部分公开。
+Public docs, README text, release notes, demos, paper drafts, and launch posts
+must not claim more than current artifacts can support. If it is unmeasured, say
+NOT MEASURED. If the system only traces, say traceability rather than proof. Do
+not package human-discovered errors as model self-verification. If a failure
+case changes the capability boundary, make it part of the public system
+evidence.
 
-### Data Boundary: 私有事实不为公共机制背书。
+### Data Boundary: private facts must not justify public mechanisms.
 
-MABW 可以从真实工作流中蒸馏模式、失败类型、控制面规则和测试形态，但私有业务事实、客户事实、雇主材料、IR 内容、未公开信息不得进入 repo、fixtures、公开 demo 或未批准的外部 API。公共机制必须能用公开语料或合成材料复现。
+MABW may distill patterns, failure types, control-plane rules, and test shapes
+from real workflows. Private business facts, customer facts, employer material,
+IR content, and non-public information must not enter the repo, fixtures, public
+demos, or unapproved external APIs. Public mechanisms must be reproducible from
+public-safe or synthetic material.
