@@ -42,7 +42,7 @@ Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Audit
 - **source-planner** (coordination): Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
 - **scout** (pipeline): Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.
 - **screener** (pipeline): Strict-topology independent screening role that filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
-- **claim-ledger** (pipeline): Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.
+- **claim-ledger** (pipeline): Converts screened candidates into source-grounded claim drafts for deterministic Python freezing into the Claim Ledger.
 - **analyst** (pipeline): Drafts the Analyst working brief from Claim Ledger entries; Python freezes that draft into analyst_draft_snapshot at analyst stage-complete.
 - **auditor** (pipeline): Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures.
 - **editor** (pipeline): Delivery Editor alias for the editor stage; improves clarity, structure, tone, and executive readability without adding facts.

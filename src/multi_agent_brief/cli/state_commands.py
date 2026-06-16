@@ -11,6 +11,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
     complete_finalize_transaction,
     complete_stage_transaction,
+    freeze_claim_ledger_transaction,
     import_fact_layer_transaction,
     initialize_runtime_state,
     record_decision,
@@ -106,6 +107,23 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Actor recorded in event_log.jsonl.",
     )
     stage_complete_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    freeze_claim_ledger_parser = actions.add_parser(
+        "freeze-claim-ledger",
+        help="Freeze claim_drafts.json into deterministic claim_ledger.json.",
+    )
+    freeze_claim_ledger_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    freeze_claim_ledger_parser.add_argument(
+        "--repo-workdir",
+        help="Repository or packaged contract base (default: auto-detect).",
+    )
+    freeze_claim_ledger_parser.add_argument(
+        "--actor",
+        default="cli",
+        choices=("cli", "orchestrator", "runtime", "system"),
+        help="Actor recorded in event_log.jsonl.",
+    )
+    freeze_claim_ledger_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     finalize_complete_parser = actions.add_parser(
         "finalize-complete",
@@ -211,6 +229,23 @@ def handle(args: argparse.Namespace) -> int:
                 print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
             else:
                 _print_human_summary("state stage-complete", state)
+            return 0
+
+        if args.state_action == "freeze-claim-ledger":
+            state = freeze_claim_ledger_transaction(
+                workspace=args.workspace,
+                repo_workdir=getattr(args, "repo_workdir", None),
+                actor=getattr(args, "actor", "cli"),
+            )
+            if getattr(args, "json", False):
+                print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                _print_human_summary("state freeze-claim-ledger", state)
+                freeze = state.get("claim_ledger_freeze") or (state.get("manifest") or {}).get("claim_ledger_freeze") or {}
+                print(f"[state freeze-claim-ledger] claim_count: {freeze.get('claim_count', 0)}")
+                print(f"[state freeze-claim-ledger] claim_ledger_sha256: {freeze.get('claim_ledger_sha256', '')}")
+                if freeze.get("warnings"):
+                    print(f"[state freeze-claim-ledger] warning_count: {len(freeze.get('warnings') or [])}")
             return 0
 
         if args.state_action == "finalize-complete":

@@ -223,7 +223,7 @@ def test_generated_analyst_and_editor_explain_audited_brief_ownership(manifest):
     assert "Own the final auditable output/intermediate/audited_brief.md" in rendered
 
 
-def test_generated_assets_do_not_claim_claim_freeze_is_implemented(manifest):
+def test_generated_assets_scope_claim_freeze_to_claim_ledger_runtime_protocol(manifest):
     rendered_parts: list[str] = [render_opencode_command_generate_brief(manifest)]
     for name, role in manifest["roles"].items():
         rendered_parts.extend([
@@ -235,9 +235,19 @@ def test_generated_assets_do_not_claim_claim_freeze_is_implemented(manifest):
     rendered = "\n".join(rendered_parts)
 
     assert "Claim Freeze is implemented" not in rendered
-    assert "claim_drafts.json" not in rendered
-    assert "multi-agent-brief state freeze" not in rendered
-    assert "freeze-claim" not in rendered
+    assert "claim_drafts.json" in rendered
+    assert "freeze-claim-ledger" in rendered
+
+    analyst_auditor = "\n".join([
+        render_codex_agent("analyst", manifest["roles"]["analyst"], manifest),
+        render_claude_agent("analyst", manifest["roles"]["analyst"], manifest),
+        render_opencode_agent("analyst", manifest["roles"]["analyst"], manifest),
+        render_codex_agent("auditor", manifest["roles"]["auditor"], manifest),
+        render_claude_agent("auditor", manifest["roles"]["auditor"], manifest),
+        render_opencode_agent("auditor", manifest["roles"]["auditor"], manifest),
+    ])
+    assert "claim_drafts.json" not in analyst_auditor
+    assert "freeze-claim-ledger" not in analyst_auditor
 
 
 def test_generated_orchestrator_separates_runtime_and_repo_development_modes(manifest):

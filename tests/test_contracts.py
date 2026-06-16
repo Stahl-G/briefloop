@@ -130,6 +130,13 @@ class TestClaimDraftContract:
                     "evidence_text": "Example evidence.",
                     "claim_type": "fact",
                     "confidence": "medium",
+                    "published_at": "2026-06-01",
+                    "retrieved_at": "2026-06-16T00:00:00Z",
+                    "source_path": "input/sources/source-001.md",
+                    "source_title": "Example Source",
+                    "source_name": "Example Wire",
+                    "publisher": "Example Publisher",
+                    "topic": "demo market",
                 }
             ],
             "metadata": {"created_by": "test"},
@@ -208,6 +215,10 @@ class TestClaimDraftContract:
                     "used_in_sections": ["summary", 3],
                     "limitations": "none",
                     "metadata": [],
+                    "published_at": 20260601,
+                    "retrieved_at": ["2026-06-16"],
+                    "source_path": {"path": "source.md"},
+                    "topic": 42,
                 }
             ],
         }
@@ -220,6 +231,10 @@ class TestClaimDraftContract:
             "drafts[0].used_in_sections[1]",
             "drafts[0].limitations",
             "drafts[0].metadata",
+            "drafts[0].published_at",
+            "drafts[0].retrieved_at",
+            "drafts[0].source_path",
+            "drafts[0].topic",
         } <= error_fields
 
     def test_claim_drafts_do_not_semantically_dedupe(self):

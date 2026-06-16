@@ -51,7 +51,7 @@ Use after Scout has written `candidate_claims.json` only when the selected topol
 - Screen existing Scout candidates only.
 - Do not rediscover source material or add new candidates from source files.
 - Do not rewrite `candidate_claims.json`.
-- Never mint `claim_id` values. Claim Ledger owns claim IDs.
+- Never mint `claim_id` values. The Claim Ledger freeze transaction owns claim IDs.
 
 ## Handoff
 

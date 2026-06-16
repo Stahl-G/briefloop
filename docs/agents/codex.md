@@ -11,7 +11,7 @@
 - `source-planner.toml` — Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
 - `scout.toml` — Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.
 - `screener.toml` — Strict-topology independent screening role that filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
-- `claim-ledger.toml` — Converts screened candidates into source-grounded claim ledger entries with stable IDs and evidence.
+- `claim-ledger.toml` — Converts screened candidates into source-grounded claim drafts for deterministic Python freezing into the Claim Ledger.
 - `analyst.toml` — Drafts the Analyst working brief from Claim Ledger entries; Python freezes that draft into analyst_draft_snapshot at analyst stage-complete.
 - `auditor.toml` — Audits source support, freshness, unsupported numbers, redaction risk, duplicate claims, placeholders, and harness failures.
 - `editor.toml` — Delivery Editor alias for the editor stage; improves clarity, structure, tone, and executive readability without adding facts.

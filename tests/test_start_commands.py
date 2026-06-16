@@ -218,6 +218,25 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     ]
     assert screener_protocol["topology_satisfaction"]["human_assisted"]["satisfied_by"] == "scout"
     assert screener_protocol["independent_completion_topologies"] == ["strict"]
+    claim_ledger_protocol = protocol_stages["claim-ledger"]
+    assert claim_ledger_protocol["freeze_input_artifacts"] == [
+        {
+            "artifact_id": "claim_drafts",
+            "path": "output/intermediate/claim_drafts.json",
+            "required": False,
+            "format": "json",
+        }
+    ]
+    assert claim_ledger_protocol["pre_completion_transactions"][0]["transaction"] == "freeze_claim_ledger"
+    assert "freeze-claim-ledger" in claim_ledger_protocol["pre_completion_transactions"][0]["command"]
+    assert claim_ledger_protocol["pre_completion_transactions"][0]["writes"] == [
+        {
+            "artifact_id": "claim_ledger",
+            "path": "output/intermediate/claim_ledger.json",
+            "required": True,
+            "format": "json",
+        }
+    ]
     assert protocol_stages["analyst"]["required_input_artifacts"] == [
         {
             "artifact_id": "claim_ledger",
@@ -438,6 +457,13 @@ def test_start_with_workspace_generates_handoff(tmp_path):
     data = json.loads(js.read_text(encoding="utf-8"))
     assert data["runtime"] == "hermes"
     _assert_orchestrator_contract_handoff(data)
+    md_text = md.read_text(encoding="utf-8")
+    claim_ledger_section = md_text.split("#### `claim-ledger`", 1)[1].split("#### `analyst`", 1)[0]
+    assert "Freeze input artifacts" in claim_ledger_section
+    assert "`claim_drafts` at `output/intermediate/claim_drafts.json`" in claim_ledger_section
+    assert "Pre-completion transactions" in claim_ledger_section
+    assert "freeze-claim-ledger" in claim_ledger_section
+    assert "state stage-complete --stage claim-ledger" in claim_ledger_section
 
 
 def test_start_does_not_generate_brief(tmp_path):
