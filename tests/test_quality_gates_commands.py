@@ -370,6 +370,74 @@ def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path
     assert helper_finding_types == report_finding_types
 
 
+def test_parallel_quality_gate_findings_match_serial(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(ws, [])
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo update.\n\n## Detail\nRevenue was $42 million.\n",
+    )
+    _repo, stages, artifacts = quality_gate_state._contracts(workspace=ws, repo_workdir=ROOT)
+    ledger = quality_gate_state._load_ledger(_intermediate(ws) / "claim_ledger.json", required=True)
+    kwargs = {
+        "markdown": (_intermediate(ws) / "audited_brief.md").read_text(encoding="utf-8"),
+        "ledger": ledger,
+        "config": quality_gate_state._load_config(ws),
+        "user_text": (ws / "user.md").read_text(encoding="utf-8"),
+        "analyst_markdown": None,
+        "report_date": "",
+        "max_source_age_days": None,
+        "strict": False,
+        "reader_facing_mode": False,
+        "stages": stages,
+        "artifacts": artifacts,
+    }
+
+    serial = quality_gate_state.evaluate_quality_gate_findings(**kwargs)
+    parallel = quality_gate_state.evaluate_quality_gate_findings(**kwargs, parallel=True)
+
+    assert list(parallel) == sorted(GATE_IDS)
+    assert parallel == serial
+
+
+def test_parallel_quality_gate_errors_wait_for_scheduled_gates(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(ws, [])
+    _write_audited_brief(ws, "## Executive Summary\nTargetCo update.\n")
+    _repo, stages, artifacts = quality_gate_state._contracts(workspace=ws, repo_workdir=ROOT)
+    ledger = quality_gate_state._load_ledger(_intermediate(ws) / "claim_ledger.json", required=True)
+    target_called = {"value": False}
+
+    def boom(**_kwargs):
+        raise ValueError("material boom")
+
+    def target_relevance(**_kwargs):
+        target_called["value"] = True
+        return []
+
+    monkeypatch.setattr(quality_gate_state, "_material_findings", boom)
+    monkeypatch.setattr(quality_gate_state, "_target_relevance_findings", target_relevance)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        quality_gate_state.evaluate_quality_gate_findings(
+            markdown=(_intermediate(ws) / "audited_brief.md").read_text(encoding="utf-8"),
+            ledger=ledger,
+            config=quality_gate_state._load_config(ws),
+            user_text=(ws / "user.md").read_text(encoding="utf-8"),
+            analyst_markdown=None,
+            report_date="",
+            max_source_age_days=None,
+            strict=False,
+            reader_facing_mode=False,
+            stages=stages,
+            artifacts=artifacts,
+            parallel=True,
+        )
+
+    assert excinfo.value.details["gate_errors"] == {"material_fact": "material boom"}
+    assert target_called["value"] is True
+
+
 def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])

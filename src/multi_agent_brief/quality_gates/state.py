@@ -6,8 +6,9 @@ import json
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -790,6 +791,7 @@ def evaluate_quality_gate_findings(
     reader_facing_mode: bool,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
+    parallel: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Evaluate deterministic quality gates from preloaded inputs without writes.
 
@@ -799,15 +801,16 @@ def evaluate_quality_gate_findings(
     """
 
     gate_findings: dict[str, list[dict[str, Any]]] = {gate_id: [] for gate_id in sorted(GATE_IDS)}
+    gate_tasks: dict[str, Callable[[], list[dict[str, Any]]]] = {}
     if not reader_facing_mode:
-        gate_findings["material_fact"] = _material_findings(
+        gate_tasks["material_fact"] = lambda: _material_findings(
             markdown=markdown,
             ledger=ledger,
             strict=strict,
             stages=stages,
             artifacts=artifacts,
         )
-        gate_findings["freshness"] = _freshness_findings(
+        gate_tasks["freshness"] = lambda: _freshness_findings(
             markdown=markdown,
             ledger=ledger,
             report_date=report_date,
@@ -816,14 +819,14 @@ def evaluate_quality_gate_findings(
             stages=stages,
             artifacts=artifacts,
         )
-        gate_findings["editor_new_fact"] = _editor_introduced_new_fact_findings(
+        gate_tasks["editor_new_fact"] = lambda: _editor_introduced_new_fact_findings(
             markdown=markdown,
             analyst_markdown=analyst_markdown,
             strict=strict,
             stages=stages,
             artifacts=artifacts,
         )
-    gate_findings["target_relevance"] = _target_relevance_findings(
+    gate_tasks["target_relevance"] = lambda: _target_relevance_findings(
         markdown=markdown,
         ledger=ledger,
         config=config,
@@ -832,6 +835,27 @@ def evaluate_quality_gate_findings(
         stages=stages,
         artifacts=artifacts,
     )
+
+    if not parallel or len(gate_tasks) <= 1:
+        for gate_id in sorted(gate_tasks):
+            gate_findings[gate_id] = gate_tasks[gate_id]()
+        return gate_findings
+
+    gate_errors: dict[str, str] = {}
+    max_workers = min(len(gate_tasks), 4)
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="mabw-quality-gate") as executor:
+        futures = {executor.submit(gate_tasks[gate_id]): gate_id for gate_id in sorted(gate_tasks)}
+        for future in as_completed(futures):
+            gate_id = futures[future]
+            try:
+                gate_findings[gate_id] = future.result()
+            except Exception as exc:  # pragma: no cover - exercised through monkeypatch tests.
+                gate_errors[gate_id] = str(exc)
+    if gate_errors:
+        raise RuntimeStateError(
+            "Quality gate evaluation failed.",
+            details={"gate_errors": {gate_id: gate_errors[gate_id] for gate_id in sorted(gate_errors)}},
+        )
     return gate_findings
 
 
