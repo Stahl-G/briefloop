@@ -44,6 +44,8 @@ EVENT_TYPES = {
     "feedback_issue_resolved",
     "repair_plan_created",
     "repair_plan_completed",
+    "repair_started",
+    "repair_completed",
     "quality_gate_checked",
     "quality_gate_blocked",
     "quality_gate_passed",

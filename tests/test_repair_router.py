@@ -382,3 +382,52 @@ def test_repair_route_no_match_is_read_only_none_route(tmp_path, capsys):
     assert payload["repair_owner"] == "none"
     assert payload["routes"] == []
     assert payload["reason"] == "No deterministic repair route found."
+
+
+def test_repair_start_fails_when_no_deterministic_route_exists(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_ILLEGAL_TRANSITION"
+    assert "No deterministic repair route found" in payload["error"]
+
+
+def test_repair_start_fails_on_invalid_gate_report_json(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{broken", encoding="utf-8")
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+
+
+def test_repair_complete_fails_without_active_repair(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+
+    rc = main([
+        "repair",
+        "complete",
+        "--workspace",
+        str(ws),
+        "--reason",
+        "no active repair",
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_ILLEGAL_TRANSITION"
+    assert "No active repair transaction" in payload["error"]

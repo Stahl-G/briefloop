@@ -18,12 +18,14 @@ from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     check_runtime_state,
     complete_finalize_transaction,
+    complete_repair_transaction,
     complete_stage_transaction,
     freeze_claim_ledger_transaction,
     initialize_runtime_state,
     import_fact_layer_transaction,
     record_decision,
     show_runtime_state,
+    start_repair_transaction,
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
@@ -283,6 +285,51 @@ def _write_quality_gate_report(
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(payload_text, encoding="utf-8")
     (_intermediate(ws) / "quality_gate_report.json").write_text(payload_text, encoding="utf-8")
+
+
+def _write_editor_repair_gate_report(ws: Path) -> None:
+    path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "multi-agent-brief-quality-gates/v1",
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "updated_at": "2026-06-11T00:00:00+00:00",
+        "workspace": ".",
+        "report_date": "2026-06-11",
+        "policy_pack": "default",
+        "status": "fail",
+        "gate_results": [
+            {
+                "gate_id": "material_fact",
+                "status": "fail",
+                "blocking": True,
+                "finding_ids": ["QG_EDITOR_REPAIR_001"],
+            }
+        ],
+        "findings": [
+            {
+                "finding_id": "QG_EDITOR_REPAIR_001",
+                "finding_type": "unsupported_claim",
+                "severity": "high",
+                "blocking": True,
+                "artifact_id": "audited_brief",
+                "repair_owner": "editor",
+                "repair_stage_id": "editor",
+                "repair_artifact_id": "audited_brief",
+                "message": "Audited brief needs an owner-stage editor repair.",
+            }
+        ],
+        "metadata": {
+            "brief": "output/intermediate/audited_brief.md",
+            "ledger": "output/intermediate/claim_ledger.json",
+            "stage_id": "auditor",
+            "gate_stage_id": "auditor",
+            "gate_artifact_id": "auditor_quality_gate_report",
+        },
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    path.write_text(text, encoding="utf-8")
+    (_intermediate(ws) / "quality_gate_report.json").write_text(text, encoding="utf-8")
 
 
 def _write_finalize_report(
@@ -2378,6 +2425,130 @@ def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert workflow["run_integrity"]["status"] == "contaminated"
     assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
+
+
+def test_repair_start_records_editor_owner_transaction(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor draft needing repair. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    before_registry = _state_file(ws, "artifact_registry").read_bytes()
+    _write_editor_repair_gate_report(ws)
+
+    state = start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+
+    workflow = state["workflow_state"]
+    repair = workflow["active_repair"]
+    assert workflow["current_stage"] == "editor"
+    assert repair["repair_owner"] == "editor"
+    assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert repair["source"]["finding_id"] == "QG_EDITOR_REPAIR_001"
+    assert repair["must_rerun_from"] == "auditor"
+    assert _state_file(ws, "artifact_registry").read_bytes() == before_registry
+    events = _event_records(ws)
+    assert events[-1]["event_type"] == "repair_started"
+    assert events[-1]["metadata"]["repair_owner"] == "editor"
+
+
+def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downstream(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor draft needing repair. [src:CL-001]\n", encoding="utf-8")
+    editor_state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    old_sha = editor_state["artifact_registry"]["artifacts"]["audited_brief"]["sha256"]
+    _write_editor_repair_gate_report(ws)
+    start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+    audited.write_text("# Brief\n\nEditor repaired draft. [src:CL-001]\n", encoding="utf-8")
+
+    state = complete_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="editor repaired audited brief from deterministic route",
+    )
+
+    workflow = state["workflow_state"]
+    assert "active_repair" not in workflow
+    assert workflow["current_stage"] == "auditor"
+    assert workflow["stage_statuses"]["editor"]["status"] == "complete"
+    assert workflow["stage_statuses"]["editor"]["metadata"]["repaired"] is True
+    assert workflow["stage_statuses"]["auditor"]["status"] == "ready"
+    assert workflow["stage_statuses"]["finalize"]["status"] == "pending"
+    new_sha = state["artifact_registry"]["artifacts"]["audited_brief"]["sha256"]
+    assert new_sha != old_sha
+    assert workflow["run_integrity"]["status"] == "clean"
+    events = _event_records(ws)
+    assert events[-1]["event_type"] == "repair_completed"
+    assert events[-1]["metadata"]["repair_owner"] == "editor"
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    assert checked["workflow_state"]["run_integrity"]["status"] == "clean"
+
+
+def test_repair_complete_rejects_blocked_artifact_edit(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor draft needing repair. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    _write_editor_repair_gate_report(ws)
+    start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+    audited.write_text("# Brief\n\nEditor repaired draft. [src:CL-001]\n", encoding="utf-8")
+    (_intermediate(ws) / "analyst_draft_snapshot.md").write_text(
+        "# Brief\n\nIllegally changed snapshot. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_repair_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="editor repaired audited brief from deterministic route",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "Blocked repair artifact changed" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["active_repair"]["repair_owner"] == "editor"
 
 
 def test_analyst_snapshot_rolls_back_when_stage_completion_fails_after_snapshot(tmp_path, monkeypatch):

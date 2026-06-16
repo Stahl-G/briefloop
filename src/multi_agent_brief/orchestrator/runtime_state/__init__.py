@@ -16,12 +16,14 @@ from .manifest import RUNTIME_MANIFEST_SCHEMA
 from .operations import (
     check_runtime_state,
     complete_finalize_transaction,
+    complete_repair_transaction,
     complete_stage_transaction,
     freeze_claim_ledger_transaction,
     import_fact_layer_transaction,
     initialize_runtime_state,
     record_decision,
     show_runtime_state,
+    start_repair_transaction,
 )
 from .paths import RUNTIME_STATE_FILES, runtime_state_paths
 
@@ -36,6 +38,7 @@ __all__ = sorted([
     "append_event",
     "check_runtime_state",
     "complete_finalize_transaction",
+    "complete_repair_transaction",
     "complete_stage_transaction",
     "freeze_claim_ledger_transaction",
     "import_fact_layer_transaction",
@@ -48,5 +51,6 @@ __all__ = sorted([
     "record_handoff_written",
     "runtime_state_paths",
     "show_runtime_state",
+    "start_repair_transaction",
     "utc_now",
 ])

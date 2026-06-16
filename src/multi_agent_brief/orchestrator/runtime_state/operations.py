@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import fnmatch
 import json
 import os
 import re
@@ -2698,6 +2699,536 @@ def _complete_stage_transaction(
     }
     if archive_result is not None:
         state["run_archive"] = archive_result
+    return state
+
+
+def _repair_route_error(payload: dict[str, Any]) -> RuntimeStateError:
+    return RuntimeStateError(
+        str(payload.get("message") or payload.get("reason") or payload.get("error") or "No deterministic repair route found."),
+        details=payload,
+        error_code=str(payload.get("error_code") or E_ILLEGAL_TRANSITION),
+    )
+
+
+def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "transaction_id": active_repair.get("transaction_id"),
+        "repair_owner": active_repair.get("repair_owner"),
+        "allowed_artifacts": list(active_repair.get("allowed_artifacts") or []),
+        "blocked_direct_edits": list(active_repair.get("blocked_direct_edits") or []),
+        "source": active_repair.get("source") or {},
+        "must_rerun_from": active_repair.get("must_rerun_from"),
+    }
+
+
+def _workflow_with_active_repair(
+    *,
+    workflow: dict[str, Any],
+    stages: list[dict[str, Any]],
+    active_repair: dict[str, Any],
+    now: str,
+) -> dict[str, Any]:
+    owner = str(active_repair.get("repair_owner") or "")
+    if owner not in _stage_ids(stages):
+        raise RuntimeStateError(
+            f"Repair owner '{owner}' is not a workflow stage.",
+            details={"repair_owner": owner, "known_stages": _stage_ids(stages)},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    updated = dict(workflow)
+    statuses = dict(updated.get("stage_statuses") or {})
+    statuses[owner] = _status_entry(
+        STAGE_READY,
+        f"Repair started: {active_repair.get('reason') or ''}".strip(),
+        now,
+        metadata={
+            "active_repair": True,
+            "repair_transaction_id": active_repair.get("transaction_id"),
+            "allowed_artifacts": list(active_repair.get("allowed_artifacts") or []),
+            "must_rerun_from": active_repair.get("must_rerun_from"),
+        },
+    )
+    updated["updated_at"] = now
+    updated["current_stage"] = owner
+    updated["blocked"] = False
+    updated["blocking_reason"] = ""
+    updated["stage_statuses"] = statuses
+    updated["active_repair"] = active_repair
+    updated["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, owner)
+    return updated
+
+
+def start_repair_transaction(
+    *,
+    workspace: str | Path,
+    repo_workdir: str | Path | None = None,
+    actor: str = "orchestrator",
+) -> dict[str, Any]:
+    """Start an explicit owner-stage repair transaction from the deterministic route."""
+
+    ws = _require_workspace(workspace)
+    paths = runtime_state_paths(ws)
+    _preflight_transaction_files(paths)
+    if not paths["event_log"].exists():
+        raise RuntimeStateError(
+            "Repair start requires an existing event_log.jsonl control trace.",
+            details={"path": str(paths["event_log"])},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
+    if isinstance(workflow.get("active_repair"), dict):
+        raise RuntimeStateError(
+            "A repair transaction is already active.",
+            details={"active_repair": workflow.get("active_repair")},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+
+    from multi_agent_brief.repair.router import route_repair
+
+    route = route_repair(workspace=ws)
+    if not route.get("ok"):
+        raise _repair_route_error(route)
+    if route.get("repair_owner") in {None, "", "none"}:
+        raise RuntimeStateError(
+            "No deterministic repair route found.",
+            details=route,
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    if not route.get("allowed_artifacts"):
+        raise RuntimeStateError(
+            "Deterministic repair route has no allowed artifacts.",
+            details=route,
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+
+    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
+    stages = load_stage_specs(repo)
+    transaction_id = uuid.uuid4().hex
+    now = utc_now()
+    active_repair = {
+        "schema_version": "mabw.active_repair.v1",
+        "transaction_id": transaction_id,
+        "repair_owner": route.get("repair_owner"),
+        "allowed_artifacts": list(route.get("allowed_artifacts") or []),
+        "blocked_direct_edits": list(route.get("blocked_direct_edits") or []),
+        "source": route.get("source") or {},
+        "source_report_path": (route.get("source") or {}).get("file"),
+        "must_rerun_from": route.get("must_rerun_from") or "",
+        "reason": route.get("reason") or "",
+        "started_at": now,
+    }
+    next_workflow = _workflow_with_active_repair(
+        workflow=workflow,
+        stages=stages,
+        active_repair=active_repair,
+        now=now,
+    )
+
+    old_workflow_bytes = _read_state_bytes(paths["workflow_state"])
+    _write_json_atomic(paths["workflow_state"], next_workflow)
+    try:
+        append_event(
+            workspace=ws,
+            run_id=str(manifest["run_id"]),
+            event_type="repair_started",
+            actor=actor,
+            stage_id=str(active_repair["repair_owner"]),
+            reason=str(active_repair.get("reason") or "Repair transaction started."),
+            metadata=_repair_event_metadata(active_repair),
+        )
+    except RuntimeStateError as exc:
+        try:
+            _restore_state_bytes(paths["workflow_state"], old_workflow_bytes)
+        except RuntimeStateError as rollback_exc:
+            raise RuntimeStateError(
+                "Repair start partially wrote workflow_state.json and failed rollback.",
+                details={
+                    "transaction_id": transaction_id,
+                    "event_error": str(exc),
+                    "rollback_error": str(rollback_exc),
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from rollback_exc
+        raise RuntimeStateError(
+            "Repair start event append failed; workflow_state.json was restored.",
+            details={"transaction_id": transaction_id, "event_error": str(exc), "event_details": exc.details},
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
+
+    state = show_runtime_state(workspace=ws)
+    state["repair"] = active_repair
+    state["transaction"] = {
+        "transaction_id": transaction_id,
+        "stage_id": active_repair["repair_owner"],
+        "decision": "repair_start",
+    }
+    return state
+
+
+def _artifact_path_matches(pattern: str, path: str) -> bool:
+    normalized_pattern = pattern.strip()
+    normalized_path = path.strip()
+    return bool(
+        normalized_pattern
+        and (
+            normalized_path == normalized_pattern
+            or fnmatch.fnmatch(normalized_path, normalized_pattern)
+        )
+    )
+
+
+def _artifact_allowed(path: str, patterns: list[str]) -> bool:
+    return any(_artifact_path_matches(pattern, path) for pattern in patterns)
+
+
+def _repair_changed_artifact_reasons(
+    *,
+    old_registry: dict[str, Any] | None,
+    registry: dict[str, Any],
+    allowed_artifacts: list[str],
+    blocked_direct_edits: list[str],
+) -> list[str]:
+    old_records = (old_registry or {}).get("artifacts")
+    new_records = registry.get("artifacts")
+    if not isinstance(old_records, dict) or not isinstance(new_records, dict):
+        return ["Repair completion requires a valid artifact_registry.json before and after repair."]
+
+    reasons: list[str] = []
+    for artifact_id, old_record_raw in old_records.items():
+        if not isinstance(old_record_raw, dict):
+            continue
+        old_sha = str(old_record_raw.get("sha256") or "")
+        if not old_sha:
+            continue
+        new_record = new_records.get(artifact_id) or {}
+        if not isinstance(new_record, dict):
+            new_record = {}
+        new_sha = str(new_record.get("sha256") or "")
+        path = str(new_record.get("path") or old_record_raw.get("path") or artifact_id)
+        if old_sha == new_sha:
+            continue
+        if _artifact_allowed(path, allowed_artifacts):
+            continue
+        if _artifact_allowed(path, blocked_direct_edits):
+            reasons.append(
+                f"Blocked repair artifact changed without ownership: {path}."
+            )
+        else:
+            reasons.append(
+                f"Repair changed non-allowed frozen artifact: {path}."
+            )
+    return reasons
+
+
+def _workflow_after_repair_completion(
+    *,
+    workflow: dict[str, Any],
+    stages: list[dict[str, Any]],
+    active_repair: dict[str, Any],
+    reason: str,
+    now: str,
+    transaction_id: str,
+) -> dict[str, Any]:
+    owner = str(active_repair.get("repair_owner") or "")
+    stage_ids = _stage_ids(stages)
+    if owner not in stage_ids:
+        raise RuntimeStateError(
+            f"Repair owner '{owner}' is not a workflow stage.",
+            details={"repair_owner": owner, "known_stages": stage_ids},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    owner_index = stage_ids.index(owner)
+    requested_rerun = str(active_repair.get("must_rerun_from") or "")
+    rerun_stage = requested_rerun if requested_rerun in stage_ids else _next_stage_id(stages, owner)
+    statuses = dict(workflow.get("stage_statuses") or {})
+    statuses[owner] = _status_entry(
+        STAGE_COMPLETE,
+        reason,
+        now,
+        metadata={
+            "repaired": True,
+            "repair_transaction_id": transaction_id,
+            "allowed_artifacts": list(active_repair.get("allowed_artifacts") or []),
+        },
+    )
+    for stage_id in stage_ids[owner_index + 1:]:
+        if stage_id == rerun_stage:
+            statuses[stage_id] = _status_entry(
+                STAGE_READY,
+                "Ready after owner-stage repair completion.",
+                now,
+                metadata={
+                    "stale_after_repair": True,
+                    "repair_transaction_id": transaction_id,
+                    "repair_owner": owner,
+                },
+            )
+        else:
+            statuses[stage_id] = _status_entry(
+                STAGE_PENDING,
+                "Pending rerun after owner-stage repair completion.",
+                now,
+                metadata={
+                    "stale_after_repair": True,
+                    "repair_transaction_id": transaction_id,
+                    "repair_owner": owner,
+                },
+            )
+    updated = dict(workflow)
+    updated.pop("active_repair", None)
+    updated["updated_at"] = now
+    updated["current_stage"] = rerun_stage
+    updated["blocked"] = False
+    updated["blocking_reason"] = ""
+    updated["stage_statuses"] = statuses
+    updated["last_decision"] = {
+        "stage_id": owner,
+        "decision": "repair_complete",
+        "reason": reason,
+        "created_at": now,
+    }
+    updated["last_repair_transaction"] = {
+        "transaction_id": transaction_id,
+        "stage_id": owner,
+        "decision": "repair_complete",
+        "reason": reason,
+        "created_at": now,
+    }
+    updated["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, rerun_stage)
+    return updated
+
+
+def complete_repair_transaction(
+    *,
+    workspace: str | Path,
+    reason: str,
+    repo_workdir: str | Path | None = None,
+    actor: str = "orchestrator",
+) -> dict[str, Any]:
+    """Complete the active owner-stage repair transaction."""
+
+    ws = _require_workspace(workspace)
+    paths = runtime_state_paths(ws)
+    _preflight_transaction_files(paths)
+    if not paths["event_log"].exists():
+        raise RuntimeStateError(
+            "Repair completion requires an existing event_log.jsonl control trace.",
+            details={"path": str(paths["event_log"])},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
+    active_repair = workflow.get("active_repair")
+    if not isinstance(active_repair, dict):
+        raise RuntimeStateError(
+            "No active repair transaction exists.",
+            details={"workspace": str(ws)},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    owner = str(active_repair.get("repair_owner") or "")
+    if workflow.get("current_stage") != owner:
+        raise RuntimeStateError(
+            "Active repair owner does not match current workflow stage.",
+            details={"repair_owner": owner, "current_stage": workflow.get("current_stage")},
+            error_code=E_STAGE_MISMATCH,
+        )
+
+    allowed_artifacts = [str(item) for item in active_repair.get("allowed_artifacts") or []]
+    blocked_direct_edits = [str(item) for item in active_repair.get("blocked_direct_edits") or []]
+    if not allowed_artifacts:
+        raise RuntimeStateError(
+            "Active repair has no allowed artifacts.",
+            details={"active_repair": active_repair},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+
+    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
+    stages = load_stage_specs(repo)
+    artifacts = load_artifact_contracts(repo)
+    stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
+    stage = stage_by_id.get(owner)
+    if stage is None:
+        raise RuntimeStateError(
+            f"Unknown repair owner stage: {owner}",
+            details={"repair_owner": owner, "known_stages": list(stage_by_id)},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    artifacts_by_id = _artifact_map(artifacts)
+    artifact_reasons = _completion_artifact_gate_reasons(
+        workspace=ws,
+        stage=stage,
+        artifacts_by_id=artifacts_by_id,
+    )
+    if artifact_reasons:
+        code = E_REQUIRED_ARTIFACT_MISSING
+        if any("invalid" in item.lower() for item in artifact_reasons):
+            code = E_ARTIFACT_INVALID
+        _raise_completion_reasons(
+            message=f"Cannot complete repair for stage '{owner}'",
+            reasons=artifact_reasons,
+            error_code=code,
+            details={"stage_id": owner},
+        )
+    feedback_reasons = current_stage_feedback_blocking_reasons(
+        workspace=ws,
+        current_stage=owner,
+        stages=stages,
+        artifacts=artifacts,
+    )
+    if feedback_reasons:
+        _raise_completion_reasons(
+            message=f"Cannot complete repair for stage '{owner}'",
+            reasons=feedback_reasons,
+            error_code=E_ILLEGAL_TRANSITION,
+            details={"stage_id": owner},
+        )
+    transaction_id = uuid.uuid4().hex
+    now = utc_now()
+    run_id = str(manifest["run_id"])
+    old_registry = _read_json_if_exists(paths["artifact_registry"])
+    registry_for_change_check = _build_artifact_registry(
+        workspace=ws,
+        run_id=run_id,
+        artifacts=artifacts,
+        workflow=workflow,
+        updated_at=now,
+    )
+    changed_reasons = _repair_changed_artifact_reasons(
+        old_registry=old_registry,
+        registry=registry_for_change_check,
+        allowed_artifacts=allowed_artifacts,
+        blocked_direct_edits=blocked_direct_edits,
+    )
+    if changed_reasons:
+        _raise_completion_reasons(
+            message="Repair completion changed artifacts outside the deterministic repair route",
+            reasons=changed_reasons,
+            error_code=E_TRANSACTION_INTEGRITY,
+            details={"stage_id": owner, "allowed_artifacts": allowed_artifacts},
+        )
+
+    next_workflow = _workflow_after_repair_completion(
+        workflow=workflow,
+        stages=stages,
+        active_repair=active_repair,
+        reason=reason,
+        now=now,
+        transaction_id=transaction_id,
+    )
+    registry = _build_artifact_registry(
+        workspace=ws,
+        run_id=run_id,
+        artifacts=artifacts,
+        workflow=next_workflow,
+        updated_at=now,
+    )
+    frozen_verdict = interpret_frozen_artifact_integrity(
+        old_registry=old_registry,
+        registry=registry,
+        workflow=workflow,
+        artifacts=artifacts,
+        stages=stages,
+        mutating_stage=owner,
+    )
+    frozen_reasons = require_frozen_artifact_integrity_pass(frozen_verdict)
+    if frozen_reasons:
+        _raise_completion_reasons(
+            message="Repair completion cannot proceed because frozen artifact integrity could not be verified",
+            reasons=frozen_reasons,
+            error_code=E_TRANSACTION_INTEGRITY,
+            details={"stage_id": owner},
+        )
+    artifact_events = _changed_artifact_events(old_registry=old_registry, registry=registry)
+
+    state_snapshots = _snapshot_state_files(paths, ("artifact_registry", "workflow_state", "event_log"))
+    state_written = False
+    try:
+        _write_json_atomic(paths["artifact_registry"], registry)
+        state_written = True
+        _write_json_atomic(paths["workflow_state"], next_workflow)
+    except RuntimeStateError as exc:
+        try:
+            _restore_state_files(paths, state_snapshots)
+        except RuntimeStateError as rollback_exc:
+            raise RuntimeStateError(
+                "Repair completion partially wrote files and failed rollback.",
+                details={
+                    "transaction_id": transaction_id,
+                    "stage_id": owner,
+                    "state_error": str(exc),
+                    "rollback_error": str(rollback_exc),
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from rollback_exc
+        code = E_TRANSACTION_PARTIAL_WRITE if state_written else exc.error_code
+        raise RuntimeStateError(
+            "Repair completion failed while writing state files; control files were restored.",
+            details={
+                "transaction_id": transaction_id,
+                "stage_id": owner,
+                "state_error": str(exc),
+                "state_details": exc.details,
+                "restored": True,
+            },
+            error_code=code,
+        ) from exc
+
+    try:
+        for event in artifact_events:
+            append_event(
+                workspace=ws,
+                run_id=run_id,
+                event_type=str(event["event_type"]),
+                actor=actor,
+                artifact_id=event.get("artifact_id"),
+                reason=str(event.get("reason") or ""),
+                metadata={**(event.get("metadata") or {}), "transaction_id": transaction_id},
+            )
+        append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="repair_completed",
+            actor=actor,
+            stage_id=owner,
+            decision="repair_complete",
+            reason=reason,
+            metadata={
+                **_repair_event_metadata({**active_repair, "transaction_id": transaction_id}),
+                "next_stage": next_workflow.get("current_stage"),
+            },
+        )
+    except RuntimeStateError as exc:
+        try:
+            _restore_state_files(paths, state_snapshots)
+        except RuntimeStateError as rollback_exc:
+            raise RuntimeStateError(
+                "Repair completion partially wrote files and failed rollback after event append failure.",
+                details={
+                    "transaction_id": transaction_id,
+                    "stage_id": owner,
+                    "event_error": str(exc),
+                    "rollback_error": str(rollback_exc),
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from rollback_exc
+        raise RuntimeStateError(
+            "Repair completion event append failed; control files were restored.",
+            details={"transaction_id": transaction_id, "event_error": str(exc), "event_details": exc.details},
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
+
+    state = show_runtime_state(workspace=ws)
+    state["repair"] = {
+        "completed": True,
+        "repair_owner": owner,
+        "allowed_artifacts": allowed_artifacts,
+        "must_rerun_from": active_repair.get("must_rerun_from"),
+        "next_stage": next_workflow.get("current_stage"),
+    }
+    state["transaction"] = {
+        "transaction_id": transaction_id,
+        "stage_id": owner,
+        "decision": "repair_complete",
+    }
     return state
 
 
