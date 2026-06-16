@@ -853,6 +853,125 @@ def test_experiments_080_score_run_marks_missing_archive_incomplete(tmp_path, ca
     assert scorecard["reader_clean"]["status"] == "unknown"
 
 
+def test_experiments_080_score_run_rejects_archive_run_id_mismatch(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    _patch_archive_manifest(archive_manifest, run_id="mabw-20260614T000000Z-other0001")
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_RUN_ID_MISMATCH"
+    assert not scorecard_path.exists()
+
+
+def test_experiments_080_score_run_rejects_archive_runtime_manifest_run_id_mismatch(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    _patch_archive_manifest(archive_manifest, runtime_manifest_run_id="mabw-20260614T000000Z-other0001")
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_RUN_ID_MISMATCH"
+    assert not scorecard_path.exists()
+
+
+def test_experiments_080_score_run_rejects_tampered_finalize_report(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    _write_json(
+        archive_manifest.parent / "intermediate" / "finalize_report.json",
+        {"status": "pass", "reader_clean": {"status": "pass", "markdown_blocking_count": 0}},
+    )
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID"
+    assert not scorecard_path.exists()
+
+
+def test_experiments_080_score_run_rejects_tampered_gate_report(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    _write_json(
+        archive_manifest.parent / "intermediate" / "gates" / "auditor_quality_gate_report.json",
+        {"status": "pass", "gate_results": [{"gate_id": "tampered"}]},
+    )
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID"
+    assert not scorecard_path.exists()
+
+
+def test_experiments_080_score_run_rejects_tampered_artifact_registry(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    _write_json(
+        archive_manifest.parent / "control" / "artifact_registry.json",
+        {"schema_version": "multi-agent-brief-artifact-registry/v1", "artifacts": {"tampered": {}}},
+    )
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID"
+    assert not scorecard_path.exists()
+
+
 def test_experiments_080_score_run_rejects_invalid_run_record(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     _write_case(case_dir)
