@@ -1,33 +1,36 @@
-# Windows PowerShell 原生指南
+# Windows PowerShell Guide
 
-本项目支持 Windows 原生 PowerShell 路径，不要求 WSL 或 Git Bash。
+MABW supports a native Windows PowerShell path. Windows users do not need WSL
+or Git Bash to install and run the CLI.
 
-## 支持环境
+## Supported Environment
 
-- Windows 10 / Windows 11
-- Windows PowerShell 5.1 或 PowerShell 7
+- Windows 10 or Windows 11
+- Windows PowerShell 5.1 or PowerShell 7
 - Python 3.9+
 - Git for Windows
 
-PowerShell 是 Windows 默认推荐路径。WSL 是可选高级路径，不是必需条件。CMD 不是主要支持目标。
+PowerShell is the recommended Windows path. WSL is an optional advanced path,
+not a requirement. CMD is not the primary supported shell.
 
-## 安装 Python
+## Install Python
 
-推荐任选一种方式：
+The simplest option is:
 
 ```powershell
 winget install Python.Python.3.12
 ```
 
-或从 python.org 下载：
+You can also install Python from:
 
 ```text
 https://www.python.org/downloads/windows/
 ```
 
-使用 python.org 安装器时，请勾选 `Add python.exe to PATH`。安装后重新打开 PowerShell。
+If you use the python.org installer, select `Add python.exe to PATH`, then open
+a new PowerShell window.
 
-## Clone And Setup
+## Clone And Set Up
 
 ```powershell
 git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
@@ -37,16 +40,17 @@ cd multi-agent-brief-workflow
 multi-agent-brief version
 ```
 
-`scripts/setup.ps1` 会：
+`scripts/setup.ps1` will:
 
-- 搜索 `py -3`、`py`、`python`、`python3` 和常见安装路径
-- 严格检查 Python 3.9+
-- 创建 `.venv`
-- 安装 `.[dev]`
-- 验证 `python -m multi_agent_brief.cli.main version`
-- 验证 `.venv\Scripts\multi-agent-brief.exe version`
+- find `py -3`, `py`, `python`, `python3`, or common Python install paths;
+- require Python 3.9+;
+- create `.venv`;
+- install `.[dev]`;
+- verify `python -m multi_agent_brief.cli.main version`;
+- verify `.venv\Scripts\multi-agent-brief.exe version`.
 
-如果 PowerShell 执行策略拦截脚本，也可以只对 setup 脚本临时绕过：
+If PowerShell blocks script execution, bypass the policy only for this setup
+script:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
@@ -54,7 +58,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ## Create Your First Brief
 
-真实使用路径不是 demo，而是先收集需求、创建工作区，再生成 runtime handoff：
+The real user path is onboarding, workspace initialization, and runtime handoff:
 
 ```powershell
 multi-agent-brief onboard
@@ -62,43 +66,48 @@ multi-agent-brief init .\mabw-workspace --from-onboarding onboarding.json
 multi-agent-brief run --workspace .\mabw-workspace
 ```
 
+`run` creates the runtime handoff. It does not make Python write a full brief.
+
 ## Optional: Inspect The Demo
 
-demo 用于查看合成材料上的控制面和证据链，不是使用产品前的必经步骤。
+The demo is for inspecting the control surfaces and evidence chain on synthetic
+materials. It is not a required step before using MABW.
 
 ```powershell
-multi-agent-brief init --demo
-# Optional: install /generate-brief for Claude Desktop Code tab discovery
+multi-agent-brief init .\mabw-demo --demo --force
+multi-agent-brief run --workspace .\mabw-demo
+```
+
+If you use Claude Code from a source clone, you can also install the Claude
+writer command:
+
+```powershell
 multi-agent-brief claude install --repo-workdir .
-# Then use /generate-brief inside Claude Code CLI/Desktop Code tab
-# with this repository loaded, or use:
-# multi-agent-brief run --workspace <workspace>
 ```
 
-或直接运行示例输入：
-
-```powershell
-# Use /generate-brief only inside Claude Code with this repository loaded.
-# Generic chat clients should use multi-agent-brief run --workspace <workspace>.
-```
-
-## Init Workspace Directly
+## Initialize A Workspace Directly
 
 ```powershell
 multi-agent-brief init my-workspace
 ```
 
-Answer the interactive onboarding questions. For non-interactive agent runs, generate `onboarding.json` first and use `multi-agent-brief init my-workspace --from-onboarding onboarding.json`.
+For non-interactive runs, create `onboarding.json` first and use:
+
+```powershell
+multi-agent-brief init my-workspace --from-onboarding onboarding.json
+```
 
 ## Advanced: Experimental Installer
 
-Windows 用户安装器也可用：
+There is also a Windows installer asset:
 
 ```powershell
 irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
 ```
 
-但它当前在 support matrix 中仍是 Experimental CLI-only installer asset。README 首页推荐的默认路径仍是 source clone + `scripts/setup.ps1`。
+It is currently listed in the support matrix as an Experimental CLI-only
+installer asset. The default README path remains source clone plus
+`scripts/setup.ps1`.
 
 ## Run Tests
 
@@ -112,7 +121,7 @@ python -m pytest -q
 python scripts/generate_agent_configs.py --check
 ```
 
-重新生成自动文件：
+To regenerate generated agent files:
 
 ```powershell
 python scripts/generate_agent_configs.py --write
@@ -121,31 +130,31 @@ python scripts/generate_agent_configs.py --check
 
 ## No-Install Run
 
-PowerShell 不能使用 Bash 的 `PYTHONPATH=src command` 写法。请这样写：
+PowerShell does not use Bash's `PYTHONPATH=src command` syntax. Use:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m multi_agent_brief.cli.main run tests/fixtures/basic_market_brief/input --output output/basic_market_brief
+python -m multi_agent_brief.cli.main version
 Remove-Item Env:PYTHONPATH
 ```
 
-## 常见问题
+## Common Issues
 
 ### Activate.ps1 cannot be loaded
 
-如果激活虚拟环境时报 ExecutionPolicy 错误，运行：
+If PowerShell blocks virtual environment activation, run:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-然后重新执行：
+Then retry:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-也可以只对 setup 脚本临时绕过：
+You can also bypass the policy only for setup:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
@@ -153,35 +162,36 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ### python opens Microsoft Store
 
-这通常说明 `python` 指向 Microsoft Store placeholder，而不是真实 Python。
+This usually means `python` points to the Microsoft Store placeholder instead
+of a real Python install.
 
-解决方式：
+Install Python and reopen PowerShell:
 
 ```powershell
 winget install Python.Python.3.12
 ```
 
-安装后重新打开 PowerShell。也可以在 Windows 设置里关闭 App execution aliases 中的 Python alias。
+You can also disable Python App execution aliases in Windows Settings.
 
-### python3 not recognized
+### python3 is not recognized
 
-Windows 上推荐使用：
+On Windows, prefer:
 
 ```powershell
 python
 ```
 
-或 Python launcher：
+or the Python launcher:
 
 ```powershell
 py -3
 ```
 
-本项目文档中的 Windows 命令统一使用 `python`，不是 `python3`。
+Windows examples in this repository use `python`, not `python3`.
 
 ### PYTHONPATH=src does not work in PowerShell
 
-`PYTHONPATH=src python ...` 是 Bash 写法。PowerShell 使用：
+`PYTHONPATH=src python ...` is Bash syntax. In PowerShell:
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -191,7 +201,7 @@ Remove-Item Env:PYTHONPATH
 
 ### Paths With Spaces
 
-路径中有空格时请加引号：
+Quote paths that contain spaces:
 
 ```powershell
 cd "C:\Users\you\Documents\multi-agent-brief-workflow"
@@ -200,8 +210,10 @@ python scripts/generate_agent_configs.py --check
 
 ### WSL Is Optional
 
-WSL/Git Bash 可以使用 macOS/Linux 文档里的 Bash 命令，但 Windows 用户不需要安装 WSL 才能使用本项目。
+WSL and Git Bash can run the macOS/Linux Bash commands, but Windows users do
+not need WSL to use MABW.
 
 ### Git Hook Is Optional
 
-`.githooks/pre-push` 是维护者可选 hook，普通 Windows 用户不需要安装。
+`.githooks/pre-push` is an optional maintainer hook. Regular Windows users do
+not need to install it.

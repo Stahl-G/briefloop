@@ -14,7 +14,12 @@ Code. The verbs are:
 `/mabw` is the writer-facing entrypoint. `/generate-brief` remains the
 compatibility command for the full delegated subagent workflow.
 
-For Chinese writer-facing operation notes, see:
+For writer-facing operation notes, see:
+
+- `docs/golden-path.md`
+- `docs/weekly-use.md`
+
+Chinese versions:
 
 - `docs/golden-path.zh-CN.md`
 - `docs/weekly-use.zh-CN.md`

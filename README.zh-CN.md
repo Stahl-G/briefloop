@@ -279,7 +279,7 @@ hermes plugins enable mabw
 * 源发现候选合并（包括 `llm_decide` source profile）：`multi-agent-brief sources decide --config <workspace>/config.yaml --merge`
 * 飞书集成（采集 + 推送）：见 [docs/feishu-integration.md](docs/feishu-integration.md)
 * SEC Filing 解析：见 [docs/opencli-source-provider.md](docs/opencli-source-provider.md)
-* Windows PowerShell：见 [docs/windows-powershell.md](docs/windows-powershell.md)
+* Windows PowerShell：见 [docs/windows-powershell.zh-CN.md](docs/windows-powershell.zh-CN.md)
 
 常用命令片段：
 
@@ -339,6 +339,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 ## 文档索引
 
 [架构](docs/architecture.zh-CN.md) ·
+[文档语言索引](docs/README.md) ·
 [技术报告 v0.1.2](docs/mabw-architecture-reference-v0.1.2.md) ·
 [司乐契约模型](docs/orchestrator-contracts.zh-CN.md) ·
 [质量门禁](docs/harness.md) ·

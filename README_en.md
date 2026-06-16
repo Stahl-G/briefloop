@@ -177,7 +177,7 @@ Then use the five writer verbs inside Claude Code CLI or the Claude Desktop Code
 /mabw deliver <workspace>
 ```
 
-See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Chinese writer-facing operator notes are available in [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
+See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Writer-facing operator notes are available in [docs/golden-path.md](docs/golden-path.md) and [docs/weekly-use.md](docs/weekly-use.md); Chinese versions are [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
 
 ## Product Boundary 🧱
 
@@ -202,8 +202,8 @@ MABW does not have a "lite mode." The entry cost can be reduced, but the account
 | Path | Best for | How to start | What does not get lighter |
 |---|---|---|---|
 | Look once | You want to decide whether the project is relevant | Read the [public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md), then run `bash scripts/demo.sh` and `bash scripts/demo-deep-dive.sh` | The demo shows control behavior and traceability, not output-quality improvement |
-| Run once | You want to try a few local materials | Skip search backend setup, use a small set of local text sources, and follow the Chinese [golden path](docs/golden-path.zh-CN.md) | Claim Ledger, gates, reader-final gate, and human delivery still apply |
-| Live with it | You want a weekly workflow | Configure search sources, cadence, feedback, and approved preferences with the [weekly-use script](docs/weekly-use.zh-CN.md) | Unapproved preferences do not take effect; approved preferences only affect later frozen runs |
+| Run once | You want to try a few local materials | Skip search backend setup, use a small set of local text sources, and follow the [golden path](docs/golden-path.md) | Claim Ledger, gates, reader-final gate, and human delivery still apply |
+| Live with it | You want a weekly workflow | Configure search sources, cadence, feedback, and approved preferences with the [weekly-use script](docs/weekly-use.md) | Unapproved preferences do not take effect; approved preferences only affect later frozen runs |
 
 Do not use "audit an arbitrary external AI report" as the lightweight entrypoint. Without a Claim Ledger, external drafts can only receive shallow checks and cannot provide MABW's accountability guarantees.
 
@@ -249,7 +249,7 @@ still runs through `/generate-brief <workspace>`. `status` calls the read-only
 `multi-agent-brief status` helper, `feedback` records and triages without acting downstream, and `deliver` must go
 through gates, the reader-final gate, and `state finalize-complete`.
 
-See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Chinese writer-facing operator notes are available in [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
+See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Writer-facing operator notes are available in [docs/golden-path.md](docs/golden-path.md) and [docs/weekly-use.md](docs/weekly-use.md); Chinese versions are [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
 
 ### Other Runtimes
 
@@ -280,6 +280,7 @@ Runtime installation details, workspace-local runtime kits, and common issues ar
 - Feishu integration for collection and delivery: [docs/feishu-integration.md](docs/feishu-integration.md)
 - SEC filing parsing: [docs/opencli-source-provider.md](docs/opencli-source-provider.md)
 - Windows PowerShell: [docs/windows-powershell.md](docs/windows-powershell.md)
+- Documentation language matrix: [docs/README.md](docs/README.md)
 
 Common command snippets:
 
