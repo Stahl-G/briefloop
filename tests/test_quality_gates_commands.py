@@ -464,9 +464,13 @@ def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, cap
     assert _auditor_report_path(ws).exists()
     assert not _finalize_report_path(ws).exists()
     findings = report["findings"]
-    assert any(finding["finding_type"] == "number_without_source" for finding in findings)
+    number_finding = next(finding for finding in findings if finding["finding_type"] == "number_without_source")
+    assert number_finding["rule_summary"] == "Numbers in the brief must be tied to source-backed Claim Ledger support."
+    assert number_finding["docs_anchor"] == "docs/agent-contract.md#number_without_source"
     assert any(finding["blocking_level"] == "blocking" for finding in findings)
-    assert any(result["gate_id"] == "material_fact" for result in report["gate_results"])
+    material_result = next(result for result in report["gate_results"] if result["gate_id"] == "material_fact")
+    assert "Claim Ledger entries" in material_result["rule_summary"]
+    assert material_result["docs_anchor"] == "docs/agent-contract.md#material_fact"
     event_types = [event["event_type"] for event in _events(ws)]
     assert event_types.count("quality_gate_checked") == 1
     assert event_types.count("quality_gate_blocked") == 1
