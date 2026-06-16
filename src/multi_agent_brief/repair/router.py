@@ -11,7 +11,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.orchestrator.runtime_state import runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state import (
+    load_artifact_contracts,
+    load_stage_specs,
+    runtime_state_paths,
+    utc_now,
+)
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import _build_artifact_registry
+from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.quality_gates.contract import quality_gate_paths
 
 
@@ -130,6 +137,7 @@ def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[
         findings.extend(_findings_from_payload(payload, source=label, path=_workspace_relative(workspace, path)))
     registry = payloads.get("artifact_registry")
     findings.extend(_findings_from_artifact_registry(registry))
+    findings.extend(_findings_from_frozen_artifact_integrity(workspace, payloads))
     return _dedupe_findings(findings), input_errors
 
 
@@ -140,6 +148,7 @@ def _input_paths(workspace: Path) -> dict[str, Path]:
         "auditor_quality_gate_report": gate_paths["auditor_quality_gate_report"],
         "finalize_quality_gate_report": gate_paths["finalize_quality_gate_report"],
         "audit_report": workspace / INTERMEDIATE_DIR / "audit_report.json",
+        "runtime_manifest": runtime_paths["runtime_manifest"],
         "workflow_state": runtime_paths["workflow_state"],
         "artifact_registry": runtime_paths["artifact_registry"],
     }
@@ -198,6 +207,96 @@ def _findings_from_artifact_registry(registry: dict[str, Any] | None) -> list[di
             "message": str(record.get("blocking_reason") or f"Artifact {artifact_id} is invalid."),
         })
     return findings
+
+
+def _findings_from_frozen_artifact_integrity(
+    workspace: Path,
+    payloads: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    manifest = payloads.get("runtime_manifest")
+    workflow = payloads.get("workflow_state")
+    old_registry = payloads.get("artifact_registry")
+    if not isinstance(manifest, dict) or not isinstance(workflow, dict) or not isinstance(old_registry, dict):
+        return []
+    run_id = str(manifest.get("run_id") or "")
+    if not run_id:
+        return []
+    try:
+        repo = resolve_repo_workdir(None, workspace=workspace)
+        stages = load_stage_specs(repo)
+        artifacts = load_artifact_contracts(repo)
+        current_registry = _build_artifact_registry(
+            workspace=workspace,
+            run_id=run_id,
+            artifacts=artifacts,
+            workflow=workflow,
+            updated_at=utc_now(),
+        )
+    except Exception:
+        return []
+
+    old_records = old_registry.get("artifacts")
+    current_records = current_registry.get("artifacts")
+    if not isinstance(old_records, dict) or not isinstance(current_records, dict):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    for artifact in artifacts:
+        artifact_id = str(artifact.get("artifact_id") or "")
+        owner = str(artifact.get("producer_stage") or "")
+        if not artifact_id or not owner or not _stage_is_complete(workflow, owner):
+            continue
+        old_record = old_records.get(artifact_id)
+        current_record = current_records.get(artifact_id)
+        if not isinstance(old_record, dict) or not isinstance(current_record, dict):
+            continue
+        old_sha = str(old_record.get("sha256") or "")
+        current_sha = str(current_record.get("sha256") or "")
+        if not old_sha or (current_sha and current_sha == old_sha):
+            continue
+        path = str(current_record.get("path") or old_record.get("path") or artifact.get("path") or artifact_id)
+        if not current_sha or current_record.get("status") == "missing":
+            message = (
+                f"Frozen artifact '{path}' from owner stage '{owner}' is missing after stage-complete; "
+                "route repair back to the owner stage."
+            )
+        else:
+            message = (
+                f"Frozen artifact '{path}' from owner stage '{owner}' changed after stage-complete; "
+                "route repair back to the owner stage instead of downstream in-place conversion."
+            )
+        findings.append(
+            {
+                "_source": "transaction_integrity",
+                "_source_path": "output/intermediate/artifact_registry.json",
+                "finding_id": f"TX_FROZEN_{artifact_id}",
+                "finding_type": "frozen_artifact_changed",
+                "category": "transaction_integrity",
+                "severity": "high",
+                "artifact_id": artifact_id,
+                "repair_owner": owner,
+                "repair_stage_id": owner,
+                "repair_artifact_id": artifact_id,
+                "message": message,
+                "recommended_action": (
+                    "Use repair start/complete for local inspection, or start a fresh workspace for "
+                    "reference-grade evidence."
+                ),
+                "run_integrity_effect": {
+                    "reference_eligible": False,
+                    "reason": "Frozen artifact changed after stage completion.",
+                },
+            }
+        )
+    return findings
+
+
+def _stage_is_complete(workflow: dict[str, Any], stage_id: str) -> bool:
+    statuses = workflow.get("stage_statuses")
+    if not isinstance(statuses, dict):
+        return False
+    stage = statuses.get(stage_id)
+    return isinstance(stage, dict) and stage.get("status") == "complete"
 
 
 def _route_for_finding(finding: dict[str, Any]) -> dict[str, Any] | None:
@@ -338,6 +437,8 @@ def _route(
         "must_rerun_from": must_rerun_from,
         "blocked_direct_edits": blocked_direct_edits,
         "reason": reason,
+        "recommended_action": source.get("recommended_action"),
+        "run_integrity_effect": source.get("run_integrity_effect"),
         "source": {
             "file": source.get("_source_path"),
             "kind": source.get("_source"),
@@ -356,6 +457,8 @@ def _no_route() -> dict[str, Any]:
         "must_rerun_from": "",
         "blocked_direct_edits": [],
         "reason": "No deterministic repair route found.",
+        "recommended_action": "start_fresh_workspace_or_request_human_review",
+        "run_integrity_effect": None,
         "source": {},
     }
 

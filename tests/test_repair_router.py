@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
+    initialize_runtime_state,
+    runtime_state_paths,
+    utc_now,
+)
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -75,6 +80,47 @@ def _write_legacy_quality_gate_report(ws: Path, finding: dict[str, object]) -> N
     )
 
 
+def _set_workflow_stages(ws: Path, *, completed: list[str], current_stage: str) -> None:
+    path = runtime_state_paths(ws)["workflow_state"]
+    workflow = json.loads(path.read_text(encoding="utf-8"))
+    now = utc_now()
+    statuses = {}
+    for stage_id in workflow.get("stage_statuses") or {}:
+        if stage_id in completed:
+            statuses[stage_id] = {"status": "complete", "reason": f"{stage_id} fixture complete", "updated_at": now}
+        elif stage_id == current_stage:
+            statuses[stage_id] = {"status": "ready", "reason": "", "updated_at": now}
+        else:
+            statuses[stage_id] = {"status": "pending", "reason": "", "updated_at": now}
+    workflow["current_stage"] = current_stage
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["updated_at"] = now
+    workflow["stage_statuses"] = statuses
+    path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_valid_claim_ledger(ws: Path, statement: str = "ExampleCo opened a demo facility.") -> None:
+    (_intermediate(ws) / "claim_ledger.json").write_text(
+        json.dumps(
+            [
+                {
+                    "claim_id": "CL-0001",
+                    "statement": statement,
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "source_url": "https://example.com",
+                    "source_type": "web_search",
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
@@ -100,6 +146,61 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     assert "output/intermediate/audit_report.json" in payload["blocked_direct_edits"]
     assert not (ws / "output" / "intermediate" / "repair_plan.json").exists()
     assert runtime_state_paths(ws)["event_log"].read_bytes() == before_events
+
+
+def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_valid_claim_ledger(ws)
+    (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nOriginal editor text.\n", encoding="utf-8")
+    _set_workflow_stages(
+        ws,
+        completed=["doctor", "source-discovery", "input-governance", "scout", "screener", "claim-ledger", "analyst", "editor"],
+        current_stage="auditor",
+    )
+    check_runtime_state(workspace=ws)
+    workflow_before = runtime_state_paths(ws)["workflow_state"].read_bytes()
+    registry_before = runtime_state_paths(ws)["artifact_registry"].read_bytes()
+    event_log_before = runtime_state_paths(ws)["event_log"].read_bytes()
+    (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nChanged downstream patch.\n", encoding="utf-8")
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "editor"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert payload["must_rerun_from"] == "auditor"
+    assert payload["run_integrity_effect"]["reference_eligible"] is False
+    assert payload["source"]["kind"] == "transaction_integrity"
+    assert payload["source"]["finding_type"] == "frozen_artifact_changed"
+    assert runtime_state_paths(ws)["workflow_state"].read_bytes() == workflow_before
+    assert runtime_state_paths(ws)["artifact_registry"].read_bytes() == registry_before
+    assert runtime_state_paths(ws)["event_log"].read_bytes() == event_log_before
+
+
+def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_valid_claim_ledger(ws)
+    _set_workflow_stages(
+        ws,
+        completed=["doctor", "source-discovery", "input-governance", "scout", "screener", "claim-ledger"],
+        current_stage="analyst",
+    )
+    check_runtime_state(workspace=ws)
+    registry_before = runtime_state_paths(ws)["artifact_registry"].read_bytes()
+    _write_valid_claim_ledger(ws, statement="Changed ledger text.")
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "claim-ledger"
+    assert payload["allowed_artifacts"] == ["output/intermediate/claim_ledger.json"]
+    assert payload["must_rerun_from"] == "analyst"
+    assert payload["run_integrity_effect"]["reference_eligible"] is False
+    assert runtime_state_paths(ws)["artifact_registry"].read_bytes() == registry_before
 
 
 def test_repair_route_maps_claim_ledger_invalid_registry_to_claim_ledger(tmp_path, capsys):
