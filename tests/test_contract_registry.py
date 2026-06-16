@@ -71,6 +71,27 @@ def test_audited_brief_ownership_contract_is_editor_scoped():
         assert "analyst_draft_snapshot" in analyst.expected_artifacts
 
 
+def test_claim_drafts_contract_is_optional_experimental_freeze_input():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        claim_drafts = registry.artifact("claim_drafts")
+        claim_ledger = registry.artifact("claim_ledger")
+        claim_ledger_stage = registry.stage("claim-ledger")
+        assert claim_drafts is not None
+        assert claim_ledger is not None
+        assert claim_ledger_stage is not None
+        assert claim_drafts.required is False
+        assert claim_drafts.path == "output/intermediate/claim_drafts.json"
+        assert claim_drafts.validation_result == "experimental_freeze_input"
+        assert "claim_drafts" not in claim_ledger_stage.produces
+        assert "claim_drafts" not in claim_ledger_stage.expected_artifacts
+        assert claim_ledger.required is True
+        assert "claim_ledger" in claim_ledger_stage.produces
+        assert "claim_ledger" in claim_ledger_stage.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"

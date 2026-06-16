@@ -223,6 +223,23 @@ def test_generated_analyst_and_editor_explain_audited_brief_ownership(manifest):
     assert "Own the final auditable output/intermediate/audited_brief.md" in rendered
 
 
+def test_generated_assets_do_not_claim_claim_freeze_is_implemented(manifest):
+    rendered_parts: list[str] = [render_opencode_command_generate_brief(manifest)]
+    for name, role in manifest["roles"].items():
+        rendered_parts.extend([
+            render_codex_agent(name, role, manifest),
+            render_claude_agent(name, role, manifest),
+            render_opencode_agent(name, role, manifest),
+        ])
+    rendered_parts.extend(render_docs(manifest).values())
+    rendered = "\n".join(rendered_parts)
+
+    assert "Claim Freeze is implemented" not in rendered
+    assert "claim_drafts.json" not in rendered
+    assert "multi-agent-brief state freeze" not in rendered
+    assert "freeze-claim" not in rendered
+
+
 def test_generated_orchestrator_separates_runtime_and_repo_development_modes(manifest):
     role = manifest["roles"]["orchestrator"]
     rendered = "\n".join([

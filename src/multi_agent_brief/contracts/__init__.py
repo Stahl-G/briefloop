@@ -10,6 +10,7 @@ from multi_agent_brief.contracts.registry import (
 from multi_agent_brief.contracts.schemas import (
     AuditReportContract,
     CandidateItemContract,
+    ClaimDraftContract,
     ClaimContract,
     SourceItemContract,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "StageSpec",
     "AuditReportContract",
     "CandidateItemContract",
+    "ClaimDraftContract",
     "ClaimContract",
     "SourceItemContract",
     "migrate_claim_v1_to_v2",
