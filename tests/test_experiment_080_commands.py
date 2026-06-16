@@ -279,6 +279,60 @@ def _score_args(case_dir: Path, run_record: Path, output: Path) -> list[str]:
     ]
 
 
+def _assessment_args(scorecard: Path, assessment: Path, output: Path) -> list[str]:
+    return [
+        "experiments",
+        "080",
+        "import-assessment",
+        "--scorecard",
+        str(scorecard),
+        "--assessment",
+        str(assessment),
+        "--output",
+        str(output),
+        "--json",
+    ]
+
+
+def _assessment_payload(*, method: str = "human", entry_id: str = "AG-0001") -> dict:
+    return {
+        "schema_version": "mabw.experiment_080.assessment.v1",
+        "experiment_id": "MABW-080",
+        "case_id": "weekly_public_001",
+        "condition": "memory",
+        "run_id": "mabw-20260614T000000Z-public0001",
+        "assessed_at": "2026-06-16T00:00:00Z",
+        "assessed_by": "masked-human-reviewer",
+        "guidance_scores": [
+            {
+                "entry_id": entry_id,
+                "relevant": True,
+                "manifestation_score": 2,
+                "overapplication": False,
+                "assessment_method": method,
+                "evidence_excerpt": "The brief leads with the business implication.",
+            }
+        ],
+    }
+
+
+def _write_scorecard_draft_from_fixture(tmp_path: Path, capsys) -> tuple[Path, Path]:
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    capsys.readouterr()
+    return case_dir, scorecard_path
+
+
 def test_experiments_080_validate_case_json_ok(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     _write_case(case_dir)
@@ -985,3 +1039,215 @@ def test_experiments_080_score_run_rejects_invalid_run_record(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["details"]["code"] == "E_EXPERIMENT_080_RUN_RECORD_INVALID"
     assert not scorecard_path.exists()
+
+
+def test_experiments_080_import_assessment_promotes_to_a_controlled(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["validity_class"] == "A_controlled"
+    assert payload["assessment_status"] == "assessed"
+    assessed = json.loads(output_path.read_text(encoding="utf-8"))
+    assert validate_scorecard(assessed) == []
+    assert assessed["validity_class"] == "A_controlled"
+    assert assessed["assessment_status"] == "assessed"
+    assert assessed["guidance_scores"][0]["assessment_method"] == "human"
+    assert assessed["guidance_assessment"]["source"] == "imported_assessment"
+    assert "Python did not judge guidance manifestation" in assessed["notes"][-1]
+
+
+def test_experiments_080_import_assessment_llm_only_becomes_b_integration(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="llm_only"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 0
+    json.loads(capsys.readouterr().out)
+    assessed = json.loads(output_path.read_text(encoding="utf-8"))
+    assert assessed["validity_class"] == "B_integration"
+    assert assessed["guidance_scores"][0]["assessment_method"] == "llm_only"
+
+
+def test_experiments_080_import_assessment_keeps_fact_layer_mismatch_invalid(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST, source_pack_sha="c" * 64)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    capsys.readouterr()
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 0
+    json.loads(capsys.readouterr().out)
+    assessed = json.loads(output_path.read_text(encoding="utf-8"))
+    assert assessed["validity_class"] == "invalid_fact_layer_mismatch"
+
+
+def test_experiments_080_import_assessment_rejects_identity_mismatch(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    assessment = _assessment_payload(method="human")
+    assessment["run_id"] = "mabw-20260614T000000Z-other0001"
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, assessment)
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_MISMATCH"
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_assessment_rejects_unknown_guidance_entry(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human", entry_id="AG-9999"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH"
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_assessment_rejects_missing_guidance_entry(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    scorecard["guidance_assessment"]["guidance_entry_ids"].append("AG-0002")
+    _write_json(scorecard_path, scorecard)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH"
+    assert payload["details"]["missing_entry_ids"] == ["AG-0002"]
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_assessment_rejects_missing_scorecard_guidance_binding(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    del scorecard["guidance_assessment"]
+    _write_json(scorecard_path, scorecard)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human", entry_id="AG-9999"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH"
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_assessment_rejects_empty_scorecard_guidance_binding(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    scorecard["guidance_assessment"]["guidance_entry_ids"] = []
+    _write_json(scorecard_path, scorecard)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH"
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_assessment_rejects_duplicate_scorecard_guidance_binding(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    scorecard["guidance_assessment"]["guidance_entry_ids"] = ["AG-0001", "AG-0001"]
+    _write_json(scorecard_path, scorecard)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH"
+    assert payload["details"]["duplicate_entry_ids"] == ["AG-0001"]
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_assessment_rejects_already_assessed_scorecard(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    scorecard["guidance_assessment"]["status"] = "assessed"
+    _write_json(scorecard_path, scorecard)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH"
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_assessment_rejects_different_existing_output(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    output_path.write_text("{}\n", encoding="utf-8")
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_OUTPUT_EXISTS"
+    assert output_path.read_text(encoding="utf-8") == "{}\n"
+
+
+def test_experiments_080_import_assessment_is_idempotent_when_output_matches(tmp_path, capsys):
+    _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+    assert main(_assessment_args(scorecard_path, assessment_path, output_path)) == 0
+    capsys.readouterr()
+    before = output_path.read_bytes()
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["written"] is False
+    assert output_path.read_bytes() == before

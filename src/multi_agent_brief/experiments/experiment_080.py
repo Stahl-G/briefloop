@@ -1,10 +1,10 @@
 """MABW-080 experiment harness validation and metadata registration.
 
 080 validates whether approved Improvement Memory guidance manifests under a
-frozen fact layer. Schema validators are side-effect free. ``register-run``
-and ``score-run`` write only the requested experiment metadata outputs and must
-not mutate workspace runtime state, archive files, case files, agent assets, or
-Improvement Ledger files.
+frozen fact layer. Schema validators are side-effect free. ``register-run``,
+``score-run``, and ``import-assessment`` write only the requested experiment
+metadata outputs and must not mutate workspace runtime state, archive files,
+case files, agent assets, or Improvement Ledger files.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -31,6 +32,7 @@ FROZEN_FACT_LAYER_SCHEMA = "mabw.experiment_080.frozen_fact_layer.v1"
 GUIDANCE_SET_SCHEMA = "mabw.experiment_080.guidance_set.v1"
 RUN_RECORD_SCHEMA = "mabw.experiment_080.run_record.v1"
 SCORECARD_SCHEMA = "mabw.experiment_080.scorecard.v1"
+ASSESSMENT_SCHEMA = "mabw.experiment_080.assessment.v1"
 CASE_VALIDATION_SCHEMA = "mabw.experiment_080.case_validation.v1"
 RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
 
@@ -47,6 +49,18 @@ ALLOWED_GUIDANCE_SOURCES = {"improvement_ledger", "manual", "prompt_only"}
 ALLOWED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review", "llm_only"}
 A_CONTROLLED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review"}
 ALLOWED_SCORECARD_ASSESSMENT_STATUSES = {"assessed", "needs_assessment"}
+A_CONTROLLED_REQUIRED_CONTROL_KEYS = (
+    "terminal_workflow",
+    "run_integrity_clean",
+    "reference_eligible",
+    "artifact_registry_valid",
+    "quality_gates_passed",
+    "archive_present",
+    "archive_schema_valid",
+    "finalize_complete",
+    "finalize_report_pass",
+    "timing_available",
+)
 
 REQUIRED_FACT_ARTIFACT_IDS = {
     "durable_source_evidence_or_source_pack",
@@ -650,6 +664,90 @@ def score_run_record(
     }
 
 
+def import_assessment(
+    *,
+    scorecard: str | Path,
+    assessment: str | Path,
+    output: str | Path,
+) -> dict[str, Any]:
+    """Import human/assisted manifestation assessment into a scorecard.
+
+    This command validates and merges externally supplied assessment metadata.
+    It does not judge whether guidance manifested, prose improved, or factual
+    regressions occurred.
+    """
+
+    scorecard_path = Path(scorecard).expanduser()
+    if not scorecard_path.is_absolute():
+        scorecard_path = (Path.cwd() / scorecard_path).resolve()
+    else:
+        scorecard_path = scorecard_path.resolve()
+    assessment_path = Path(assessment).expanduser()
+    if not assessment_path.is_absolute():
+        assessment_path = (Path.cwd() / assessment_path).resolve()
+    else:
+        assessment_path = assessment_path.resolve()
+    output_path = Path(output).expanduser()
+    if not output_path.is_absolute():
+        output_path = (Path.cwd() / output_path).resolve()
+    else:
+        output_path = output_path.resolve()
+
+    scorecard_payload = _load_json_object(scorecard_path, label="scorecard")
+    scorecard_diagnostics = validate_scorecard(scorecard_payload)
+    if scorecard_diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "scorecard.json failed schema validation.",
+            errors=[diagnostic.to_dict() for diagnostic in scorecard_diagnostics],
+        )
+    assessment_payload = _load_json_object(assessment_path, label="assessment")
+    assessment_diagnostics = validate_assessment(assessment_payload)
+    if assessment_diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_INVALID",
+            "assessment.json failed schema validation.",
+            errors=[diagnostic.to_dict() for diagnostic in assessment_diagnostics],
+        )
+    _validate_assessment_identity(scorecard_payload, assessment_payload)
+    guidance_scores = _assessment_guidance_scores_for_scorecard(
+        scorecard_payload=scorecard_payload,
+        assessment=assessment_payload,
+    )
+    assessed_scorecard = _scorecard_with_imported_assessment(
+        scorecard=scorecard_payload,
+        assessment=assessment_payload,
+        guidance_scores=guidance_scores,
+    )
+    diagnostics = validate_scorecard(assessed_scorecard)
+    if diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "Assessed scorecard.json failed schema validation.",
+            errors=[diagnostic.to_dict() for diagnostic in diagnostics],
+        )
+
+    record_bytes = _json_bytes(assessed_scorecard)
+    written = _write_experiment_output_idempotently(
+        output_path,
+        record_bytes,
+        artifact_label="scorecard",
+    )
+    return {
+        "ok": True,
+        "schema_version": SCORECARD_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": assessed_scorecard["case_id"],
+        "condition": assessed_scorecard["condition"],
+        "run_id": assessed_scorecard["run_id"],
+        "validity_class": assessed_scorecard["validity_class"],
+        "assessment_status": assessed_scorecard["assessment_status"],
+        "output": str(output_path),
+        "written": written,
+        "scorecard": assessed_scorecard,
+    }
+
+
 def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]:
     """Validate ``scorecard.json``."""
 
@@ -750,6 +848,62 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             reader_clean=reader_clean,
             diagnostics=diagnostics,
         )
+    return diagnostics
+
+
+def validate_assessment(payload: dict[str, Any]) -> list[Experiment080Diagnostic]:
+    """Validate imported MABW-080 manifestation assessment metadata."""
+
+    diagnostics: list[Experiment080Diagnostic] = []
+    _require_schema(payload, expected=ASSESSMENT_SCHEMA, label="assessment", diagnostics=diagnostics)
+    if payload.get("experiment_id") != EXPERIMENT_080_ID:
+        diagnostics.append(_diag(
+            "invalid_experiment_id",
+            f"assessment.experiment_id must be {EXPERIMENT_080_ID}.",
+            path="assessment.experiment_id",
+        ))
+    _validate_case_id_field(payload.get("case_id"), diagnostics, path="assessment.case_id")
+    _validate_condition(payload.get("condition"), diagnostics, path="assessment.condition")
+    _require_non_empty_string(payload.get("run_id"), diagnostics, path="assessment.run_id")
+    _require_non_empty_string(payload.get("assessed_at"), diagnostics, path="assessment.assessed_at")
+    _require_non_empty_string(payload.get("assessed_by"), diagnostics, path="assessment.assessed_by")
+    if "validity_class" in payload:
+        diagnostics.append(_diag(
+            "assessment_must_not_set_validity_class",
+            "assessment files must not set scorecard validity_class; Python derives it from control fields and imported scores.",
+            path="assessment.validity_class",
+        ))
+
+    guidance_scores = payload.get("guidance_scores")
+    if not isinstance(guidance_scores, list):
+        diagnostics.append(_diag(
+            "invalid_guidance_scores",
+            "assessment.guidance_scores must be a non-empty list.",
+            path="assessment.guidance_scores",
+        ))
+        guidance_scores = []
+    elif not guidance_scores:
+        diagnostics.append(_diag(
+            "empty_guidance_scores",
+            "assessment.guidance_scores must contain at least one guidance score.",
+            path="assessment.guidance_scores",
+        ))
+    seen_guidance_score_ids: set[str] = set()
+    for idx, score in enumerate(guidance_scores):
+        path = f"assessment.guidance_scores[{idx}]"
+        if not isinstance(score, dict):
+            diagnostics.append(_diag("invalid_guidance_score", f"{path} must be an object.", path=path))
+            continue
+        entry_id = score.get("entry_id")
+        if isinstance(entry_id, str):
+            if entry_id in seen_guidance_score_ids:
+                diagnostics.append(_diag(
+                    "duplicate_guidance_score_entry_id",
+                    f"{path}.entry_id is duplicated: {entry_id}.",
+                    path=f"{path}.entry_id",
+                ))
+            seen_guidance_score_ids.add(entry_id)
+        _validate_guidance_score(score, diagnostics, path=path)
     return diagnostics
 
 
@@ -900,23 +1054,166 @@ def _scorecard_validity_class(
         return "invalid_contaminated"
     if not fact_layer_matches:
         return "invalid_fact_layer_mismatch"
-    required_control_keys = (
-        "terminal_workflow",
-        "run_integrity_clean",
-        "reference_eligible",
-        "artifact_registry_valid",
-        "quality_gates_passed",
-        "archive_present",
-        "archive_schema_valid",
-        "finalize_complete",
-        "finalize_report_pass",
-        "timing_available",
-    )
-    if any(control_integrity.get(key) is not True for key in required_control_keys):
+    if any(control_integrity.get(key) is not True for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS):
         return "invalid_incomplete"
     if reader_clean.get("pass") is not True:
         return "invalid_incomplete"
     return "invalid_incomplete"
+
+
+def _validate_assessment_identity(scorecard: dict[str, Any], assessment: dict[str, Any]) -> None:
+    mismatches = [
+        key
+        for key in ("case_id", "condition", "run_id")
+        if scorecard.get(key) != assessment.get(key)
+    ]
+    if mismatches:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_MISMATCH",
+            "assessment identity does not match scorecard.",
+            mismatches=mismatches,
+            scorecard_identity={
+                "case_id": scorecard.get("case_id"),
+                "condition": scorecard.get("condition"),
+                "run_id": scorecard.get("run_id"),
+            },
+            assessment_identity={
+                "case_id": assessment.get("case_id"),
+                "condition": assessment.get("condition"),
+                "run_id": assessment.get("run_id"),
+            },
+        )
+
+
+def _assessment_guidance_scores_for_scorecard(
+    *,
+    scorecard_payload: dict[str, Any],
+    assessment: dict[str, Any],
+) -> list[dict[str, Any]]:
+    guidance_assessment = (
+        scorecard_payload.get("guidance_assessment")
+        if isinstance(scorecard_payload.get("guidance_assessment"), dict)
+        else {}
+    )
+    required = _required_guidance_entry_ids_for_assessment(guidance_assessment)
+    scores = assessment.get("guidance_scores") if isinstance(assessment.get("guidance_scores"), list) else []
+    score_ids = {score.get("entry_id") for score in scores if isinstance(score, dict)}
+    unknown = sorted(entry_id for entry_id in score_ids if isinstance(entry_id, str) and entry_id not in required)
+    missing = sorted(required - {entry_id for entry_id in score_ids if isinstance(entry_id, str)})
+    if unknown or missing:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH",
+            "assessment.guidance_scores must cover exactly the scorecard guidance entries.",
+            missing_entry_ids=missing,
+            unknown_entry_ids=unknown,
+        )
+    return sorted(
+        [deepcopy(score) for score in scores if isinstance(score, dict)],
+        key=lambda score: str(score.get("entry_id") or ""),
+    )
+
+
+def _required_guidance_entry_ids_for_assessment(guidance_assessment: dict[str, Any]) -> set[str]:
+    if guidance_assessment.get("status") != "needs_assessment":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH",
+            "scorecard.guidance_assessment.status must be needs_assessment before assessment import.",
+            guidance_assessment_status=guidance_assessment.get("status"),
+        )
+    entry_ids = guidance_assessment.get("guidance_entry_ids")
+    if not isinstance(entry_ids, list) or not entry_ids:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH",
+            "scorecard.guidance_assessment.guidance_entry_ids must be a non-empty list before assessment import.",
+        )
+    required: set[str] = set()
+    invalid: list[Any] = []
+    duplicates: list[str] = []
+    for entry_id in entry_ids:
+        if not isinstance(entry_id, str) or not _GUIDANCE_ENTRY_ID_RE.match(entry_id):
+            invalid.append(entry_id)
+            continue
+        if entry_id in required:
+            duplicates.append(entry_id)
+        required.add(entry_id)
+    if invalid or duplicates:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH",
+            "scorecard.guidance_assessment.guidance_entry_ids must contain unique AG-0001 style ids.",
+            invalid_entry_ids=invalid,
+            duplicate_entry_ids=sorted(set(duplicates)),
+        )
+    return required
+
+
+def _scorecard_with_imported_assessment(
+    *,
+    scorecard: dict[str, Any],
+    assessment: dict[str, Any],
+    guidance_scores: list[dict[str, Any]],
+) -> dict[str, Any]:
+    assessed = deepcopy(scorecard)
+    assessed["assessment_status"] = "assessed"
+    assessed["guidance_scores"] = guidance_scores
+    existing_guidance_assessment = (
+        assessed.get("guidance_assessment")
+        if isinstance(assessed.get("guidance_assessment"), dict)
+        else {}
+    )
+    imported_assessment = {
+        "status": "assessed",
+        "source": "imported_assessment",
+        "assessment_schema_version": ASSESSMENT_SCHEMA,
+        "assessed_at": assessment.get("assessed_at"),
+        "assessed_by": assessment.get("assessed_by"),
+        "assessment_methods": sorted({
+            score.get("assessment_method")
+            for score in guidance_scores
+            if isinstance(score.get("assessment_method"), str)
+        }),
+        "guidance_entry_ids": existing_guidance_assessment.get("guidance_entry_ids"),
+    }
+    if "notes" in assessment:
+        imported_assessment["assessment_notes_present"] = isinstance(assessment.get("notes"), list)
+    assessed["guidance_assessment"] = imported_assessment
+    assessed["assessment_boundary"] = (
+        "python_validates_and_merges_imported_assessment_only; "
+        "guidance_manifestation_scores_are_external_human_or_llm_assisted_inputs"
+    )
+    assessed["validity_class"] = _scorecard_validity_class_with_assessment(
+        scorecard=assessed,
+        guidance_scores=guidance_scores,
+    )
+    notes = assessed.get("notes") if isinstance(assessed.get("notes"), list) else []
+    boundary_note = "Imported assessment was supplied externally; Python did not judge guidance manifestation."
+    if boundary_note not in notes:
+        notes = [*notes, boundary_note]
+    assessed["notes"] = notes
+    return assessed
+
+
+def _scorecard_validity_class_with_assessment(
+    *,
+    scorecard: dict[str, Any],
+    guidance_scores: list[dict[str, Any]],
+) -> str:
+    control_integrity = scorecard.get("control_integrity") if isinstance(scorecard.get("control_integrity"), dict) else {}
+    fact_layer = scorecard.get("frozen_fact_layer") if isinstance(scorecard.get("frozen_fact_layer"), dict) else {}
+    reader_clean = scorecard.get("reader_clean") if isinstance(scorecard.get("reader_clean"), dict) else {}
+    if control_integrity.get("run_integrity_clean") is not True or control_integrity.get("reference_eligible") is False:
+        return "invalid_contaminated"
+    if fact_layer.get("matches_case") is not True:
+        return "invalid_fact_layer_mismatch"
+    if any(control_integrity.get(key) is not True for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS):
+        return "invalid_incomplete"
+    if reader_clean.get("pass") is not True:
+        return "invalid_incomplete"
+    relevant_scores = [score for score in guidance_scores if score.get("relevant") is True]
+    if not relevant_scores:
+        return "invalid_incomplete"
+    if all(score.get("assessment_method") in A_CONTROLLED_ASSESSMENT_METHODS for score in relevant_scores):
+        return "A_controlled"
+    return "B_integration"
 
 
 def _scorecard_archive_projection(
@@ -1751,11 +2048,10 @@ def _validate_a_controlled_scorecard(
     diagnostics: list[Experiment080Diagnostic],
 ) -> None:
     required_values = {
-        "control_integrity.terminal_workflow": control.get("terminal_workflow"),
-        "control_integrity.run_integrity_clean": control.get("run_integrity_clean"),
-        "control_integrity.artifact_registry_valid": control.get("artifact_registry_valid"),
-        "control_integrity.quality_gates_passed": control.get("quality_gates_passed"),
-        "control_integrity.archive_present": control.get("archive_present"),
+        **{
+            f"control_integrity.{key}": control.get(key)
+            for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS
+        },
         "frozen_fact_layer.matches_case": fact_layer.get("matches_case"),
         "reader_clean.pass": reader_clean.get("pass"),
     }

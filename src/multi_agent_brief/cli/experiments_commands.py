@@ -8,6 +8,7 @@ from typing import Any
 
 from multi_agent_brief.experiments import (
     Experiment080Error,
+    import_assessment,
     register_run_record,
     score_run_record,
     validate_case_dir,
@@ -62,6 +63,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     score_run.add_argument("--output", required=True, help="Path to write scorecard.json.")
     score_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
+    import_assessment_parser = exp080_sub.add_parser(
+        "import-assessment",
+        help="Import external guidance-manifestation assessment into an MABW-080 scorecard.",
+    )
+    import_assessment_parser.add_argument("--scorecard", required=True, help="Path to scorecard.json.")
+    import_assessment_parser.add_argument("--assessment", required=True, help="Path to assessment.json.")
+    import_assessment_parser.add_argument("--output", required=True, help="Path to write assessed scorecard.json.")
+    import_assessment_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
 
 def handle(args: argparse.Namespace) -> int:
     if args.experiments_action != "080":
@@ -95,6 +105,29 @@ def handle(args: argparse.Namespace) -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
             _print_score_run(payload)
+        return 0
+    if args.experiment_080_action == "import-assessment":
+        try:
+            payload = import_assessment(
+                scorecard=args.scorecard,
+                assessment=args.assessment,
+                output=args.output,
+            )
+        except Experiment080Error as exc:
+            payload = exc.to_dict()
+            if getattr(args, "json", False):
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"[experiments 080 import-assessment] ok: False")
+                details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+                code = details.get("code")
+                suffix = f" ({code})" if code else ""
+                print(f"  - {payload.get('error')}{suffix}")
+            return 1
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            _print_import_assessment(payload)
         return 0
     if args.experiment_080_action != "register-run":
         return 1
@@ -155,3 +188,13 @@ def _print_score_run(payload: dict[str, Any]) -> None:
     print(f"[experiments 080 score-run] validity_class: {payload.get('validity_class')}")
     print(f"[experiments 080 score-run] assessment_status: {payload.get('assessment_status')}")
     print(f"[experiments 080 score-run] output: {payload.get('output')}")
+
+
+def _print_import_assessment(payload: dict[str, Any]) -> None:
+    print(f"[experiments 080 import-assessment] ok: {payload.get('ok')}")
+    print(f"[experiments 080 import-assessment] case_id: {payload.get('case_id')}")
+    print(f"[experiments 080 import-assessment] condition: {payload.get('condition')}")
+    print(f"[experiments 080 import-assessment] run_id: {payload.get('run_id')}")
+    print(f"[experiments 080 import-assessment] validity_class: {payload.get('validity_class')}")
+    print(f"[experiments 080 import-assessment] assessment_status: {payload.get('assessment_status')}")
+    print(f"[experiments 080 import-assessment] output: {payload.get('output')}")

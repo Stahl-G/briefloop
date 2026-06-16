@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Delivery snapshot convenience copies**: `finalize` still refreshes `output/delivery/` as the latest reader surface, and now also writes reader-facing copies under `output/delivery-history/<run_id-or-timestamp>/` before the authoritative run archive is created by `state finalize-complete`.
 - **MABW-080 deterministic scorecard draft builder**: `experiments 080 score-run` can build scorecard metadata from a registered run, case definition, and available archive/control projections without scoring guidance manifestation or output quality.
+- **MABW-080 assessment import**: `experiments 080 import-assessment` can merge externally supplied guidance-manifestation assessment into a scorecard and derive A/B/invalid validity classes from deterministic control fields plus assessment metadata. Python still does not judge prose quality, guidance manifestation, or semantic regression.
 
 ## [0.8.4] — 2026-06-16
 

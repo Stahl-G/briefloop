@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from multi_agent_brief.experiments.experiment_080 import (
+    validate_assessment,
     validate_case_dir,
     validate_case_manifest,
     validate_frozen_fact_layer,
@@ -94,9 +95,14 @@ def _valid_scorecard() -> dict:
         "control_integrity": {
             "terminal_workflow": True,
             "run_integrity_clean": True,
+            "reference_eligible": True,
             "artifact_registry_valid": True,
             "quality_gates_passed": True,
             "archive_present": True,
+            "archive_schema_valid": True,
+            "finalize_complete": True,
+            "finalize_report_pass": True,
+            "timing_available": True,
         },
         "frozen_fact_layer": {"matches_case": True, "mismatches": []},
         "reader_clean": {"pass": True},
@@ -112,6 +118,28 @@ def _valid_scorecard() -> dict:
         ],
         "regression": {},
         "notes": [],
+    }
+
+
+def _valid_assessment() -> dict:
+    return {
+        "schema_version": "mabw.experiment_080.assessment.v1",
+        "experiment_id": "MABW-080",
+        "case_id": "solar_public_001",
+        "condition": "memory",
+        "run_id": "mabw-20260614T000000Z-test",
+        "assessed_at": "2026-06-16T00:00:00Z",
+        "assessed_by": "masked-human-reviewer",
+        "guidance_scores": [
+            {
+                "entry_id": "AG-0001",
+                "relevant": True,
+                "manifestation_score": 2,
+                "overapplication": False,
+                "assessment_method": "human",
+                "evidence_excerpt": "The brief starts with the business implication.",
+            }
+        ],
     }
 
 
@@ -313,6 +341,29 @@ def test_experiment_080_a_controlled_rejects_string_false_requirement_values():
     assert "a_controlled_requirements_not_met" in codes
 
 
+def test_experiment_080_a_controlled_rejects_missing_required_control_key():
+    for key in (
+        "terminal_workflow",
+        "run_integrity_clean",
+        "reference_eligible",
+        "artifact_registry_valid",
+        "quality_gates_passed",
+        "archive_present",
+        "archive_schema_valid",
+        "finalize_complete",
+        "finalize_report_pass",
+        "timing_available",
+    ):
+        scorecard = _valid_scorecard()
+        del scorecard["control_integrity"][key]
+
+        diagnostics = validate_scorecard(scorecard)
+
+        codes = _codes(diagnostics)
+        assert "invalid_a_controlled_requirement_type" in codes
+        assert "a_controlled_requirements_not_met" in codes
+
+
 def test_experiment_080_scorecard_requires_non_empty_guidance_scores():
     scorecard = _valid_scorecard()
     scorecard["guidance_scores"] = []
@@ -369,6 +420,48 @@ def test_experiment_080_overapplication_true_requires_score_three():
     diagnostics = validate_scorecard(scorecard)
 
     assert "overapplication_score_mismatch" in _codes(diagnostics)
+
+
+def test_experiment_080_valid_assessment_passes():
+    diagnostics = validate_assessment(_valid_assessment())
+
+    assert diagnostics == []
+
+
+def test_experiment_080_assessment_rejects_old_agent_assisted_method():
+    assessment = _valid_assessment()
+    assessment["guidance_scores"][0]["assessment_method"] = "agent_assisted"
+
+    diagnostics = validate_assessment(assessment)
+
+    assert "invalid_assessment_method" in _codes(diagnostics)
+
+
+def test_experiment_080_assessment_requires_non_empty_guidance_scores():
+    assessment = _valid_assessment()
+    assessment["guidance_scores"] = []
+
+    diagnostics = validate_assessment(assessment)
+
+    assert "empty_guidance_scores" in _codes(diagnostics)
+
+
+def test_experiment_080_assessment_rejects_duplicate_guidance_score_entry_ids():
+    assessment = _valid_assessment()
+    assessment["guidance_scores"].append(dict(assessment["guidance_scores"][0]))
+
+    diagnostics = validate_assessment(assessment)
+
+    assert "duplicate_guidance_score_entry_id" in _codes(diagnostics)
+
+
+def test_experiment_080_assessment_must_not_set_validity_class():
+    assessment = _valid_assessment()
+    assessment["validity_class"] = "A_controlled"
+
+    diagnostics = validate_assessment(assessment)
+
+    assert "assessment_must_not_set_validity_class" in _codes(diagnostics)
 
 
 def test_experiment_080_valid_run_record_passes():

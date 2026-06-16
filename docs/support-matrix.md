@@ -50,6 +50,7 @@ validation unless that is stated separately.
 | `multi-agent-brief experiments 080 validate-case` | Experimental |
 | `multi-agent-brief experiments 080 register-run` | Experimental |
 | `multi-agent-brief experiments 080 score-run` | Experimental |
+| `multi-agent-brief experiments 080 import-assessment` | Experimental |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -111,6 +112,13 @@ fact-layer match, reader-clean, gate/finalize/archive, timing, and coverage-delt
 status when inputs are available. It does not score guidance
 manifestation, summarize experiments, scaffold conditions, run workflow stages,
 judge prose quality, or prove output quality.
+
+MABW-080 assessment import is experimental experiment metadata tooling. It
+validates externally supplied guidance-manifestation scores, merges them into a
+scorecard, and derives the resulting validity class from deterministic control
+fields plus the imported assessment method. Python does not judge whether
+guidance manifested, whether prose improved, or whether a semantic regression
+occurred.
 
 ## Runtimes
 
