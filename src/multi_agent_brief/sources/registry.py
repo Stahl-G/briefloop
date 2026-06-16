@@ -23,7 +23,10 @@ from multi_agent_brief.sources.mineru_provider import MineruProvider
 from multi_agent_brief.sources.opencli_provider import OpenCliProvider
 from multi_agent_brief.sources.filing_resolver import FilingResolverProvider
 from multi_agent_brief.sources.local_signal import LocalSignalProvider
-from multi_agent_brief.sources.normalizer import normalize_source_item, dedupe_sources, filter_by_recency
+from multi_agent_brief.sources.join import (
+    SourceProviderBatch,
+    join_source_provider_batches,
+)
 
 
 # Provider registry
@@ -110,18 +113,28 @@ def collect_all_sources(
         query = SourceQuery()
 
     providers = get_providers(source_config)
-    all_items: list[SourceItem] = []
-    errors: list[dict[str, str]] = []
+    batches: list[SourceProviderBatch] = []
+    provider_priorities: dict[str, int] = {}
+    for idx, name in enumerate(source_config.enabled_providers):
+        provider_priorities.setdefault(name, idx)
 
     # Surface unknown providers as errors
     for name in source_config.enabled_providers:
         if name not in PROVIDER_CLASSES:
-            errors.append({
-                "provider": name,
-                "error_type": "UnknownProvider",
-                "message": f"Unknown provider '{name}' is not registered. "
-                f"Available: {', '.join(sorted(PROVIDER_CLASSES))}",
-            })
+            batches.append(
+                SourceProviderBatch(
+                    provider=name,
+                    provider_priority=provider_priorities[name],
+                    errors=[
+                        {
+                            "provider": name,
+                            "error_type": "UnknownProvider",
+                            "message": f"Unknown provider '{name}' is not registered. "
+                            f"Available: {', '.join(sorted(PROVIDER_CLASSES))}",
+                        }
+                    ],
+                )
+            )
 
     # Resolve relative manual source paths against config_dir
     manual_config = _resolve_manual_paths(source_config.manual, source_config.config_dir)
@@ -148,69 +161,47 @@ def collect_all_sources(
 
     for name, provider in providers.items():
         config = config_map.get(name, {})
+        batch = SourceProviderBatch(
+            provider=name,
+            provider_priority=provider_priorities.get(name, len(provider_priorities)),
+        )
         try:
             validation_errors = provider.validate_config(config)
         except Exception as exc:
-            errors.append({
+            batch.errors.append({
                 "provider": name,
                 "error_type": "ConfigValidationError",
                 "message": f"validation error: {exc}",
             })
+            batches.append(batch)
             continue
         if validation_errors:
             for ve in validation_errors:
-                errors.append({
+                batch.errors.append({
                     "provider": name,
                     "error_type": "ConfigValidationError",
                     "message": ve,
                 })
+            batches.append(batch)
             continue
         try:
-            items = provider.collect(query, config)
-            all_items.extend(items)
+            batch.items.extend(provider.collect(query, config))
         except Exception as exc:
             # Provider failures are non-fatal, but record the error
-            errors.append({
+            batch.errors.append({
                 "provider": name,
                 "error_type": type(exc).__name__,
                 "message": str(exc)[:200],
             })
-
-    # Normalize, separate error/placeholder items from usable (B10)
-    usable: list[SourceItem] = []
-    for item in all_items:
-        item = normalize_source_item(item)
-        if _is_error_or_placeholder(item):
-            errors.append({
-                "provider": item.source_type.replace("_error", ""),
-                "error_type": item.metadata.get("error_type", "PlaceholderSource"),
-                "message": f"Source '{item.source_name}' is not usable: {item.content[:120]}",
-            })
-        else:
-            usable.append(item)
+        batches.append(batch)
 
     recency = query.recency_days
     report_date = query.metadata.get("report_date", "")
-    filtered = filter_by_recency(usable, recency, report_date=report_date)
-
-    return dedupe_sources(filtered), errors
-
-
-def _is_error_or_placeholder(item: SourceItem) -> bool:
-    """Return True if this SourceItem is an error or placeholder, not usable content."""
-    if item.metadata.get("error_type"):
-        return True
-    if item.metadata.get("requires_fetch"):
-        return True
-    if item.metadata.get("ingestion_status") == "placeholder":
-        return True
-    if item.metadata.get("filtered_reason"):
-        return True
-    if item.metadata.get("low_quality"):
-        return True
-    if item.source_type.endswith("_error"):
-        return True
-    return False
+    return join_source_provider_batches(
+        batches,
+        recency_days=recency,
+        report_date=report_date,
+    )
 
 
 def validate_all_providers(source_config: SourceConfig) -> list[str]:
