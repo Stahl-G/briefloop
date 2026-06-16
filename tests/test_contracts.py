@@ -8,7 +8,7 @@ from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import ContractError, FieldViolation
 from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
 from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemContract
-from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
+from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract, claim_draft_diagnostics
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.analysis_pack import (
@@ -236,6 +236,53 @@ class TestClaimDraftContract:
             "drafts[0].source_path",
             "drafts[0].topic",
         } <= error_fields
+
+    def test_claim_draft_diagnostics_include_allowed_and_forbidden_values(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "claim_id": "CL-001",
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "claim_type": "unsupported",
+                    "confidence": "certain",
+                    "epistemic_type": "guess",
+                    "evidence_relation": "maybe",
+                }
+            ],
+        }
+
+        diagnostics = claim_draft_diagnostics(
+            [violation for violation in ClaimDraftContract.validate(data) if violation.severity == "error"]
+        )
+
+        by_field = {item["field"]: item for item in diagnostics}
+        assert by_field["drafts[0].claim_id"]["forbidden_fields"] == ["claim_id"]
+        assert "Python assigns CL-####" in by_field["drafts[0].claim_id"]["hint"]
+        assert by_field["drafts[0].claim_type"]["allowed_values"] == [
+            "date",
+            "fact",
+            "forecast",
+            "interpretation",
+            "number",
+            "risk",
+        ]
+        assert by_field["drafts[0].confidence"]["allowed_values"] == ["high", "low", "medium"]
+        assert by_field["drafts[0].epistemic_type"]["allowed_values"] == [
+            "action",
+            "analogy",
+            "hypothesis",
+            "interpreted",
+            "observed",
+        ]
+        assert by_field["drafts[0].evidence_relation"]["allowed_values"] == [
+            "analogous",
+            "direct",
+            "indirect",
+            "inferred",
+        ]
 
     def test_claim_drafts_do_not_semantically_dedupe(self):
         draft = {

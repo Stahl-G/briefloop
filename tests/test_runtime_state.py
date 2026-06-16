@@ -1982,8 +1982,10 @@ def test_freeze_claim_ledger_rejects_draft_claim_id_without_writing_ledger(tmp_p
     with pytest.raises(RuntimeStateError) as excinfo:
         freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert excinfo.value.error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID"
     assert "drafts[0].claim_id" in str(excinfo.value.details)
+    assert excinfo.value.details["diagnostics"][0]["field"] == "drafts[0].claim_id"
+    assert excinfo.value.details["diagnostics"][0]["forbidden_fields"] == ["claim_id"]
     assert not (_intermediate(ws) / "claim_ledger.json").exists()
 
 
@@ -2000,8 +2002,13 @@ def test_freeze_claim_ledger_rejects_empty_drafts_without_writing_ledger(tmp_pat
     with pytest.raises(RuntimeStateError) as excinfo:
         freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
-    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert excinfo.value.error_code == "E_CLAIM_DRAFT_CONTRACT_INVALID"
     assert excinfo.value.details["field"] == "drafts"
+    assert excinfo.value.details["diagnostics"][0]["required_fields"] == [
+        "statement",
+        "source_id",
+        "evidence_text",
+    ]
     assert "at least one draft" in str(excinfo.value)
     assert not (_intermediate(ws) / "claim_ledger.json").exists()
 
@@ -2099,6 +2106,95 @@ def test_state_freeze_claim_ledger_cli_json(tmp_path, capsys):
     assert payload["claim_ledger_freeze"]["status"] == "frozen"
     assert payload["transaction"]["decision"] == "freeze_claim_ledger"
     assert (_intermediate(ws) / "claim_ledger.json").exists()
+
+
+def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                        "claim_type": "unsupported",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    rc = main([
+        "state",
+        "freeze-claim-ledger",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_CLAIM_DRAFT_CONTRACT_INVALID"
+    diagnostic = payload["details"]["diagnostics"][0]
+    assert diagnostic["field"] == "drafts[0].claim_type"
+    assert diagnostic["allowed_values"] == [
+        "date",
+        "fact",
+        "forecast",
+        "interpretation",
+        "number",
+        "risk",
+    ]
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+
+
+def test_state_freeze_claim_ledger_human_output_explains_forbidden_claim_id(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "claim_id": "CL-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    rc = main([
+        "state",
+        "freeze-claim-ledger",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+    ])
+
+    assert rc == 1
+    output = capsys.readouterr().out
+    assert "drafts[0].claim_id" in output
+    assert "forbidden_fields: claim_id" in output
+    assert "Python assigns CL-####" in output
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
 
 
 def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):

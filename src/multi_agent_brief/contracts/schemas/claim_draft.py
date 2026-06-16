@@ -62,6 +62,35 @@ DRAFT_OPTIONAL_STRING_FIELDS = {
 }
 DRAFT_OPTIONAL_STRING_LIST_FIELDS = {"used_in_sections", "limitations"}
 RESERVED_ID_KEYS = {"claim_id"}
+CLAIM_DRAFT_ALLOWED_VALUES = {
+    "claim_type": sorted(VALID_CLAIM_TYPES),
+    "confidence": sorted(VALID_CONFIDENCE),
+    "epistemic_type": sorted(VALID_EPISTEMIC),
+    "evidence_relation": sorted(VALID_EVIDENCE_RELATION),
+}
+CLAIM_DRAFT_FORBIDDEN_FIELDS = sorted(RESERVED_ID_KEYS)
+
+
+def claim_draft_diagnostics(violations: list[FieldViolation]) -> list[dict[str, Any]]:
+    """Return agent-facing diagnostics for claim draft validation failures."""
+
+    diagnostics: list[dict[str, Any]] = []
+    for violation in violations:
+        item: dict[str, Any] = {
+            "field": violation.field,
+            "error": violation.error,
+            "severity": violation.severity,
+        }
+        field_name = violation.field.rsplit(".", 1)[-1]
+        if field_name in CLAIM_DRAFT_ALLOWED_VALUES:
+            item["allowed_values"] = CLAIM_DRAFT_ALLOWED_VALUES[field_name]
+        if field_name in DRAFT_REQUIRED_FIELDS or violation.field == "drafts":
+            item["required_fields"] = list(DRAFT_REQUIRED_FIELD_ORDER)
+        if field_name in RESERVED_ID_KEYS:
+            item["forbidden_fields"] = CLAIM_DRAFT_FORBIDDEN_FIELDS
+            item["hint"] = "Remove claim_id; Python assigns CL-#### during freeze."
+        diagnostics.append(item)
+    return diagnostics
 
 
 @SchemaRegistry.register

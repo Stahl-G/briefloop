@@ -15,7 +15,7 @@ from typing import Any
 from multi_agent_brief.feedback.feedback_contract import (
     current_stage_feedback_blocking_reasons,
 )
-from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
+from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract, claim_draft_diagnostics
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.quality_gates.contract import (
     current_stage_quality_gate_blocking_reasons,
@@ -56,6 +56,7 @@ from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ARTIFACT_INVALID,
+    E_CLAIM_DRAFT_CONTRACT_INVALID,
     E_COMPLETION_TRANSACTION_REQUIRED,
     E_FACT_LAYER_IMPORT_INVALID,
     E_ILLEGAL_TRANSITION,
@@ -1680,14 +1681,18 @@ def _read_claim_drafts_for_freeze(workspace: Path) -> tuple[Path, dict[str, Any]
     errors = [violation for violation in violations if violation.severity == "error"]
     if errors:
         first = errors[0]
+        diagnostics = claim_draft_diagnostics(errors)
         raise RuntimeStateError(
             "Claim drafts failed contract validation.",
             details={
                 "path": _workspace_relative(workspace, path),
                 "field": first.field,
                 "error": first.error,
+                "required_fields": ["statement", "source_id", "evidence_text"],
+                "forbidden_fields": ["claim_id"],
+                "diagnostics": diagnostics,
             },
-            error_code=E_ARTIFACT_INVALID,
+            error_code=E_CLAIM_DRAFT_CONTRACT_INVALID,
         )
     drafts = payload.get("drafts") or []
     if not drafts:
@@ -1697,8 +1702,18 @@ def _read_claim_drafts_for_freeze(workspace: Path) -> tuple[Path, dict[str, Any]
                 "path": _workspace_relative(workspace, path),
                 "field": "drafts",
                 "error": "must contain at least one draft",
+                "required_fields": ["statement", "source_id", "evidence_text"],
+                "forbidden_fields": ["claim_id"],
+                "diagnostics": [
+                    {
+                        "field": "drafts",
+                        "error": "must contain at least one draft",
+                        "severity": "error",
+                        "required_fields": ["statement", "source_id", "evidence_text"],
+                    }
+                ],
             },
-            error_code=E_ARTIFACT_INVALID,
+            error_code=E_CLAIM_DRAFT_CONTRACT_INVALID,
         )
     return path, payload, [dict(draft) for draft in drafts]
 

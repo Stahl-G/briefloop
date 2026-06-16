@@ -353,6 +353,26 @@ def _print_error(exc: RuntimeStateError, *, as_json: bool) -> None:
 
 def _print_error_details(exc: RuntimeStateError) -> None:
     details = exc.details or {}
+    diagnostics = details.get("diagnostics") or []
+    if diagnostics:
+        print("[state] diagnostics:")
+        for item in diagnostics:
+            if not isinstance(item, dict):
+                continue
+            field = item.get("field", "<unknown>")
+            error = item.get("error", "")
+            print(f"  - {field}: {error}")
+            allowed_values = item.get("allowed_values")
+            if allowed_values:
+                print(f"    allowed_values: {', '.join(str(value) for value in allowed_values)}")
+            forbidden_fields = item.get("forbidden_fields")
+            if forbidden_fields:
+                print(f"    forbidden_fields: {', '.join(str(value) for value in forbidden_fields)}")
+            required_fields = item.get("required_fields")
+            if required_fields:
+                print(f"    required_fields: {', '.join(str(value) for value in required_fields)}")
+            if item.get("hint"):
+                print(f"    hint: {item.get('hint')}")
     required_commands = details.get("required_commands") or []
     if required_commands:
         print("[state] required_commands:")
