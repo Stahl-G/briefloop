@@ -16,7 +16,12 @@ REPAIR_GUIDANCE_NOTE = (
     "Repair guidance is bounded runtime guidance, not an automatic trajectory regulator: "
     "if the same stage has already needed roughly three retry/repair rounds, prefer "
     "request_human_review or block_run; if a repair would touch more than two sections, "
-    "narrow the scope before delegating or request human review."
+    "narrow the scope before delegating or request human review. For owner-stage artifact "
+    "repair, run `multi-agent-brief repair route --workspace <workspace>` and "
+    "`multi-agent-brief repair start --workspace <workspace>` before delegation; after "
+    "the owner edits only allowed_artifacts, run `multi-agent-brief repair complete "
+    "--workspace <workspace> --reason \"<reason>\"` and rerun downstream stages from "
+    "must_rerun_from."
 )
 
 
@@ -574,7 +579,7 @@ multi-agent-brief state check --workspace <workspace> --strict
 multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
-If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize.
+If state is blocked by owner-stage artifact repair, run `multi-agent-brief repair route --workspace <workspace>` and `multi-agent-brief repair start --workspace <workspace>`; otherwise choose `request_human_review` or `block_run`. Do not finalize.
 
 15. Run finalize only after the gates/state completion path passes. `finalize` is not a quality-gate executor:
 
@@ -981,7 +986,7 @@ As the Hermes Orchestrator main agent, execute:
 19. If state is not blocked, record the auditor completion:
     multi-agent-brief state stage-complete --workspace {workspace} --stage auditor --reason "Audit and quality gates passed."
 
-20. If state is blocked, choose delegate_repair, request_human_review, or block_run; do not finalize.
+20. If state is blocked by owner-stage artifact repair, run `multi-agent-brief repair route --workspace {workspace}` and `multi-agent-brief repair start --workspace {workspace}`. Delegate only the repair_owner role and allow edits only to allowed_artifacts, then run `multi-agent-brief repair complete --workspace {workspace} --reason "<reason>"` and rerun downstream stages from must_rerun_from. Otherwise choose request_human_review or block_run. Do not finalize.
 
 21. Run finalize only after the gates/state completion path passes. finalize is not a quality-gate executor:
     multi-agent-brief finalize --config {workspace}/config.yaml

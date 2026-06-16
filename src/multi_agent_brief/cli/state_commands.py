@@ -348,3 +348,28 @@ def _print_error(exc: RuntimeStateError, *, as_json: bool) -> None:
         print(json.dumps(exc.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     else:
         print(f"[state] {exc}")
+        _print_error_details(exc)
+
+
+def _print_error_details(exc: RuntimeStateError) -> None:
+    details = exc.details or {}
+    required_commands = details.get("required_commands") or []
+    if required_commands:
+        print("[state] required_commands:")
+        for command in required_commands:
+            print(f"  - {command}")
+    repair_route = details.get("repair_route")
+    if not isinstance(repair_route, dict):
+        return
+    if repair_route.get("ok"):
+        print(f"[state] repair_owner: {repair_route.get('repair_owner')}")
+        print(f"[state] must_rerun_from: {repair_route.get('must_rerun_from') or 'none'}")
+        allowed = repair_route.get("allowed_artifacts") or []
+        if allowed:
+            print("[state] allowed_artifacts:")
+            for artifact in allowed:
+                print(f"  - {artifact}")
+    else:
+        message = repair_route.get("message") or repair_route.get("error")
+        if message:
+            print(f"[state] repair_route_error: {message}")

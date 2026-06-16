@@ -61,6 +61,7 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ILLEGAL_TRANSITION,
     E_QUALITY_GATE_REQUIRED,
     E_READER_FINAL_GATE_FAILED,
+    E_REPAIR_TRANSACTION_REQUIRED,
     E_REQUIRED_ARTIFACT_MISSING,
     E_RUN_ARCHIVE_FAILED,
     E_RUNTIME_STATE_NOT_INITIALIZED,
@@ -2747,6 +2748,32 @@ def _repair_route_error(payload: dict[str, Any]) -> RuntimeStateError:
     )
 
 
+def _delegate_repair_transaction_required_error(*, workspace: Path, stage_id: str, decision: str) -> RuntimeStateError:
+    try:
+        from multi_agent_brief.repair.router import route_repair
+
+        repair_route = route_repair(workspace=workspace)
+    except Exception as exc:  # pragma: no cover - defensive best-effort diagnostics
+        repair_route = {"ok": False, "error": str(exc)}
+    return RuntimeStateError(
+        (
+            "Decision 'delegate_repair' requires `multi-agent-brief repair start`; "
+            "`state decide` cannot authorize owner-stage artifact edits."
+        ),
+        details={
+            "stage_id": stage_id,
+            "decision": decision,
+            "required_commands": [
+                f"multi-agent-brief repair route --workspace {workspace}",
+                f"multi-agent-brief repair start --workspace {workspace}",
+            ],
+            "fallback_decisions": ["request_human_review", "block_run"],
+            "repair_route": repair_route,
+        },
+        error_code=E_REPAIR_TRANSACTION_REQUIRED,
+    )
+
+
 def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
     return {
         "transaction_id": active_repair.get("transaction_id"),
@@ -3481,6 +3508,13 @@ def record_decision(
             },
         )
 
+    if decision == "delegate_repair":
+        raise _delegate_repair_transaction_required_error(
+            workspace=ws,
+            stage_id=stage_id,
+            decision=decision,
+        )
+
     if decision in {"continue", "finalize"}:
         command = "finalize-complete" if decision == "finalize" else "stage-complete"
         raise RuntimeStateError(
@@ -3510,7 +3544,7 @@ def record_decision(
             current_stage = next_stage
         else:
             current_stage = None
-    elif decision in {"retry_stage", "delegate_repair"}:
+    elif decision == "retry_stage":
         statuses[stage_id] = _status_entry(STAGE_READY, reason, now)
     elif decision in {"request_human_review", "block_run"}:
         statuses[stage_id] = _status_entry(STAGE_BLOCKED, reason, now)

@@ -39,7 +39,7 @@ Responsibilities:
 - Read orchestrator_control_switchboard.json and record enable, defer, or reject selections in control_selections.json before explicitly executing selected controls.
 - Identify the next stage and delegate the appropriate specialist role or Python tool.
 - Check expected artifacts after each delegated stage, then record the required completion transaction before continuing.
-- Make stage decisions using completion transactions for successful progress and state decide for retry_stage, delegate_repair, request_human_review, and block_run.
+- Make stage decisions using completion transactions for successful progress, state decide for retry_stage/request_human_review/block_run, and the repair route/start/complete transaction for delegate_repair.
 - Stage completion is transaction-defined, not artifact-defined.
 - You are not allowed to call the next specialist agent or tool until `multi-agent-brief state stage-complete` for the current stage has succeeded.
 - If the expected artifact exists but `state stage-complete` has not succeeded, the stage is still incomplete.
@@ -54,8 +54,8 @@ Responsibilities:
 - If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner and continue with stale or old sources.
 - Treat source_candidates.yaml as a source plan, not source evidence. Scout must extract candidate claims from actual source content or materialized source files.
 - Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet. Summary-only notes are discovery hints, not evidence.
-- Use state decide only for non-success decisions such as retry_stage, delegate_repair, request_human_review, or block_run; if the command rejects the decision or completion, stop and correct the stage state.
-- Before finalize, after Auditor completes, run gates check with `--stage auditor` and strict state check. If blocking findings exist, do not finalize; use feedback/repair, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
+- Use state decide only for retry_stage, request_human_review, or block_run. For owner-stage artifact repair, use `multi-agent-brief repair route --workspace <workspace>`, then `multi-agent-brief repair start --workspace <workspace>`, delegate only the repair_owner role, and finish with `multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"`; if any command rejects the decision, completion, or repair, stop and correct the stage state.
+- Before finalize, after Auditor completes, run gates check with `--stage auditor` and strict state check. If blocking findings exist, do not finalize; use feedback plus the deterministic repair transaction, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
 - After finalize writes reader-facing artifacts, verify completion with `multi-agent-brief gates check --stage finalize --brief <workspace>/output/brief.md` and then multi-agent-brief state finalize-complete before reporting the run complete.
 - Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
 - Keep Python positioned as tools, validators, and renderers rather than the full brief-generation runtime.

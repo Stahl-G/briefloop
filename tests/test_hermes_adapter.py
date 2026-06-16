@@ -251,6 +251,9 @@ def test_hermes_prompt_keeps_user_inside_hermes():
     assert f"multi-agent-brief state check --workspace {resolved_ws} --strict" in prompt
     assert f"multi-agent-brief state stage-complete --workspace {resolved_ws} --stage auditor" in prompt
     assert f"multi-agent-brief state finalize-complete --workspace {resolved_ws}" in prompt
+    assert f"multi-agent-brief repair route --workspace {resolved_ws}" in prompt
+    assert f"multi-agent-brief repair start --workspace {resolved_ws}" in prompt
+    assert f"multi-agent-brief repair complete --workspace {resolved_ws}" in prompt
     assert f"multi-agent-brief provenance build --workspace {resolved_ws}" in prompt
     assert f"multi-agent-brief provenance validate --workspace {resolved_ws}" in prompt
     assert prompt.index("multi-agent-brief controls select") < prompt.index("multi-agent-brief gates check")

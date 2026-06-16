@@ -1260,6 +1260,70 @@ def test_state_decide_records_event_and_last_decision(tmp_path):
     assert any(json.loads(line)["event_type"] == "decision_recorded" for line in events)
 
 
+def test_state_decide_delegate_repair_requires_repair_transaction_without_mutation(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_editor_repair_gate_report(ws)
+    registry_path = _state_file(ws, "artifact_registry")
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_registry = registry_path.read_bytes() if registry_path.exists() else None
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair editor-owned brief",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_REPAIR_TRANSACTION_REQUIRED
+    details = excinfo.value.details
+    assert "multi-agent-brief repair route" in "\n".join(details["required_commands"])
+    assert "multi-agent-brief repair start" in "\n".join(details["required_commands"])
+    assert details["repair_route"]["repair_owner"] == "editor"
+    assert details["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert details["repair_route"]["must_rerun_from"] == "auditor"
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    if before_registry is None:
+        assert not registry_path.exists()
+    else:
+        assert registry_path.read_bytes() == before_registry
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+
+
+def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_editor_repair_gate_report(ws)
+
+    rc = main([
+        "state",
+        "decide",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--stage",
+        "auditor",
+        "--decision",
+        "delegate_repair",
+        "--reason",
+        "repair editor-owned brief",
+    ])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "multi-agent-brief repair route" in out
+    assert "multi-agent-brief repair start" in out
+    assert "[state] repair_owner: editor" in out
+    assert "[state] must_rerun_from: auditor" in out
+    assert "output/intermediate/audited_brief.md" in out
+
+
 def test_stage_complete_records_transaction_event_and_advances(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

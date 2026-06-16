@@ -312,6 +312,9 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "multi-agent-brief state stage-complete --workspace <workspace>" in text
     assert "multi-agent-brief state finalize-complete --workspace <workspace>" in text
     assert "state decide" in text
+    assert "multi-agent-brief repair route --workspace <workspace>" in text
+    assert "multi-agent-brief repair start --workspace <workspace>" in text
+    assert "multi-agent-brief repair complete --workspace <workspace>" in text
     assert "next_allowed_decisions" in text
     assert "Stage completion protocol" in text
     assert "MUST produce" in text

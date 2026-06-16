@@ -26,7 +26,7 @@ Read workspace context -> read contract references -> identify the next stage ->
 6. Create `output/intermediate/` when needed.
 7. Delegate child tasks in sequence.
 8. Verify each expected artifact exists and is non-empty before selecting the next decision.
-9. Decide `retry_stage`, `delegate_repair`, `request_human_review`, or `block_run` for non-success paths; use completion transactions for success paths.
+9. Decide `retry_stage`, `request_human_review`, or `block_run` with `state decide`; for `delegate_repair`, use the deterministic repair route/start/complete transaction. Use completion transactions for success paths.
 10. Run quality gates, strict state check, and `state stage-complete` before finalize.
 11. Run `multi-agent-brief finalize --config <workspace>/config.yaml` after audit readiness and gate readiness.
 12. Run `state finalize-complete` after finalize writes reader-facing artifacts.
@@ -120,7 +120,20 @@ multi-agent-brief state check --workspace <workspace> --strict
 multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
-If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize. `finalize` is not a quality-gate executor.
+If state is blocked by owner-stage artifact repair, do not use `state decide delegate_repair`. Run:
+
+```bash
+multi-agent-brief repair route --workspace <workspace>
+multi-agent-brief repair start --workspace <workspace>
+```
+
+Delegate only the repair_owner role, allow edits only to allowed_artifacts, then run:
+
+```bash
+multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"
+```
+
+After repair-complete, rerun downstream stages from must_rerun_from. For non-repair blocks, choose `request_human_review` or `block_run`; do not finalize. `finalize` is not a quality-gate executor.
 
 After finalize writes reader-facing artifacts, run:
 
