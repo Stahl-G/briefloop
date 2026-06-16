@@ -182,7 +182,7 @@ Three on-ramps, one spine. There is no lite mode: entry cost drops, the accounta
 | Run once | ~30 min | A few local text files, no search backend, `new -> run -> status -> deliver` |
 | Live with it | weekly | Configured sources, feedback loop, approved preferences |
 
-Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
 
 ## 🧭 A Note On Provenance
 
