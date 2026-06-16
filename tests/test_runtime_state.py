@@ -1619,6 +1619,130 @@ def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):
     assert registry["claim_ledger"]["sha256"]
 
 
+def test_claim_ledger_stage_complete_keeps_claim_drafts_optional(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "analyst"
+    registry = state["artifact_registry"]["artifacts"]
+    assert registry["claim_ledger"]["status"] == "valid"
+    assert registry["claim_ledger"]["validation_result"] == "valid_claim_ledger_schema"
+    assert registry["claim_drafts"]["status"] == "valid"
+    assert registry["claim_drafts"]["validation_result"] == "valid_claim_drafts_schema"
+
+
+def test_state_check_marks_claim_drafts_with_claim_id_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "claim_id": "CL-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    record = state["artifact_registry"]["artifacts"]["claim_drafts"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "claim_drafts_schema_error:drafts[0].claim_id"
+
+
+def test_state_check_marks_claim_drafts_with_nested_claim_id_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                        "metadata": {"claim_id": "CL-001"},
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    record = state["artifact_registry"]["artifacts"]["claim_drafts"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "claim_drafts_schema_error:drafts[0].metadata.claim_id"
+
+
+def test_state_check_marks_claim_drafts_with_non_string_required_fields_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "statement": 123,
+                        "source_id": ["SRC-001"],
+                        "evidence_text": {"text": "Example evidence."},
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    record = state["artifact_registry"]["artifacts"]["claim_drafts"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "claim_drafts_schema_error:drafts[0].statement"
+
+
 def test_claim_ledger_stage_complete_rejects_nested_meta_ai_shape(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

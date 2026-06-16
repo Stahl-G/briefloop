@@ -8,6 +8,7 @@ from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import ContractError, FieldViolation
 from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
 from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemContract
+from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.analysis_pack import (
@@ -24,6 +25,7 @@ class TestSchemaRegistry:
     def test_register_and_get(self):
         assert SchemaRegistry.get("source_item") is SourceItemContract
         assert SchemaRegistry.get("claim") is ClaimContract
+        assert SchemaRegistry.get("claim_drafts") is ClaimDraftContract
 
     def test_get_unknown_returns_none(self):
         assert SchemaRegistry.get("nonexistent") is None
@@ -112,6 +114,127 @@ class TestClaimContract:
         }
         violations = ClaimContract.validate(data)
         assert any(v.field == "confidence" for v in violations)
+
+
+# ── ClaimDraftContract ──
+
+
+class TestClaimDraftContract:
+    def test_valid_claim_drafts_pass(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                }
+            ],
+            "metadata": {"created_by": "test"},
+        }
+
+        assert ClaimDraftContract.is_valid(data)
+        assert ClaimDraftContract.validate(data) == []
+
+    def test_claim_drafts_reject_claim_id(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "claim_id": "CL-001",
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                }
+            ],
+        }
+
+        violations = ClaimDraftContract.validate(data)
+
+        assert any(v.field == "drafts[0].claim_id" for v in violations)
+        assert not ClaimDraftContract.is_valid(data)
+
+    def test_claim_drafts_reject_claim_id_in_metadata(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "metadata": {"claim_id": "CL-001"},
+                }
+            ],
+        }
+
+        violations = ClaimDraftContract.validate(data)
+
+        assert any(v.field == "drafts[0].metadata.claim_id" for v in violations)
+        assert not ClaimDraftContract.is_valid(data)
+
+    def test_claim_drafts_reject_non_string_required_fields(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": 123,
+                    "source_id": ["SRC-001"],
+                    "evidence_text": {"text": "Example evidence."},
+                }
+            ],
+        }
+
+        violations = ClaimDraftContract.validate(data)
+
+        error_fields = {violation.field for violation in violations if violation.severity == "error"}
+        assert {
+            "drafts[0].statement",
+            "drafts[0].source_id",
+            "drafts[0].evidence_text",
+        } <= error_fields
+        assert not ClaimDraftContract.is_valid(data)
+
+    def test_claim_drafts_reject_optional_field_type_mismatches(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "requires_audit": "yes",
+                    "used_in_sections": ["summary", 3],
+                    "limitations": "none",
+                    "metadata": [],
+                }
+            ],
+        }
+
+        violations = ClaimDraftContract.validate(data)
+
+        error_fields = {violation.field for violation in violations if violation.severity == "error"}
+        assert {
+            "drafts[0].requires_audit",
+            "drafts[0].used_in_sections[1]",
+            "drafts[0].limitations",
+            "drafts[0].metadata",
+        } <= error_fields
+
+    def test_claim_drafts_do_not_semantically_dedupe(self):
+        draft = {
+            "statement": "ExampleCo opened a demo facility.",
+            "source_id": "SRC-001",
+            "evidence_text": "Example evidence.",
+        }
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [dict(draft), dict(draft)],
+        }
+
+        assert ClaimDraftContract.validate(data) == []
+        assert ClaimDraftContract.is_valid(data)
 
 
 # ── AuditReportContract ──

@@ -12,6 +12,7 @@ import yaml
 
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
+from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
@@ -67,6 +68,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             payload = json.loads(text)
             if artifact_id == "claim_ledger":
                 return _validate_claim_ledger_payload(payload)
+            if artifact_id == "claim_drafts":
+                return _validate_claim_drafts_payload(payload)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
         elif fmt in {"yaml", "yml"}:
@@ -111,6 +114,17 @@ def _validate_claim_ledger_payload(payload: Any) -> tuple[str, str]:
     if errors:
         return ARTIFACT_INVALID, f"claim_ledger_schema_error:{errors[0]}"
     return ARTIFACT_VALID, "valid_claim_ledger_schema"
+
+
+def _validate_claim_drafts_payload(payload: Any) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ARTIFACT_INVALID, "claim_drafts_schema_error:not_object"
+    violations = ClaimDraftContract.validate(payload)
+    errors = [violation for violation in violations if violation.severity == "error"]
+    if errors:
+        first = errors[0]
+        return ARTIFACT_INVALID, f"claim_drafts_schema_error:{first.field}"
+    return ARTIFACT_VALID, "valid_claim_drafts_schema"
 
 
 def _validate_audit_report_payload(payload: Any) -> tuple[str, str]:
