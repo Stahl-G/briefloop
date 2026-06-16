@@ -79,6 +79,67 @@ class FinalizeResult:
         return data
 
 
+_FINALIZE_REPORT_PATH_FIELDS = (
+    "audited_brief",
+    "reader_brief",
+    "named_reader_brief",
+    "reader_docx",
+    "named_reader_docx",
+    "source_appendix",
+    "delivery_markdown",
+    "delivery_docx",
+    "delivery_latest_dir",
+    "delivery_snapshot_dir",
+)
+_FINALIZE_REPORT_PATH_LIST_FIELDS = (
+    "delivery_artifacts",
+    "delivery_snapshot_artifacts",
+)
+_FINALIZE_REPORT_PATH_HASH_FIELDS = (
+    "delivery_artifact_sha256",
+    "delivery_snapshot_artifact_sha256",
+)
+
+
+def _finalize_report_payload(result: FinalizeResult, *, output_dir: Path) -> dict[str, Any]:
+    """Serialize finalize reports with workspace-relative path identities."""
+
+    payload = result.to_dict()
+    workspace = output_dir.resolve().parent
+    for field_name in _FINALIZE_REPORT_PATH_FIELDS:
+        payload[field_name] = _workspace_relative_value(workspace, payload.get(field_name))
+    for field_name in _FINALIZE_REPORT_PATH_LIST_FIELDS:
+        values = payload.get(field_name) or []
+        payload[field_name] = [_workspace_relative_value(workspace, value) for value in values]
+    for field_name in _FINALIZE_REPORT_PATH_HASH_FIELDS:
+        values = payload.get(field_name) or {}
+        if isinstance(values, dict):
+            payload[field_name] = {
+                _workspace_relative_value(workspace, key): value
+                for key, value in values.items()
+            }
+    return payload
+
+
+def _write_finalize_report(path: Path, result: FinalizeResult, *, output_dir: Path) -> None:
+    path.write_text(
+        json.dumps(_finalize_report_payload(result, output_dir=output_dir), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _workspace_relative_value(workspace: Path, value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.resolve().relative_to(workspace).as_posix()
+    except ValueError:
+        return str(value)
+
+
 def finalize_reader_outputs(
     *,
     output_dir: str | Path,
@@ -247,7 +308,7 @@ def finalize_reader_outputs(
     result.reader_clean = reader_clean
     if result.audit_binding and result.audit_binding.get("status") == "fail":
         result.status = "fail"
-        report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_finalize_report(report_path, result, output_dir=out)
         findings = result.audit_binding.get("findings") or []
         raise RuntimeError(
             "Audit report binding check failed: "
@@ -256,7 +317,7 @@ def finalize_reader_outputs(
         )
     if reader_clean["status"] == "fail":
         result.status = "fail"
-        report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_finalize_report(report_path, result, output_dir=out)
         finding_count = len(reader_clean.get("sample_findings", []))
         total_count = sum(
             int(value)
@@ -276,14 +337,14 @@ def finalize_reader_outputs(
     except Exception as exc:
         result.status = "fail"
         result.delivery_snapshot_error = f"{type(exc).__name__}: {exc}"
-        report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_finalize_report(report_path, result, output_dir=out)
         raise RuntimeError(
             f"Delivery snapshot creation failed. See {report_path}."
         ) from exc
     result.delivery_snapshot_dir = delivery_snapshot["delivery_snapshot_dir"]
     result.delivery_snapshot_artifacts = delivery_snapshot["delivery_snapshot_artifacts"]
     result.delivery_snapshot_artifact_sha256 = delivery_snapshot["delivery_snapshot_artifact_sha256"]
-    report_path.write_text(json.dumps(result.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_finalize_report(report_path, result, output_dir=out)
     return result
 
 

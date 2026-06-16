@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
+    _finalize_report_delivery_artifact_reasons,
+    _finalize_report_reader_artifact_paths,
+)
 from multi_agent_brief.outputs.finalize import (
     finalize_reader_outputs,
     interpret_finalize_audit_binding,
@@ -387,9 +392,9 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert "https://example.com/exampleco-demo" in delivery
     assert "SYN_CLAIM" not in reader
     assert "SYN_CLAIM" not in delivery
-    assert report["delivery_markdown"] == str(output_dir / "delivery" / "brief.md")
+    assert report["delivery_markdown"] == "output/delivery/brief.md"
     assert report["delivery_docx"] == ""
-    assert report["delivery_artifacts"] == [str(output_dir / "delivery" / "brief.md")]
+    assert report["delivery_artifacts"] == ["output/delivery/brief.md"]
     assert not (output_dir / "delivery" / "source_appendix.md").exists()
     assert not (output_dir / "delivery" / "claim_ledger.json").exists()
 
@@ -1184,27 +1189,36 @@ def test_finalize_delivery_bundle_contains_appended_sources_without_audit_files(
     assert result.delivery_markdown == str(delivery_markdown)
     assert result.delivery_docx == str(delivery_docx)
     assert result.delivery_artifacts == [str(delivery_markdown), str(delivery_docx)]
-    assert report["delivery_artifacts"] == [str(delivery_markdown), str(delivery_docx)]
+    assert report["delivery_artifacts"] == [
+        "output/delivery/brief.md",
+        "output/delivery/ExampleCo_2026-06-12.docx",
+    ]
     assert report["delivery_artifact_sha256"] == {
+        "output/delivery/brief.md": _sha256_file(delivery_markdown),
+        "output/delivery/ExampleCo_2026-06-12.docx": _sha256_file(delivery_docx),
+    }
+    assert result.delivery_artifact_sha256 == {
         str(delivery_markdown): _sha256_file(delivery_markdown),
         str(delivery_docx): _sha256_file(delivery_docx),
     }
-    assert result.delivery_artifact_sha256 == report["delivery_artifact_sha256"]
     snapshot_dir = output_dir / "delivery-history" / "mabw-run-delivery"
     snapshot_markdown = snapshot_dir / "brief.md"
     snapshot_docx = snapshot_dir / "ExampleCo_2026-06-12.docx"
     assert result.delivery_latest_dir == str(delivery_dir)
-    assert report["delivery_latest_dir"] == str(delivery_dir)
+    assert report["delivery_latest_dir"] == "output/delivery"
     assert result.delivery_snapshot_dir == str(snapshot_dir)
-    assert report["delivery_snapshot_dir"] == str(snapshot_dir)
+    assert report["delivery_snapshot_dir"] == "output/delivery-history/mabw-run-delivery"
     assert snapshot_markdown.exists()
     assert snapshot_docx.exists()
     assert not (snapshot_dir / "source_appendix.md").exists()
     assert not (snapshot_dir / "claim_ledger.json").exists()
-    assert report["delivery_snapshot_artifacts"] == [str(snapshot_markdown), str(snapshot_docx)]
+    assert report["delivery_snapshot_artifacts"] == [
+        "output/delivery-history/mabw-run-delivery/brief.md",
+        "output/delivery-history/mabw-run-delivery/ExampleCo_2026-06-12.docx",
+    ]
     assert report["delivery_snapshot_artifact_sha256"] == {
-        str(snapshot_markdown): _sha256_file(snapshot_markdown),
-        str(snapshot_docx): _sha256_file(snapshot_docx),
+        "output/delivery-history/mabw-run-delivery/brief.md": _sha256_file(snapshot_markdown),
+        "output/delivery-history/mabw-run-delivery/ExampleCo_2026-06-12.docx": _sha256_file(snapshot_docx),
     }
     assert report["delivery_snapshot_semantics"] == "convenience_copy_not_immutable_archive"
     assert report["reader_clean"]["status"] == "pass"
@@ -1284,10 +1298,36 @@ def test_finalize_delivery_snapshot_failure_writes_failed_report(tmp_path: Path)
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["status"] == "fail"
-    assert report["delivery_artifacts"] == [str(output_dir / "delivery" / "brief.md")]
+    assert report["delivery_artifacts"] == ["output/delivery/brief.md"]
     assert report["delivery_snapshot_dir"] == ""
     assert report["delivery_snapshot_artifacts"] == []
     assert "FileExistsError" in report["delivery_snapshot_error"]
+
+
+def test_finalize_report_relative_paths_survive_workspace_move(tmp_path: Path):
+    ws = tmp_path / "workspace"
+    output_dir = ws / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text("# Brief\n\nReader-safe text.\n", encoding="utf-8")
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    moved = tmp_path / "moved-workspace"
+    shutil.move(str(ws), str(moved))
+    report = json.loads((moved / "output" / "intermediate" / "finalize_report.json").read_text(encoding="utf-8"))
+
+    assert report["reader_brief"] == "output/brief.md"
+    assert report["delivery_artifacts"] == ["output/delivery/brief.md"]
+    assert _finalize_report_delivery_artifact_reasons(moved, report) == []
+    reader_paths = _finalize_report_reader_artifact_paths(moved, report)
+    assert (moved / "output" / "brief.md").resolve() in reader_paths
+    assert all(path.exists() for path in reader_paths)
 
 
 def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path):
