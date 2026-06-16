@@ -17,6 +17,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.quality_gates import state as quality_gate_state
 from multi_agent_brief.quality_gates.contract import (
+    GATE_IDS,
     interpret_quality_gate_binding,
     quality_gate_report_path_for_stage,
     require_quality_gate_binding_pass,
@@ -318,6 +319,57 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert payload["details"]["required_command"] == "stage-complete"
 
 
+def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(ws, [])
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo update.\n\n## Detail\nRevenue was $42 million.\n",
+    )
+    _repo, stages, artifacts = quality_gate_state._contracts(workspace=ws, repo_workdir=ROOT)
+    ledger = quality_gate_state._load_ledger(_intermediate(ws) / "claim_ledger.json", required=True)
+
+    gate_findings = quality_gate_state.evaluate_quality_gate_findings(
+        markdown=(_intermediate(ws) / "audited_brief.md").read_text(encoding="utf-8"),
+        ledger=ledger,
+        config=quality_gate_state._load_config(ws),
+        user_text=(ws / "user.md").read_text(encoding="utf-8"),
+        analyst_markdown=None,
+        report_date="",
+        max_source_age_days=None,
+        strict=False,
+        reader_facing_mode=False,
+        stages=stages,
+        artifacts=artifacts,
+    )
+
+    assert list(gate_findings) == sorted(GATE_IDS)
+    assert not _report_path(ws).exists()
+    assert not _auditor_report_path(ws).exists()
+    assert not (ws / "output" / "intermediate" / "event_log.jsonl").exists()
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    report_finding_types = {
+        gate_id: [finding["finding_type"] for finding in report["findings"] if finding["gate_id"] == gate_id]
+        for gate_id in sorted(GATE_IDS)
+    }
+    helper_finding_types = {
+        gate_id: [finding["finding_type"] for finding in gate_findings[gate_id]]
+        for gate_id in sorted(GATE_IDS)
+    }
+    assert helper_finding_types == report_finding_types
+
+
 def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
@@ -348,8 +400,8 @@ def test_gates_check_writes_report_and_events_for_material_blocker(tmp_path, cap
     assert any(finding["blocking_level"] == "blocking" for finding in findings)
     assert any(result["gate_id"] == "material_fact" for result in report["gate_results"])
     event_types = [event["event_type"] for event in _events(ws)]
-    assert "quality_gate_checked" in event_types
-    assert "quality_gate_blocked" in event_types
+    assert event_types.count("quality_gate_checked") == 1
+    assert event_types.count("quality_gate_blocked") == 1
 
 
 def test_gate_report_can_be_explicitly_ingested_as_audit_feedback(tmp_path, capsys):

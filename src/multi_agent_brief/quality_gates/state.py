@@ -168,6 +168,28 @@ def _read_text(path: Path, *, label: str) -> str:
     return text
 
 
+def _read_optional_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _read_analyst_draft_snapshot(workspace: Path) -> str | None:
+    snapshot_path = workspace / ANALYST_DRAFT_SNAPSHOT_FILE
+    if not snapshot_path.exists():
+        return None
+    try:
+        return snapshot_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeStateError(
+            f"Failed to read Analyst draft snapshot: {snapshot_path}",
+            details={"path": str(snapshot_path), "reason": str(exc)},
+        ) from exc
+
+
 def _load_ledger(path: Path, *, required: bool) -> ClaimLedger:
     if not path.exists():
         if required:
@@ -503,22 +525,14 @@ def _line_number_for_token(text: str, token: str) -> int | None:
 
 def _editor_introduced_new_fact_findings(
     *,
-    workspace: Path,
     markdown: str,
+    analyst_markdown: str | None,
     strict: bool,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    snapshot_path = workspace / ANALYST_DRAFT_SNAPSHOT_FILE
-    if not snapshot_path.exists():
+    if analyst_markdown is None:
         return []
-    try:
-        analyst_markdown = snapshot_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise RuntimeStateError(
-            f"Failed to read Analyst draft snapshot: {snapshot_path}",
-            details={"path": str(snapshot_path), "reason": str(exc)},
-        ) from exc
 
     introduced_numbers = sorted(
         set(_token_map(FACT_NUMBER_RE, markdown)) - set(_token_map(FACT_NUMBER_RE, analyst_markdown))
@@ -635,7 +649,7 @@ def _section_between(content: str, start_patterns: tuple[str, ...]) -> str:
     return "\n".join(lines[start_idx:end_idx])
 
 
-def _target_terms(workspace: Path, config: dict[str, Any]) -> list[str]:
+def _target_terms(config: dict[str, Any], *, user_text: str = "") -> list[str]:
     terms: list[str] = []
     project = config.get("project") or {}
     if isinstance(project, dict):
@@ -647,14 +661,9 @@ def _target_terms(workspace: Path, config: dict[str, Any]) -> list[str]:
         value = config.get(key)
         if isinstance(value, str) and value.strip():
             terms.append(value.strip())
-    user_path = workspace / "user.md"
-    if user_path.exists():
-        try:
-            text = user_path.read_text(encoding="utf-8")
-        except OSError:
-            text = ""
+    if user_text:
         for marker in ("Target:", "Company:", "Organization:", "目标：", "公司："):
-            for line in text.splitlines():
+            for line in user_text.splitlines():
                 if marker in line:
                     value = line.split(marker, 1)[1].strip(" #:-")
                     if value:
@@ -676,17 +685,17 @@ def _mentions_any(text: str, terms: list[str]) -> bool:
 
 def _target_relevance_findings(
     *,
-    workspace: Path,
     markdown: str,
     ledger: ClaimLedger,
     config: dict[str, Any],
+    user_text: str,
     reader_facing_mode: bool,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     stage_id = _stage_or_none(stages, "editor")
     artifact_id = _artifact_or_none(artifacts, "audited_brief")
-    terms = _target_terms(workspace, config)
+    terms = _target_terms(config, user_text=user_text)
     if not terms:
         return [
             _finding(
@@ -768,6 +777,64 @@ def _reader_facing_mode(workspace: Path, brief_path: Path) -> bool:
     return _workspace_relative(workspace, brief_path) == "output/brief.md"
 
 
+def evaluate_quality_gate_findings(
+    *,
+    markdown: str,
+    ledger: ClaimLedger,
+    config: dict[str, Any],
+    user_text: str,
+    analyst_markdown: str | None,
+    report_date: str,
+    max_source_age_days: int | None,
+    strict: bool,
+    reader_facing_mode: bool,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Evaluate deterministic quality gates from preloaded inputs without writes.
+
+    The returned mapping is intentionally keyed by gate ID so callers can choose
+    their own deterministic aggregation policy. Report writing, event emission,
+    and legacy projection updates remain owned by ``check_quality_gates``.
+    """
+
+    gate_findings: dict[str, list[dict[str, Any]]] = {gate_id: [] for gate_id in sorted(GATE_IDS)}
+    if not reader_facing_mode:
+        gate_findings["material_fact"] = _material_findings(
+            markdown=markdown,
+            ledger=ledger,
+            strict=strict,
+            stages=stages,
+            artifacts=artifacts,
+        )
+        gate_findings["freshness"] = _freshness_findings(
+            markdown=markdown,
+            ledger=ledger,
+            report_date=report_date,
+            max_source_age_days=max_source_age_days,
+            strict=strict,
+            stages=stages,
+            artifacts=artifacts,
+        )
+        gate_findings["editor_new_fact"] = _editor_introduced_new_fact_findings(
+            markdown=markdown,
+            analyst_markdown=analyst_markdown,
+            strict=strict,
+            stages=stages,
+            artifacts=artifacts,
+        )
+    gate_findings["target_relevance"] = _target_relevance_findings(
+        markdown=markdown,
+        ledger=ledger,
+        config=config,
+        user_text=user_text,
+        reader_facing_mode=reader_facing_mode,
+        stages=stages,
+        artifacts=artifacts,
+    )
+    return gate_findings
+
+
 def check_quality_gates(
     *,
     workspace: str | Path,
@@ -803,45 +870,26 @@ def check_quality_gates(
     markdown = _read_text(brief_path, label="Brief")
     claim_ledger = _load_ledger(ledger_path, required=not reader_mode)
     config = _load_config(ws)
+    user_text = _read_optional_text(ws / "user.md")
+    analyst_markdown = None if reader_mode else _read_analyst_draft_snapshot(ws)
     report_date, max_source_age_days = _config_report_defaults(
         config,
         report_date=report_date,
         max_source_age_days=max_source_age_days,
     )
 
-    gate_findings: dict[str, list[dict[str, Any]]] = {gate_id: [] for gate_id in GATE_IDS}
-    if not reader_mode:
-        gate_findings["material_fact"] = _material_findings(
-            markdown=markdown,
-            ledger=claim_ledger,
-            strict=strict,
-            stages=stages,
-            artifacts=artifacts,
-        )
-        gate_findings["freshness"] = _freshness_findings(
-            markdown=markdown,
-            ledger=claim_ledger,
-            report_date=report_date,
-            max_source_age_days=max_source_age_days,
-            strict=strict,
-            stages=stages,
-            artifacts=artifacts,
-        )
-        gate_findings["editor_new_fact"] = _editor_introduced_new_fact_findings(
-            workspace=ws,
-            markdown=markdown,
-            strict=strict,
-            stages=stages,
-            artifacts=artifacts,
-        )
-    gate_findings["target_relevance"] = _target_relevance_findings(
-        workspace=ws,
+    gate_findings = evaluate_quality_gate_findings(
         markdown=markdown,
         ledger=claim_ledger,
         config=config,
-        reader_facing_mode=reader_mode,
+        user_text=user_text,
+        analyst_markdown=analyst_markdown,
+        report_date=report_date,
+        max_source_age_days=max_source_age_days,
         stages=stages,
         artifacts=artifacts,
+        strict=strict,
+        reader_facing_mode=reader_mode,
     )
     for gate_id in sorted(GATE_IDS):
         gate_findings[gate_id] = _apply_gate_context(
