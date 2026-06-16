@@ -2,8 +2,8 @@
 
 080 validates whether approved Improvement Memory guidance manifests under a
 frozen fact layer. Schema validators are side-effect free. ``register-run``
-writes only the requested experiment metadata output and must not mutate
-workspace runtime state, archive files, case files, agent assets, or
+and ``score-run`` write only the requested experiment metadata outputs and must
+not mutate workspace runtime state, archive files, case files, agent assets, or
 Improvement Ledger files.
 """
 
@@ -978,6 +978,7 @@ def _scorecard_archive_projection(
         if isinstance(archive_manifest.get("fact_layer"), dict)
         else "unknown"
     )
+    _validate_archive_manifest_ids(archive_manifest, run_id=str(run_record.get("run_id") or ""))
     finalize["complete"] = archive["schema_valid"] and archive["source"] == "finalize-complete"
 
     finalize_report = _read_archive_json_by_original_path(
@@ -1089,19 +1090,112 @@ def _archive_file_by_original_path(
     files = archive_manifest.get("files")
     if not isinstance(files, list):
         return None
-    for record in files:
-        if not isinstance(record, dict) or record.get("original_path") != original_path:
-            continue
-        archive_path = record.get("archive_path")
-        if not isinstance(archive_path, str) or _unsafe_relative_archive_path(archive_path):
-            return None
-        candidate = (archive_root / archive_path).resolve()
-        try:
-            candidate.relative_to(archive_root.resolve())
-        except ValueError:
-            return None
-        return candidate if candidate.exists() and candidate.is_file() else None
-    return None
+    matches = [
+        record
+        for record in files
+        if isinstance(record, dict) and record.get("original_path") == original_path
+    ]
+    if len(matches) > 1:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "run archive contains duplicate file records for original_path.",
+            original_path=original_path,
+        )
+    if not matches:
+        return None
+    record = matches[0]
+    normalized = _validated_scorecard_archive_file_record(
+        archive_root=archive_root,
+        record=record,
+        context=original_path,
+    )
+    return archive_root / normalized["archive_path"]
+
+
+def _validated_scorecard_archive_file_record(
+    *,
+    archive_root: Path,
+    record: dict[str, Any],
+    context: str,
+) -> dict[str, Any]:
+    archive_path = record.get("archive_path")
+    original_path = record.get("original_path")
+    sha256 = record.get("sha256")
+    size_bytes = record.get("size_bytes")
+    if not isinstance(archive_path, str) or not archive_path.strip():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file record archive_path is required.",
+            context=context,
+        )
+    if not isinstance(original_path, str) or not original_path.strip():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file record original_path is required.",
+            context=context,
+        )
+    if not isinstance(sha256, str) or not _SHA256_RE.match(sha256):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file record sha256 is invalid.",
+            context=context,
+        )
+    if not isinstance(size_bytes, int) or size_bytes < 0:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file record size_bytes is invalid.",
+            context=context,
+        )
+    if _unsafe_relative_archive_path(archive_path):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file record archive_path must be relative and safe.",
+            context=context,
+            archive_path=archive_path,
+        )
+    file_path = (archive_root / archive_path).resolve()
+    try:
+        file_path.relative_to(archive_root.resolve())
+    except ValueError:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file record archive_path escapes archive.",
+            context=context,
+            archive_path=archive_path,
+        )
+    if not file_path.exists() or not file_path.is_file():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file is missing.",
+            context=context,
+            archive_path=archive_path,
+        )
+    actual_size = file_path.stat().st_size
+    if actual_size != size_bytes:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file size does not match manifest.",
+            context=context,
+            archive_path=archive_path,
+            expected_size_bytes=size_bytes,
+            actual_size_bytes=actual_size,
+        )
+    actual_sha = _sha256_file(file_path)
+    if actual_sha != sha256:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FILE_INVALID",
+            "archive file hash does not match manifest.",
+            context=context,
+            archive_path=archive_path,
+            expected_sha256=sha256,
+            actual_sha256=actual_sha,
+        )
+    return {
+        "archive_path": archive_path,
+        "original_path": original_path,
+        "sha256": sha256,
+        "size_bytes": size_bytes,
+    }
 
 
 def _scorecard_reader_clean(finalize_report: dict[str, Any]) -> dict[str, Any]:
@@ -1218,7 +1312,7 @@ def _validate_archive_manifest_ids(archive_manifest: dict[str, Any], *, run_id: 
         _raise_experiment_error(
             "E_EXPERIMENT_080_RUN_ID_MISMATCH",
             "runtime_manifest.run_id and archive run ids do not match.",
-            runtime_manifest_run_id=run_id,
+            run_record_run_id=run_id,
             archive_run_id=archive_run_id,
             archive_runtime_manifest_run_id=runtime_manifest_run_id,
         )
