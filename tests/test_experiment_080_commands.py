@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.experiments import validate_run_record
+from multi_agent_brief.experiments import validate_run_record, validate_scorecard
 
 
 SHA = "b" * 64
@@ -103,6 +103,16 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _write_case(case_dir: Path) -> None:
     case_dir.mkdir(parents=True)
     _write_json(case_dir / "case_manifest.json", _case_manifest())
@@ -143,6 +153,54 @@ def _copy_archive_to_workspace(ws: Path, archive_manifest: Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(run_dir, target)
     return target / "manifest.json"
+
+
+def _add_scorecard_archive_reports(archive_manifest: Path) -> None:
+    archive_root = archive_manifest.parent
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    records = manifest.setdefault("files", [])
+
+    def add_json(archive_path: str, original_path: str, payload: dict) -> None:
+        path = archive_root / archive_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(path, payload)
+        records.append({
+            "role": "intermediate" if archive_path.startswith("intermediate/") else "control",
+            "archive_path": archive_path,
+            "original_path": original_path,
+            "sha256": _sha256_file(path),
+            "size_bytes": path.stat().st_size,
+        })
+
+    add_json(
+        "intermediate/finalize_report.json",
+        "output/intermediate/finalize_report.json",
+        {
+            "status": "pass",
+            "reader_clean": {
+                "status": "pass",
+                "markdown_blocking_count": 0,
+                "docx_blocking_count": 0,
+            },
+            "delivery_artifacts": ["output/delivery/brief.md"],
+        },
+    )
+    add_json(
+        "intermediate/gates/auditor_quality_gate_report.json",
+        "output/intermediate/gates/auditor_quality_gate_report.json",
+        {"status": "pass", "gate_results": []},
+    )
+    add_json(
+        "intermediate/gates/finalize_quality_gate_report.json",
+        "output/intermediate/gates/finalize_quality_gate_report.json",
+        {"status": "pass", "gate_results": []},
+    )
+    add_json(
+        "control/artifact_registry.json",
+        "output/intermediate/artifact_registry.json",
+        {"schema_version": "multi-agent-brief-artifact-registry/v1", "artifacts": {}},
+    )
+    _write_json(archive_manifest, manifest)
 
 
 def _write_terminal_runtime(
@@ -200,6 +258,21 @@ def _register_args(case_dir: Path, ws: Path, output: Path, *, condition: str = "
         condition,
         "--workspace",
         str(ws),
+        "--output",
+        str(output),
+        "--json",
+    ]
+
+
+def _score_args(case_dir: Path, run_record: Path, output: Path) -> list[str]:
+    return [
+        "experiments",
+        "080",
+        "score-run",
+        "--case",
+        str(case_dir),
+        "--run-record",
+        str(run_record),
         "--output",
         str(output),
         "--json",
@@ -624,3 +697,172 @@ def test_experiments_080_register_run_does_not_use_unrelated_cwd_git(tmp_path, c
     assert record["repo_commit"] == "abc123"
     assert record["repo_commit"] != unrelated_head
     assert record["repo_commit_source"] == "case_manifest"
+
+
+def test_experiments_080_score_run_writes_deterministic_scorecard_draft(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    run_id = archive_manifest.parent.name
+    _write_terminal_runtime(ws, run_id=run_id)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["validity_class"] == "invalid_incomplete"
+    assert payload["assessment_status"] == "needs_assessment"
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert validate_scorecard(scorecard) == []
+    assert scorecard["assessment_status"] == "needs_assessment"
+    assert scorecard["guidance_scores"] == []
+    assert scorecard["guidance_assessment"]["guidance_entry_ids"] == ["AG-0001"]
+    assert scorecard["control_integrity"]["archive_present"] is True
+    assert scorecard["control_integrity"]["quality_gates_passed"] is True
+    assert scorecard["control_integrity"]["finalize_report_pass"] is True
+    assert scorecard["control_integrity"]["artifact_registry_valid"] is True
+    assert scorecard["reader_clean"]["pass"] is True
+    assert scorecard["frozen_fact_layer"]["matches_case"] is True
+    assert "Python does not score guidance manifestation" in scorecard["notes"][1]
+
+
+def test_experiments_080_score_run_is_idempotent_when_output_matches(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    capsys.readouterr()
+    before = scorecard_path.read_bytes()
+
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["written"] is False
+    assert scorecard_path.read_bytes() == before
+
+
+def test_experiments_080_score_run_refuses_different_existing_output(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    scorecard_path.write_text("{}\n", encoding="utf-8")
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_OUTPUT_EXISTS"
+    assert scorecard_path.read_text(encoding="utf-8") == "{}\n"
+
+
+def test_experiments_080_score_run_marks_fact_layer_mismatch(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST, source_pack_sha="c" * 64)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 0
+    json.loads(capsys.readouterr().out)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["validity_class"] == "invalid_fact_layer_mismatch"
+    assert scorecard["frozen_fact_layer"]["matches_case"] is False
+
+
+def test_experiments_080_score_run_marks_contaminated_run(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    contaminated = {
+        "status": "contaminated",
+        "reference_eligible": False,
+        "clean_single_shot": False,
+        "reasons": [{"reason_code": "test_contamination", "message": "test"}],
+    }
+    _patch_archive_manifest(archive_manifest, run_integrity=contaminated)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name, run_integrity=contaminated)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 0
+    json.loads(capsys.readouterr().out)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["validity_class"] == "invalid_contaminated"
+    assert scorecard["control_integrity"]["run_integrity_clean"] is False
+
+
+def test_experiments_080_score_run_marks_missing_archive_incomplete(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    run_id = archive_manifest.parent.name
+    _write_terminal_runtime(ws, run_id=run_id)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    shutil.rmtree(archive_manifest.parent)
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 0
+    json.loads(capsys.readouterr().out)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["validity_class"] == "invalid_incomplete"
+    assert scorecard["control_integrity"]["archive_present"] is False
+    assert scorecard["reader_clean"]["status"] == "unknown"
+
+
+def test_experiments_080_score_run_rejects_invalid_run_record(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    run_record = tmp_path / "bad.run_record.json"
+    _write_json(run_record, {"schema_version": "mabw.experiment_080.run_record.v1"})
+    scorecard_path = tmp_path / "bad.scorecard.json"
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_RUN_RECORD_INVALID"
+    assert not scorecard_path.exists()

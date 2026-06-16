@@ -49,6 +49,7 @@ validation unless that is stated separately.
 | `multi-agent-brief eval-cases list/validate/run` | Supported |
 | `multi-agent-brief experiments 080 validate-case` | Experimental |
 | `multi-agent-brief experiments 080 register-run` | Experimental |
+| `multi-agent-brief experiments 080 score-run` | Experimental |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -103,8 +104,13 @@ Screener, or Claim Ledger execution history.
 
 MABW-080 run registration is experimental experiment metadata tooling. It
 registers completed workspace runs into an existing 080 case as `run_record.json`.
-It does not score guidance manifestation, summarize experiments, scaffold
-conditions, run workflow stages, or prove output quality.
+MABW-080 scorecard building is experimental deterministic metadata tooling. It
+can build a scorecard draft from an existing `run_record.json`, archive/control
+projections, and the case definition. Python fills control integrity,
+fact-layer match, reader-clean, gate/finalize/archive, timing, and coverage-delta
+status when inputs are available. It does not score guidance
+manifestation, summarize experiments, scaffold conditions, run workflow stages,
+judge prose quality, or prove output quality.
 
 ## Runtimes
 

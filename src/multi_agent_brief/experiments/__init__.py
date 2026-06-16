@@ -6,8 +6,10 @@ state and not workflow artifacts.
 
 from .experiment_080 import (
     EXPERIMENT_080_ID,
+    ALLOWED_SCORECARD_ASSESSMENT_STATUSES,
     Experiment080Error,
     register_run_record,
+    score_run_record,
     validate_case_dir,
     validate_case_manifest,
     validate_frozen_fact_layer,
@@ -18,8 +20,10 @@ from .experiment_080 import (
 
 __all__ = [
     "EXPERIMENT_080_ID",
+    "ALLOWED_SCORECARD_ASSESSMENT_STATUSES",
     "Experiment080Error",
     "register_run_record",
+    "score_run_record",
     "validate_case_dir",
     "validate_case_manifest",
     "validate_frozen_fact_layer",

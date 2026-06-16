@@ -46,6 +46,7 @@ ALLOWED_RUN_INTEGRITY_STATUSES = PERSISTED_RUN_INTEGRITY_STATUSES
 ALLOWED_GUIDANCE_SOURCES = {"improvement_ledger", "manual", "prompt_only"}
 ALLOWED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review", "llm_only"}
 A_CONTROLLED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review"}
+ALLOWED_SCORECARD_ASSESSMENT_STATUSES = {"assessed", "needs_assessment"}
 
 REQUIRED_FACT_ARTIFACT_IDS = {
     "durable_source_evidence_or_source_pack",
@@ -548,6 +549,107 @@ def register_run_record(
     }
 
 
+def score_run_record(
+    *,
+    case_dir: str | Path,
+    run_record: str | Path,
+    output: str | Path,
+) -> dict[str, Any]:
+    """Build a deterministic MABW-080 scorecard draft from a registered run.
+
+    The builder fills only deterministic control/readiness fields. It does not
+    judge whether guidance manifested, prose improved, or factual regressions
+    occurred. Until a human/assisted assessment is imported, the generated
+    scorecard remains ``assessment_status=needs_assessment`` and cannot be
+    A-grade evidence.
+    """
+
+    case_root = Path(case_dir).expanduser().resolve()
+    record_path = Path(run_record).expanduser()
+    if not record_path.is_absolute():
+        record_path = (Path.cwd() / record_path).resolve()
+    else:
+        record_path = record_path.resolve()
+    output_path = Path(output).expanduser()
+    if not output_path.is_absolute():
+        output_path = (Path.cwd() / output_path).resolve()
+    else:
+        output_path = output_path.resolve()
+
+    case_validation = validate_case_dir(case_root)
+    if not case_validation.get("ok"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_CASE_INVALID",
+            "MABW-080 case validation failed.",
+            errors=case_validation.get("errors") or [],
+            warnings=case_validation.get("warnings") or [],
+        )
+    case_manifest = _load_json_object(case_root / "case_manifest.json", label="case_manifest")
+    guidance_set = _load_json_object(case_root / "guidance_set.json", label="guidance_set")
+    record = _load_json_object(record_path, label="run_record")
+    run_record_diagnostics = validate_run_record(record)
+    if run_record_diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_RECORD_INVALID",
+            "run_record.json failed schema validation.",
+            errors=[diagnostic.to_dict() for diagnostic in run_record_diagnostics],
+        )
+    if record.get("case_id") != case_manifest.get("case_id"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_CASE_MISMATCH",
+            "run_record.case_id does not match case_manifest.case_id.",
+            run_record_case_id=record.get("case_id"),
+            case_manifest_case_id=case_manifest.get("case_id"),
+        )
+    conditions = case_manifest.get("conditions") if isinstance(case_manifest.get("conditions"), list) else []
+    if record.get("condition") not in conditions:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_CONDITION_INVALID",
+            "run_record.condition is not declared by case_manifest.conditions.",
+            condition=record.get("condition"),
+            allowed_conditions=[item for item in conditions if item in ALLOWED_CONDITIONS],
+        )
+
+    archive_projection = _scorecard_archive_projection(
+        case_root=case_root,
+        run_record_path=record_path,
+        run_record=record,
+    )
+    scorecard = _build_scorecard_draft(
+        case_manifest=case_manifest,
+        guidance_set=guidance_set,
+        run_record=record,
+        archive_projection=archive_projection,
+    )
+    diagnostics = validate_scorecard(scorecard)
+    if diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "Generated scorecard.json failed schema validation.",
+            errors=[diagnostic.to_dict() for diagnostic in diagnostics],
+        )
+
+    record_bytes = _json_bytes(scorecard)
+    written = _write_experiment_output_idempotently(
+        output_path,
+        record_bytes,
+        artifact_label="scorecard",
+    )
+    return {
+        "ok": True,
+        "schema_version": SCORECARD_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": scorecard["case_id"],
+        "condition": scorecard["condition"],
+        "run_id": scorecard["run_id"],
+        "validity_class": scorecard["validity_class"],
+        "assessment_status": scorecard["assessment_status"],
+        "output": str(output_path),
+        "written": written,
+        "scorecard": scorecard,
+    }
+
+
 def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]:
     """Validate ``scorecard.json``."""
 
@@ -569,6 +671,13 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             "invalid_validity_class",
             f"scorecard.validity_class must be one of {sorted(ALLOWED_VALIDITY_CLASSES)}.",
             path="scorecard.validity_class",
+        ))
+    assessment_status = payload.get("assessment_status")
+    if assessment_status is not None and assessment_status not in ALLOWED_SCORECARD_ASSESSMENT_STATUSES:
+        diagnostics.append(_diag(
+            "invalid_assessment_status",
+            f"scorecard.assessment_status must be one of {sorted(ALLOWED_SCORECARD_ASSESSMENT_STATUSES)} when present.",
+            path="scorecard.assessment_status",
         ))
 
     control = payload.get("control_integrity")
@@ -604,10 +713,10 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             path="scorecard.guidance_scores",
         ))
         guidance_scores = []
-    elif not guidance_scores:
+    elif not guidance_scores and assessment_status != "needs_assessment":
         diagnostics.append(_diag(
             "empty_guidance_scores",
-            "scorecard.guidance_scores must contain at least one guidance score.",
+            "scorecard.guidance_scores must contain at least one guidance score unless assessment_status is needs_assessment.",
             path="scorecard.guidance_scores",
         ))
     seen_guidance_score_ids: set[str] = set()
@@ -628,6 +737,12 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
         _validate_guidance_score(score, diagnostics, path=path)
 
     if validity == "A_controlled":
+        if assessment_status == "needs_assessment":
+            diagnostics.append(_diag(
+                "a_controlled_requires_assessment",
+                "A_controlled scorecards cannot be marked needs_assessment.",
+                path="scorecard.assessment_status",
+            ))
         _validate_a_controlled_scorecard(
             control=control,
             fact_layer=fact_layer,
@@ -686,6 +801,351 @@ def validate_case_dir(case_dir: str | Path) -> dict[str, Any]:
         "errors": [error.to_dict() for error in errors],
         "warnings": [warning.to_dict() for warning in warnings],
     }
+
+
+def _build_scorecard_draft(
+    *,
+    case_manifest: dict[str, Any],
+    guidance_set: dict[str, Any],
+    run_record: dict[str, Any],
+    archive_projection: dict[str, Any],
+) -> dict[str, Any]:
+    run_integrity = run_record.get("run_integrity") if isinstance(run_record.get("run_integrity"), dict) else {}
+    imported_fact_layer = (
+        run_record.get("imported_fact_layer")
+        if isinstance(run_record.get("imported_fact_layer"), dict)
+        else {}
+    )
+    fact_layer_matches = imported_fact_layer.get("matches_case_frozen_fact_layer") is True
+    reader_clean = archive_projection["reader_clean"]
+    gate_status = archive_projection["quality_gates"]
+    finalize_status = archive_projection["finalize"]
+    archive_status = archive_projection["archive"]
+    timing_summary = _scorecard_timing_summary(run_record.get("timing"))
+    control_integrity = {
+        "terminal_workflow": True,
+        "run_integrity_clean": run_integrity.get("status") == "clean",
+        "reference_eligible": run_integrity.get("reference_eligible") is True,
+        "artifact_registry_valid": archive_projection["artifact_registry_valid"],
+        "quality_gates_passed": gate_status["passed"],
+        "archive_present": archive_status["present"],
+        "archive_schema_valid": archive_status["schema_valid"],
+        "finalize_complete": finalize_status["complete"],
+        "finalize_report_pass": finalize_status["report_pass"],
+        "timing_available": timing_summary["status"] == "available",
+    }
+    validity_class = _scorecard_validity_class(
+        run_integrity=run_integrity,
+        fact_layer_matches=fact_layer_matches,
+        control_integrity=control_integrity,
+        reader_clean=reader_clean,
+    )
+    guidance_entries = guidance_set.get("entries") if isinstance(guidance_set.get("entries"), list) else []
+    return {
+        "schema_version": SCORECARD_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": case_manifest["case_id"],
+        "condition": run_record["condition"],
+        "run_id": run_record["run_id"],
+        "validity_class": validity_class,
+        "assessment_status": "needs_assessment",
+        "assessment_boundary": (
+            "python_fills_deterministic_control_fields_only; "
+            "guidance_manifestation_requires_human_or_llm_assisted_human_review_import"
+        ),
+        "control_integrity": control_integrity,
+        "frozen_fact_layer": {
+            "matches_case": fact_layer_matches,
+            "comparison_semantics": imported_fact_layer.get("comparison_semantics", ""),
+            "mismatches": imported_fact_layer.get("mismatches") or [],
+        },
+        "reader_clean": reader_clean,
+        "quality_gates": gate_status,
+        "finalize": finalize_status,
+        "archive": archive_status,
+        "timing_summary": timing_summary,
+        "coverage_delta": {
+            "status": "not_computed",
+            "reason": "deterministic_coverage_baseline_not_available_in_run_record",
+        },
+        "guidance_assessment": {
+            "status": "needs_assessment",
+            "required_methods": sorted(A_CONTROLLED_ASSESSMENT_METHODS),
+            "guidance_entry_ids": [
+                entry.get("entry_id")
+                for entry in guidance_entries
+                if isinstance(entry, dict) and isinstance(entry.get("entry_id"), str)
+            ],
+        },
+        "guidance_scores": [],
+        "regression": {
+            "status": "not_assessed",
+            "reason": "semantic_regression_requires_human_or_imported_assessment",
+        },
+        "notes": [
+            "Scorecard draft is deterministic metadata only.",
+            "Python does not score guidance manifestation, prose quality, taste, or factual-regression semantics.",
+        ],
+    }
+
+
+def _scorecard_validity_class(
+    *,
+    run_integrity: dict[str, Any],
+    fact_layer_matches: bool,
+    control_integrity: dict[str, Any],
+    reader_clean: dict[str, Any],
+) -> str:
+    if run_integrity.get("status") == "contaminated":
+        return "invalid_contaminated"
+    if not fact_layer_matches:
+        return "invalid_fact_layer_mismatch"
+    required_control_keys = (
+        "terminal_workflow",
+        "run_integrity_clean",
+        "reference_eligible",
+        "artifact_registry_valid",
+        "quality_gates_passed",
+        "archive_present",
+        "archive_schema_valid",
+        "finalize_complete",
+        "finalize_report_pass",
+        "timing_available",
+    )
+    if any(control_integrity.get(key) is not True for key in required_control_keys):
+        return "invalid_incomplete"
+    if reader_clean.get("pass") is not True:
+        return "invalid_incomplete"
+    return "invalid_incomplete"
+
+
+def _scorecard_archive_projection(
+    *,
+    case_root: Path,
+    run_record_path: Path,
+    run_record: dict[str, Any],
+) -> dict[str, Any]:
+    archive_path = _resolve_scorecard_archive_manifest(
+        case_root=case_root,
+        run_record_path=run_record_path,
+        run_archive_path=str(run_record.get("run_archive_path") or ""),
+    )
+    archive = {
+        "present": archive_path is not None,
+        "schema_valid": False,
+        "source": "missing",
+        "run_archive_path": str(run_record.get("run_archive_path") or ""),
+    }
+    reader_clean = {"pass": False, "status": "unknown", "source": "archive_missing"}
+    quality_gates = {
+        "passed": False,
+        "auditor_status": "unknown",
+        "finalize_status": "unknown",
+        "source": "archive_missing",
+    }
+    finalize = {
+        "complete": False,
+        "report_pass": False,
+        "report_status": "unknown",
+        "source": "archive_missing",
+    }
+    artifact_registry_valid = False
+    if archive_path is None:
+        return {
+            "archive": archive,
+            "reader_clean": reader_clean,
+            "quality_gates": quality_gates,
+            "finalize": finalize,
+            "artifact_registry_valid": artifact_registry_valid,
+        }
+    archive_root = archive_path.parent
+    try:
+        archive_manifest = _load_json_object(archive_path, label="run_archive_manifest")
+    except Experiment080Error as exc:
+        archive["source"] = "invalid_archive_manifest"
+        archive["error"] = exc.details.get("code", "E_EXPERIMENT_080_INPUT_INVALID")
+        return {
+            "archive": archive,
+            "reader_clean": reader_clean,
+            "quality_gates": quality_gates,
+            "finalize": finalize,
+            "artifact_registry_valid": artifact_registry_valid,
+        }
+    archive["schema_valid"] = archive_manifest.get("schema_version") == RUN_ARCHIVE_SCHEMA
+    archive["source"] = archive_manifest.get("source") if isinstance(archive_manifest.get("source"), str) else "unknown"
+    archive["fact_layer_status"] = (
+        archive_manifest.get("fact_layer", {}).get("status")
+        if isinstance(archive_manifest.get("fact_layer"), dict)
+        else "unknown"
+    )
+    finalize["complete"] = archive["schema_valid"] and archive["source"] == "finalize-complete"
+
+    finalize_report = _read_archive_json_by_original_path(
+        archive_root=archive_root,
+        archive_manifest=archive_manifest,
+        original_path="output/intermediate/finalize_report.json",
+    )
+    if isinstance(finalize_report, dict):
+        report_status = str(finalize_report.get("status") or "unknown")
+        finalize.update({
+            "source": "finalize_report",
+            "report_status": report_status,
+            "report_pass": report_status == "pass",
+        })
+        reader_clean = _scorecard_reader_clean(finalize_report)
+    else:
+        finalize["source"] = "finalize_report_missing"
+
+    auditor_report = _read_archive_json_by_original_path(
+        archive_root=archive_root,
+        archive_manifest=archive_manifest,
+        original_path="output/intermediate/gates/auditor_quality_gate_report.json",
+    )
+    finalize_gate_report = _read_archive_json_by_original_path(
+        archive_root=archive_root,
+        archive_manifest=archive_manifest,
+        original_path="output/intermediate/gates/finalize_quality_gate_report.json",
+    )
+    auditor_status = _status_from_report(auditor_report)
+    finalize_gate_status = _status_from_report(finalize_gate_report)
+    quality_gates = {
+        "passed": auditor_status == "pass" and finalize_gate_status == "pass",
+        "auditor_status": auditor_status,
+        "finalize_status": finalize_gate_status,
+        "source": "archive_gate_reports",
+    }
+
+    artifact_registry = _read_archive_json_by_original_path(
+        archive_root=archive_root,
+        archive_manifest=archive_manifest,
+        original_path="output/intermediate/artifact_registry.json",
+    )
+    artifact_registry_valid = (
+        isinstance(artifact_registry, dict)
+        and isinstance(artifact_registry.get("artifacts"), dict)
+    )
+    return {
+        "archive": archive,
+        "reader_clean": reader_clean,
+        "quality_gates": quality_gates,
+        "finalize": finalize,
+        "artifact_registry_valid": artifact_registry_valid,
+    }
+
+
+def _resolve_scorecard_archive_manifest(
+    *,
+    case_root: Path,
+    run_record_path: Path,
+    run_archive_path: str,
+) -> Path | None:
+    if not run_archive_path.strip():
+        return None
+    rel = Path(run_archive_path)
+    candidates: list[Path] = []
+    if rel.is_absolute():
+        candidates.append(rel)
+    else:
+        for parent in [run_record_path.parent, *run_record_path.parents]:
+            candidates.append(parent / rel)
+        candidates.append(case_root / rel)
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists() and resolved.is_file():
+            return resolved
+    return None
+
+
+def _read_archive_json_by_original_path(
+    *,
+    archive_root: Path,
+    archive_manifest: dict[str, Any],
+    original_path: str,
+) -> dict[str, Any] | None:
+    path = _archive_file_by_original_path(
+        archive_root=archive_root,
+        archive_manifest=archive_manifest,
+        original_path=original_path,
+    )
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _archive_file_by_original_path(
+    *,
+    archive_root: Path,
+    archive_manifest: dict[str, Any],
+    original_path: str,
+) -> Path | None:
+    files = archive_manifest.get("files")
+    if not isinstance(files, list):
+        return None
+    for record in files:
+        if not isinstance(record, dict) or record.get("original_path") != original_path:
+            continue
+        archive_path = record.get("archive_path")
+        if not isinstance(archive_path, str) or _unsafe_relative_archive_path(archive_path):
+            return None
+        candidate = (archive_root / archive_path).resolve()
+        try:
+            candidate.relative_to(archive_root.resolve())
+        except ValueError:
+            return None
+        return candidate if candidate.exists() and candidate.is_file() else None
+    return None
+
+
+def _scorecard_reader_clean(finalize_report: dict[str, Any]) -> dict[str, Any]:
+    reader = finalize_report.get("reader_clean")
+    if not isinstance(reader, dict):
+        return {"pass": False, "status": "unknown", "source": "finalize_report.reader_clean_missing"}
+    status = str(reader.get("status") or "unknown")
+    return {
+        "pass": status == "pass" or reader.get("pass") is True,
+        "status": status,
+        "source": "finalize_report.reader_clean",
+        "finding_count": sum(
+            int(value)
+            for key, value in reader.items()
+            if key.endswith("_count") and isinstance(value, int)
+        ),
+    }
+
+
+def _status_from_report(report: dict[str, Any] | None) -> str:
+    if not isinstance(report, dict):
+        return "missing"
+    status = report.get("status")
+    return status if isinstance(status, str) and status else "unknown"
+
+
+def _scorecard_timing_summary(timing: Any) -> dict[str, Any]:
+    if not isinstance(timing, dict):
+        return {"status": "unknown", "schema_version": "", "source": "run_record.timing"}
+    stages = timing.get("stages")
+    summary = {
+        "schema_version": str(timing.get("schema_version") or ""),
+        "status": str(timing.get("status") or "unknown"),
+        "run_recipe": timing.get("run_recipe", ""),
+        "source": "run_record.timing",
+    }
+    if isinstance(stages, list):
+        summary["stage_count"] = len(stages)
+        summary["completed_stage_count"] = sum(
+            1
+            for stage in stages
+            if isinstance(stage, dict) and stage.get("status") in {"complete", "satisfied_by_topology"}
+        )
+    return summary
 
 
 def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
@@ -1127,11 +1587,19 @@ def _model_identity(*containers: dict[str, Any]) -> dict[str, str] | None:
 
 
 def _write_run_record_idempotently(path: Path, payload: bytes) -> bool:
+    return _write_experiment_output_idempotently(
+        path,
+        payload,
+        artifact_label="run_record",
+    )
+
+
+def _write_experiment_output_idempotently(path: Path, payload: bytes, *, artifact_label: str) -> bool:
     if path.exists():
         if not path.is_file():
             _raise_experiment_error(
                 "E_EXPERIMENT_080_OUTPUT_EXISTS",
-                "run_record output path exists but is not a file.",
+                f"{artifact_label} output path exists but is not a file.",
                 output=str(path),
             )
         existing = path.read_bytes()
@@ -1139,7 +1607,7 @@ def _write_run_record_idempotently(path: Path, payload: bytes) -> bool:
             return False
         _raise_experiment_error(
             "E_EXPERIMENT_080_OUTPUT_EXISTS",
-            "run_record output path already exists with different content.",
+            f"{artifact_label} output path already exists with different content.",
             output=str(path),
         )
     path.parent.mkdir(parents=True, exist_ok=True)

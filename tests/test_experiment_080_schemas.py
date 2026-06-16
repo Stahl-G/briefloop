@@ -322,6 +322,26 @@ def test_experiment_080_scorecard_requires_non_empty_guidance_scores():
     assert "empty_guidance_scores" in _codes(diagnostics)
 
 
+def test_experiment_080_scorecard_draft_allows_empty_guidance_scores_when_needs_assessment():
+    scorecard = _valid_scorecard()
+    scorecard["validity_class"] = "invalid_incomplete"
+    scorecard["assessment_status"] = "needs_assessment"
+    scorecard["guidance_scores"] = []
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "empty_guidance_scores" not in _codes(diagnostics)
+
+
+def test_experiment_080_a_controlled_rejects_needs_assessment_scorecard():
+    scorecard = _valid_scorecard()
+    scorecard["assessment_status"] = "needs_assessment"
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "a_controlled_requires_assessment" in _codes(diagnostics)
+
+
 def test_experiment_080_scorecard_rejects_duplicate_guidance_score_entry_ids():
     scorecard = _valid_scorecard()
     scorecard["guidance_scores"].append(dict(scorecard["guidance_scores"][0]))

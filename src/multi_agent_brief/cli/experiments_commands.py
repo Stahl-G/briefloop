@@ -6,7 +6,12 @@ import argparse
 import json
 from typing import Any
 
-from multi_agent_brief.experiments import Experiment080Error, register_run_record, validate_case_dir
+from multi_agent_brief.experiments import (
+    Experiment080Error,
+    register_run_record,
+    score_run_record,
+    validate_case_dir,
+)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -48,6 +53,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     register_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
+    score_run = exp080_sub.add_parser(
+        "score-run",
+        help="Build a deterministic MABW-080 scorecard draft from a registered run.",
+    )
+    score_run.add_argument("--case", required=True, dest="case_dir", help="Path to experiments/080/cases/<case_id>.")
+    score_run.add_argument("--run-record", required=True, help="Path to run_record.json.")
+    score_run.add_argument("--output", required=True, help="Path to write scorecard.json.")
+    score_run.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
 
 def handle(args: argparse.Namespace) -> int:
     if args.experiments_action != "080":
@@ -59,6 +73,29 @@ def handle(args: argparse.Namespace) -> int:
         else:
             _print_validate_case(payload)
         return 0 if payload.get("ok") else 1
+    if args.experiment_080_action == "score-run":
+        try:
+            payload = score_run_record(
+                case_dir=args.case_dir,
+                run_record=args.run_record,
+                output=args.output,
+            )
+        except Experiment080Error as exc:
+            payload = exc.to_dict()
+            if getattr(args, "json", False):
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"[experiments 080 score-run] ok: False")
+                details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+                code = details.get("code")
+                suffix = f" ({code})" if code else ""
+                print(f"  - {payload.get('error')}{suffix}")
+            return 1
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            _print_score_run(payload)
+        return 0
     if args.experiment_080_action != "register-run":
         return 1
     try:
@@ -108,3 +145,13 @@ def _print_register_run(payload: dict[str, Any]) -> None:
     print(f"[experiments 080 register-run] condition: {payload.get('condition')}")
     print(f"[experiments 080 register-run] run_id: {payload.get('run_id')}")
     print(f"[experiments 080 register-run] output: {payload.get('output')}")
+
+
+def _print_score_run(payload: dict[str, Any]) -> None:
+    print(f"[experiments 080 score-run] ok: {payload.get('ok')}")
+    print(f"[experiments 080 score-run] case_id: {payload.get('case_id')}")
+    print(f"[experiments 080 score-run] condition: {payload.get('condition')}")
+    print(f"[experiments 080 score-run] run_id: {payload.get('run_id')}")
+    print(f"[experiments 080 score-run] validity_class: {payload.get('validity_class')}")
+    print(f"[experiments 080 score-run] assessment_status: {payload.get('assessment_status')}")
+    print(f"[experiments 080 score-run] output: {payload.get('output')}")
