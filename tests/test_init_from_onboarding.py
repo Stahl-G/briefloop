@@ -148,6 +148,55 @@ def test_init_from_onboarding_aliases_accepted(tmp_path: Path):
     assert (ws / "audience_profile.md").exists()
 
 
+def test_init_from_onboarding_title_alias_does_not_pollute_task_objective(tmp_path: Path):
+    onboarding = {
+        "company": "Toyo Solar",
+        "industry": "美国光储市场",
+        "title": "美国光储市场周报",
+        "task_objective": (
+            "制作 Toyo Solar 美国光储市场周报，聚焦 AI 数据中心清洁能源需求和"
+            "美国 HJT 异质结技术动态，输出专业严谨的中文简报供管理层决策参考"
+        ),
+        "audience": "管理层",
+        "language": "zh-CN",
+        "cadence": "weekly",
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding, ensure_ascii=False), encoding="utf-8")
+    ws = tmp_path / "ws"
+
+    rc = main(["init", str(ws), "--from-onboarding", str(ob_path)])
+
+    assert rc == 0
+    config = yaml.safe_load((ws / "config.yaml").read_text(encoding="utf-8"))
+    assert config["project"]["name"] == "美国光储市场周报"
+    assert config["project"]["name"] != onboarding["task_objective"]
+    user_md = (ws / "user.md").read_text(encoding="utf-8")
+    assert onboarding["task_objective"] in user_md
+
+
+def test_init_from_onboarding_canonical_brief_title_beats_title_alias(tmp_path: Path):
+    onboarding = {
+        "company": "Toyo Solar",
+        "industry": "美国光储市场",
+        "title": "Alias Title Should Lose",
+        "brief_title": "美国光储市场周报",
+        "task_objective": "制作 Toyo Solar 美国光储市场周报并供管理层决策参考",
+        "audience": "管理层",
+        "language": "zh-CN",
+        "cadence": "weekly",
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding, ensure_ascii=False), encoding="utf-8")
+    ws = tmp_path / "ws"
+
+    rc = main(["init", str(ws), "--from-onboarding", str(ob_path)])
+
+    assert rc == 0
+    config = yaml.safe_load((ws / "config.yaml").read_text(encoding="utf-8"))
+    assert config["project"]["name"] == "美国光储市场周报"
+
+
 def test_direct_init_creates_audience_profile(tmp_path: Path):
     ws = tmp_path / "direct-ws"
 

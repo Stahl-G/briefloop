@@ -28,6 +28,7 @@ Responsibilities:
 
 Guardrails:
         - Keep facts, numbers, and causality within Claim Ledger support.
+        - Use plain Markdown headings; do not wrap heading text in inline formatting such as `# **Heading**` or `### *Heading*`.
         - Read only frozen claim_ledger.json as the Claim Ledger input. Do not read claim_drafts.json; it is a pre-freeze writer artifact, not Analyst evidence.
         - Do not create, edit, rewrite, or repair claim_ledger.json.
         - Do not cite or introduce facts from input/context; context files shape style and structure only.

@@ -41,6 +41,7 @@ Responsibilities:
 
 Guardrails:
 - Edit existing claims and prose only.
+- Use plain Markdown headings; do not wrap heading text in inline formatting such as `# **Heading**` or `### *Heading*`.
 - Own output/intermediate/audited_brief.md after editing; do not modify output/intermediate/analyst_draft_snapshot.md.
 - Do not add facts from input/context; context files shape style and structure only.
 - Do not add new facts, numbers, named entities, dates, causal claims, or citations.

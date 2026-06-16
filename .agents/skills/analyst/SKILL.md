@@ -45,6 +45,8 @@ Use after the Claim Ledger freeze transaction has produced `claim_ledger.json`.
   only claim IDs that exist in the Claim Ledger.
 - Include dates, numbers, locations, parties, and caveats when the ledger supports them.
 - Preserve uncertainty and source limitations.
+- Use plain Markdown headings; do not wrap heading text in inline formatting
+  such as `# **Heading**` or `### *Heading*`.
 - Do not cite or introduce facts from `input/context/`; those files do not enter
   the Claim Ledger.
 - Do not write or edit `output/intermediate/analyst_draft_snapshot.md`; it is a
