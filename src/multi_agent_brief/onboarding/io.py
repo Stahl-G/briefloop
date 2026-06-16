@@ -19,7 +19,7 @@ _DICT_FIELDS = {"market_scope", "competitor_preferences"}
 _FIELD_ALIASES: dict[str, str] = {
     "company": "company_or_org",
     "industry": "industry_or_theme",
-    "title": "task_objective",
+    "title": "brief_title",
     "audience": "audience_plain",
     "language": "language_plain",
     "output_language": "language_plain",
@@ -48,7 +48,9 @@ def load_onboarding_result(path: str | Path) -> OnboardingResult:
     for k, v in data.items():
         canonical = _FIELD_ALIASES.get(k, k)
         if canonical in aliased:
-            continue  # first write wins
+            if k == canonical:
+                aliased[canonical] = v
+            continue  # canonical keys override aliases; aliases otherwise keep first write
         aliased[canonical] = v
 
     # Keep only known fields; ignore unknown keys.

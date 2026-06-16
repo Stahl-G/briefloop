@@ -221,6 +221,8 @@ def test_generated_analyst_and_editor_explain_audited_brief_ownership(manifest):
     assert "Python freezes it into output/intermediate/analyst_draft_snapshot.md" in rendered
     assert "Do not edit output/intermediate/analyst_draft_snapshot.md" in rendered
     assert "Own the final auditable output/intermediate/audited_brief.md" in rendered
+    assert "Use plain Markdown headings" in rendered
+    assert "do not wrap heading text in inline formatting" in rendered
 
 
 def test_generated_assets_scope_claim_freeze_to_claim_ledger_runtime_protocol(manifest):

@@ -377,12 +377,10 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
     profile.selector_max_items = _SELECTOR_MAP.get(profile.source_profile, 20)
 
     # Brief title: user-specified overrides auto-generation.
-    # Check brief_title (canonical), then task_objective (legacy alias for old onboarding files).
+    # task_objective is descriptive context, not a title or filename stem.
     user_title = ""
     if hasattr(result, "brief_title") and result.brief_title.strip():
         user_title = result.brief_title.strip()
-    elif hasattr(result, "task_objective") and result.task_objective.strip() and result.task_objective.strip() != "executive brief, conclusion-first":
-        user_title = result.task_objective.strip()
 
     if user_title:
         profile.brief_title = user_title

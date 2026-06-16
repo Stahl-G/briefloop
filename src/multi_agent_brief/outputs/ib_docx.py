@@ -376,12 +376,58 @@ def parse_markdown(md_text: str) -> list:
 # ── Inline formatting ───────────────────────────────────────────
 
 _INLINE_PATTERN = re.compile(
-    r"(\*\*[^*\n]+?\*\*"        # **bold**
+    r"(\*\*\*[^*\n]+?\*\*\*"    # ***bold italic***
+    r"|___[^_\n]+?___"          # ___bold italic___
+    r"|\*\*[^*\n]+?\*\*"        # **bold**
+    r"|__[^_\n]+?__"            # __bold__
     r"|~~[^~\n]+?~~"            # ~~strike~~
     r"|`[^`\n]+?`"              # `code`
     r"|\[[^\]]+\]\([^)]+\)"    # [text](url)
-    r"|\*[^*\n]+?\*)"           # *italic*
+    r"|\*[^*\n]+?\*"            # *italic*
+    r"|(?<!\w)_[^_\n]+?_(?!\w))"  # _italic_
 )
+
+
+def _unwrap_inline_token(part: str) -> tuple[str, str]:
+    if part.startswith("***") and part.endswith("***") and len(part) > 6:
+        return "bold_italic", part[3:-3]
+    if part.startswith("___") and part.endswith("___") and len(part) > 6:
+        return "bold_italic", part[3:-3]
+    if part.startswith("**") and part.endswith("**") and len(part) > 4:
+        return "bold", part[2:-2]
+    if part.startswith("__") and part.endswith("__") and len(part) > 4:
+        return "bold", part[2:-2]
+    if part.startswith("~~") and part.endswith("~~") and len(part) > 4:
+        return "strike", part[2:-2]
+    if part.startswith("`") and part.endswith("`") and len(part) > 2:
+        return "code", part[1:-1]
+    if part.startswith("[") and part.endswith(")") and "](" in part:
+        m_link = re.match(r"\[([^\]]+)\]\(([^)]+)\)", part)
+        if m_link:
+            return "link", m_link.group(1)
+    if part.startswith("*") and part.endswith("*") and len(part) > 2:
+        return "italic", part[1:-1]
+    if part.startswith("_") and part.endswith("_") and len(part) > 2:
+        return "italic", part[1:-1]
+    return "plain", part
+
+
+def _inline_plain_text(text: str) -> str:
+    """Return inline Markdown text without formatting tokens.
+
+    Cover titles and Word heading styles are rendered as single runs, so inline
+    Markdown tokens there would leak as literal ``**``/``*`` text.
+    """
+    if not text:
+        return ""
+
+    parts: list[str] = []
+    for part in _INLINE_PATTERN.split(text):
+        if not part:
+            continue
+        _, plain = _unwrap_inline_token(part)
+        parts.append(plain)
+    return "".join(parts).strip()
 
 
 def _add_inline(paragraph, text: str, font_name: str, base_color: str | None = None):
@@ -392,32 +438,34 @@ def _add_inline(paragraph, text: str, font_name: str, base_color: str | None = N
         if not part:
             continue
 
-        if part.startswith("**") and part.endswith("**") and len(part) > 4:
-            run = paragraph.add_run(part[2:-2])
+        kind, plain = _unwrap_inline_token(part)
+        if kind == "bold_italic":
+            run = paragraph.add_run(plain)
+            run.bold = True
+            run.italic = True
+            run.font.color.rgb = _hex_to_rgb(COLORS["dark"])
+        elif kind == "bold":
+            run = paragraph.add_run(plain)
             run.bold = True
             run.font.color.rgb = _hex_to_rgb(COLORS["dark"])
-        elif part.startswith("~~") and part.endswith("~~") and len(part) > 4:
-            run = paragraph.add_run(part[2:-2])
+        elif kind == "strike":
+            run = paragraph.add_run(plain)
             run.font.strike = True
-        elif part.startswith("`") and part.endswith("`") and len(part) > 2:
-            run = paragraph.add_run(part[1:-1])
+        elif kind == "code":
+            run = paragraph.add_run(plain)
             run.font.name = LATIN_FONT
             _set_run_eastasia_font(run, font_name)
             run.font.size = Pt(9.5)
             run.font.color.rgb = _hex_to_rgb(COLORS["negative"])
-        elif part.startswith("[") and part.endswith(")") and "](" in part:
-            m_link = re.match(r"\[([^\]]+)\]\(([^)]+)\)", part)
-            if m_link:
-                run = paragraph.add_run(m_link.group(1))
-                run.font.color.rgb = _hex_to_rgb(COLORS["primary"])
-                run.font.underline = True
-            else:
-                run = paragraph.add_run(part)
-        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-            run = paragraph.add_run(part[1:-1])
+        elif kind == "link":
+            run = paragraph.add_run(plain)
+            run.font.color.rgb = _hex_to_rgb(COLORS["primary"])
+            run.font.underline = True
+        elif kind == "italic":
+            run = paragraph.add_run(plain)
             run.italic = True
         else:
-            run = paragraph.add_run(part)
+            run = paragraph.add_run(plain)
             if base_color:
                 run.font.color.rgb = _hex_to_rgb(base_color)
 
@@ -762,15 +810,17 @@ def convert(
     if title is None:
         m = re.search(r"^#\s+(.+)$", md_text, re.MULTILINE)
         if m:
-            title = m.group(1).strip()
+            title = _inline_plain_text(m.group(1).strip())
         else:
             for line in md_text.splitlines():
                 line = line.strip()
                 if line and not line.startswith("---"):
-                    title = line
+                    title = _inline_plain_text(line)
                     break
             else:
                 title = Path(md_path).stem
+    else:
+        title = _inline_plain_text(title)
 
     if font is None:
         font = EAST_ASIA_FONT
@@ -795,7 +845,7 @@ def convert(
     for idx, line in enumerate(body_lines):
         if not line.strip():
             continue
-        if line.strip().lstrip("#").strip() == title:
+        if _inline_plain_text(line.strip().lstrip("#").strip()) == title:
             body_lines.pop(idx)
         break
 
@@ -804,7 +854,7 @@ def convert(
     for block in blocks:
         btype = block[0]
         if btype == "heading":
-            level, text = block[1], block[2]
+            level, text = block[1], _inline_plain_text(block[2])
             if not skipped_title_block and text == title:
                 skipped_title_block = True
                 continue
@@ -812,7 +862,7 @@ def convert(
                 level = 1
             doc.add_heading(text, level=min(level, 4))
         elif btype == "paragraph":
-            if not skipped_title_block and block[1].strip() == title:
+            if not skipped_title_block and _inline_plain_text(block[1].strip()) == title:
                 skipped_title_block = True
                 continue
             p = doc.add_paragraph()

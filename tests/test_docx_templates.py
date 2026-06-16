@@ -166,3 +166,61 @@ class TestDocxPreservesHeadings:
 
         # Should have headings with different levels
         assert len(set(levels)) >= 2
+
+    def test_heading_inline_markdown_is_stripped_from_docx_headings(self, tmp_path):
+        """LLM-styled heading emphasis must not leak literal Markdown into DOCX."""
+        md_path = tmp_path / "test.md"
+        md_path.write_text(
+            (
+                "**美国光储市场周报**\n\n"
+                "# **一、核心摘要**\n\n"
+                "正文内容。\n\n"
+                "### **2.1 美国本土制造与产能扩张**\n\n"
+                "更多正文。"
+            ),
+            encoding="utf-8",
+        )
+        docx_path = tmp_path / "output.docx"
+
+        from docx import Document
+        from multi_agent_brief.outputs.ib_docx import convert
+
+        convert(md_path, docx_path, title="美国光储市场周报", template="research_note")
+        doc = Document(str(docx_path))
+
+        texts = [p.text for p in doc.paragraphs if p.text.strip()]
+        headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
+
+        assert texts.count("美国光储市场周报") == 1
+        assert "一、核心摘要" in headings
+        assert "2.1 美国本土制造与产能扩张" in headings
+        assert all("*" not in heading for heading in headings)
+
+    def test_auto_extracted_docx_title_strips_inline_markdown(self, tmp_path):
+        md_path = tmp_path / "test.md"
+        md_path.write_text(
+            (
+                "# ***Market Brief***\n\n"
+                "## __Section__\n\n"
+                "Content with ___bold italic___, _italic_, and __bold__ text.\n\n"
+                "### _Subsection_\n\n"
+                "More content."
+            ),
+            encoding="utf-8",
+        )
+        docx_path = tmp_path / "output.docx"
+
+        from docx import Document
+        from multi_agent_brief.outputs.ib_docx import convert
+
+        convert(md_path, docx_path, template="executive_brief")
+        doc = Document(str(docx_path))
+
+        texts = [p.text for p in doc.paragraphs if p.text.strip()]
+        headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
+        assert texts[0] == "Market Brief"
+        assert "Section" in headings
+        assert "Subsection" in headings
+        assert all(marker not in text for text in texts for marker in ("***", "___", "__", "**"))
+        assert all(not (text.startswith("*") and text.endswith("*")) for text in texts)
+        assert all(not (text.startswith("_") and text.endswith("_")) for text in texts)

@@ -43,6 +43,8 @@ Use after Analyst has written `audited_brief.md` and Python has frozen
   the Claim Ledger.
 - Preserve caveats, uncertainty, dates, and factual scope.
 - Clean process residue, invalid citation markers, and obvious formatting defects.
+- Use plain Markdown headings; do not wrap heading text in inline formatting
+  such as `# **Heading**` or `### *Heading*`.
 - Do not add facts from `input/context/`; those files do not enter the Claim Ledger.
 - Treat `output/intermediate/analyst_draft_snapshot.md` as the factual boundary.
   Restructure and clarify `output/intermediate/audited_brief.md`, but do not
