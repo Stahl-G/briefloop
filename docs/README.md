@@ -23,6 +23,7 @@ tree is fully bilingual.
 ## English-First Reference Docs
 
 - [Claude Code quickstart](claude-code-quickstart.md)
+- [Runtime agent contract](agent-contract.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)
 - [Runtime recipes](runtime-recipes.md)

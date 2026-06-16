@@ -57,6 +57,67 @@ ENTITY_STOP_PHRASES = {
     "Key Takeaways",
     "Important Notes",
 }
+GATE_RULE_DOC_ANCHOR = "docs/agent-contract.md#quality-gate-rule-summaries"
+GATE_RULES: dict[str, dict[str, str]] = {
+    "material_fact": {
+        "rule_summary": (
+            "Reader-facing factual claims must be traceable to supported Claim Ledger entries; numbers "
+            "and material assertions cannot rely on uncited prose alone."
+        ),
+        "docs_anchor": "docs/agent-contract.md#material_fact",
+    },
+    "freshness": {
+        "rule_summary": (
+            "Time-sensitive claims must respect the workspace freshness window and source-date requirements."
+        ),
+        "docs_anchor": "docs/agent-contract.md#freshness",
+    },
+    "target_relevance": {
+        "rule_summary": (
+            "The reader-facing summary must keep the configured target entity or topic visible."
+        ),
+        "docs_anchor": "docs/agent-contract.md#target_relevance",
+    },
+    "editor_new_fact": {
+        "rule_summary": (
+            "The Delivery Editor may polish wording but must not introduce factual tokens absent from the "
+            "Analyst draft."
+        ),
+        "docs_anchor": "docs/agent-contract.md#editor_new_fact",
+    },
+}
+FINDING_RULES: dict[str, dict[str, str]] = {
+    "target_relevance_gap": {
+        "rule_summary": "Executive summary target visibility is required for reader context.",
+        "docs_anchor": "docs/agent-contract.md#target_relevance_gap",
+    },
+    "target_priority_claim_missing_from_summary": {
+        "rule_summary": "High-priority target-specific Claim Ledger entries should be represented in the summary.",
+        "docs_anchor": "docs/agent-contract.md#target_relevance_gap",
+    },
+    "number_without_source": {
+        "rule_summary": "Numbers in the brief must be tied to source-backed Claim Ledger support.",
+        "docs_anchor": "docs/agent-contract.md#number_without_source",
+    },
+    "editor_introduced_new_fact": {
+        "rule_summary": "Editor-added factual tokens must be removed or routed back through the owner stages.",
+        "docs_anchor": "docs/agent-contract.md#editor_introduced_new_fact",
+    },
+}
+
+
+def _gate_rule(gate_id: str) -> dict[str, str]:
+    return GATE_RULES.get(
+        gate_id,
+        {
+            "rule_summary": "Quality gate rule details are available in the runtime agent contract.",
+            "docs_anchor": GATE_RULE_DOC_ANCHOR,
+        },
+    )
+
+
+def _finding_rule(*, finding_type: str, gate_id: str) -> dict[str, str]:
+    return FINDING_RULES.get(finding_type, _gate_rule(gate_id))
 
 
 def _require_workspace(workspace: str | Path) -> Path:
@@ -305,6 +366,7 @@ def _finding(
     evidence_ref: str = "",
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    rule = _finding_rule(finding_type=finding_type, gate_id=gate_id)
     return {
         "finding_id": finding_id,
         "gate_id": gate_id,
@@ -325,6 +387,8 @@ def _finding(
         "line_number": line_number,
         "description": description,
         "recommendation": recommendation,
+        "rule_summary": rule["rule_summary"],
+        "docs_anchor": rule["docs_anchor"],
         "summary": description,
         "evidence_ref": evidence_ref,
         "metadata": metadata or {},
@@ -766,11 +830,14 @@ def _target_relevance_findings(
 
 
 def _gate_result(gate_id: str, findings: list[dict[str, Any]]) -> dict[str, Any]:
+    rule = _gate_rule(gate_id)
     return {
         "gate_id": gate_id,
         "status": _gate_status(findings),
         "blocking": any(finding.get("blocking_level") == "blocking" for finding in findings),
         "finding_ids": [str(finding.get("finding_id")) for finding in findings],
+        "rule_summary": rule["rule_summary"],
+        "docs_anchor": rule["docs_anchor"],
     }
 
 
