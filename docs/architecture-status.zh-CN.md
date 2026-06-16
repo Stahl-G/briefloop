@@ -10,6 +10,7 @@
 - Feedback issues 和 bounded repair plans 可以被结构化、校验和记录，但不会自动执行 repair。
 - 默认 role topology 允许 Scout 同时完成发现和筛选，同时保持 `candidate_claims.json` 与 `screened_candidates.json` 作为独立 artifacts；strict topology 仍可保留独立 Screener。
 - topology-satisfied stages 会记录在 workflow state 和 event log 中；它们不会伪造下游 stage 的独立执行历史。
+- Claim Ledger freeze 由 Python 控制面负责：Claim Ledger agents 写不带 claim ID 的 `claim_drafts.json`，然后 `state freeze-claim-ledger` 分配确定性 ID、写 canonical `claim_ledger.json`、记录 freeze metadata，并用冻结账本约束 Claim Ledger stage completion。
 - Deterministic material-fact、freshness、target-relevance 和 editor-new-fact gates 可以写入 stage-scoped 质量门禁 reports，但不会自动找源、改稿或 repair。
 - Packaged public-safe evaluation cases 可以验证 gates、feedback、runtime blocker 和 Hermes path 相关回归，用于开发和 CI。
 - 可选 deterministic 溯源投影 可以基于已有 control files 写入 workspace-local audit/debug graph。

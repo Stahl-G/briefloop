@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] — 2026-06-16
+
+### Added
+
+- **Claim Draft contract**: added experimental `claim_drafts.json` validation for source-grounded draft claims without `claim_id` fields.
+- **Claim Ledger freeze transaction**: added `multi-agent-brief state freeze-claim-ledger` so Python assigns deterministic `CL-####` IDs, writes canonical `claim_ledger.json`, records freeze metadata, and emits a `claim_ledger_frozen` event.
+- **Claim Ledger completion enforcement**: `state stage-complete --stage claim-ledger` now requires a matching freeze record for the current ledger bytes.
+- **Auditor support calibration contract**: Auditor role contracts now explicitly check overstatement, support-strength calibration, confidence mismatch, evidence-relation mismatch, and limitation leakage.
+
+### Changed
+
+- **Claim Ledger role boundary tightened**: Claim Ledger agents now draft `claim_drafts.json` and no longer author canonical `claim_ledger.json`.
+- **Analyst/Auditor contracts aligned with frozen ledger semantics**: Analyst and Auditor read frozen `claim_ledger.json`, do not read `claim_drafts.json`, and must not edit the Claim Ledger.
+- **Generated runtime assets regenerated**: Claude, Codex, OpenCode, Hermes, and hand-maintained skill text now reflect the Claim Freeze boundary.
+
+### Boundaries
+
+- v0.8.3 does not claim semantic proof, automatic semantic dedupe, output-quality improvement, autonomous repair, or Codex parity.
+- Claim IDs are deterministic for the same freeze input under `sorted_sequential_v1`; this is not an incremental ID-stability promise after draft sets change.
+- `claim_drafts.json` is a freeze input only. Downstream drafting, auditing, gates, source appendix, and finalize binding continue to use frozen `claim_ledger.json`.
+
 ## [0.8.2] — 2026-06-15
 
 ### Added

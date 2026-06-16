@@ -37,7 +37,7 @@ validation unless that is stated separately.
 | `multi-agent-brief status --workspace <path>` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target local` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
-| `multi-agent-brief state init/check/show/decide/stage-complete/finalize-complete` | Supported |
+| `multi-agent-brief state init/check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete` | Supported |
 | `multi-agent-brief state import-fact-layer` | Experimental |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
 | `multi-agent-brief runtime install --workspace <path> --runtime opencode\|claude\|codex\|all` | Source-clone-only |
@@ -76,6 +76,13 @@ The default topology lets Scout write both `candidate_claims.json` and
 paths still require the Claim Ledger, auditable draft, stage-scoped gate
 reports, audit report, event log, archive, and human-triggered delivery. This is
 not a speed-improvement claim.
+
+Claim Ledger freeze is a deterministic control transaction. Claim Ledger agents
+write `claim_drafts.json` without claim IDs; Python assigns deterministic
+`CL-####` IDs, writes the canonical `claim_ledger.json`, records freeze
+metadata, and requires the frozen ledger before Claim Ledger stage completion.
+This controls identity and freezing; it is not semantic proof or automatic claim
+deduplication.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 

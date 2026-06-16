@@ -10,6 +10,7 @@ This page separates current implementation state from roadmap goals. Use it befo
 - Feedback issues and bounded repair plans can be structured, validated, and recorded without executing repair.
 - The default role topology lets Scout perform discovery and screening while keeping `candidate_claims.json` and `screened_candidates.json` as distinct artifacts; strict topology can keep Screener independent.
 - Topology-satisfied stages are recorded in workflow state and event log; they do not synthesize a separate downstream stage execution history.
+- Claim Ledger freeze is Python-owned: Claim Ledger agents write `claim_drafts.json` without claim IDs, then `state freeze-claim-ledger` assigns deterministic IDs, writes canonical `claim_ledger.json`, records freeze metadata, and gates Claim Ledger stage completion on the frozen ledger.
 - Deterministic material-fact, freshness, target-relevance, and editor-new-fact gates can write stage-scoped quality gate reports without fetching sources, rewriting briefs, or executing repair.
 - Packaged public-safe evaluation cases can validate known gates, feedback, runtime blocker, and Hermes path regressions for development and CI.
 - Optional deterministic provenance projection can write a workspace-local audit/debug graph from existing control files.
