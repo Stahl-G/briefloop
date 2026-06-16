@@ -617,10 +617,10 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
             parallel_chunk_contract = {
                 "status": "runtime_internal_optional",
                 "scratch_only": True,
-                "workflow_artifacts": [
-                    "output/intermediate/candidate_claims.json",
-                    "output/intermediate/screened_candidates.json",
-                ],
+                "final_joined_artifacts": {
+                    "always": ["output/intermediate/candidate_claims.json"],
+                    "default_topology": ["output/intermediate/screened_candidates.json"],
+                },
                 "join_requirement": (
                     "Join chunk outputs deterministically before writing workflow artifacts; "
                     "stable ordering must use source identity, source path or URL, source date, topic, and evidence text."

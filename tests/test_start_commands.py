@@ -204,10 +204,10 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     scout_chunk_contract = protocol_stages["scout"]["parallel_chunk_contract"]
     assert scout_chunk_contract["status"] == "runtime_internal_optional"
     assert scout_chunk_contract["scratch_only"] is True
-    assert scout_chunk_contract["workflow_artifacts"] == [
-        "output/intermediate/candidate_claims.json",
-        "output/intermediate/screened_candidates.json",
-    ]
+    assert scout_chunk_contract["final_joined_artifacts"] == {
+        "always": ["output/intermediate/candidate_claims.json"],
+        "default_topology": ["output/intermediate/screened_candidates.json"],
+    }
     assert "stable ordering must use source identity" in scout_chunk_contract["join_requirement"]
     assert "append to candidate_claims.json from chunk workers" in scout_chunk_contract["forbidden"]
     assert "treat chunk outputs as workflow artifacts" in scout_chunk_contract["forbidden"]
