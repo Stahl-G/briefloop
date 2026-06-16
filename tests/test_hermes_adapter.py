@@ -199,6 +199,14 @@ def test_hermes_skill_has_delegation_sequence():
     assert "Editor child" in skill
     assert "Auditor child" in skill
     assert "Parent Orchestration" in skill
+    assert "batch delegation with up to" in skill
+    assert "scratch/intermediate runtime material" in skill
+    assert "not workflow artifacts" in skill
+    assert "join chunk outputs deterministically" in skill
+    assert "stable ordering must use source identity" in skill
+    assert "child completion" in skill
+    assert "do not silently drop chunk-level outputs" in skill
+    assert "Only the final joined" in skill
 
 
 

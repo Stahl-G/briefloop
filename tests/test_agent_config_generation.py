@@ -185,6 +185,11 @@ def test_generated_scout_and_screener_are_topology_aware(manifest):
     assert "In default topology, produce both candidate_claims.json and screened_candidates.json" in scout_rendered
     assert "also output screened_candidates.json before Scout stage completion" in scout_rendered
     assert "Strict: Scout -> Screener" in scout_rendered
+    assert "chunk outputs are scratch/intermediate runtime material, not workflow artifacts" in scout_rendered
+    assert "Join all chunk outputs deterministically before writing workflow artifacts" in scout_rendered
+    assert "not completion order" in scout_rendered
+    assert "Do not append to candidate_claims.json from chunk workers" in scout_rendered
+    assert "read the already-joined candidate_claims.json" in scout_rendered
     assert "Use only when role_topology is strict" in screener_rendered
     assert "Default topology uses Scout to perform screening" in screener_rendered
     assert "Do not rediscover source material" in screener_rendered

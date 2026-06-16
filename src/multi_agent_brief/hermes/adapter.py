@@ -628,7 +628,15 @@ Return a summary with candidate count, selected count, excluded count, and sourc
 )
 ```
 
-For independent source clusters, the parent may use batch delegation with up to 3 scout children, then merge their outputs into one `candidate_claims.json` before the default Scout screening step or strict Screener handoff.
+For independent source clusters, the parent may use batch delegation with up to
+3 scout children. Those child outputs are scratch/intermediate runtime material,
+not workflow artifacts. The parent must join chunk outputs deterministically
+before writing `candidate_claims.json`: stable ordering must use source identity,
+source path or URL, source date, topic, and evidence text, not child completion
+order. Duplicates or near-duplicates must be represented or excluded with
+reasons; do not silently drop chunk-level outputs. Only the final joined
+`candidate_claims.json` and, in default topology, `screened_candidates.json`
+count for stage completion.
 
 #### 2. Screener child (strict topology or explicit repair/review)
 

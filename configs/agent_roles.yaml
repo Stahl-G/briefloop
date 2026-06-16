@@ -231,16 +231,26 @@ roles:
     - Do NOT extract claims from `input/feedback/`, `input/instructions/`, or `input/context/`
       — these are editorial guidance, not factual evidence.
     - Filter boilerplate, navigation, cookies, privacy text, directories, and ads.
+    - Runtime may split Scout discovery across source chunks or child agents when
+      supported, but chunk outputs are scratch/intermediate runtime material,
+      not workflow artifacts.
+    - Join all chunk outputs deterministically before writing workflow artifacts;
+      stable ordering must be based on source identity, source path or URL, source
+      date, topic, and evidence text, not completion order.
     - Step 1 discovery always extracts structured candidate claims from source content
-      and writes output/intermediate/candidate_claims.json as the complete found universe.
+      and writes output/intermediate/candidate_claims.json once as the complete
+      found universe.
     - 'Each claim must include: statement, evidence_text, source_url, published_at
       or retrieved_at, topic, claim_type, confidence.'
     - Preserve source path, source ID, source date, and evidence text.
+    - Duplicates and near-duplicates must be represented or excluded with reasons;
+      do not silently drop chunk-level outputs during the join.
     - Mark vague, stale-looking, duplicate-looking, or low-confidence items.
     - Do not pre-filter by relevance or capacity during discovery; screening discards
       must remain auditable.
-    - In default topology, read the frozen candidate_claims.json, rank and deduplicate
-      candidates, apply freshness and capacity policy, then write output/intermediate/screened_candidates.json.
+    - In default topology, read the already-joined candidate_claims.json, rank
+      and deduplicate candidates, apply freshness and capacity policy, then write
+      output/intermediate/screened_candidates.json.
     - screened_candidates.json must contain selected candidates, excluded or deprioritized
       candidates with reasons, and the screening_policy snapshot actually applied.
     - In strict topology, return candidate_claims.json only and hand off to the independent
@@ -249,6 +259,11 @@ roles:
     - Ground every candidate in source material.
     hard_rules:
     - Output candidate_claims.json first. This is the frozen found universe for screening.
+    - Do not append to candidate_claims.json from chunk workers; write the complete
+      joined artifact once after deterministic chunk join.
+    - If Scout work is split across chunks or child agents, chunk results are scratch
+      material only; only the final joined candidate_claims.json and, in default
+      topology, screened_candidates.json count for stage-complete.
     - In default topology, also output screened_candidates.json before Scout stage completion.
     - In strict topology, do not screen; pass candidate_claims.json to Screener.
     - The control boundary is the artifact boundary, not the agent boundary.

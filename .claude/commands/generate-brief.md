@@ -105,6 +105,9 @@ your editorial judgment.
    - With `role_topology=default`, Scout writes both `candidate_claims.json` and `screened_candidates.json` before `stage-complete --stage scout`.
    - Do not delegate Screener in default topology. The Screener stage is satisfied by topology after `stage-complete --stage scout` succeeds with both artifacts present.
    - With `role_topology=strict`, Scout writes only `candidate_claims.json`; strict topology delegates Screener separately after Scout completion.
+   - Optional chunk parallelism is parent-side only: chunk outputs are scratch/intermediate runtime material, not workflow artifacts.
+   - If Scout work is split across chunks or child agents, the parent must join chunks deterministically before writing `candidate_claims.json`, using source identity, source path or URL, source date, topic, and evidence text rather than completion order.
+   - Do not append to `candidate_claims.json` from chunk workers, and do not silently drop duplicate or near-duplicate chunk outputs.
    - Write `$ARGUMENTS/output/intermediate/candidate_claims.json`.
    - In default topology, also screen candidates and write `$ARGUMENTS/output/intermediate/screened_candidates.json` before recording `stage-complete --stage scout`.
    - Check the expected artifact.

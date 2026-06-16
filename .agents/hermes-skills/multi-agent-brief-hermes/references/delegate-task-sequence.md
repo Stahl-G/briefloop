@@ -47,6 +47,17 @@ Context should include:
 - Required fields: source path or URL, source date, evidence text, topic, claim type, confidence
 - Default topology screening fields: selected candidates, excluded candidates with reasons, and screening policy snapshot
 
+Optional Scout chunk parallelism is runtime-internal only. If the Hermes parent
+splits source clusters across multiple Scout children, child outputs are
+scratch/intermediate runtime material, not workflow artifacts. The parent must
+join chunk outputs deterministically before writing `candidate_claims.json`.
+Stable ordering must use source identity, source path or URL, source date, topic,
+and evidence text, not child completion order. Do not append to
+`candidate_claims.json` from chunk workers. Duplicates and near-duplicates must
+be represented or excluded with reasons; do not silently drop chunk-level
+outputs. Only the final joined `candidate_claims.json` and, in default topology,
+`screened_candidates.json` count for stage completion.
+
 Toolsets: `file`, `terminal`, `web` when source access is enabled.
 
 ### Screener (strict topology or explicit repair/review)

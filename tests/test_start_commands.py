@@ -191,6 +191,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert protocol["schema_version"] == "multi-agent-brief-stage-completion-protocol/v1"
     assert protocol["status"] == "canonical_handoff_protocol"
     assert any("artifact-based" in rule for rule in protocol["rules"])
+    assert any("Scout chunk outputs are scratch material only" in rule for rule in protocol["rules"])
     protocol_stages = {stage["stage_id"]: stage for stage in protocol["stages"]}
     assert protocol_stages["scout"]["required_output_artifacts"] == [
         {
@@ -200,6 +201,17 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
             "format": "json",
         }
     ]
+    scout_chunk_contract = protocol_stages["scout"]["parallel_chunk_contract"]
+    assert scout_chunk_contract["status"] == "runtime_internal_optional"
+    assert scout_chunk_contract["scratch_only"] is True
+    assert scout_chunk_contract["final_joined_artifacts"] == {
+        "always": ["output/intermediate/candidate_claims.json"],
+        "default_topology": ["output/intermediate/screened_candidates.json"],
+    }
+    assert "stable ordering must use source identity" in scout_chunk_contract["join_requirement"]
+    assert "append to candidate_claims.json from chunk workers" in scout_chunk_contract["forbidden"]
+    assert "treat chunk outputs as workflow artifacts" in scout_chunk_contract["forbidden"]
+    assert "drop duplicates silently during chunk join" in scout_chunk_contract["forbidden"]
     screener_protocol = protocol_stages["screener"]
     assert screener_protocol["topology_satisfaction"]["default"]["satisfied_by"] == "scout"
     assert screener_protocol["topology_satisfaction"]["default"]["required_artifacts"] == [
@@ -303,6 +315,9 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "next_allowed_decisions" in text
     assert "Stage completion protocol" in text
     assert "MUST produce" in text
+    assert "optional chunk parallelism" in text
+    assert "runtime-internal scratch only" in text
+    assert "append to candidate_claims.json from chunk workers" in text
     assert "topology satisfaction: default: satisfied by scout" in text
     assert "independent MUST produce (strict): screened_candidates at output/intermediate/screened_candidates.json" in text
     assert (
@@ -747,6 +762,11 @@ def test_handoff_with_config_generates_artifacts(tmp_path):
     assert (ws / "output" / "intermediate" / "audience_profile_snapshot.md").exists()
     assert (ws / "output" / "intermediate" / "orchestrator_control_switchboard.json").exists()
     assert not (ws / "output" / "intermediate" / "control_selections.json").exists()
+    handoff_md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    assert "Optional chunk parallelism" in handoff_md
+    assert "scratch only: `True`" in handoff_md
+    assert "Join chunk outputs deterministically before writing workflow artifacts" in handoff_md
+    assert "append to candidate_claims.json from chunk workers" in handoff_md
 
 
 def test_handoff_no_config_fails(tmp_path):

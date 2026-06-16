@@ -10,6 +10,23 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def _assert_scout_chunk_contract(path: str) -> None:
+    text = _read(path)
+    normalized = " ".join(text.replace("`", "").split())
+
+    assert "scratch/intermediate runtime material" in normalized, path
+    assert "not workflow artifacts" in normalized, path
+    assert "deterministically" in normalized, path
+    assert "source identity" in normalized, path
+    assert "source path or URL" in normalized, path
+    assert "source date" in normalized, path
+    assert "topic" in normalized, path
+    assert "evidence text" in normalized, path
+    assert "completion order" in normalized, path
+    assert "append to candidate_claims.json from chunk workers" in normalized, path
+    assert "silently drop" in normalized, path
+
+
 def test_python_agent_package_removed_from_runtime_source():
     assert not (ROOT / "src" / "multi_agent_brief" / "agents").exists()
 
@@ -116,6 +133,22 @@ def test_claude_generate_brief_is_topology_aware_for_scout_and_screener():
     assert "Strict topology only: invoke the **screener** subagent" in text
     assert "With `role_topology=strict`, Scout writes only `candidate_claims.json`" in text
     assert "strict topology delegates Screener separately after Scout completion" in text
+
+
+def test_scout_contract_treats_chunk_outputs_as_scratch_only():
+    paths = [
+        "configs/agent_roles.yaml",
+        ".agents/skills/scout/SKILL.md",
+        ".agents/hermes-skills/multi-agent-brief-hermes/SKILL.md",
+        ".agents/hermes-skills/multi-agent-brief-hermes/references/delegate-task-sequence.md",
+        ".claude/commands/generate-brief.md",
+        ".claude/agents/scout.md",
+        ".codex/agents/scout.toml",
+        ".opencode/commands/generate-brief.md",
+        ".opencode/agents/brief-scout.md",
+    ]
+    for path in paths:
+        _assert_scout_chunk_contract(path)
 
 
 def test_claim_ledger_skill_accepts_screened_candidates_from_any_topology():

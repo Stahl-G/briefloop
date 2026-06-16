@@ -42,6 +42,16 @@ Use after source discovery, doctor, and input governance have identified evidenc
 
 ## Work
 
+### Optional Chunk Parallelism
+
+- Runtime may split Scout discovery across source chunks or child agents when supported.
+- Chunk outputs are scratch/intermediate runtime material, not workflow artifacts.
+- Do not append to `candidate_claims.json` from chunk workers.
+- Join all chunk outputs deterministically before writing workflow artifacts.
+- Stable join ordering must be based on source identity, source path or URL, source date, topic, and evidence text, not completion order.
+- Duplicates and near-duplicates must be represented or excluded with reasons; do not silently drop chunk-level outputs during the join.
+- Only the final joined `candidate_claims.json` and, in default topology, `screened_candidates.json` count for `stage-complete`.
+
 ### Step 1: Discovery
 
 - Read approved source files from `input/sources/` (and `input/` root for backward compatibility), cached source packages, and evidence input lists. If users provided PDF/DOCX/image evidence, read the extracted `.mineru.md` file, not the raw binary document.
@@ -51,11 +61,11 @@ Use after source discovery, doctor, and input governance have identified evidenc
 - Extract candidate reportable items with source identity, evidence text, source date, topic, claim type, and confidence.
 - Mark vague, stale-looking, duplicate-looking, or low-confidence candidates without dropping them.
 - Keep source wording and evidence traceable.
-- Write the complete `candidate_claims.json` before screening starts.
+- Write the complete joined `candidate_claims.json` once before screening starts.
 
 ### Step 2: Screening
 
-- In default topology, read the just-written `candidate_claims.json` as the authoritative found universe.
+- In default topology, read the already-joined `candidate_claims.json` as the authoritative found universe.
 - Rank by relevance, freshness, source quality, and user focus.
 - Deduplicate exact and near-duplicate candidates.
 - Apply topic capacity caps and reporting-window rules from config.
@@ -75,6 +85,7 @@ Use after source discovery, doctor, and input governance have identified evidenc
 ## Boundary Rules
 
 - `candidate_claims.json` is write-once for this stage: Step 2 reads it, never rewrites it.
+- Chunk-level outputs are not workflow artifacts and do not satisfy stage completion.
 - Screening judgment must not leak into discovery. Discovery captures the found universe; screening records the discard audit.
 - Never mint `claim_id` values. The Claim Ledger freeze transaction owns claim IDs.
 - Do not write prose analysis.

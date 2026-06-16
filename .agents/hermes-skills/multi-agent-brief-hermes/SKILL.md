@@ -94,11 +94,11 @@ doctor → source discovery → input governance
 → gates check + state check + state stage-complete → finalize → finalize-complete
 ```
 
-Read `configs/policy_packs/default.yaml` before delegating. In default topology,
-Scout writes both `candidate_claims.json` and `screened_candidates.json`, then
-`stage-complete --stage scout` satisfies Screener by topology. In strict topology,
-Scout writes only `candidate_claims.json` and independent Screener writes
-`screened_candidates.json`. Both artifacts remain required before Claim Ledger.
+Read `configs/policy_packs/default.yaml` before delegating. Default topology:
+Scout writes `candidate_claims.json` and `screened_candidates.json`, then `stage-complete --stage scout` satisfies Screener. Strict topology: Scout writes only `candidate_claims.json`; independent Screener writes `screened_candidates.json`.
+If the Hermes parent splits Scout across chunks/children, child outputs are scratch/intermediate runtime material, not workflow artifacts.
+The parent must join chunks deterministically before writing `candidate_claims.json`, using source identity, source path or URL, source date, topic, and evidence text rather than child completion order.
+Do not append to `candidate_claims.json` from chunk workers, and do not silently drop chunk-level duplicates or near-duplicates.
 
 If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 

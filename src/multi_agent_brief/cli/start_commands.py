@@ -92,7 +92,8 @@ ROLE_TOPOLOGY_HANDOFF_NOTE = (
     "and must not be run as a separate specialist. With role_topology=strict, Scout "
     "writes only candidate_claims.json, then delegate Screener to write "
     "screened_candidates.json. In all modes both artifacts remain required evidence "
-    "for Claim Ledger."
+    "for Claim Ledger. Runtime may split Scout work internally, but chunk outputs "
+    "are scratch material only; only deterministic joined artifacts count."
 )
 RUNTIME_WEBSEARCH_ZERO_RESULT_NOTE = (
     "Runtime WebSearch zero-result guard: if runtime WebSearch reports `Did 0 searches`, "
@@ -110,6 +111,7 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "After state stage-complete succeeds, that stage's output artifacts are frozen for downstream stages; later stages must not rewrite them in place.",
     "If a downstream stage finds schema mismatch or invalid frozen upstream artifacts, route repair back to the owner stage instead of editing the artifact directly.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
+    "Scout chunk outputs are scratch material only; if Scout work is split across chunks or child agents, join chunks deterministically before writing candidate_claims.json.",
     "Record successful stage transitions with multi-agent-brief state stage-complete only after artifact-level completion evidence is available.",
     "Record finalize completion with multi-agent-brief state finalize-complete after delivery artifacts and finalize_report.json are clean.",
 ]
@@ -462,7 +464,7 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "   If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.\n"
             f"3. multi-agent-brief inputs extract --config {ws_path}/config.yaml  (if PDF/DOCX/image inputs exist)\n"
             f"4. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
-            "5. Use the 'scout' subagent. Default topology: write output/intermediate/candidate_claims.json and output/intermediate/screened_candidates.json, then stage-complete scout. Strict topology: write only candidate_claims.json.\n"
+            "5. Use the 'scout' subagent. Runtime may split Scout work internally, but chunk outputs are scratch only; write the deterministic joined output/intermediate/candidate_claims.json once. Default topology: also write output/intermediate/screened_candidates.json from the joined candidate universe, then stage-complete scout. Strict topology: write only candidate_claims.json.\n"
             "6. Strict topology only: use the 'screener' subagent to write output/intermediate/screened_candidates.json.\n"
             "7. Use the 'claim-ledger' subagent to write output/intermediate/claim_drafts.json, then run "
             f"multi-agent-brief state freeze-claim-ledger --workspace {ws_path} to create output/intermediate/claim_ledger.json, "
@@ -610,6 +612,25 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
                 "writes": [claim_ledger_ref],
                 "must_run_before": "state stage-complete --stage claim-ledger",
             })
+        parallel_chunk_contract: dict[str, Any] | None = None
+        if stage_id == "scout":
+            parallel_chunk_contract = {
+                "status": "runtime_internal_optional",
+                "scratch_only": True,
+                "final_joined_artifacts": {
+                    "always": ["output/intermediate/candidate_claims.json"],
+                    "default_topology": ["output/intermediate/screened_candidates.json"],
+                },
+                "join_requirement": (
+                    "Join chunk outputs deterministically before writing workflow artifacts; "
+                    "stable ordering must use source identity, source path or URL, source date, topic, and evidence text."
+                ),
+                "forbidden": [
+                    "append to candidate_claims.json from chunk workers",
+                    "treat chunk outputs as workflow artifacts",
+                    "drop duplicates silently during chunk join",
+                ],
+            }
         independent_topologies = [
             topology
             for topology in _ordered_role_topologies()
@@ -624,6 +645,7 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
             "required_output_artifacts": required_outputs,
             "freeze_input_artifacts": freeze_input_artifacts,
             "pre_completion_transactions": pre_completion_transactions,
+            "parallel_chunk_contract": parallel_chunk_contract,
             "topology_satisfaction": topology_satisfaction,
             "independent_completion_topologies": independent_topologies,
             "allowed_decisions": [str(item) for item in (stage.get("allowed_decisions") or [])],
@@ -710,6 +732,15 @@ def _render_stage_completion_protocol_prompt(protocol: dict[str, Any]) -> str:
             lines.append(f"  independent MUST produce ({independent_topologies}): {outputs}")
         else:
             lines.append(f"  MUST produce: {outputs}")
+        chunk_contract = stage.get("parallel_chunk_contract")
+        if isinstance(chunk_contract, dict):
+            lines.append(
+                "  optional chunk parallelism: runtime-internal scratch only; "
+                f"{chunk_contract.get('join_requirement')}"
+            )
+            forbidden = ", ".join(str(item) for item in (chunk_contract.get("forbidden") or []))
+            if forbidden:
+                lines.append(f"  chunk forbidden: {forbidden}")
         freeze_inputs = _protocol_paths(stage.get("freeze_input_artifacts") or [])
         if freeze_inputs != "none":
             lines.append(f"  role MUST produce freeze input: {freeze_inputs}")
@@ -925,6 +956,18 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
                 md_content.append(f"  - `{transaction.get('transaction')}`: `{transaction.get('command')}`")
                 md_content.append(f"    - Reads: {reads}")
                 md_content.append(f"    - Writes: {writes}")
+        chunk_contract = stage.get("parallel_chunk_contract")
+        if isinstance(chunk_contract, dict):
+            md_content.append("- Optional chunk parallelism:")
+            md_content.append(
+                f"  - Status: `{chunk_contract.get('status')}`; scratch only: `{chunk_contract.get('scratch_only')}`"
+            )
+            md_content.append(f"  - Join: {chunk_contract.get('join_requirement')}")
+            forbidden = chunk_contract.get("forbidden") or []
+            if forbidden:
+                md_content.append("  - Forbidden:")
+                for item in forbidden:
+                    md_content.append(f"    - {item}")
         topology_satisfaction = stage.get("topology_satisfaction") or {}
         if topology_satisfaction:
             md_content.append("- Topology satisfaction:")
