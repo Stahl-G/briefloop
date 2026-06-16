@@ -11,7 +11,7 @@ MABW: A Process-Accountable Business Briefing Loop
 
 MABW is an **agent briefing workflow** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns briefing into an accountable loop: collect sources, build a Claim Ledger, let agents draft, run gates, and have a human deliver the final brief.
 
-The v0.8.3 release moves Claim Ledger identity into Python control. Claim Ledger agents draft `claim_drafts.json` without claim IDs; `state freeze-claim-ledger` assigns deterministic IDs, writes the canonical `claim_ledger.json`, records freeze metadata, and makes Analyst/Auditor work from the frozen ledger.
+The v0.8.4 release adds safe-parallelism foundations: deterministic source-provider joins, opt-in source collection parallelism, Scout chunk join contracts, helper-level parallel gate evaluation, owner-stage repair transactions, and explicit stage runtime/model provenance. It does not claim faster end-to-end runtime or output-quality improvement.
 
 It is built for:
 
@@ -23,7 +23,7 @@ It is built for:
   <a href="#quick-start">🚀 Quick Start</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
-  <a href="docs/releases/v0.8.3.md">📦 v0.8.3 Release</a>
+  <a href="docs/releases/v0.8.4.md">📦 v0.8.4 Release</a>
 </p>
 
 ## Why It Is Worth Looking At 👀
@@ -67,7 +67,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. MABW traced how errors propagated; it did not prove semantic correctness.
-- [v0.8.3 release note](docs/releases/v0.8.3.md): deterministic Claim Ledger freeze transaction, Python-owned claim IDs, and frozen-ledger Analyst/Auditor contracts.
+- [v0.8.4 release note](docs/releases/v0.8.4.md): safe-parallelism foundations, deterministic joins, owner-stage repair transactions, and provenance-only runtime/model metadata.
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -181,9 +181,9 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 ## Product Boundary 🧱
 
-Current version: **v0.8.3**
+Current version: **v0.8.4**
 
-The v0.8.3 release ships installable runtime assets for Hermes / Claude Code / OpenCode, with Codex custom-agent assets available as Experimental, plus runtime state files, Python-owned Claim Ledger freeze, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, Markdown / Word output, default/strict role topology, and the editor-new-fact gate. 1000+ deterministic tests run in CI without LLM calls.
+The v0.8.4 release ships installable runtime assets for Hermes / Claude Code / OpenCode, with Codex custom-agent assets available as Experimental, plus runtime state files, Python-owned Claim Ledger freeze, deterministic quality gates, feedback and repair planning, provenance projection, audience profile snapshots, controlled Improvement Ledger / Improvement Memory, Markdown / Word output, default/strict role topology, editor-new-fact gate, safe source-provider joins, owner-stage repair transactions, and provenance-only stage runtime/model metadata. 1000+ deterministic tests run in CI without LLM calls.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -346,7 +346,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Improvement Ledger](docs/modules/improvement.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
-[v0.8.3 Release](docs/releases/v0.8.3.md) ·
+[v0.8.4 Release](docs/releases/v0.8.4.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·
 [Migration guide](docs/MIGRATION.md)

@@ -7,13 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] — 2026-06-16
+
 ### Added
 
+- **Deterministic source provider join**: source provider batches now join through a stable ordering and digest helper so provider completion order does not decide dedupe winners or source ordering.
+- **Opt-in source provider parallel collection**: parallel-safe source providers can run through an opt-in thread-pool path while unsafe providers remain serial ordering barriers. Joined results still flow through the deterministic source join.
+- **Scout chunk join contract**: Scout runtime guidance now treats chunk outputs as scratch material and requires parent-side deterministic joining before workflow artifacts are written. Default topology may join into `candidate_claims.json` and `screened_candidates.json`; strict topology joins Scout output only into `candidate_claims.json`.
+- **Quality gate evaluation helper**: deterministic quality gate finding evaluation is now isolated in a read-only helper with helper-level opt-in parallel execution. Report writing, legacy projection updates, and event emission remain single-writer serial transactions.
 - **Stage runtime/model provenance**: `state stage-complete` and `state finalize-complete` can record explicit runtime/model values in workflow state and event log metadata as audit provenance only.
+- **Owner-stage repair transaction**: deterministic `repair start` / `repair complete` transactions can route repair to the owner stage, record active repair state, restrict allowed artifacts, and keep contaminated runs non-reference-eligible.
+
+### Changed
+
+- **Repair boundaries hardened**: finalized runs cannot be reopened by stale repair reports, disallowed downstream artifact creation is blocked during repair, and no-op repairs are rejected unless a future explicit no-op path is added.
+- **Onboarding title mapping fixed**: DOCX heading configuration is now kept separate from onboarding brief titles.
 
 ### Boundaries
 
-- Stage runtime/model provenance is not an output-quality claim, model-performance measurement, or semantic support signal.
+- v0.8.4 is about safe parallelism foundations and deterministic repair routing. It is not a speed-improvement claim, output-quality claim, model-performance measurement, or semantic support signal.
+- `gates check` remains serial by default in the user-facing CLI. Parallel gate evaluation is currently helper-level opt-in infrastructure.
+- Scout chunk parallelism is a runtime contract only. MABW does not ship a Python Scout executor, semantic chunk extractor, or worker-output artifact append path.
+- Stage runtime/model provenance is recorded only when completion commands are called with explicit values; normal runtime handoffs do not automatically supply it yet.
 
 ## [0.8.3] — 2026-06-16
 

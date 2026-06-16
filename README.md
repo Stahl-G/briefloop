@@ -7,13 +7,13 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Current version: **v0.8.3**
+Current version: **v0.8.4**
 
 > When someone asks where a number came from, MABW does not ask the model to improvise an explanation. It opens the ledger.
 
 MABW turns AI-assisted business briefing into an accountable loop with four steps: **find and screen evidence -> freeze key facts into a Claim Ledger -> write only from the ledger -> audit independently.** A human delivers the final brief. Always.
 
-The v0.8.3 release moves Claim Ledger identity into Python control. Claim Ledger agents draft `claim_drafts.json` without claim IDs; `state freeze-claim-ledger` assigns deterministic IDs, writes the canonical `claim_ledger.json`, records freeze metadata, and makes Analyst/Auditor work from the frozen ledger.
+The v0.8.4 release adds safe-parallelism foundations: deterministic source-provider joins, opt-in source collection parallelism, Scout chunk join contracts, helper-level parallel gate evaluation, owner-stage repair transactions, and explicit stage runtime/model provenance. It does not claim faster end-to-end runtime or output-quality improvement.
 
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
@@ -141,7 +141,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 
 - **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
-- **[v0.8.3 release notes](docs/releases/v0.8.3.md)**: deterministic Claim Ledger freeze transaction, Python-owned claim IDs, and frozen-ledger Analyst/Auditor contracts.
+- **[v0.8.4 release notes](docs/releases/v0.8.4.md)**: safe-parallelism foundations, deterministic joins, owner-stage repair transactions, and provenance-only runtime/model metadata.
 
 We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.
 

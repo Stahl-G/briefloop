@@ -12,7 +12,7 @@
 
 MABW 是一个面向商业、研究、市场、政策、公司跟踪和管理层汇报的 **agent briefing workflow**。它不是“让 AI 写得更快”的 prompt，而是把简报拆成可追溯、可审计、可交付的工作循环：找来源、建事实账本、让 agent 写作、用门禁把关、由人定稿交付。
 
-v0.8.3 release 把 Claim Ledger 身份分配交给 Python 控制面。Claim Ledger agent 只写不带 claim ID 的 `claim_drafts.json`；`state freeze-claim-ledger` 负责确定性分配 ID、写 canonical `claim_ledger.json`、记录 freeze metadata，并让 Analyst / Auditor 只基于冻结后的账本工作。
+v0.8.4 release 增加 safe-parallelism foundations：确定性的 source-provider join、显式 opt-in 的 source collection parallelism、Scout chunk join contract、helper-level parallel gate evaluation、owner-stage repair transaction，以及 provenance-only 的 stage runtime/model metadata。它不宣称端到端更快，也不宣称输出质量提升。
 
 它适合这些人：
 
@@ -24,7 +24,7 @@ v0.8.3 release 把 Claim Ledger 身份分配交给 Python 控制面。Claim Ledg
   <a href="#快速开始">🚀 快速开始</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md">🔬 公开运行摘要</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md">🧯 失败研究</a> ·
-  <a href="docs/releases/v0.8.3.md">📦 v0.8.3 Release</a>
+  <a href="docs/releases/v0.8.4.md">📦 v0.8.4 Release</a>
 </p>
 
 ## 为什么值得看 👀
@@ -68,7 +68,7 @@ MABW 的用户心智模型不是“有多少个控制面”，而是每次简报
 
 * [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)：展示 Improvement Memory materialization、门禁执行、控制面闭环。它是 integration reference，不是输出质量提升或严格因果效果证明。
 * [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。MABW 当前能追溯错误传播链，但还不能证明每个来源语义支持每个子主张。
-* [v0.8.3 release note](docs/releases/v0.8.3.md)：确定性 Claim Ledger freeze transaction、Python-owned claim IDs，以及 frozen-ledger Analyst / Auditor contracts。
+* [v0.8.4 release note](docs/releases/v0.8.4.md)：safe-parallelism foundations、确定性 join、owner-stage repair transactions，以及 provenance-only runtime/model metadata。
 
 我们公开失败分析，因为问责也适用于这个项目自己。
 
@@ -182,9 +182,9 @@ multi-agent-brief claude install --repo-workdir .
 
 ## 产品承诺与边界 🧱
 
-当前版本：**v0.8.3**
+当前版本：**v0.8.4**
 
-v0.8.3 release 提供 Hermes / Claude Code / OpenCode 的可安装 runtime assets，Codex custom-agent assets 仍为 Experimental；同时提供运行时状态文件、Python-owned Claim Ledger freeze、确定性质量门禁、反馈与修复计划、溯源投影、受众画像快照、受控的改进账本 / 改进记忆、Markdown / Word 输出、default / strict role topology selector 和 editor-new-fact gate。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
+v0.8.4 release 提供 Hermes / Claude Code / OpenCode 的可安装 runtime assets，Codex custom-agent assets 仍为 Experimental；同时提供运行时状态文件、Python-owned Claim Ledger freeze、确定性质量门禁、反馈与修复计划、溯源投影、受众画像快照、受控的改进账本 / 改进记忆、Markdown / Word 输出、default / strict role topology selector、editor-new-fact gate、safe source-provider joins、owner-stage repair transactions，以及 provenance-only 的 stage runtime/model metadata。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
 
 它仍然不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统，也不是投资建议工具、交易信号生成器或人工审核替代品。详见 [当前架构状态](docs/architecture-status.zh-CN.md)、[路线图](docs/roadmap.zh-CN.md) 和 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
 
@@ -348,7 +348,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [每周使用脚本](docs/weekly-use.zh-CN.md) ·
 [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
 [失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md) ·
-[v0.8.3 Release](docs/releases/v0.8.3.md) ·
+[v0.8.4 Release](docs/releases/v0.8.4.md) ·
 [发布验证清单](docs/launch-validation.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·
 [安全](docs/security.md) ·
