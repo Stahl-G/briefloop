@@ -122,9 +122,11 @@ your editorial judgment.
    - If the transaction fails, stop and report the failure. Do not invoke the next specialist.
 
 8. Invoke the **claim-ledger** subagent:
-   - Convert screened candidates into stable, source-grounded claims.
-   - Write `$ARGUMENTS/output/intermediate/claim_ledger.json`.
-   - Check the expected artifact.
+   - Convert screened candidates into source-grounded claim drafts without `claim_id` fields.
+   - Write `$ARGUMENTS/output/intermediate/claim_drafts.json`.
+   - Check the expected freeze input artifact.
+   - Run `multi-agent-brief state freeze-claim-ledger --workspace $ARGUMENTS`.
+   - Confirm freeze produced `$ARGUMENTS/output/intermediate/claim_ledger.json`.
    - Run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage claim-ledger --reason "Claim Ledger was built from screened candidates."`.
    - If the transaction fails, stop and report the failure. Do not invoke the next specialist.
 

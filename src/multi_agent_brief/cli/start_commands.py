@@ -464,7 +464,9 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"4. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
             "5. Use the 'scout' subagent. Default topology: write output/intermediate/candidate_claims.json and output/intermediate/screened_candidates.json, then stage-complete scout. Strict topology: write only candidate_claims.json.\n"
             "6. Strict topology only: use the 'screener' subagent to write output/intermediate/screened_candidates.json.\n"
-            "7. Use the 'claim-ledger' subagent to write output/intermediate/claim_ledger.json\n"
+            "7. Use the 'claim-ledger' subagent to write output/intermediate/claim_drafts.json, then run "
+            f"multi-agent-brief state freeze-claim-ledger --workspace {ws_path} to create output/intermediate/claim_ledger.json, "
+            f"then run multi-agent-brief state stage-complete --workspace {ws_path} --stage claim-ledger --reason \"Claim Ledger was frozen from claim drafts.\"\n"
             "8. Use the 'analyst' subagent to write output/intermediate/audited_brief.md as a working draft; analyst stage-complete freezes output/intermediate/analyst_draft_snapshot.md\n"
             "9. Use the 'editor' / Delivery Editor subagent to own and polish the final output/intermediate/audited_brief.md without adding facts\n"
             "10. Use the 'auditor' subagent to write output/intermediate/audit_report.json\n"
@@ -595,6 +597,19 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
             stage.get("topology_satisfaction") or {},
             artifact_by_id,
         )
+        freeze_input_artifacts: list[dict[str, Any]] = []
+        pre_completion_transactions: list[dict[str, Any]] = []
+        if stage_id == "claim-ledger" and "claim_drafts" in artifact_by_id:
+            claim_drafts_ref = _protocol_artifact_ref("claim_drafts", artifact_by_id["claim_drafts"])
+            claim_ledger_ref = _protocol_artifact_ref("claim_ledger", artifact_by_id["claim_ledger"])
+            freeze_input_artifacts.append(claim_drafts_ref)
+            pre_completion_transactions.append({
+                "transaction": "freeze_claim_ledger",
+                "command": "multi-agent-brief state freeze-claim-ledger --workspace <workspace>",
+                "reads": [claim_drafts_ref],
+                "writes": [claim_ledger_ref],
+                "must_run_before": "state stage-complete --stage claim-ledger",
+            })
         independent_topologies = [
             topology
             for topology in _ordered_role_topologies()
@@ -607,6 +622,8 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
             "required_input_artifacts": required_inputs,
             "context_inputs": context_inputs,
             "required_output_artifacts": required_outputs,
+            "freeze_input_artifacts": freeze_input_artifacts,
+            "pre_completion_transactions": pre_completion_transactions,
             "topology_satisfaction": topology_satisfaction,
             "independent_completion_topologies": independent_topologies,
             "allowed_decisions": [str(item) for item in (stage.get("allowed_decisions") or [])],
@@ -693,6 +710,16 @@ def _render_stage_completion_protocol_prompt(protocol: dict[str, Any]) -> str:
             lines.append(f"  independent MUST produce ({independent_topologies}): {outputs}")
         else:
             lines.append(f"  MUST produce: {outputs}")
+        freeze_inputs = _protocol_paths(stage.get("freeze_input_artifacts") or [])
+        if freeze_inputs != "none":
+            lines.append(f"  role MUST produce freeze input: {freeze_inputs}")
+        for transaction in stage.get("pre_completion_transactions") or []:
+            reads = _protocol_paths(transaction.get("reads") or [])
+            writes = _protocol_paths(transaction.get("writes") or [])
+            lines.append(
+                "  control transaction before stage-complete: "
+                f"{transaction.get('command')} (reads {reads}; writes {writes})"
+            )
         lines.append("  forbidden: no prose-only completion, no upstream mutation, no invented evidence, no skipped completion transaction.")
     return "\n".join(lines)
 
@@ -875,6 +902,7 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             f"- Owner: `{stage.get('owner')}`",
             f"- Context inputs: {', '.join(stage.get('context_inputs') or []) or 'none'}",
             f"- Completion condition: {stage.get('completion_condition')}",
+            f"- Stage completion transaction: `multi-agent-brief state stage-complete --stage {stage.get('stage_id')} --workspace <workspace> --reason \"<reason>\"`",
             "- Required input artifacts:",
         ])
         inputs = stage.get("required_input_artifacts") or []
@@ -883,6 +911,20 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
                 md_content.append(f"  - `{item.get('artifact_id')}` at `{item.get('path')}`")
         else:
             md_content.append("  - none")
+        freeze_inputs = stage.get("freeze_input_artifacts") or []
+        if freeze_inputs:
+            md_content.append("- Freeze input artifacts:")
+            for item in freeze_inputs:
+                md_content.append(f"  - `{item.get('artifact_id')}` at `{item.get('path')}`")
+        pre_transactions = stage.get("pre_completion_transactions") or []
+        if pre_transactions:
+            md_content.append("- Pre-completion transactions:")
+            for transaction in pre_transactions:
+                reads = _protocol_paths(transaction.get("reads") or [])
+                writes = _protocol_paths(transaction.get("writes") or [])
+                md_content.append(f"  - `{transaction.get('transaction')}`: `{transaction.get('command')}`")
+                md_content.append(f"    - Reads: {reads}")
+                md_content.append(f"    - Writes: {writes}")
         topology_satisfaction = stage.get("topology_satisfaction") or {}
         if topology_satisfaction:
             md_content.append("- Topology satisfaction:")

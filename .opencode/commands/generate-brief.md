@@ -67,8 +67,10 @@ Stage sequence:
    - Write `$ARGUMENTS/output/intermediate/screened_candidates.json`.
 
 9. Check `screened_candidates.json`, then delegate the **brief-claim-ledger** subagent:
-   - Convert screened candidates into source-grounded claims.
-   - Write `$ARGUMENTS/output/intermediate/claim_ledger.json`.
+   - Convert screened candidates into source-grounded claim drafts without claim_id fields.
+   - Write `$ARGUMENTS/output/intermediate/claim_drafts.json`.
+   - Run: `multi-agent-brief state freeze-claim-ledger --workspace $ARGUMENTS`.
+   - Confirm freeze produced `$ARGUMENTS/output/intermediate/claim_ledger.json` before `stage-complete --stage claim-ledger`.
 
 10. Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.
 

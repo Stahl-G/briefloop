@@ -127,6 +127,18 @@ def test_claim_ledger_skill_accepts_screened_candidates_from_any_topology():
     assert "strict Screener" in text
 
 
+def test_claude_generate_brief_runs_claim_ledger_freeze_transaction():
+    text = _read(".claude/commands/generate-brief.md")
+    claim_ledger_section = text.split("8. Invoke the **claim-ledger** subagent:", 1)[1].split(
+        "9. **Market & Competitor Module", 1
+    )[0]
+    assert "claim_drafts.json" in claim_ledger_section
+    assert "without `claim_id` fields" in claim_ledger_section
+    assert "state freeze-claim-ledger" in claim_ledger_section
+    assert "Confirm freeze produced `$ARGUMENTS/output/intermediate/claim_ledger.json`" in claim_ledger_section
+    assert "Write `$ARGUMENTS/output/intermediate/claim_ledger.json`" not in claim_ledger_section
+
+
 def test_claude_generate_brief_requires_source_discovery_transaction_for_all_profiles():
     text = _read(".claude/commands/generate-brief.md")
     source_section = text.split("**Source discovery transaction (all source profiles):**", 1)[1].split(

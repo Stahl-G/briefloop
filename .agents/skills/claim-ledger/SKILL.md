@@ -1,6 +1,6 @@
 ---
 name: claim-ledger
-description: Builds stable source-grounded claim ledger entries from screened candidates. Use after output/intermediate/screened_candidates.json exists and before analyst drafting.
+description: Builds source-grounded claim drafts from screened candidates. Use after output/intermediate/screened_candidates.json exists and before Python freezes output/intermediate/claim_ledger.json.
 ---
 
 # Claim Ledger Skill Contract
@@ -13,7 +13,7 @@ It is not the platform-specific subagent definition. Claude Code subagents live 
 
 ## Purpose
 
-Convert screened candidates into stable, source-grounded claim ledger entries.
+Convert screened candidates into source-grounded claim drafts for deterministic Python freezing.
 
 ## Use When
 
@@ -25,15 +25,16 @@ Use after screened_candidates.json exists, whether default Scout or strict Scree
 
 ## Outputs
 
-- `output/intermediate/claim_ledger.json`
+- `output/intermediate/claim_drafts.json`
 
 ## Work
 
-- Create stable claim IDs.
+- Write claim drafts without `claim_id` fields.
 - Preserve statement, evidence text, source URL/path, source date, retrieved date, topic, claim type, and confidence.
-- Merge overlapping candidates only when traceability remains clear.
+- Merge overlapping candidates only when traceability remains clear; otherwise keep separate drafts.
 - Keep language strength aligned with evidence strength.
+- Do not write `output/intermediate/claim_ledger.json`; Python creates it with `multi-agent-brief state freeze-claim-ledger`.
 
 ## Handoff
 
-Pass claim_ledger.json to analyst.
+Return after `claim_drafts.json` exists. The Orchestrator must run `multi-agent-brief state freeze-claim-ledger --workspace <workspace>` before `state stage-complete --stage claim-ledger`.

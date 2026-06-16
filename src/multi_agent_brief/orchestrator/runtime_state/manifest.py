@@ -15,7 +15,12 @@ from multi_agent_brief.orchestrator.runtime_state.paths import RUNTIME_STATE_FIL
 
 
 RUNTIME_MANIFEST_SCHEMA = "multi-agent-brief-runtime-manifest/v1"
-PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = ("improvement", "recipe", "fact_layer_import")
+PRESERVED_RUNTIME_MANIFEST_EXTENSION_KEYS = (
+    "improvement",
+    "recipe",
+    "fact_layer_import",
+    "claim_ledger_freeze",
+)
 
 
 def _runtime_manifest(

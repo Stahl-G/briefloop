@@ -19,6 +19,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
     complete_finalize_transaction,
     complete_stage_transaction,
+    freeze_claim_ledger_transaction,
     initialize_runtime_state,
     import_fact_layer_transaction,
     record_decision,
@@ -148,6 +149,33 @@ def _valid_claim_ledger_payload(
             }
         ]
     ) + "\n"
+
+
+def _valid_claim_drafts_payload(*, duplicate: bool = False) -> str:
+    drafts = [
+        {
+            "statement": "ExampleCo opened a demo facility.",
+            "source_id": "SRC-001",
+            "evidence_text": "Example evidence.",
+            "claim_type": "fact",
+            "confidence": "medium",
+        },
+        {
+            "statement": "BetaCo expanded module output.",
+            "source_id": "SRC-002",
+            "evidence_text": "Second example evidence.",
+            "claim_type": "fact",
+            "confidence": "medium",
+        },
+    ]
+    if duplicate:
+        drafts.append(dict(drafts[0]))
+    return json.dumps({"schema_version": "mabw.claim_drafts.v1", "drafts": drafts}) + "\n"
+
+
+def _freeze_claim_ledger_fixture(ws: Path, *, duplicate: bool = False) -> None:
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload(duplicate=duplicate))
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
 
 
 def _valid_audit_report_payload() -> str:
@@ -1599,11 +1627,328 @@ def test_claim_ledger_stage_complete_rejects_invalid_claim_schema(tmp_path):
     assert "claim_ledger_schema_error:claim[0].claim_type" in str(excinfo.value)
 
 
-def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):
+def test_freeze_claim_ledger_transaction_writes_canonical_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+
+    state = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
+    assert [claim["claim_id"] for claim in ledger] == ["CL-0001", "CL-0002"]
+    assert [claim["source_id"] for claim in ledger] == ["SRC-001", "SRC-002"]
+    freeze = state["manifest"]["claim_ledger_freeze"]
+    assert freeze["schema_version"] == "mabw.claim_ledger_freeze.v1"
+    assert freeze["status"] == "frozen"
+    assert freeze["id_strategy"] == "sorted_sequential_v1"
+    assert freeze["id_stability_scope"] == "per_freeze_input"
+    assert "not a cross-incremental stability guarantee" in freeze["id_strategy_description"]
+    assert freeze["source_path"] == "output/intermediate/claim_drafts.json"
+    assert freeze["claim_ledger_path"] == "output/intermediate/claim_ledger.json"
+    assert freeze["claim_count"] == 2
+    assert freeze["claim_ledger_sha256"] == _sha256_file(_intermediate(ws) / "claim_ledger.json")
+    assert freeze["source_sha256"] == _sha256_file(_intermediate(ws) / "claim_drafts.json")
+    records = _event_records(ws)
+    assert records[-1]["event_type"] == "claim_ledger_frozen"
+    assert records[-1]["artifact_id"] == "claim_ledger"
+
+
+def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                        "source_url": "https://example.com/news",
+                        "source_type": "public_web",
+                        "source_path": "input/sources/source-001.md",
+                        "published_at": "2026-06-01",
+                        "retrieved_at": "2026-06-16T00:00:00Z",
+                        "source_title": "ExampleCo Demo Facility",
+                        "source_name": "Example Wire",
+                        "publisher": "Example Publisher",
+                        "topic": "demo market",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
+    claim = ledger[0]
+    assert claim["source_url"] == "https://example.com/news"
+    assert claim["source_type"] == "public_web"
+    assert claim["metadata"]["source_path"] == "input/sources/source-001.md"
+    assert claim["metadata"]["published_at"] == "2026-06-01"
+    assert claim["metadata"]["retrieved_at"] == "2026-06-16T00:00:00Z"
+    assert claim["metadata"]["source_title"] == "ExampleCo Demo Facility"
+    assert claim["metadata"]["source_name"] == "Example Wire"
+    assert claim["metadata"]["publisher"] == "Example Publisher"
+    assert claim["metadata"]["topic"] == "demo market"
+
+
+def test_freeze_claim_ledger_is_idempotent_for_same_frozen_inputs(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    registry_before = _state_file(ws, "artifact_registry").read_bytes()
+    event_log_before = _state_file(ws, "event_log").read_bytes()
+    ledger_before = (_intermediate(ws) / "claim_ledger.json").read_bytes()
+
+    state = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert state["transaction"]["decision"] == "freeze_claim_ledger_idempotent"
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert _state_file(ws, "artifact_registry").read_bytes() == registry_before
+    assert _state_file(ws, "event_log").read_bytes() == event_log_before
+    assert (_intermediate(ws) / "claim_ledger.json").read_bytes() == ledger_before
+
+
+def test_freeze_claim_ledger_requires_existing_event_log(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    assert not _state_file(ws, "artifact_registry").exists()
+    _state_file(ws, "event_log").unlink()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_RUNTIME_STATE_NOT_INITIALIZED"
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+    assert not _state_file(ws, "event_log").exists()
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert not _state_file(ws, "artifact_registry").exists()
+
+
+def test_freeze_claim_ledger_requires_current_run_initialized_event(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    assert not _state_file(ws, "artifact_registry").exists()
+    _state_file(ws, "event_log").write_text("", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "current-run start event" in str(excinfo.value)
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert not _state_file(ws, "artifact_registry").exists()
+
+
+def test_freeze_claim_ledger_accepts_reset_run_start_event(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT, reset_state=True)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+
+    state = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert state["claim_ledger_freeze"]["status"] == "frozen"
+    assert (_intermediate(ws) / "claim_ledger.json").exists()
+    records = _event_records(ws)
+    run_id = state["manifest"]["run_id"]
+    assert any(record["run_id"] == run_id and record["event_type"] == "run_reset" for record in records)
+    assert records[-1]["event_type"] == "claim_ledger_frozen"
+
+
+def test_freeze_claim_ledger_rejects_changed_drafts_after_existing_freeze(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    registry_before = _state_file(ws, "artifact_registry").read_bytes()
+    event_log_before = _state_file(ws, "event_log").read_bytes()
+    ledger_before = (_intermediate(ws) / "claim_ledger.json").read_bytes()
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload(duplicate=True))
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "already frozen" in str(excinfo.value)
+    assert "source hash does not match" in str(excinfo.value.details["freeze_reasons"])
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert _state_file(ws, "artifact_registry").read_bytes() == registry_before
+    assert _state_file(ws, "event_log").read_bytes() == event_log_before
+    assert (_intermediate(ws) / "claim_ledger.json").read_bytes() == ledger_before
+
+
+def test_freeze_claim_ledger_rejects_draft_claim_id_without_writing_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "claim_id": "CL-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "drafts[0].claim_id" in str(excinfo.value.details)
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+
+
+def test_freeze_claim_ledger_rejects_empty_drafts_without_writing_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps({"schema_version": "mabw.claim_drafts.v1", "drafts": []}) + "\n",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert excinfo.value.details["field"] == "drafts"
+    assert "at least one draft" in str(excinfo.value)
+    assert not (_intermediate(ws) / "claim_ledger.json").exists()
+
+
+def test_freeze_claim_ledger_warns_on_lexical_duplicates_without_merging(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload(duplicate=True))
+
+    state = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
+    freeze = state["manifest"]["claim_ledger_freeze"]
+    assert len(ledger) == 3
+    assert [claim["claim_id"] for claim in ledger] == ["CL-0001", "CL-0002", "CL-0003"]
+    assert freeze["warnings"][0]["warning_type"] == "lexical_duplicate_statement"
+    assert freeze["warnings"][0]["draft_indexes"] == [0, 2]
+
+
+def test_claim_ledger_stage_complete_requires_freeze(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="claim ledger complete",
+        )
+
+    assert excinfo.value.error_code == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert "Claim Ledger has not been frozen" in str(excinfo.value)
+
+
+def test_claim_ledger_stage_complete_accepts_frozen_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "analyst"
+    assert state["artifact_registry"]["artifacts"]["claim_ledger"]["status"] == "valid"
+
+
+def test_claim_ledger_stage_complete_rejects_changed_drafts_after_freeze(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload(duplicate=True))
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            reason="claim ledger complete",
+        )
+
+    assert excinfo.value.error_code == "E_COMPLETION_TRANSACTION_REQUIRED"
+    assert "source hash does not match" in str(excinfo.value)
+
+
+def test_state_freeze_claim_ledger_cli_json(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+
+    rc = main([
+        "state",
+        "freeze-claim-ledger",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["claim_ledger_freeze"]["status"] == "frozen"
+    assert payload["transaction"]["decision"] == "freeze_claim_ledger"
+    assert (_intermediate(ws) / "claim_ledger.json").exists()
+
+
+def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _freeze_claim_ledger_fixture(ws)
 
     state = complete_stage_transaction(
         workspace=ws,
@@ -1619,28 +1964,11 @@ def test_claim_ledger_stage_complete_accepts_valid_flat_ledger(tmp_path):
     assert registry["claim_ledger"]["sha256"]
 
 
-def test_claim_ledger_stage_complete_keeps_claim_drafts_optional(tmp_path):
+def test_claim_ledger_stage_complete_records_valid_claim_drafts_after_freeze(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
-    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
-    _write_json_artifact(
-        ws,
-        "claim_drafts.json",
-        json.dumps(
-            {
-                "schema_version": "mabw.claim_drafts.v1",
-                "drafts": [
-                    {
-                        "statement": "ExampleCo opened a demo facility.",
-                        "source_id": "SRC-001",
-                        "evidence_text": "Example evidence.",
-                    }
-                ],
-            }
-        )
-        + "\n",
-    )
+    _freeze_claim_ledger_fixture(ws)
 
     state = complete_stage_transaction(
         workspace=ws,
@@ -1832,7 +2160,7 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
-    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -1870,7 +2198,7 @@ def test_state_check_rejects_malformed_registry_before_frozen_integrity_launderi
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
-    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -1935,7 +2263,7 @@ def test_state_check_contamination_event_failure_rolls_back_workflow(tmp_path, m
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
-    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -1966,7 +2294,7 @@ def test_state_check_accepts_unchanged_frozen_claim_ledger(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
-    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,
@@ -2135,7 +2463,7 @@ def test_state_check_allows_append_only_event_log_after_frozen_artifact(tmp_path
     ws = _write_workspace(tmp_path)
     state = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "claim-ledger")
-    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _freeze_claim_ledger_fixture(ws)
     complete_stage_transaction(
         workspace=ws,
         repo_workdir=ROOT,

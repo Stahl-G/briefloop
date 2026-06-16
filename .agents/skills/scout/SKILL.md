@@ -76,7 +76,7 @@ Use after source discovery, doctor, and input governance have identified evidenc
 
 - `candidate_claims.json` is write-once for this stage: Step 2 reads it, never rewrites it.
 - Screening judgment must not leak into discovery. Discovery captures the found universe; screening records the discard audit.
-- Never mint `claim_id` values. Claim Ledger owns claim IDs.
+- Never mint `claim_id` values. The Claim Ledger freeze transaction owns claim IDs.
 - Do not write prose analysis.
 
 ## Handoff

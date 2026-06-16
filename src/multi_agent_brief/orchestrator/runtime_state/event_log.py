@@ -64,6 +64,7 @@ EVENT_TYPES = {
     "delivery_succeeded",
     "delivery_failed",
     "fact_layer_imported",
+    "claim_ledger_frozen",
     "run_archived",
     "run_blocked",
     "run_integrity_contaminated",

@@ -60,12 +60,17 @@ Use only when `role_topology: strict` keeps screening independent, or when the O
 
 ### Claim Ledger
 
-Goal: Build the MABW Claim Ledger.
+Goal: Build MABW claim drafts for deterministic Python freezing.
 
 Input: `output/intermediate/screened_candidates.json`
-Write: `output/intermediate/claim_ledger.json`
+Write: `output/intermediate/claim_drafts.json`
 
-Create stable claim IDs and preserve evidence text, source URL/path, publication date, retrieved date, topic, claim type, and confidence.
+Write source-grounded claim drafts without `claim_id` fields. Preserve evidence text, source URL/path, publication date, retrieved date, topic, claim type, and confidence. Do not write `output/intermediate/claim_ledger.json`; after the child returns, run:
+
+```bash
+multi-agent-brief state freeze-claim-ledger --workspace <workspace>
+multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
+```
 
 ### Analyst
 
