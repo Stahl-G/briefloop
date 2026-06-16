@@ -74,6 +74,7 @@ class WebSearchProvider(SourceProvider):
 
     name = "web_search"
     source_type = "web_search"
+    parallel_safe = False
 
     def __init__(self, backend: SearchBackend | None = None) -> None:
         self._backend = backend

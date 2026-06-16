@@ -1,6 +1,7 @@
 """Source registry: loads config, instantiates providers, collects sources."""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,17 @@ PROVIDER_CLASSES: dict[str, type[SourceProvider]] = {
     "filing_resolver": FilingResolverProvider,
     "local_signal": LocalSignalProvider,
 }
+
+PARALLEL_SAFE_PROVIDER_NAMES = frozenset(
+    {
+        "manual",
+        "rss",
+        "api",
+        "filings",
+        "cached_package",
+        "local_signal",
+    }
+)
 
 
 def load_sources_config(path: str | Path) -> SourceConfig:
@@ -102,8 +114,14 @@ def get_providers(source_config: SourceConfig) -> dict[str, SourceProvider]:
 def collect_all_sources(
     source_config: SourceConfig,
     query: SourceQuery | None = None,
+    *,
+    parallel: bool = False,
 ) -> tuple[list[SourceItem], list[dict[str, str]]]:
     """Collect sources from all enabled providers, normalize, and dedupe.
+
+    `parallel=True` is opt-in.  Only known parallel-safe providers are scheduled
+    in a thread pool; unsafe providers are still collected serially and included
+    in the same deterministic join.
 
     Returns:
         Tuple of (deduplicated source items, list of error dicts with keys
@@ -159,41 +177,20 @@ def collect_all_sources(
         "local_signal": source_config.local_signal,
     }
 
-    for name, provider in providers.items():
-        config = config_map.get(name, {})
-        batch = SourceProviderBatch(
-            provider=name,
-            provider_priority=provider_priorities.get(name, len(provider_priorities)),
+    provider_jobs = [
+        (
+            name,
+            provider,
+            config_map.get(name, {}),
+            provider_priorities.get(name, len(provider_priorities)),
         )
-        try:
-            validation_errors = provider.validate_config(config)
-        except Exception as exc:
-            batch.errors.append({
-                "provider": name,
-                "error_type": "ConfigValidationError",
-                "message": f"validation error: {exc}",
-            })
-            batches.append(batch)
-            continue
-        if validation_errors:
-            for ve in validation_errors:
-                batch.errors.append({
-                    "provider": name,
-                    "error_type": "ConfigValidationError",
-                    "message": ve,
-                })
-            batches.append(batch)
-            continue
-        try:
-            batch.items.extend(provider.collect(query, config))
-        except Exception as exc:
-            # Provider failures are non-fatal, but record the error
-            batch.errors.append({
-                "provider": name,
-                "error_type": type(exc).__name__,
-                "message": str(exc)[:200],
-            })
-        batches.append(batch)
+        for name, provider in providers.items()
+    ]
+    if parallel:
+        batches.extend(_collect_provider_batches_with_barriers(provider_jobs, query))
+    else:
+        for job in provider_jobs:
+            batches.append(_collect_provider_batch(*job, query=query))
 
     recency = query.recency_days
     report_date = query.metadata.get("report_date", "")
@@ -202,6 +199,95 @@ def collect_all_sources(
         recency_days=recency,
         report_date=report_date,
     )
+
+
+def _provider_is_parallel_safe(name: str, provider: SourceProvider) -> bool:
+    explicit = getattr(provider, "parallel_safe", None)
+    if explicit is not None:
+        return explicit is True
+    return name in PARALLEL_SAFE_PROVIDER_NAMES
+
+
+def _collect_provider_batches_with_barriers(
+    jobs: list[tuple[str, SourceProvider, dict[str, Any], int]],
+    query: SourceQuery,
+) -> list[SourceProviderBatch]:
+    batches: list[SourceProviderBatch] = []
+    pending_parallel: list[tuple[str, SourceProvider, dict[str, Any], int]] = []
+
+    def flush_pending_parallel() -> None:
+        if pending_parallel:
+            batches.extend(_collect_provider_batches_parallel(pending_parallel, query))
+            pending_parallel.clear()
+
+    for job in jobs:
+        name, provider, _config, _priority = job
+        if _provider_is_parallel_safe(name, provider):
+            pending_parallel.append(job)
+            continue
+        flush_pending_parallel()
+        batches.append(_collect_provider_batch(*job, query=query))
+    flush_pending_parallel()
+    return batches
+
+
+def _collect_provider_batches_parallel(
+    jobs: list[tuple[str, SourceProvider, dict[str, Any], int]],
+    query: SourceQuery,
+) -> list[SourceProviderBatch]:
+    if not jobs:
+        return []
+    max_workers = min(len(jobs), 8)
+    batches: list[SourceProviderBatch] = []
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="mabw-source") as executor:
+        futures = [
+            executor.submit(_collect_provider_batch, name, provider, config, priority, query=query)
+            for name, provider, config, priority in jobs
+        ]
+        for future in as_completed(futures):
+            batches.append(future.result())
+    return batches
+
+
+def _collect_provider_batch(
+    name: str,
+    provider: SourceProvider,
+    config: dict[str, Any],
+    provider_priority: int,
+    *,
+    query: SourceQuery,
+) -> SourceProviderBatch:
+    batch = SourceProviderBatch(
+        provider=name,
+        provider_priority=provider_priority,
+    )
+    try:
+        validation_errors = provider.validate_config(config)
+    except Exception as exc:
+        batch.errors.append({
+            "provider": name,
+            "error_type": "ConfigValidationError",
+            "message": f"validation error: {exc}",
+        })
+        return batch
+    if validation_errors:
+        for ve in validation_errors:
+            batch.errors.append({
+                "provider": name,
+                "error_type": "ConfigValidationError",
+                "message": ve,
+            })
+        return batch
+    try:
+        batch.items.extend(provider.collect(query, config))
+    except Exception as exc:
+        # Provider failures are non-fatal, but record the error
+        batch.errors.append({
+            "provider": name,
+            "error_type": type(exc).__name__,
+            "message": str(exc)[:200],
+        })
+    return batch
 
 
 def validate_all_providers(source_config: SourceConfig) -> list[str]:
