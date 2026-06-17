@@ -1204,6 +1204,44 @@ def test_editor_new_fact_gate_allows_added_markdown_heading_in_strict_mode(tmp_p
     assert editor_result["blocking"] is False
 
 
+def test_editor_new_fact_gate_allows_declared_project_name_metadata(tmp_path, capsys):
+    ws = _prepare_editor_gate_workspace(
+        tmp_path,
+        analyst_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+        editor_text=(
+            "## Executive Summary\n"
+            "Solar Insights Media Weekly Brief: TargetCo opened a demo facility. [src:CL-001]\n"
+        ),
+    )
+    config_path = ws / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            'name: "TargetCo"',
+            'name: "Solar Insights Media Weekly Brief"',
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--strict",
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    finding_types = {finding["finding_type"] for finding in report["findings"]}
+    editor_result = next(result for result in report["gate_results"] if result["gate_id"] == "editor_new_fact")
+    assert "editor_introduced_new_fact" not in finding_types
+    assert editor_result["status"] == "pass"
+    assert editor_result["blocking"] is False
+
+
 def test_editor_new_fact_gate_blocks_added_entity_in_bullet_strict_mode(tmp_path, capsys):
     ws = _prepare_editor_gate_workspace(
         tmp_path,

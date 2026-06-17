@@ -592,6 +592,8 @@ def _editor_introduced_new_fact_findings(
     *,
     markdown: str,
     analyst_markdown: str | None,
+    config: dict[str, Any],
+    user_text: str,
     strict: bool,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
@@ -603,7 +605,10 @@ def _editor_introduced_new_fact_findings(
         set(_token_map(FACT_NUMBER_RE, markdown)) - set(_token_map(FACT_NUMBER_RE, analyst_markdown))
     )
     introduced_claim_ids = sorted(set(_claim_ref_map(markdown)) - set(_claim_ref_map(analyst_markdown)))
-    introduced_entities = sorted(set(_entity_map(markdown)) - set(_entity_map(analyst_markdown)))
+    allowed_metadata_entities = _declared_metadata_entity_tokens(config=config, user_text=user_text)
+    introduced_entities = sorted(
+        set(_entity_map(markdown)) - set(_entity_map(analyst_markdown)) - allowed_metadata_entities
+    )
     if not introduced_numbers and not introduced_claim_ids and not introduced_entities:
         return []
 
@@ -643,6 +648,7 @@ def _editor_introduced_new_fact_findings(
                 "introduced_numbers": samples["numbers"],
                 "introduced_claim_ids": samples["claim_ids"],
                 "introduced_entities": samples["entities"],
+                "ignored_declared_metadata_entities": sorted(allowed_metadata_entities),
                 "strict": strict,
             },
         )
@@ -741,6 +747,13 @@ def _target_terms(config: dict[str, Any], *, user_text: str = "") -> list[str]:
             seen.add(normalized)
             result.append(term)
     return result
+
+
+def _declared_metadata_entity_tokens(*, config: dict[str, Any], user_text: str) -> set[str]:
+    tokens: set[str] = set()
+    for term in _target_terms(config, user_text=user_text):
+        tokens.update(_entity_map(term))
+    return tokens
 
 
 def _mentions_any(text: str, terms: list[str]) -> bool:
@@ -892,6 +905,8 @@ def evaluate_quality_gate_findings(
         gate_tasks["editor_new_fact"] = lambda: _editor_introduced_new_fact_findings(
             markdown=markdown,
             analyst_markdown=analyst_markdown,
+            config=config,
+            user_text=user_text,
             strict=strict,
             stages=stages,
             artifacts=artifacts,
