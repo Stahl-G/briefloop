@@ -290,7 +290,8 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     ])
 
     assert rc == 0
-    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    payload = json.loads(capsys.readouterr().out)
+    report = payload["quality_gate_report"]
     blocker = next(finding for finding in report["findings"] if finding["finding_type"] == "number_without_source")
     assert blocker["gate_stage_id"] == "auditor"
     assert blocker["gate_artifact_id"] == "auditor_quality_gate_report"
@@ -298,11 +299,37 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert blocker["artifact_id"] == "audited_brief"
     assert blocker["repair_stage_id"] == "editor"
     assert blocker["repair_artifact_id"] == "audited_brief"
+    assert payload["repair_route"]["repair_owner"] == "editor"
+    assert payload["repair_route"]["must_rerun_from"] == "auditor"
+    assert payload["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert "output/intermediate/audit_report.json" in payload["repair_route"]["blocked_direct_edits"]
+    assert payload["required_commands"] == [
+        f"multi-agent-brief repair route --workspace {ws.resolve()} --json",
+        f"multi-agent-brief repair start --workspace {ws.resolve()} --json",
+        f"multi-agent-brief repair complete --workspace {ws.resolve()} --reason \"<reason>\" --json",
+    ]
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     assert state["workflow_state"]["current_stage"] == "auditor"
     assert state["workflow_state"]["blocked"] is True
     assert "blocking quality gate findings" in state["workflow_state"]["blocking_reason"]
+
+    rc = main([
+        "gates",
+        "show",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+    ])
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "[gates show] required_commands:" in output
+    assert f"multi-agent-brief repair start --workspace {ws.resolve()} --json" in output
+    assert "[gates show] repair_owner: editor" in output
+    assert "[gates show] must_rerun_from: auditor" in output
+    assert "output/intermediate/audited_brief.md" in output
+    assert "output/intermediate/audit_report.json" in output
 
     rc = main([
         "state",

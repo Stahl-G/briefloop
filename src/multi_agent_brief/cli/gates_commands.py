@@ -116,6 +116,35 @@ def _print_state(label: str, state: dict[str, Any], *, as_json: bool) -> None:
     print(f"[{label}] valid: {validation.get('ok')}")
     for error in validation.get("errors") or []:
         print(f"  - {error}")
+    _print_repair_guidance(label, state)
+
+
+def _print_repair_guidance(label: str, state: dict[str, Any]) -> None:
+    required_commands = state.get("required_commands") or []
+    if required_commands:
+        print(f"[{label}] required_commands:")
+        for command in required_commands:
+            print(f"  - {command}")
+    repair_route = state.get("repair_route")
+    if not isinstance(repair_route, dict):
+        return
+    if repair_route.get("ok"):
+        print(f"[{label}] repair_owner: {repair_route.get('repair_owner')}")
+        print(f"[{label}] must_rerun_from: {repair_route.get('must_rerun_from') or 'none'}")
+        allowed = repair_route.get("allowed_artifacts") or []
+        if allowed:
+            print(f"[{label}] allowed_artifacts:")
+            for artifact in allowed:
+                print(f"  - {artifact}")
+        blocked = repair_route.get("blocked_direct_edits") or []
+        if blocked:
+            print(f"[{label}] blocked_direct_edits:")
+            for artifact in blocked:
+                print(f"  - {artifact}")
+    else:
+        message = repair_route.get("message") or repair_route.get("error")
+        if message:
+            print(f"[{label}] repair_route_error: {message}")
 
 
 def _print_validation(result: dict[str, Any]) -> None:

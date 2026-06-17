@@ -1128,7 +1128,7 @@ def show_quality_gates(
         workspace=ws,
         repo_workdir=repo_workdir,
     )
-    return {
+    state = {
         "ok": bool(validation.get("ok")),
         "workspace": str(ws),
         "quality_gate_state_files": QUALITY_GATE_STATE_FILES,
@@ -1136,6 +1136,8 @@ def show_quality_gates(
         "stage_quality_gate_reports": stage_reports,
         "validation": validation,
     }
+    state.update(_blocking_repair_guidance(workspace=ws, validation=validation))
+    return state
 
 
 def validate_quality_gates_workspace(
@@ -1146,3 +1148,38 @@ def validate_quality_gates_workspace(
     ws = _require_workspace(workspace)
     _repo, stages, artifacts = _contracts(workspace=ws, repo_workdir=repo_workdir)
     return validate_quality_gate_workspace(workspace=ws, stages=stages, artifacts=artifacts)
+
+
+def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) -> dict[str, Any]:
+    if int(validation.get("blocking_count") or 0) <= 0:
+        return {}
+
+    route_command = f"multi-agent-brief repair route --workspace {workspace} --json"
+    required_commands = [route_command]
+    try:
+        from multi_agent_brief.repair.router import route_repair
+
+        repair_route = route_repair(workspace=workspace)
+    except Exception as exc:  # pragma: no cover - defensive CLI guidance path.
+        repair_route = {
+            "ok": False,
+            "error_code": "E_REPAIR_ROUTE_UNAVAILABLE",
+            "message": str(exc),
+            "workspace": str(workspace),
+        }
+
+    if repair_route.get("ok") and repair_route.get("repair_owner") != "none":
+        required_commands.extend([
+            f"multi-agent-brief repair start --workspace {workspace} --json",
+            f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
+        ])
+    else:
+        required_commands.extend([
+            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
+            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision block_run --reason \"<reason>\" --json",
+        ])
+
+    return {
+        "required_commands": required_commands,
+        "repair_route": repair_route,
+    }
