@@ -1395,7 +1395,7 @@ def test_stage_complete_records_runtime_model_provenance_from_cli(tmp_path, caps
     assert decision_event["metadata"]["runtime_provenance"] == provenance
 
 
-def test_stage_complete_duplicate_rejects_without_duplicate_event(tmp_path):
+def test_stage_complete_duplicate_rejects_without_contamination_event(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(
@@ -1416,19 +1416,16 @@ def test_stage_complete_duplicate_rejects_without_duplicate_event(tmp_path):
 
     assert excinfo.value.error_code == "E_STAGE_ALREADY_COMPLETED"
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
-    assert workflow["run_integrity"]["status"] == "contaminated"
-    assert workflow["run_integrity"]["reference_eligible"] is False
-    assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "older_stage_replay"
+    assert workflow["run_integrity"]["status"] == "clean"
+    assert workflow["run_integrity"]["reference_eligible"] is True
+    assert workflow["run_integrity"].get("reasons", []) == []
     contamination_events = [
         event for event in _event_records(ws)
         if event["event_type"] == "run_integrity_contaminated"
     ]
-    assert len(contamination_events) == 1
-    assert contamination_events[0]["metadata"]["reason_code"] == "older_stage_replay"
-    assert contamination_events[0]["metadata"]["reference_eligible"] is False
-    assert contamination_events[0]["metadata"]["clean_single_shot"] is False
-    workflow_bytes_after_first_contamination = _state_file(ws, "workflow_state").read_bytes()
-    event_bytes_after_first_contamination = _state_file(ws, "event_log").read_bytes()
+    assert contamination_events == []
+    workflow_bytes_after_first_rejection = _state_file(ws, "workflow_state").read_bytes()
+    event_bytes_after_first_rejection = _state_file(ws, "event_log").read_bytes()
 
     with pytest.raises(RuntimeStateError):
         complete_stage_transaction(
@@ -1443,14 +1440,15 @@ def test_stage_complete_duplicate_rejects_without_duplicate_event(tmp_path):
         event for event in _event_records(ws)
         if event["event_type"] == "run_integrity_contaminated"
     ]
-    assert len(workflow["run_integrity"]["reasons"]) == 1
-    assert len(contamination_events) == 1
-    assert len(_event_records(ws)) == len(before_events) + 1
-    assert _state_file(ws, "workflow_state").read_bytes() == workflow_bytes_after_first_contamination
-    assert _state_file(ws, "event_log").read_bytes() == event_bytes_after_first_contamination
+    assert workflow["run_integrity"]["status"] == "clean"
+    assert workflow["run_integrity"].get("reasons", []) == []
+    assert contamination_events == []
+    assert len(_event_records(ws)) == len(before_events)
+    assert _state_file(ws, "workflow_state").read_bytes() == workflow_bytes_after_first_rejection
+    assert _state_file(ws, "event_log").read_bytes() == event_bytes_after_first_rejection
 
 
-def test_stage_complete_contamination_event_failure_rolls_back_workflow(tmp_path, monkeypatch):
+def test_stage_complete_duplicate_validation_runs_before_contamination_event(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     complete_stage_transaction(
@@ -1471,7 +1469,7 @@ def test_stage_complete_contamination_event_failure_rolls_back_workflow(tmp_path
             reason="doctor replay should fail atomically",
         )
 
-    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_PARTIAL_WRITE
+    assert excinfo.value.error_code == "E_STAGE_ALREADY_COMPLETED"
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
 
@@ -1649,6 +1647,46 @@ def test_default_topology_scout_completion_satisfies_screener(tmp_path):
     assert timing["status"] == "available"
     screener_timing = next(stage for stage in timing["stages"] if stage["stage_id"] == "screener")
     assert screener_timing["status"] == "satisfied_by_topology"
+
+
+def test_default_topology_screener_replay_rejects_without_contamination(tmp_path):
+    repo = _repo_with_role_topology(
+        tmp_path,
+        "default",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json")
+    _write_json_artifact(ws, "screened_candidates.json")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="scout complete",
+    )
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="screener",
+            reason="orchestrator replayed topology-satisfied screener",
+        )
+
+    assert excinfo.value.error_code == "E_STAGE_ALREADY_COMPLETED"
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["run_integrity"]["status"] == "clean"
+    assert workflow["run_integrity"]["reference_eligible"] is True
+    assert workflow["run_integrity"].get("reasons", []) == []
+    assert [
+        event for event in _event_records(ws)
+        if event["event_type"] == "run_integrity_contaminated"
+    ] == []
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
 
 
 def test_topology_satisfaction_respects_target_stage_feedback_blockers(tmp_path):

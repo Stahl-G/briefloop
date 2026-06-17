@@ -2398,6 +2398,12 @@ def _complete_stage_transaction(
     policy_pack = load_default_policy_pack(repo)
     artifacts_by_id = _artifact_map(artifacts)
     stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
+    stage = _validate_completion_target(
+        stage_id=stage_id,
+        workflow=workflow,
+        stage_by_id=stage_by_id,
+        finalize=finalize,
+    )
     replay_message = _older_stage_replay_message(
         stage_id=stage_id,
         current_stage=workflow.get("current_stage"),
@@ -2415,12 +2421,6 @@ def _complete_stage_transaction(
             actor=actor,
             stage_id=stage_id,
         )
-    stage = _validate_completion_target(
-        stage_id=stage_id,
-        workflow=workflow,
-        stage_by_id=stage_by_id,
-        finalize=finalize,
-    )
 
     transaction_id = uuid.uuid4().hex
     now = utc_now()
