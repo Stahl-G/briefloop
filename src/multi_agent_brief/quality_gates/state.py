@@ -842,7 +842,10 @@ def _gate_result(gate_id: str, findings: list[dict[str, Any]]) -> dict[str, Any]
 
 
 def _reader_facing_mode(workspace: Path, brief_path: Path) -> bool:
-    return _workspace_relative(workspace, brief_path) == "output/brief.md"
+    rel_path = _workspace_relative(workspace, brief_path)
+    if rel_path == "output/brief.md":
+        return True
+    return rel_path.startswith("output/delivery/") and rel_path.endswith(".md")
 
 
 def evaluate_quality_gate_findings(

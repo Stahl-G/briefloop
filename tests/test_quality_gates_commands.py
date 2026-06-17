@@ -82,6 +82,12 @@ def _write_reader_brief(ws: Path, text: str) -> None:
     (output / "brief.md").write_text(text, encoding="utf-8")
 
 
+def _write_delivery_brief(ws: Path, text: str, *, name: str = "brief.md") -> None:
+    delivery = ws / "output" / "delivery"
+    delivery.mkdir(parents=True, exist_ok=True)
+    (delivery / name).write_text(text, encoding="utf-8")
+
+
 def _write_supported_target_ledger(ws: Path) -> None:
     _write_ledger(
         ws,
@@ -656,6 +662,44 @@ def test_explicit_reader_brief_skips_source_reference_material_gate(tmp_path, ca
     assert report["metadata"]["gate_stage_id"] == "finalize"
     assert report["metadata"]["gate_artifact_id"] == "finalize_quality_gate_report"
     assert _finalize_report_path(ws).exists()
+
+
+def test_delivery_reader_brief_skips_internal_citation_material_gate(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(ws, [
+        {
+            "claim_id": "CL-0001",
+            "statement": "TargetCo revenue was $42 million.",
+            "source_id": "SRC",
+            "evidence_text": "TargetCo revenue was $42 million.",
+            "metadata": {"importance": "high"},
+        }
+    ])
+    _write_delivery_brief(
+        ws,
+        "## Executive Summary\nTargetCo revenue was $42 million. [S1]\n\n"
+        "## Source Appendix\n### [S1] TargetCo Filing\n",
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--brief",
+        "output/delivery/brief.md",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    finding_types = {finding["finding_type"] for finding in report["findings"]}
+    assert "number_without_source" not in finding_types
+    assert report["metadata"]["reader_facing_mode"] is True
+    assert report["metadata"]["gate_stage_id"] == "finalize"
+    assert report["metadata"]["brief"] == "output/delivery/brief.md"
 
 
 def test_auditable_brief_hyphenated_target_claim_ref_counts_for_summary(tmp_path, capsys):
