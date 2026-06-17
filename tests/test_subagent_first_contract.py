@@ -27,6 +27,23 @@ def _assert_scout_chunk_contract(path: str) -> None:
     assert "silently drop" in normalized, path
 
 
+def _assert_generate_brief_repair_transaction(path: str) -> None:
+    text = _read(path)
+    normalized = " ".join(text.replace("`", "").split())
+
+    assert "Do not call multi-agent-brief run again mid-pipeline" in normalized, path
+    assert "multi-agent-brief repair route --workspace $ARGUMENTS --json" in normalized, path
+    assert "multi-agent-brief repair start --workspace $ARGUMENTS --json" in normalized, path
+    assert "multi-agent-brief repair complete --workspace $ARGUMENTS --reason" in normalized, path
+    assert "do not edit artifacts directly" in normalized.lower(), path
+    assert "reported repair_owner role" in normalized, path
+    assert "allowed_artifacts" in normalized, path
+    assert "blocked_direct_edits" in normalized, path
+    assert "must_rerun_from" in normalized, path
+    assert "Never use state decide delegate_repair to authorize artifact edits" in normalized, path
+    assert "Never manually update artifact_registry.json or frozen hashes" in normalized, path
+
+
 def test_python_agent_package_removed_from_runtime_source():
     assert not (ROOT / "src" / "multi_agent_brief" / "agents").exists()
 
@@ -123,6 +140,14 @@ def test_claude_generate_brief_requires_stage_complete_before_next_specialist():
     assert "Never treat `state stage-complete` as after-the-fact bookkeeping" in text
     assert "output artifacts are frozen for downstream stages" in text
     assert "route repair back to the owner stage" in text
+
+
+def test_generate_brief_commands_use_repair_transaction_for_blocking_gates():
+    for path in [
+        ".claude/commands/generate-brief.md",
+        ".opencode/commands/generate-brief.md",
+    ]:
+        _assert_generate_brief_repair_transaction(path)
 
 
 def test_claude_generate_brief_is_topology_aware_for_scout_and_screener():

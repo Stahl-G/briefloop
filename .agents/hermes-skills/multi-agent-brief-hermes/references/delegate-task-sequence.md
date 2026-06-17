@@ -120,6 +120,8 @@ multi-agent-brief state check --workspace <workspace> --strict
 multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
+Do not call `multi-agent-brief run` again mid-pipeline to refresh handoff or state. Use `multi-agent-brief status`, `state show`, `gates check`, `state check`, and repair commands instead.
+
 If state is blocked by owner-stage artifact repair, do not use `state decide delegate_repair`. Run:
 
 ```bash

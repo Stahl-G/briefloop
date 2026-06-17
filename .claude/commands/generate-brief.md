@@ -48,6 +48,7 @@ Follow this sequence:
    - Summarize relevant taste guidance for delegated roles.
    - Do not treat `audience_profile.md` as source evidence; mid-run profile edits apply to the next run.
    - Record control choices with `multi-agent-brief controls select`; selection is not execution.
+   - Do not call `multi-agent-brief run` again mid-pipeline to refresh handoff or state. Use `multi-agent-brief status`, `state show`, `gates check`, `state check`, and repair commands instead.
 
 2. Read:
    - $ARGUMENTS/config.yaml
@@ -176,7 +177,18 @@ your editorial judgment.
     - Run `multi-agent-brief state check --workspace $ARGUMENTS --strict`.
     - If state is not blocked, run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage auditor --reason "Audit and quality gates passed."`.
     - If the transaction fails, stop and report the failure. Do not invoke formatter/finalize.
-    - If state is blocked, choose `delegate_repair`, `request_human_review`, or `block_run`; do not finalize.
+    - If state is blocked, do not edit artifacts directly and do not finalize.
+    - First run `multi-agent-brief repair route --workspace $ARGUMENTS --json`.
+    - If the route is ok:
+      1. Run `multi-agent-brief repair start --workspace $ARGUMENTS --json`.
+      2. Delegate only the reported `repair_owner` role.
+      3. Allow edits only to the reported `allowed_artifacts`.
+      4. Do not edit `blocked_direct_edits` or any frozen artifact outside `allowed_artifacts`.
+      5. After the owner role finishes, run `multi-agent-brief repair complete --workspace $ARGUMENTS --reason "<reason>" --json`.
+      6. Resume from `must_rerun_from`. If `must_rerun_from` is `auditor`, rerun Auditor and then gates/state check.
+    - If `repair route` is not ok, choose `request_human_review` or `block_run`.
+    - Never use `state decide delegate_repair` to authorize artifact edits.
+    - Never manually update `artifact_registry.json` or frozen hashes.
     - Repair guidance is bounded runtime guidance, not an automatic trajectory regulator: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 
 14. Invoke the **formatter** subagent / finalize tool only after the gates/state completion path passes:

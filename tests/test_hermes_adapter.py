@@ -442,6 +442,7 @@ def test_hermes_skill_contains_onboarding_workflow():
     assert "Collect brief profile in chat" in content
     assert "multi-agent-brief init <workspace> --from-onboarding onboarding.json" in content
     assert "multi-agent-brief run --workspace <workspace>" in content
+    assert "Do not call `multi-agent-brief run` again mid-pipeline" in content
     assert "delegate_task" in content
     assert "gates check + state check + state stage-complete" in content
     assert "state finalize-complete" in content

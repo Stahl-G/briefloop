@@ -73,7 +73,7 @@ When the plugin is not available, run onboarding as a chat-to-JSON workflow:
 3. Validate: `multi-agent-brief onboard --validate onboarding.json`
 4. Create the workspace: `multi-agent-brief init <workspace> --from-onboarding onboarding.json`
 5. Create runtime handoff: `multi-agent-brief run --workspace <workspace>`
-6. Read `agent_handoff.md`, `workflow_state.json`, `artifact_registry.json`, and optional feedback state references, then continue with the delegated workflow below.
+6. Read `agent_handoff.md`, `workflow_state.json`, `artifact_registry.json`, and optional feedback state references, then continue with the delegated workflow below. Do not call `multi-agent-brief run` again mid-pipeline to refresh handoff or state; use `multi-agent-brief status`, `state show`, `gates check`, `state check`, and repair commands instead.
 
 ## Existing Workspace Path
 
