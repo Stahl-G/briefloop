@@ -125,6 +125,7 @@ AUDITABLE_TARGET_ARTIFACTS = {
     "audit_report": "output/intermediate/audit_report.json",
     "auditor_quality_gate_report": "output/intermediate/gates/auditor_quality_gate_report.json",
 }
+AUDITABLE_TIMING_STAGE_ORDER = ["analyst", "editor", "auditor"]
 
 REQUIRED_FACT_ARTIFACT_IDS = {
     "durable_source_evidence_or_source_pack",
@@ -664,6 +665,7 @@ def register_run_record(
                 intermediate / "event_log.jsonl",
                 workflow_state=workflow_state,
                 run_integrity=workflow_integrity,
+                stage_order=AUDITABLE_TIMING_STAGE_ORDER,
                 expected_run_id=run_id,
             ),
             runtime_manifest=runtime_manifest,

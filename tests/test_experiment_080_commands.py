@@ -254,6 +254,12 @@ def _write_auditable_target_workspace(
         },
     )
     stage_statuses = {
+        "doctor": {"status": "complete", "metadata": {"satisfied_by_import": True}},
+        "source-discovery": {"status": "complete", "metadata": {"satisfied_by_import": True}},
+        "input-governance": {"status": "complete", "metadata": {"satisfied_by_import": True}},
+        "scout": {"status": "complete", "metadata": {"satisfied_by_import": True}},
+        "screener": {"status": "complete", "metadata": {"satisfied_by_import": True}},
+        "claim-ledger": {"status": "complete", "metadata": {"satisfied_by_import": True}},
         "analyst": {"status": "complete"},
         "editor": {"status": "complete"},
         "auditor": {"status": "complete"},
@@ -1569,6 +1575,8 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert record["assessment_target"] == "auditable_brief"
     assert record["run_archive_path"] == ""
     assert record["target_artifacts"]["audited_brief"]["path"] == "output/intermediate/audited_brief.md"
+    assert [stage["stage_id"] for stage in record["timing"]["stages"]] == ["analyst", "editor", "auditor"]
+    assert record["timing"]["status"] == "available"
     capsys.readouterr()
 
     assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
