@@ -179,6 +179,42 @@ def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsy
     assert runtime_state_paths(ws)["event_log"].read_bytes() == event_log_before
 
 
+def test_repair_route_prioritizes_frozen_artifact_change_over_audit_text(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_valid_claim_ledger(ws)
+    (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nOriginal editor text.\n", encoding="utf-8")
+    _set_workflow_stages(
+        ws,
+        completed=["doctor", "source-discovery", "input-governance", "scout", "screener", "claim-ledger", "analyst", "editor"],
+        current_stage="auditor",
+    )
+    check_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_INPUT_001",
+            "finding_type": "unsupported_claim",
+            "severity": "high",
+            "artifact_id": "claim_ledger",
+            "repair_owner": "claim-ledger",
+            "repair_stage_id": "claim-ledger",
+            "repair_artifact_id": "claim_ledger",
+            "message": "Claim Ledger support looks insufficient.",
+        },
+    )
+    (_intermediate(ws) / "audited_brief.md").write_text("# Brief\n\nChanged downstream patch.\n", encoding="utf-8")
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "editor"
+    assert payload["source"]["kind"] == "transaction_integrity"
+    assert payload["source"]["finding_type"] == "frozen_artifact_changed"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+
+
 def test_repair_route_maps_frozen_claim_ledger_change_to_claim_ledger(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
@@ -391,6 +427,33 @@ def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
+def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_FINAL_001",
+            "finding_type": "insufficient_claims",
+            "severity": "high",
+            "artifact_id": "claim_ledger",
+            "repair_owner": "claim-ledger",
+            "repair_stage_id": "claim-ledger",
+            "repair_artifact_id": "claim_ledger",
+            "message": "Only 1 reportable claims selected; weekly brief requires at least 20.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "none"
+    assert payload["allowed_artifacts"] == []
+    assert payload["source"]["route_classification"] == "input_limitation"
+    assert payload["recommended_action"] == "request_human_review_or_start_fresh_workspace"
+
+
 def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
@@ -511,6 +574,53 @@ def test_repair_start_fails_on_invalid_gate_report_json(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+
+
+def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _set_workflow_stages(
+        ws,
+        completed=["doctor", "source-discovery", "input-governance", "scout", "screener", "claim-ledger", "analyst", "editor"],
+        current_stage="auditor",
+    )
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "analyst",
+            "repair_stage_id": "analyst",
+            "repair_artifact_id": "audited_brief",
+            "message": "Executive summary does not mention the configured target.",
+        },
+    )
+    workflow_path = runtime_state_paths(ws)["workflow_state"]
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["run_integrity"] = {
+        "status": "contaminated",
+        "reference_eligible": False,
+        "clean_single_shot": False,
+        "reasons": [{"reason_code": "frozen_artifact_changed", "message": "fixture contamination"}],
+    }
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    repair = payload["repair"]
+    assert repair["run_integrity_effect"]["reference_eligible"] is False
+    assert "cannot restore clean reference eligibility" in repair["run_integrity_effect"]["reason"]
+    events = [
+        json.loads(line)
+        for line in runtime_state_paths(ws)["event_log"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert events[-1]["event_type"] == "repair_started"
+    assert events[-1]["metadata"]["run_integrity_effect"]["reference_eligible"] is False
 
 
 def test_repair_complete_fails_without_active_repair(tmp_path, capsys):

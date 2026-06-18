@@ -101,7 +101,7 @@ def route_repair(*, workspace: str | Path) -> dict[str, Any]:
             "workspace": str(ws),
         }
 
-    findings, input_errors = _collect_findings(ws)
+    findings, input_errors, payloads = _collect_findings(ws)
     if input_errors:
         return {
             "ok": False,
@@ -112,7 +112,9 @@ def route_repair(*, workspace: str | Path) -> dict[str, Any]:
         }
     routes = [_route_for_finding(finding) for finding in findings]
     routes = [route for route in routes if route is not None]
+    routes = sorted(routes, key=_route_priority)
     selected = routes[0] if routes else _no_route()
+    selected = _with_run_integrity_context(selected, payloads.get("workflow_state"))
     return {
         "ok": True,
         "workspace": str(ws),
@@ -122,7 +124,7 @@ def route_repair(*, workspace: str | Path) -> dict[str, Any]:
     }
 
 
-def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, dict[str, Any]]]:
     findings: list[dict[str, Any]] = []
     input_errors: list[dict[str, str]] = []
     payloads: dict[str, dict[str, Any]] = {}
@@ -138,7 +140,7 @@ def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[
     registry = payloads.get("artifact_registry")
     findings.extend(_findings_from_artifact_registry(registry))
     findings.extend(_findings_from_frozen_artifact_integrity(workspace, payloads))
-    return _dedupe_findings(findings), input_errors
+    return _dedupe_findings(findings), input_errors, payloads
 
 
 def _input_paths(workspace: Path) -> dict[str, Path]:
@@ -300,6 +302,9 @@ def _stage_is_complete(workflow: dict[str, Any], stage_id: str) -> bool:
 
 
 def _route_for_finding(finding: dict[str, Any]) -> dict[str, Any] | None:
+    if _is_input_limitation_finding(finding):
+        return _input_limitation_route(finding)
+
     explicit = _explicit_repair_route(finding)
     if explicit is not None:
         return explicit
@@ -415,6 +420,44 @@ def _is_claim_ledger_issue(text: str, finding_type: str, artifact_id: str) -> bo
     return any(token in text or token in finding_type for token in ("schema", "support", "invalid", "missing support"))
 
 
+def _is_input_limitation_finding(finding: dict[str, Any]) -> bool:
+    finding_type = str(finding.get("finding_type") or finding.get("category") or "").lower()
+    text = _finding_text(finding)
+    if finding_type in {"insufficient_claims", "low_source_density", "no_reportable_claims"}:
+        return True
+    return (
+        "min_items" in text
+        or "minimum items" in text
+        or "requires at least" in text
+        or "requires at least" in finding_type
+    )
+
+
+def _input_limitation_route(finding: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "repair_owner": "none",
+        "allowed_artifacts": [],
+        "must_rerun_from": "",
+        "blocked_direct_edits": [
+            "output/intermediate/claim_ledger.json",
+            "output/intermediate/audited_brief.md",
+            "output/intermediate/audit_report.json",
+        ],
+        "reason": _reason(finding, "Input limitation requires human review or a fresh evidence setup."),
+        "recommended_action": "request_human_review_or_start_fresh_workspace",
+        "run_integrity_effect": None,
+        "source": {
+            "file": finding.get("_source_path"),
+            "kind": finding.get("_source"),
+            "stage_id": finding.get("_source_stage_id") or finding.get("gate_stage_id") or finding.get("stage_id"),
+            "finding_id": finding.get("finding_id") or finding.get("id"),
+            "finding_type": finding.get("finding_type") or finding.get("category"),
+            "artifact_id": finding.get("artifact_id"),
+            "route_classification": "input_limitation",
+        },
+    }
+
+
 def _is_audited_brief_binding_issue(finding_type: str, artifact_id: str) -> bool:
     return (
         finding_type in {"unsupported_claim", "claim_binding_imprecise"}
@@ -461,6 +504,49 @@ def _no_route() -> dict[str, Any]:
         "run_integrity_effect": None,
         "source": {},
     }
+
+
+def _route_priority(route: dict[str, Any]) -> tuple[int, str, str]:
+    source = route.get("source") if isinstance(route.get("source"), dict) else {}
+    kind = str(source.get("kind") or "")
+    finding_type = str(source.get("finding_type") or "")
+    repair_owner = str(route.get("repair_owner") or "")
+    if kind == "transaction_integrity" or finding_type == "frozen_artifact_changed":
+        return (0, kind, finding_type)
+    if repair_owner == "none":
+        return (90, kind, finding_type)
+    return (10, kind, finding_type)
+
+
+def _with_run_integrity_context(route: dict[str, Any], workflow: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(workflow, dict):
+        return route
+    integrity = workflow.get("run_integrity")
+    if not isinstance(integrity, dict):
+        return route
+    status = str(integrity.get("status") or "")
+    if status in {"", "clean"} and integrity.get("reference_eligible", True) is True:
+        return route
+    updated = dict(route)
+    existing_effect = updated.get("run_integrity_effect")
+    if not isinstance(existing_effect, dict):
+        existing_effect = {}
+    updated["run_integrity_effect"] = {
+        **existing_effect,
+        "status": status or "unknown",
+        "reference_eligible": False,
+        "reason": (
+            "This run is already non-reference-eligible. Repair can support local inspection "
+            "but cannot restore clean reference eligibility."
+        ),
+    }
+    recommended = updated.get("recommended_action")
+    if not isinstance(recommended, str) or not recommended.strip():
+        recommended = "repair_for_local_inspection_or_start_fresh_workspace"
+    elif "local inspection" not in recommended:
+        recommended = f"{recommended}; repair is local inspection only for this non-reference run"
+    updated["recommended_action"] = recommended
+    return updated
 
 
 def _dedupe_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
