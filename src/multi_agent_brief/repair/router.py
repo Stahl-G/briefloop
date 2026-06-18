@@ -199,14 +199,21 @@ def _findings_from_artifact_registry(registry: dict[str, Any] | None) -> list[di
         return []
     findings: list[dict[str, Any]] = []
     for artifact_id, record in artifacts.items():
-        if not isinstance(record, dict) or record.get("status") != "invalid":
+        if not isinstance(record, dict):
+            continue
+        status = str(record.get("status") or "")
+        validation_result = str(record.get("validation_result") or "")
+        blocking_reason = str(record.get("blocking_reason") or "")
+        if status == "missing" and not blocking_reason and validation_result in {"", "not_checked"}:
+            continue
+        if status not in {"invalid", "missing"}:
             continue
         findings.append({
             "_source": "artifact_registry",
             "_source_path": "output/intermediate/artifact_registry.json",
-            "finding_type": str(record.get("validation_result") or "artifact_invalid"),
+            "finding_type": validation_result or "artifact_invalid",
             "artifact_id": artifact_id,
-            "message": str(record.get("blocking_reason") or f"Artifact {artifact_id} is invalid."),
+            "message": blocking_reason or f"Artifact {artifact_id} is {status}.",
         })
     return findings
 

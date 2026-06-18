@@ -276,6 +276,43 @@ def test_repair_route_maps_claim_ledger_invalid_registry_to_claim_ledger(tmp_pat
     assert "output/intermediate/audited_brief.md" in payload["blocked_direct_edits"]
 
 
+def test_repair_route_maps_missing_claim_ledger_registry_to_claim_ledger(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    registry_path = runtime_state_paths(ws)["artifact_registry"]
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-artifact-registry/v1",
+                "run_id": "run-test",
+                "artifacts": {
+                    "claim_ledger": {
+                        "artifact_id": "claim_ledger",
+                        "path": "output/intermediate/claim_ledger.json",
+                        "status": "missing",
+                        "validation_result": "required_artifact_missing",
+                        "blocking_reason": "Claim Ledger artifact is missing.",
+                    }
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "claim-ledger"
+    assert payload["allowed_artifacts"] == ["output/intermediate/claim_ledger.json"]
+    assert payload["must_rerun_from"] == "analyst"
+    assert "output/intermediate/audited_brief.md" in payload["blocked_direct_edits"]
+
+
 def test_repair_route_maps_missing_source_excerpt_to_source_discovery(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
