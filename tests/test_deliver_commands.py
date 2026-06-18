@@ -106,6 +106,20 @@ def _mark_run_contaminated(ws: Path) -> None:
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _mark_active_repair(ws: Path) -> None:
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["active_repair"] = {
+        "schema_version": "mabw.active_repair.v1",
+        "transaction_id": "repair-test-001",
+        "repair_owner": "editor",
+        "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+        "blocked_direct_edits": ["output/intermediate/claim_ledger.json"],
+        "must_rerun_from": "auditor",
+    }
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
@@ -122,6 +136,21 @@ def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path, capsys) -> Non
     events = _delivery_events(ws)
     assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_succeeded"]
     assert events[0]["metadata"]["artifact"] == "output/delivery/brief.md"
+
+
+def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws)
+    _mark_active_repair(ws)
+
+    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_ACTIVE_REPAIR_OPEN"
+    assert payload["runtime_error_code"] == "E_ACTIVE_REPAIR_OPEN"
+    assert "repair complete" in payload["message"]
+    assert _delivery_events(ws) == []
 
 
 def test_deliver_local_allows_contaminated_run_but_reports_integrity(tmp_path: Path, capsys) -> None:
