@@ -2802,6 +2802,55 @@ def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _workflow_with_repair_run_integrity_effect(
+    *,
+    workflow: dict[str, Any],
+    active_repair: dict[str, Any],
+    now: str,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    effect = active_repair.get("run_integrity_effect")
+    if not isinstance(effect, dict) or effect.get("reference_eligible") is not False:
+        return workflow, None
+    current_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
+    if (
+        current_integrity.get("status") != RUN_INTEGRITY_CLEAN
+        or current_integrity.get("reference_eligible", True) is not True
+    ):
+        return workflow, None
+
+    source = active_repair.get("source") if isinstance(active_repair.get("source"), dict) else {}
+    reason_code = str(source.get("finding_type") or effect.get("reason_code") or "repair_non_reference")
+    message = str(
+        effect.get("reason")
+        or active_repair.get("reason")
+        or "Repair route marked this run non-reference-eligible."
+    )
+    stage_id = source.get("stage_id") or active_repair.get("repair_owner")
+    artifact_id = source.get("artifact_id")
+    metadata = {
+        "repair_transaction_id": active_repair.get("transaction_id"),
+        "repair_owner": active_repair.get("repair_owner"),
+        "source": source,
+        "recommended_action": active_repair.get("recommended_action"),
+        "run_integrity_effect": effect,
+    }
+    contaminated, reason_added = _contaminate_run_integrity_with_event_flag(
+        workflow,
+        reason_code=reason_code,
+        message=message,
+        created_at=now,
+        event_type="repair_started",
+        stage_id=str(stage_id) if stage_id else None,
+        artifact_id=str(artifact_id) if artifact_id else None,
+        metadata=metadata,
+    )
+    if not reason_added:
+        return contaminated, None
+    reasons = (contaminated.get("run_integrity") or {}).get("reasons")
+    reason = reasons[-1] if isinstance(reasons, list) and reasons and isinstance(reasons[-1], dict) else {}
+    return contaminated, reason
+
+
 def _source_stage_for_repair_route(route: dict[str, Any]) -> str:
     source = route.get("source") if isinstance(route.get("source"), dict) else {}
     stage_id = str(source.get("stage_id") or "")
@@ -2965,8 +3014,13 @@ def start_repair_transaction(
         active_repair=active_repair,
         now=now,
     )
+    next_workflow, contamination_reason = _workflow_with_repair_run_integrity_effect(
+        workflow=next_workflow,
+        active_repair=active_repair,
+        now=now,
+    )
 
-    old_workflow_bytes = _read_state_bytes(paths["workflow_state"])
+    state_snapshots = _snapshot_state_files(paths, ("workflow_state", "event_log"))
     _write_json_atomic(paths["workflow_state"], next_workflow)
     try:
         append_event(
@@ -2978,12 +3032,23 @@ def start_repair_transaction(
             reason=str(active_repair.get("reason") or "Repair transaction started."),
             metadata=_repair_event_metadata(active_repair),
         )
+        if contamination_reason is not None:
+            append_event(
+                workspace=ws,
+                run_id=str(manifest["run_id"]),
+                event_type="run_integrity_contaminated",
+                actor=actor,
+                stage_id=contamination_reason.get("stage_id"),
+                artifact_id=contamination_reason.get("artifact_id"),
+                reason=str(contamination_reason.get("message") or "Repair start contaminated run integrity."),
+                metadata=_run_integrity_contamination_event_metadata(contamination_reason),
+            )
     except RuntimeStateError as exc:
         try:
-            _restore_state_bytes(paths["workflow_state"], old_workflow_bytes)
+            _restore_state_files(paths, state_snapshots)
         except RuntimeStateError as rollback_exc:
             raise RuntimeStateError(
-                "Repair start partially wrote workflow_state.json and failed rollback.",
+                "Repair start partially wrote control files and failed rollback.",
                 details={
                     "transaction_id": transaction_id,
                     "event_error": str(exc),
@@ -2992,7 +3057,7 @@ def start_repair_transaction(
                 error_code=E_TRANSACTION_PARTIAL_WRITE,
             ) from rollback_exc
         raise RuntimeStateError(
-            "Repair start event append failed; workflow_state.json was restored.",
+            "Repair start event append failed; control files were restored.",
             details={"transaction_id": transaction_id, "event_error": str(exc), "event_details": exc.details},
             error_code=E_TRANSACTION_PARTIAL_WRITE,
         ) from exc
