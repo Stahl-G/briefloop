@@ -181,6 +181,104 @@ def _copy_archive_to_workspace(ws: Path, archive_manifest: Path) -> Path:
     return target / "manifest.json"
 
 
+def _copy_archive_to_case_source(case_dir: Path, archive_manifest: Path) -> Path:
+    run_dir = archive_manifest.parent
+    target = case_dir / "output" / "runs" / run_dir.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(run_dir, target)
+    return target / "manifest.json"
+
+
+def _write_auditable_target_workspace(ws: Path, *, run_id: str, active_repair: bool = False) -> None:
+    intermediate = ws / "output" / "intermediate"
+    gates = intermediate / "gates"
+    gates.mkdir(parents=True, exist_ok=True)
+    audited = intermediate / "audited_brief.md"
+    audit = intermediate / "audit_report.json"
+    gate = gates / "auditor_quality_gate_report.json"
+    audited.write_text("# Audited brief\n\nBusiness implication first. [src:CL-0001]\n", encoding="utf-8")
+    _write_json(audit, {"schema_version": "multi-agent-brief-audit-report/v1", "status": "pass", "findings": []})
+    _write_json(gate, {"schema_version": "multi-agent-brief-quality-gates/v1", "status": "pass", "gate_results": []})
+    stage_statuses = {
+        "analyst": {"status": "complete"},
+        "editor": {"status": "complete"},
+        "auditor": {"status": "complete"},
+        "finalize": {"status": "ready"},
+    }
+    _write_terminal_runtime(
+        ws,
+        run_id=run_id,
+        recipe="fast-rerun",
+        fact_layer_import={"timing_comparability": "downstream_only"},
+        current_stage="finalize",
+        stage_statuses=stage_statuses,
+    )
+    workflow_path = intermediate / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    if active_repair:
+        workflow["active_repair"] = {"repair_owner": "editor", "transaction_id": "repair-test"}
+        _write_json(workflow_path, workflow)
+    _write_json(
+        intermediate / "artifact_registry.json",
+        {
+            "schema_version": "multi-agent-brief-artifact-registry/v1",
+            "artifacts": {
+                "audited_brief": {
+                    "path": "output/intermediate/audited_brief.md",
+                    "status": "valid",
+                    "validation_result": "reference_only",
+                    "sha256": _sha256_file(audited),
+                },
+                "audit_report": {
+                    "path": "output/intermediate/audit_report.json",
+                    "status": "valid",
+                    "validation_result": "valid_audit_report_schema",
+                    "sha256": _sha256_file(audit),
+                },
+                "auditor_quality_gate_report": {
+                    "path": "output/intermediate/gates/auditor_quality_gate_report.json",
+                    "status": "valid",
+                    "validation_result": "conditional_quality_gate_only",
+                    "sha256": _sha256_file(gate),
+                },
+            },
+        },
+    )
+    events = [
+        {
+            "schema_version": "multi-agent-brief-event-log/v1",
+            "event_id": "evt0",
+            "run_id": run_id,
+            "created_at": "2026-06-14T00:00:00+00:00",
+            "event_type": "run_initialized",
+            "actor": "cli",
+            "stage_id": None,
+            "artifact_id": None,
+            "decision": None,
+            "reason": "test",
+            "metadata": {},
+        }
+    ]
+    for idx, stage_id in enumerate(("analyst", "editor", "auditor"), start=1):
+        events.append({
+            "schema_version": "multi-agent-brief-event-log/v1",
+            "event_id": f"evt{idx}",
+            "run_id": run_id,
+            "created_at": f"2026-06-14T00:0{idx}:00+00:00",
+            "event_type": "decision_recorded",
+            "actor": "cli",
+            "stage_id": stage_id,
+            "artifact_id": None,
+            "decision": "continue",
+            "reason": "test complete",
+            "metadata": {"transaction_id": f"txn-{stage_id}"},
+        })
+    (intermediate / "event_log.jsonl").write_text(
+        "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+
 def _add_scorecard_archive_reports(archive_manifest: Path) -> None:
     archive_root = archive_manifest.parent
     manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
@@ -239,6 +337,7 @@ def _write_terminal_runtime(
     run_integrity: dict | str | None = None,
     current_stage=None,
     finalize_status: str = "complete",
+    stage_statuses: dict | None = None,
 ) -> None:
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True, exist_ok=True)
@@ -268,7 +367,7 @@ def _write_terminal_runtime(
             "schema_version": "multi-agent-brief-workflow-state/v1",
             "run_id": run_id,
             "current_stage": current_stage,
-            "stage_statuses": {"finalize": {"status": finalize_status}},
+            "stage_statuses": stage_statuses or {"finalize": {"status": finalize_status}},
             "run_integrity": run_integrity,
         },
     )
@@ -371,13 +470,18 @@ def _scaffold_args(
     return args
 
 
-def _assessment_payload(*, method: str = "human", entry_id: str = "AG-0001") -> dict:
+def _assessment_payload(
+    *,
+    method: str = "human",
+    entry_id: str = "AG-0001",
+    run_id: str = "mabw-20260614T000000Z-public0001",
+) -> dict:
     return {
         "schema_version": "mabw.experiment_080.assessment.v1",
         "experiment_id": "MABW-080",
         "case_id": "weekly_public_001",
         "condition": "memory",
-        "run_id": "mabw-20260614T000000Z-public0001",
+        "run_id": run_id,
         "assessed_at": "2026-06-16T00:00:00Z",
         "assessed_by": "masked-human-reviewer",
         "guidance_scores": [
@@ -470,6 +574,52 @@ def _scorecard_payload(
         "regression": {},
         "notes": [],
     }
+
+
+def _auditable_scorecard_payload(**overrides) -> dict:
+    payload = _scorecard_payload(**overrides)
+    payload["assessment_target"] = "auditable_brief"
+    payload["claim_scope"] = [
+        "guidance_manifestation_in_audited_brief",
+        "evidence_use_under_frozen_fact_layer",
+        "auditor_gate_passage",
+    ]
+    payload["excluded_claim_scope"] = [
+        "reader_clean_delivery",
+        "finalize_transform_correctness",
+        "management_ready_output",
+        "docx_pdf_delivery_quality",
+    ]
+    payload["reader_clean"] = {
+        "pass": None,
+        "status": "not_required_for_target",
+        "source": "assessment_target.auditable_brief",
+    }
+    payload["control_integrity"] = {
+        "terminal_workflow": False,
+        "auditor_complete": True,
+        "run_integrity_clean": True,
+        "reference_eligible": True,
+        "artifact_registry_valid": True,
+        "audited_brief_frozen_valid": True,
+        "audit_report_frozen_valid": True,
+        "auditor_gate_report_valid": True,
+        "auditor_gates_no_blocking": True,
+        "fact_layer_matches": True,
+        "quality_gates_passed": True,
+        "archive_present": False,
+        "archive_schema_valid": False,
+        "finalize_complete": False,
+        "finalize_report_pass": False,
+        "timing_available": True,
+    }
+    payload["finalize"] = {
+        "complete": False,
+        "report_pass": False,
+        "report_status": "not_required_for_target",
+    }
+    payload["archive"] = {"present": False, "schema_valid": False}
+    return payload
 
 
 def _write_scorecard_draft_from_fixture(tmp_path: Path, capsys) -> tuple[Path, Path]:
@@ -1316,6 +1466,99 @@ def test_experiments_080_score_run_writes_deterministic_scorecard_draft(tmp_path
     assert "Python does not score guidance manifestation" in scorecard["notes"][1]
 
 
+def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    run_id = "mabw-20260614T000000Z-auditable0001"
+    _write_auditable_target_workspace(ws, run_id=run_id)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
+
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    record = json.loads(run_record.read_text(encoding="utf-8"))
+    assert record["assessment_target"] == "auditable_brief"
+    assert record["run_archive_path"] == ""
+    assert record["target_artifacts"]["audited_brief"]["path"] == "output/intermediate/audited_brief.md"
+    capsys.readouterr()
+
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert validate_scorecard(scorecard) == []
+    assert scorecard["assessment_target"] == "auditable_brief"
+    assert scorecard["claim_scope"] == [
+        "guidance_manifestation_in_audited_brief",
+        "evidence_use_under_frozen_fact_layer",
+        "auditor_gate_passage",
+    ]
+    assert scorecard["reader_clean"]["pass"] is None
+    assert scorecard["reader_clean"]["status"] == "not_required_for_target"
+    assert scorecard["finalize"]["complete"] is False
+    assert scorecard["control_integrity"]["auditor_complete"] is True
+    assert scorecard["control_integrity"]["auditor_gates_no_blocking"] is True
+    assert scorecard["control_integrity"]["timing_available"] is True
+    assert scorecard["validity_class"] == "invalid_incomplete"
+
+    assessment_path = tmp_path / "assessment.json"
+    assessed_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human", run_id=run_id))
+    capsys.readouterr()
+    assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
+    assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
+    assert assessed["validity_class"] == "A_controlled"
+    assert assessed["assessment_target"] == "auditable_brief"
+
+
+def test_experiments_080_auditable_brief_register_rejects_active_repair(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(ws, run_id="mabw-20260614T000000Z-auditable0001", active_repair=True)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_ACTIVE_REPAIR_OPEN"
+    assert not output.exists()
+
+
+def test_experiments_080_delivery_target_still_requires_terminal_workflow(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    run_id = CLEAN_FIXTURE_MANIFEST.parent.name
+    _write_terminal_runtime(
+        ws,
+        run_id=run_id,
+        current_stage="finalize",
+        finalize_status="ready",
+        stage_statuses={"auditor": {"status": "complete"}, "finalize": {"status": "ready"}},
+    )
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_RUN_NOT_TERMINAL"
+    assert not output.exists()
+
+
 def test_experiments_080_score_run_accepts_fast_rerun_downstream_only_timing(tmp_path, capsys):
     scorecard = _scorecard_from_fast_rerun_timing(
         tmp_path,
@@ -1980,6 +2223,21 @@ def test_experiments_080_summarize_aggregates_scorecards_without_quality_claim(t
     assert summary["timing"]["available_count"] == 2
     assert summary["timing"]["contaminated_count"] == 0
     assert {"reason": "run_integrity_contaminated_or_non_reference", "count": 1} in summary["invalid_reasons"]
+
+
+def test_experiments_080_summarize_does_not_count_auditable_target_reader_clean(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    _write_json(case_dir / "memory.scorecard.json", _auditable_scorecard_payload())
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["summary"]
+    assert summary["assessment_target_counts"]["auditable_brief"] == 1
+    assert summary["reader_clean"]["total_evaluable"] == 0
+    assert summary["scorecards"][0]["assessment_target"] == "auditable_brief"
 
 
 def test_experiments_080_summarize_handles_missing_condition_scorecards(tmp_path, capsys):

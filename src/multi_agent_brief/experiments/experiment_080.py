@@ -28,6 +28,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
 )
+from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 
 
 EXPERIMENT_080_ID = "MABW-080"
@@ -57,7 +58,9 @@ ALLOWED_GUIDANCE_SOURCES = {"improvement_ledger", "manual", "prompt_only"}
 ALLOWED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review", "llm_only"}
 A_CONTROLLED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review"}
 ALLOWED_SCORECARD_ASSESSMENT_STATUSES = {"assessed", "needs_assessment"}
-A_CONTROLLED_REQUIRED_CONTROL_KEYS = (
+ALLOWED_ASSESSMENT_TARGETS = {"auditable_brief", "delivery_brief"}
+DEFAULT_ASSESSMENT_TARGET = "delivery_brief"
+DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS = (
     "terminal_workflow",
     "run_integrity_clean",
     "reference_eligible",
@@ -69,6 +72,49 @@ A_CONTROLLED_REQUIRED_CONTROL_KEYS = (
     "finalize_report_pass",
     "timing_available",
 )
+AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
+    "auditor_complete",
+    "run_integrity_clean",
+    "reference_eligible",
+    "artifact_registry_valid",
+    "audited_brief_frozen_valid",
+    "audit_report_frozen_valid",
+    "auditor_gate_report_valid",
+    "auditor_gates_no_blocking",
+    "fact_layer_matches",
+    "timing_available",
+)
+A_CONTROLLED_REQUIRED_CONTROL_KEYS = DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS
+A_CONTROLLED_REQUIRED_CONTROL_KEYS_BY_TARGET = {
+    "delivery_brief": DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS,
+    "auditable_brief": AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS,
+}
+ASSESSMENT_TARGET_CLAIM_SCOPE = {
+    "auditable_brief": [
+        "guidance_manifestation_in_audited_brief",
+        "evidence_use_under_frozen_fact_layer",
+        "auditor_gate_passage",
+    ],
+    "delivery_brief": [
+        "guidance_manifestation_in_reader_delivery",
+        "reader_clean_delivery",
+        "finalize_transform_included",
+    ],
+}
+ASSESSMENT_TARGET_EXCLUDED_CLAIM_SCOPE = {
+    "auditable_brief": [
+        "reader_clean_delivery",
+        "finalize_transform_correctness",
+        "management_ready_output",
+        "docx_pdf_delivery_quality",
+    ],
+    "delivery_brief": [],
+}
+AUDITABLE_TARGET_ARTIFACTS = {
+    "audited_brief": "output/intermediate/audited_brief.md",
+    "audit_report": "output/intermediate/audit_report.json",
+    "auditor_quality_gate_report": "output/intermediate/gates/auditor_quality_gate_report.json",
+}
 
 REQUIRED_FACT_ARTIFACT_IDS = {
     "durable_source_evidence_or_source_pack",
@@ -232,6 +278,11 @@ def validate_case_manifest(payload: dict[str, Any]) -> list[Experiment080Diagnos
                 "memory_mechanism_adds_over_prompt requires baseline, memory, and prompt_only conditions.",
                 path="case_manifest.allowed_claims.memory_mechanism_adds_over_prompt",
             ))
+    _validate_assessment_target(
+        payload.get("assessment_target", DEFAULT_ASSESSMENT_TARGET),
+        diagnostics,
+        path="case_manifest.assessment_target",
+    )
     return diagnostics
 
 
@@ -395,11 +446,26 @@ def validate_run_record(payload: dict[str, Any]) -> list[Experiment080Diagnostic
         ))
     _validate_case_id_field(payload.get("case_id"), diagnostics, path="run_record.case_id")
     _validate_condition(payload.get("condition"), diagnostics, path="run_record.condition")
+    target = _assessment_target(payload)
+    _validate_assessment_target(
+        payload.get("assessment_target", DEFAULT_ASSESSMENT_TARGET),
+        diagnostics,
+        path="run_record.assessment_target",
+    )
     run_id = payload.get("run_id")
     if not isinstance(run_id, str) or not _RUN_ID_RE.match(run_id):
         diagnostics.append(_diag("invalid_run_id", "run_record.run_id is required.", path="run_record.run_id"))
-    for key in ("workspace_path", "run_archive_path", "repo_commit", "runtime"):
+    for key in ("workspace_path", "repo_commit", "runtime"):
         _require_non_empty_string(payload.get(key), diagnostics, path=f"run_record.{key}")
+    if target == "delivery_brief":
+        _require_non_empty_string(payload.get("run_archive_path"), diagnostics, path="run_record.run_archive_path")
+    elif "run_archive_path" in payload and payload.get("run_archive_path") is not None:
+        if not isinstance(payload.get("run_archive_path"), str):
+            diagnostics.append(_diag(
+                "invalid_run_archive_path",
+                "run_record.run_archive_path must be a string when present.",
+                path="run_record.run_archive_path",
+            ))
     model = payload.get("model")
     if model is not None:
         if not isinstance(model, dict):
@@ -436,6 +502,38 @@ def validate_run_record(payload: dict[str, Any]) -> list[Experiment080Diagnostic
             "run_record.imported_fact_layer.matches_case_frozen_fact_layer must be a boolean.",
             path="run_record.imported_fact_layer.matches_case_frozen_fact_layer",
         ))
+    target_artifacts = payload.get("target_artifacts")
+    if target == "auditable_brief":
+        if not isinstance(target_artifacts, dict):
+            diagnostics.append(_diag(
+                "invalid_target_artifacts",
+                "auditable run_record.target_artifacts must be an object.",
+                path="run_record.target_artifacts",
+            ))
+        else:
+            for artifact_id, expected_path in AUDITABLE_TARGET_ARTIFACTS.items():
+                artifact = target_artifacts.get(artifact_id)
+                artifact_path = f"run_record.target_artifacts.{artifact_id}"
+                if not isinstance(artifact, dict):
+                    diagnostics.append(_diag(
+                        "missing_target_artifact",
+                        f"{artifact_path} must be an object.",
+                        path=artifact_path,
+                    ))
+                    continue
+                if artifact.get("path") != expected_path:
+                    diagnostics.append(_diag(
+                        "invalid_target_artifact_path",
+                        f"{artifact_path}.path must be {expected_path}.",
+                        path=f"{artifact_path}.path",
+                    ))
+                sha = artifact.get("sha256")
+                if not isinstance(sha, str) or not _SHA256_RE.match(sha):
+                    diagnostics.append(_diag(
+                        "invalid_target_artifact_sha256",
+                        f"{artifact_path}.sha256 must be a lowercase SHA-256 hex digest.",
+                        path=f"{artifact_path}.sha256",
+                    ))
     return diagnostics
 
 
@@ -480,6 +578,7 @@ def register_run_record(
             condition=condition,
             allowed_conditions=[item for item in conditions if item in ALLOWED_CONDITIONS],
         )
+    assessment_target = _assessment_target(case_manifest)
 
     intermediate = ws / "output" / "intermediate"
     runtime_manifest = _load_json_object(intermediate / "runtime_manifest.json", label="runtime_manifest")
@@ -494,46 +593,69 @@ def register_run_record(
             workflow_state_run_id=workflow_run_id,
         )
 
-    _validate_terminal_workflow(workflow_state)
-    archive_manifest_path = ws / "output" / "runs" / run_id / "manifest.json"
-    archive_manifest = _load_json_object(archive_manifest_path, label="run_archive_manifest")
-    _validate_archive_manifest_ids(archive_manifest, run_id=run_id)
+    workflow_integrity = _registered_run_integrity(workflow_state, path="workflow_state.run_integrity")
+    target_artifacts: dict[str, Any] | None = None
+    target_workflow: dict[str, Any] | None = None
+    run_archive_path = ""
+    if assessment_target == "delivery_brief":
+        _validate_terminal_workflow(workflow_state)
+        archive_manifest_path = ws / "output" / "runs" / run_id / "manifest.json"
+        archive_manifest = _load_json_object(archive_manifest_path, label="run_archive_manifest")
+        _validate_archive_manifest_ids(archive_manifest, run_id=run_id)
 
-    workflow_integrity = _registered_run_integrity(
-        workflow_state,
-        path="workflow_state.run_integrity",
-    )
-    archive_integrity = _registered_run_integrity(
-        archive_manifest,
-        path="run_archive_manifest.run_integrity",
-    )
-    _validate_run_integrity_consistency(workflow_integrity, archive_integrity)
+        archive_integrity = _registered_run_integrity(
+            archive_manifest,
+            path="run_archive_manifest.run_integrity",
+        )
+        _validate_run_integrity_consistency(workflow_integrity, archive_integrity)
 
-    archive_fact_layer = archive_manifest.get("fact_layer")
-    if not isinstance(archive_fact_layer, dict):
-        _raise_experiment_error(
-            "E_EXPERIMENT_080_ARCHIVE_INVALID",
-            "run archive manifest.fact_layer must be an object.",
+        archive_fact_layer = archive_manifest.get("fact_layer")
+        if not isinstance(archive_fact_layer, dict):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_ARCHIVE_INVALID",
+                "run archive manifest.fact_layer must be an object.",
+            )
+        if archive_fact_layer.get("status") != "complete":
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_INCOMPLETE",
+                "run archive fact_layer.status must be complete.",
+                status=archive_fact_layer.get("status"),
+            )
+        imported_fact_layer = _compare_case_fact_layer_to_archive(
+            frozen_fact_layer=frozen_fact_layer,
+            archive_fact_layer=archive_fact_layer,
+            archive_root=archive_manifest_path.parent,
         )
-    if archive_fact_layer.get("status") != "complete":
-        _raise_experiment_error(
-            "E_EXPERIMENT_080_FACT_LAYER_INCOMPLETE",
-            "run archive fact_layer.status must be complete.",
-            status=archive_fact_layer.get("status"),
-        )
-    imported_fact_layer = _compare_case_fact_layer_to_archive(
-        frozen_fact_layer=frozen_fact_layer,
-        archive_fact_layer=archive_fact_layer,
-        archive_root=archive_manifest_path.parent,
-    )
 
-    timing = archive_manifest.get("timing")
-    if not isinstance(timing, dict) or not timing.get("schema_version") or not timing.get("status"):
-        _raise_experiment_error(
-            "E_EXPERIMENT_080_TIMING_MISSING",
-            "run archive manifest.timing must contain schema_version and status.",
+        timing = archive_manifest.get("timing")
+        if not isinstance(timing, dict) or not timing.get("schema_version") or not timing.get("status"):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_TIMING_MISSING",
+                "run archive manifest.timing must contain schema_version and status.",
+            )
+        timing = _run_record_timing(timing, runtime_manifest=runtime_manifest)
+        run_archive_path = _portable_run_archive_path(
+            output_path=output_path,
+            workspace=ws,
+            archive_manifest_path=archive_manifest_path,
         )
-    timing = _run_record_timing(timing, runtime_manifest=runtime_manifest)
+    else:
+        _validate_auditable_workflow_ready(workflow_state)
+        imported_fact_layer = _auditable_imported_fact_layer_comparison(
+            case_root=case_root,
+            frozen_fact_layer=frozen_fact_layer,
+        )
+        target_artifacts = _auditable_target_artifacts(workspace=ws)
+        target_workflow = _auditable_target_workflow(workflow_state)
+        timing = _run_record_timing(
+            derive_control_timing_from_path(
+                intermediate / "event_log.jsonl",
+                workflow_state=workflow_state,
+                run_integrity=workflow_integrity,
+                expected_run_id=run_id,
+            ),
+            runtime_manifest=runtime_manifest,
+        )
 
     repo_commit, repo_commit_source = _registration_repo_commit(
         case_manifest=case_manifest,
@@ -547,12 +669,9 @@ def register_run_record(
         "case_id": case_manifest["case_id"],
         "condition": condition,
         "run_id": run_id,
+        "assessment_target": assessment_target,
         "workspace_path": "<redacted-workspace>",
-        "run_archive_path": _portable_run_archive_path(
-            output_path=output_path,
-            workspace=ws,
-            archive_manifest_path=archive_manifest_path,
-        ),
+        "run_archive_path": run_archive_path,
         "repo_commit": repo_commit,
         "repo_commit_source": repo_commit_source,
         "runtime": runtime,
@@ -560,6 +679,10 @@ def register_run_record(
         "timing": timing,
         "imported_fact_layer": imported_fact_layer,
     }
+    if target_artifacts is not None:
+        run_record["target_artifacts"] = target_artifacts
+    if target_workflow is not None:
+        run_record["target_workflow"] = target_workflow
     model = _model_identity(runtime_manifest, workflow_state)
     if model is not None:
         run_record["model"] = model
@@ -638,6 +761,15 @@ def score_run_record(
             "run_record.case_id does not match case_manifest.case_id.",
             run_record_case_id=record.get("case_id"),
             case_manifest_case_id=case_manifest.get("case_id"),
+        )
+    case_target = _assessment_target(case_manifest)
+    record_target = _assessment_target(record)
+    if record_target != case_target:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_TARGET_MISMATCH",
+            "run_record.assessment_target does not match case_manifest.assessment_target.",
+            run_record_assessment_target=record_target,
+            case_manifest_assessment_target=case_target,
         )
     conditions = case_manifest.get("conditions") if isinstance(case_manifest.get("conditions"), list) else []
     if record.get("condition") not in conditions:
@@ -1330,6 +1462,12 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
     _validate_case_id_field(payload.get("case_id"), diagnostics, path="scorecard.case_id")
     _validate_condition(payload.get("condition"), diagnostics, path="scorecard.condition")
     _require_non_empty_string(payload.get("run_id"), diagnostics, path="scorecard.run_id")
+    target = _assessment_target(payload)
+    _validate_assessment_target(
+        payload.get("assessment_target", DEFAULT_ASSESSMENT_TARGET),
+        diagnostics,
+        path="scorecard.assessment_target",
+    )
 
     validity = payload.get("validity_class")
     if validity not in ALLOWED_VALIDITY_CLASSES:
@@ -1414,6 +1552,7 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             fact_layer=fact_layer,
             guidance_scores=guidance_scores,
             reader_clean=reader_clean,
+            assessment_target=target,
             diagnostics=diagnostics,
         )
     return diagnostics
@@ -1538,37 +1677,87 @@ def _build_scorecard_draft(
         if isinstance(run_record.get("imported_fact_layer"), dict)
         else {}
     )
+    assessment_target = _assessment_target(run_record)
     fact_layer_matches = imported_fact_layer.get("matches_case_frozen_fact_layer") is True
-    reader_clean = archive_projection["reader_clean"]
-    gate_status = archive_projection["quality_gates"]
-    finalize_status = archive_projection["finalize"]
+    reader_clean = (
+        archive_projection["reader_clean"]
+        if _reader_clean_required_for_target(assessment_target)
+        else {
+            "pass": None,
+            "status": "not_required_for_target",
+            "source": "assessment_target.auditable_brief",
+        }
+    )
+    gate_status = (
+        archive_projection["quality_gates"]
+        if assessment_target == "delivery_brief"
+        else _auditable_scorecard_gate_status(run_record)
+    )
+    finalize_status = (
+        archive_projection["finalize"]
+        if assessment_target == "delivery_brief"
+        else {
+            "complete": False,
+            "report_pass": False,
+            "report_status": "not_required_for_target",
+            "source": "assessment_target.auditable_brief",
+        }
+    )
     archive_status = archive_projection["archive"]
     timing_summary = _scorecard_timing_summary(run_record.get("timing"))
-    control_integrity = {
-        "terminal_workflow": True,
+    base_control_integrity = {
         "run_integrity_clean": run_integrity.get("status") == "clean",
         "reference_eligible": run_integrity.get("reference_eligible") is True,
-        "artifact_registry_valid": archive_projection["artifact_registry_valid"],
-        "quality_gates_passed": gate_status["passed"],
-        "archive_present": archive_status["present"],
-        "archive_schema_valid": archive_status["schema_valid"],
-        "finalize_complete": finalize_status["complete"],
-        "finalize_report_pass": finalize_status["report_pass"],
         "timing_available": timing_summary["status"] in {"available", "downstream_only"},
+        "fact_layer_matches": fact_layer_matches,
     }
+    if assessment_target == "delivery_brief":
+        control_integrity = {
+            **base_control_integrity,
+            "terminal_workflow": True,
+            "artifact_registry_valid": archive_projection["artifact_registry_valid"],
+            "quality_gates_passed": gate_status["passed"],
+            "archive_present": archive_status["present"],
+            "archive_schema_valid": archive_status["schema_valid"],
+            "finalize_complete": finalize_status["complete"],
+            "finalize_report_pass": finalize_status["report_pass"],
+        }
+    else:
+        target_projection = _auditable_scorecard_target_projection(run_record)
+        control_integrity = {
+            **base_control_integrity,
+            "terminal_workflow": run_record.get("target_workflow", {}).get("current_stage") is None
+            if isinstance(run_record.get("target_workflow"), dict)
+            else False,
+            "auditor_complete": _auditable_scorecard_auditor_complete(run_record),
+            "artifact_registry_valid": target_projection["artifact_registry_valid"],
+            "audited_brief_frozen_valid": target_projection["audited_brief_frozen_valid"],
+            "audit_report_frozen_valid": target_projection["audit_report_frozen_valid"],
+            "auditor_gate_report_valid": target_projection["auditor_gate_report_valid"],
+            "auditor_gates_no_blocking": target_projection["auditor_gates_no_blocking"],
+            "quality_gates_passed": gate_status["passed"],
+            "archive_present": archive_status["present"],
+            "archive_schema_valid": archive_status["schema_valid"],
+            "finalize_complete": finalize_status["complete"],
+            "finalize_report_pass": finalize_status["report_pass"],
+        }
     validity_class = _scorecard_validity_class(
         run_integrity=run_integrity,
         fact_layer_matches=fact_layer_matches,
         control_integrity=control_integrity,
         reader_clean=reader_clean,
+        assessment_target=assessment_target,
     )
     guidance_entries = guidance_set.get("entries") if isinstance(guidance_set.get("entries"), list) else []
-    return {
+    scorecard = {
         "schema_version": SCORECARD_SCHEMA,
         "experiment_id": EXPERIMENT_080_ID,
         "case_id": case_manifest["case_id"],
         "condition": run_record["condition"],
         "run_id": run_record["run_id"],
+        "assessment_target": assessment_target,
+        "claim_scope": ASSESSMENT_TARGET_CLAIM_SCOPE[assessment_target],
+        "excluded_claim_scope": ASSESSMENT_TARGET_EXCLUDED_CLAIM_SCOPE[assessment_target],
         "validity_class": validity_class,
         "assessment_status": "needs_assessment",
         "assessment_boundary": (
@@ -1609,6 +1798,9 @@ def _build_scorecard_draft(
             "Python does not score guidance manifestation, prose quality, taste, or factual-regression semantics.",
         ],
     }
+    if assessment_target == "auditable_brief":
+        scorecard["target_artifacts"] = run_record.get("target_artifacts", {})
+    return scorecard
 
 
 def _scorecard_validity_class(
@@ -1617,14 +1809,15 @@ def _scorecard_validity_class(
     fact_layer_matches: bool,
     control_integrity: dict[str, Any],
     reader_clean: dict[str, Any],
+    assessment_target: str,
 ) -> str:
-    if run_integrity.get("status") == "contaminated":
+    if run_integrity.get("status") != "clean" or run_integrity.get("reference_eligible") is False:
         return "invalid_contaminated"
     if not fact_layer_matches:
         return "invalid_fact_layer_mismatch"
-    if any(control_integrity.get(key) is not True for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS):
+    if any(control_integrity.get(key) is not True for key in _control_keys_for_target(assessment_target)):
         return "invalid_incomplete"
-    if reader_clean.get("pass") is not True:
+    if _reader_clean_required_for_target(assessment_target) and reader_clean.get("pass") is not True:
         return "invalid_incomplete"
     return "invalid_incomplete"
 
@@ -1768,13 +1961,14 @@ def _scorecard_validity_class_with_assessment(
     control_integrity = scorecard.get("control_integrity") if isinstance(scorecard.get("control_integrity"), dict) else {}
     fact_layer = scorecard.get("frozen_fact_layer") if isinstance(scorecard.get("frozen_fact_layer"), dict) else {}
     reader_clean = scorecard.get("reader_clean") if isinstance(scorecard.get("reader_clean"), dict) else {}
+    assessment_target = _assessment_target(scorecard)
     if control_integrity.get("run_integrity_clean") is not True or control_integrity.get("reference_eligible") is False:
         return "invalid_contaminated"
     if fact_layer.get("matches_case") is not True:
         return "invalid_fact_layer_mismatch"
-    if any(control_integrity.get(key) is not True for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS):
+    if any(control_integrity.get(key) is not True for key in _control_keys_for_target(assessment_target)):
         return "invalid_incomplete"
-    if reader_clean.get("pass") is not True:
+    if _reader_clean_required_for_target(assessment_target) and reader_clean.get("pass") is not True:
         return "invalid_incomplete"
     relevant_scores = [score for score in guidance_scores if score.get("relevant") is True]
     if not relevant_scores:
@@ -1972,6 +2166,7 @@ def _build_case_summary(
     coverage = _empty_coverage_summary(all_conditions)
     timing = _empty_timing_summary(all_conditions)
     invalid_reasons: dict[str, int] = {}
+    assessment_target_counts = {target: 0 for target in sorted(ALLOWED_ASSESSMENT_TARGETS)}
     scorecard_index: list[dict[str, Any]] = []
 
     for record in sorted(scorecards, key=lambda item: (
@@ -2001,6 +2196,8 @@ def _build_case_summary(
         validity = str(scorecard.get("validity_class") or "invalid_incomplete")
         if validity not in validity_counts:
             validity = "invalid_incomplete"
+        assessment_target = _assessment_target(scorecard)
+        assessment_target_counts[assessment_target] = assessment_target_counts.get(assessment_target, 0) + 1
         validity_counts[validity] += 1
         condition_counts[condition]["total"] += 1
         condition_counts[condition]["validity_class_counts"][validity] += 1
@@ -2015,6 +2212,7 @@ def _build_case_summary(
             "path": record["path"],
             "condition": condition,
             "run_id": scorecard.get("run_id"),
+            "assessment_target": assessment_target,
             "validity_class": validity,
             "assessment_status": scorecard.get("assessment_status", ""),
         })
@@ -2045,6 +2243,7 @@ def _build_case_summary(
                 for key in ("invalid_contaminated", "invalid_incomplete", "invalid_fact_layer_mismatch")
             ),
         },
+        "assessment_target_counts": assessment_target_counts,
         "condition_counts": condition_counts,
         "manifestation": manifestation,
         "reader_clean": reader_clean,
@@ -2252,11 +2451,12 @@ def _scorecard_invalid_reasons(scorecard: dict[str, Any]) -> list[str]:
         return []
     reasons: list[str] = []
     control = scorecard.get("control_integrity") if isinstance(scorecard.get("control_integrity"), dict) else {}
-    for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS:
+    assessment_target = _assessment_target(scorecard)
+    for key in _control_keys_for_target(assessment_target):
         if control.get(key) is not True:
             reasons.append(f"control_integrity.{key}_not_true")
     reader_clean = scorecard.get("reader_clean") if isinstance(scorecard.get("reader_clean"), dict) else {}
-    if reader_clean.get("pass") is not True:
+    if _reader_clean_required_for_target(assessment_target) and reader_clean.get("pass") is not True:
         reasons.append("reader_clean_not_pass")
     if scorecard.get("assessment_status") == "needs_assessment":
         reasons.append("assessment_needed")
@@ -2376,6 +2576,58 @@ def _scorecard_archive_projection(
         "finalize": finalize,
         "artifact_registry_valid": artifact_registry_valid,
     }
+
+
+def _auditable_scorecard_target_projection(run_record: dict[str, Any]) -> dict[str, bool]:
+    target_artifacts = (
+        run_record.get("target_artifacts")
+        if isinstance(run_record.get("target_artifacts"), dict)
+        else {}
+    )
+    audited = target_artifacts.get("audited_brief") if isinstance(target_artifacts.get("audited_brief"), dict) else {}
+    audit = target_artifacts.get("audit_report") if isinstance(target_artifacts.get("audit_report"), dict) else {}
+    gate = (
+        target_artifacts.get("auditor_quality_gate_report")
+        if isinstance(target_artifacts.get("auditor_quality_gate_report"), dict)
+        else {}
+    )
+    return {
+        "artifact_registry_valid": all(
+            isinstance(target_artifacts.get(artifact_id), dict)
+            and target_artifacts[artifact_id].get("frozen_valid") is True
+            for artifact_id in AUDITABLE_TARGET_ARTIFACTS
+        ),
+        "audited_brief_frozen_valid": audited.get("frozen_valid") is True,
+        "audit_report_frozen_valid": audit.get("frozen_valid") is True,
+        "auditor_gate_report_valid": gate.get("frozen_valid") is True,
+        "auditor_gates_no_blocking": gate.get("no_blocking") is True,
+    }
+
+
+def _auditable_scorecard_gate_status(run_record: dict[str, Any]) -> dict[str, Any]:
+    target_artifacts = (
+        run_record.get("target_artifacts")
+        if isinstance(run_record.get("target_artifacts"), dict)
+        else {}
+    )
+    gate = (
+        target_artifacts.get("auditor_quality_gate_report")
+        if isinstance(target_artifacts.get("auditor_quality_gate_report"), dict)
+        else {}
+    )
+    auditor_status = gate.get("report_status") if isinstance(gate.get("report_status"), str) else "missing"
+    return {
+        "passed": auditor_status == "pass" and gate.get("no_blocking") is True,
+        "auditor_status": auditor_status,
+        "finalize_status": "not_required_for_target",
+        "source": "run_record.target_artifacts",
+    }
+
+
+def _auditable_scorecard_auditor_complete(run_record: dict[str, Any]) -> bool:
+    workflow = run_record.get("target_workflow") if isinstance(run_record.get("target_workflow"), dict) else {}
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    return statuses.get("auditor") == "complete"
 
 
 def _resolve_scorecard_archive_manifest(
@@ -2698,6 +2950,182 @@ def _validate_terminal_workflow(workflow_state: dict[str, Any]) -> None:
             "Workspace run is not finalized; stage_statuses.finalize.status must be complete.",
             finalize_status=finalize.get("status"),
         )
+
+
+def _validate_auditable_workflow_ready(workflow_state: dict[str, Any]) -> None:
+    active_repair = workflow_state.get("active_repair")
+    if isinstance(active_repair, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ACTIVE_REPAIR_OPEN",
+            "Auditable-brief registration requires no active owner-stage repair.",
+            active_repair=active_repair,
+        )
+    current_stage = workflow_state.get("current_stage")
+    if current_stage not in {"finalize", None}:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_NOT_AUDITABLE_READY",
+            "Auditable-brief registration requires workflow_state.current_stage to be finalize or null.",
+            current_stage=current_stage,
+        )
+    statuses = workflow_state.get("stage_statuses")
+    if not isinstance(statuses, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_NOT_AUDITABLE_READY",
+            "Auditable-brief registration requires workflow_state.stage_statuses.",
+        )
+    missing_or_incomplete: dict[str, Any] = {}
+    for stage_id in ("analyst", "editor", "auditor"):
+        status = statuses.get(stage_id) if isinstance(statuses.get(stage_id), dict) else {}
+        if status.get("status") != "complete":
+            missing_or_incomplete[stage_id] = status.get("status")
+    if missing_or_incomplete:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_RUN_NOT_AUDITABLE_READY",
+            "Auditable-brief registration requires analyst, editor, and auditor stages to be complete.",
+            stage_statuses=missing_or_incomplete,
+        )
+
+
+def _auditable_target_workflow(workflow_state: dict[str, Any]) -> dict[str, Any]:
+    statuses = workflow_state.get("stage_statuses") if isinstance(workflow_state.get("stage_statuses"), dict) else {}
+    return {
+        "current_stage": workflow_state.get("current_stage"),
+        "required_complete_stage_ids": ["analyst", "editor", "auditor"],
+        "stage_statuses": {
+            stage_id: (
+                statuses.get(stage_id, {}).get("status")
+                if isinstance(statuses.get(stage_id), dict)
+                else None
+            )
+            for stage_id in ("analyst", "editor", "auditor", "finalize")
+        },
+    }
+
+
+def _auditable_imported_fact_layer_comparison(
+    *,
+    case_root: Path,
+    frozen_fact_layer: dict[str, Any],
+) -> dict[str, Any]:
+    archive_manifest_path = _resolve_case_source_archive_manifest(
+        case_root=case_root,
+        frozen_fact_layer=frozen_fact_layer,
+    )
+    archive_manifest = _load_json_object(archive_manifest_path, label="source_archive_manifest")
+    archive_fact_layer = archive_manifest.get("fact_layer")
+    if not isinstance(archive_fact_layer, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_INVALID",
+            "source archive manifest.fact_layer must be an object for auditable_brief registration.",
+        )
+    if archive_fact_layer.get("status") != "complete":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_INCOMPLETE",
+            "source archive fact_layer.status must be complete for auditable_brief registration.",
+            status=archive_fact_layer.get("status"),
+        )
+    return _compare_case_fact_layer_to_archive(
+        frozen_fact_layer=frozen_fact_layer,
+        archive_fact_layer=archive_fact_layer,
+        archive_root=archive_manifest_path.parent,
+    )
+
+
+def _resolve_case_source_archive_manifest(*, case_root: Path, frozen_fact_layer: dict[str, Any]) -> Path:
+    raw = frozen_fact_layer.get("source_archive_path")
+    if not isinstance(raw, str) or not raw.strip():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_MISSING",
+            "auditable_brief registration requires frozen_fact_layer.source_archive_path.",
+        )
+    raw_path = Path(raw).expanduser()
+    candidates = [raw_path] if raw_path.is_absolute() else [case_root / raw_path, case_root.parent / raw_path]
+    for candidate in candidates:
+        path = candidate / "manifest.json" if candidate.is_dir() else candidate
+        if path.exists() and path.is_file():
+            return path.resolve()
+    _raise_experiment_error(
+        "E_EXPERIMENT_080_ARCHIVE_MISSING",
+        "auditable_brief registration could not find frozen_fact_layer.source_archive_path.",
+        archive=raw,
+        searched=[str(candidate) for candidate in candidates],
+    )
+
+
+def _auditable_target_artifacts(*, workspace: Path) -> dict[str, Any]:
+    registry = _load_json_object(
+        workspace / "output" / "intermediate" / "artifact_registry.json",
+        label="artifact_registry",
+    )
+    artifacts = registry.get("artifacts")
+    if not isinstance(artifacts, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARTIFACT_REGISTRY_INVALID",
+            "artifact_registry.json artifacts must be an object.",
+        )
+    projected: dict[str, Any] = {}
+    for artifact_id, expected_path in AUDITABLE_TARGET_ARTIFACTS.items():
+        record = artifacts.get(artifact_id)
+        if not isinstance(record, dict):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_TARGET_ARTIFACT_INVALID",
+                "auditable_brief target artifact is missing from artifact_registry.",
+                artifact_id=artifact_id,
+            )
+        path_text = record.get("path")
+        sha = record.get("sha256")
+        status = record.get("status")
+        validation_result = record.get("validation_result")
+        if path_text != expected_path or status != "valid" or not isinstance(sha, str) or not _SHA256_RE.match(sha):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_TARGET_ARTIFACT_INVALID",
+                "auditable_brief target artifact must be frozen as a valid artifact.",
+                artifact_id=artifact_id,
+                expected_path=expected_path,
+                path=path_text,
+                status=status,
+                validation_result=validation_result,
+            )
+        file_path = (workspace / expected_path).resolve()
+        try:
+            file_path.relative_to(workspace.resolve())
+        except ValueError:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_TARGET_ARTIFACT_INVALID",
+                "auditable_brief target artifact path escapes workspace.",
+                artifact_id=artifact_id,
+                path=expected_path,
+            )
+        if not file_path.exists() or not file_path.is_file():
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_TARGET_ARTIFACT_INVALID",
+                "auditable_brief target artifact file is missing.",
+                artifact_id=artifact_id,
+                path=expected_path,
+            )
+        actual_sha = _sha256_file(file_path)
+        if actual_sha != sha:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_TARGET_ARTIFACT_INVALID",
+                "auditable_brief target artifact hash does not match artifact_registry.",
+                artifact_id=artifact_id,
+                path=expected_path,
+                expected_sha256=sha,
+                actual_sha256=actual_sha,
+            )
+        projection = {
+            "path": expected_path,
+            "sha256": sha,
+            "status": status,
+            "validation_result": validation_result or "",
+            "frozen_valid": True,
+        }
+        if artifact_id == "auditor_quality_gate_report":
+            report = _load_json_object(file_path, label="auditor_quality_gate_report")
+            projection["report_status"] = _status_from_report(report)
+            projection["no_blocking"] = projection["report_status"] == "pass"
+        projected[artifact_id] = projection
+    return projected
 
 
 def _validate_archive_manifest_ids(archive_manifest: dict[str, Any], *, run_id: str) -> None:
@@ -3159,16 +3587,18 @@ def _validate_a_controlled_scorecard(
     fact_layer: dict[str, Any],
     guidance_scores: list[Any],
     reader_clean: dict[str, Any],
+    assessment_target: str,
     diagnostics: list[Experiment080Diagnostic],
 ) -> None:
     required_values = {
         **{
             f"control_integrity.{key}": control.get(key)
-            for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS
+            for key in _control_keys_for_target(assessment_target)
         },
         "frozen_fact_layer.matches_case": fact_layer.get("matches_case"),
-        "reader_clean.pass": reader_clean.get("pass"),
     }
+    if _reader_clean_required_for_target(assessment_target):
+        required_values["reader_clean.pass"] = reader_clean.get("pass")
     invalid_types = [field for field, value in required_values.items() if not isinstance(value, bool)]
     if invalid_types:
         diagnostics.append(_diag(
@@ -3298,6 +3728,35 @@ def _validate_condition(
             f"{path} must be one of {sorted(ALLOWED_CONDITIONS)}.",
             path=path,
         ))
+
+
+def _assessment_target(container: dict[str, Any]) -> str:
+    value = container.get("assessment_target")
+    if value in ALLOWED_ASSESSMENT_TARGETS:
+        return str(value)
+    return DEFAULT_ASSESSMENT_TARGET
+
+
+def _validate_assessment_target(
+    value: Any,
+    diagnostics: list[Experiment080Diagnostic],
+    *,
+    path: str,
+) -> None:
+    if value not in ALLOWED_ASSESSMENT_TARGETS:
+        diagnostics.append(_diag(
+            "invalid_assessment_target",
+            f"{path} must be one of {sorted(ALLOWED_ASSESSMENT_TARGETS)}.",
+            path=path,
+        ))
+
+
+def _control_keys_for_target(target: str) -> tuple[str, ...]:
+    return A_CONTROLLED_REQUIRED_CONTROL_KEYS_BY_TARGET.get(target, DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS)
+
+
+def _reader_clean_required_for_target(target: str) -> bool:
+    return target == "delivery_brief"
 
 
 def _validate_case_id_field(
