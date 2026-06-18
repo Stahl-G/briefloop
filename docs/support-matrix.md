@@ -51,6 +51,7 @@ validation unless that is stated separately.
 | `multi-agent-brief experiments 080 register-run` | Experimental |
 | `multi-agent-brief experiments 080 score-run` | Experimental |
 | `multi-agent-brief experiments 080 import-assessment` | Experimental |
+| `multi-agent-brief experiments 080 summarize` | Experimental |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -119,6 +120,12 @@ scorecard, and derives the resulting validity class from deterministic control
 fields plus the imported assessment method. Python does not judge whether
 guidance manifested, whether prose improved, or whether a semantic regression
 occurred.
+
+MABW-080 case summarization is experimental experiment metadata tooling. It
+aggregates existing scorecards into A/B/invalid counts, condition groups,
+manifestation-score counts, reader-clean rates, coverage-delta status, timing
+status, and invalid reasons. It does not judge output quality, run workflow
+stages, scaffold conditions, or include invalid runs in A-grade denominators.
 
 ## Runtimes
 

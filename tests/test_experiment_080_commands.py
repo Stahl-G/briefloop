@@ -294,6 +294,20 @@ def _assessment_args(scorecard: Path, assessment: Path, output: Path) -> list[st
     ]
 
 
+def _summarize_args(case_dir: Path, output: Path | None = None) -> list[str]:
+    args = [
+        "experiments",
+        "080",
+        "summarize",
+        "--case",
+        str(case_dir),
+        "--json",
+    ]
+    if output is not None:
+        args.extend(["--output", str(output)])
+    return args
+
+
 def _assessment_payload(*, method: str = "human", entry_id: str = "AG-0001") -> dict:
     return {
         "schema_version": "mabw.experiment_080.assessment.v1",
@@ -313,6 +327,85 @@ def _assessment_payload(*, method: str = "human", entry_id: str = "AG-0001") -> 
                 "evidence_excerpt": "The brief leads with the business implication.",
             }
         ],
+    }
+
+
+def _scorecard_payload(
+    *,
+    condition: str = "memory",
+    run_id: str = "mabw-20260614T000000Z-public0001",
+    validity_class: str = "A_controlled",
+    assessment_status: str = "assessed",
+    manifestation_score: int = 2,
+    overapplication: bool = False,
+    assessment_method: str = "human",
+    reader_clean_pass: bool = True,
+    coverage_delta: float | None = None,
+    timing_status: str = "available",
+) -> dict:
+    control_integrity = {
+        "terminal_workflow": True,
+        "run_integrity_clean": True,
+        "reference_eligible": True,
+        "artifact_registry_valid": True,
+        "quality_gates_passed": True,
+        "archive_present": True,
+        "archive_schema_valid": True,
+        "finalize_complete": True,
+        "finalize_report_pass": True,
+        "timing_available": timing_status == "available",
+    }
+    frozen_fact_layer = {"matches_case": True, "mismatches": []}
+    if validity_class == "invalid_contaminated":
+        control_integrity["run_integrity_clean"] = False
+        control_integrity["reference_eligible"] = False
+    if validity_class == "invalid_fact_layer_mismatch":
+        frozen_fact_layer["matches_case"] = False
+        frozen_fact_layer["mismatches"] = [{"artifact_id": "claim_ledger"}]
+    guidance_scores = []
+    if assessment_status != "needs_assessment":
+        guidance_scores = [
+            {
+                "entry_id": "AG-0001",
+                "relevant": True,
+                "manifestation_score": manifestation_score,
+                "overapplication": overapplication,
+                "assessment_method": assessment_method,
+                "evidence_excerpt": "Observed in the reader brief.",
+            }
+        ]
+    return {
+        "schema_version": "mabw.experiment_080.scorecard.v1",
+        "experiment_id": "MABW-080",
+        "case_id": "weekly_public_001",
+        "condition": condition,
+        "run_id": run_id,
+        "validity_class": validity_class,
+        "assessment_status": assessment_status,
+        "control_integrity": control_integrity,
+        "frozen_fact_layer": frozen_fact_layer,
+        "reader_clean": {"pass": reader_clean_pass},
+        "quality_gates": {"passed": control_integrity["quality_gates_passed"]},
+        "finalize": {
+            "complete": control_integrity["finalize_complete"],
+            "report_pass": control_integrity["finalize_report_pass"],
+        },
+        "archive": {
+            "present": control_integrity["archive_present"],
+            "schema_valid": control_integrity["archive_schema_valid"],
+        },
+        "timing_summary": {
+            "status": timing_status,
+            "completed_stage_count": 8,
+        },
+        "coverage_delta": (
+            {"status": "computed", "delta": coverage_delta}
+            if coverage_delta is not None
+            else {"status": "not_computed", "reason": "test"}
+        ),
+        "guidance_scores": guidance_scores,
+        "regression": {},
+        "notes": [],
     }
 
 
@@ -1219,6 +1312,165 @@ def test_experiments_080_import_assessment_rejects_already_assessed_scorecard(tm
     payload = json.loads(capsys.readouterr().out)
     assert payload["details"]["code"] == "E_EXPERIMENT_080_ASSESSMENT_GUIDANCE_MISMATCH"
     assert not output_path.exists()
+
+
+def test_experiments_080_summarize_aggregates_scorecards_without_quality_claim(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    _write_json(
+        case_dir / "baseline.scorecard.json",
+        _scorecard_payload(
+            condition="baseline",
+            run_id="mabw-20260614T000000Z-baseline01",
+            validity_class="B_integration",
+            manifestation_score=3,
+            overapplication=True,
+            assessment_method="llm_only",
+            reader_clean_pass=False,
+            coverage_delta=-1.0,
+        ),
+    )
+    _write_json(
+        case_dir / "memory.scorecard.json",
+        _scorecard_payload(
+            condition="memory",
+            run_id="mabw-20260614T000000Z-memory01",
+            validity_class="A_controlled",
+            manifestation_score=2,
+            overapplication=False,
+            assessment_method="human",
+            coverage_delta=2.0,
+        ),
+    )
+    _write_json(
+        case_dir / "memory-contaminated.scorecard.json",
+        _scorecard_payload(
+            condition="memory",
+            run_id="mabw-20260614T000000Z-memory02",
+            validity_class="invalid_contaminated",
+            assessment_status="needs_assessment",
+            timing_status="contaminated",
+        ),
+    )
+    output = tmp_path / "summary.json"
+
+    rc = main(_summarize_args(case_dir, output))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["scorecard_count"] == 3
+    summary = json.loads(output.read_text(encoding="utf-8"))
+    assert summary["schema_version"] == "mabw.experiment_080.case_summary.v1"
+    assert "no_python_or_llm_quality_judgment" in summary["summary_boundary"]
+    assert "invalid_runs_excluded_from_interpretable_metrics" in summary["summary_boundary"]
+    assert summary["run_counts"]["validity_class_counts"]["A_controlled"] == 1
+    assert summary["run_counts"]["validity_class_counts"]["B_integration"] == 1
+    assert summary["run_counts"]["validity_class_counts"]["invalid_contaminated"] == 1
+    assert summary["run_counts"]["a_grade_count"] == 1
+    assert summary["run_counts"]["interpretable_run_denominator"] == 2
+    assert summary["run_counts"]["invalid_excluded_count"] == 1
+    assert summary["condition_counts"]["memory"]["total"] == 2
+    assert summary["condition_counts"]["baseline"]["total"] == 1
+    assert summary["manifestation"]["score_2_manifested_count"] == 1
+    assert summary["manifestation"]["score_3_overapplication_count"] == 1
+    assert summary["reader_clean"]["pass_count"] == 1
+    assert summary["reader_clean"]["total_evaluable"] == 2
+    assert summary["reader_clean"]["pass_rate"] == 0.5
+    assert summary["coverage_delta"]["numeric_count"] == 2
+    assert summary["coverage_delta"]["numeric_sum"] == 1.0
+    assert summary["coverage_delta"]["numeric_average"] == 0.5
+    assert summary["coverage_delta"]["not_computed_count"] == 0
+    assert summary["timing"]["available_count"] == 2
+    assert summary["timing"]["contaminated_count"] == 0
+    assert {"reason": "run_integrity_contaminated_or_non_reference", "count": 1} in summary["invalid_reasons"]
+
+
+def test_experiments_080_summarize_handles_missing_condition_scorecards(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    _write_json(
+        case_dir / "memory.scorecard.json",
+        _scorecard_payload(
+            condition="memory",
+            run_id="mabw-20260614T000000Z-memory01",
+            validity_class="A_controlled",
+        ),
+    )
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["summary"]
+    assert summary["scorecard_count"] == 1
+    assert summary["condition_counts"]["baseline"]["total"] == 0
+    assert summary["timing"]["by_condition"]["baseline"]["completed_stage_count"] == {
+        "count": 0,
+        "min": None,
+        "max": None,
+        "average": None,
+    }
+
+
+def test_experiments_080_summarize_excludes_invalid_scorecards_from_interpretable_metrics(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    _write_json(
+        case_dir / "memory.scorecard.json",
+        _scorecard_payload(
+            condition="memory",
+            run_id="mabw-20260614T000000Z-memory01",
+            validity_class="A_controlled",
+            manifestation_score=2,
+            reader_clean_pass=True,
+            coverage_delta=1.0,
+        ),
+    )
+    _write_json(
+        case_dir / "memory-contaminated.scorecard.json",
+        _scorecard_payload(
+            condition="memory",
+            run_id="mabw-20260614T000000Z-memory02",
+            validity_class="invalid_contaminated",
+            assessment_status="assessed",
+            manifestation_score=2,
+            reader_clean_pass=True,
+            coverage_delta=99.0,
+            timing_status="contaminated",
+        ),
+    )
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["summary"]
+    assert summary["run_counts"]["interpretable_run_denominator"] == 1
+    assert summary["manifestation"]["score_2_manifested_count"] == 1
+    assert summary["reader_clean"]["pass_count"] == 1
+    assert summary["reader_clean"]["total_evaluable"] == 1
+    assert summary["coverage_delta"]["numeric_count"] == 1
+    assert summary["coverage_delta"]["numeric_sum"] == 1.0
+    assert summary["timing"]["available_count"] == 1
+    assert summary["timing"]["contaminated_count"] == 0
+    assert {"reason": "run_integrity_contaminated_or_non_reference", "count": 1} in summary["invalid_reasons"]
+
+
+def test_experiments_080_summarize_rejects_invalid_scorecard_file(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    invalid_scorecard = _scorecard_payload()
+    invalid_scorecard["validity_class"] = "excellent"
+    _write_json(case_dir / "bad.scorecard.json", invalid_scorecard)
+    output = tmp_path / "summary.json"
+
+    rc = main(_summarize_args(case_dir, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_SCORECARD_INVALID"
+    assert not output.exists()
 
 
 def test_experiments_080_import_assessment_rejects_different_existing_output(tmp_path, capsys):

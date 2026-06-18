@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MABW-080 case summary builder**: `experiments 080 summarize` aggregates
+  existing scorecards into deterministic A/B/invalid counts, condition groups,
+  manifestation-score counts, reader-clean rates, coverage-delta status, timing
+  status, and invalid reasons. It does not judge output quality or run workflow
+  stages.
+
 ## [0.8.5] — 2026-06-16
 
 ### Added

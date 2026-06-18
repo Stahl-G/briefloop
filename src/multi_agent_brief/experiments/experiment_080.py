@@ -2,9 +2,9 @@
 
 080 validates whether approved Improvement Memory guidance manifests under a
 frozen fact layer. Schema validators are side-effect free. ``register-run``,
-``score-run``, and ``import-assessment`` write only the requested experiment
-metadata outputs and must not mutate workspace runtime state, archive files,
-case files, agent assets, or Improvement Ledger files.
+``score-run``, ``import-assessment``, and ``summarize`` write only the requested
+experiment metadata outputs and must not mutate workspace runtime state,
+archive files, case files, agent assets, or Improvement Ledger files.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ GUIDANCE_SET_SCHEMA = "mabw.experiment_080.guidance_set.v1"
 RUN_RECORD_SCHEMA = "mabw.experiment_080.run_record.v1"
 SCORECARD_SCHEMA = "mabw.experiment_080.scorecard.v1"
 ASSESSMENT_SCHEMA = "mabw.experiment_080.assessment.v1"
+CASE_SUMMARY_SCHEMA = "mabw.experiment_080.case_summary.v1"
 CASE_VALIDATION_SCHEMA = "mabw.experiment_080.case_validation.v1"
 RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
 
@@ -44,6 +45,7 @@ ALLOWED_VALIDITY_CLASSES = {
     "invalid_incomplete",
     "invalid_fact_layer_mismatch",
 }
+INTERPRETABLE_SCORECARD_VALIDITY_CLASSES = {"A_controlled", "B_integration"}
 ALLOWED_RUN_INTEGRITY_STATUSES = PERSISTED_RUN_INTEGRITY_STATUSES
 ALLOWED_GUIDANCE_SOURCES = {"improvement_ledger", "manual", "prompt_only"}
 ALLOWED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review", "llm_only"}
@@ -748,6 +750,57 @@ def import_assessment(
     }
 
 
+def summarize_case(
+    *,
+    case_dir: str | Path,
+    output: str | Path | None = None,
+) -> dict[str, Any]:
+    """Summarize MABW-080 scorecards for a case.
+
+    The summary reads scorecards only. It aggregates deterministic control and
+    externally imported assessment fields; it does not judge guidance
+    manifestation, prose quality, preference, or factual-regression semantics.
+    """
+
+    case_root = Path(case_dir).expanduser().resolve()
+    output_path: Path | None = None
+    if output is not None:
+        output_path = Path(output).expanduser()
+        if not output_path.is_absolute():
+            output_path = (Path.cwd() / output_path).resolve()
+        else:
+            output_path = output_path.resolve()
+
+    case_validation = validate_case_dir(case_root)
+    if not case_validation.get("ok"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_CASE_INVALID",
+            "MABW-080 case validation failed.",
+            errors=case_validation.get("errors") or [],
+            warnings=case_validation.get("warnings") or [],
+        )
+    case_manifest = _load_json_object(case_root / "case_manifest.json", label="case_manifest")
+    scorecards = _discover_case_scorecards(case_root=case_root, output_path=output_path)
+    summary = _build_case_summary(case_manifest=case_manifest, scorecards=scorecards)
+    written = False
+    if output_path is not None:
+        written = _write_experiment_output_idempotently(
+            output_path,
+            _json_bytes(summary),
+            artifact_label="case_summary",
+        )
+    return {
+        "ok": True,
+        "schema_version": CASE_SUMMARY_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": summary["case_id"],
+        "scorecard_count": summary["scorecard_count"],
+        "output": str(output_path) if output_path is not None else None,
+        "written": written,
+        "summary": summary,
+    }
+
+
 def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]:
     """Validate ``scorecard.json``."""
 
@@ -1214,6 +1267,375 @@ def _scorecard_validity_class_with_assessment(
     if all(score.get("assessment_method") in A_CONTROLLED_ASSESSMENT_METHODS for score in relevant_scores):
         return "A_controlled"
     return "B_integration"
+
+
+def _discover_case_scorecards(
+    *,
+    case_root: Path,
+    output_path: Path | None,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    output_resolved = output_path.resolve() if output_path is not None else None
+    for path in sorted(case_root.rglob("*.json"), key=lambda item: item.relative_to(case_root).as_posix()):
+        resolved = path.resolve()
+        if output_resolved is not None and resolved == output_resolved:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            if "scorecard" in path.name:
+                _raise_experiment_error(
+                    "E_EXPERIMENT_080_SCORECARD_INVALID",
+                    f"scorecard JSON is unreadable: {exc}",
+                    path=str(path),
+                )
+            continue
+        if not isinstance(payload, dict):
+            if "scorecard" in path.name:
+                _raise_experiment_error(
+                    "E_EXPERIMENT_080_SCORECARD_INVALID",
+                    "scorecard file must contain a JSON object.",
+                    path=str(path),
+                )
+            continue
+        schema_version = payload.get("schema_version")
+        if schema_version != SCORECARD_SCHEMA:
+            if "scorecard" in path.name:
+                _raise_experiment_error(
+                    "E_EXPERIMENT_080_SCORECARD_INVALID",
+                    f"scorecard file schema_version must be {SCORECARD_SCHEMA}.",
+                    path=str(path),
+                    schema_version=schema_version,
+                )
+            continue
+        diagnostics = validate_scorecard(payload)
+        if diagnostics:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_SCORECARD_INVALID",
+                "scorecard.json failed schema validation.",
+                path=str(path),
+                errors=[diagnostic.to_dict() for diagnostic in diagnostics],
+            )
+        records.append({
+            "path": path.relative_to(case_root).as_posix(),
+            "scorecard": payload,
+        })
+    return records
+
+
+def _build_case_summary(
+    *,
+    case_manifest: dict[str, Any],
+    scorecards: list[dict[str, Any]],
+) -> dict[str, Any]:
+    case_id = str(case_manifest.get("case_id") or "")
+    declared_conditions = [
+        condition
+        for condition in case_manifest.get("conditions", [])
+        if isinstance(condition, str) and condition in ALLOWED_CONDITIONS
+    ]
+    all_conditions = sorted({
+        *declared_conditions,
+        *(record["scorecard"].get("condition") for record in scorecards if isinstance(record.get("scorecard"), dict)),
+    })
+    validity_counts = _empty_validity_counts()
+    condition_counts = {
+        condition: {
+            "total": 0,
+            "validity_class_counts": _empty_validity_counts(),
+        }
+        for condition in all_conditions
+    }
+    manifestation = _empty_manifestation_summary(all_conditions)
+    reader_clean = _empty_rate_summary(all_conditions)
+    coverage = _empty_coverage_summary(all_conditions)
+    timing = _empty_timing_summary(all_conditions)
+    invalid_reasons: dict[str, int] = {}
+    scorecard_index: list[dict[str, Any]] = []
+
+    for record in sorted(scorecards, key=lambda item: (
+        str(item["scorecard"].get("condition") or ""),
+        str(item["scorecard"].get("run_id") or ""),
+        item["path"],
+    )):
+        scorecard = record["scorecard"]
+        if scorecard.get("case_id") != case_id:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_SCORECARD_CASE_MISMATCH",
+                "scorecard.case_id does not match case_manifest.case_id.",
+                path=record["path"],
+                scorecard_case_id=scorecard.get("case_id"),
+                case_manifest_case_id=case_id,
+            )
+        condition = str(scorecard.get("condition") or "")
+        if condition not in condition_counts:
+            condition_counts[condition] = {
+                "total": 0,
+                "validity_class_counts": _empty_validity_counts(),
+            }
+            manifestation["by_condition"][condition] = _empty_manifestation_counts()
+            reader_clean["by_condition"][condition] = _empty_rate_counts()
+            coverage["by_condition"][condition] = _empty_coverage_counts()
+            timing["by_condition"][condition] = _empty_timing_counts()
+        validity = str(scorecard.get("validity_class") or "invalid_incomplete")
+        if validity not in validity_counts:
+            validity = "invalid_incomplete"
+        validity_counts[validity] += 1
+        condition_counts[condition]["total"] += 1
+        condition_counts[condition]["validity_class_counts"][validity] += 1
+        if validity in INTERPRETABLE_SCORECARD_VALIDITY_CLASSES:
+            _accumulate_manifestation(manifestation, condition=condition, scorecard=scorecard)
+            _accumulate_reader_clean(reader_clean, condition=condition, scorecard=scorecard)
+            _accumulate_coverage(coverage, condition=condition, scorecard=scorecard)
+            _accumulate_timing(timing, condition=condition, scorecard=scorecard)
+        for reason in _scorecard_invalid_reasons(scorecard):
+            invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
+        scorecard_index.append({
+            "path": record["path"],
+            "condition": condition,
+            "run_id": scorecard.get("run_id"),
+            "validity_class": validity,
+            "assessment_status": scorecard.get("assessment_status", ""),
+        })
+
+    _finalize_rate_summary(reader_clean)
+    _finalize_coverage_summary(coverage)
+    _finalize_timing_summary(timing)
+    return {
+        "schema_version": CASE_SUMMARY_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": case_id,
+        "summary_boundary": (
+            "deterministic_scorecard_aggregation_only; "
+            "invalid_runs_excluded_from_interpretable_metrics; "
+            "no_python_or_llm_quality_judgment"
+        ),
+        "scorecard_count": len(scorecards),
+        "run_counts": {
+            "total": len(scorecards),
+            "validity_class_counts": validity_counts,
+            "a_grade_count": validity_counts["A_controlled"],
+            "interpretable_run_denominator": sum(
+                validity_counts[key]
+                for key in sorted(INTERPRETABLE_SCORECARD_VALIDITY_CLASSES)
+            ),
+            "invalid_excluded_count": sum(
+                validity_counts[key]
+                for key in ("invalid_contaminated", "invalid_incomplete", "invalid_fact_layer_mismatch")
+            ),
+        },
+        "condition_counts": condition_counts,
+        "manifestation": manifestation,
+        "reader_clean": reader_clean,
+        "coverage_delta": coverage,
+        "timing": timing,
+        "invalid_reasons": [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(invalid_reasons.items())
+        ],
+        "scorecards": scorecard_index,
+    }
+
+
+def _empty_validity_counts() -> dict[str, int]:
+    return {validity: 0 for validity in sorted(ALLOWED_VALIDITY_CLASSES)}
+
+
+def _empty_manifestation_counts() -> dict[str, int]:
+    return {
+        "guidance_score_count": 0,
+        "relevant_guidance_score_count": 0,
+        "score_2_manifested_count": 0,
+        "score_3_overapplication_count": 0,
+        "overapplication_count": 0,
+    }
+
+
+def _empty_manifestation_summary(conditions: list[str]) -> dict[str, Any]:
+    summary = _empty_manifestation_counts()
+    summary["by_condition"] = {condition: _empty_manifestation_counts() for condition in conditions}
+    return summary
+
+
+def _empty_rate_counts() -> dict[str, Any]:
+    return {"pass_count": 0, "total_evaluable": 0, "pass_rate": None}
+
+
+def _empty_rate_summary(conditions: list[str]) -> dict[str, Any]:
+    summary = _empty_rate_counts()
+    summary["by_condition"] = {condition: _empty_rate_counts() for condition in conditions}
+    return summary
+
+
+def _empty_coverage_counts() -> dict[str, Any]:
+    return {
+        "numeric_count": 0,
+        "numeric_sum": 0.0,
+        "numeric_min": None,
+        "numeric_max": None,
+        "numeric_average": None,
+        "not_computed_count": 0,
+        "status_counts": {},
+    }
+
+
+def _empty_coverage_summary(conditions: list[str]) -> dict[str, Any]:
+    summary = _empty_coverage_counts()
+    summary["by_condition"] = {condition: _empty_coverage_counts() for condition in conditions}
+    return summary
+
+
+def _empty_timing_counts() -> dict[str, Any]:
+    return {
+        "status_counts": {},
+        "available_count": 0,
+        "incomplete_count": 0,
+        "unknown_count": 0,
+        "contaminated_count": 0,
+        "completed_stage_count": {"count": 0, "min": None, "max": None, "average": None},
+    }
+
+
+def _empty_timing_summary(conditions: list[str]) -> dict[str, Any]:
+    summary = _empty_timing_counts()
+    summary["by_condition"] = {condition: _empty_timing_counts() for condition in conditions}
+    return summary
+
+
+def _accumulate_manifestation(summary: dict[str, Any], *, condition: str, scorecard: dict[str, Any]) -> None:
+    condition_summary = summary["by_condition"][condition]
+    scores = scorecard.get("guidance_scores") if isinstance(scorecard.get("guidance_scores"), list) else []
+    for score in scores:
+        if not isinstance(score, dict):
+            continue
+        for target in (summary, condition_summary):
+            target["guidance_score_count"] += 1
+            if score.get("relevant") is True:
+                target["relevant_guidance_score_count"] += 1
+            if score.get("manifestation_score") == 2:
+                target["score_2_manifested_count"] += 1
+            if score.get("manifestation_score") == 3:
+                target["score_3_overapplication_count"] += 1
+            if score.get("overapplication") is True:
+                target["overapplication_count"] += 1
+
+
+def _accumulate_reader_clean(summary: dict[str, Any], *, condition: str, scorecard: dict[str, Any]) -> None:
+    reader_clean = scorecard.get("reader_clean") if isinstance(scorecard.get("reader_clean"), dict) else {}
+    if not isinstance(reader_clean.get("pass"), bool):
+        return
+    for target in (summary, summary["by_condition"][condition]):
+        target["total_evaluable"] += 1
+        if reader_clean.get("pass") is True:
+            target["pass_count"] += 1
+
+
+def _accumulate_coverage(summary: dict[str, Any], *, condition: str, scorecard: dict[str, Any]) -> None:
+    coverage = scorecard.get("coverage_delta") if isinstance(scorecard.get("coverage_delta"), dict) else {}
+    status = str(coverage.get("status") or "unknown")
+    value = coverage.get("delta")
+    for target in (summary, summary["by_condition"][condition]):
+        status_counts = target["status_counts"]
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            _accumulate_numeric(target, float(value))
+        else:
+            target["not_computed_count"] += 1
+
+
+def _accumulate_timing(summary: dict[str, Any], *, condition: str, scorecard: dict[str, Any]) -> None:
+    timing = scorecard.get("timing_summary") if isinstance(scorecard.get("timing_summary"), dict) else {}
+    status = str(timing.get("status") or "unknown")
+    completed_stage_count = timing.get("completed_stage_count")
+    for target in (summary, summary["by_condition"][condition]):
+        status_counts = target["status_counts"]
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status == "available":
+            target["available_count"] += 1
+        elif status == "incomplete":
+            target["incomplete_count"] += 1
+        elif status == "contaminated":
+            target["contaminated_count"] += 1
+        else:
+            target["unknown_count"] += 1
+        if isinstance(completed_stage_count, int):
+            _accumulate_numeric(target["completed_stage_count"], float(completed_stage_count))
+
+
+def _accumulate_numeric(target: dict[str, Any], value: float) -> None:
+    target["numeric_count"] = target.get("numeric_count", 0) + 1
+    target["numeric_sum"] = round(float(target.get("numeric_sum", 0.0)) + value, 6)
+    target["numeric_min"] = value if target.get("numeric_min") is None else min(float(target["numeric_min"]), value)
+    target["numeric_max"] = value if target.get("numeric_max") is None else max(float(target["numeric_max"]), value)
+
+
+def _finalize_rate_summary(summary: dict[str, Any]) -> None:
+    _finalize_rate_counts(summary)
+    for condition_summary in summary["by_condition"].values():
+        _finalize_rate_counts(condition_summary)
+
+
+def _finalize_rate_counts(counts: dict[str, Any]) -> None:
+    total = counts.get("total_evaluable", 0)
+    counts["pass_rate"] = round(counts["pass_count"] / total, 6) if total else None
+
+
+def _finalize_coverage_summary(summary: dict[str, Any]) -> None:
+    _finalize_coverage_counts(summary)
+    for condition_summary in summary["by_condition"].values():
+        _finalize_coverage_counts(condition_summary)
+
+
+def _finalize_coverage_counts(counts: dict[str, Any]) -> None:
+    if counts["numeric_count"]:
+        counts["numeric_average"] = round(counts["numeric_sum"] / counts["numeric_count"], 6)
+    counts["numeric_sum"] = round(counts["numeric_sum"], 6)
+
+
+def _finalize_timing_summary(summary: dict[str, Any]) -> None:
+    _finalize_timing_counts(summary)
+    for condition_summary in summary["by_condition"].values():
+        _finalize_timing_counts(condition_summary)
+
+
+def _finalize_timing_counts(counts: dict[str, Any]) -> None:
+    completed = counts["completed_stage_count"]
+    if completed.get("numeric_count", 0):
+        completed["average"] = round(completed["numeric_sum"] / completed["numeric_count"], 6)
+        completed["min"] = completed.pop("numeric_min")
+        completed["max"] = completed.pop("numeric_max")
+        completed.pop("numeric_sum", None)
+        completed["count"] = completed.pop("numeric_count")
+        return
+    completed.setdefault("count", 0)
+    completed.setdefault("min", None)
+    completed.setdefault("max", None)
+    completed.setdefault("average", None)
+    completed.pop("numeric_sum", None)
+    completed.pop("numeric_min", None)
+    completed.pop("numeric_max", None)
+    completed.pop("numeric_count", None)
+
+
+def _scorecard_invalid_reasons(scorecard: dict[str, Any]) -> list[str]:
+    validity = scorecard.get("validity_class")
+    if validity == "invalid_contaminated":
+        return ["run_integrity_contaminated_or_non_reference"]
+    if validity == "invalid_fact_layer_mismatch":
+        return ["frozen_fact_layer_mismatch"]
+    if validity != "invalid_incomplete":
+        return []
+    reasons: list[str] = []
+    control = scorecard.get("control_integrity") if isinstance(scorecard.get("control_integrity"), dict) else {}
+    for key in A_CONTROLLED_REQUIRED_CONTROL_KEYS:
+        if control.get(key) is not True:
+            reasons.append(f"control_integrity.{key}_not_true")
+    reader_clean = scorecard.get("reader_clean") if isinstance(scorecard.get("reader_clean"), dict) else {}
+    if reader_clean.get("pass") is not True:
+        reasons.append("reader_clean_not_pass")
+    if scorecard.get("assessment_status") == "needs_assessment":
+        reasons.append("assessment_needed")
+    return reasons or ["incomplete_control_or_assessment"]
 
 
 def _scorecard_archive_projection(
