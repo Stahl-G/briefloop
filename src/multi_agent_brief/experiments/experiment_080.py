@@ -847,6 +847,12 @@ def scaffold_condition(
         frozen_fact_layer=frozen_fact_layer,
         archive=archive,
     )
+    archive_payload = _load_json_object(archive_manifest, label="run_archive")
+    _assert_scaffold_archive_matches_case(
+        frozen_fact_layer=frozen_fact_layer,
+        archive_manifest=archive_payload,
+        archive_manifest_path=archive_manifest,
+    )
     created_shell_files = _ensure_scaffold_workspace_shell(
         workspace=ws,
         case_manifest=case_manifest,
@@ -940,6 +946,40 @@ def _resolve_scaffold_archive_manifest(
     )
 
 
+def _assert_scaffold_archive_matches_case(
+    *,
+    frozen_fact_layer: dict[str, Any],
+    archive_manifest: dict[str, Any],
+    archive_manifest_path: Path,
+) -> None:
+    if archive_manifest.get("schema_version") != RUN_ARCHIVE_SCHEMA:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_INVALID",
+            f"run archive manifest schema_version must be {RUN_ARCHIVE_SCHEMA}.",
+            archive=str(archive_manifest_path),
+            schema_version=archive_manifest.get("schema_version"),
+        )
+    fact_layer = archive_manifest.get("fact_layer")
+    if not isinstance(fact_layer, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ARCHIVE_FACT_LAYER_INVALID",
+            "run archive manifest must contain a fact_layer object.",
+            archive=str(archive_manifest_path),
+        )
+    comparison = _compare_case_fact_layer_to_archive(
+        frozen_fact_layer=frozen_fact_layer,
+        archive_fact_layer=fact_layer,
+        archive_root=archive_manifest_path.parent,
+    )
+    if comparison.get("matches_case_frozen_fact_layer") is not True:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_MISMATCH",
+            "scaffold-condition archive fact layer does not match case frozen_fact_layer.json.",
+            archive=str(archive_manifest_path),
+            mismatches=comparison.get("mismatches", []),
+        )
+
+
 def _ensure_scaffold_workspace_shell(
     *,
     workspace: Path,
@@ -1017,8 +1057,6 @@ def _scaffold_config_yaml(*, title: str, condition: str) -> str:
         "  path: \"output\"\n"
         "report:\n"
         f"  title: \"{escaped_title} / {escaped_condition}\"\n"
-        "  date: \"2026-06-20\"\n"
-        "  max_source_age_days: 90\n"
         "  fail_on_stale_source: false\n"
     )
 

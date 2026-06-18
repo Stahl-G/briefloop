@@ -553,6 +553,13 @@ def test_experiments_080_scaffold_condition_imports_fact_layer_workspace(tmp_pat
     assert metadata["schema_version"] == "mabw.experiment_080.scaffold_condition.v1"
     assert metadata["workspace_path"] == "<redacted-workspace>"
     assert metadata["treatment"]["improvement_memory"] == "disabled"
+    config = (ws / "config.yaml").read_text(encoding="utf-8")
+    assert "date: \"2026-06-20\"" not in config
+    assert "max_source_age_days" not in config
+    manifest = json.loads((ws / "output" / "intermediate" / "runtime_manifest.json").read_text(encoding="utf-8"))
+    freshness = manifest["fact_layer_import"]["freshness_at_import"]
+    assert freshness["status"] == "unknown"
+    assert freshness["reason"] == "report_date_or_max_source_age_missing"
     instructions = (ws / "experiment" / "080" / "operator_instructions.md").read_text(encoding="utf-8")
     assert "Do not rerun source-discovery, Scout, Screener, or Claim Ledger" in instructions
     assert "multi-agent-brief run --workspace" in instructions
@@ -593,6 +600,23 @@ def test_experiments_080_scaffold_rejects_condition_not_declared(tmp_path, capsy
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["details"]["code"] == "E_EXPERIMENT_080_CONDITION_INVALID"
+    assert not ws.exists()
+
+
+def test_experiments_080_scaffold_rejects_archive_fact_layer_mismatch(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    frozen_fact_layer = json.loads((case_dir / "frozen_fact_layer.json").read_text(encoding="utf-8"))
+    frozen_fact_layer["artifacts"][0]["sha256"] = "0" * 64
+    _write_json(case_dir / "frozen_fact_layer.json", frozen_fact_layer)
+
+    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_FACT_LAYER_MISMATCH"
+    assert payload["details"]["mismatches"][0]["artifact_id"] == "durable_source_evidence_or_source_pack"
     assert not ws.exists()
 
 
