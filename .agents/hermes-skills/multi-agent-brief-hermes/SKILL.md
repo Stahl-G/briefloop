@@ -112,7 +112,6 @@ multi-agent-brief finalize --config <workspace>/config.yaml
 multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
-
 `finalize` is not a quality-gate executor. Blocking gate findings must route to feedback plus deterministic repair, `request_human_review`, or `block_run`; do not finalize through a blocking gate.
 At run start, read `output/intermediate/audience_profile_snapshot.md` for taste context and pass a concise summary to delegated roles. Do not treat `audience_profile.md` as evidence.
 Read `output/intermediate/orchestrator_control_switchboard.json`, then use `multi-agent-brief controls select` to record selected controls before explicitly running their CLI/subagent/human action. Selection is not execution.
