@@ -77,7 +77,15 @@ def summarize_fact_layer_import(
         errors.append("runtime_manifest.fact_layer_import.source_archive_manifest_sha256 is required.")
     if not isinstance(imported_file_count, int) or imported_file_count <= 0:
         errors.append("runtime_manifest.fact_layer_import.imported_file_count must be a positive integer.")
-    errors.extend(_imported_file_record_errors(record, workspace=workspace))
+    derived_imported_files: list[dict[str, Any]] = []
+    errors.extend(
+        _imported_file_record_errors(
+            record,
+            workspace=workspace,
+            manifest=manifest_obj,
+            derived_files=derived_imported_files,
+        )
+    )
 
     missing_satisfied = sorted(set(IMPORT_SATISFIED_STAGE_IDS) - set(satisfied_stage_ids))
     if missing_satisfied:
@@ -104,6 +112,7 @@ def summarize_fact_layer_import(
         "source_archive_manifest_sha256": source_archive_manifest_sha256,
         "fact_layer_sha256": fact_layer_sha256,
         "imported_file_count": imported_file_count,
+        "derived_imported_files": derived_imported_files,
         "freshness_at_import": freshness_at_import,
         "satisfied_stage_ids": satisfied_stage_ids,
         "required_satisfied_stage_ids": list(IMPORT_SATISFIED_STAGE_IDS),
@@ -191,7 +200,13 @@ def _imported_stage_projection(record: dict[str, Any], workflow: dict[str, Any])
     return stages
 
 
-def _imported_file_record_errors(record: dict[str, Any], *, workspace: str | Path | None) -> list[str]:
+def _imported_file_record_errors(
+    record: dict[str, Any],
+    *,
+    workspace: str | Path | None,
+    manifest: dict[str, Any] | None = None,
+    derived_files: list[dict[str, Any]] | None = None,
+) -> list[str]:
     files = record.get("imported_files")
     expected_count = record.get("imported_file_count")
     errors: list[str] = []
@@ -243,13 +258,50 @@ def _imported_file_record_errors(record: dict[str, Any], *, workspace: str | Pat
         if not target.exists() or not target.is_file():
             errors.append(f"Imported fact-layer file is missing: {workspace_path}.")
             continue
+        actual_sha256 = _sha256_file(target) if sha256 else ""
+        if actual_sha256 and _valid_derived_imported_file(
+            manifest=manifest,
+            record=item,
+            actual_sha256=actual_sha256,
+        ):
+            if derived_files is not None:
+                derived_files.append({
+                    "artifact_id": str(item.get("artifact_id") or ""),
+                    "workspace_path": workspace_path,
+                    "original_sha256": sha256,
+                    "current_sha256": actual_sha256,
+                    "derivation": "claim_ledger_metadata_enrichment",
+                })
+            continue
         if isinstance(size_bytes, int) and target.stat().st_size != size_bytes:
             errors.append(f"Imported fact-layer file size mismatch: {workspace_path}.")
-        if sha256:
-            actual_sha256 = _sha256_file(target)
-            if actual_sha256 != sha256:
-                errors.append(f"Imported fact-layer file hash mismatch: {workspace_path}.")
+        if sha256 and actual_sha256 != sha256:
+            errors.append(f"Imported fact-layer file hash mismatch: {workspace_path}.")
     return errors
+
+
+def _valid_derived_imported_file(
+    *,
+    manifest: dict[str, Any] | None,
+    record: dict[str, Any],
+    actual_sha256: str,
+) -> bool:
+    if not isinstance(manifest, dict):
+        return False
+    if record.get("artifact_id") != "claim_ledger":
+        return False
+    if record.get("workspace_path") != "output/intermediate/claim_ledger.json":
+        return False
+    enrichment = manifest.get("claim_ledger_metadata_enrichment")
+    if not isinstance(enrichment, dict):
+        return False
+    return (
+        enrichment.get("schema_version") == "mabw.claim_ledger_metadata_enrichment.v1"
+        and enrichment.get("status") == "applied"
+        and enrichment.get("claim_ledger_path") == "output/intermediate/claim_ledger.json"
+        and enrichment.get("previous_claim_ledger_sha256") == record.get("sha256")
+        and enrichment.get("claim_ledger_sha256") == actual_sha256
+    )
 
 
 def _path_text_is_unsafe(path_text: str) -> bool:

@@ -1860,6 +1860,113 @@ def _claim_ledger_freeze_reasons(
     return reasons
 
 
+def _imported_claim_ledger_record(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    import_record = manifest.get("fact_layer_import")
+    if not isinstance(import_record, dict):
+        return None
+    imported_files = import_record.get("imported_files")
+    if not isinstance(imported_files, list):
+        return None
+    for record in imported_files:
+        if not isinstance(record, dict):
+            continue
+        if (
+            record.get("artifact_id") == "claim_ledger"
+            and str(record.get("workspace_path") or "") == CLAIM_LEDGER_PATH.as_posix()
+        ):
+            return record
+    return None
+
+
+def _valid_imported_claim_ledger_derivation(
+    *,
+    manifest: dict[str, Any],
+    import_record: dict[str, Any],
+    current_sha256: str,
+) -> bool:
+    enrichment = manifest.get("claim_ledger_metadata_enrichment")
+    if not isinstance(enrichment, dict):
+        return False
+    return (
+        enrichment.get("schema_version") == CLAIM_LEDGER_METADATA_ENRICHMENT_SCHEMA
+        and enrichment.get("status") == "applied"
+        and enrichment.get("claim_ledger_path") == CLAIM_LEDGER_PATH.as_posix()
+        and enrichment.get("previous_claim_ledger_sha256") == import_record.get("sha256")
+        and enrichment.get("claim_ledger_sha256") == current_sha256
+    )
+
+
+def _claim_ledger_enrichment_authority(
+    *,
+    workspace: Path,
+    manifest: dict[str, Any],
+    ledger_path: Path,
+) -> dict[str, str]:
+    freeze = manifest.get("claim_ledger_freeze")
+    if isinstance(freeze, dict):
+        freeze_reasons = _claim_ledger_freeze_reasons(workspace=workspace, manifest=manifest)
+        if freeze_reasons:
+            _raise_completion_reasons(
+                message="Cannot enrich Claim Ledger metadata before Claim Ledger freeze is valid",
+                reasons=freeze_reasons,
+                error_code=E_TRANSACTION_INTEGRITY,
+                details={"stage_id": "claim-ledger"},
+            )
+        return {
+            "kind": "claim_ledger_freeze",
+            "source_claim_ledger_sha256": str(freeze.get("claim_ledger_sha256") or ""),
+        }
+    if freeze is not None:
+        raise RuntimeStateError(
+            "Claim Ledger freeze metadata is malformed; refusing metadata enrichment.",
+            details={"field": "claim_ledger_freeze"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+
+    import_record = _imported_claim_ledger_record(manifest)
+    if not isinstance(import_record, dict):
+        raise RuntimeStateError(
+            "Claim metadata enrichment requires a frozen Claim Ledger from local freeze or fact-layer import.",
+            details={"required_authority": "claim_ledger_freeze_or_fact_layer_import"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    if not ledger_path.exists() or not ledger_path.is_file():
+        raise RuntimeStateError(
+            "Imported Claim Ledger is missing; refusing metadata enrichment.",
+            details={"workspace_path": CLAIM_LEDGER_PATH.as_posix()},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    expected_sha = str(import_record.get("sha256") or "")
+    expected_size = import_record.get("size_bytes")
+    current_sha = _sha256_file(ledger_path)
+    current_size = ledger_path.stat().st_size
+    if current_sha == expected_sha and (not isinstance(expected_size, int) or current_size == expected_size):
+        return {
+            "kind": "fact_layer_import",
+            "source_claim_ledger_sha256": expected_sha,
+        }
+    if _valid_imported_claim_ledger_derivation(
+        manifest=manifest,
+        import_record=import_record,
+        current_sha256=current_sha,
+    ):
+        return {
+            "kind": "fact_layer_import_derived",
+            "source_claim_ledger_sha256": expected_sha,
+        }
+    raise RuntimeStateError(
+        "Current Claim Ledger does not match imported fact-layer authority.",
+        details={
+            "workspace_path": CLAIM_LEDGER_PATH.as_posix(),
+            "expected_sha256": expected_sha,
+            "actual_sha256": current_sha,
+            "expected_size_bytes": expected_size,
+            "actual_size_bytes": current_size,
+        },
+        error_code=E_TRANSACTION_INTEGRITY,
+    )
+
+
 def _current_run_start_event_exists(event_records: list[dict[str, Any]], run_id: str) -> bool:
     return any(
         event.get("run_id") == run_id and event.get("event_type") in {"run_initialized", "run_reset"}
@@ -2115,6 +2222,7 @@ def _imported_source_evidence_authority(manifest: dict[str, Any], *, workspace: 
             "sha256": actual_sha,
             "metadata": metadata,
         }
+        by_source_id.setdefault(workspace_path, authority)
         for source_id in source_ids:
             by_source_id.setdefault(source_id, authority)
 
@@ -2132,12 +2240,21 @@ def _source_evidence_ids(path: Path, metadata: dict[str, str]) -> set[str]:
         ids.add(stem)
         ids.add(stem.upper().replace("-", "_"))
         ids.add(stem.upper().replace("_", "-"))
+        normalized_stem = stem.lower().replace("_", "-")
+        match = re.fullmatch(r"(?:source|src)-?([0-9]+)", normalized_stem)
+        if match:
+            numeric_id = match.group(1)
+            ids.add(f"SRC-{numeric_id}")
+            ids.add(f"SRC-{numeric_id.zfill(3)}")
     return {item for item in ids if item}
 
 
 def _source_evidence_metadata_from_file(path: Path, *, workspace_path: str) -> dict[str, str]:
-    if path.suffix.lower() != ".json":
+    suffix = path.suffix.lower()
+    if suffix not in {".json", ".md", ".markdown"}:
         return {"source_path": workspace_path}
+    if suffix in {".md", ".markdown"}:
+        return _source_evidence_metadata_from_markdown(path, workspace_path=workspace_path)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
@@ -2164,6 +2281,45 @@ def _source_evidence_metadata_from_file(path: Path, *, workspace_path: str) -> d
     return metadata
 
 
+def _source_evidence_metadata_from_markdown(path: Path, *, workspace_path: str) -> dict[str, str]:
+    metadata: dict[str, str] = {"source_path": workspace_path}
+    aliases: dict[str, tuple[str, ...]] = {
+        "published_at": ("published", "published_at", "date", "source_published_at"),
+        "retrieved_at": ("retrieved", "retrieved_at", "accessed", "accessed_at"),
+        "source_title": ("title", "source_title"),
+        "source_name": ("source_name", "name"),
+        "publisher": ("publisher", "source_publisher"),
+        "topic": ("topic", "category"),
+        "source_id": ("source_id", "source id", "id"),
+    }
+    key_to_field = {
+        alias.lower().replace("-", "_").replace(" ", "_"): field
+        for field, field_aliases in aliases.items()
+        for alias in field_aliases
+    }
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return metadata
+    in_code_block = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block or not stripped:
+            continue
+        match = re.match(r"^\s*(?:[-*]\s*)?([A-Za-z][A-Za-z0-9 _-]{0,48})\s*:\s*(.+?)\s*$", line)
+        if not match:
+            continue
+        key = match.group(1).strip().lower().replace("-", "_").replace(" ", "_")
+        field = key_to_field.get(key)
+        value = match.group(2).strip()
+        if field and value and field not in metadata:
+            metadata[field] = value
+    return metadata
+
+
 def _claims_with_enriched_metadata(
     *,
     claims: list[dict[str, Any]],
@@ -2176,13 +2332,20 @@ def _claims_with_enriched_metadata(
     for claim in claims:
         next_claim = dict(claim)
         source_id = str(next_claim.get("source_id") or "").strip()
-        authority = source_authority.get(source_id)
+        current_metadata = dict(next_claim.get("metadata") or {})
+        metadata_source_path = current_metadata.get("source_path")
+        authority = (
+            source_authority.get(metadata_source_path)
+            if isinstance(metadata_source_path, str) and metadata_source_path.strip()
+            else None
+        )
+        if authority is None:
+            authority = source_authority.get(source_id)
         if authority is None:
             missing_sources.append(source_id)
             enriched_claims.append(next_claim)
             continue
         authority_metadata = authority["metadata"]
-        current_metadata = dict(next_claim.get("metadata") or {})
         changed_fields: list[str] = []
         for field in CLAIM_METADATA_ENRICHMENT_ALLOWED_FIELDS:
             new_value = authority_metadata.get(field)
@@ -2332,16 +2495,12 @@ def enrich_claim_metadata_transaction(
     artifacts = load_artifact_contracts(repo)
     _workflow_allows_claim_metadata_enrichment(workflow, stages)
 
-    freeze_reasons = _claim_ledger_freeze_reasons(workspace=ws, manifest=manifest)
-    if freeze_reasons:
-        _raise_completion_reasons(
-            message="Cannot enrich Claim Ledger metadata before Claim Ledger freeze is valid",
-            reasons=freeze_reasons,
-            error_code=E_TRANSACTION_INTEGRITY,
-            details={"stage_id": "claim-ledger"},
-        )
-
     ledger_path = ws / CLAIM_LEDGER_PATH
+    ledger_authority = _claim_ledger_enrichment_authority(
+        workspace=ws,
+        manifest=manifest,
+        ledger_path=ledger_path,
+    )
     try:
         ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
         claims = ClaimLedger._claim_items_from_json(ledger_payload)
@@ -2370,17 +2529,20 @@ def enrich_claim_metadata_transaction(
     transaction_id = uuid.uuid4().hex
     now = utc_now()
     next_manifest = dict(manifest)
-    freeze = dict(next_manifest.get("claim_ledger_freeze") or {})
-    freeze["claim_ledger_sha256"] = ledger_sha
-    freeze["metadata_enriched_at"] = now
-    freeze["metadata_enrichment_transaction_id"] = transaction_id
-    next_manifest["claim_ledger_freeze"] = freeze
+    if isinstance(next_manifest.get("claim_ledger_freeze"), dict):
+        freeze = dict(next_manifest["claim_ledger_freeze"])
+        freeze["claim_ledger_sha256"] = ledger_sha
+        freeze["metadata_enriched_at"] = now
+        freeze["metadata_enrichment_transaction_id"] = transaction_id
+        next_manifest["claim_ledger_freeze"] = freeze
     enrichment_record = {
         "schema_version": CLAIM_LEDGER_METADATA_ENRICHMENT_SCHEMA,
         "status": "applied",
         "enriched_at": now,
         "transaction_id": transaction_id,
         "source": "fact_layer_imported_source_evidence",
+        "claim_ledger_authority": ledger_authority["kind"],
+        "source_claim_ledger_sha256": ledger_authority["source_claim_ledger_sha256"],
         "claim_ledger_path": _workspace_relative(ws, ledger_path),
         "previous_claim_ledger_sha256": previous_sha,
         "claim_ledger_sha256": ledger_sha,
