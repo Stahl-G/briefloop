@@ -36,7 +36,7 @@ semantically complete.
 
 ```text
 Given the same frozen fact layer, did a specific guidance entry manifest in
-the reader-facing output for each condition?
+the selected assessment target for each condition?
 ```
 
 The current standard conditions are:
@@ -51,6 +51,32 @@ The harness is designed so source-discovery, input governance, Scout, Screener,
 and Claim Ledger can be held constant through a frozen fact layer. Downstream
 writing and audit still run through normal runtime handoff and completion
 transactions.
+
+## Assessment Targets
+
+MABW-080 separates content-level experiment assessment from delivery-level
+checks. The default target is `delivery_brief`, so existing cases keep their
+current finalize, reader-clean, and archive semantics unless
+`case_manifest.json` opts into another target.
+
+| Target | Meaning | Required control surface |
+|---|---|---|
+| `delivery_brief` | Full reader-delivery target. Guidance is assessed in the finalized reader delivery. | Terminal workflow, run archive, finalize pass, reader-clean delivery, timing, clean/reference-eligible run, same frozen fact layer, and imported assessment. |
+| `auditable_brief` | Content-level target for guidance manifestation in `output/intermediate/audited_brief.md`. | Analyst/Editor/Auditor complete, no active repair, clean/reference-eligible run, frozen `audited_brief`, `audit_report`, and auditor gate report hashes, auditor gates pass, timing, same frozen fact layer, and imported assessment. |
+
+Use `auditable_brief` for the minimum A-controlled memory-manifestation
+experiment when finalize formatting, DOCX generation, reader-clean delivery, or
+delivery archive creation are not the claim being assessed. This target does
+not claim management-ready delivery, reader-clean output, DOCX/PDF quality, or
+finalize transform correctness.
+
+Example:
+
+```json
+{
+  "assessment_target": "auditable_brief"
+}
+```
 
 ## What 080 Does Not Prove
 
@@ -204,10 +230,21 @@ Complete the normal downstream workflow for each condition. Source-discovery,
 input governance, Scout, Screener, and Claim Ledger are satisfied by import and
 must not be replayed for the condition workspace.
 
-### 5. Register Completed Runs
+### 5. Register Runs
 
-Run registration requires a terminal completed workspace and an archive under
-`output/runs/<run_id>/`.
+For the default `delivery_brief` target, run registration requires a terminal
+completed workspace and an archive under `output/runs/<run_id>/`.
+
+For `auditable_brief`, registration may stop after Auditor completes and the
+workflow is ready for Finalize. The run must still be clean/reference-eligible,
+have no active repair, preserve the same frozen fact layer, and have valid
+frozen hashes for:
+
+```text
+output/intermediate/audited_brief.md
+output/intermediate/audit_report.json
+output/intermediate/gates/auditor_quality_gate_report.json
+```
 
 ```bash
 multi-agent-brief experiments 080 register-run \
@@ -235,15 +272,19 @@ multi-agent-brief experiments 080 score-run \
 
 Repeat for each condition.
 
-`score-run` projects deterministic fields from the registered run and archive:
+`score-run` projects deterministic fields from the registered run and target:
 
 - control integrity
 - frozen fact-layer match
-- reader-clean and gate/finalize/archive status
+- reader-clean and gate/finalize/archive status when required by target
 - timing summary
 - coverage-delta status when available
 - required guidance entry IDs
 - `assessment_status: needs_assessment`
+
+For `auditable_brief`, `reader_clean` and finalize delivery fields are marked
+`not_required_for_target`, and the control projection uses the frozen audited
+brief, audit report, and auditor gate report recorded by `register-run`.
 
 It does not fill guidance manifestation scores.
 

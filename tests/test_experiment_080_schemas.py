@@ -199,6 +199,24 @@ def test_experiment_080_valid_minimal_case_passes(tmp_path):
     assert result["errors"] == []
 
 
+def test_experiment_080_case_manifest_accepts_assessment_targets():
+    for target in (None, "auditable_brief", "delivery_brief"):
+        manifest = _valid_case_manifest()
+        if target is not None:
+            manifest["assessment_target"] = target
+
+        assert validate_case_manifest(manifest) == []
+
+
+def test_experiment_080_case_manifest_rejects_invalid_assessment_target():
+    manifest = _valid_case_manifest()
+    manifest["assessment_target"] = "draft_quality"
+
+    diagnostics = validate_case_manifest(manifest)
+
+    assert "invalid_assessment_target" in _codes(diagnostics)
+
+
 def test_experiment_080_unknown_condition_rejects():
     manifest = _valid_case_manifest()
     manifest["conditions"] = ["baseline", "magic"]
