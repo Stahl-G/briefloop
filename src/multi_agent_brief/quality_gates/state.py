@@ -27,7 +27,10 @@ from multi_agent_brief.orchestrator.runtime_state import (
     show_runtime_state,
     utc_now,
 )
-from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY
+from multi_agent_brief.orchestrator.runtime_state.errors import (
+    E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
+    E_TRANSACTION_INTEGRITY,
+)
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.quality_gates.contract import (
     GATE_IDS,
@@ -1128,23 +1131,23 @@ def check_quality_gates(
         report_path=report_path,
         artifact_id=gate_artifact_id,
     )
+    if frozen_record is not None:
+        raise RuntimeStateError(
+            "Stage-scoped gate report is already frozen. Read the existing report, or use repair/new run if the report must change.",
+            details={
+                "artifact_id": gate_artifact_id,
+                "path": _workspace_relative(ws, report_path),
+                "producer_stage": gate_stage_id,
+                "required_action": "read_existing_report_or_repair_or_new_run",
+            },
+            error_code=E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
+        )
     existing_report = _read_json_object(report_path)
     if existing_report is not None and _quality_gate_reports_equivalent(existing_report, payload):
         legacy_report = _read_json_object(legacy_report_path)
         if legacy_report is None or not _quality_gate_reports_equivalent(legacy_report, existing_report):
             _write_json_atomic(legacy_report_path, existing_report)
         return show_quality_gates(workspace=ws, repo_workdir=repo_workdir)
-    if frozen_record is not None:
-        raise RuntimeStateError(
-            "Refusing to rewrite frozen quality gate report; route repair or start a new run instead.",
-            details={
-                "artifact_id": gate_artifact_id,
-                "path": _workspace_relative(ws, report_path),
-                "producer_stage": gate_stage_id,
-                "required_action": "route_repair_or_new_run",
-            },
-            error_code=E_TRANSACTION_INTEGRITY,
-        )
     old_report = report_path.read_bytes() if report_path.exists() else None
     old_legacy_report = legacy_report_path.read_bytes() if legacy_report_path.exists() else None
     wrote_report = False
