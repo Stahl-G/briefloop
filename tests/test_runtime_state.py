@@ -2890,6 +2890,91 @@ def test_repair_start_records_editor_owner_transaction(tmp_path):
     assert events[-1]["metadata"]["repair_owner"] == "editor"
 
 
+def test_repair_start_applies_non_reference_integrity_effect_for_frozen_artifact_change(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    audited.write_text("# Brief\n\nDirect post-freeze edit. [src:CL-001]\n", encoding="utf-8")
+
+    state = start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+
+    workflow = state["workflow_state"]
+    integrity = workflow["run_integrity"]
+    assert integrity["status"] == "contaminated"
+    assert integrity["reference_eligible"] is False
+    assert integrity["clean_single_shot"] is False
+    assert integrity["reasons"][0]["reason_code"] == "frozen_artifact_changed"
+    assert integrity["reasons"][0]["artifact_id"] == "audited_brief"
+    assert integrity["reasons"][0]["metadata"]["repair_transaction_id"]
+    assert workflow["active_repair"]["run_integrity_effect"]["reference_eligible"] is False
+    events = _event_records(ws)
+    assert events[-2]["event_type"] == "repair_started"
+    assert events[-1]["event_type"] == "run_integrity_contaminated"
+    assert events[-1]["metadata"]["reason_code"] == "frozen_artifact_changed"
+    assert events[-1]["metadata"]["artifact_id"] == "audited_brief"
+
+    audited.write_text("# Brief\n\nOwner repair edit for local delivery. [src:CL-001]\n", encoding="utf-8")
+    completed = complete_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="editor repaired audited brief from deterministic route",
+    )
+
+    completed_integrity = completed["workflow_state"]["run_integrity"]
+    assert completed_integrity["status"] == "contaminated"
+    assert completed_integrity["reference_eligible"] is False
+    assert "active_repair" not in completed["workflow_state"]
+
+
+def test_repair_start_contamination_event_failure_rolls_back_control_files(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    audited.write_text("# Brief\n\nDirect post-freeze edit. [src:CL-001]\n", encoding="utf-8")
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+    _fail_appending_event_type(monkeypatch, "run_integrity_contaminated")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_PARTIAL_WRITE
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+
+
 def test_repair_start_rejects_finalized_workflow_without_mutating_state(tmp_path):
     ws = _write_workspace(tmp_path)
     _complete_finalized_workspace(ws)
