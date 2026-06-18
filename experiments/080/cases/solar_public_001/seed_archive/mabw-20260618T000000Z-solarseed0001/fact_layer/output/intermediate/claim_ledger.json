@@ -1,0 +1,13 @@
+[
+  {
+    "claim_id": "CL-001",
+    "evidence_text": "SolarExampleCo reported a synthetic pilot module assembly line opening for public fixture validation.",
+    "metadata": {
+      "published_at": "2026-06-10",
+      "source_url": "https://example.com/mabw/fixture/solar-source-001",
+      "topic": "synthetic solar fixture"
+    },
+    "source_id": "SRC-001",
+    "statement": "SolarExampleCo reported a synthetic pilot module assembly line opening."
+  }
+]

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspaces and writes operator instructions. It does not create generic
   workspace config, run subagents, gates, finalize, registration, scoring, or
   summarization.
+- **MABW-080 public-safe pilot skeleton**: added
+  `experiments/080/cases/solar_public_001` with a synthetic frozen fact layer
+  seed archive, guidance set, and assessment template. It is setup material, not
+  completed A/B evidence or an output-quality claim.
 
 ## [0.8.5] — 2026-06-16
 

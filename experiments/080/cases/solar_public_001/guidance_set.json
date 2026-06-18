@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "entry_id": "AG-0001",
+      "expected_manifestation": "The brief opens with why the synthetic solar facility event matters before restating the event itself.",
+      "guidance_text": "Lead with the business implication before recapping the source event.",
+      "relevance_rule": "Applies to management-facing solar market update briefs that use this frozen fact layer.",
+      "source": "improvement_ledger"
+    }
+  ],
+  "schema_version": "mabw.experiment_080.guidance_set.v1"
+}

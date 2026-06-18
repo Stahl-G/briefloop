@@ -1,0 +1,9 @@
+[
+  {
+    "candidate_id": "CC-001",
+    "claim": "SolarExampleCo reported a synthetic pilot module assembly line opening.",
+    "reason": "Synthetic public fixture claim with direct source excerpt.",
+    "screening_status": "keep",
+    "source_id": "SRC-001"
+  }
+]

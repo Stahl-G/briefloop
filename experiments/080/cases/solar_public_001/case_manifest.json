@@ -1,0 +1,25 @@
+{
+  "allowed_claims": {
+    "a_grade_requires_same_fact_layer": true,
+    "guidance_manifested": true,
+    "memory_mechanism_adds_over_prompt": true
+  },
+  "case_id": "solar_public_001",
+  "case_title": "Synthetic public solar fixture pilot",
+  "conditions": [
+    "baseline",
+    "memory",
+    "prompt_only"
+  ],
+  "created_at": "2026-06-18T00:00:00Z",
+  "experiment_id": "MABW-080",
+  "frozen_fact_layer": {
+    "manifest_path": "frozen_fact_layer.json"
+  },
+  "guidance_set": {
+    "path": "guidance_set.json"
+  },
+  "public_safe": true,
+  "repo_commit": "public-fixture-skeleton",
+  "schema_version": "mabw.experiment_080.case.v1"
+}

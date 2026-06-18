@@ -1,0 +1,22 @@
+{
+  "assessed_at": "<UTC timestamp>",
+  "assessed_by": "<masked-human-reviewer>",
+  "case_id": "solar_public_001",
+  "condition": "memory",
+  "experiment_id": "MABW-080",
+  "guidance_scores": [
+    {
+      "assessment_method": "human",
+      "entry_id": "AG-0001",
+      "evidence_excerpt": "<short reader-facing excerpt supporting the assessment>",
+      "manifestation_score": 0,
+      "overapplication": false,
+      "relevant": true
+    }
+  ],
+  "notes": [
+    "Template only. Replace placeholders after a completed condition run is registered and scored."
+  ],
+  "run_id": "<registered-run-id>",
+  "schema_version": "mabw.experiment_080.assessment.v1"
+}
