@@ -68,7 +68,7 @@ MABW 的用户心智模型不是“有多少个控制面”，而是每次简报
 
 * [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)：展示 Improvement Memory materialization、门禁执行、控制面闭环。它是 integration reference，不是输出质量提升或严格因果效果证明。
 * [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。MABW 当前能追溯错误传播链，但还不能证明每个来源语义支持每个子主张。
-* [v0.8.5 preview release note](docs/releases/v0.8.5.md)：MABW-080 experiment harness metadata、deterministic scorecard draft、assessment import，以及 delivery snapshot convenience copies。
+* [v0.8.5 preview release note](docs/releases/v0.8.5.md)：MABW-080 experiment harness metadata、deterministic scorecard draft、assessment import，以及 delivery snapshot convenience copies。080 operator sequence 见 [MABW-080 experiment guide](docs/experiments-080.md)。
 
 我们公开失败分析，因为问责也适用于这个项目自己。
 
@@ -350,6 +350,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
 [失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md) ·
 [v0.8.5 Preview](docs/releases/v0.8.5.md) ·
+[MABW-080 experiment guide](docs/experiments-080.md) ·
 [发布验证清单](docs/launch-validation.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·
 [安全](docs/security.md) ·

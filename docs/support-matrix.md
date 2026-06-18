@@ -137,6 +137,9 @@ operator instructions, and leaves the run at Analyst. It does not create generic
 workspace config, run subagents, gates, finalize, register runs, score runs,
 summarize cases, or create Improvement Memory.
 
+For the full experimental command sequence and public-claim boundaries, see
+[MABW-080 experiment guide](experiments-080.md).
+
 ## Runtimes
 
 | Runtime | Status |

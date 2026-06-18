@@ -141,7 +141,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 
 - **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
-- **[v0.8.5 preview release notes](docs/releases/v0.8.5.md)**: MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, and delivery snapshot convenience copies.
+- **[v0.8.5 preview release notes](docs/releases/v0.8.5.md)**: MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, and delivery snapshot convenience copies. The operator sequence is documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.
 
@@ -182,7 +182,7 @@ Three on-ramps, one spine. There is no lite mode: entry cost drops, the accounta
 | Run once | ~30 min | A few local text files, no search backend, `new -> run -> status -> deliver` |
 | Live with it | weekly | Configured sources, feedback loop, approved preferences |
 
-Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
 
 ## 🧭 A Note On Provenance
 

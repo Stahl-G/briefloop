@@ -67,7 +67,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. MABW traced how errors propagated; it did not prove semantic correctness.
-- [v0.8.5 preview release note](docs/releases/v0.8.5.md): MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, and delivery snapshot convenience copies.
+- [v0.8.5 preview release note](docs/releases/v0.8.5.md): MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, and delivery snapshot convenience copies. The operator sequence is documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -348,6 +348,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
 [v0.8.5 Preview](docs/releases/v0.8.5.md) ·
+[MABW-080 experiment guide](docs/experiments-080.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·
 [Migration guide](docs/MIGRATION.md)
