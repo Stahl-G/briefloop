@@ -1,0 +1,32 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "durable_source_evidence_or_source_pack",
+      "path": "input/sources/source_pack.json",
+      "sha256": "30ddf2f5b7da11e97431e4466dabba87e1c2cddb3f15fd5263c1cf8e55150909"
+    },
+    {
+      "artifact_id": "input_classification",
+      "path": "output/input_classification.json",
+      "sha256": "00159d53c9e45b91746fb25b3199f78217f5d211e9eb339338e5bec6479c9b47"
+    },
+    {
+      "artifact_id": "candidate_claims",
+      "path": "output/intermediate/candidate_claims.json",
+      "sha256": "56739c47ca9698037e4991bfea5bff69f1e78e7f0ae5782390567846cd7cb024"
+    },
+    {
+      "artifact_id": "screened_candidates",
+      "path": "output/intermediate/screened_candidates.json",
+      "sha256": "6f3fa7f050bb52254240e0605ee3096c1379c80f046621ebcbc6de0fe06613f4"
+    },
+    {
+      "artifact_id": "claim_ledger",
+      "path": "output/intermediate/claim_ledger.json",
+      "sha256": "8b9d459e8476e683bb6c8c6d3b66fa78d60bf03964676e9ca70346d574f43b87"
+    }
+  ],
+  "schema_version": "mabw.experiment_080.frozen_fact_layer.v1",
+  "source_archive_path": "seed_archive/mabw-20260618T000000Z-solarseed0001/manifest.json",
+  "source_run_id": "mabw-20260618T000000Z-solarseed0001"
+}
