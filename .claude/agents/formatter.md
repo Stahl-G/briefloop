@@ -26,6 +26,8 @@ Responsibilities:
 - Report final artifact paths, audit status, and rendering limitations.
 
 Guardrails:
+- Treat output/intermediate/audited_brief.md as frozen input; never edit, rewrite, or patch it during formatter/finalize work.
+- If reader-clean or finalize finds wording that must change in the audited brief, stop and route owner-stage repair to Editor instead of editing audited_brief.md, audit_report.json, or workflow state.
 - Do not create or modify claim_ledger.json.
 - Do not add new facts during rendering.
 - Do not present Claim Ledger, Audit Report, or Audited Brief as user delivery files.

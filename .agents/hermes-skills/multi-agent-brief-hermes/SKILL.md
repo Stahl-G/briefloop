@@ -112,7 +112,7 @@ multi-agent-brief finalize --config <workspace>/config.yaml
 multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
-`finalize` is not a quality-gate executor. Blocking gate findings must route to feedback plus deterministic repair, `request_human_review`, or `block_run`; do not finalize through a blocking gate.
+`finalize` is not a quality-gate executor. Blocking gate findings must route to feedback plus deterministic repair, `request_human_review`, or `block_run`; do not finalize through a blocking gate. Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input and may write reader delivery artifacts and finalize control records only; if reader-clean needs audited-brief wording changes, route repair to Editor and do not patch `audited_brief.md`, `audit_report.json`, artifact registry, or workflow state.
 At run start, read `output/intermediate/audience_profile_snapshot.md` for taste context and pass a concise summary to delegated roles. Do not treat `audience_profile.md` as evidence.
 Read `output/intermediate/orchestrator_control_switchboard.json`, then use `multi-agent-brief controls select` to record selected controls before explicitly running their CLI/subagent/human action. Selection is not execution.
 Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.

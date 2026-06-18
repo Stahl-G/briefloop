@@ -756,6 +756,12 @@ Parent runs:
 multi-agent-brief finalize --config <workspace>/config.yaml
 ```
 
+Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input.
+It may write reader delivery artifacts and finalize control records only. If
+reader-clean requires wording changes in the audited brief, route repair to Editor;
+do not patch `audited_brief.md`, `audit_report.json`, artifact registry, or
+workflow state.
+
 Then reports delivery artifacts:
 
 - `output/delivery/brief.md`

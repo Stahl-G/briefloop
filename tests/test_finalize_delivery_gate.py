@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
 from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
     _finalize_report_delivery_artifact_reasons,
     _finalize_report_reader_artifact_paths,
@@ -17,6 +18,8 @@ from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _sha256_file(path: Path) -> str:
@@ -390,6 +393,73 @@ def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Pa
     assert not (output_dir / "brief.md").exists()
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
+
+
+def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_path: Path, capsys):
+    workspace = tmp_path / "workspace"
+    input_dir = workspace / "input"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    input_dir.mkdir(parents=True)
+    intermediate.mkdir(parents=True)
+    (input_dir / "source.md").write_text("dummy", encoding="utf-8")
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: Frozen Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(_passing_audit_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    workflow_path = runtime_state_paths(workspace)["workflow_state"]
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    _write_audit_control_chain(intermediate)
+    seen_finalize = False
+    for stage_id, entry in workflow["stage_statuses"].items():
+        if stage_id == "finalize":
+            seen_finalize = True
+            entry["status"] = "ready"
+            entry["reason"] = ""
+        elif not seen_finalize:
+            entry["status"] = "complete"
+            entry["reason"] = f"{stage_id} complete"
+        else:
+            entry["status"] = "pending"
+            entry["reason"] = ""
+    workflow["current_stage"] = "finalize"
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    audited.write_text(
+        "# Brief\n\nFormatter changed the frozen audited brief. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+
+    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
+    captured = capsys.readouterr()
+
+    assert "Runtime state integrity check failed because a frozen artifact changed" in captured.err
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+    assert not (intermediate / "finalize_report.json").exists()
+    workflow = json.loads(runtime_state_paths(workspace)["workflow_state"].read_text(encoding="utf-8"))
+    assert workflow["run_integrity"]["status"] == "contaminated"
+    assert workflow["run_integrity"]["reference_eligible"] is False
+    assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
 
 
 def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(tmp_path: Path):

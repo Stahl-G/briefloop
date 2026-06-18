@@ -91,7 +91,10 @@ FINALIZE_GATE_NOTE = (
     "`output/delivery/`, run `multi-agent-brief gates check --workspace <workspace> "
     "--stage finalize --brief <workspace>/output/brief.md`, then run "
     "`multi-agent-brief state finalize-complete --workspace <workspace> --reason "
-    "\"Reader artifacts finalized and clean.\"`."
+    "\"Reader artifacts finalized and clean.\"`. Finalize/formatter reads "
+    "`output/intermediate/audited_brief.md` as frozen input and must not edit it; "
+    "if reader-clean requires wording changes in the audited brief, stop and "
+    "route repair to Editor."
 )
 ROLE_TOPOLOGY_HANDOFF_NOTE = (
     "Role topology note: read configs/policy_packs/default.yaml before delegating. "
@@ -120,6 +123,7 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet.",
     "After state stage-complete succeeds, that stage's output artifacts are frozen for downstream stages; later stages must not rewrite them in place.",
     "If a downstream stage finds schema mismatch or invalid frozen upstream artifacts, route repair back to the owner stage instead of editing the artifact directly.",
+    "Formatter/finalize may only write reader delivery artifacts and finalize control records; it must not patch output/intermediate/audited_brief.md.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
     "Scout chunk outputs are scratch material only; if Scout work is split across chunks or child agents, join chunks deterministically before writing candidate_claims.json.",
     "Record successful stage transitions with multi-agent-brief state stage-complete only after artifact-level completion evidence is available.",
@@ -485,7 +489,8 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"11. multi-agent-brief gates check --workspace {ws_path} --stage auditor\n"
             f"12. multi-agent-brief state check --workspace {ws_path} --strict\n"
             f"13. multi-agent-brief state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
-            f"14. multi-agent-brief finalize --config {ws_path}/config.yaml\n"
+            f"14. multi-agent-brief finalize --config {ws_path}/config.yaml "
+            "(read audited_brief.md as frozen input; do not edit it during finalize)\n"
             f"15. multi-agent-brief gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
             f"16. multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
         ),

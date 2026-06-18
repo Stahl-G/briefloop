@@ -28,7 +28,7 @@ Read workspace context -> read contract references -> identify the next stage ->
 8. Verify each expected artifact exists and is non-empty before selecting the next decision.
 9. Decide `retry_stage`, `request_human_review`, or `block_run` with `state decide`; for `delegate_repair`, use the deterministic repair route/start/complete transaction. Use completion transactions for success paths.
 10. Run quality gates, strict state check, and `state stage-complete` before finalize.
-11. Run `multi-agent-brief finalize --config <workspace>/config.yaml` after audit readiness and gate readiness.
+11. Run `multi-agent-brief finalize --config <workspace>/config.yaml` after audit readiness and gate readiness. Finalize reads `output/intermediate/audited_brief.md` as frozen input and must not patch it.
 12. Run `state finalize-complete` after finalize writes reader-facing artifacts.
 13. Optionally run `multi-agent-brief provenance build/show/validate` for audit/debug projection after runtime state exists.
 
@@ -137,7 +137,7 @@ multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"
 
 Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Use the repair route/start transaction before owner-stage edits, or choose `request_human_review` / `block_run` when no deterministic route exists.
 
-After repair-complete, rerun downstream stages from must_rerun_from. For non-repair blocks, choose `request_human_review` or `block_run`; do not finalize. `finalize` is not a quality-gate executor.
+After repair-complete, rerun downstream stages from must_rerun_from. For non-repair blocks, choose `request_human_review` or `block_run`; do not finalize. `finalize` is not a quality-gate executor. Formatter/finalize may write only reader-facing delivery artifacts and finalize control records; it must not edit `output/intermediate/audited_brief.md`, `output/intermediate/audit_report.json`, artifact registry, or workflow state. If reader-clean requires wording changes to the audited brief, stop and route repair to Editor before rerunning downstream stages.
 
 After finalize writes reader-facing artifacts, run:
 

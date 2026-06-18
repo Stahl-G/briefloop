@@ -154,10 +154,10 @@ def finalize_reader_outputs(
 ) -> FinalizeResult:
     """Regenerate reader-facing artifacts from internal audited markdown.
 
-    Agent-assisted workflows write or rewrite ``output/intermediate/audited_brief.md``
-    before reader-facing delivery artifacts are rendered.
-    This function is the final delivery gate: it preserves the cited audited
-    artifact for auditability, then writes reader-facing Markdown/DOCX outputs
+    Agent-assisted workflows must finish any owner-stage edits to
+    ``output/intermediate/audited_brief.md`` before finalization begins.
+    This function reads that frozen audited artifact as input and writes only
+    reader-facing Markdown/DOCX delivery outputs plus finalize control records,
     with internal claim citations rendered as reader-facing source labels when
     Claim Ledger evidence is available.
     """

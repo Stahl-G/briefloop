@@ -11,6 +11,7 @@ from multi_agent_brief.core.config import build_run_settings, get_output_config,
 from multi_agent_brief.orchestrator.runtime_state import (
     E_ACTIVE_REPAIR_OPEN,
     RuntimeStateError,
+    check_runtime_state,
     raise_if_active_repair_open,
     runtime_state_paths,
 )
@@ -52,7 +53,7 @@ def handle(args: argparse.Namespace) -> int:
     output_config = get_output_config(config)
 
     try:
-        _preflight_no_active_repair(workspace)
+        _preflight_runtime_state_before_finalize(workspace)
         result = finalize_reader_outputs(
             output_dir=settings["output_dir"],
             project_name=settings["project_name"],
@@ -91,8 +92,9 @@ def handle(args: argparse.Namespace) -> int:
     return 0
 
 
-def _preflight_no_active_repair(workspace: Path) -> None:
-    workflow_path = runtime_state_paths(workspace)["workflow_state"]
+def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
+    paths = runtime_state_paths(workspace)
+    workflow_path = paths["workflow_state"]
     if not workflow_path.exists():
         return
     try:
@@ -109,3 +111,10 @@ def _preflight_no_active_repair(workspace: Path) -> None:
         if exc.error_code == E_ACTIVE_REPAIR_OPEN:
             raise
         raise RuntimeStateError(f"Unable to verify active repair state before finalize: {exc}") from exc
+    if paths["runtime_manifest"].exists():
+        try:
+            check_runtime_state(workspace=workspace, actor="cli")
+        except RuntimeStateError:
+            raise
+        except Exception as exc:
+            raise RuntimeStateError(f"Unable to verify runtime state integrity before finalize: {exc}") from exc

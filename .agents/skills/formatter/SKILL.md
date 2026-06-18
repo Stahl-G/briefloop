@@ -38,6 +38,11 @@ Use after auditor has produced audit_report.json and audited_brief.md is ready f
 - Strip internal [src:<claim_id>] markers from reader-facing delivery artifacts.
 - Generate configured `source_appendix.md` from cited Claim Ledger sources only as an audit/control copy.
 - Preserve the meaning and structure of the audited brief.
+- Treat `output/intermediate/audited_brief.md` as frozen input. Do not edit,
+  rewrite, or patch it during formatter/finalize work.
+- If reader-clean or finalize finds wording that must change in the audited
+  brief, stop and route owner-stage repair to Editor; do not patch
+  `audited_brief.md`, `audit_report.json`, or workflow state.
 - Do not expose raw claim IDs, source IDs, evidence text, local paths, or file URLs in delivery artifacts or source appendix audit copies.
 - Treat the source appendix as an audit/control source list, not semantic proof that claims are true.
 - Do not present Claim Ledger, Audit Report, or Audited Brief as user delivery files.

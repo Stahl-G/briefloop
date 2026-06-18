@@ -155,6 +155,8 @@ def test_hermes_skill_uses_delegate_task_runtime():
     assert "multi-agent-brief state check --workspace <workspace> --strict" in skill
     assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in skill
     assert "multi-agent-brief state finalize-complete --workspace <workspace>" in skill
+    assert "Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input" in skill
+    assert "route repair to Editor" in skill
     assert "Did 0 searches" in skill
     assert "every query returns an empty result set" in skill
     assert "Do not switch to source-planner" in skill

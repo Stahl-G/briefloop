@@ -386,6 +386,25 @@ def test_runtime_prompts_do_not_use_literal_claim_id_placeholder():
         assert "[src:CLAIM_ID]" not in text, f"literal placeholder leaked in {path}"
 
 
+def test_formatter_contract_forbids_patching_frozen_audited_brief():
+    prompt_paths = [
+        "configs/agent_roles.yaml",
+        ".agents/skills/formatter/SKILL.md",
+        ".agents/hermes-skills/multi-agent-brief-hermes/SKILL.md",
+        ".agents/hermes-skills/multi-agent-brief-hermes/references/delegate-task-sequence.md",
+        ".claude/commands/mabw.md",
+        ".claude/agents/formatter.md",
+        ".codex/agents/formatter.toml",
+        ".opencode/agents/brief-formatter.md",
+    ]
+    for path in prompt_paths:
+        text = _read(path)
+        assert "audited_brief.md" in text, f"audited brief boundary missing in {path}"
+        assert "frozen input" in text, f"frozen input boundary missing in {path}"
+        assert "repair" in text, f"repair route guidance missing in {path}"
+        assert "workflow state" in text or "workflow_state" in text, f"workflow-state edit ban missing in {path}"
+
+
 def test_claude_mabw_command_is_five_verb_writer_surface():
     text = _read(".claude/commands/mabw.md")
     assert "Claude Code is the first-class writer / five-verb path." in text

@@ -230,6 +230,20 @@ def test_generated_analyst_and_editor_explain_audited_brief_ownership(manifest):
     assert "do not wrap heading text in inline formatting" in rendered
 
 
+def test_generated_formatter_preserves_frozen_audited_brief_boundary(manifest):
+    role = manifest["roles"]["formatter"]
+    rendered = "\n".join([
+        render_codex_agent("formatter", role, manifest),
+        render_claude_agent("formatter", role, manifest),
+        render_opencode_agent("formatter", role, manifest),
+    ])
+
+    assert "Treat output/intermediate/audited_brief.md as frozen input" in rendered
+    assert "never edit, rewrite, or patch it during formatter/finalize work" in rendered
+    assert "route owner-stage repair to Editor" in rendered
+    assert "audit_report.json, or workflow state" in rendered
+
+
 def test_generated_assets_scope_claim_freeze_to_claim_ledger_runtime_protocol(manifest):
     rendered_parts: list[str] = [render_opencode_command_generate_brief(manifest)]
     for name, role in manifest["roles"].items():

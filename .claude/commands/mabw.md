@@ -255,6 +255,10 @@ multi-agent-brief finalize --config <workspace>/config.yaml
 multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
+Finalize reads `output/intermediate/audited_brief.md` as frozen input. Do not
+edit `audited_brief.md`, `audit_report.json`, artifact registry, or workflow
+state during finalize. If reader-clean requires wording changes to the audited
+brief, stop and route repair to Editor before rerunning downstream stages.
 
 If no delivery target is specified, run:
 
