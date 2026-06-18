@@ -79,6 +79,7 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_MISSING,
     ARTIFACT_REGISTRY_SCHEMA,
     ARTIFACT_VALID,
+    CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE,
     _artifact_registry_path,
     _artifact_registry_sha,
     _build_artifact_registry,
@@ -1840,7 +1841,9 @@ def _claim_ledger_freeze_reasons(
     if not ledger_path.exists() or not ledger_path.is_file():
         reasons.append(f"Frozen Claim Ledger is missing: {_workspace_relative(workspace, ledger_path)}.")
     elif _sha256_file(ledger_path) != str(freeze.get("claim_ledger_sha256") or ""):
-        reasons.append("Frozen Claim Ledger hash does not match current claim_ledger.json.")
+        reasons.append(
+            f"Frozen Claim Ledger hash does not match current claim_ledger.json. {CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE}"
+        )
     return reasons
 
 
@@ -1914,9 +1917,14 @@ def freeze_claim_ledger_transaction(
                 "decision": "freeze_claim_ledger_idempotent",
             }
             return state
-        raise RuntimeStateError(
+        message = (
             "Claim Ledger is already frozen; repeat freeze requires unchanged claim_drafts.json "
-            "and claim_ledger.json. Route repair/reset before freezing changed drafts.",
+            "and claim_ledger.json. Route repair/reset before freezing changed drafts."
+        )
+        if any(CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE in reason for reason in freeze_reasons):
+            message = f"{message} {CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE}"
+        raise RuntimeStateError(
+            message,
             details={
                 "freeze_reasons": freeze_reasons,
                 "frozen_source_sha256": frozen_source_sha,
