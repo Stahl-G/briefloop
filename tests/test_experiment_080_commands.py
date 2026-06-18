@@ -1317,6 +1317,114 @@ def test_experiments_080_score_run_writes_deterministic_scorecard_draft(tmp_path
 
 
 def test_experiments_080_score_run_accepts_fast_rerun_downstream_only_timing(tmp_path, capsys):
+    scorecard = _scorecard_from_fast_rerun_timing(
+        tmp_path,
+        capsys,
+        {
+            "schema_version": "mabw.control_timing.v1",
+            "kind": "control_trace_timing_buckets",
+            "source": "event_log",
+            "status": "incomplete",
+            "total_elapsed_seconds": 123.0,
+            "stages": [
+                {
+                    "stage_id": "scout",
+                    "status": "incomplete",
+                    "reason": "completion_event_missing",
+                },
+                {"stage_id": "analyst", "status": "complete"},
+                {"stage_id": "editor", "status": "complete"},
+                {"stage_id": "auditor", "status": "complete"},
+            ],
+            "finalize": {"stage_id": "finalize", "status": "complete"},
+            "warnings": ["scout: completion event missing"],
+        },
+    )
+
+    assert scorecard["timing_summary"]["status"] == "downstream_only"
+    assert scorecard["timing_summary"]["raw_status"] == "incomplete"
+    assert scorecard["control_integrity"]["timing_available"] is True
+
+
+def test_experiments_080_score_run_rejects_downstream_only_timing_with_missing_analyst(
+    tmp_path,
+    capsys,
+):
+    scorecard = _scorecard_from_fast_rerun_timing(
+        tmp_path,
+        capsys,
+        {
+            "schema_version": "mabw.control_timing.v1",
+            "kind": "control_trace_timing_buckets",
+            "source": "event_log",
+            "status": "incomplete",
+            "total_elapsed_seconds": 123.0,
+            "stages": [
+                {
+                    "stage_id": "scout",
+                    "status": "incomplete",
+                    "reason": "completion_event_missing",
+                },
+                {
+                    "stage_id": "analyst",
+                    "status": "incomplete",
+                    "reason": "completion_event_missing",
+                },
+                {"stage_id": "editor", "status": "complete"},
+                {"stage_id": "auditor", "status": "complete"},
+            ],
+            "finalize": {"stage_id": "finalize", "status": "complete"},
+            "warnings": [
+                "scout: completion event missing",
+                "analyst: completion event missing",
+            ],
+        },
+    )
+
+    assert scorecard["timing_summary"]["status"] == "incomplete"
+    assert scorecard["control_integrity"]["timing_available"] is False
+
+
+def test_experiments_080_score_run_rejects_downstream_only_timing_with_missing_finalize(
+    tmp_path,
+    capsys,
+):
+    scorecard = _scorecard_from_fast_rerun_timing(
+        tmp_path,
+        capsys,
+        {
+            "schema_version": "mabw.control_timing.v1",
+            "kind": "control_trace_timing_buckets",
+            "source": "event_log",
+            "status": "incomplete",
+            "total_elapsed_seconds": 123.0,
+            "stages": [
+                {
+                    "stage_id": "scout",
+                    "status": "incomplete",
+                    "reason": "completion_event_missing",
+                },
+                {"stage_id": "analyst", "status": "complete"},
+                {"stage_id": "editor", "status": "complete"},
+                {"stage_id": "auditor", "status": "complete"},
+            ],
+            "finalize": {
+                "stage_id": "finalize",
+                "status": "incomplete",
+                "reason": "completion_event_missing",
+            },
+            "warnings": [
+                "scout: completion event missing",
+                "finalize: completion event missing",
+            ],
+        },
+    )
+
+    assert scorecard["timing_summary"]["status"] == "incomplete"
+    assert scorecard["control_integrity"]["timing_available"] is False
+
+
+def _scorecard_from_fast_rerun_timing(tmp_path, capsys, timing: dict) -> dict:
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -1324,14 +1432,7 @@ def test_experiments_080_score_run_accepts_fast_rerun_downstream_only_timing(tmp
     archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
     _add_scorecard_archive_reports(archive_manifest)
     manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
-    manifest["timing"] = {
-        "schema_version": "mabw.control_timing.v1",
-        "kind": "control_trace_timing_buckets",
-        "source": "event_log",
-        "status": "incomplete",
-        "total_elapsed_seconds": 123.0,
-        "warnings": ["scout: completion event missing"],
-    }
+    manifest["timing"] = timing
     _write_json(archive_manifest, manifest)
     run_id = archive_manifest.parent.name
     _write_terminal_runtime(
@@ -1350,10 +1451,30 @@ def test_experiments_080_score_run_accepts_fast_rerun_downstream_only_timing(tmp
 
     assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
 
-    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
-    assert scorecard["timing_summary"]["status"] == "downstream_only"
-    assert scorecard["timing_summary"]["raw_status"] == "incomplete"
-    assert scorecard["control_integrity"]["timing_available"] is True
+    return json.loads(scorecard_path.read_text(encoding="utf-8"))
+
+
+def test_experiments_080_score_run_does_not_promote_downstream_only_without_stage_gaps(
+    tmp_path,
+    capsys,
+):
+    scorecard = _scorecard_from_fast_rerun_timing(
+        tmp_path,
+        capsys,
+        {
+            "schema_version": "mabw.control_timing.v1",
+            "kind": "control_trace_timing_buckets",
+            "source": "event_log",
+            "status": "incomplete",
+            "total_elapsed_seconds": 123.0,
+            "stages": [{"stage_id": "analyst", "status": "complete"}],
+            "finalize": {"stage_id": "finalize", "status": "complete"},
+            "warnings": ["scout: completion event missing"],
+        },
+    )
+
+    assert scorecard["timing_summary"]["status"] == "incomplete"
+    assert scorecard["control_integrity"]["timing_available"] is False
 
 
 def test_experiments_080_score_run_is_idempotent_when_output_matches(tmp_path, capsys):
