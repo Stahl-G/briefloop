@@ -141,7 +141,7 @@ def _validate_candidate_claims_payload(payload: Any) -> tuple[str, str]:
 
 
 def _candidate_claim_uses_legacy_shape(candidate: dict[str, Any]) -> bool:
-    return "claim" in candidate or ("candidate_id" in candidate and "statement" not in candidate)
+    return "statement" not in candidate and ("claim" in candidate or "candidate_id" in candidate)
 
 
 def _validate_legacy_candidate_claim(
@@ -238,8 +238,9 @@ def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str
     if not isinstance(selected, list):
         return ARTIFACT_INVALID, "screened_candidates_schema_error:selected"
     for idx, candidate in enumerate(selected):
-        if not _valid_screened_candidate_entry(candidate):
-            return ARTIFACT_INVALID, f"screened_candidates_schema_error:selected[{idx}]"
+        validation_error = _selected_screened_candidate_error(candidate)
+        if validation_error:
+            return ARTIFACT_INVALID, f"screened_candidates_schema_error:selected[{idx}].{validation_error}"
 
     has_discard_bucket = False
     for bucket in ("excluded", "deprioritized"):
@@ -262,6 +263,17 @@ def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str
         return ARTIFACT_INVALID, "screened_candidates_schema_error:screening_policy"
 
     return ARTIFACT_VALID, "valid_screened_candidates_schema"
+
+
+def _selected_screened_candidate_error(candidate: Any) -> str | None:
+    if not isinstance(candidate, dict):
+        return "entry"
+    for field in ("statement", "evidence_text", "source_id"):
+        if not _non_empty_string(candidate.get(field)):
+            return field
+    if not _candidate_claim_has_source_date(candidate):
+        return "published_at_or_retrieved_at"
+    return None
 
 
 def _valid_screened_candidate_entry(candidate: Any) -> bool:
