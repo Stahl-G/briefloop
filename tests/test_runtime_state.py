@@ -102,6 +102,15 @@ def _write_json_artifact(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
 
 
+def _write_input_classification(ws: Path, payload: dict) -> None:
+    output_dir = ws / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "input_classification.json").write_text(
+        json.dumps(payload) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_feedback_issue(ws: Path, *, stage_id: str, artifact_id: str, status: str = "open") -> None:
     out = _intermediate(ws)
     (out / "feedback_issues.json").write_text(
@@ -173,6 +182,28 @@ def _valid_claim_drafts_payload(*, duplicate: bool = False) -> str:
     if duplicate:
         drafts.append(dict(drafts[0]))
     return json.dumps({"schema_version": "mabw.claim_drafts.v1", "drafts": drafts}) + "\n"
+
+
+def _valid_candidate_claims_payload() -> str:
+    return json.dumps(
+        [
+            {
+                "candidate_id": "CAND-001",
+                "claim": "ExampleCo opened a demo facility.",
+                "source_id": "SRC-001",
+            }
+        ]
+    ) + "\n"
+
+
+def _valid_screened_candidates_payload(*, status: str = "selected", reason: str | None = None) -> str:
+    candidate = {
+        "candidate_id": "CAND-001",
+        "screening_status": status,
+    }
+    if reason is not None:
+        candidate["screening_reason"] = reason
+    return json.dumps([candidate]) + "\n"
 
 
 def _freeze_claim_ledger_fixture(ws: Path, *, duplicate: bool = False) -> None:
@@ -407,7 +438,7 @@ def _write_fact_layer_inputs(ws: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "input_classification.json").write_text(
         json.dumps({
-            "evidence": [{"path": str(source_dir / "source-001.md"), "name": "source-001.md"}],
+            "evidence": [{"path": "input/sources/source-001.md", "name": "source-001.md"}],
             "feedback": [],
             "instruction": [],
             "context": [],
@@ -1209,9 +1240,127 @@ def test_invalid_current_stage_output_blocks_only_that_stage(tmp_path):
     registry = state["artifact_registry"]["artifacts"]
 
     assert registry["candidate_claims"]["status"] == "invalid"
+    assert registry["candidate_claims"]["validation_result"] == "parse_error"
     assert workflow["current_stage"] == "scout"
     assert workflow["stage_statuses"]["scout"]["status"] == "blocked"
     assert workflow["stage_statuses"]["claim-ledger"]["status"] == "pending"
+
+
+def test_state_check_validates_candidate_screened_and_input_classification_shapes(tmp_path):
+    ws = _write_workspace(tmp_path)
+    source_path = ws / "input" / "sources" / "source-001.md"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text("# Source\n\nEvidence.\n", encoding="utf-8")
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "candidate_claims.json", _valid_candidate_claims_payload())
+    _write_json_artifact(ws, "screened_candidates.json", _valid_screened_candidates_payload())
+    _write_input_classification(
+        ws,
+        {
+            "evidence": [{"path": str(source_path), "name": "source-001.md"}],
+            "feedback": [],
+            "instruction": [],
+            "context": [],
+            "skipped": [],
+        },
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    registry = state["artifact_registry"]["artifacts"]
+
+    assert registry["candidate_claims"]["status"] == "valid"
+    assert registry["candidate_claims"]["validation_result"] == "valid_candidate_claims_schema"
+    assert registry["screened_candidates"]["status"] == "valid"
+    assert registry["screened_candidates"]["validation_result"] == "valid_screened_candidates_schema"
+    assert registry["input_classification"]["status"] == "valid"
+    assert registry["input_classification"]["validation_result"] == "valid_input_classification_schema"
+
+
+def test_state_check_marks_candidate_claims_missing_required_field_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps([{"candidate_id": "CAND-001", "source_id": "SRC-001"}]) + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "candidate_claims_schema_error:candidate[0].claim"
+
+
+def test_state_check_marks_duplicate_candidate_claim_ids_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "A claim.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-001", "claim": "Another claim.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "candidate_claims_schema_error:duplicate_candidate_id:CAND-001"
+
+
+def test_state_check_marks_invalid_screening_status_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps([{"candidate_id": "CAND-001", "screening_status": "maybe"}]) + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:candidate[0].screening_status"
+
+
+def test_state_check_requires_screening_reason_for_rejected_candidate(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "screened_candidates.json", _valid_screened_candidates_payload(status="rejected"))
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:candidate[0].reason"
+
+
+def test_state_check_marks_input_classification_path_escape_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_input_classification(
+        ws,
+        {
+            "evidence": [{"path": "../outside.md", "name": "outside.md"}],
+            "feedback": [],
+            "instruction": [],
+            "context": [],
+            "skipped": [],
+        },
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["input_classification"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "input_classification_schema_error:evidence[0].path"
 
 
 def test_state_decide_validates_decision_vocabulary(tmp_path, capsys):
@@ -3810,7 +3959,7 @@ def test_run_archive_uses_source_discovery_evidence_filter_for_fact_layer_source
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "input_classification.json").write_text(
         json.dumps({
-            "evidence": [{"path": str(source_dir / filename), "name": filename}],
+            "evidence": [{"path": f"input/sources/{filename}", "name": filename}],
             "feedback": [],
             "instruction": [],
             "context": [],

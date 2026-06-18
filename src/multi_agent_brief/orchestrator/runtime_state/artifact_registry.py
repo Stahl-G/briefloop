@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -37,6 +37,34 @@ ARTIFACT_MISSING = "missing"
 ARTIFACT_PRESENT = "present"
 ARTIFACT_VALID = "valid"
 ARTIFACT_INVALID = "invalid"
+
+_SCREENING_STATUSES = {
+    "keep",
+    "selected",
+    "reject",
+    "rejected",
+    "deprioritized",
+    "exclude",
+    "excluded",
+    "watch",
+}
+_SCREENING_STATUSES_REQUIRING_REASON = {
+    "reject",
+    "rejected",
+    "deprioritized",
+    "exclude",
+    "excluded",
+}
+_INPUT_CLASSIFICATION_BUCKETS = {"evidence", "context", "feedback", "instruction", "skipped"}
+_INPUT_CLASSIFICATION_PATH_KEYS = {
+    "path",
+    "file",
+    "source_path",
+    "relative_path",
+    "input_path",
+    "workspace_path",
+    "extracted_markdown",
+}
 
 
 @dataclass(frozen=True)
@@ -72,6 +100,12 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_claim_drafts_payload(payload)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
+            if artifact_id == "candidate_claims":
+                return _validate_candidate_claims_payload(payload)
+            if artifact_id == "screened_candidates":
+                return _validate_screened_candidates_payload(payload)
+            if artifact_id == "input_classification":
+                return _validate_input_classification_payload(payload, artifact_path=path)
         elif fmt in {"yaml", "yml"}:
             yaml.safe_load(text)
         elif fmt == "markdown":
@@ -82,6 +116,107 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
         return ARTIFACT_INVALID, "parse_error"
 
     return ARTIFACT_VALID, "valid_minimum"
+
+
+def _validate_candidate_claims_payload(payload: Any) -> tuple[str, str]:
+    if not isinstance(payload, list):
+        return ARTIFACT_INVALID, "candidate_claims_schema_error:not_list"
+
+    seen_ids: set[str] = set()
+    for idx, candidate in enumerate(payload):
+        if not isinstance(candidate, dict):
+            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}]"
+        for field in ("candidate_id", "claim", "source_id"):
+            value = candidate.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
+        candidate_id = str(candidate["candidate_id"]).strip()
+        if candidate_id in seen_ids:
+            return ARTIFACT_INVALID, f"candidate_claims_schema_error:duplicate_candidate_id:{candidate_id}"
+        seen_ids.add(candidate_id)
+
+    return ARTIFACT_VALID, "valid_candidate_claims_schema"
+
+
+def _validate_screened_candidates_payload(payload: Any) -> tuple[str, str]:
+    if not isinstance(payload, list):
+        return ARTIFACT_INVALID, "screened_candidates_schema_error:not_list"
+
+    for idx, candidate in enumerate(payload):
+        if not isinstance(candidate, dict):
+            return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}]"
+        candidate_id = candidate.get("candidate_id")
+        if not isinstance(candidate_id, str) or not candidate_id.strip():
+            return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}].candidate_id"
+        status = candidate.get("screening_status")
+        if not isinstance(status, str) or status.strip() not in _SCREENING_STATUSES:
+            return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}].screening_status"
+        if status.strip() in _SCREENING_STATUSES_REQUIRING_REASON:
+            has_reason = any(
+                _non_empty_string(candidate.get(field))
+                for field in ("reason", "screening_reason", "excluded_reason")
+            )
+            if not has_reason:
+                return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}].reason"
+
+    return ARTIFACT_VALID, "valid_screened_candidates_schema"
+
+
+def _validate_input_classification_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ARTIFACT_INVALID, "input_classification_schema_error:not_object"
+
+    workspace = _workspace_root_for_input_classification(artifact_path)
+    for bucket in sorted(_INPUT_CLASSIFICATION_BUCKETS):
+        entries = payload.get(bucket)
+        if entries is None:
+            continue
+        if not isinstance(entries, list):
+            return ARTIFACT_INVALID, f"input_classification_schema_error:{bucket}"
+        for idx, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            for key, value in entry.items():
+                if key not in _INPUT_CLASSIFICATION_PATH_KEYS or not isinstance(value, str):
+                    continue
+                if _input_classification_path_is_unsafe(value, workspace=workspace):
+                    return ARTIFACT_INVALID, f"input_classification_schema_error:{bucket}[{idx}].{key}"
+
+    return ARTIFACT_VALID, "valid_input_classification_schema"
+
+
+def _workspace_root_for_input_classification(artifact_path: Path) -> Path | None:
+    if artifact_path.name == "input_classification.json" and artifact_path.parent.name == "output":
+        return artifact_path.parent.parent
+    return None
+
+
+def _input_classification_path_is_unsafe(value: str, *, workspace: Path | None) -> bool:
+    raw = value.strip()
+    if not raw:
+        return False
+    if raw.startswith("~"):
+        return True
+    normalized = raw.replace("\\", "/")
+    posix_path = PurePosixPath(normalized)
+    windows_path = PureWindowsPath(raw)
+    if ".." in posix_path.parts or ".." in windows_path.parts:
+        return True
+    if windows_path.drive:
+        return True
+    path = Path(raw)
+    if path.is_absolute():
+        if workspace is None:
+            return True
+        try:
+            path.resolve(strict=False).relative_to(workspace.resolve(strict=False))
+        except ValueError:
+            return True
+    return False
+
+
+def _non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _validate_claim_ledger_payload(payload: Any) -> tuple[str, str]:
