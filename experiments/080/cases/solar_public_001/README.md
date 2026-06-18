@@ -7,12 +7,13 @@ It contains:
 - `case_manifest.json`
 - `frozen_fact_layer.json`
 - `guidance_set.json`
-- a synthetic seed archive under `output/runs/`
+- a synthetic seed archive under `seed_archive/`
 - an assessment template under `assessments/`
 
-The seed archive exists only to provide a frozen fact layer for
-`experiments 080 scaffold-condition`. It is not a completed baseline, memory, or
-prompt-only condition run.
+The seed archive manifest is
+`seed_archive/mabw-20260618T000000Z-solarseed0001/manifest.json`. It exists
+only to provide a frozen fact layer for `experiments 080 scaffold-condition`.
+It is not a completed baseline, memory, or prompt-only condition run.
 
 This fixture does not claim:
 
