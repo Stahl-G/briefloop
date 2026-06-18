@@ -113,6 +113,14 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _sha256_json(payload: dict) -> str:
+    import hashlib
+
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _write_case(case_dir: Path) -> None:
     case_dir.mkdir(parents=True)
     _write_json(case_dir / "case_manifest.json", _case_manifest())
@@ -189,16 +197,62 @@ def _copy_archive_to_case_source(case_dir: Path, archive_manifest: Path) -> Path
     return target / "manifest.json"
 
 
-def _write_auditable_target_workspace(ws: Path, *, run_id: str, active_repair: bool = False) -> None:
+def _copy_fact_layer_into_workspace(ws: Path, archive_manifest: Path) -> list[dict]:
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    archive_root = archive_manifest.parent
+    imported_files = []
+    for artifact in manifest["fact_layer"]["artifacts"]:
+        records = artifact.get("files") if isinstance(artifact.get("files"), list) else [artifact]
+        for record in records:
+            target = ws / record["original_path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(archive_root / record["archive_path"], target)
+            imported_files.append({
+                "artifact_id": artifact["artifact_id"],
+                "archive_path": record["archive_path"],
+                "workspace_path": record["original_path"],
+                "sha256": record["sha256"],
+                "size_bytes": record["size_bytes"],
+            })
+    return imported_files
+
+
+def _write_auditable_target_workspace(
+    ws: Path,
+    *,
+    run_id: str,
+    source_archive_manifest: Path,
+    active_repair: bool = False,
+) -> None:
     intermediate = ws / "output" / "intermediate"
     gates = intermediate / "gates"
     gates.mkdir(parents=True, exist_ok=True)
+    source_manifest = json.loads(source_archive_manifest.read_text(encoding="utf-8"))
+    imported_files = _copy_fact_layer_into_workspace(ws, source_archive_manifest)
     audited = intermediate / "audited_brief.md"
     audit = intermediate / "audit_report.json"
     gate = gates / "auditor_quality_gate_report.json"
     audited.write_text("# Audited brief\n\nBusiness implication first. [src:CL-0001]\n", encoding="utf-8")
     _write_json(audit, {"schema_version": "multi-agent-brief-audit-report/v1", "status": "pass", "findings": []})
-    _write_json(gate, {"schema_version": "multi-agent-brief-quality-gates/v1", "status": "pass", "gate_results": []})
+    _write_json(
+        gate,
+        {
+            "schema_version": "multi-agent-brief-quality-gates/v1",
+            "status": "pass",
+            "metadata": {
+                "gate_stage_id": "auditor",
+                "stage_id": "auditor",
+                "brief": "output/intermediate/audited_brief.md",
+                "ledger": "output/intermediate/claim_ledger.json",
+            },
+            "gate_results": [
+                {"gate_id": "material_fact", "status": "pass", "blocking": False, "finding_ids": []},
+                {"gate_id": "freshness", "status": "pass", "blocking": False, "finding_ids": []},
+                {"gate_id": "target_relevance", "status": "pass", "blocking": False, "finding_ids": []},
+            ],
+            "findings": [],
+        },
+    )
     stage_statuses = {
         "analyst": {"status": "complete"},
         "editor": {"status": "complete"},
@@ -209,7 +263,26 @@ def _write_auditable_target_workspace(ws: Path, *, run_id: str, active_repair: b
         ws,
         run_id=run_id,
         recipe="fast-rerun",
-        fact_layer_import={"timing_comparability": "downstream_only"},
+        fact_layer_import={
+            "schema_version": "mabw.fact_layer_import.v1",
+            "imported_at": "2026-06-14T00:00:00+00:00",
+            "source_run_id": source_manifest["run_id"],
+            "source_archive_manifest": f"output/runs/{source_manifest['run_id']}/manifest.json",
+            "source_archive_manifest_sha256": _sha256_file(source_archive_manifest),
+            "fact_layer_status": source_manifest["fact_layer"]["status"],
+            "fact_layer_sha256": _sha256_json(source_manifest["fact_layer"]),
+            "satisfied_stage_ids": ["doctor", "source-discovery", "input-governance", "scout", "screener", "claim-ledger"],
+            "required_artifact_ids": [
+                "durable_source_evidence_or_source_pack",
+                "input_classification",
+                "candidate_claims",
+                "screened_candidates",
+                "claim_ledger",
+            ],
+            "imported_file_count": len(imported_files),
+            "imported_files": imported_files,
+            "timing_comparability": "downstream_only",
+        },
         current_stage="finalize",
         stage_statuses=stage_statuses,
     )
@@ -277,6 +350,17 @@ def _write_auditable_target_workspace(ws: Path, *, run_id: str, active_repair: b
         "".join(json.dumps(event, sort_keys=True) + "\n" for event in events),
         encoding="utf-8",
     )
+
+
+def _mutate_auditable_gate_report(ws: Path, mutator) -> None:
+    gate_path = ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    mutator(gate)
+    _write_json(gate_path, gate)
+    registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["artifacts"]["auditor_quality_gate_report"]["sha256"] = _sha256_file(gate_path)
+    _write_json(registry_path, registry)
 
 
 def _add_scorecard_archive_reports(archive_manifest: Path) -> None:
@@ -1476,7 +1560,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     case_manifest["assessment_target"] = "auditable_brief"
     _write_json(case_dir / "case_manifest.json", case_manifest)
     run_id = "mabw-20260614T000000Z-auditable0001"
-    _write_auditable_target_workspace(ws, run_id=run_id)
+    _write_auditable_target_workspace(ws, run_id=run_id, source_archive_manifest=CLEAN_FIXTURE_MANIFEST)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
 
@@ -1524,7 +1608,12 @@ def test_experiments_080_auditable_brief_register_rejects_active_repair(tmp_path
     case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
     case_manifest["assessment_target"] = "auditable_brief"
     _write_json(case_dir / "case_manifest.json", case_manifest)
-    _write_auditable_target_workspace(ws, run_id="mabw-20260614T000000Z-auditable0001", active_repair=True)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+        active_repair=True,
+    )
     output = tmp_path / "memory.run_record.json"
 
     rc = main(_register_args(case_dir, ws, output))
@@ -1532,6 +1621,158 @@ def test_experiments_080_auditable_brief_register_rejects_active_repair(tmp_path
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["details"]["code"] == "E_EXPERIMENT_080_ACTIVE_REPAIR_OPEN"
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_requires_fact_layer_import(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    manifest_path = ws / "output" / "intermediate" / "runtime_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del manifest["fact_layer_import"]
+    _write_json(manifest_path, manifest)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID"
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_rejects_fact_layer_import_mismatch(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    manifest_path = ws / "output" / "intermediate" / "runtime_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["fact_layer_import"]["fact_layer_sha256"] = "0" * 64
+    _write_json(manifest_path, manifest)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID"
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_rejects_tampered_imported_fact_layer(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    (ws / "output" / "intermediate" / "claim_ledger.json").write_text('{"tampered": true}\n', encoding="utf-8")
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID"
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_rejects_blocking_gate_binding(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    _mutate_auditable_gate_report(ws, lambda gate: gate["gate_results"][0].__setitem__("blocking", True))
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDITOR_GATE_BLOCKED"
+    assert "blocking gate_results" in " ".join(payload["details"]["reasons"])
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_rejects_blocking_gate_finding(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+
+    def add_blocking_finding(gate: dict) -> None:
+        gate["findings"] = [
+            {
+                "finding_id": "QG_BLOCKING_001",
+                "finding_type": "target_relevance_gap",
+                "severity": "high",
+                "blocking_level": "blocking",
+                "blocking": True,
+                "stage_id": "auditor",
+                "gate_stage_id": "auditor",
+                "artifact_id": "audited_brief",
+                "gate_artifact_id": "auditor_quality_gate_report",
+                "repair_stage_id": "editor",
+                "repair_artifact_id": "audited_brief",
+            }
+        ]
+        gate["gate_results"][0]["finding_ids"] = ["QG_BLOCKING_001"]
+
+    _mutate_auditable_gate_report(ws, add_blocking_finding)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDITOR_GATE_BLOCKED"
+    assert "blocking findings" in " ".join(payload["details"]["reasons"])
     assert not output.exists()
 
 

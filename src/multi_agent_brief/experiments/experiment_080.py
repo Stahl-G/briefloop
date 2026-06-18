@@ -23,12 +23,22 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.run_integrity import (
     PERSISTED_RUN_INTEGRITY_STATUSES,
     interpret_run_integrity,
     project_for_read,
 )
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+    load_artifact_contracts,
+    load_stage_specs,
+)
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
+from multi_agent_brief.quality_gates.contract import (
+    interpret_quality_gate_binding,
+    project_quality_gate_binding_for_read,
+    require_quality_gate_binding_pass,
+)
 
 
 EXPERIMENT_080_ID = "MABW-080"
@@ -642,10 +652,12 @@ def register_run_record(
     else:
         _validate_auditable_workflow_ready(workflow_state)
         imported_fact_layer = _auditable_imported_fact_layer_comparison(
+            workspace=ws,
             case_root=case_root,
             frozen_fact_layer=frozen_fact_layer,
+            runtime_manifest=runtime_manifest,
         )
-        target_artifacts = _auditable_target_artifacts(workspace=ws)
+        target_artifacts = _auditable_target_artifacts(workspace=ws, repo_workdir=repo_workdir)
         target_workflow = _auditable_target_workflow(workflow_state)
         timing = _run_record_timing(
             derive_control_timing_from_path(
@@ -3004,13 +3016,45 @@ def _auditable_target_workflow(workflow_state: dict[str, Any]) -> dict[str, Any]
 
 def _auditable_imported_fact_layer_comparison(
     *,
+    workspace: Path,
     case_root: Path,
     frozen_fact_layer: dict[str, Any],
+    runtime_manifest: dict[str, Any],
 ) -> dict[str, Any]:
+    import_record = runtime_manifest.get("fact_layer_import")
+    if not isinstance(import_record, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+            "auditable_brief registration requires runtime_manifest.fact_layer_import.",
+        )
+    if import_record.get("schema_version") != "mabw.fact_layer_import.v1":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+            "runtime_manifest.fact_layer_import has an unsupported schema.",
+            schema_version=import_record.get("schema_version"),
+        )
+    _validate_fact_layer_import_files(workspace=workspace, import_record=import_record)
     archive_manifest_path = _resolve_case_source_archive_manifest(
         case_root=case_root,
         frozen_fact_layer=frozen_fact_layer,
     )
+    expected_logical_manifest = _case_source_archive_logical_path(archive_manifest_path=archive_manifest_path)
+    source_archive_manifest = import_record.get("source_archive_manifest")
+    if source_archive_manifest != expected_logical_manifest:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+            "runtime_manifest.fact_layer_import.source_archive_manifest does not match the case frozen fact layer.",
+            expected_source_archive_manifest=expected_logical_manifest,
+            actual_source_archive_manifest=source_archive_manifest,
+        )
+    archive_sha = _sha256_file(archive_manifest_path)
+    if import_record.get("source_archive_manifest_sha256") != archive_sha:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+            "runtime_manifest.fact_layer_import.source_archive_manifest_sha256 does not match the case source archive.",
+            expected_sha256=archive_sha,
+            actual_sha256=import_record.get("source_archive_manifest_sha256"),
+        )
     archive_manifest = _load_json_object(archive_manifest_path, label="source_archive_manifest")
     archive_fact_layer = archive_manifest.get("fact_layer")
     if not isinstance(archive_fact_layer, dict):
@@ -3024,11 +3068,121 @@ def _auditable_imported_fact_layer_comparison(
             "source archive fact_layer.status must be complete for auditable_brief registration.",
             status=archive_fact_layer.get("status"),
         )
-    return _compare_case_fact_layer_to_archive(
+    expected_fact_layer_sha = _sha256_json(archive_fact_layer)
+    if import_record.get("fact_layer_sha256") != expected_fact_layer_sha:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+            "runtime_manifest.fact_layer_import.fact_layer_sha256 does not match the case source archive fact layer.",
+            expected_sha256=expected_fact_layer_sha,
+            actual_sha256=import_record.get("fact_layer_sha256"),
+        )
+    comparison = _compare_case_fact_layer_to_archive(
         frozen_fact_layer=frozen_fact_layer,
         archive_fact_layer=archive_fact_layer,
         archive_root=archive_manifest_path.parent,
     )
+    comparison["source"] = "runtime_manifest.fact_layer_import"
+    comparison["source_archive_manifest"] = source_archive_manifest
+    comparison["source_archive_manifest_sha256"] = import_record.get("source_archive_manifest_sha256")
+    comparison["fact_layer_sha256"] = import_record.get("fact_layer_sha256")
+    return comparison
+
+
+def _validate_fact_layer_import_files(*, workspace: Path, import_record: dict[str, Any]) -> None:
+    files = import_record.get("imported_files")
+    if not isinstance(files, list) or not files:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+            "runtime_manifest.fact_layer_import.imported_files must be a non-empty list.",
+        )
+    expected_count = import_record.get("imported_file_count")
+    if expected_count != len(files):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+            "runtime_manifest.fact_layer_import.imported_file_count does not match imported_files.",
+            imported_file_count=expected_count,
+            actual_count=len(files),
+        )
+    seen: set[str] = set()
+    for index, item in enumerate(files):
+        if not isinstance(item, dict):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "runtime_manifest.fact_layer_import.imported_files entries must be objects.",
+                index=index,
+            )
+        workspace_path = item.get("workspace_path")
+        sha = item.get("sha256")
+        size_bytes = item.get("size_bytes")
+        if not isinstance(workspace_path, str) or _unsafe_relative_archive_path(workspace_path):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "runtime_manifest.fact_layer_import.imported_files workspace_path must be safe and relative.",
+                index=index,
+                workspace_path=workspace_path,
+            )
+        if workspace_path in seen:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "runtime_manifest.fact_layer_import.imported_files contains duplicate workspace_path.",
+                workspace_path=workspace_path,
+            )
+        seen.add(workspace_path)
+        if not isinstance(sha, str) or not _SHA256_RE.match(sha):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "runtime_manifest.fact_layer_import.imported_files sha256 is invalid.",
+                index=index,
+                workspace_path=workspace_path,
+            )
+        if not isinstance(size_bytes, int) or size_bytes < 0:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "runtime_manifest.fact_layer_import.imported_files size_bytes is invalid.",
+                index=index,
+                workspace_path=workspace_path,
+            )
+        target = (workspace / workspace_path).resolve()
+        try:
+            target.relative_to(workspace.resolve())
+        except ValueError:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "runtime_manifest.fact_layer_import.imported_files workspace_path escapes workspace.",
+                index=index,
+                workspace_path=workspace_path,
+            )
+        if not target.exists() or not target.is_file():
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "imported fact-layer file is missing.",
+                index=index,
+                workspace_path=workspace_path,
+            )
+        if target.stat().st_size != size_bytes:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "imported fact-layer file size does not match runtime_manifest.fact_layer_import.",
+                index=index,
+                workspace_path=workspace_path,
+                expected_size_bytes=size_bytes,
+                actual_size_bytes=target.stat().st_size,
+            )
+        actual_sha = _sha256_file(target)
+        if actual_sha != sha:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_FACT_LAYER_IMPORT_INVALID",
+                "imported fact-layer file hash does not match runtime_manifest.fact_layer_import.",
+                index=index,
+                workspace_path=workspace_path,
+                expected_sha256=sha,
+                actual_sha256=actual_sha,
+            )
+
+
+def _case_source_archive_logical_path(*, archive_manifest_path: Path) -> str:
+    run_id = archive_manifest_path.parent.name
+    return f"output/runs/{run_id}/manifest.json"
 
 
 def _resolve_case_source_archive_manifest(*, case_root: Path, frozen_fact_layer: dict[str, Any]) -> Path:
@@ -3052,7 +3206,7 @@ def _resolve_case_source_archive_manifest(*, case_root: Path, frozen_fact_layer:
     )
 
 
-def _auditable_target_artifacts(*, workspace: Path) -> dict[str, Any]:
+def _auditable_target_artifacts(*, workspace: Path, repo_workdir: str | Path | None) -> dict[str, Any]:
     registry = _load_json_object(
         workspace / "output" / "intermediate" / "artifact_registry.json",
         label="artifact_registry",
@@ -3121,11 +3275,41 @@ def _auditable_target_artifacts(*, workspace: Path) -> dict[str, Any]:
             "frozen_valid": True,
         }
         if artifact_id == "auditor_quality_gate_report":
-            report = _load_json_object(file_path, label="auditor_quality_gate_report")
-            projection["report_status"] = _status_from_report(report)
-            projection["no_blocking"] = projection["report_status"] == "pass"
+            binding = _auditable_quality_gate_binding(
+                workspace=workspace,
+                repo_workdir=repo_workdir,
+            )
+            projection["report_status"] = binding["gate_status"]
+            projection["binding_status"] = binding["status"]
+            projection["no_blocking"] = binding["status"] == "pass"
+            projection["binding_reasons"] = binding["reasons"]
         projected[artifact_id] = projection
     return projected
+
+
+def _auditable_quality_gate_binding(*, workspace: Path, repo_workdir: str | Path | None) -> dict[str, Any]:
+    repo = resolve_repo_workdir(repo_workdir, workspace=workspace)
+    verdict = interpret_quality_gate_binding(
+        workspace=workspace,
+        stage_id="auditor",
+        expected_brief="output/intermediate/audited_brief.md",
+        expected_ledger="output/intermediate/claim_ledger.json",
+        stages=load_stage_specs(repo),
+        artifacts=load_artifact_contracts(repo),
+    )
+    reasons = require_quality_gate_binding_pass(verdict)
+    if reasons:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_AUDITOR_GATE_BLOCKED",
+            "auditable_brief registration requires a canonical passing auditor quality gate binding.",
+            reasons=reasons,
+        )
+    projection = project_quality_gate_binding_for_read(verdict)
+    return {
+        "status": str(projection.get("status") or ""),
+        "gate_status": str(projection.get("gate_status") or ""),
+        "reasons": reasons,
+    }
 
 
 def _validate_archive_manifest_ids(archive_manifest: dict[str, Any], *, run_id: str) -> None:
