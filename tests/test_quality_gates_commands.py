@@ -554,6 +554,32 @@ def test_gates_check_repeated_same_report_preserves_stage_report_bytes(tmp_path,
     assert len(_events(ws)) == event_count
 
 
+def test_gates_check_can_rerun_hashed_report_before_auditor_complete(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "auditor")
+    _write_ledger(ws, [])
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo update.\n\n## Detail\nRevenue was $42 million.\n",
+    )
+    first = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, stage_id="auditor")
+    assert first["quality_gate_report"]["status"] == "fail"
+    runtime_state.check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    state = runtime_state.show_runtime_state(workspace=ws)
+    auditor_status = state["workflow_state"]["stage_statuses"]["auditor"]["status"]
+    assert auditor_status in {"ready", "blocked"}
+    report_record = state["artifact_registry"]["artifacts"]["auditor_quality_gate_report"]
+    assert report_record["status"] == "valid"
+    assert report_record["sha256"]
+    report_bytes = _auditor_report_path(ws).read_bytes()
+
+    second = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, stage_id="auditor")
+
+    assert second["quality_gate_report"]["status"] == "fail"
+    assert _auditor_report_path(ws).read_bytes() == report_bytes
+
+
 def test_gates_check_rejects_frozen_auditor_gate_report_without_mutation(tmp_path):
     ws = _prepare_editor_gate_workspace(
         tmp_path,

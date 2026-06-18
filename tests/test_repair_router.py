@@ -542,6 +542,58 @@ def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, c
     assert payload["recommended_action"] == "request_human_review_or_start_fresh_workspace"
 
 
+def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "fail",
+                "findings": [
+                    {
+                        "finding_id": "QG_FINAL_001",
+                        "finding_type": "insufficient_claims",
+                        "severity": "high",
+                        "artifact_id": "claim_ledger",
+                        "repair_owner": "claim-ledger",
+                        "repair_stage_id": "claim-ledger",
+                        "repair_artifact_id": "claim_ledger",
+                        "message": "Only 1 reportable claims selected; weekly brief requires at least 20.",
+                    },
+                    {
+                        "finding_id": "QG_MATERIAL_FACT_001",
+                        "finding_type": "number_without_source",
+                        "severity": "high",
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "A number-like value appears without a source reference.",
+                    },
+                ],
+                "metadata": {"gate_stage_id": "auditor"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "none"
+    assert payload["allowed_artifacts"] == []
+    assert payload["source"]["route_classification"] == "input_limitation"
+    assert payload["recommended_action"] == "request_human_review_or_start_fresh_workspace"
+    assert any(route["repair_owner"] == "editor" for route in payload["routes"])
+
+
 def test_repair_route_analyst_without_artifact_never_allows_snapshot_edit(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
