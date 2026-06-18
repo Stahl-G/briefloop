@@ -10,6 +10,7 @@ from multi_agent_brief.experiments import (
     Experiment080Error,
     import_assessment,
     register_run_record,
+    scaffold_condition,
     score_run_record,
     summarize_case,
     validate_case_dir,
@@ -87,6 +88,33 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     summarize.add_argument("--output", help="Optional path to write case_summary.json.")
     summarize.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    scaffold = exp080_sub.add_parser(
+        "scaffold-condition",
+        help="Prepare one initialized MABW-080 condition workspace with deterministic fast-rerun import.",
+    )
+    scaffold.add_argument("--case", required=True, dest="case_dir", help="Path to experiments/080/cases/<case_id>.")
+    scaffold.add_argument(
+        "--condition",
+        required=True,
+        choices=("baseline", "memory", "prompt_only"),
+        help="080 condition to scaffold.",
+    )
+    scaffold.add_argument(
+        "--workspace",
+        required=True,
+        help=(
+            "Initialized condition workspace to import into. Must already contain "
+            "config.yaml, sources.yaml, user.md, and audience_profile.md."
+        ),
+    )
+    scaffold.add_argument(
+        "--archive",
+        help="Optional run archive manifest or archive directory. Defaults to frozen_fact_layer.source_archive_path.",
+    )
+    scaffold.add_argument("--runtime", default="hermes", help="Runtime value to record in imported runtime state.")
+    scaffold.add_argument("--repo-workdir", help="Optional MABW source checkout for packaged config resolution.")
+    scaffold.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -167,6 +195,32 @@ def handle(args: argparse.Namespace) -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
             _print_summarize(payload)
+        return 0
+    if args.experiment_080_action == "scaffold-condition":
+        try:
+            payload = scaffold_condition(
+                case_dir=args.case_dir,
+                condition=args.condition,
+                workspace=args.workspace,
+                archive=args.archive,
+                runtime=args.runtime,
+                repo_workdir=args.repo_workdir,
+            )
+        except Experiment080Error as exc:
+            payload = exc.to_dict()
+            if getattr(args, "json", False):
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"[experiments 080 scaffold-condition] ok: False")
+                details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+                code = details.get("code")
+                suffix = f" ({code})" if code else ""
+                print(f"  - {payload.get('error')}{suffix}")
+            return 1
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            _print_scaffold_condition(payload)
         return 0
     if args.experiment_080_action != "register-run":
         return 1
@@ -263,3 +317,19 @@ def _print_summarize(payload: dict[str, Any]) -> None:
     output = payload.get("output")
     if output:
         print(f"[experiments 080 summarize] output: {output}")
+
+
+def _print_scaffold_condition(payload: dict[str, Any]) -> None:
+    print(f"[experiments 080 scaffold-condition] ok: {payload.get('ok')}")
+    print(f"[experiments 080 scaffold-condition] case_id: {payload.get('case_id')}")
+    print(f"[experiments 080 scaffold-condition] condition: {payload.get('condition')}")
+    print(f"[experiments 080 scaffold-condition] workspace: {payload.get('workspace')}")
+    print(f"[experiments 080 scaffold-condition] metadata: {payload.get('metadata_path')}")
+    print(f"[experiments 080 scaffold-condition] instructions: {payload.get('operator_instructions_path')}")
+    fact_import = payload.get("fact_layer_import") if isinstance(payload.get("fact_layer_import"), dict) else {}
+    if fact_import:
+        print(f"[experiments 080 scaffold-condition] source_run_id: {fact_import.get('source_run_id')}")
+        stages = fact_import.get("satisfied_stage_ids") if isinstance(fact_import.get("satisfied_stage_ids"), list) else []
+        if stages:
+            print(f"[experiments 080 scaffold-condition] imported_stages: {', '.join(str(stage) for stage in stages)}")
+    print(f"[experiments 080 scaffold-condition] next: {payload.get('next_command')}")

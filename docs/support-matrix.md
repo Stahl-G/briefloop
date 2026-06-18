@@ -52,6 +52,7 @@ validation unless that is stated separately.
 | `multi-agent-brief experiments 080 score-run` | Experimental |
 | `multi-agent-brief experiments 080 import-assessment` | Experimental |
 | `multi-agent-brief experiments 080 summarize` | Experimental |
+| `multi-agent-brief experiments 080 scaffold-condition` | Experimental |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -98,8 +99,8 @@ Source appendices are reader-facing delivery artifacts generated during finalize
 Fast-rerun fact-layer import is an experimental control transaction. It can
 import a complete, clean, archived frozen fact layer into a new runtime run for
 downstream rerun inspection. It does not register 080 experiment runs, score
-output quality, summarize experiments, scaffold conditions, or prove semantic
-truth. `run --recipe fast-rerun` requires an existing valid
+output quality, summarize experiments, or prove semantic truth.
+`run --recipe fast-rerun` requires an existing valid
 `runtime_manifest.fact_layer_import`; it writes runtime handoff guidance from
 Analyst onward and must not synthesize upstream source-discovery, Scout,
 Screener, or Claim Ledger execution history.
@@ -128,6 +129,13 @@ status, and invalid reasons. It discovers scorecards under the case directory
 and can include explicit `--scorecard` paths for scorecards written elsewhere.
 It does not judge output quality, run workflow stages, scaffold conditions, or
 include invalid runs in A-grade denominators.
+
+MABW-080 condition scaffolding is experimental experiment setup tooling. It
+requires an initialized condition workspace, imports the frozen fact layer
+through the deterministic fast-rerun transaction, writes condition metadata and
+operator instructions, and leaves the run at Analyst. It does not create generic
+workspace config, run subagents, gates, finalize, register runs, score runs,
+summarize cases, or create Improvement Memory.
 
 ## Runtimes
 
@@ -196,6 +204,11 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 |---|---|
 | Packaged public-safe evaluation cases (`eval-cases`) | Supported |
 | MABW-080 experiment case validator (`experiments 080 validate-case`) | Experimental |
+| MABW-080 run registration (`experiments 080 register-run`) | Experimental |
+| MABW-080 scorecard builder (`experiments 080 score-run`) | Experimental |
+| MABW-080 assessment import (`experiments 080 import-assessment`) | Experimental |
+| MABW-080 case summary builder (`experiments 080 summarize`) | Experimental |
+| MABW-080 condition scaffold (`experiments 080 scaffold-condition`) | Experimental |
 | Workspace provenance projection (`provenance`) | Supported |
 | Runtime asset parity check (`scripts/check_runtime_asset_parity.py`) | Source-clone-only |
 | Private/commercial benchmark cases | Not shipped |

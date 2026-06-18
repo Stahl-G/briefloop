@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status, and invalid reasons. It can include explicit `--scorecard` paths when
   scorecards live outside the case directory. It does not judge output quality
   or run workflow stages.
+- **MABW-080 condition scaffold**: `experiments 080 scaffold-condition`
+  imports the frozen fact layer into initialized baseline/memory/prompt-only
+  workspaces and writes operator instructions. It does not create generic
+  workspace config, run subagents, gates, finalize, registration, scoring, or
+  summarization.
 
 ## [0.8.5] — 2026-06-16
 
