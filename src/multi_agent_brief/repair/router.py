@@ -429,15 +429,7 @@ def _is_claim_ledger_issue(text: str, finding_type: str, artifact_id: str) -> bo
 
 def _is_input_limitation_finding(finding: dict[str, Any]) -> bool:
     finding_type = str(finding.get("finding_type") or finding.get("category") or "").lower()
-    text = _finding_text(finding)
-    if finding_type in {"insufficient_claims", "low_source_density", "no_reportable_claims"}:
-        return True
-    return (
-        "min_items" in text
-        or "minimum items" in text
-        or "requires at least" in text
-        or "requires at least" in finding_type
-    )
+    return finding_type in {"insufficient_claims", "no_reportable_claims"}
 
 
 def _input_limitation_route(finding: dict[str, Any]) -> dict[str, Any]:

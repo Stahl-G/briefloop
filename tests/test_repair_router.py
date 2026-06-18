@@ -464,6 +464,57 @@ def test_repair_route_prefers_number_without_source_metadata(tmp_path, capsys):
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
 
 
+def test_repair_route_maps_low_source_density_metadata_to_editor(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_MATERIAL_FACT_004",
+            "finding_type": "low_source_density",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "The brief has too few source-linked claims for reader confidence.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "editor"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert payload["must_rerun_from"] == "auditor"
+
+
+def test_repair_route_does_not_let_minimum_text_override_explicit_editor_route(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_MATERIAL_FACT_005",
+            "finding_type": "number_without_source",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "The repair requires at least one source citation on the affected line.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "editor"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+
+
 def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
