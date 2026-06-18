@@ -856,6 +856,7 @@ def scaffold_condition(
         archive_manifest_path=archive_manifest,
     )
     _require_scaffold_workspace_shell(workspace=ws)
+    _reject_improvement_memory_for_non_memory_condition(workspace=ws, condition=condition)
     _reject_existing_scaffold_metadata(ws)
 
     from multi_agent_brief.orchestrator.runtime_state import RuntimeStateError, import_fact_layer_transaction
@@ -996,6 +997,41 @@ def _require_scaffold_workspace_shell(*, workspace: Path) -> None:
             ),
             workspace=str(workspace),
             missing_files=missing,
+        )
+
+
+def _reject_improvement_memory_for_non_memory_condition(*, workspace: Path, condition: str) -> None:
+    if condition == "memory":
+        return
+    improvement_dir = workspace / "improvement"
+    existing: list[str] = []
+    for rel_path in ("improvement/ledger.jsonl", "improvement/memory.md"):
+        path = workspace / rel_path
+        if path.exists():
+            existing.append(rel_path)
+    if improvement_dir.exists() and improvement_dir.is_dir():
+        for path in sorted(improvement_dir.rglob("*"), key=lambda item: item.relative_to(workspace).as_posix()):
+            if not path.is_file() or path.name.startswith("."):
+                continue
+            rel_path = path.relative_to(workspace).as_posix()
+            if rel_path in existing:
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 1
+            if size > 0:
+                existing.append(rel_path)
+    if existing:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_TREATMENT_CONTAMINATION",
+            (
+                "scaffold-condition baseline and prompt_only workspaces must not contain "
+                "Improvement Memory files. Remove improvement/ artifacts or use the memory condition."
+            ),
+            workspace=str(workspace),
+            condition=condition,
+            existing_improvement_files=existing,
         )
 
 

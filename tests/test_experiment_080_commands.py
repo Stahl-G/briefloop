@@ -620,6 +620,62 @@ def test_experiments_080_scaffold_prompt_only_records_guidance_without_memory(tm
     assert not (ws / "improvement" / "memory.md").exists()
 
 
+def test_experiments_080_scaffold_baseline_rejects_existing_improvement_ledger(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "baseline-workspace"
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _write_scaffold_workspace(ws)
+    improvement_dir = ws / "improvement"
+    improvement_dir.mkdir()
+    (improvement_dir / "ledger.jsonl").write_text(
+        json.dumps({
+            "schema_version": "multi-agent-brief-improvement-ledger/v1",
+            "entry_id": "AG-0001",
+            "revision": 1,
+            "level": 2,
+            "target_kind": "audience_guidance",
+            "status": "approved",
+            "guidance_text": "Lead with business implication before news recap.",
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_TREATMENT_CONTAMINATION"
+    assert payload["details"]["condition"] == "baseline"
+    assert payload["details"]["existing_improvement_files"] == ["improvement/ledger.jsonl"]
+    assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert not (ws / "experiment" / "080" / "condition.json").exists()
+
+
+def test_experiments_080_scaffold_prompt_only_rejects_existing_improvement_memory(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "prompt-only-workspace"
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _write_scaffold_workspace(ws)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["conditions"] = ["baseline", "memory", "prompt_only"]
+    case_manifest["allowed_claims"]["memory_mechanism_adds_over_prompt"] = True
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    improvement_dir = ws / "improvement"
+    improvement_dir.mkdir()
+    (improvement_dir / "memory.md").write_text("# Improvement Memory\n\n- Use business framing.\n", encoding="utf-8")
+
+    rc = main(_scaffold_args(case_dir, ws, condition="prompt_only"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_TREATMENT_CONTAMINATION"
+    assert payload["details"]["condition"] == "prompt_only"
+    assert payload["details"]["existing_improvement_files"] == ["improvement/memory.md"]
+    assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert not (ws / "experiment" / "080" / "condition.json").exists()
+
+
 def test_experiments_080_scaffold_rejects_condition_not_declared(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "prompt-only-workspace"
