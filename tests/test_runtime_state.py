@@ -363,6 +363,31 @@ def _write_editor_repair_gate_report(ws: Path) -> None:
     (_intermediate(ws) / "quality_gate_report.json").write_text(text, encoding="utf-8")
 
 
+def _start_active_editor_repair(tmp_path: Path) -> Path:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor draft needing repair. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    _write_editor_repair_gate_report(ws)
+    start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+    return ws
+
+
 def _write_finalize_report(
     ws: Path,
     *,
@@ -2895,6 +2920,45 @@ def test_repair_start_records_editor_owner_transaction(tmp_path):
         event for event in events
         if event["event_type"] == "run_integrity_contaminated"
     ] == []
+
+
+def test_stage_complete_fails_while_active_repair_open_without_events(tmp_path):
+    ws = _start_active_editor_repair(tmp_path)
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="should not advance during active repair",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_ACTIVE_REPAIR_OPEN
+    assert "repair complete" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["active_repair"]["repair_owner"] == "editor"
+    assert workflow["run_integrity"]["status"] == "clean"
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+    assert [event for event in _event_records(ws) if event["event_type"] == "run_integrity_contaminated"] == []
+
+
+def test_finalize_complete_fails_while_active_repair_open_without_events(tmp_path):
+    ws = _start_active_editor_repair(tmp_path)
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="should not finalize during active repair",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_ACTIVE_REPAIR_OPEN
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["active_repair"]["transaction_id"]
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+    assert [event for event in _event_records(ws) if event["event_type"] == "decision_recorded"][-1]["stage_id"] == "editor"
 
 
 def test_repair_start_applies_non_reference_integrity_effect_for_frozen_artifact_change(tmp_path):

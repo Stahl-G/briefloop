@@ -7,6 +7,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import shutil
 import uuid
 from pathlib import Path
@@ -56,6 +57,7 @@ from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ARTIFACT_INVALID,
+    E_ACTIVE_REPAIR_OPEN,
     E_CLAIM_DRAFT_CONTRACT_INVALID,
     E_COMPLETION_TRANSACTION_REQUIRED,
     E_FACT_LAYER_IMPORT_INVALID,
@@ -2385,6 +2387,43 @@ def _append_transaction_events(
         ) from exc
 
 
+def _active_repair_blocking_error(workspace: Path, workflow: dict[str, Any]) -> RuntimeStateError:
+    active = workflow.get("active_repair") if isinstance(workflow.get("active_repair"), dict) else {}
+    owner = active.get("repair_owner")
+    transaction_id = active.get("transaction_id")
+    workspace_arg = shlex.quote(str(workspace))
+    return RuntimeStateError(
+        "An owner-stage repair transaction is active. Complete it before advancing workflow state.\n\n"
+        "Run:\n"
+        f"  multi-agent-brief repair complete --workspace {workspace_arg} --reason \"<reason>\"\n\n"
+        "Or inspect:\n"
+        f"  multi-agent-brief repair route --workspace {workspace_arg} --json\n"
+        f"  multi-agent-brief state check --workspace {workspace_arg} --strict",
+        details={
+            "active_repair": active,
+            "repair_owner": owner,
+            "transaction_id": transaction_id,
+            "allowed_commands": [
+                f"multi-agent-brief repair route --workspace {workspace_arg} --json",
+                f"multi-agent-brief repair complete --workspace {workspace_arg} --reason \"<reason>\" --json",
+                f"multi-agent-brief state check --workspace {workspace_arg} --strict --json",
+            ],
+            "blocked_commands": [
+                "state stage-complete",
+                "state finalize-complete",
+                "gates check",
+                "deliver",
+            ],
+        },
+        error_code=E_ACTIVE_REPAIR_OPEN,
+    )
+
+
+def raise_if_active_repair_open(*, workspace: Path, workflow: dict[str, Any]) -> None:
+    if isinstance(workflow.get("active_repair"), dict):
+        raise _active_repair_blocking_error(workspace, workflow)
+
+
 def _complete_stage_transaction(
     *,
     workspace: str | Path,
@@ -2400,6 +2439,7 @@ def _complete_stage_transaction(
     paths = runtime_state_paths(ws)
     _preflight_transaction_files(paths)
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
+    raise_if_active_repair_open(workspace=ws, workflow=workflow)
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)

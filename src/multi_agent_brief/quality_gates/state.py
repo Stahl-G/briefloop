@@ -24,10 +24,13 @@ from multi_agent_brief.orchestrator.runtime_state import (
     initialize_runtime_state,
     load_artifact_contracts,
     load_stage_specs,
+    raise_if_active_repair_open,
+    runtime_state_paths,
     show_runtime_state,
     utc_now,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
+    E_ACTIVE_REPAIR_OPEN,
     E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
     E_TRANSACTION_INTEGRITY,
 )
@@ -1060,6 +1063,7 @@ def check_quality_gates(
     actor: str = GATE_EVENT_ACTOR,
 ) -> dict[str, Any]:
     ws = _require_workspace(workspace)
+    _raise_if_active_repair_open_for_gate_check(ws)
     _repo, stages, artifacts = _contracts(workspace=ws, repo_workdir=repo_workdir)
 
     requested_stage_id = stage_id or "auditor"
@@ -1228,6 +1232,25 @@ def check_quality_gates(
         raise
 
     return show_quality_gates(workspace=ws, repo_workdir=repo_workdir)
+
+
+def _raise_if_active_repair_open_for_gate_check(workspace: Path) -> None:
+    workflow_path = runtime_state_paths(workspace)["workflow_state"]
+    if not workflow_path.exists():
+        return
+    try:
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeStateError(
+            f"workflow_state.json is unreadable before quality gate check: {exc}",
+            error_code=E_TRANSACTION_INTEGRITY,
+        ) from exc
+    if not isinstance(workflow, dict):
+        raise RuntimeStateError(
+            "workflow_state.json must contain an object before quality gate check.",
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    raise_if_active_repair_open(workspace=workspace, workflow=workflow)
 
 
 def show_quality_gates(

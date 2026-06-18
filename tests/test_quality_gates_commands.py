@@ -202,6 +202,20 @@ def _events(ws: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def _mark_active_repair(ws: Path) -> None:
+    paths = runtime_state.runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["active_repair"] = {
+        "schema_version": "mabw.active_repair.v1",
+        "transaction_id": "repair-test-001",
+        "repair_owner": "editor",
+        "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+        "blocked_direct_edits": ["output/intermediate/claim_ledger.json"],
+        "must_rerun_from": "auditor",
+    }
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def test_quality_gate_binding_interpreter_rejects_pass_status_with_blocking_finding(tmp_path):
     ws = _write_workspace(tmp_path)
     report_path = quality_gate_report_path_for_stage(ws, "auditor")
@@ -578,6 +592,34 @@ def test_gates_check_can_rerun_hashed_report_before_auditor_complete(tmp_path):
 
     assert second["quality_gate_report"]["status"] == "fail"
     assert _auditor_report_path(ws).read_bytes() == report_bytes
+
+
+def test_gates_check_fails_without_writing_when_active_repair_open(tmp_path):
+    ws = _prepare_editor_gate_workspace(
+        tmp_path,
+        analyst_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+        editor_text="## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+    )
+    _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
+    _auditor_report_path(ws).write_text("existing gate report\n", encoding="utf-8")
+    _report_path(ws).write_text("existing legacy report\n", encoding="utf-8")
+    report_bytes = _auditor_report_path(ws).read_bytes()
+    legacy_bytes = _report_path(ws).read_bytes()
+    event_bytes = (ws / "output" / "intermediate" / "event_log.jsonl").read_bytes()
+    _mark_active_repair(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        quality_gate_state.check_quality_gates(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+        )
+
+    assert excinfo.value.error_code == runtime_state.E_ACTIVE_REPAIR_OPEN
+    assert "repair complete" in str(excinfo.value)
+    assert _auditor_report_path(ws).read_bytes() == report_bytes
+    assert _report_path(ws).read_bytes() == legacy_bytes
+    assert (ws / "output" / "intermediate" / "event_log.jsonl").read_bytes() == event_bytes
 
 
 def test_gates_check_rejects_frozen_auditor_gate_report_without_mutation(tmp_path):

@@ -14,9 +14,11 @@ from typing import Any
 from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryResult, DeliveryTarget
 from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
 from multi_agent_brief.orchestrator.runtime_state import (
+    E_ACTIVE_REPAIR_OPEN,
     E_RUNTIME_STATE_NOT_INITIALIZED,
     RuntimeStateError,
     append_event,
+    raise_if_active_repair_open,
     read_event_log_records_strict,
     runtime_state_paths,
 )
@@ -166,6 +168,7 @@ def deliver_workspace(
     bundle = _load_delivery_bundle(ws)
     _verify_current_delivery_artifacts(bundle)
     _preflight_delivery_event_surface(ws)
+    _preflight_no_active_repair(ws, target=target, channel=channel)
     run_integrity = _delivery_run_integrity(ws)
 
     if target == "local":
@@ -498,6 +501,41 @@ def _preflight_delivery_event_surface(workspace: Path) -> None:
         raise DeliverCommandError(
             f"Delivery event surface is not writable/readable: {exc}",
             error_code=E_DELIVERY_EVENT_FAILED,
+        ) from exc
+
+
+def _preflight_no_active_repair(workspace: Path, *, target: str, channel: str) -> None:
+    paths = runtime_state_paths(workspace)
+    try:
+        workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+        if not isinstance(workflow, dict):
+            raise RuntimeStateError("workflow_state.json must contain an object.")
+        raise_if_active_repair_open(workspace=workspace, workflow=workflow)
+    except RuntimeStateError as exc:
+        if exc.error_code == E_ACTIVE_REPAIR_OPEN:
+            raise DeliverCommandError(
+                str(exc),
+                error_code=E_ACTIVE_REPAIR_OPEN,
+                target=target,
+                channel=channel,
+                extra={
+                    "runtime_error_code": E_ACTIVE_REPAIR_OPEN,
+                    "details": exc.details,
+                },
+            ) from exc
+        raise DeliverCommandError(
+            f"Unable to verify active repair state before delivery: {exc}",
+            error_code=E_DELIVERY_EVENT_FAILED,
+            target=target,
+            channel=channel,
+            extra={"runtime_error_code": exc.error_code or E_DELIVERY_EVENT_FAILED},
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise DeliverCommandError(
+            f"workflow_state.json is unreadable before delivery: {exc}",
+            error_code=E_DELIVERY_EVENT_FAILED,
+            target=target,
+            channel=channel,
         ) from exc
 
 
