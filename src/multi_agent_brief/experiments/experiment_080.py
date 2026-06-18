@@ -1005,7 +1005,11 @@ def _reject_improvement_memory_for_non_memory_condition(*, workspace: Path, cond
         return
     improvement_dir = workspace / "improvement"
     existing: list[str] = []
-    for rel_path in ("improvement/ledger.jsonl", "improvement/memory.md"):
+    for rel_path in (
+        "improvement/ledger.jsonl",
+        "improvement/memory.md",
+        "output/intermediate/improvement_memory_snapshot.md",
+    ):
         path = workspace / rel_path
         if path.exists():
             existing.append(rel_path)
@@ -1022,17 +1026,60 @@ def _reject_improvement_memory_for_non_memory_condition(*, workspace: Path, cond
                 size = 1
             if size > 0:
                 existing.append(rel_path)
+    for rel_path in (
+        "output/intermediate/runtime_manifest.json",
+        "output/intermediate/agent_handoff.json",
+        "output/intermediate/runtime_handoff.json",
+    ):
+        path = workspace / rel_path
+        if rel_path in existing or not path.exists() or not path.is_file():
+            continue
+        residue = _improvement_residue_in_control_json(path, rel_path=rel_path)
+        if residue:
+            existing.append(residue)
     if existing:
         _raise_experiment_error(
             "E_EXPERIMENT_080_TREATMENT_CONTAMINATION",
             (
                 "scaffold-condition baseline and prompt_only workspaces must not contain "
-                "Improvement Memory files. Remove improvement/ artifacts or use the memory condition."
+                "Improvement Memory files or runtime residues. Remove improvement artifacts, "
+                "snapshot/handoff residues, or use the memory condition."
             ),
             workspace=str(workspace),
             condition=condition,
             existing_improvement_files=existing,
         )
+
+
+def _improvement_residue_in_control_json(path: Path, *, rel_path: str) -> str | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return f"{rel_path}:unreadable"
+    if not isinstance(payload, dict):
+        return None
+    if rel_path.endswith("runtime_manifest.json"):
+        improvement = payload.get("improvement")
+        if isinstance(improvement, dict) and _runtime_manifest_improvement_has_residue(improvement):
+            return f"{rel_path}:improvement"
+    if rel_path.endswith("agent_handoff.json") or rel_path.endswith("runtime_handoff.json"):
+        improvement_files = payload.get("improvement_memory_files")
+        if isinstance(improvement_files, dict) and any(
+            isinstance(value, str) and value.strip() for value in improvement_files.values()
+        ):
+            return f"{rel_path}:improvement_memory_files"
+    return None
+
+
+def _runtime_manifest_improvement_has_residue(improvement: dict[str, Any]) -> bool:
+    materialized = improvement.get("materialized_entry_ids")
+    if isinstance(materialized, list) and materialized:
+        return True
+    for key in ("ledger_sha256", "snapshot_path", "snapshot_sha256"):
+        value = improvement.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
 
 
 def _reject_existing_scaffold_metadata(workspace: Path) -> None:
@@ -1077,6 +1124,12 @@ def _scaffold_condition_metadata(
     elif condition == "memory":
         treatment.update({
             "improvement_memory": "operator_must_prepare_approved_memory_before_run",
+            "memory_ready": "unknown_not_verified_by_scaffold",
+            "memory_ready_check": (
+                "Before running fast-rerun, verify improvement/ledger.jsonl exists and contains "
+                "approved guidance entries matching guidance_entry_ids. The runtime will freeze "
+                "output/intermediate/improvement_memory_snapshot.md at run start."
+            ),
             "prompt_only_guidance": [],
             "operator_requirement": (
                 "Configure approved Improvement Memory matching guidance_entry_ids before running fast-rerun. "
@@ -1166,6 +1219,13 @@ def _scaffold_condition_instructions(metadata: dict[str, Any]) -> str:
     if isinstance(prompt_guidance, list) and prompt_guidance:
         lines.extend(["", "Prompt-only guidance text:"])
         lines.extend(f"- {text}" for text in prompt_guidance if isinstance(text, str))
+    memory_ready_check = treatment.get("memory_ready_check")
+    if isinstance(memory_ready_check, str) and memory_ready_check:
+        lines.extend([
+            "",
+            "Memory condition readiness check:",
+            f"- {memory_ready_check}",
+        ])
     lines.extend([
         "",
         "## Next Command",

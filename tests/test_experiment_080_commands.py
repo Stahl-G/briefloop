@@ -652,6 +652,27 @@ def test_experiments_080_scaffold_baseline_rejects_existing_improvement_ledger(t
     assert not (ws / "experiment" / "080" / "condition.json").exists()
 
 
+def test_experiments_080_scaffold_baseline_rejects_existing_improvement_snapshot(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "baseline-workspace"
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _write_scaffold_workspace(ws)
+    snapshot = ws / "output" / "intermediate" / "improvement_memory_snapshot.md"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text("# Frozen Improvement Memory\n\n- Prior memory treatment.\n", encoding="utf-8")
+
+    rc = main(_scaffold_args(case_dir, ws, condition="baseline"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_TREATMENT_CONTAMINATION"
+    assert payload["details"]["existing_improvement_files"] == [
+        "output/intermediate/improvement_memory_snapshot.md"
+    ]
+    assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert not (ws / "experiment" / "080" / "condition.json").exists()
+
+
 def test_experiments_080_scaffold_prompt_only_rejects_existing_improvement_memory(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "prompt-only-workspace"
@@ -673,6 +694,53 @@ def test_experiments_080_scaffold_prompt_only_rejects_existing_improvement_memor
     assert payload["details"]["condition"] == "prompt_only"
     assert payload["details"]["existing_improvement_files"] == ["improvement/memory.md"]
     assert not (ws / "output" / "intermediate" / "runtime_manifest.json").exists()
+    assert not (ws / "experiment" / "080" / "condition.json").exists()
+
+
+def test_experiments_080_scaffold_prompt_only_rejects_improvement_runtime_residue(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "prompt-only-workspace"
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _write_scaffold_workspace(ws)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["conditions"] = ["baseline", "memory", "prompt_only"]
+    case_manifest["allowed_claims"]["memory_mechanism_adds_over_prompt"] = True
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_json(
+        intermediate / "runtime_manifest.json",
+        {
+            "run_id": "mabw-20260618T000000Z-old0001",
+            "improvement": {
+                "ledger_sha256": "a" * 64,
+                "memory_sha256": "b" * 64,
+                "snapshot_path": "output/intermediate/improvement_memory_snapshot.md",
+                "snapshot_sha256": "c" * 64,
+                "materialized_entry_ids": ["AG-0001"],
+            },
+        },
+    )
+    _write_json(
+        intermediate / "agent_handoff.json",
+        {
+            "runtime": "codex",
+            "improvement_memory_files": {
+                "improvement_memory_snapshot": "output/intermediate/improvement_memory_snapshot.md",
+            },
+        },
+    )
+
+    rc = main(_scaffold_args(case_dir, ws, condition="prompt_only"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_TREATMENT_CONTAMINATION"
+    assert payload["details"]["condition"] == "prompt_only"
+    assert payload["details"]["existing_improvement_files"] == [
+        "output/intermediate/runtime_manifest.json:improvement",
+        "output/intermediate/agent_handoff.json:improvement_memory_files",
+    ]
     assert not (ws / "experiment" / "080" / "condition.json").exists()
 
 
@@ -758,6 +826,11 @@ def test_experiments_080_scaffold_uses_case_archive_path(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["fact_layer_import"]["source_run_id"] == run_dir.name
+    metadata = json.loads((ws / "experiment" / "080" / "condition.json").read_text(encoding="utf-8"))
+    assert metadata["treatment"]["memory_ready"] == "unknown_not_verified_by_scaffold"
+    assert "approved guidance entries" in metadata["treatment"]["memory_ready_check"]
+    instructions = (ws / "experiment" / "080" / "operator_instructions.md").read_text(encoding="utf-8")
+    assert "Memory condition readiness check" in instructions
 
 
 def test_experiments_080_register_run_writes_valid_record(tmp_path, capsys):
