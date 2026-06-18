@@ -165,6 +165,9 @@ jobs:
       - name: Compile Python files
         run: python -m compileall -q src tests scripts
 
+      - name: Ruff check
+        run: python -m ruff check .
+
       - name: Terminology check
         run: python scripts/check_terms.py
 
