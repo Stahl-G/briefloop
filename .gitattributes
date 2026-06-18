@@ -1,1 +1,2 @@
 tests/fixtures/fast_rerun_*/** -text
+experiments/080/cases/*/seed_archive/** -text
