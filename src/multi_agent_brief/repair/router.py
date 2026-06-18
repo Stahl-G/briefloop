@@ -512,6 +512,8 @@ def _route_priority(route: dict[str, Any]) -> tuple[int, str, str]:
     repair_owner = str(route.get("repair_owner") or "")
     if kind == "transaction_integrity" or finding_type == "frozen_artifact_changed":
         return (0, kind, finding_type)
+    if source.get("route_classification") == "input_limitation":
+        return (5, kind, finding_type)
     if repair_owner == "none":
         return (90, kind, finding_type)
     return (10, kind, finding_type)

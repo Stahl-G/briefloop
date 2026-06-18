@@ -192,11 +192,29 @@ def _frozen_report_record(workspace: Path, artifact_id: str) -> dict[str, Any] |
         state = show_runtime_state(workspace=workspace)
     except RuntimeStateError:
         return None
+    stage_id = _gate_report_producer_stage(artifact_id)
+    if stage_id is None or not _stage_is_frozen(state, stage_id):
+        return None
     artifacts = (state.get("artifact_registry") or {}).get("artifacts")
     if not isinstance(artifacts, dict):
         return None
     record = artifacts.get(artifact_id)
     return record if isinstance(record, dict) and record.get("sha256") else None
+
+
+def _gate_report_producer_stage(artifact_id: str) -> str | None:
+    if artifact_id == "auditor_quality_gate_report":
+        return "auditor"
+    if artifact_id == "finalize_quality_gate_report":
+        return "finalize"
+    return None
+
+
+def _stage_is_frozen(state: dict[str, Any], stage_id: str) -> bool:
+    workflow = state.get("workflow_state")
+    statuses = workflow.get("stage_statuses") if isinstance(workflow, dict) else None
+    stage = statuses.get(stage_id) if isinstance(statuses, dict) else None
+    return isinstance(stage, dict) and stage.get("status") in {"complete", "skipped"}
 
 
 def _ensure_frozen_report_is_unchanged(
