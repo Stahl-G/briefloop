@@ -1338,6 +1338,68 @@ def test_state_check_accepts_contract_candidate_with_claim_alias(tmp_path):
     assert record["validation_result"] == "valid_candidate_claims_schema"
 
 
+def test_state_check_accepts_contract_candidate_with_source_path_only(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "evidence_text": "ExampleCo opened a demo facility in June.",
+                    "source_path": "input/sources/source-001.md",
+                    "published_at": "2026-06-01",
+                    "topic": "demo market",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_candidate_claims_schema"
+
+
+def test_state_check_rejects_contract_candidate_without_source_identity(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "evidence_text": "ExampleCo opened a demo facility in June.",
+                    "published_at": "2026-06-01",
+                    "topic": "demo market",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "invalid"
+    assert (
+        record["validation_result"]
+        == "candidate_claims_schema_error:candidate[0].source_url_or_source_path"
+    )
+
+
 def test_state_check_rejects_contract_candidate_without_source_date(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

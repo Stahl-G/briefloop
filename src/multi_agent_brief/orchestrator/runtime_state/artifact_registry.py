@@ -167,10 +167,12 @@ def _validate_contract_candidate_claim(
     idx: int,
     seen_ids: set[str],
 ) -> tuple[str, str]:
-    for field in ("statement", "evidence_text", "source_url", "topic", "claim_type"):
+    for field in ("statement", "evidence_text", "topic", "claim_type"):
         value = candidate.get(field)
         if not isinstance(value, str) or not value.strip():
             return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
+    if not _candidate_claim_has_source_identity(candidate):
+        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].source_url_or_source_path"
     if not _candidate_claim_has_source_date(candidate):
         return ARTIFACT_INVALID, (
             f"candidate_claims_schema_error:candidate[{idx}].published_at_or_retrieved_at"
@@ -190,6 +192,12 @@ def _validate_contract_candidate_claim(
             return ARTIFACT_INVALID, f"candidate_claims_schema_error:duplicate_candidate_id:{normalized_id}"
         seen_ids.add(normalized_id)
     return ARTIFACT_VALID, "valid_candidate_claims_schema"
+
+
+def _candidate_claim_has_source_identity(candidate: dict[str, Any]) -> bool:
+    return _non_empty_string(candidate.get("source_url")) or _non_empty_string(
+        candidate.get("source_path")
+    )
 
 
 def _candidate_claim_has_source_date(candidate: dict[str, Any]) -> bool:
