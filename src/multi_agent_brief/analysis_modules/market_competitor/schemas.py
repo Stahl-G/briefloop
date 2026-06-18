@@ -19,7 +19,7 @@ Design constraints
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 
 # ── Enums -------------------------------------------------------------------
@@ -47,6 +47,7 @@ EventType = Literal[
     "management_change",
     "other",
 ]
+EVENT_TYPES: tuple[str, ...] = tuple(get_args(EventType))
 
 EventStatus = Literal[
     "rumored",
@@ -101,6 +102,7 @@ FindingType = Literal[
     "market_shift",
     "other",
 ]
+FINDING_TYPES: tuple[str, ...] = tuple(get_args(FindingType))
 
 TimeHorizon = Literal[
     "immediate",

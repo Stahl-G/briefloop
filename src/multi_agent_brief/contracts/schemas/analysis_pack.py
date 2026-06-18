@@ -4,17 +4,15 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from multi_agent_brief.analysis_modules.market_competitor.schemas import (
+    EVENT_TYPES,
+    FINDING_TYPES,
+)
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import FieldViolation
 
-VALID_EVENT_TYPES = {
-    "product_launch", "partnership", "acquisition", "funding",
-    "regulatory", "leadership", "market_shift", "technology", "other",
-}
-VALID_FINDING_TYPES = {
-    "competitive_threat", "opportunity", "market_trend",
-    "regulatory_risk", "technology_shift", "other",
-}
+VALID_EVENT_TYPES = set(EVENT_TYPES)
+VALID_FINDING_TYPES = set(FINDING_TYPES)
 VALID_CONFIDENCE = {"low", "medium", "high"}
 VALID_MATERIALITY = {"low", "medium", "high"}
 

@@ -335,7 +335,7 @@ class TestMarketEventContract:
 class TestAnalysisCardContract:
     def test_valid_analysis_card_passes(self):
         data = {
-            "analysis_id": "A1", "finding_type": "competitive_threat",
+            "analysis_id": "A1", "finding_type": "risk",
             "headline": "H", "observation": "O",
         }
         assert AnalysisCardContract.is_valid(data)

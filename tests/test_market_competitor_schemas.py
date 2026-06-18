@@ -10,10 +10,16 @@ from multi_agent_brief.analysis_modules.market_competitor.schemas import (
     CompetitorMatrixCell,
     CompetitorUniverse,
     CoverageReport,
+    EVENT_TYPES,
+    FINDING_TYPES,
     MarketEvent,
     ModuleConfig,
     Watchlist,
     WatchlistItem,
+)
+from multi_agent_brief.contracts.schemas.analysis_pack import (
+    AnalysisCardContract,
+    MarketEventContract,
 )
 
 
@@ -93,6 +99,25 @@ def test_market_event_rejects_empty_claims():
         )
 
 
+def test_market_event_contract_enum_matches_runtime_event_types():
+    schema = MarketEventContract.json_schema()
+    assert set(schema["properties"]["event_type"]["enum"]) == set(EVENT_TYPES)
+
+    for event_type in EVENT_TYPES:
+        assert MarketEventContract.is_valid({
+            "event_id": "EVT_TEST",
+            "entity_ids": ["entity"],
+            "event_type": event_type,
+        })
+
+    violations = MarketEventContract.validate({
+        "event_id": "EVT_BAD",
+        "entity_ids": ["entity"],
+        "event_type": "not_a_runtime_event_type",
+    })
+    assert any(violation.field == "event_type" for violation in violations)
+
+
 # ── AnalysisCard ────────────────────────────────────────────────────────────
 
 def test_analysis_card_construction():
@@ -141,6 +166,27 @@ def test_analysis_card_single_source_low_confidence_accepted():
         confidence="low",
     )
     assert ac.confidence == "low"
+
+
+def test_analysis_card_contract_enum_matches_runtime_finding_types():
+    schema = AnalysisCardContract.json_schema()
+    assert set(schema["properties"]["finding_type"]["enum"]) == set(FINDING_TYPES)
+
+    for finding_type in FINDING_TYPES:
+        assert AnalysisCardContract.is_valid({
+            "analysis_id": "ANL_TEST",
+            "finding_type": finding_type,
+            "headline": "Headline",
+            "observation": "Observation",
+        })
+
+    violations = AnalysisCardContract.validate({
+        "analysis_id": "ANL_BAD",
+        "finding_type": "not_a_runtime_finding_type",
+        "headline": "Headline",
+        "observation": "Observation",
+    })
+    assert any(violation.field == "finding_type" for violation in violations)
 
 
 # ── ModuleConfig ────────────────────────────────────────────────────────────
