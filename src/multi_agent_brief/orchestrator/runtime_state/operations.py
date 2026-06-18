@@ -2797,6 +2797,8 @@ def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
         "blocked_direct_edits": list(active_repair.get("blocked_direct_edits") or []),
         "source": active_repair.get("source") or {},
         "must_rerun_from": active_repair.get("must_rerun_from"),
+        "recommended_action": active_repair.get("recommended_action"),
+        "run_integrity_effect": active_repair.get("run_integrity_effect"),
     }
 
 
@@ -2952,6 +2954,8 @@ def start_repair_transaction(
         "source_report_path": (route.get("source") or {}).get("file"),
         "must_rerun_from": route.get("must_rerun_from") or "",
         "reason": route.get("reason") or "",
+        "recommended_action": route.get("recommended_action"),
+        "run_integrity_effect": route.get("run_integrity_effect"),
         "started_at": now,
         "artifact_baseline": _repair_artifact_baseline(baseline_registry),
     }

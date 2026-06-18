@@ -130,3 +130,9 @@ def _print_repair_state(label: str, payload: dict[str, Any]) -> None:
         print(f"[{label}] allowed_artifacts:")
         for artifact in allowed:
             print(f"  - {artifact}")
+    effect = repair.get("run_integrity_effect")
+    if isinstance(effect, dict) and effect.get("reference_eligible") is False:
+        print(f"[{label}] reference_eligible: false")
+        reason = effect.get("reason")
+        if reason:
+            print(f"[{label}] run_integrity_note: {reason}")

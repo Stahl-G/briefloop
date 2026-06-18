@@ -2434,6 +2434,7 @@ def test_claim_ledger_stage_complete_rejects_missing_evidence_text(tmp_path):
 def test_state_check_marks_malformed_claim_ledger_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     _write_json_artifact(ws, "candidate_claims.json")
     _write_json_artifact(ws, "screened_candidates.json")
@@ -2601,6 +2602,7 @@ def test_state_check_accepts_unchanged_frozen_claim_ledger(tmp_path):
 def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     analyst_text = "# Brief\n\nAnalyst draft. [src:CL-001]\n"
@@ -2642,6 +2644,7 @@ def test_editor_stage_complete_can_rewrite_audited_brief(tmp_path):
 def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
@@ -2674,6 +2677,7 @@ def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
 def test_repair_start_records_editor_owner_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
@@ -2744,6 +2748,7 @@ def test_repair_start_rejects_stale_report_from_non_current_stage(tmp_path):
 def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downstream(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
@@ -2791,6 +2796,7 @@ def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downs
 def test_repair_complete_rejects_blocked_artifact_edit(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
@@ -2831,6 +2837,7 @@ def test_repair_complete_rejects_blocked_artifact_edit(tmp_path):
 def test_repair_complete_rejects_downstream_artifact_created_during_repair(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
@@ -2868,6 +2875,7 @@ def test_repair_complete_rejects_downstream_artifact_created_during_repair(tmp_p
 def test_repair_complete_rejects_noop_repair(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     _set_current_stage(ws, "analyst")
     audited = _intermediate(ws) / "audited_brief.md"
     audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
