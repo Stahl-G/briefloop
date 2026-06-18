@@ -382,6 +382,44 @@ def test_experiment_080_a_controlled_rejects_missing_required_control_key():
         assert "a_controlled_requirements_not_met" in codes
 
 
+def test_experiment_080_auditable_brief_a_controlled_does_not_require_timing_available():
+    scorecard = _valid_scorecard()
+    scorecard["assessment_target"] = "auditable_brief"
+    scorecard["claim_scope"] = [
+        "guidance_manifestation_in_audited_brief",
+        "evidence_use_under_frozen_fact_layer",
+        "auditor_gate_passage",
+    ]
+    scorecard["excluded_claim_scope"] = [
+        "reader_clean_delivery",
+        "finalize_transform_correctness",
+        "management_ready_output",
+        "docx_pdf_delivery_quality",
+    ]
+    scorecard["control_integrity"] = {
+        "auditor_complete": True,
+        "run_integrity_clean": True,
+        "reference_eligible": True,
+        "artifact_registry_valid": True,
+        "audited_brief_frozen_valid": True,
+        "audit_report_frozen_valid": True,
+        "auditor_gate_report_valid": True,
+        "auditor_gates_no_blocking": True,
+        "fact_layer_matches": True,
+        "quality_gates_passed": True,
+        "timing_available": False,
+    }
+    scorecard["reader_clean"] = {
+        "pass": None,
+        "status": "not_required_for_target",
+        "source": "assessment_target.auditable_brief",
+    }
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert diagnostics == []
+
+
 def test_experiment_080_scorecard_requires_non_empty_guidance_scores():
     scorecard = _valid_scorecard()
     scorecard["guidance_scores"] = []

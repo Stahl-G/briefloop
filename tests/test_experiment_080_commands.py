@@ -1606,6 +1606,25 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert assessed["validity_class"] == "A_controlled"
     assert assessed["assessment_target"] == "auditable_brief"
 
+    no_timing_scorecard_path = tmp_path / "scorecards" / "memory.no_timing.scorecard.json"
+    no_timing_assessed_path = tmp_path / "assessed.no_timing.scorecard.json"
+    scorecard["control_integrity"]["timing_available"] = False
+    scorecard["timing_summary"] = {
+        "schema_version": "mabw.control_timing.v1",
+        "source": "run_record.timing",
+        "status": "incomplete",
+        "raw_status": "incomplete",
+        "timing_comparability": "downstream_only",
+    }
+    _write_json(no_timing_scorecard_path, scorecard)
+    assert validate_scorecard(scorecard) == []
+
+    capsys.readouterr()
+    assert main(_assessment_args(no_timing_scorecard_path, assessment_path, no_timing_assessed_path)) == 0
+    no_timing_assessed = json.loads(no_timing_assessed_path.read_text(encoding="utf-8"))
+    assert no_timing_assessed["control_integrity"]["timing_available"] is False
+    assert no_timing_assessed["validity_class"] == "A_controlled"
+
 
 def test_experiments_080_auditable_brief_register_rejects_active_repair(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"

@@ -92,7 +92,6 @@ AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
     "auditor_gate_report_valid",
     "auditor_gates_no_blocking",
     "fact_layer_matches",
-    "timing_available",
 )
 A_CONTROLLED_REQUIRED_CONTROL_KEYS = DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS
 A_CONTROLLED_REQUIRED_CONTROL_KEYS_BY_TARGET = {
