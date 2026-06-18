@@ -900,6 +900,7 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "    - Run: `multi-agent-brief state check --workspace $ARGUMENTS --strict`\n"
         "    - If state is not blocked, run: `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage auditor --reason \"Audit and quality gates passed.\"`\n"
         "    - If state is blocked, do not edit artifacts directly and do not finalize.\n"
+        "    - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.\n"
         "    - First run: `multi-agent-brief repair route --workspace $ARGUMENTS --json`\n"
         "    - If the route is ok:\n"
         "      1. Run: `multi-agent-brief repair start --workspace $ARGUMENTS --json`\n"

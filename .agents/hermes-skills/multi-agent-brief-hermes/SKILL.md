@@ -112,12 +112,12 @@ multi-agent-brief finalize --config <workspace>/config.yaml
 multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
-
 `finalize` is not a quality-gate executor. Blocking gate findings must route to feedback plus deterministic repair, `request_human_review`, or `block_run`; do not finalize through a blocking gate.
 At run start, read `output/intermediate/audience_profile_snapshot.md` for taste context and pass a concise summary to delegated roles. Do not treat `audience_profile.md` as evidence.
 Read `output/intermediate/orchestrator_control_switchboard.json`, then use `multi-agent-brief controls select` to record selected controls before explicitly running their CLI/subagent/human action. Selection is not execution.
 Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.
 For owner-stage artifact repair, run `multi-agent-brief repair route --workspace <workspace>` and `multi-agent-brief repair start --workspace <workspace>`. Delegate only the repair_owner role and allow edits only to allowed_artifacts. After the owner edits, run `multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"`, then rerun downstream stages from must_rerun_from. Do not use `state decide delegate_repair` to authorize artifact edits.
+Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Use the repair route/start transaction before owner-stage edits, or choose `request_human_review` / `block_run` when no deterministic route exists.
 Repair guidance is bounded runtime guidance, not an automatic trajectory regulator: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 Use `multi-agent-brief provenance build`, `provenance show --json`, and `provenance validate` only as optional audit/debug projection commands after runtime state exists. Provenance projection does not prove semantic support, execute repair, or gate finalize by default.
 

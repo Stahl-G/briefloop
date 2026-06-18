@@ -58,6 +58,8 @@ REPAIR_GUIDANCE_NOTE = (
     "regulator: if the same stage has already needed roughly three retry/repair "
     "rounds, prefer request_human_review or block_run; if a repair would touch "
     "more than two sections, narrow the scope before delegating or request human review. "
+    "Audit warnings, overstatement findings, support-calibration findings, and quality-gate "
+    "findings do not authorize direct edits to frozen artifacts. "
     "For owner-stage artifact repair, first run `multi-agent-brief repair route --workspace "
     "<workspace>` and `multi-agent-brief repair start --workspace <workspace>`, then delegate "
     "only the repair_owner role and allow edits only to allowed_artifacts. After the owner "

@@ -296,6 +296,8 @@ def test_generated_orchestrator_separates_runtime_and_repo_development_modes(man
     assert "In brief-runtime mode, do not edit repository files" in rendered
     assert "run repo validation commands unless the user explicitly switches" in rendered
     assert "only in repo-development mode" in rendered
+    assert "Audit warnings, overstatement findings, support-calibration findings" in rendered
+    assert "do not authorize direct edits to frozen artifacts" in rendered
 
 
 def test_generated_auditor_does_not_treat_audit_report_as_input_or_coordinator(manifest):

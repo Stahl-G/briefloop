@@ -36,6 +36,8 @@ def _assert_generate_brief_repair_transaction(path: str) -> None:
     assert "multi-agent-brief repair start --workspace $ARGUMENTS --json" in normalized, path
     assert "multi-agent-brief repair complete --workspace $ARGUMENTS --reason" in normalized, path
     assert "do not edit artifacts directly" in normalized.lower(), path
+    assert "Do not edit frozen artifacts directly" in normalized, path
+    assert "Direct edits will mark the run contaminated and non-reference-eligible" in normalized, path
     assert "reported repair_owner role" in normalized, path
     assert "allowed_artifacts" in normalized, path
     assert "blocked_direct_edits" in normalized, path

@@ -135,6 +135,8 @@ Delegate only the repair_owner role, allow edits only to allowed_artifacts, then
 multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"
 ```
 
+Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Use the repair route/start transaction before owner-stage edits, or choose `request_human_review` / `block_run` when no deterministic route exists.
+
 After repair-complete, rerun downstream stages from must_rerun_from. For non-repair blocks, choose `request_human_review` or `block_run`; do not finalize. `finalize` is not a quality-gate executor.
 
 After finalize writes reader-facing artifacts, run:

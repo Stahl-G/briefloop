@@ -344,6 +344,8 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "Do not switch to source-planner" in text
     assert "Audit and quality gates passed" in text
     assert "do not finalize" in text
+    assert "Audit warnings, overstatement findings, support-calibration findings" in text
+    assert "do not authorize direct edits to frozen artifacts" in text
     assert "Quality gate controls are optional" not in text
     assert "retry_stage" in text
     assert "request_human_review" in text

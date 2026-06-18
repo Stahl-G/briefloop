@@ -58,6 +58,7 @@ Responsibilities:
 - Before finalize, after Auditor completes, run gates check with `--stage auditor` and strict state check. If blocking findings exist, do not finalize; use feedback plus the deterministic repair transaction, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
 - After finalize writes reader-facing artifacts, verify completion with `multi-agent-brief gates check --stage finalize --brief <workspace>/output/brief.md` and then multi-agent-brief state finalize-complete before reporting the run complete.
 - Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
+- Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Route owner-stage repair with repair route/start, or choose request_human_review or block_run when no deterministic route exists.
 - Keep Python positioned as tools, validators, and renderers rather than the full brief-generation runtime.
 - Coordinate platform-specific agent files without duplicating role logic manually only in repo-development mode.
 - Run or document focused tests before completion only in repo-development mode.

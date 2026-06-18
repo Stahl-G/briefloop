@@ -148,6 +148,8 @@ def test_hermes_skill_uses_delegate_task_runtime():
     assert "control_selections.json" in skill
     assert "controls select" in skill
     assert "Selection is not execution" in skill
+    assert "Audit warnings, overstatement findings, support-calibration findings" in skill
+    assert "do not authorize direct edits to frozen artifacts" in skill
     assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in skill
     assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in skill
     assert "multi-agent-brief state check --workspace <workspace> --strict" in skill
@@ -254,6 +256,8 @@ def test_hermes_prompt_keeps_user_inside_hermes():
     assert f"multi-agent-brief repair route --workspace {resolved_ws}" in prompt
     assert f"multi-agent-brief repair start --workspace {resolved_ws}" in prompt
     assert f"multi-agent-brief repair complete --workspace {resolved_ws}" in prompt
+    assert "Audit warnings, overstatement findings, support-calibration findings" in prompt
+    assert "do not authorize direct edits to frozen artifacts" in prompt
     assert f"multi-agent-brief provenance build --workspace {resolved_ws}" in prompt
     assert f"multi-agent-brief provenance validate --workspace {resolved_ws}" in prompt
     assert prompt.index("multi-agent-brief controls select") < prompt.index("multi-agent-brief gates check")

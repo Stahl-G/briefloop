@@ -1289,4 +1289,8 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
     return {
         "required_commands": required_commands,
         "repair_route": repair_route,
+        "repair_warnings": [
+            "Do not edit frozen artifacts directly.",
+            "Direct edits will mark the run contaminated and non-reference-eligible.",
+        ],
     }

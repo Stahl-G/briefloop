@@ -178,6 +178,7 @@ your editorial judgment.
     - If state is not blocked, run `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage auditor --reason "Audit and quality gates passed."`.
     - If the transaction fails, stop and report the failure. Do not invoke formatter/finalize.
     - If state is blocked, do not edit artifacts directly and do not finalize.
+    - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.
     - First run `multi-agent-brief repair route --workspace $ARGUMENTS --json`.
     - If the route is ok:
       1. Run `multi-agent-brief repair start --workspace $ARGUMENTS --json`.

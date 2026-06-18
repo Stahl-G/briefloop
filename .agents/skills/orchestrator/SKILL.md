@@ -78,6 +78,11 @@ when the user explicitly asks for repo-development work.
   if the same stage has already needed roughly three retry/repair rounds, prefer
   `request_human_review` or `block_run`; if a repair would touch more than two
   sections, narrow the scope before delegating or request human review.
+- Audit warnings, overstatement findings, support-calibration findings, and
+  quality-gate findings do not authorize direct edits to frozen artifacts. Run
+  `multi-agent-brief repair route` and `multi-agent-brief repair start` before
+  delegating owner-stage edits, or choose `request_human_review` / `block_run`
+  when no deterministic route exists.
 - Keep Python positioned as tools, validators, and renderers.
 - Keep control selections separate from execution; selection is not execution.
 - In repo-development mode only, update generation sources when generated platform
