@@ -7,6 +7,7 @@ import os
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +26,10 @@ from multi_agent_brief.orchestrator.runtime_state import (
     load_stage_specs,
     show_runtime_state,
     utc_now,
+)
+from multi_agent_brief.orchestrator.runtime_state.errors import (
+    E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
+    E_TRANSACTION_INTEGRITY,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.quality_gates.contract import (
@@ -146,6 +151,86 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             f"Failed to write quality gate report: {path}",
             details={"path": str(path), "reason": str(exc)},
         ) from exc
+
+
+def _sha256_file(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _stable_report_projection(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        return {
+            str(key): _stable_report_projection(value)
+            for key, value in sorted(payload.items(), key=lambda item: str(item[0]))
+            if key not in {"created_at", "updated_at"}
+        }
+    if isinstance(payload, list):
+        return [_stable_report_projection(item) for item in payload]
+    return payload
+
+
+def _quality_gate_reports_equivalent(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return _stable_report_projection(left) == _stable_report_projection(right)
+
+
+def _frozen_report_record(workspace: Path, artifact_id: str) -> dict[str, Any] | None:
+    try:
+        state = show_runtime_state(workspace=workspace)
+    except RuntimeStateError:
+        return None
+    artifacts = (state.get("artifact_registry") or {}).get("artifacts")
+    if not isinstance(artifacts, dict):
+        return None
+    record = artifacts.get(artifact_id)
+    return record if isinstance(record, dict) and record.get("sha256") else None
+
+
+def _ensure_frozen_report_is_unchanged(
+    *,
+    workspace: Path,
+    report_path: Path,
+    artifact_id: str,
+) -> dict[str, Any] | None:
+    record = _frozen_report_record(workspace, artifact_id)
+    if record is None:
+        return None
+    expected_sha = str(record.get("sha256") or "")
+    if not report_path.exists():
+        raise RuntimeStateError(
+            f"Frozen quality gate report is missing: {_workspace_relative(workspace, report_path)}",
+            details={
+                "artifact_id": artifact_id,
+                "path": _workspace_relative(workspace, report_path),
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    actual_sha = _sha256_file(report_path)
+    if actual_sha != expected_sha:
+        raise RuntimeStateError(
+            "Frozen quality gate report no longer matches artifact_registry.json.",
+            details={
+                "artifact_id": artifact_id,
+                "path": _workspace_relative(workspace, report_path),
+                "expected_sha256": expected_sha,
+                "actual_sha256": actual_sha,
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    return record
 
 
 def _workspace_relative(workspace: Path, path: Path) -> str:
@@ -1041,6 +1126,28 @@ def check_quality_gates(
 
     report_path = quality_gate_report_path_for_stage(ws, gate_stage_id)
     legacy_report_path = quality_gate_paths(ws)["quality_gate_report"]
+    frozen_record = _ensure_frozen_report_is_unchanged(
+        workspace=ws,
+        report_path=report_path,
+        artifact_id=gate_artifact_id,
+    )
+    if frozen_record is not None:
+        raise RuntimeStateError(
+            "Stage-scoped gate report is already frozen. Read the existing report, or use repair/new run if the report must change.",
+            details={
+                "artifact_id": gate_artifact_id,
+                "path": _workspace_relative(ws, report_path),
+                "producer_stage": gate_stage_id,
+                "required_action": "read_existing_report_or_repair_or_new_run",
+            },
+            error_code=E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
+        )
+    existing_report = _read_json_object(report_path)
+    if existing_report is not None and _quality_gate_reports_equivalent(existing_report, payload):
+        legacy_report = _read_json_object(legacy_report_path)
+        if legacy_report is None or not _quality_gate_reports_equivalent(legacy_report, existing_report):
+            _write_json_atomic(legacy_report_path, existing_report)
+        return show_quality_gates(workspace=ws, repo_workdir=repo_workdir)
     old_report = report_path.read_bytes() if report_path.exists() else None
     old_legacy_report = legacy_report_path.read_bytes() if legacy_report_path.exists() else None
     wrote_report = False
