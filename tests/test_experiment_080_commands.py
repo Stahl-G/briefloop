@@ -234,19 +234,26 @@ def _write_terminal_runtime(
     *,
     run_id: str,
     runtime: str = "codex",
+    recipe: str | None = None,
+    fact_layer_import: dict | None = None,
     run_integrity: dict | str | None = None,
     current_stage=None,
     finalize_status: str = "complete",
 ) -> None:
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True, exist_ok=True)
+    runtime_manifest = {
+        "schema_version": "multi-agent-brief-runtime-manifest/v1",
+        "run_id": run_id,
+        "runtime": runtime,
+    }
+    if recipe is not None:
+        runtime_manifest["recipe"] = recipe
+    if fact_layer_import is not None:
+        runtime_manifest["fact_layer_import"] = fact_layer_import
     _write_json(
         intermediate / "runtime_manifest.json",
-        {
-            "schema_version": "multi-agent-brief-runtime-manifest/v1",
-            "run_id": run_id,
-            "runtime": runtime,
-        },
+        runtime_manifest,
     )
     if run_integrity is None:
         run_integrity = {
@@ -923,11 +930,36 @@ def test_experiments_080_register_run_writes_valid_record(tmp_path, capsys):
     record = json.loads(output.read_text(encoding="utf-8"))
     assert validate_run_record(record) == []
     assert record["workspace_path"] == "<redacted-workspace>"
-    assert record["run_archive_path"] == f"output/runs/{run_id}/manifest.json"
+    assert (output.parent / record["run_archive_path"]).resolve() == archive_manifest.resolve()
     assert record["repo_commit"] == "abc123"
     assert record["repo_commit_source"] == "case_manifest"
     assert record["imported_fact_layer"]["matches_case_frozen_fact_layer"] is True
     assert record["timing"]["schema_version"] == "mabw.control_timing.v1"
+
+
+def test_experiments_080_register_run_writes_archive_path_resolvable_from_case_output(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspaces" / "memory"
+    ws.mkdir(parents=True)
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    run_id = archive_manifest.parent.name
+    _write_terminal_runtime(ws, run_id=run_id)
+    output = case_dir / "runs" / "memory" / "run_record.json"
+    scorecard_path = case_dir / "runs" / "memory" / "scorecard.json"
+
+    assert main(_register_args(case_dir, ws, output)) == 0
+    capsys.readouterr()
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert not Path(record["run_archive_path"]).is_absolute()
+    assert (output.parent / record["run_archive_path"]).resolve() == archive_manifest.resolve()
+
+    assert main(_score_args(case_dir, output, scorecard_path)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["archive"]["present"] is True
 
 
 def test_experiments_080_register_run_is_idempotent_when_output_matches(tmp_path, capsys):
@@ -1282,6 +1314,46 @@ def test_experiments_080_score_run_writes_deterministic_scorecard_draft(tmp_path
     assert scorecard["reader_clean"]["pass"] is True
     assert scorecard["frozen_fact_layer"]["matches_case"] is True
     assert "Python does not score guidance manifestation" in scorecard["notes"][1]
+
+
+def test_experiments_080_score_run_accepts_fast_rerun_downstream_only_timing(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    manifest["timing"] = {
+        "schema_version": "mabw.control_timing.v1",
+        "kind": "control_trace_timing_buckets",
+        "source": "event_log",
+        "status": "incomplete",
+        "total_elapsed_seconds": 123.0,
+        "warnings": ["scout: completion event missing"],
+    }
+    _write_json(archive_manifest, manifest)
+    run_id = archive_manifest.parent.name
+    _write_terminal_runtime(
+        ws,
+        run_id=run_id,
+        recipe="fast-rerun",
+        fact_layer_import={"timing_comparability": "downstream_only"},
+    )
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    record = json.loads(run_record.read_text(encoding="utf-8"))
+    assert record["timing"]["run_recipe"] == "fast-rerun"
+    assert record["timing"]["timing_comparability"] == "downstream_only"
+
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["timing_summary"]["status"] == "downstream_only"
+    assert scorecard["timing_summary"]["raw_status"] == "incomplete"
+    assert scorecard["control_integrity"]["timing_available"] is True
 
 
 def test_experiments_080_score_run_is_idempotent_when_output_matches(tmp_path, capsys):

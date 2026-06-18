@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -523,6 +524,7 @@ def register_run_record(
             "E_EXPERIMENT_080_TIMING_MISSING",
             "run archive manifest.timing must contain schema_version and status.",
         )
+    timing = _run_record_timing(timing, runtime_manifest=runtime_manifest)
 
     repo_commit, repo_commit_source = _registration_repo_commit(
         case_manifest=case_manifest,
@@ -537,7 +539,11 @@ def register_run_record(
         "condition": condition,
         "run_id": run_id,
         "workspace_path": "<redacted-workspace>",
-        "run_archive_path": _workspace_relative(ws, archive_manifest_path),
+        "run_archive_path": _portable_run_archive_path(
+            output_path=output_path,
+            workspace=ws,
+            archive_manifest_path=archive_manifest_path,
+        ),
         "repo_commit": repo_commit,
         "repo_commit_source": repo_commit_source,
         "runtime": runtime,
@@ -1539,7 +1545,7 @@ def _build_scorecard_draft(
         "archive_schema_valid": archive_status["schema_valid"],
         "finalize_complete": finalize_status["complete"],
         "finalize_report_pass": finalize_status["report_pass"],
-        "timing_available": timing_summary["status"] == "available",
+        "timing_available": timing_summary["status"] in {"available", "downstream_only"},
     }
     validity_class = _scorecard_validity_class(
         run_integrity=run_integrity,
@@ -2095,6 +2101,7 @@ def _empty_timing_counts() -> dict[str, Any]:
     return {
         "status_counts": {},
         "available_count": 0,
+        "downstream_only_count": 0,
         "incomplete_count": 0,
         "unknown_count": 0,
         "contaminated_count": 0,
@@ -2158,6 +2165,9 @@ def _accumulate_timing(summary: dict[str, Any], *, condition: str, scorecard: di
         status_counts[status] = status_counts.get(status, 0) + 1
         if status == "available":
             target["available_count"] += 1
+        elif status == "downstream_only":
+            target["available_count"] += 1
+            target["downstream_only_count"] += 1
         elif status == "incomplete":
             target["incomplete_count"] += 1
         elif status == "contaminated":
@@ -2551,12 +2561,27 @@ def _scorecard_timing_summary(timing: Any) -> dict[str, Any]:
     if not isinstance(timing, dict):
         return {"status": "unknown", "schema_version": "", "source": "run_record.timing"}
     stages = timing.get("stages")
+    raw_status = str(timing.get("status") or "unknown")
+    status = raw_status
+    total_elapsed = timing.get("total_elapsed_seconds")
+    timing_comparability = timing.get("timing_comparability")
+    if (
+        raw_status == "incomplete"
+        and timing_comparability == "downstream_only"
+        and isinstance(total_elapsed, (int, float))
+        and not isinstance(total_elapsed, bool)
+    ):
+        status = "downstream_only"
     summary = {
         "schema_version": str(timing.get("schema_version") or ""),
-        "status": str(timing.get("status") or "unknown"),
+        "status": status,
+        "raw_status": raw_status,
         "run_recipe": timing.get("run_recipe", ""),
+        "timing_comparability": timing_comparability or "",
         "source": "run_record.timing",
     }
+    if isinstance(total_elapsed, (int, float)) and not isinstance(total_elapsed, bool):
+        summary["total_elapsed_seconds"] = float(total_elapsed)
     if isinstance(stages, list):
         summary["stage_count"] = len(stages)
         summary["completed_stage_count"] = sum(
@@ -2565,6 +2590,19 @@ def _scorecard_timing_summary(timing: Any) -> dict[str, Any]:
             if isinstance(stage, dict) and stage.get("status") in {"complete", "satisfied_by_topology"}
         )
     return summary
+
+
+def _run_record_timing(timing: dict[str, Any], *, runtime_manifest: dict[str, Any]) -> dict[str, Any]:
+    enriched = deepcopy(timing)
+    recipe = runtime_manifest.get("recipe")
+    if isinstance(recipe, str) and recipe:
+        enriched.setdefault("run_recipe", recipe)
+    fact_import = runtime_manifest.get("fact_layer_import")
+    if isinstance(fact_import, dict):
+        timing_comparability = fact_import.get("timing_comparability")
+        if isinstance(timing_comparability, str) and timing_comparability:
+            enriched.setdefault("timing_comparability", timing_comparability)
+    return enriched
 
 
 def _load_json_object(path: Path, *, label: str) -> dict[str, Any]:
@@ -3061,6 +3099,16 @@ def _workspace_relative(workspace: Path, path: Path) -> str:
             "Path is not workspace-relative.",
             path=str(path),
         )
+
+
+def _portable_run_archive_path(*, output_path: Path, workspace: Path, archive_manifest_path: Path) -> str:
+    output_parent = output_path.parent.resolve()
+    workspace_root = workspace.resolve()
+    try:
+        output_parent.relative_to(workspace_root)
+    except ValueError:
+        return Path(os.path.relpath(archive_manifest_path.resolve(), start=output_parent)).as_posix()
+    return _workspace_relative(workspace, archive_manifest_path)
 
 
 def _raise_experiment_error(code: str, message: str, **details: Any) -> None:
