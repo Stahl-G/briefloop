@@ -19,11 +19,13 @@ tree is fully bilingual.
 | Roadmap | [roadmap.md](roadmap.md) | [roadmap.zh-CN.md](roadmap.zh-CN.md) |
 | Migration notes | [MIGRATION.md](MIGRATION.md) | [MIGRATION.zh-CN.md](MIGRATION.zh-CN.md) |
 | What MABW tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
+| MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | Planned |
 
 ## English-First Reference Docs
 
 - [Claude Code quickstart](claude-code-quickstart.md)
 - [Runtime agent contract](agent-contract.md)
+- [MABW-080 experiment guide](experiments-080.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)
 - [Runtime recipes](runtime-recipes.md)
