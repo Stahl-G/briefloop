@@ -1276,6 +1276,68 @@ def test_state_check_validates_candidate_screened_and_input_classification_shape
     assert registry["input_classification"]["validation_result"] == "valid_input_classification_schema"
 
 
+def test_state_check_accepts_contract_shaped_candidate_claims(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "evidence_text": "ExampleCo opened a demo facility in June.",
+                    "source_url": "https://example.com/source",
+                    "published_at": "2026-06-01",
+                    "topic": "demo market",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                    "source_id": "SRC-001",
+                    "source_path": "input/sources/source-001.md",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_candidate_claims_schema"
+
+
+def test_state_check_rejects_contract_candidate_without_source_date(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "evidence_text": "ExampleCo opened a demo facility in June.",
+                    "source_url": "https://example.com/source",
+                    "topic": "demo market",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "invalid"
+    assert (
+        record["validation_result"]
+        == "candidate_claims_schema_error:candidate[0].published_at_or_retrieved_at"
+    )
+
+
 def test_state_check_marks_candidate_claims_missing_required_field_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -1312,6 +1374,63 @@ def test_state_check_marks_duplicate_candidate_claim_ids_invalid(tmp_path):
 
     assert record["status"] == "invalid"
     assert record["validation_result"] == "candidate_claims_schema_error:duplicate_candidate_id:CAND-001"
+
+
+def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "statement": "An older duplicate item.",
+                        "reason": "duplicate",
+                    }
+                ],
+                "deprioritized": [],
+                "screening_policy": {"max_items": 8, "freshness_window_days": 90},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_screened_candidates_schema"
+
+
+def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [{"statement": "ExampleCo opened a demo facility."}],
+                "excluded": [{"statement": "An older duplicate item."}],
+                "screening_policy": {"max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:excluded[0].reason"
 
 
 def test_state_check_marks_invalid_screening_status_invalid(tmp_path):

@@ -130,22 +130,89 @@ def _validate_candidate_claims_payload(payload: Any) -> tuple[str, str]:
     for idx, candidate in enumerate(payload):
         if not isinstance(candidate, dict):
             return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}]"
-        for field in ("candidate_id", "claim", "source_id"):
-            value = candidate.get(field)
-            if not isinstance(value, str) or not value.strip():
-                return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
-        candidate_id = str(candidate["candidate_id"]).strip()
-        if candidate_id in seen_ids:
-            return ARTIFACT_INVALID, f"candidate_claims_schema_error:duplicate_candidate_id:{candidate_id}"
-        seen_ids.add(candidate_id)
+        if _candidate_claim_uses_legacy_shape(candidate):
+            status, result = _validate_legacy_candidate_claim(candidate, idx=idx, seen_ids=seen_ids)
+        else:
+            status, result = _validate_contract_candidate_claim(candidate, idx=idx, seen_ids=seen_ids)
+        if status != ARTIFACT_VALID:
+            return status, result
 
     return ARTIFACT_VALID, "valid_candidate_claims_schema"
 
 
-def _validate_screened_candidates_payload(payload: Any) -> tuple[str, str]:
-    if not isinstance(payload, list):
-        return ARTIFACT_INVALID, "screened_candidates_schema_error:not_list"
+def _candidate_claim_uses_legacy_shape(candidate: dict[str, Any]) -> bool:
+    return "claim" in candidate or ("candidate_id" in candidate and "statement" not in candidate)
 
+
+def _validate_legacy_candidate_claim(
+    candidate: dict[str, Any],
+    *,
+    idx: int,
+    seen_ids: set[str],
+) -> tuple[str, str]:
+    for field in ("candidate_id", "claim", "source_id"):
+        value = candidate.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
+    candidate_id = str(candidate["candidate_id"]).strip()
+    if candidate_id in seen_ids:
+        return ARTIFACT_INVALID, f"candidate_claims_schema_error:duplicate_candidate_id:{candidate_id}"
+    seen_ids.add(candidate_id)
+    return ARTIFACT_VALID, "valid_candidate_claims_schema"
+
+
+def _validate_contract_candidate_claim(
+    candidate: dict[str, Any],
+    *,
+    idx: int,
+    seen_ids: set[str],
+) -> tuple[str, str]:
+    for field in ("statement", "evidence_text", "source_url", "topic", "claim_type"):
+        value = candidate.get(field)
+        if not isinstance(value, str) or not value.strip():
+            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
+    if not _candidate_claim_has_source_date(candidate):
+        return ARTIFACT_INVALID, (
+            f"candidate_claims_schema_error:candidate[{idx}].published_at_or_retrieved_at"
+        )
+    if not _non_empty_scalar(candidate.get("confidence")):
+        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].confidence"
+    for field in ("source_id", "source_path"):
+        value = candidate.get(field)
+        if value is not None and not _non_empty_string(value):
+            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
+    candidate_id = candidate.get("candidate_id")
+    if candidate_id is not None:
+        if not _non_empty_string(candidate_id):
+            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].candidate_id"
+        normalized_id = candidate_id.strip()
+        if normalized_id in seen_ids:
+            return ARTIFACT_INVALID, f"candidate_claims_schema_error:duplicate_candidate_id:{normalized_id}"
+        seen_ids.add(normalized_id)
+    return ARTIFACT_VALID, "valid_candidate_claims_schema"
+
+
+def _candidate_claim_has_source_date(candidate: dict[str, Any]) -> bool:
+    return _non_empty_string(candidate.get("published_at")) or _non_empty_string(
+        candidate.get("retrieved_at")
+    )
+
+
+def _non_empty_scalar(value: Any) -> bool:
+    return (isinstance(value, str) and bool(value.strip())) or (
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+    )
+
+
+def _validate_screened_candidates_payload(payload: Any) -> tuple[str, str]:
+    if isinstance(payload, list):
+        return _validate_legacy_screened_candidates(payload)
+    if isinstance(payload, dict):
+        return _validate_contract_screened_candidates(payload)
+    return ARTIFACT_INVALID, "screened_candidates_schema_error:not_list_or_object"
+
+
+def _validate_legacy_screened_candidates(payload: list[Any]) -> tuple[str, str]:
     for idx, candidate in enumerate(payload):
         if not isinstance(candidate, dict):
             return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}]"
@@ -164,6 +231,50 @@ def _validate_screened_candidates_payload(payload: Any) -> tuple[str, str]:
                 return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}].reason"
 
     return ARTIFACT_VALID, "valid_screened_candidates_schema"
+
+
+def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str, str]:
+    selected = payload.get("selected")
+    if not isinstance(selected, list):
+        return ARTIFACT_INVALID, "screened_candidates_schema_error:selected"
+    for idx, candidate in enumerate(selected):
+        if not _valid_screened_candidate_entry(candidate):
+            return ARTIFACT_INVALID, f"screened_candidates_schema_error:selected[{idx}]"
+
+    has_discard_bucket = False
+    for bucket in ("excluded", "deprioritized"):
+        entries = payload.get(bucket)
+        if entries is None:
+            continue
+        if not isinstance(entries, list):
+            return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}"
+        has_discard_bucket = True
+        for idx, candidate in enumerate(entries):
+            if not _valid_screened_candidate_entry(candidate):
+                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}]"
+            if not _screened_candidate_has_reason(candidate):
+                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].reason"
+    if not has_discard_bucket:
+        return ARTIFACT_INVALID, "screened_candidates_schema_error:excluded_or_deprioritized"
+
+    screening_policy = payload.get("screening_policy")
+    if not isinstance(screening_policy, dict) or not screening_policy:
+        return ARTIFACT_INVALID, "screened_candidates_schema_error:screening_policy"
+
+    return ARTIFACT_VALID, "valid_screened_candidates_schema"
+
+
+def _valid_screened_candidate_entry(candidate: Any) -> bool:
+    if not isinstance(candidate, dict):
+        return False
+    return any(_non_empty_string(candidate.get(field)) for field in ("candidate_id", "statement", "claim"))
+
+
+def _screened_candidate_has_reason(candidate: dict[str, Any]) -> bool:
+    return any(
+        _non_empty_string(candidate.get(field))
+        for field in ("reason", "screening_reason", "excluded_reason", "deprioritized_reason")
+    )
 
 
 def _validate_input_classification_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
