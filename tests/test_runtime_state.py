@@ -2880,6 +2880,9 @@ def test_repair_start_records_editor_owner_transaction(tmp_path):
     workflow = state["workflow_state"]
     repair = workflow["active_repair"]
     assert workflow["current_stage"] == "editor"
+    assert workflow["run_integrity"]["status"] == "clean"
+    assert workflow["run_integrity"]["reference_eligible"] is True
+    assert workflow["run_integrity"].get("reasons", []) == []
     assert repair["repair_owner"] == "editor"
     assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert repair["source"]["finding_id"] == "QG_EDITOR_REPAIR_001"
@@ -2888,6 +2891,10 @@ def test_repair_start_records_editor_owner_transaction(tmp_path):
     events = _event_records(ws)
     assert events[-1]["event_type"] == "repair_started"
     assert events[-1]["metadata"]["repair_owner"] == "editor"
+    assert [
+        event for event in events
+        if event["event_type"] == "run_integrity_contaminated"
+    ] == []
 
 
 def test_repair_start_applies_non_reference_integrity_effect_for_frozen_artifact_change(tmp_path):
