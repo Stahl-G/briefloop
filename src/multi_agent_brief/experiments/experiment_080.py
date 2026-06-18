@@ -77,6 +77,15 @@ REQUIRED_FACT_ARTIFACT_IDS = {
     "screened_candidates",
     "claim_ledger",
 }
+FAST_RERUN_IMPORTED_UPSTREAM_STAGE_IDS = {
+    "doctor",
+    "source-discovery",
+    "input-governance",
+    "scout",
+    "screener",
+    "claim-ledger",
+}
+FAST_RERUN_DOWNSTREAM_TIMED_STAGE_IDS = {"analyst", "editor", "auditor"}
 
 SOURCE_PLAN_ARTIFACT_IDS = {
     "source_candidates",
@@ -2570,6 +2579,7 @@ def _scorecard_timing_summary(timing: Any) -> dict[str, Any]:
         and timing_comparability == "downstream_only"
         and isinstance(total_elapsed, (int, float))
         and not isinstance(total_elapsed, bool)
+        and _timing_gaps_are_imported_upstream_only(timing)
     ):
         status = "downstream_only"
     summary = {
@@ -2590,6 +2600,34 @@ def _scorecard_timing_summary(timing: Any) -> dict[str, Any]:
             if isinstance(stage, dict) and stage.get("status") in {"complete", "satisfied_by_topology"}
         )
     return summary
+
+
+def _timing_gaps_are_imported_upstream_only(timing: dict[str, Any]) -> bool:
+    stages = timing.get("stages")
+    if not isinstance(stages, list):
+        return False
+    gap_stage_ids: list[str] = []
+    stage_statuses: dict[str, Any] = {}
+    for stage in stages:
+        if not isinstance(stage, dict):
+            return False
+        stage_id = stage.get("stage_id")
+        if not isinstance(stage_id, str) or not stage_id:
+            return False
+        status = stage.get("status")
+        stage_statuses[stage_id] = status
+        if status not in {"incomplete", "unknown"}:
+            continue
+        if stage_id not in FAST_RERUN_IMPORTED_UPSTREAM_STAGE_IDS:
+            return False
+        gap_stage_ids.append(stage_id)
+    for stage_id in FAST_RERUN_DOWNSTREAM_TIMED_STAGE_IDS:
+        if stage_statuses.get(stage_id) in {None, "incomplete", "unknown"}:
+            return False
+    finalize = timing.get("finalize")
+    if not isinstance(finalize, dict) or finalize.get("status") in {"incomplete", "unknown"}:
+        return False
+    return bool(gap_stage_ids)
 
 
 def _run_record_timing(timing: dict[str, Any], *, runtime_manifest: dict[str, Any]) -> dict[str, Any]:
