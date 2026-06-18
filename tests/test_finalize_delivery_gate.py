@@ -342,6 +342,56 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, 
     assert (intermediate / "finalize_report.json").exists()
 
 
+def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Path, capsys):
+    workspace = tmp_path / "workspace"
+    input_dir = workspace / "input"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    input_dir.mkdir(parents=True)
+    intermediate.mkdir(parents=True)
+    (input_dir / "source.md").write_text("dummy", encoding="utf-8")
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: Active Repair Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n- Claim [src:CLAIM_123456]\n",
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps(
+            {
+                "active_repair": {
+                    "schema_version": "mabw.active_repair.v1",
+                    "transaction_id": "repair-test-001",
+                    "repair_owner": "editor",
+                    "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+                    "must_rerun_from": "auditor",
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
+    captured = capsys.readouterr()
+
+    assert "repair complete" in captured.err
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+    assert not (intermediate / "finalize_report.json").exists()
+
+
 def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"

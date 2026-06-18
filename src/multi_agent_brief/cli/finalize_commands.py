@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
+from multi_agent_brief.orchestrator.runtime_state import (
+    E_ACTIVE_REPAIR_OPEN,
+    RuntimeStateError,
+    raise_if_active_repair_open,
+    runtime_state_paths,
+)
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
 
@@ -32,6 +39,7 @@ def handle(args: argparse.Namespace) -> int:
     rendered.
     """
     config_path = Path(args.config).resolve()
+    workspace = config_path.parent
     config = load_config(str(config_path))
     settings = build_run_settings(
         config=config,
@@ -44,6 +52,7 @@ def handle(args: argparse.Namespace) -> int:
     output_config = get_output_config(config)
 
     try:
+        _preflight_no_active_repair(workspace)
         result = finalize_reader_outputs(
             output_dir=settings["output_dir"],
             project_name=settings["project_name"],
@@ -57,7 +66,7 @@ def handle(args: argparse.Namespace) -> int:
             docx_template=output_config.get("docx_template", "default"),
             source_appendix_config=output_config.get("source_appendix", {}),
         )
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+    except (FileNotFoundError, ValueError, RuntimeError, RuntimeStateError) as exc:
         print(f"[finalize] Error: {exc}", file=sys.stderr)
         return 1
 
@@ -80,3 +89,23 @@ def handle(args: argparse.Namespace) -> int:
         " reader-facing artifacts."
     )
     return 0
+
+
+def _preflight_no_active_repair(workspace: Path) -> None:
+    workflow_path = runtime_state_paths(workspace)["workflow_state"]
+    if not workflow_path.exists():
+        return
+    try:
+        workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeStateError(
+            f"workflow_state.json is unreadable before finalize: {exc}",
+        ) from exc
+    if not isinstance(workflow, dict):
+        raise RuntimeStateError("workflow_state.json must contain an object before finalize.")
+    try:
+        raise_if_active_repair_open(workspace=workspace, workflow=workflow)
+    except RuntimeStateError as exc:
+        if exc.error_code == E_ACTIVE_REPAIR_OPEN:
+            raise
+        raise RuntimeStateError(f"Unable to verify active repair state before finalize: {exc}") from exc
