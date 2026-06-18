@@ -754,6 +754,7 @@ def summarize_case(
     *,
     case_dir: str | Path,
     output: str | Path | None = None,
+    scorecards: list[str | Path] | None = None,
 ) -> dict[str, Any]:
     """Summarize MABW-080 scorecards for a case.
 
@@ -780,8 +781,12 @@ def summarize_case(
             warnings=case_validation.get("warnings") or [],
         )
     case_manifest = _load_json_object(case_root / "case_manifest.json", label="case_manifest")
-    scorecards = _discover_case_scorecards(case_root=case_root, output_path=output_path)
-    summary = _build_case_summary(case_manifest=case_manifest, scorecards=scorecards)
+    scorecard_records = _discover_case_scorecards(
+        case_root=case_root,
+        output_path=output_path,
+        scorecard_paths=scorecards or [],
+    )
+    summary = _build_case_summary(case_manifest=case_manifest, scorecards=scorecard_records)
     written = False
     if output_path is not None:
         written = _write_experiment_output_idempotently(
@@ -795,6 +800,7 @@ def summarize_case(
         "experiment_id": EXPERIMENT_080_ID,
         "case_id": summary["case_id"],
         "scorecard_count": summary["scorecard_count"],
+        "scorecard_paths": [record["path"] for record in scorecard_records],
         "output": str(output_path) if output_path is not None else None,
         "written": written,
         "summary": summary,
@@ -1273,12 +1279,16 @@ def _discover_case_scorecards(
     *,
     case_root: Path,
     output_path: Path | None,
+    scorecard_paths: list[str | Path],
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     output_resolved = output_path.resolve() if output_path is not None else None
+    seen_resolved: set[Path] = set()
     for path in sorted(case_root.rglob("*.json"), key=lambda item: item.relative_to(case_root).as_posix()):
         resolved = path.resolve()
         if output_resolved is not None and resolved == output_resolved:
+            continue
+        if resolved in seen_resolved:
             continue
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -1320,7 +1330,78 @@ def _discover_case_scorecards(
             "path": path.relative_to(case_root).as_posix(),
             "scorecard": payload,
         })
+        seen_resolved.add(resolved)
+
+    for raw_path in scorecard_paths:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        else:
+            path = path.resolve()
+        if output_resolved is not None and path == output_resolved:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_SCORECARD_INVALID",
+                "summarize --scorecard cannot point to the summary output path.",
+                path=str(path),
+            )
+        if path in seen_resolved:
+            continue
+        records.append({
+            "path": _scorecard_display_path(path=path, case_root=case_root),
+            "scorecard": _read_scorecard_file(path),
+        })
+        seen_resolved.add(path)
     return records
+
+
+def _read_scorecard_file(path: Path) -> dict[str, Any]:
+    if not path.exists() or not path.is_file():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "scorecard file does not exist.",
+            path=str(path),
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            f"scorecard JSON is unreadable: {exc}",
+            path=str(path),
+        )
+    if not isinstance(payload, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "scorecard file must contain a JSON object.",
+            path=str(path),
+        )
+    if payload.get("schema_version") != SCORECARD_SCHEMA:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            f"scorecard file schema_version must be {SCORECARD_SCHEMA}.",
+            path=str(path),
+            schema_version=payload.get("schema_version"),
+        )
+    diagnostics = validate_scorecard(payload)
+    if diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "scorecard.json failed schema validation.",
+            path=str(path),
+            errors=[diagnostic.to_dict() for diagnostic in diagnostics],
+        )
+    return payload
+
+
+def _scorecard_display_path(*, path: Path, case_root: Path) -> str:
+    try:
+        return path.relative_to(case_root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return path.relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return f"<external-scorecard>/{path.name}"
 
 
 def _build_case_summary(

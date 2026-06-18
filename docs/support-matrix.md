@@ -124,8 +124,10 @@ occurred.
 MABW-080 case summarization is experimental experiment metadata tooling. It
 aggregates existing scorecards into A/B/invalid counts, condition groups,
 manifestation-score counts, reader-clean rates, coverage-delta status, timing
-status, and invalid reasons. It does not judge output quality, run workflow
-stages, scaffold conditions, or include invalid runs in A-grade denominators.
+status, and invalid reasons. It discovers scorecards under the case directory
+and can include explicit `--scorecard` paths for scorecards written elsewhere.
+It does not judge output quality, run workflow stages, scaffold conditions, or
+include invalid runs in A-grade denominators.
 
 ## Runtimes
 

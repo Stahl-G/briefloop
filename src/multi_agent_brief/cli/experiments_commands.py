@@ -78,6 +78,13 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Summarize deterministic MABW-080 scorecards for a case.",
     )
     summarize.add_argument("--case", required=True, dest="case_dir", help="Path to experiments/080/cases/<case_id>.")
+    summarize.add_argument(
+        "--scorecard",
+        action="append",
+        dest="scorecards",
+        default=[],
+        help="Additional scorecard JSON path to include. May be passed multiple times.",
+    )
     summarize.add_argument("--output", help="Optional path to write case_summary.json.")
     summarize.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
@@ -143,6 +150,7 @@ def handle(args: argparse.Namespace) -> int:
             payload = summarize_case(
                 case_dir=args.case_dir,
                 output=args.output,
+                scorecards=args.scorecards,
             )
         except Experiment080Error as exc:
             payload = exc.to_dict()

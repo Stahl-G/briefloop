@@ -294,7 +294,7 @@ def _assessment_args(scorecard: Path, assessment: Path, output: Path) -> list[st
     ]
 
 
-def _summarize_args(case_dir: Path, output: Path | None = None) -> list[str]:
+def _summarize_args(case_dir: Path, output: Path | None = None, *, scorecards: list[Path] | None = None) -> list[str]:
     args = [
         "experiments",
         "080",
@@ -303,6 +303,8 @@ def _summarize_args(case_dir: Path, output: Path | None = None) -> list[str]:
         str(case_dir),
         "--json",
     ]
+    for scorecard in scorecards or []:
+        args.extend(["--scorecard", str(scorecard)])
     if output is not None:
         args.extend(["--output", str(output)])
     return args
@@ -1411,6 +1413,44 @@ def test_experiments_080_summarize_handles_missing_condition_scorecards(tmp_path
         "max": None,
         "average": None,
     }
+
+
+def test_experiments_080_summarize_includes_explicit_scorecard_outside_case_dir(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    scorecard_path = tmp_path / "assessed_scorecard.json"
+    _write_json(
+        scorecard_path,
+        _scorecard_payload(
+            condition="memory",
+            run_id="mabw-20260614T000000Z-memory01",
+            validity_class="A_controlled",
+        ),
+    )
+
+    rc = main(_summarize_args(case_dir, scorecards=[scorecard_path]))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["summary"]
+    assert payload["scorecard_count"] == 1
+    assert payload["scorecard_paths"] == ["<external-scorecard>/assessed_scorecard.json"]
+    assert summary["scorecard_count"] == 1
+    assert summary["condition_counts"]["memory"]["total"] == 1
+    assert summary["scorecards"][0]["path"] == "<external-scorecard>/assessed_scorecard.json"
+
+
+def test_experiments_080_summarize_rejects_missing_explicit_scorecard(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    missing_scorecard = tmp_path / "assessed_scorecard.json"
+
+    rc = main(_summarize_args(case_dir, scorecards=[missing_scorecard]))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_SCORECARD_INVALID"
+    assert payload["details"]["path"] == str(missing_scorecard)
 
 
 def test_experiments_080_summarize_excludes_invalid_scorecards_from_interpretable_metrics(tmp_path, capsys):
