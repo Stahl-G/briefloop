@@ -37,6 +37,10 @@ ARTIFACT_MISSING = "missing"
 ARTIFACT_PRESENT = "present"
 ARTIFACT_VALID = "valid"
 ARTIFACT_INVALID = "invalid"
+CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE = (
+    "claim_ledger.json is frozen. Do not hand-edit metadata or synchronize hashes manually. "
+    "Rebuild the fact layer or use a deterministic metadata enrichment transaction when available."
+)
 
 _SCREENING_STATUSES = {
     "keep",
@@ -428,9 +432,13 @@ def interpret_frozen_artifact_integrity(
                 f"Frozen artifact '{path}' from owner stage '{producer_stage}' is missing after stage-complete; route repair back to the owner stage."
             )
         elif new_sha != old_sha:
-            reasons.append(
-                f"Frozen artifact '{path}' from owner stage '{producer_stage}' changed after stage-complete; route repair back to the owner stage instead of downstream in-place conversion."
+            reason = (
+                f"Frozen artifact '{path}' from owner stage '{producer_stage}' changed after stage-complete; "
+                "route repair back to the owner stage instead of downstream in-place conversion."
             )
+            if artifact_id == "claim_ledger":
+                reason = f"{reason} {CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE}"
+            reasons.append(reason)
     if reasons:
         return FrozenArtifactIntegrityVerdict(
             kind="degraded",

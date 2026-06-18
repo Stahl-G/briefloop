@@ -2064,6 +2064,33 @@ def test_freeze_claim_ledger_is_idempotent_for_same_frozen_inputs(tmp_path):
     assert (_intermediate(ws) / "claim_ledger.json").read_bytes() == ledger_before
 
 
+def test_freeze_claim_ledger_rejects_hand_edited_frozen_ledger_metadata_with_guidance(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    registry_before = _state_file(ws, "artifact_registry").read_bytes()
+    event_log_before = _state_file(ws, "event_log").read_bytes()
+    ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
+    ledger[0].setdefault("metadata", {})["published_at"] = "2026-06-18"
+    (_intermediate(ws) / "claim_ledger.json").write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert "Do not hand-edit metadata or synchronize hashes manually" in str(excinfo.value)
+    assert "deterministic metadata enrichment transaction" in str(excinfo.value)
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert _state_file(ws, "artifact_registry").read_bytes() == registry_before
+    assert _state_file(ws, "event_log").read_bytes() == event_log_before
+
+
 def test_freeze_claim_ledger_requires_existing_event_log(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -2608,13 +2635,12 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
         stage_id="claim-ledger",
         reason="claim ledger complete",
     )
-    _write_json_artifact(
-        ws,
-        "claim_ledger.json",
-        _valid_claim_ledger_payload(
-            claim_id="CL-002",
-            statement="ExampleCo changed the already completed ledger.",
-        ),
+    registry_before = _state_file(ws, "artifact_registry").read_bytes()
+    ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
+    ledger[0].setdefault("metadata", {})["published_at"] = "2026-06-18"
+    (_intermediate(ws) / "claim_ledger.json").write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
     with pytest.raises(RuntimeStateError) as excinfo:
@@ -2623,6 +2649,9 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Frozen artifact" in str(excinfo.value)
     assert "owner stage 'claim-ledger'" in str(excinfo.value)
+    assert "Do not hand-edit metadata or synchronize hashes manually" in str(excinfo.value)
+    assert "deterministic metadata enrichment transaction" in str(excinfo.value)
+    assert _state_file(ws, "artifact_registry").read_bytes() == registry_before
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert workflow["run_integrity"]["status"] == "contaminated"
     assert workflow["run_integrity"]["reference_eligible"] is False
