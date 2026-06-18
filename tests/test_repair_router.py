@@ -62,6 +62,41 @@ def _write_quality_gate_report(ws: Path, finding: dict[str, object]) -> None:
     )
 
 
+def _write_finalize_report_with_reader_clean_failure(ws: Path) -> None:
+    (_intermediate(ws) / "finalize_report.json").write_text(
+        json.dumps(
+            {
+                "status": "fail",
+                "reader_clean": {
+                    "status": "fail",
+                    "bare_claim_id_count": 1,
+                    "process_wording_count": 1,
+                    "sample_findings": [
+                        {
+                            "kind": "bare_claim_id",
+                            "text": "CL-0001",
+                            "line": 12,
+                            "artifact": str(ws / "output" / "delivery" / "brief.md"),
+                            "message": "Reader-facing output contains a raw internal claim ID.",
+                        },
+                        {
+                            "kind": "process_wording",
+                            "text": "Claim Ledger",
+                            "line": 18,
+                            "artifact": str(ws / "output" / "delivery" / "brief.md"),
+                            "message": "Reader-facing output contains internal workflow/process wording.",
+                        },
+                    ],
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_legacy_quality_gate_report(ws: Path, finding: dict[str, object]) -> None:
     path = _intermediate(ws) / "quality_gate_report.json"
     path.write_text(
@@ -146,6 +181,70 @@ def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     assert "output/intermediate/audit_report.json" in payload["blocked_direct_edits"]
     assert not (ws / "output" / "intermediate" / "repair_plan.json").exists()
     assert runtime_state_paths(ws)["event_log"].read_bytes() == before_events
+
+
+def test_repair_route_maps_finalize_reader_clean_failure_to_editor(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_finalize_report_with_reader_clean_failure(ws)
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "editor"
+    assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert payload["must_rerun_from"] == "auditor"
+    assert payload["recommended_action"] == "repair_editor_audited_brief_and_rerun_auditor_finalize"
+    assert payload["source"]["kind"] == "finalize_report"
+    assert payload["source"]["stage_id"] == "finalize"
+    assert payload["source"]["finding_type"] == "reader_clean_bare_claim_id"
+    assert any(route["source"]["finding_type"] == "reader_clean_process_wording" for route in payload["routes"])
+
+
+def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_valid_claim_ledger(ws)
+    (_intermediate(ws) / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a demo facility. [src:CL-0001]\n",
+        encoding="utf-8",
+    )
+    (_intermediate(ws) / "audit_report.json").write_text(
+        json.dumps({"audit_status": "pass", "audit_score": 95, "findings": []}) + "\n",
+        encoding="utf-8",
+    )
+    _set_workflow_stages(
+        ws,
+        completed=[
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+            "auditor",
+        ],
+        current_stage="finalize",
+    )
+    check_runtime_state(workspace=ws)
+    _write_finalize_report_with_reader_clean_failure(ws)
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    repair = payload["repair"]
+    workflow = payload["workflow_state"]
+    assert payload["transaction"]["decision"] == "repair_start"
+    assert workflow["current_stage"] == "editor"
+    assert workflow["active_repair"]["repair_owner"] == "editor"
+    assert repair["source"]["kind"] == "finalize_report"
+    assert repair["source"]["stage_id"] == "finalize"
+    assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert repair["must_rerun_from"] == "auditor"
 
 
 def test_repair_route_maps_frozen_audited_brief_change_to_editor(tmp_path, capsys):

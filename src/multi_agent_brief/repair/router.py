@@ -137,6 +137,8 @@ def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[
             continue
         payloads[label] = payload
         findings.extend(_findings_from_payload(payload, source=label, path=_workspace_relative(workspace, path)))
+        if label == "finalize_report":
+            findings.extend(_findings_from_finalize_report(payload, path=_workspace_relative(workspace, path)))
     registry = payloads.get("artifact_registry")
     findings.extend(_findings_from_artifact_registry(registry))
     findings.extend(_findings_from_frozen_artifact_integrity(workspace, payloads))
@@ -150,6 +152,7 @@ def _input_paths(workspace: Path) -> dict[str, Path]:
         "auditor_quality_gate_report": gate_paths["auditor_quality_gate_report"],
         "finalize_quality_gate_report": gate_paths["finalize_quality_gate_report"],
         "audit_report": workspace / INTERMEDIATE_DIR / "audit_report.json",
+        "finalize_report": workspace / INTERMEDIATE_DIR / "finalize_report.json",
         "runtime_manifest": runtime_paths["runtime_manifest"],
         "workflow_state": runtime_paths["workflow_state"],
         "artifact_registry": runtime_paths["artifact_registry"],
@@ -190,6 +193,41 @@ def _findings_from_payload(payload: dict[str, Any], *, source: str, path: str) -
         if source_stage_id:
             item.setdefault("_source_stage_id", source_stage_id)
         normalized.append(item)
+    return normalized
+
+
+def _findings_from_finalize_report(payload: dict[str, Any], *, path: str) -> list[dict[str, Any]]:
+    reader_clean = payload.get("reader_clean")
+    if not isinstance(reader_clean, dict) or reader_clean.get("status") == "pass":
+        return []
+    sample_findings = reader_clean.get("sample_findings")
+    if not isinstance(sample_findings, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for idx, finding in enumerate(sample_findings):
+        if not isinstance(finding, dict):
+            continue
+        kind = str(finding.get("kind") or "reader_clean_residue")
+        message = str(finding.get("message") or f"Reader-clean failure: {kind}.")
+        residue = str(finding.get("text") or "")
+        if residue:
+            message = f"{message} Residue: {residue!r}."
+        normalized.append({
+            "_source": "finalize_report",
+            "_source_path": path,
+            "_source_index": idx,
+            "_source_stage_id": "finalize",
+            "finding_id": f"READER_CLEAN_{idx + 1:03d}",
+            "finding_type": f"reader_clean_{kind}",
+            "category": "reader_clean",
+            "severity": "medium",
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": message,
+            "recommended_action": "repair_editor_audited_brief_and_rerun_auditor_finalize",
+        })
     return normalized
 
 
