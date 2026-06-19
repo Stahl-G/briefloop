@@ -407,6 +407,7 @@ def test_experiment_080_auditable_brief_a_controlled_does_not_require_timing_ava
         "auditor_gate_report_valid": True,
         "auditor_gates_no_blocking": True,
         "fact_layer_matches": True,
+        "treatment_isolation_passed": True,
         "quality_gates_passed": True,
         "timing_available": False,
     }
@@ -425,10 +426,57 @@ def test_experiment_080_auditable_brief_a_controlled_does_not_require_timing_ava
         "relevant_repair_transaction_ids": [],
         "auditor_stage_transaction_id": "tx-auditor-complete",
     }
+    scorecard["treatment_isolation"] = {
+        "schema_version": "mabw.experiment_080.treatment_visibility.v1",
+        "status": "pass",
+        "condition": "memory",
+    }
 
     diagnostics = validate_scorecard(scorecard)
 
     assert diagnostics == []
+
+
+def test_experiment_080_auditable_brief_a_controlled_requires_treatment_isolation_pass():
+    scorecard = _valid_scorecard()
+    scorecard["assessment_target"] = "auditable_brief"
+    scorecard["reader_clean"] = {
+        "pass": None,
+        "status": "not_required_for_target",
+        "source": "assessment_target.auditable_brief",
+    }
+    scorecard["control_integrity"] = {
+        "auditor_complete": True,
+        "run_integrity_clean": True,
+        "reference_eligible": True,
+        "artifact_registry_valid": True,
+        "audit_binding_valid": True,
+        "audited_brief_frozen_valid": True,
+        "audit_report_frozen_valid": True,
+        "auditor_gate_report_valid": True,
+        "auditor_gates_no_blocking": True,
+        "fact_layer_matches": True,
+        "treatment_isolation_passed": True,
+    }
+    scorecard["audit_binding"] = {
+        "schema_version": "mabw.auditable_audit_binding.v1",
+        "status": "valid",
+        "source": "workflow_state.stage_statuses.auditor.metadata.audit_binding",
+        "claim_ledger_sha256": SHA,
+        "audited_brief_sha256": SHA,
+        "audit_report_sha256": SHA,
+        "relevant_repair_transaction_ids": [],
+        "auditor_stage_transaction_id": "tx-auditor-complete",
+    }
+    scorecard["treatment_isolation"] = {
+        "schema_version": "mabw.experiment_080.treatment_visibility.v1",
+        "status": "fail",
+        "condition": "memory",
+    }
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "a_controlled_requirements_not_met" in _codes(diagnostics)
 
 
 def test_experiment_080_scorecard_requires_non_empty_guidance_scores():

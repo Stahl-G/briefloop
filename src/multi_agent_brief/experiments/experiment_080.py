@@ -65,7 +65,38 @@ SCAFFOLD_CONDITION_SCHEMA = "mabw.experiment_080.scaffold_condition.v1"
 CASE_VALIDATION_SCHEMA = "mabw.experiment_080.case_validation.v1"
 RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
 
+SCAFFOLD_METADATA_PATH = "experiment/080/condition.json"
+SCAFFOLD_INSTRUCTIONS_PATH = "experiment/080/operator_instructions.md"
+
 ALLOWED_CONDITIONS = {"baseline", "memory", "prompt_only"}
+TREATMENT_VISIBILITY_SCHEMA = "mabw.experiment_080.treatment_visibility.v1"
+PROMPT_GUIDANCE_BLOCK_SCHEMA = "mabw.experiment_080.prompt_guidance_block.v1"
+TREATMENT_VISIBLE_MATERIALS = {
+    "baseline": (),
+    "memory": ("output/intermediate/improvement_memory_snapshot.md",),
+    "prompt_only": ("handoff.prompt_guidance_block",),
+}
+TREATMENT_RUNTIME_VISIBLE_FILES = (
+    "config.yaml",
+    "sources.yaml",
+    "user.md",
+    "audience_profile.md",
+    "improvement/ledger.jsonl",
+    "improvement/memory.md",
+    SCAFFOLD_METADATA_PATH,
+    SCAFFOLD_INSTRUCTIONS_PATH,
+    "output/intermediate/agent_handoff.md",
+    "output/intermediate/agent_handoff.json",
+    "output/intermediate/runtime_handoff.json",
+    "output/intermediate/improvement_memory_snapshot.md",
+)
+PROMPT_ONLY_GUIDANCE_TEXT_ALLOWED_FILES = {
+    SCAFFOLD_METADATA_PATH,
+    SCAFFOLD_INSTRUCTIONS_PATH,
+    "output/intermediate/agent_handoff.md",
+    "output/intermediate/agent_handoff.json",
+    "output/intermediate/runtime_handoff.json",
+}
 ALLOWED_VALIDITY_CLASSES = {
     "A_controlled",
     "B_integration",
@@ -102,6 +133,7 @@ AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
     "auditor_gate_report_valid",
     "auditor_gates_no_blocking",
     "fact_layer_matches",
+    "treatment_isolation_passed",
 )
 A_CONTROLLED_REQUIRED_CONTROL_KEYS = DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS
 A_CONTROLLED_REQUIRED_CONTROL_KEYS_BY_TARGET = {
@@ -132,8 +164,6 @@ SOURCE_PLAN_ARTIFACT_IDS = {
     "source_candidate_plan",
     "source_plan",
 }
-SCAFFOLD_METADATA_PATH = "experiment/080/condition.json"
-SCAFFOLD_INSTRUCTIONS_PATH = "experiment/080/operator_instructions.md"
 
 _CASE_ID_RE = re.compile(r"^[a-z][a-z0-9_-]{2,79}$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{2,159}$")
@@ -612,6 +642,7 @@ def register_run_record(
 
     case_manifest = _load_json_object(case_root / "case_manifest.json", label="case_manifest")
     frozen_fact_layer = _load_json_object(case_root / "frozen_fact_layer.json", label="frozen_fact_layer")
+    guidance_set = _load_json_object(case_root / "guidance_set.json", label="guidance_set")
     conditions = case_manifest.get("conditions") if isinstance(case_manifest.get("conditions"), list) else []
     if condition not in conditions:
         _raise_experiment_error(
@@ -713,6 +744,11 @@ def register_run_record(
         repo_workdir=repo_workdir,
     )
     runtime = _require_text(runtime_manifest.get("runtime"), "runtime_manifest.runtime")
+    treatment_isolation = _registered_treatment_isolation(
+        workspace=ws,
+        condition=condition,
+        guidance_set=guidance_set,
+    )
 
     run_record: dict[str, Any] = {
         "schema_version": RUN_RECORD_SCHEMA,
@@ -730,6 +766,7 @@ def register_run_record(
         "run_integrity": workflow_integrity,
         "timing": timing,
         "imported_fact_layer": imported_fact_layer,
+        "treatment_isolation": treatment_isolation,
     }
     if target_artifacts is not None:
         run_record["target_artifacts"] = target_artifacts
@@ -1064,6 +1101,12 @@ def scaffold_condition(
     )
     _require_scaffold_workspace_shell(workspace=ws)
     _reject_improvement_memory_for_non_memory_condition(workspace=ws, condition=condition)
+    _reject_treatment_guidance_leakage(
+        workspace=ws,
+        condition=condition,
+        guidance_set=guidance_set,
+        allowed_guidance_text_files=set(),
+    )
     _reject_existing_scaffold_metadata(ws)
     removed_placeholders = _remove_scaffold_init_placeholders(ws)
 
@@ -1291,6 +1334,367 @@ def _runtime_manifest_improvement_has_residue(improvement: dict[str, Any]) -> bo
     return False
 
 
+def _guidance_leak_markers(guidance_set: dict[str, Any]) -> list[dict[str, str]]:
+    markers: list[dict[str, str]] = []
+    for entry in guidance_set.get("entries", []):
+        if not isinstance(entry, dict):
+            continue
+        entry_id = str(entry.get("entry_id") or "")
+        for field in ("guidance_text", "expected_manifestation"):
+            value = entry.get(field)
+            if isinstance(value, str) and value.strip():
+                markers.append({
+                    "entry_id": entry_id,
+                    "field": field,
+                    "text": value.strip(),
+                })
+    return markers
+
+
+def _runtime_visible_treatment_files(workspace: Path) -> list[Path]:
+    files: list[Path] = []
+    for rel_path in TREATMENT_RUNTIME_VISIBLE_FILES:
+        path = workspace / rel_path
+        if path.is_file():
+            files.append(path)
+    return files
+
+
+def _reject_treatment_guidance_leakage(
+    *,
+    workspace: Path,
+    condition: str,
+    guidance_set: dict[str, Any],
+    allowed_guidance_text_files: set[str],
+) -> None:
+    leaks = _treatment_guidance_leaks(
+        workspace=workspace,
+        condition=condition,
+        guidance_set=guidance_set,
+        allowed_guidance_text_files=allowed_guidance_text_files,
+    )
+    if leaks:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_TREATMENT_CONTAMINATION",
+            (
+                "080 condition workspace exposes treatment guidance outside the "
+                "allowed condition-specific surface."
+            ),
+            workspace=str(workspace),
+            condition=condition,
+            treatment_guidance_leaks=leaks,
+        )
+
+
+def _treatment_guidance_leaks(
+    *,
+    workspace: Path,
+    condition: str,
+    guidance_set: dict[str, Any],
+    allowed_guidance_text_files: set[str],
+) -> list[dict[str, str]]:
+    leaks: list[dict[str, str]] = []
+    markers = _guidance_leak_markers(guidance_set)
+    if not markers:
+        return leaks
+    for path in _runtime_visible_treatment_files(workspace):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        rel_path = path.relative_to(workspace).as_posix()
+        for marker in markers:
+            if marker["text"] not in text:
+                continue
+            if (
+                condition == "prompt_only"
+                and marker["field"] == "guidance_text"
+                and rel_path in allowed_guidance_text_files
+            ):
+                continue
+            if (
+                condition == "memory"
+                and marker["field"] == "guidance_text"
+                and rel_path == "output/intermediate/improvement_memory_snapshot.md"
+            ):
+                continue
+            leaks.append({
+                "path": rel_path,
+                "entry_id": marker["entry_id"],
+                "field": marker["field"],
+            })
+    return leaks
+
+
+def _treatment_visibility_contract(condition: str) -> dict[str, Any]:
+    return {
+        "schema_version": TREATMENT_VISIBILITY_SCHEMA,
+        "condition": condition,
+        "allowed_visible_treatment_materials": list(TREATMENT_VISIBLE_MATERIALS[condition]),
+        "forbidden_visible_fields": ["expected_manifestation"]
+        if condition == "prompt_only"
+        else ["guidance_text", "expected_manifestation"],
+        "semantics": (
+            "exact_runtime_visibility_contract; no semantic leakage or synonym scanning"
+        ),
+    }
+
+
+def _prompt_guidance_block(guidance_entries: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "schema_version": PROMPT_GUIDANCE_BLOCK_SCHEMA,
+        "source": "case_guidance_set",
+        "guidance": [
+            {
+                "entry_id": entry["entry_id"],
+                "guidance_text": entry["guidance_text"],
+            }
+            for entry in guidance_entries
+        ],
+    }
+
+
+def _treatment_isolation_projection(
+    *,
+    workspace: Path,
+    condition: str,
+    guidance_set: dict[str, Any],
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    guidance_entries = _scaffold_guidance_entries(guidance_set)
+    guidance_entry_ids = [entry["entry_id"] for entry in guidance_entries]
+    details: list[dict[str, Any]] = []
+    status = "pass"
+
+    if metadata is None:
+        return {
+            "schema_version": TREATMENT_VISIBILITY_SCHEMA,
+            "status": "not_checked",
+            "condition": condition,
+            "reason": "scaffold_condition_metadata_missing",
+        }
+
+    if metadata.get("condition") != condition:
+        status = "fail"
+        details.append({
+            "reason": "condition_metadata_mismatch",
+            "expected": condition,
+            "actual": metadata.get("condition"),
+        })
+
+    visibility = metadata.get("treatment_visibility")
+    if not isinstance(visibility, dict):
+        status = "fail"
+        details.append({"reason": "treatment_visibility_missing"})
+    else:
+        allowed = visibility.get("allowed_visible_treatment_materials")
+        if allowed != list(TREATMENT_VISIBLE_MATERIALS[condition]):
+            status = "fail"
+            details.append({
+                "reason": "allowed_visible_treatment_materials_mismatch",
+                "expected": list(TREATMENT_VISIBLE_MATERIALS[condition]),
+                "actual": allowed,
+            })
+
+    handoff = metadata.get("handoff") if isinstance(metadata.get("handoff"), dict) else {}
+    prompt_block = handoff.get("prompt_guidance_block") if isinstance(handoff, dict) else None
+    snapshot_path = workspace / "output" / "intermediate" / "improvement_memory_snapshot.md"
+
+    if condition == "baseline":
+        if isinstance(prompt_block, dict):
+            status = "fail"
+            details.append({"reason": "baseline_prompt_guidance_block_present"})
+        if snapshot_path.exists():
+            status = "fail"
+            details.append({
+                "reason": "baseline_improvement_memory_snapshot_present",
+                "path": "output/intermediate/improvement_memory_snapshot.md",
+            })
+    elif condition == "memory":
+        if isinstance(prompt_block, dict):
+            status = "fail"
+            details.append({"reason": "memory_prompt_guidance_block_present"})
+        snapshot_status = _memory_snapshot_treatment_status(
+            workspace=workspace,
+            guidance_entry_ids=guidance_entry_ids,
+        )
+        if snapshot_status["status"] != "pass":
+            status = "fail"
+            details.append(snapshot_status)
+    elif condition == "prompt_only":
+        if snapshot_path.exists():
+            status = "fail"
+            details.append({
+                "reason": "prompt_only_improvement_memory_snapshot_present",
+                "path": "output/intermediate/improvement_memory_snapshot.md",
+            })
+        block_status = _prompt_guidance_block_status(
+            prompt_block=prompt_block,
+            guidance_entries=guidance_entries,
+        )
+        if block_status["status"] != "pass":
+            status = "fail"
+            details.append(block_status)
+
+    allowed_guidance_text_files = (
+        PROMPT_ONLY_GUIDANCE_TEXT_ALLOWED_FILES if condition == "prompt_only" else set()
+    )
+    leaks = _treatment_guidance_leaks(
+        workspace=workspace,
+        condition=condition,
+        guidance_set=guidance_set,
+        allowed_guidance_text_files=allowed_guidance_text_files,
+    )
+    if leaks:
+        status = "fail"
+        details.append({"reason": "treatment_guidance_leakage", "leaks": leaks})
+
+    return {
+        "schema_version": TREATMENT_VISIBILITY_SCHEMA,
+        "status": status,
+        "condition": condition,
+        "allowed_visible_treatment_materials": list(TREATMENT_VISIBLE_MATERIALS[condition]),
+        "guidance_entry_ids": guidance_entry_ids,
+        "details": details,
+    }
+
+
+def _memory_snapshot_treatment_status(*, workspace: Path, guidance_entry_ids: list[str]) -> dict[str, Any]:
+    rel_path = "output/intermediate/improvement_memory_snapshot.md"
+    path = workspace / rel_path
+    if not path.is_file():
+        return {"status": "fail", "reason": "memory_snapshot_missing", "path": rel_path}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return {"status": "fail", "reason": "memory_snapshot_unreadable", "path": rel_path, "error": str(exc)}
+    if "mabw:improvement-memory-snapshot" not in text:
+        return {"status": "fail", "reason": "memory_snapshot_marker_missing", "path": rel_path}
+    expected = set(guidance_entry_ids)
+    actual = _snapshot_selected_entry_ids(text)
+    if actual != expected:
+        return {
+            "status": "fail",
+            "reason": "memory_snapshot_guidance_entry_ids_mismatch",
+            "path": rel_path,
+            "missing_entry_ids": sorted(expected - actual),
+            "unexpected_entry_ids": sorted(actual - expected),
+        }
+    return {"status": "pass", "path": rel_path}
+
+
+def _snapshot_selected_entry_ids(text: str) -> set[str]:
+    for line in text.splitlines():
+        if not line.startswith("selected_entry_ids:"):
+            continue
+        raw = line.split(":", 1)[1].strip()
+        if raw in {"", "none"}:
+            return set()
+        return {item.strip() for item in raw.split(",") if item.strip()}
+    return set()
+
+
+def _prompt_guidance_block_status(
+    *,
+    prompt_block: Any,
+    guidance_entries: list[dict[str, str]],
+) -> dict[str, Any]:
+    if not isinstance(prompt_block, dict):
+        return {"status": "fail", "reason": "prompt_guidance_block_missing"}
+    if prompt_block.get("schema_version") != PROMPT_GUIDANCE_BLOCK_SCHEMA:
+        return {
+            "status": "fail",
+            "reason": "prompt_guidance_block_schema_invalid",
+            "schema_version": prompt_block.get("schema_version"),
+        }
+    guidance = prompt_block.get("guidance")
+    if not isinstance(guidance, list):
+        return {"status": "fail", "reason": "prompt_guidance_block_guidance_not_list"}
+    expected = {entry["entry_id"]: entry["guidance_text"] for entry in guidance_entries}
+    actual: dict[str, str] = {}
+    duplicate_entry_ids: set[str] = set()
+    for item in guidance:
+        if not isinstance(item, dict):
+            continue
+        entry_id = item.get("entry_id")
+        text = item.get("guidance_text")
+        if isinstance(entry_id, str) and isinstance(text, str):
+            if entry_id in actual:
+                duplicate_entry_ids.add(entry_id)
+            actual[entry_id] = text
+    if duplicate_entry_ids:
+        return {
+            "status": "fail",
+            "reason": "prompt_guidance_block_duplicate_guidance_entry_ids",
+            "duplicate_entry_ids": sorted(duplicate_entry_ids),
+        }
+    unexpected = sorted(set(actual) - set(expected))
+    if unexpected:
+        return {
+            "status": "fail",
+            "reason": "prompt_guidance_block_unexpected_guidance",
+            "unexpected_entry_ids": unexpected,
+        }
+    missing = [entry_id for entry_id in expected if actual.get(entry_id) != expected[entry_id]]
+    if missing:
+        return {
+            "status": "fail",
+            "reason": "prompt_guidance_block_missing_guidance",
+            "missing_entry_ids": missing,
+        }
+    return {"status": "pass"}
+
+
+def _registered_treatment_isolation(
+    *,
+    workspace: Path,
+    condition: str,
+    guidance_set: dict[str, Any],
+) -> dict[str, Any]:
+    metadata_path = workspace / SCAFFOLD_METADATA_PATH
+    if not metadata_path.exists():
+        return {
+            "schema_version": TREATMENT_VISIBILITY_SCHEMA,
+            "status": "not_checked",
+            "condition": condition,
+            "reason": "scaffold_condition_metadata_missing",
+        }
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_TREATMENT_CONTAMINATION",
+            "080 scaffold condition metadata is unreadable; treatment isolation cannot be verified.",
+            workspace=str(workspace),
+            condition=condition,
+            metadata_path=SCAFFOLD_METADATA_PATH,
+            error=str(exc),
+        )
+    if not isinstance(metadata, dict):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_TREATMENT_CONTAMINATION",
+            "080 scaffold condition metadata must contain an object.",
+            workspace=str(workspace),
+            condition=condition,
+            metadata_path=SCAFFOLD_METADATA_PATH,
+        )
+    projection = _treatment_isolation_projection(
+        workspace=workspace,
+        condition=condition,
+        guidance_set=guidance_set,
+        metadata=metadata,
+    )
+    if projection.get("status") != "pass":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_TREATMENT_CONTAMINATION",
+            "080 condition treatment isolation failed.",
+            workspace=str(workspace),
+            condition=condition,
+            treatment_isolation=projection,
+        )
+    return projection
+
+
 def _reject_existing_scaffold_metadata(workspace: Path) -> None:
     existing = [
         path.relative_to(workspace).as_posix()
@@ -1347,35 +1751,34 @@ def _scaffold_condition_metadata(
     treatment: dict[str, Any] = {
         "condition": condition,
         "guidance_entry_ids": [entry["entry_id"] for entry in guidance_entries],
-        "guidance_entries": guidance_entries,
     }
+    handoff: dict[str, Any] = {}
     if condition == "baseline":
         treatment.update({
             "improvement_memory": "disabled",
-            "prompt_only_guidance": [],
             "operator_requirement": "Do not use Improvement Memory or prompt-only guidance for this condition.",
         })
     elif condition == "memory":
         treatment.update({
-            "improvement_memory": "operator_must_prepare_approved_memory_before_run",
-            "memory_ready": "unknown_not_verified_by_scaffold",
+            "improvement_memory": "requires_approved_snapshot",
+            "memory_ready": "requires_runtime_snapshot",
             "memory_ready_check": (
-                "Before running fast-rerun, verify improvement/ledger.jsonl exists and contains "
-                "approved guidance entries matching guidance_entry_ids. The runtime will freeze "
-                "output/intermediate/improvement_memory_snapshot.md at run start."
+                "Before registering the run, verify the runtime created "
+                "output/intermediate/improvement_memory_snapshot.md from approved Improvement Memory "
+                "and that the snapshot includes guidance_entry_ids."
             ),
-            "prompt_only_guidance": [],
             "operator_requirement": (
-                "Configure approved Improvement Memory matching guidance_entry_ids before running fast-rerun. "
-                "The runtime will freeze the memory snapshot at run start."
+                "Expose treatment only through the approved frozen Improvement Memory snapshot. "
+                "Do not add a prompt-only guidance block."
             ),
         })
     else:
+        handoff["prompt_guidance_block"] = _prompt_guidance_block(guidance_entries)
         treatment.update({
             "improvement_memory": "disabled",
-            "prompt_only_guidance": [entry["guidance_text"] for entry in guidance_entries],
             "operator_requirement": (
-                "Inject the listed guidance text as prompt-only treatment. Do not create or use Improvement Memory."
+                "Inject only the explicit handoff.prompt_guidance_block as prompt-only treatment. "
+                "Do not create or use Improvement Memory."
             ),
         })
     return {
@@ -1399,7 +1802,9 @@ def _scaffold_condition_metadata(
             "timing_comparability": fact_import.get("timing_comparability"),
             "imported_file_count": fact_import.get("imported_file_count"),
         },
+        "treatment_visibility": _treatment_visibility_contract(condition),
         "treatment": treatment,
+        "handoff": handoff,
         "next_command": (
             f"multi-agent-brief run --workspace {shlex.quote(str(workspace))} "
             "--recipe fast-rerun --skip-doctor"
@@ -1434,6 +1839,8 @@ def _scaffold_guidance_entries(guidance_set: dict[str, Any]) -> list[dict[str, s
 
 def _scaffold_condition_instructions(metadata: dict[str, Any]) -> str:
     treatment = metadata.get("treatment") if isinstance(metadata.get("treatment"), dict) else {}
+    handoff = metadata.get("handoff") if isinstance(metadata.get("handoff"), dict) else {}
+    prompt_block = handoff.get("prompt_guidance_block") if isinstance(handoff.get("prompt_guidance_block"), dict) else {}
     lines = [
         f"# MABW-080 Condition Scaffold: {metadata.get('case_id')} / {metadata.get('condition')}",
         "",
@@ -1451,10 +1858,16 @@ def _scaffold_condition_instructions(metadata: dict[str, Any]) -> str:
         f"- Improvement Memory: `{treatment.get('improvement_memory')}`",
         f"- Operator requirement: {treatment.get('operator_requirement')}",
     ]
-    prompt_guidance = treatment.get("prompt_only_guidance")
+    prompt_guidance = prompt_block.get("guidance")
     if isinstance(prompt_guidance, list) and prompt_guidance:
-        lines.extend(["", "Prompt-only guidance text:"])
-        lines.extend(f"- {text}" for text in prompt_guidance if isinstance(text, str))
+        lines.extend(["", "Prompt-only guidance block (`handoff.prompt_guidance_block`):"])
+        for item in prompt_guidance:
+            if not isinstance(item, dict):
+                continue
+            entry_id = item.get("entry_id")
+            text = item.get("guidance_text")
+            if isinstance(entry_id, str) and isinstance(text, str):
+                lines.append(f"- {entry_id}: {text}")
     memory_ready_check = treatment.get("memory_ready_check")
     if isinstance(memory_ready_check, str) and memory_ready_check:
         lines.extend([
@@ -1570,6 +1983,11 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             diagnostics,
             path="scorecard.audit_binding",
         )
+    treatment_isolation = (
+        payload.get("treatment_isolation")
+        if isinstance(payload.get("treatment_isolation"), dict)
+        else {}
+    )
 
     guidance_scores = payload.get("guidance_scores")
     if not isinstance(guidance_scores, list):
@@ -1615,6 +2033,7 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             guidance_scores=guidance_scores,
             reader_clean=reader_clean,
             assessment_target=target,
+            treatment_isolation=treatment_isolation,
             diagnostics=diagnostics,
         )
     return diagnostics
@@ -1772,6 +2191,7 @@ def _build_scorecard_draft(
         "reference_eligible": run_integrity.get("reference_eligible") is True,
         "timing_available": timing_summary["status"] in {"available", "downstream_only"},
         "fact_layer_matches": fact_layer_matches,
+        "treatment_isolation_passed": _scorecard_treatment_isolation_passed(run_record),
     }
     if assessment_target == "delivery_brief":
         control_integrity = {
@@ -1847,6 +2267,12 @@ def _build_scorecard_draft(
         "finalize": finalize_status,
         "archive": archive_status,
         "timing_summary": timing_summary,
+        "treatment_isolation": run_record.get("treatment_isolation", {
+            "schema_version": TREATMENT_VISIBILITY_SCHEMA,
+            "status": "not_checked",
+            "condition": run_record["condition"],
+            "reason": "run_record_treatment_isolation_missing",
+        }),
         "coverage_delta": {
             "status": "not_computed",
             "reason": "deterministic_coverage_baseline_not_available_in_run_record",
@@ -1874,6 +2300,11 @@ def _build_scorecard_draft(
         scorecard["target_artifacts"] = run_record.get("target_artifacts", {})
         scorecard["audit_binding"] = run_record.get("audit_binding", {})
     return scorecard
+
+
+def _scorecard_treatment_isolation_passed(run_record: dict[str, Any]) -> bool:
+    treatment = run_record.get("treatment_isolation")
+    return isinstance(treatment, dict) and treatment.get("status") == "pass"
 
 
 def _scorecard_target_readiness(
@@ -2080,6 +2511,8 @@ def _scorecard_validity_class_with_assessment(
         return "invalid_fact_layer_mismatch"
     if any(control_integrity.get(key) is not True for key in _control_keys_for_target(assessment_target)):
         return "invalid_incomplete"
+    if not _scorecard_treatment_isolation_status_passed(scorecard, assessment_target=assessment_target):
+        return "invalid_incomplete"
     if _reader_clean_required_for_target(assessment_target) and reader_clean.get("pass") is not True:
         return "invalid_incomplete"
     relevant_scores = [score for score in guidance_scores if score.get("relevant") is True]
@@ -2088,6 +2521,17 @@ def _scorecard_validity_class_with_assessment(
     if all(score.get("assessment_method") in A_CONTROLLED_ASSESSMENT_METHODS for score in relevant_scores):
         return "A_controlled"
     return "B_integration"
+
+
+def _scorecard_treatment_isolation_status_passed(
+    scorecard: dict[str, Any],
+    *,
+    assessment_target: str,
+) -> bool:
+    if assessment_target != "auditable_brief":
+        return True
+    treatment = scorecard.get("treatment_isolation")
+    return isinstance(treatment, dict) and treatment.get("status") == "pass"
 
 
 def _discover_case_scorecards(
@@ -4091,6 +4535,7 @@ def _validate_a_controlled_scorecard(
     guidance_scores: list[Any],
     reader_clean: dict[str, Any],
     assessment_target: str,
+    treatment_isolation: dict[str, Any],
     diagnostics: list[Experiment080Diagnostic],
 ) -> None:
     required_values = {
@@ -4100,6 +4545,10 @@ def _validate_a_controlled_scorecard(
         },
         "frozen_fact_layer.matches_case": fact_layer.get("matches_case"),
     }
+    if assessment_target == "auditable_brief":
+        required_values["treatment_isolation.status_passed"] = (
+            treatment_isolation.get("status") == "pass"
+        )
     if _reader_clean_required_for_target(assessment_target):
         required_values["reader_clean.pass"] = reader_clean.get("pass")
     invalid_types = [field for field, value in required_values.items() if not isinstance(value, bool)]
