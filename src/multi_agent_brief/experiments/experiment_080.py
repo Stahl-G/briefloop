@@ -81,6 +81,8 @@ TREATMENT_RUNTIME_VISIBLE_FILES = (
     "sources.yaml",
     "user.md",
     "audience_profile.md",
+    "improvement/ledger.jsonl",
+    "improvement/memory.md",
     SCAFFOLD_METADATA_PATH,
     SCAFFOLD_INSTRUCTIONS_PATH,
     "output/intermediate/agent_handoff.md",
@@ -131,6 +133,7 @@ AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
     "auditor_gate_report_valid",
     "auditor_gates_no_blocking",
     "fact_layer_matches",
+    "treatment_isolation_passed",
 )
 A_CONTROLLED_REQUIRED_CONTROL_KEYS = DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS
 A_CONTROLLED_REQUIRED_CONTROL_KEYS_BY_TARGET = {
@@ -2164,6 +2167,7 @@ def _build_scorecard_draft(
         "reference_eligible": run_integrity.get("reference_eligible") is True,
         "timing_available": timing_summary["status"] in {"available", "downstream_only"},
         "fact_layer_matches": fact_layer_matches,
+        "treatment_isolation_passed": _scorecard_treatment_isolation_passed(run_record),
     }
     if assessment_target == "delivery_brief":
         control_integrity = {
@@ -2272,6 +2276,11 @@ def _build_scorecard_draft(
         scorecard["target_artifacts"] = run_record.get("target_artifacts", {})
         scorecard["audit_binding"] = run_record.get("audit_binding", {})
     return scorecard
+
+
+def _scorecard_treatment_isolation_passed(run_record: dict[str, Any]) -> bool:
+    treatment = run_record.get("treatment_isolation")
+    return isinstance(treatment, dict) and treatment.get("status") == "pass"
 
 
 def _scorecard_target_readiness(

@@ -827,6 +827,7 @@ def _auditable_scorecard_payload(**overrides) -> dict:
         "auditor_gate_report_valid": True,
         "auditor_gates_no_blocking": True,
         "fact_layer_matches": True,
+        "treatment_isolation_passed": True,
         "quality_gates_passed": True,
         "archive_present": False,
         "archive_schema_valid": False,
@@ -1426,6 +1427,36 @@ def test_experiments_080_register_run_rejects_memory_prompt_guidance_block(tmp_p
     assert not output.exists()
 
 
+def test_experiments_080_register_run_rejects_memory_live_store_guidance_leak(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    _write_treatment_condition_metadata(ws, condition="memory")
+    _write_improvement_memory_snapshot(ws)
+    improvement_dir = ws / "improvement"
+    improvement_dir.mkdir()
+    (improvement_dir / "memory.md").write_text(
+        "# Improvement Memory\n\n- Guidance: Lead with business implication before news recap.\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "runs" / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output, condition="memory"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_TREATMENT_CONTAMINATION"
+    detail = payload["details"]["treatment_isolation"]["details"][-1]
+    assert detail["reason"] == "treatment_guidance_leakage"
+    assert detail["leaks"] == [
+        {"path": "improvement/memory.md", "entry_id": "AG-0001", "field": "guidance_text"}
+    ]
+    assert not output.exists()
+
+
 def test_experiments_080_register_run_rejects_prompt_only_improvement_memory_snapshot(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "workspace"
@@ -1868,6 +1899,8 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     _write_json(case_dir / "case_manifest.json", case_manifest)
     run_id = "mabw-20260614T000000Z-auditable0001"
     _write_auditable_target_workspace(ws, run_id=run_id, source_archive_manifest=CLEAN_FIXTURE_MANIFEST)
+    _write_treatment_condition_metadata(ws, condition="memory")
+    _write_improvement_memory_snapshot(ws)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
 
@@ -1882,6 +1915,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert record["audit_binding"]["status"] == "valid"
     assert record["audit_binding"]["source"] == "workflow_state.stage_statuses.auditor.metadata.audit_binding"
     assert record["audit_binding"]["relevant_repair_transaction_ids"] == []
+    assert record["treatment_isolation"]["status"] == "pass"
     assert record["target_artifacts"]["audited_brief"]["path"] == "output/intermediate/audited_brief.md"
     assert [stage["stage_id"] for stage in record["timing"]["stages"]] == ["analyst", "editor", "auditor"]
     assert record["timing"]["status"] == "available"
@@ -1912,6 +1946,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert scorecard["control_integrity"]["auditor_complete"] is True
     assert scorecard["control_integrity"]["audit_binding_valid"] is True
     assert scorecard["control_integrity"]["auditor_gates_no_blocking"] is True
+    assert scorecard["control_integrity"]["treatment_isolation_passed"] is True
     assert scorecard["control_integrity"]["timing_available"] is True
     assert scorecard["validity_class"] == "invalid_incomplete"
 
@@ -1942,6 +1977,41 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     no_timing_assessed = json.loads(no_timing_assessed_path.read_text(encoding="utf-8"))
     assert no_timing_assessed["control_integrity"]["timing_available"] is False
     assert no_timing_assessed["validity_class"] == "A_controlled"
+
+
+def test_experiments_080_auditable_brief_missing_treatment_isolation_stays_incomplete(
+    tmp_path, capsys
+):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    run_id = "mabw-20260614T000000Z-auditable0001"
+    _write_auditable_target_workspace(ws, run_id=run_id, source_archive_manifest=CLEAN_FIXTURE_MANIFEST)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
+
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    record = json.loads(run_record.read_text(encoding="utf-8"))
+    assert record["treatment_isolation"]["status"] == "not_checked"
+    capsys.readouterr()
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["control_integrity"]["treatment_isolation_passed"] is False
+    assert scorecard["target_readiness"]["status"] == "incomplete"
+    assert "missing required control: treatment_isolation_passed" in scorecard["target_readiness"]["reasons"]
+
+    assessment_path = tmp_path / "assessment.json"
+    assessed_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human", run_id=run_id))
+    capsys.readouterr()
+    assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
+    assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
+    assert assessed["validity_class"] == "invalid_incomplete"
 
 
 def test_experiments_080_auditable_brief_target_blocks_finalize(tmp_path, capsys):

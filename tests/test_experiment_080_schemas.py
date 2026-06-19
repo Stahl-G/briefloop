@@ -407,6 +407,7 @@ def test_experiment_080_auditable_brief_a_controlled_does_not_require_timing_ava
         "auditor_gate_report_valid": True,
         "auditor_gates_no_blocking": True,
         "fact_layer_matches": True,
+        "treatment_isolation_passed": True,
         "quality_gates_passed": True,
         "timing_available": False,
     }
