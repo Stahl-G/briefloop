@@ -3150,6 +3150,42 @@ def raise_if_auditable_target_complete_blocks_downstream(
     )
 
 
+def _stale_expected_artifact_refresh_reasons(
+    *,
+    workspace: Path,
+    stage: dict[str, Any],
+    artifacts_by_id: dict[str, dict[str, Any]],
+    old_registry: dict[str, Any],
+) -> list[str]:
+    if not isinstance(old_registry, dict):
+        return []
+    registry_artifacts = old_registry.get("artifacts") if isinstance(old_registry.get("artifacts"), dict) else {}
+    reasons: list[str] = []
+    for artifact_id in [str(item) for item in (stage.get("expected_artifacts") or [])]:
+        record = registry_artifacts.get(artifact_id)
+        if not isinstance(record, dict):
+            continue
+        if record.get("status") != "stale" and record.get("validation_result") != "stale_after_repair":
+            continue
+        contract = artifacts_by_id.get(artifact_id)
+        if not isinstance(contract, dict):
+            continue
+        rel_path = str(contract.get("path") or record.get("path") or "")
+        if not rel_path:
+            continue
+        path = workspace / rel_path
+        if not path.is_file():
+            continue
+        stale_sha = record.get("sha256")
+        current_sha = _sha256_file(path)
+        if isinstance(stale_sha, str) and stale_sha == current_sha:
+            reasons.append(
+                f"Expected artifact '{artifact_id}' at '{rel_path}' is stale after repair "
+                "and still has the stale hash; rerun the producer stage and refresh the artifact before stage-complete."
+            )
+    return reasons
+
+
 def _complete_stage_transaction(
     *,
     workspace: str | Path,
@@ -3220,6 +3256,20 @@ def _complete_stage_transaction(
             stage=stage,
             artifacts_by_id=artifacts_by_id,
         )
+        old_registry_for_stale_check = _read_json_if_exists(paths["artifact_registry"])
+        stale_artifact_reasons = _stale_expected_artifact_refresh_reasons(
+            workspace=ws,
+            stage=stage,
+            artifacts_by_id=artifacts_by_id,
+            old_registry=old_registry_for_stale_check,
+        )
+        if stale_artifact_reasons:
+            _raise_completion_reasons(
+                message=f"Cannot complete stage '{stage_id}' because stale downstream artifacts were not refreshed",
+                reasons=stale_artifact_reasons,
+                error_code=E_TRANSACTION_INTEGRITY,
+                details={"stage_id": stage_id},
+            )
         topology_targets = _topology_satisfaction_targets_for_completion(
             stages=stages,
             policy_pack=policy_pack,

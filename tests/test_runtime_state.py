@@ -3761,7 +3761,9 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
     repair_transaction_id = repaired["transaction"]["transaction_id"]
     assert repaired["artifact_registry"]["artifacts"]["audit_report"]["status"] == "stale"
 
-    _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
+    refreshed_report = json.loads(_valid_audit_report_payload())
+    refreshed_report["repair_reviewed"] = True
+    _write_json_artifact(ws, "audit_report.json", json.dumps(refreshed_report) + "\n")
     _write_quality_gate_report(ws, stage_id="auditor")
     audited_state = complete_stage_transaction(
         workspace=ws,
@@ -3781,6 +3783,55 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
     assert artifacts["auditor_quality_gate_report"]["status"] == "valid"
     assert artifacts["claim_ledger"]["status"] == "valid"
     assert artifacts["analyst_draft_snapshot"]["status"] == "valid"
+
+
+def test_auditor_rerun_rejects_unrefreshed_stale_audit_report(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor draft needing repair. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
+    _write_editor_repair_gate_report(ws)
+    start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+    audited.write_text("# Brief\n\nEditor repaired draft. [src:CL-001]\n", encoding="utf-8")
+    repaired = complete_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="editor repaired audited brief from deterministic route",
+    )
+    assert repaired["artifact_registry"]["artifacts"]["audit_report"]["status"] == "stale"
+
+    _write_quality_gate_report(ws, stage_id="auditor")
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="auditor reran gate only after editor repair",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "audit_report" in str(excinfo.value)
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    assert checked["artifact_registry"]["artifacts"]["audit_report"]["status"] == "stale"
+    workflow = checked["workflow_state"]
+    assert workflow["current_stage"] == "auditor"
+    assert workflow["stage_statuses"]["auditor"]["status"] != "complete"
 
 
 def test_repair_complete_rejects_blocked_artifact_edit(tmp_path):
