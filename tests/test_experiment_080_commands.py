@@ -3539,6 +3539,126 @@ def test_experiments_080_import_assessment_requires_delivery_treatment_isolation
     assert assessed["validity_class"] == "invalid_incomplete"
 
 
+def test_experiments_080_auditable_target_readiness_smoke(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecards: list[Path] = []
+    run_records: dict[str, dict] = {}
+    for condition in ("baseline", "memory", "prompt_only"):
+        ws = tmp_path / f"{condition}-workspace"
+        ws.mkdir()
+        run_id = f"mabw-20260614T000000Z-{condition.replace('_', '')}086"
+        _write_auditable_target_workspace(ws, run_id=run_id, source_archive_manifest=CLEAN_FIXTURE_MANIFEST)
+        if condition == "memory":
+            _write_treatment_condition_metadata(ws, condition=condition)
+            _write_improvement_memory_snapshot(ws)
+        elif condition == "prompt_only":
+            _write_treatment_condition_metadata(ws, condition=condition, prompt_block=True)
+        else:
+            _write_treatment_condition_metadata(ws, condition=condition)
+
+        run_record_path = ws / f"{condition}.run_record.json"
+        scorecard_path = ws / f"{condition}.scorecard.json"
+        assert main(_register_args(case_dir, ws, run_record_path, condition=condition)) == 0
+        capsys.readouterr()
+        record = json.loads(run_record_path.read_text(encoding="utf-8"))
+        run_records[condition] = record
+        assert record["assessment_target"] == "auditable_brief"
+        assert record["audit_binding"]["status"] == "valid"
+        assert record["treatment_isolation"]["status"] == "pass"
+        if condition == "baseline":
+            assert record["treatment_isolation"]["allowed_visible_treatment_materials"] == []
+            condition_text = (ws / "experiment" / "080" / "condition.json").read_text(encoding="utf-8")
+            assert "Lead with business implication before news recap." not in condition_text
+            assert "Business implication appears before news recap." not in condition_text
+        elif condition == "memory":
+            assert record["treatment_isolation"]["allowed_visible_treatment_materials"] == [
+                "output/intermediate/improvement_memory_snapshot.md"
+            ]
+            assert (ws / "output" / "intermediate" / "improvement_memory_snapshot.md").is_file()
+            condition_payload = json.loads((ws / "experiment" / "080" / "condition.json").read_text(encoding="utf-8"))
+            assert "prompt_guidance_block" not in condition_payload.get("handoff", {})
+        else:
+            assert record["treatment_isolation"]["allowed_visible_treatment_materials"] == [
+                "handoff.prompt_guidance_block"
+            ]
+            assert not (ws / "output" / "intermediate" / "improvement_memory_snapshot.md").exists()
+
+        assert main(_score_args(case_dir, run_record_path, scorecard_path)) == 0
+        capsys.readouterr()
+        scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+        assert scorecard["target_readiness"]["status"] == "complete"
+        assert scorecard["target_readiness"]["ready_for_assessment_import"] is True
+        assert scorecard["finalize"]["complete"] is False
+        assert scorecard["reader_clean"]["status"] == "not_required_for_target"
+        assert scorecard["control_integrity"]["audit_binding_valid"] is True
+        assert scorecard["control_integrity"]["treatment_isolation_passed"] is True
+        scorecards.append(scorecard_path)
+
+    stale_record = json.loads(json.dumps(run_records["memory"]))
+    stale_record["target_artifacts"]["audit_report"]["status"] = "stale"
+    stale_record["target_artifacts"]["audit_report"]["frozen_valid"] = False
+    stale_record_path = tmp_path / "memory.stale.run_record.json"
+    stale_scorecard_path = tmp_path / "memory.stale.scorecard.json"
+    _write_json(stale_record_path, stale_record)
+    assert main(_score_args(case_dir, stale_record_path, stale_scorecard_path)) == 0
+    stale_scorecard = json.loads(stale_scorecard_path.read_text(encoding="utf-8"))
+    assert stale_scorecard["control_integrity"]["audit_report_frozen_valid"] is False
+    assert stale_scorecard["validity_class"] == "invalid_incomplete"
+
+    blind_dir = tmp_path / "blind-pack"
+    assert main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed")) == 0
+    capsys.readouterr()
+    blind_pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    reveal = json.loads((blind_dir / "reveal_mapping.json").read_text(encoding="utf-8"))
+    assert {item["blind_item_id"] for item in blind_pack["items"]} == {"BI-A", "BI-B", "BI-C"}
+    scorer_visible = json.dumps(blind_pack, ensure_ascii=False)
+    assert "baseline" not in scorer_visible
+    assert "memory" not in scorer_visible
+    assert "prompt_only" not in scorer_visible
+
+    assessed_scorecards: list[Path] = []
+    scores = {"baseline": 1, "memory": 2, "prompt_only": 3}
+    by_id = {item["blind_item_id"]: item for item in blind_pack["items"]}
+    for reveal_item in reveal["items"]:
+        item = by_id[reveal_item["blind_item_id"]]
+        condition = reveal_item["condition"]
+        assessment = _blind_assessment_payload(
+            blind_item_id=item["blind_item_id"],
+            artifact_sha256=item["artifact_sha256"],
+        )
+        assessment["guidance_scores"][0]["manifestation_score"] = scores[condition]
+        assessment["guidance_scores"][0]["overapplication"] = scores[condition] == 3
+        assessment_path = tmp_path / f"{condition}.blind-assessment.json"
+        assessed_path = tmp_path / f"{condition}.assessed.scorecard.json"
+        _write_json(assessment_path, assessment)
+        assert main(_blind_assessment_args(
+            blind_dir / "blind_pack.json",
+            blind_dir / "reveal_mapping.json",
+            assessment_path,
+            assessed_path,
+        )) == 0
+        capsys.readouterr()
+        assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
+        assert assessed["condition"] == condition
+        assert assessed["validity_class"] == "A_controlled"
+        assert assessed["guidance_assessment"]["blind_pack"]["hash_verified"] is True
+        assessed_scorecards.append(assessed_path)
+
+    summary_path = tmp_path / "case_summary.json"
+    assert main(_summarize_args(case_dir, summary_path, scorecards=assessed_scorecards)) == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
+    assert summary["raw_observed_assessments"]["score_3_overapplication_count"] == 1
+    assert summary["valid_interpretable_metrics"]["denominator"] == 3
+    assert summary["manifestation"]["score_2_manifested_count"] == 1
+    assert summary["manifestation"]["score_3_overapplication_count"] == 1
+    assert {
+        item["condition"]
+        for item in summary["valid_interpretable_metrics"]["included_scorecards"]
+    } == {"baseline", "memory", "prompt_only"}
+
+
 def test_experiments_080_import_assessment_llm_only_becomes_b_integration(tmp_path, capsys):
     _, scorecard_path = _write_scorecard_draft_from_fixture(tmp_path, capsys)
     assessment_path = tmp_path / "assessment.json"
