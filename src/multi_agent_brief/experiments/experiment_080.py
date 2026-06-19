@@ -49,6 +49,7 @@ from multi_agent_brief.orchestrator.timing import derive_control_timing_from_pat
 from multi_agent_brief.quality_gates.contract import (
     interpret_quality_gate_binding,
     project_quality_gate_binding_for_read,
+    quality_gate_report_path_for_stage,
     require_quality_gate_binding_pass,
 )
 
@@ -3420,6 +3421,8 @@ def _build_case_summary(
                 validity_class=validity,
             )
         )
+        for warning in _scorecard_quality_gate_hardening_warnings(scorecard):
+            hardening_warning_counts[warning] = hardening_warning_counts.get(warning, 0) + 1
         formal_exclusion_reasons = _scorecard_formal_metric_exclusion_reasons(scorecard)
         formal_interpretable = not formal_exclusion_reasons
         if formal_interpretable:
@@ -3741,6 +3744,17 @@ def _scorecard_formal_metric_exclusion_reasons(scorecard: dict[str, Any]) -> lis
     return sorted(dict.fromkeys(reasons))
 
 
+def _scorecard_quality_gate_hardening_warnings(scorecard: dict[str, Any]) -> list[str]:
+    quality_gates = scorecard.get("quality_gates") if isinstance(scorecard.get("quality_gates"), dict) else {}
+    warning_types = quality_gates.get("warning_finding_types")
+    if not isinstance(warning_types, list):
+        return []
+    warnings: list[str] = []
+    if "unsupported_strategic_implication" in {str(item) for item in warning_types}:
+        warnings.append("unsupported_strategic_implication_warning")
+    return warnings
+
+
 def _scorecard_raw_assessment_observations(
     scorecard: dict[str, Any],
     *,
@@ -3980,11 +3994,14 @@ def _scorecard_archive_projection(
     )
     auditor_status = _status_from_report(auditor_report)
     finalize_gate_status = _status_from_report(finalize_gate_report)
+    auditor_warning_types = _quality_gate_warning_finding_types(auditor_report)
+    finalize_warning_types = _quality_gate_warning_finding_types(finalize_gate_report)
     quality_gates = {
         "passed": auditor_status == "pass" and finalize_gate_status == "pass",
         "auditor_status": auditor_status,
         "finalize_status": finalize_gate_status,
         "source": "archive_gate_reports",
+        "warning_finding_types": sorted({*auditor_warning_types, *finalize_warning_types}),
     }
 
     artifact_registry = _read_archive_json_by_original_path(
@@ -4050,7 +4067,28 @@ def _auditable_scorecard_gate_status(run_record: dict[str, Any]) -> dict[str, An
         "auditor_status": auditor_status,
         "finalize_status": "not_required_for_target",
         "source": "run_record.target_artifacts",
+        "warning_finding_types": [
+            str(item)
+            for item in gate.get("warning_finding_types", [])
+            if isinstance(item, str)
+        ],
     }
+
+
+def _quality_gate_warning_finding_types(report: Any) -> list[str]:
+    if not isinstance(report, dict):
+        return []
+    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+    warning_types: list[str] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if finding.get("blocking_level") != "warning" and finding.get("blocking") is not False:
+            continue
+        finding_type = finding.get("finding_type")
+        if isinstance(finding_type, str) and finding_type:
+            warning_types.append(finding_type)
+    return sorted(dict.fromkeys(warning_types))
 
 
 def _auditable_scorecard_auditor_complete(run_record: dict[str, Any]) -> bool:
@@ -4917,6 +4955,7 @@ def _auditable_target_artifacts(*, workspace: Path, repo_workdir: str | Path | N
             projection["binding_status"] = binding["status"]
             projection["no_blocking"] = binding["status"] == "pass"
             projection["binding_reasons"] = binding["reasons"]
+            projection["warning_finding_types"] = binding["warning_finding_types"]
         projected[artifact_id] = projection
     return projected
 
@@ -4939,10 +4978,15 @@ def _auditable_quality_gate_binding(*, workspace: Path, repo_workdir: str | Path
             reasons=reasons,
         )
     projection = project_quality_gate_binding_for_read(verdict)
+    report = _load_json_object(
+        quality_gate_report_path_for_stage(workspace, "auditor"),
+        label="auditor_quality_gate_report",
+    )
     return {
         "status": str(projection.get("status") or ""),
         "gate_status": str(projection.get("gate_status") or ""),
         "reasons": reasons,
+        "warning_finding_types": _quality_gate_warning_finding_types(report),
     }
 
 

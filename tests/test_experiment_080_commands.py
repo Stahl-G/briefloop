@@ -4165,6 +4165,30 @@ def test_experiments_080_summarize_excludes_blind_metadata_when_scorecard_was_ed
     assert "blind_assessment_not_hash_verified" in summary["exclusions"][0]["reasons"]
 
 
+def test_experiments_080_summarize_surfaces_unsupported_strategic_warning(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    scorecard = _auditable_scorecard_payload(
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory01",
+        validity_class="A_controlled",
+        blind_assessment_verified=True,
+    )
+    scorecard["quality_gates"]["warning_finding_types"] = ["unsupported_strategic_implication"]
+    scorecard = _bind_blind_metadata_for_test(scorecard)
+    _write_json(case_dir / "memory.scorecard.json", scorecard)
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert {
+        "warning": "unsupported_strategic_implication_warning",
+        "count": 1,
+    } in summary["hardening_warnings"]
+    assert summary["valid_interpretable_metrics"]["denominator"] == 1
+
+
 def test_experiments_080_summarize_handles_missing_condition_scorecards(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     _write_case(case_dir)
