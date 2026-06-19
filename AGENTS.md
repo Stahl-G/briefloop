@@ -14,10 +14,7 @@ In repository development mode, files under `.agents/skills/`, `.agents/hermes-s
 
 Use `multi-agent-brief run --workspace <workspace>` to create a runtime handoff. The handoff artifact, not this repository manual, is the execution contract for a specific brief run.
 
-For BriefLoop workspace operation, repair, gates/status/finalize/delivery
-decisions, MABW-080 / BriefLoop-090 experiment operation, public-claim routing,
-or repo changes that alter agent behavior, use the canonical operator skill:
-`.agents/skills/briefloop/SKILL.md`.
+For BriefLoop operator protocol, use `.agents/skills/briefloop/SKILL.md`.
 
 ## Environment Separation
 
@@ -106,23 +103,6 @@ For the full charter, read `docs/charter/README.md`. Short form:
 7. Speed must not remove ledgers, gates, approvals, events, snapshots, archives, or human delivery.
 8. Public claims must not exceed artifacts: say `NOT MEASURED` or traceability rather than proof.
 9. Private facts must not justify public mechanisms; demos need public-safe or synthetic material.
-
-### Skill Impact
-
-For each PR, decide whether it changes how agents should operate BriefLoop.
-
-- No skill impact.
-- Runtime workspace operation.
-- Experiment 080/090 operation.
-- Repair protocol.
-- Gates/status/finalize/delivery behavior.
-- Public claim boundaries.
-- Naming/compatibility.
-- CLI or slash command behavior.
-
-If a PR has skill impact, update `.agents/skills/briefloop/...`,
-`.claude/skills/briefloop/...` when the projection changes, and the skill
-contract tests.
 
 ### Implementation Plan Checklist
 
