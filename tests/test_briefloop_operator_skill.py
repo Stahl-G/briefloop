@@ -61,6 +61,17 @@ def test_experiment_reference_separates_targets_and_stops_finalize() -> None:
     assert "BriefLoop-090 is an experiment/readiness label" in text
 
 
+def test_experiment_reference_uses_formal_blind_command_loop() -> None:
+    text = _read(CANONICAL / "references" / "experiment-080-090.md")
+    assert "validate-case --case" not in text
+    assert "multi-agent-brief experiments 080 validate-case <case_dir>" in text
+    assert "--blind-pack <blind_pack_dir>/blind_pack.json" in text
+    assert "--reveal-mapping <blind_pack_dir>/reveal_mapping.json" in text
+    assert "--scorecard <baseline_scorecard.json>" in text
+    assert "--scorecard <memory_scorecard.json>" in text
+    assert "--scorecard <prompt_only_scorecard.json>" in text
+
+
 def test_repair_reference_requires_transaction_path() -> None:
     text = _read(CANONICAL / "references" / "repair-protocol.md")
     assert "multi-agent-brief repair route" in text
