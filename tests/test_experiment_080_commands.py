@@ -2484,6 +2484,41 @@ def test_experiments_080_auditable_brief_register_rejects_active_repair(tmp_path
     assert not output.exists()
 
 
+def test_experiments_080_auditable_brief_register_requires_downstream_stage_events(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    event_log = ws / "output" / "intermediate" / "event_log.jsonl"
+    events = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    event_log.write_text(
+        "".join(
+            json.dumps(event, sort_keys=True) + "\n"
+            for event in events
+            if event.get("stage_id") != "analyst"
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_STAGE_TRACE_INVALID"
+    assert "analyst stage completion decision_recorded event is missing" in payload["details"]["reasons"]
+    assert not output.exists()
+
+
 def test_experiments_080_auditable_brief_register_requires_audit_binding(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "workspace"

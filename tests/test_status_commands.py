@@ -280,22 +280,39 @@ def _write_auditable_target_complete_state(ws: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
+    run_id = str(workflow.get("run_id") or "run-test")
+    events = [
+        _event(
+            "analyst-complete",
+            "decision_recorded",
+            "2026-06-14T00:02:00Z",
+            run_id=run_id,
+            stage_id="analyst",
+            decision="continue",
+            metadata={"transaction_id": "tx-analyst-complete"},
+        ),
+        _event(
+            "editor-complete",
+            "decision_recorded",
+            "2026-06-14T00:03:00Z",
+            run_id=run_id,
+            stage_id="editor",
+            decision="continue",
+            metadata={"transaction_id": "tx-editor-complete"},
+        ),
+        _event(
+            "auditor-complete",
+            "decision_recorded",
+            "2026-06-14T00:04:00Z",
+            run_id=run_id,
+            stage_id="auditor",
+            decision="continue",
+            metadata={"transaction_id": "tx-auditor-complete"},
+        ),
+    ]
     with paths["event_log"].open("a", encoding="utf-8") as handle:
-        handle.write(
-            json.dumps(
-                _event(
-                    "auditor-complete",
-                    "decision_recorded",
-                    "2026-06-14T00:04:00Z",
-                    run_id=str(workflow.get("run_id") or "run-test"),
-                    stage_id="auditor",
-                    decision="continue",
-                    metadata={"transaction_id": "tx-auditor-complete"},
-                ),
-                sort_keys=True,
-            )
-            + "\n"
-        )
+        for event in events:
+            handle.write(json.dumps(event, sort_keys=True) + "\n")
 
 
 def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys):
@@ -495,6 +512,35 @@ def test_status_command_reports_auditable_target_complete(tmp_path, capsys):
     assert "[status] experiment_080: case=solar_public_001 condition=memory assessment_target=auditable_brief" in out
     assert "[status] target_complete: auditable_brief" in out
     assert "do not finalize for this target" in out
+
+
+def test_status_command_requires_auditable_downstream_stage_completion_events(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    _write_auditable_target_complete_state(ws)
+    paths = runtime_state_paths(ws)
+    events = [
+        json.loads(line)
+        for line in paths["event_log"].read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    paths["event_log"].write_text(
+        "".join(
+            json.dumps(event, sort_keys=True) + "\n"
+            for event in events
+            if event.get("stage_id") != "analyst"
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    experiment = payload["experiment_080"]
+    assert experiment["target_complete"] is False
+    assert "analyst stage completion decision_recorded event is missing" in experiment["reasons"]
+    assert "experiments 080 register-run" not in payload["suggested_next_command"]
 
 
 def test_status_command_replays_sticky_contamination_before_auditable_target(tmp_path, capsys):

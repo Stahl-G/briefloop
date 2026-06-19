@@ -128,6 +128,8 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "source_candidates.yaml is a source plan only, not source evidence; Scout must extract candidates from actual source content or materialized source files.",
     "Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet.",
     "After state stage-complete succeeds, that stage's output artifacts are frozen for downstream stages; later stages must not rewrite them in place.",
+    "Never edit workflow_state.json, artifact_registry.json, runtime_manifest.json, or event_log.jsonl directly; only deterministic multi-agent-brief transactions may write runtime control files.",
+    "If state stage-complete, repair complete, or finalize-complete fails, stop and report the exact CLI error instead of patching control files or advancing state manually.",
     "If a downstream stage finds schema mismatch or invalid frozen upstream artifacts, route repair back to the owner stage instead of editing the artifact directly.",
     "Formatter/finalize may only write reader delivery artifacts and finalize control records; it must not patch output/intermediate/audited_brief.md.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
@@ -142,6 +144,7 @@ DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not treat source_candidates.yaml as source evidence or use it to support claims.",
     "Do not rewrite a previous stage's artifact after that stage has completed; schema mismatch must route back to the owner stage for repair.",
     "Do not invent source evidence, claim support, citations, or validation results.",
+    "Do not edit workflow_state.json, artifact_registry.json, runtime_manifest.json, or event_log.jsonl directly.",
     "Do not bypass workflow_state.json next_allowed_decisions or skip state stage-complete/finalize-complete.",
 ]
 
@@ -635,6 +638,20 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
                 "writes": [claim_ledger_ref],
                 "must_run_before": "state stage-complete --stage claim-ledger",
             })
+        if stage_id == "analyst" and "audited_brief" in artifact_by_id and "analyst_draft_snapshot" in artifact_by_id:
+            audited_brief_ref = _protocol_artifact_ref("audited_brief", artifact_by_id["audited_brief"])
+            snapshot_ref = _protocol_artifact_ref(
+                "analyst_draft_snapshot",
+                artifact_by_id["analyst_draft_snapshot"],
+            )
+            freeze_input_artifacts.append(audited_brief_ref)
+            pre_completion_transactions.append({
+                "transaction": "snapshot_analyst_draft",
+                "command": "multi-agent-brief state stage-complete --workspace <workspace> --stage analyst",
+                "reads": [audited_brief_ref],
+                "writes": [snapshot_ref],
+                "must_run_before": "delegate editor",
+            })
         parallel_chunk_contract: dict[str, Any] | None = None
         if stage_id == "scout":
             parallel_chunk_contract = {
@@ -746,15 +763,22 @@ def _render_stage_completion_protocol_prompt(protocol: dict[str, Any]) -> str:
         context = ", ".join(stage.get("context_inputs") or []) or "none"
         topology_satisfaction = stage.get("topology_satisfaction") or {}
         independent_topologies = ", ".join(stage.get("independent_completion_topologies") or []) or "none"
+        freeze_inputs = _protocol_paths(stage.get("freeze_input_artifacts") or [])
         lines.append(f"- {stage_id}:")
         lines.append(f"  required input artifacts: {inputs}")
         lines.append(f"  context inputs: {context}")
         if topology_satisfaction:
             lines.append(f"  topology satisfaction: {_render_topology_satisfaction(topology_satisfaction)}")
             lines.append(f"  independent completion topologies: {independent_topologies}")
-            lines.append(f"  independent MUST produce ({independent_topologies}): {outputs}")
+            if freeze_inputs != "none":
+                lines.append(f"  independent completion requires control output ({independent_topologies}): {outputs}")
+            else:
+                lines.append(f"  independent MUST produce ({independent_topologies}): {outputs}")
         else:
-            lines.append(f"  MUST produce: {outputs}")
+            if freeze_inputs != "none":
+                lines.append(f"  stage-complete control output: {outputs}")
+            else:
+                lines.append(f"  MUST produce: {outputs}")
         chunk_contract = stage.get("parallel_chunk_contract")
         if isinstance(chunk_contract, dict):
             lines.append(
@@ -764,7 +788,6 @@ def _render_stage_completion_protocol_prompt(protocol: dict[str, Any]) -> str:
             forbidden = ", ".join(str(item) for item in (chunk_contract.get("forbidden") or []))
             if forbidden:
                 lines.append(f"  chunk forbidden: {forbidden}")
-        freeze_inputs = _protocol_paths(stage.get("freeze_input_artifacts") or [])
         if freeze_inputs != "none":
             lines.append(f"  role MUST produce freeze input: {freeze_inputs}")
         for transaction in stage.get("pre_completion_transactions") or []:

@@ -34,6 +34,7 @@ from multi_agent_brief.experiments.target_contract import (
     DEFAULT_ASSESSMENT_TARGET,
     assessment_target as _target_contract_assessment_target,
     assessment_target_manifest,
+    auditable_stage_completion_event_reasons,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.run_integrity import (
@@ -735,6 +736,18 @@ def register_run_record(
         )
     else:
         _validate_auditable_workflow_ready(workflow_state)
+        auditable_event_records = _read_event_log_for_experiment(intermediate / "event_log.jsonl")
+        stage_trace_reasons = auditable_stage_completion_event_reasons(
+            workflow_state=workflow_state,
+            event_records=auditable_event_records,
+        )
+        if stage_trace_reasons:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_STAGE_TRACE_INVALID",
+                "Auditable-brief registration requires Analyst, Editor, and Auditor "
+                "stage-complete decision_recorded events for the current run.",
+                reasons=stage_trace_reasons,
+            )
         imported_fact_layer = _auditable_imported_fact_layer_comparison(
             workspace=ws,
             case_root=case_root,
@@ -746,6 +759,7 @@ def register_run_record(
             workspace=ws,
             workflow_state=workflow_state,
             target_artifacts=target_artifacts,
+            event_records=auditable_event_records,
         )
         target_workflow = _auditable_target_workflow(workflow_state)
         timing = _run_record_timing(
@@ -4474,6 +4488,7 @@ def _auditable_audit_binding_projection(
     workspace: Path,
     workflow_state: dict[str, Any],
     target_artifacts: dict[str, Any],
+    event_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     statuses = workflow_state.get("stage_statuses") if isinstance(workflow_state.get("stage_statuses"), dict) else {}
     auditor_status = statuses.get("auditor") if isinstance(statuses.get("auditor"), dict) else {}
@@ -4508,7 +4523,8 @@ def _auditable_audit_binding_projection(
         actual = binding.get(field)
         if actual != expected_sha:
             mismatches[field] = {"expected": expected_sha, "actual": actual}
-    event_records = _read_event_log_for_experiment(workspace / "output" / "intermediate" / "event_log.jsonl")
+    if event_records is None:
+        event_records = _read_event_log_for_experiment(workspace / "output" / "intermediate" / "event_log.jsonl")
     run_id = _auditable_binding_run_id(workflow_state)
     expected_repair_ids = _auditable_brief_repair_transaction_ids(
         event_records,
