@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # User installer for multi-agent-brief-workflow.
 # Intended for:
-#   curl -fsSL https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.sh | bash
 set -euo pipefail
 
-REPO_URL="${MABW_REPO:-https://github.com/Stahl-G/multi-agent-brief-workflow}"
+REPO_URL="${MABW_REPO:-https://github.com/Stahl-G/briefloop}"
 REF="${MABW_REF:-main}"
 PREFIX="${MABW_PREFIX:-$HOME/.local/share/multi-agent-brief}"
 BIN_DIR="${MABW_BIN_DIR:-$HOME/.local/bin}"
@@ -31,7 +31,7 @@ Environment overrides:
   MABW_PREFIX, MABW_BIN_DIR, MABW_REPO, MABW_REF, MABW_ARCHIVE_URL, MABW_PACKAGE_SPEC
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.sh | bash
   MABW_REF=v0.3.4 bash scripts/install.sh
   bash scripts/install.sh --prefix "$HOME/.local/share/mabw" --bin-dir "$HOME/.local/bin"
 EOF

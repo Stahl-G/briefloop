@@ -122,8 +122,8 @@ In a contract-following run, important numbers in the delivered brief should lin
 **Install From Source — macOS / Linux**
 
 ```bash
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 bash scripts/setup.sh
 ```
 
@@ -134,8 +134,8 @@ Windows does not require WSL or Git Bash. PowerShell is the recommended Windows 
 ```powershell
 winget install Python.Python.3.12
 
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
@@ -166,7 +166,7 @@ bash scripts/demo-deep-dive.sh
 
 The demo is for reviewers and GitHub visitors who want to inspect the evidence chain on synthetic materials. It is not required before using the product.
 
-Advanced Windows installer: `irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex` exists, but is currently an Experimental CLI-only installer asset. The default path is source clone plus `scripts/setup.ps1`.
+Advanced Windows installer: `irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex` exists, but is currently an Experimental CLI-only installer asset. The default path is source clone plus `scripts/setup.ps1`.
 
 For the Claude Code writer path, install the writer entrypoint:
 
@@ -321,7 +321,7 @@ This project is developed from real manufacturing and briefing work. It needs mo
 
 - **Pilot users**: you work in strategy, research, IR, management office, or a similar role and produce real weekly reports, competitor tracking, or leadership briefs. You are willing to run this on your workflow and report friction points.
 - **Evaluation collaborators**: you work on LLM agents or multi-agent systems and are interested in comparing contract-governed workflows against single-model baselines. The project can provide system design, realistic scenarios, and run data.
-- **Contributors**: start from a [good first issue](https://github.com/Stahl-G/multi-agent-brief-workflow/issues). Before submitting changes, read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
+- **Contributors**: start from a [good first issue](https://github.com/Stahl-G/briefloop/issues). Before submitting changes, read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
 ## Glossary
 

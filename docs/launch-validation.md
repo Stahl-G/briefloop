@@ -128,8 +128,8 @@ and what you expected to happen.
 ### Pilot Steps
 
 ```bash
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 bash scripts/setup.sh
 source .venv/bin/activate
 which multi-agent-brief

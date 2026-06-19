@@ -2,11 +2,11 @@ class MultiAgentBrief < Formula
   include Language::Python::Virtualenv
 
   desc "Source-grounded, audit-ready multi-agent workflow for business briefs"
-  homepage "https://github.com/Stahl-G/multi-agent-brief-workflow"
-  url "https://github.com/Stahl-G/multi-agent-brief-workflow/archive/refs/tags/v0.9.0.tar.gz"
-  sha256 "cb300bf7acda2a35606e66497ceb1cb16a076abd539c519309ebe62083e0281f"
+  homepage "https://github.com/Stahl-G/briefloop"
+  url "https://github.com/Stahl-G/briefloop/archive/refs/tags/v0.9.0.tar.gz"
+  sha256 "c41727466e5dd0af55997c4e3e4860016a0d3ec131b8e320cd1f2a8e2f9f116a"
   license "MIT"
-  head "https://github.com/Stahl-G/multi-agent-brief-workflow.git", branch: "main"
+  head "https://github.com/Stahl-G/briefloop.git", branch: "main"
 
   depends_on "libxml2"
   depends_on "libxslt"

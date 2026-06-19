@@ -20,12 +20,18 @@ workspace formats, experiment IDs, reference-run paths, or archived run IDs.
 
 The current compatibility surfaces remain:
 
+- `https://github.com/Stahl-G/briefloop` public repository URL
 - `multi-agent-brief` CLI
 - `/mabw` Claude commands
 - `multi_agent_brief` Python package/module path
 - `multi-agent-brief-workflow` distribution package name
 - existing artifact names and workspace formats
 - MABW experiment IDs such as `MABW-080`
+
+GitHub redirects from the historical
+`https://github.com/Stahl-G/multi-agent-brief-workflow` URL are expected to
+remain available during the compatibility period, but new public documentation
+should use `https://github.com/Stahl-G/briefloop`.
 
 ## Naming layers
 
