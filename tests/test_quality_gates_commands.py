@@ -786,6 +786,43 @@ def test_quality_gates_warn_on_unsupported_strategic_implication(tmp_path):
     assert strategic[0]["metadata"]["support_check"] == "lexical_phrase_absent_from_claim_ledger"
 
 
+def test_quality_gates_warn_when_strategic_implication_only_appears_in_limitations(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(
+        ws,
+        [
+            {
+                "claim_id": "CL-001",
+                "statement": "TargetCo opened a demo facility and reported 42 deployments.",
+                "source_id": "SRC-001",
+                "evidence_text": "TargetCo opened a demo facility and reported 42 deployments.",
+                "source_url": "https://example.com/targetco-demo",
+                "source_type": "web_search",
+                "claim_type": "fact",
+                "limitations": ["This evidence does not establish early-mover demand."],
+                "metadata": {"published_at": "2026-06-01"},
+            }
+        ],
+    )
+    _write_audited_brief(
+        ws,
+        (
+            "## Executive Summary\n"
+            "TargetCo opened a demo facility and this creates early-mover demand. [src:CL-001]\n"
+        ),
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    strategic = [
+        finding
+        for finding in state["quality_gate_report"]["findings"]
+        if finding.get("finding_type") == "unsupported_strategic_implication"
+    ]
+    assert len(strategic) == 1
+    assert strategic[0]["blocking_level"] == "warning"
+
+
 def test_quality_gates_do_not_warn_when_strategic_implication_is_ledger_supported(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_supported_strategic_ledger(ws)
