@@ -65,6 +65,13 @@ ENTITY_STOP_PHRASES = {
     "Key Takeaways",
     "Important Notes",
 }
+STRATEGIC_IMPLICATION_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("early_mover_demand", ("early-mover demand", "early mover demand")),
+    ("procurement_pathways", ("procurement pathway", "procurement pathways")),
+    ("municipal_buyer_demand", ("municipal buyer demand", "municipal buyers demand")),
+    ("policy_driven_demand", ("policy-driven demand", "policy driven demand")),
+    ("partnership_recommendations", ("partnership recommendation", "partnership recommendations")),
+)
 GATE_RULE_DOC_ANCHOR = "docs/agent-contract.md#quality-gate-rule-summaries"
 GATE_RULES: dict[str, dict[str, str]] = {
     "material_fact": {
@@ -110,6 +117,13 @@ FINDING_RULES: dict[str, dict[str, str]] = {
     "editor_introduced_new_fact": {
         "rule_summary": "Editor-added factual tokens must be removed or routed back through the owner stages.",
         "docs_anchor": "docs/agent-contract.md#editor_introduced_new_fact",
+    },
+    "unsupported_strategic_implication": {
+        "rule_summary": (
+            "Strategic implications and recommendations need Claim Ledger support; lexical overreach is flagged "
+            "as a non-blocking warning for auditor review."
+        ),
+        "docs_anchor": "docs/agent-contract.md#unsupported_strategic_implication",
     },
 }
 
@@ -592,7 +606,7 @@ def _material_findings(
             "low_source_density",
         }
     ]
-    return [
+    findings = [
         _map_audit_finding(
             finding=finding,
             idx=idx,
@@ -603,6 +617,85 @@ def _material_findings(
         )
         for idx, finding in enumerate(raw, start=1)
     ]
+    findings.extend(
+        _unsupported_strategic_implication_findings(
+            markdown=markdown,
+            ledger=ledger,
+            start_idx=len(findings) + 1,
+            stages=stages,
+            artifacts=artifacts,
+        )
+    )
+    return findings
+
+
+def _unsupported_strategic_implication_findings(
+    *,
+    markdown: str,
+    ledger: ClaimLedger,
+    start_idx: int,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    support_text = _claim_ledger_support_text(ledger)
+    normalized_markdown = markdown.lower()
+    findings: list[dict[str, Any]] = []
+    editor_stage = _stage_or_none(stages, "editor")
+    audited_artifact = _artifact_or_none(artifacts, "audited_brief")
+    for _phrase_id, variants in STRATEGIC_IMPLICATION_PHRASES:
+        matched_variant = next((variant for variant in variants if variant in normalized_markdown), "")
+        if not matched_variant:
+            continue
+        if any(variant in support_text for variant in variants):
+            continue
+        findings.append(
+            _finding(
+                finding_id=f"QG_MATERIAL_FACT_{start_idx + len(findings):03d}",
+                gate_id="material_fact",
+                finding_type="unsupported_strategic_implication",
+                severity="medium",
+                blocking_level="warning",
+                repair_owner="editor",
+                stage_id=editor_stage,
+                artifact_id=audited_artifact,
+                description=(
+                    "The brief introduces a strategic implication or recommendation phrase "
+                    f"('{matched_variant}') without matching Claim Ledger support."
+                ),
+                recommendation=(
+                    "Downgrade or remove the implication, or add explicit Claim Ledger support through the "
+                    "proper owner stages before presenting it as an implication."
+                ),
+                category="strategic_overreach",
+                line_number=_line_number_for_token(markdown, matched_variant),
+                evidence_ref=matched_variant,
+                metadata={
+                    "matched_phrase": matched_variant,
+                    "support_check": "lexical_phrase_absent_from_claim_ledger",
+                    "semantic_boundary": (
+                        "warning_only; Python flags lexical overreach risk but does not judge full strategic support"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def _claim_ledger_support_text(ledger: ClaimLedger) -> str:
+    parts: list[str] = []
+    for claim in ledger:
+        parts.extend([
+            claim.statement,
+            claim.evidence_text,
+            claim.applicability_reason,
+            *claim.limitations,
+        ])
+        for value in claim.metadata.values():
+            if isinstance(value, str):
+                parts.append(value)
+            elif isinstance(value, list):
+                parts.extend(str(item) for item in value if isinstance(item, str))
+    return "\n".join(part for part in parts if isinstance(part, str)).lower()
 
 
 def _freshness_findings(

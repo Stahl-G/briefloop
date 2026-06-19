@@ -110,6 +110,28 @@ def _write_supported_target_ledger(ws: Path) -> None:
     )
 
 
+def _write_supported_strategic_ledger(ws: Path) -> None:
+    _write_ledger(
+        ws,
+        [
+            {
+                "claim_id": "CL-001",
+                "statement": "TargetCo opened a demo facility that may support early-mover demand.",
+                "source_id": "SRC-001",
+                "evidence_text": "TargetCo opened a demo facility that may support early-mover demand.",
+                "source_url": "https://example.com/targetco-demo",
+                "source_type": "web_search",
+                "claim_type": "interpretation",
+                "metadata": {
+                    "source_title": "TargetCo Demo Facility",
+                    "publisher": "Example News",
+                    "published_at": "2026-06-01",
+                },
+            }
+        ],
+    )
+
+
 def _prepare_editor_gate_workspace(tmp_path: Path, *, analyst_text: str, editor_text: str) -> Path:
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -736,6 +758,52 @@ def test_gate_report_can_be_explicitly_ingested_as_audit_feedback(tmp_path, caps
     assert issue["category"] == "unsupported_claim"
     assert issue["metadata"]["source_finding_id"].startswith("QG_")
     assert issue["metadata"]["raw_finding"]["gate_stage_id"] == "auditor"
+
+
+def test_quality_gates_warn_on_unsupported_strategic_implication(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    _write_audited_brief(
+        ws,
+        (
+            "## Executive Summary\n"
+            "TargetCo opened a demo facility and this creates early-mover demand. [src:CL-001]\n"
+        ),
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    findings = state["quality_gate_report"]["findings"]
+    strategic = [
+        finding
+        for finding in findings
+        if finding.get("finding_type") == "unsupported_strategic_implication"
+    ]
+    assert len(strategic) == 1
+    assert strategic[0]["blocking_level"] == "warning"
+    assert strategic[0]["blocking"] is False
+    assert strategic[0]["category"] == "strategic_overreach"
+    assert strategic[0]["metadata"]["support_check"] == "lexical_phrase_absent_from_claim_ledger"
+
+
+def test_quality_gates_do_not_warn_when_strategic_implication_is_ledger_supported(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_strategic_ledger(ws)
+    _write_audited_brief(
+        ws,
+        (
+            "## Executive Summary\n"
+            "TargetCo opened a demo facility that may support early-mover demand. [src:CL-001]\n"
+        ),
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    assert not [
+        finding
+        for finding in state["quality_gate_report"]["findings"]
+        if finding.get("finding_type") == "unsupported_strategic_implication"
+    ]
 
 
 def test_gates_show_and_validate_are_machine_readable(tmp_path, capsys):

@@ -165,6 +165,14 @@ A number appears in the brief without sufficient source-backed Claim Ledger
 support. Add support through the proper owner stage or remove/downgrade the
 number.
 
+#### unsupported_strategic_implication
+
+The brief uses strategic implication or recommendation language that is not
+lexically supported by the frozen Claim Ledger. This is a non-blocking warning
+for auditor review, not a Python proof that the implication is unsupported.
+Downgrade the language, remove the implication, or add support through the
+proper owner stages.
+
 #### editor_introduced_new_fact
 
 The Editor added factual tokens not present in
