@@ -19,8 +19,9 @@ notes, or compatibility claims.
 - Do not change workspace artifact names for public framing only.
 - When public docs say BriefLoop, keep compatibility notes for `multi-agent-brief`,
   `/mabw`, package/module paths, and MABW experiment IDs.
-- BriefLoop-090 can be an experiment/readiness label; v0.9.0 is a semver
-  release. Do not conflate them.
+- BriefLoop-090 can be a future experiment/readiness label; v0.9.0 is a semver
+  release. `experiments 090` is not a current CLI namespace. Do not conflate
+  them.
 
 ## Current Authority
 

@@ -3,8 +3,7 @@
 Read this for experiment cases, condition workspaces, scorecards, blind packs,
 assessments, and summaries.
 
-BriefLoop-090 is an experiment/readiness label. It is not the semver release
-number. MABW-080 remains the experiment command namespace.
+BriefLoop-090 is a future experiment/readiness label. It is not the semver release number and not a current CLI namespace. MABW-080 remains the shipped experiment command namespace.
 
 ## Current Command Loop
 
