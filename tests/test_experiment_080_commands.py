@@ -828,6 +828,7 @@ def _scorecard_payload(
     reader_clean_pass: bool = True,
     coverage_delta: float | None = None,
     timing_status: str = "available",
+    blind_assessment_verified: bool = False,
 ) -> dict:
     control_integrity = {
         "terminal_workflow": True,
@@ -861,6 +862,26 @@ def _scorecard_payload(
                 "evidence_excerpt": "Observed in the reader brief.",
             }
         ]
+    guidance_assessment = {"status": "needs_assessment", "guidance_entry_ids": ["AG-0001"]}
+    if assessment_status != "needs_assessment":
+        guidance_assessment = {
+            "status": "assessed",
+            "source": "imported_assessment",
+            "assessment_methods": [assessment_method],
+            "guidance_entry_ids": ["AG-0001"],
+        }
+        if blind_assessment_verified:
+            guidance_assessment.update({
+                "blind_item_id": "BI-A",
+                "blind_artifact_sha256": "4" * 64,
+                "blind_pack": {
+                    "schema_version": "mabw.experiment_080.blind_pack.v1",
+                    "blind_item_id": "BI-A",
+                    "artifact_sha256": "4" * 64,
+                    "scorecard_sha256": "5" * 64,
+                    "hash_verified": True,
+                },
+            })
     return {
         "schema_version": "mabw.experiment_080.scorecard.v1",
         "experiment_id": "MABW-080",
@@ -890,6 +911,7 @@ def _scorecard_payload(
             if coverage_delta is not None
             else {"status": "not_computed", "reason": "test"}
         ),
+        "guidance_assessment": guidance_assessment,
         "guidance_scores": guidance_scores,
         "treatment_isolation": {
             "schema_version": "mabw.experiment_080.treatment_visibility.v1",
@@ -3679,22 +3701,31 @@ def test_experiments_080_summarize_aggregates_scorecards_without_quality_claim(t
     assert summary["run_counts"]["validity_class_counts"]["A_controlled"] == 1
     assert summary["run_counts"]["validity_class_counts"]["B_integration"] == 1
     assert summary["run_counts"]["validity_class_counts"]["invalid_contaminated"] == 1
-    assert summary["run_counts"]["a_grade_count"] == 1
-    assert summary["run_counts"]["interpretable_run_denominator"] == 2
+    assert summary["run_counts"]["a_grade_count"] == 0
+    assert summary["run_counts"]["interpretable_run_denominator"] == 0
     assert summary["run_counts"]["invalid_excluded_count"] == 1
     assert summary["condition_counts"]["memory"]["total"] == 2
     assert summary["condition_counts"]["baseline"]["total"] == 1
-    assert summary["manifestation"]["score_2_manifested_count"] == 1
-    assert summary["manifestation"]["score_3_overapplication_count"] == 1
-    assert summary["reader_clean"]["pass_count"] == 1
-    assert summary["reader_clean"]["total_evaluable"] == 2
-    assert summary["reader_clean"]["pass_rate"] == 0.5
-    assert summary["coverage_delta"]["numeric_count"] == 2
-    assert summary["coverage_delta"]["numeric_sum"] == 1.0
-    assert summary["coverage_delta"]["numeric_average"] == 0.5
+    assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
+    assert summary["raw_observed_assessments"]["score_3_overapplication_count"] == 1
+    assert {
+        item["condition"]
+        for item in summary["raw_observed_assessments"]["observations"]
+    } == {"baseline", "memory"}
+    assert summary["manifestation"]["score_2_manifested_count"] == 0
+    assert summary["manifestation"]["score_3_overapplication_count"] == 0
+    assert summary["reader_clean"]["pass_count"] == 0
+    assert summary["reader_clean"]["total_evaluable"] == 0
+    assert summary["reader_clean"]["pass_rate"] is None
+    assert summary["coverage_delta"]["numeric_count"] == 0
+    assert summary["coverage_delta"]["numeric_sum"] == 0.0
+    assert summary["coverage_delta"]["numeric_average"] is None
     assert summary["coverage_delta"]["not_computed_count"] == 0
-    assert summary["timing"]["available_count"] == 2
+    assert summary["timing"]["available_count"] == 0
     assert summary["timing"]["contaminated_count"] == 0
+    assert summary["valid_interpretable_metrics"]["denominator"] == 0
+    assert all(item["formal_interpretable"] is False for item in summary["scorecards"])
+    assert any(item["warning"] == "blind_assessment_not_hash_verified" for item in summary["hardening_warnings"])
     assert {"reason": "run_integrity_contaminated_or_non_reference", "count": 1} in summary["invalid_reasons"]
 
 
@@ -3711,6 +3742,87 @@ def test_experiments_080_summarize_does_not_count_auditable_target_reader_clean(
     assert summary["assessment_target_counts"]["auditable_brief"] == 1
     assert summary["reader_clean"]["total_evaluable"] == 0
     assert summary["scorecards"][0]["assessment_target"] == "auditable_brief"
+
+
+def test_experiments_080_summarize_counts_only_blind_bound_scorecards_as_formal_metrics(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    _write_json(
+        case_dir / "memory.scorecard.json",
+        _auditable_scorecard_payload(
+            condition="memory",
+            run_id="mabw-20260614T000000Z-memory01",
+            validity_class="A_controlled",
+            manifestation_score=2,
+            blind_assessment_verified=True,
+        ),
+    )
+    _write_json(
+        case_dir / "prompt.scorecard.json",
+        _auditable_scorecard_payload(
+            condition="prompt_only",
+            run_id="mabw-20260614T000000Z-prompt01",
+            validity_class="A_controlled",
+            manifestation_score=3,
+            overapplication=True,
+            blind_assessment_verified=True,
+        ),
+    )
+    _write_json(
+        case_dir / "baseline-nonblind.scorecard.json",
+        _auditable_scorecard_payload(
+            condition="baseline",
+            run_id="mabw-20260614T000000Z-baseline01",
+            validity_class="A_controlled",
+            manifestation_score=2,
+            blind_assessment_verified=False,
+        ),
+    )
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 2
+    assert summary["raw_observed_assessments"]["score_3_overapplication_count"] == 1
+    assert len(summary["raw_observed_assessments"]["observations"]) == 3
+    assert summary["run_counts"]["interpretable_run_denominator"] == 2
+    assert summary["manifestation"]["score_2_manifested_count"] == 1
+    assert summary["manifestation"]["score_3_overapplication_count"] == 1
+    assert summary["manifestation"]["overapplication_count"] == 1
+    assert summary["valid_interpretable_metrics"]["denominator"] == 2
+    assert {
+        item["condition"]
+        for item in summary["valid_interpretable_metrics"]["included_scorecards"]
+    } == {"memory", "prompt_only"}
+    excluded = {item["condition"]: item for item in summary["exclusions"]}
+    assert "blind_assessment_not_hash_verified" in excluded["baseline"]["reasons"]
+    assert any(item["warning"] == "low_formal_interpretable_n" for item in summary["hardening_warnings"])
+
+
+def test_experiments_080_summarize_excludes_binding_invalid_scorecards_from_formal_metrics(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    scorecard = _auditable_scorecard_payload(
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory01",
+        validity_class="B_integration",
+        blind_assessment_verified=True,
+    )
+    scorecard["control_integrity"]["audit_binding_valid"] = False
+    scorecard["audit_binding"]["status"] = "invalid"
+    _write_json(case_dir / "memory.scorecard.json", scorecard)
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
+    assert summary["valid_interpretable_metrics"]["denominator"] == 0
+    assert summary["manifestation"]["score_2_manifested_count"] == 0
+    assert summary["exclusions"][0]["condition"] == "memory"
+    assert "audit_binding_not_valid" in summary["exclusions"][0]["reasons"]
+    assert "control_integrity.audit_binding_valid_not_true" in summary["exclusions"][0]["reasons"]
 
 
 def test_experiments_080_summarize_handles_missing_condition_scorecards(tmp_path, capsys):
@@ -3832,6 +3944,7 @@ def test_experiments_080_summarize_excludes_invalid_scorecards_from_interpretabl
             manifestation_score=2,
             reader_clean_pass=True,
             coverage_delta=1.0,
+            blind_assessment_verified=True,
         ),
     )
     _write_json(

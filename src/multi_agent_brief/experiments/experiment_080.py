@@ -113,6 +113,7 @@ ALLOWED_VALIDITY_CLASSES = {
     "invalid_fact_layer_mismatch",
 }
 INTERPRETABLE_SCORECARD_VALIDITY_CLASSES = {"A_controlled", "B_integration"}
+SUMMARY_LOW_N_DENOMINATOR_THRESHOLD = 3
 ALLOWED_RUN_INTEGRITY_STATUSES = PERSISTED_RUN_INTEGRITY_STATUSES
 ALLOWED_GUIDANCE_SOURCES = {"improvement_ledger", "manual", "prompt_only"}
 ALLOWED_ASSESSMENT_METHODS = {"human", "llm_assisted_human_review", "llm_only"}
@@ -3240,6 +3241,7 @@ def _build_case_summary(
         }
         for condition in all_conditions
     }
+    raw_observed_assessments = _empty_manifestation_summary(all_conditions)
     manifestation = _empty_manifestation_summary(all_conditions)
     reader_clean = _empty_rate_summary(all_conditions)
     coverage = _empty_coverage_summary(all_conditions)
@@ -3247,6 +3249,10 @@ def _build_case_summary(
     invalid_reasons: dict[str, int] = {}
     assessment_target_counts = {target: 0 for target in sorted(ALLOWED_ASSESSMENT_TARGETS)}
     scorecard_index: list[dict[str, Any]] = []
+    formal_included_scorecards: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
+    hardening_warning_counts: dict[str, int] = {}
+    raw_observed_assessments["observations"] = []
 
     for record in sorted(scorecards, key=lambda item: (
         str(item["scorecard"].get("condition") or ""),
@@ -3269,6 +3275,7 @@ def _build_case_summary(
                 "validity_class_counts": _empty_validity_counts(),
             }
             manifestation["by_condition"][condition] = _empty_manifestation_counts()
+            raw_observed_assessments["by_condition"][condition] = _empty_manifestation_counts()
             reader_clean["by_condition"][condition] = _empty_rate_counts()
             coverage["by_condition"][condition] = _empty_coverage_counts()
             timing["by_condition"][condition] = _empty_timing_counts()
@@ -3280,11 +3287,41 @@ def _build_case_summary(
         validity_counts[validity] += 1
         condition_counts[condition]["total"] += 1
         condition_counts[condition]["validity_class_counts"][validity] += 1
-        if validity in INTERPRETABLE_SCORECARD_VALIDITY_CLASSES:
+        _accumulate_manifestation(raw_observed_assessments, condition=condition, scorecard=scorecard)
+        raw_observed_assessments["observations"].extend(
+            _scorecard_raw_assessment_observations(
+                scorecard,
+                path=record["path"],
+                condition=condition,
+                assessment_target=assessment_target,
+                validity_class=validity,
+            )
+        )
+        formal_exclusion_reasons = _scorecard_formal_metric_exclusion_reasons(scorecard)
+        formal_interpretable = not formal_exclusion_reasons
+        if formal_interpretable:
             _accumulate_manifestation(manifestation, condition=condition, scorecard=scorecard)
             _accumulate_reader_clean(reader_clean, condition=condition, scorecard=scorecard)
             _accumulate_coverage(coverage, condition=condition, scorecard=scorecard)
             _accumulate_timing(timing, condition=condition, scorecard=scorecard)
+            formal_included_scorecards.append({
+                "path": record["path"],
+                "condition": condition,
+                "run_id": scorecard.get("run_id"),
+                "assessment_target": assessment_target,
+                "validity_class": validity,
+            })
+        else:
+            for reason in formal_exclusion_reasons:
+                hardening_warning_counts[reason] = hardening_warning_counts.get(reason, 0) + 1
+            exclusions.append({
+                "path": record["path"],
+                "condition": condition,
+                "run_id": scorecard.get("run_id"),
+                "assessment_target": assessment_target,
+                "validity_class": validity,
+                "reasons": formal_exclusion_reasons,
+            })
         for reason in _scorecard_invalid_reasons(scorecard):
             invalid_reasons[reason] = invalid_reasons.get(reason, 0) + 1
         scorecard_index.append({
@@ -3294,17 +3331,37 @@ def _build_case_summary(
             "assessment_target": assessment_target,
             "validity_class": validity,
             "assessment_status": scorecard.get("assessment_status", ""),
+            "blind_assessment_verified": _scorecard_blind_assessment_verified(scorecard),
+            "formal_interpretable": formal_interpretable,
         })
 
     _finalize_rate_summary(reader_clean)
     _finalize_coverage_summary(coverage)
     _finalize_timing_summary(timing)
+    formal_denominator = len(formal_included_scorecards)
+    hardening_warnings = [
+        {"warning": warning, "count": count}
+        for warning, count in sorted(hardening_warning_counts.items())
+    ]
+    if formal_denominator < SUMMARY_LOW_N_DENOMINATOR_THRESHOLD:
+        hardening_warnings.append({
+            "warning": "low_formal_interpretable_n",
+            "count": formal_denominator,
+            "threshold": SUMMARY_LOW_N_DENOMINATOR_THRESHOLD,
+        })
+    formal_a_grade_count = sum(
+        1
+        for item in formal_included_scorecards
+        if item.get("validity_class") == "A_controlled"
+    )
     return {
         "schema_version": CASE_SUMMARY_SCHEMA,
         "experiment_id": EXPERIMENT_080_ID,
         "case_id": case_id,
         "summary_boundary": (
             "deterministic_scorecard_aggregation_only; "
+            "raw_observations_are_not_formal_proof; "
+            "formal_metrics_require_blind_hash_bound_assessment; "
             "invalid_runs_excluded_from_interpretable_metrics; "
             "no_python_or_llm_quality_judgment"
         ),
@@ -3312,11 +3369,8 @@ def _build_case_summary(
         "run_counts": {
             "total": len(scorecards),
             "validity_class_counts": validity_counts,
-            "a_grade_count": validity_counts["A_controlled"],
-            "interpretable_run_denominator": sum(
-                validity_counts[key]
-                for key in sorted(INTERPRETABLE_SCORECARD_VALIDITY_CLASSES)
-            ),
+            "a_grade_count": formal_a_grade_count,
+            "interpretable_run_denominator": formal_denominator,
             "invalid_excluded_count": sum(
                 validity_counts[key]
                 for key in ("invalid_contaminated", "invalid_incomplete", "invalid_fact_layer_mismatch")
@@ -3324,6 +3378,20 @@ def _build_case_summary(
         },
         "assessment_target_counts": assessment_target_counts,
         "condition_counts": condition_counts,
+        "raw_observed_assessments": raw_observed_assessments,
+        "valid_interpretable_metrics": {
+            "denominator": formal_denominator,
+            "a_grade_count": formal_a_grade_count,
+            "included_scorecards": formal_included_scorecards,
+            "low_n_threshold": SUMMARY_LOW_N_DENOMINATOR_THRESHOLD,
+            "low_n": formal_denominator < SUMMARY_LOW_N_DENOMINATOR_THRESHOLD,
+            "manifestation": manifestation,
+            "reader_clean": reader_clean,
+            "coverage_delta": coverage,
+            "timing": timing,
+        },
+        "exclusions": exclusions,
+        "hardening_warnings": hardening_warnings,
         "manifestation": manifestation,
         "reader_clean": reader_clean,
         "coverage_delta": coverage,
@@ -3518,6 +3586,92 @@ def _finalize_timing_counts(counts: dict[str, Any]) -> None:
     completed.pop("numeric_min", None)
     completed.pop("numeric_max", None)
     completed.pop("numeric_count", None)
+
+
+def _scorecard_formal_metric_exclusion_reasons(scorecard: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    validity = str(scorecard.get("validity_class") or "invalid_incomplete")
+    assessment_target = _assessment_target(scorecard)
+    control = scorecard.get("control_integrity") if isinstance(scorecard.get("control_integrity"), dict) else {}
+    fact_layer = scorecard.get("frozen_fact_layer") if isinstance(scorecard.get("frozen_fact_layer"), dict) else {}
+    reader_clean = scorecard.get("reader_clean") if isinstance(scorecard.get("reader_clean"), dict) else {}
+    if validity not in INTERPRETABLE_SCORECARD_VALIDITY_CLASSES:
+        reasons.append(f"validity_class.{validity}_not_interpretable")
+    if scorecard.get("assessment_status") != "assessed":
+        reasons.append("assessment_status_not_assessed")
+    for key in _control_keys_for_target(assessment_target):
+        if control.get(key) is not True:
+            reasons.append(f"control_integrity.{key}_not_true")
+    if fact_layer.get("matches_case") is not True:
+        reasons.append("frozen_fact_layer_mismatch")
+    if _reader_clean_required_for_target(assessment_target) and reader_clean.get("pass") is not True:
+        reasons.append("reader_clean_not_pass")
+    if not _scorecard_treatment_isolation_status_passed(scorecard, assessment_target=assessment_target):
+        reasons.append("treatment_isolation_not_passed")
+    if not _scorecard_audit_binding_summary_passed(scorecard, assessment_target=assessment_target):
+        reasons.append("audit_binding_not_valid")
+    if not _scorecard_blind_assessment_verified(scorecard):
+        reasons.append("blind_assessment_not_hash_verified")
+    scores = scorecard.get("guidance_scores") if isinstance(scorecard.get("guidance_scores"), list) else []
+    if not any(isinstance(score, dict) and score.get("relevant") is True for score in scores):
+        reasons.append("no_relevant_guidance_scores")
+    return sorted(dict.fromkeys(reasons))
+
+
+def _scorecard_raw_assessment_observations(
+    scorecard: dict[str, Any],
+    *,
+    path: str,
+    condition: str,
+    assessment_target: str,
+    validity_class: str,
+) -> list[dict[str, Any]]:
+    scores = scorecard.get("guidance_scores") if isinstance(scorecard.get("guidance_scores"), list) else []
+    observations: list[dict[str, Any]] = []
+    for score in scores:
+        if not isinstance(score, dict):
+            continue
+        observations.append({
+            "path": path,
+            "condition": condition,
+            "run_id": scorecard.get("run_id"),
+            "assessment_target": assessment_target,
+            "validity_class": validity_class,
+            "assessment_status": scorecard.get("assessment_status", ""),
+            "entry_id": score.get("entry_id"),
+            "relevant": score.get("relevant"),
+            "manifestation_score": score.get("manifestation_score"),
+            "overapplication": score.get("overapplication"),
+            "assessment_method": score.get("assessment_method"),
+            "blind_assessment_verified": _scorecard_blind_assessment_verified(scorecard),
+        })
+    return observations
+
+
+def _scorecard_audit_binding_summary_passed(scorecard: dict[str, Any], *, assessment_target: str) -> bool:
+    if assessment_target != "auditable_brief":
+        return True
+    control = scorecard.get("control_integrity") if isinstance(scorecard.get("control_integrity"), dict) else {}
+    binding = scorecard.get("audit_binding") if isinstance(scorecard.get("audit_binding"), dict) else {}
+    return control.get("audit_binding_valid") is True and binding.get("status") == "valid"
+
+
+def _scorecard_blind_assessment_verified(scorecard: dict[str, Any]) -> bool:
+    guidance_assessment = (
+        scorecard.get("guidance_assessment")
+        if isinstance(scorecard.get("guidance_assessment"), dict)
+        else {}
+    )
+    blind_pack = (
+        guidance_assessment.get("blind_pack")
+        if isinstance(guidance_assessment.get("blind_pack"), dict)
+        else {}
+    )
+    return (
+        blind_pack.get("hash_verified") is True
+        and isinstance(guidance_assessment.get("blind_item_id"), str)
+        and isinstance(guidance_assessment.get("blind_artifact_sha256"), str)
+    )
 
 
 def _scorecard_invalid_reasons(scorecard: dict[str, Any]) -> list[str]:

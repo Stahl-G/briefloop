@@ -396,11 +396,24 @@ stages, score prose, import assessments, or judge quality.
 | `invalid_incomplete` | Required run, archive, scorecard, or assessment material is missing or incomplete. |
 | `invalid_fact_layer_mismatch` | The run did not use the case frozen fact layer. |
 
-Summary metrics separate:
+Summary output separates:
 
-- `a_grade_count`: `A_controlled` only.
-- `interpretable_run_denominator`: `A_controlled + B_integration`.
-- `invalid_excluded_count`: invalid scorecards retained as failure evidence but excluded from interpretable manifestation, reader-clean, coverage, and timing metrics.
+- `raw_observed_assessments`: imported guidance scores observed in the input
+  scorecards, including pilot, invalid, stale, and non-blind observations.
+- `valid_interpretable_metrics`: formal metrics whose scorecards pass the
+  target contract, audit binding, treatment isolation, and condition-blind
+  hash-bound assessment checks.
+- `exclusions`: scorecards retained as evidence but excluded from formal
+  metrics, with deterministic reasons.
+- `hardening_warnings`: warnings such as low formal denominator or missing
+  blind assessment binding.
+
+`run_counts.interpretable_run_denominator` is the formal denominator, not the
+raw count of `A_controlled + B_integration` labels. Raw validity labels remain
+available under `validity_class_counts` for auditability.
+
+`manifestation_score = 3` is overapplication. It is counted separately and must
+not be combined with score 2 as a stronger success.
 
 ## Common Failure Modes
 
@@ -443,8 +456,9 @@ Use these patterns:
 - "The run was registered under MABW-080."
 - "The scorecard reports deterministic control metadata."
 - "The assessment was imported from external review."
-- "The summary observed `k/n` interpretable scorecards with score 2 manifestation."
+- "The summary observed `k` raw score-2 assessments and `n` formal interpretable scorecards."
 - "Invalid runs were excluded from the interpretable denominator."
+- "Non-blind pilot scorecards remained visible as raw observations but were excluded from formal metrics."
 
 Avoid these patterns:
 
