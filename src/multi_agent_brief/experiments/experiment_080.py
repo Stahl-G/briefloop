@@ -3155,7 +3155,12 @@ def _auditable_audit_binding_projection(
         actual = binding.get(field)
         if actual != expected_sha:
             mismatches[field] = {"expected": expected_sha, "actual": actual}
-    expected_repair_ids = _auditable_brief_repair_transaction_ids(workspace)
+    event_records = _read_event_log_for_experiment(workspace / "output" / "intermediate" / "event_log.jsonl")
+    run_id = _auditable_binding_run_id(workflow_state)
+    expected_repair_ids = _auditable_brief_repair_transaction_ids(
+        event_records,
+        run_id=run_id,
+    )
     actual_repair_ids = [
         str(item)
         for item in binding.get("relevant_repair_transaction_ids", [])
@@ -3165,6 +3170,30 @@ def _auditable_audit_binding_projection(
         mismatches["relevant_repair_transaction_ids"] = {
             "expected": expected_repair_ids,
             "actual": actual_repair_ids,
+        }
+    auditor_event = _auditable_auditor_completion_event(
+        event_records,
+        run_id=run_id,
+        transaction_id=str(binding["auditor_stage_transaction_id"]),
+    )
+    binding_stage_event = (
+        binding.get("stage_completion_event")
+        if isinstance(binding.get("stage_completion_event"), dict)
+        else {}
+    )
+    binding_stage_event_tx = binding_stage_event.get("transaction_id")
+    if (
+        binding_stage_event_tx is not None
+        and binding_stage_event_tx != binding["auditor_stage_transaction_id"]
+    ):
+        mismatches["stage_completion_event.transaction_id"] = {
+            "expected": binding["auditor_stage_transaction_id"],
+            "actual": binding_stage_event_tx,
+        }
+    if auditor_event is None:
+        mismatches["auditor_stage_transaction_id"] = {
+            "expected": "current-run auditor decision_recorded event",
+            "actual": binding["auditor_stage_transaction_id"],
         }
     if mismatches:
         _raise_experiment_error(
@@ -3181,9 +3210,7 @@ def _auditable_audit_binding_projection(
         "audit_report_sha256": binding["audit_report_sha256"],
         "relevant_repair_transaction_ids": actual_repair_ids,
         "auditor_stage_transaction_id": binding["auditor_stage_transaction_id"],
-        "stage_completion_event": binding.get("stage_completion_event")
-        if isinstance(binding.get("stage_completion_event"), dict)
-        else {},
+        "stage_completion_event": auditor_event or {},
     }
 
 
@@ -3211,11 +3238,26 @@ def _target_artifact_sha(target_artifacts: dict[str, Any], artifact_id: str) -> 
     )
 
 
-def _auditable_brief_repair_transaction_ids(workspace: Path) -> list[str]:
-    records = _read_event_log_for_experiment(workspace / "output" / "intermediate" / "event_log.jsonl")
+def _auditable_binding_run_id(workflow_state: dict[str, Any]) -> str:
+    run_id = workflow_state.get("run_id")
+    if isinstance(run_id, str) and run_id.strip():
+        return run_id.strip()
+    _raise_experiment_error(
+        "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+        "Auditor audit_binding verification requires workflow_state.run_id.",
+    )
+
+
+def _auditable_brief_repair_transaction_ids(
+    records: list[dict[str, Any]],
+    *,
+    run_id: str,
+) -> list[str]:
     ids: list[str] = []
     artifact_path = "output/intermediate/audited_brief.md"
     for event in records:
+        if event.get("run_id") != run_id:
+            continue
         if event.get("event_type") != "repair_completed":
             continue
         metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
@@ -3226,6 +3268,33 @@ def _auditable_brief_repair_transaction_ids(workspace: Path) -> list[str]:
         if isinstance(transaction_id, str) and transaction_id and transaction_id not in ids:
             ids.append(transaction_id)
     return ids
+
+
+def _auditable_auditor_completion_event(
+    records: list[dict[str, Any]],
+    *,
+    run_id: str,
+    transaction_id: str,
+) -> dict[str, Any] | None:
+    for event in records:
+        if event.get("run_id") != run_id:
+            continue
+        if event.get("event_type") != "decision_recorded":
+            continue
+        if event.get("stage_id") != "auditor" or event.get("decision") != "continue":
+            continue
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        if metadata.get("transaction_id") != transaction_id:
+            continue
+        return {
+            "event_type": "decision_recorded",
+            "event_id": event.get("event_id"),
+            "created_at": event.get("created_at"),
+            "stage_id": "auditor",
+            "decision": "continue",
+            "transaction_id": transaction_id,
+        }
+    return None
 
 
 def _artifact_path_matches(pattern: str, path: str) -> bool:

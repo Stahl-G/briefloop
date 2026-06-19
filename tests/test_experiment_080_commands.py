@@ -1829,6 +1829,70 @@ def test_experiments_080_auditable_brief_register_rejects_mismatched_audit_bindi
     assert not output.exists()
 
 
+def test_experiments_080_auditable_brief_register_requires_auditor_completion_event(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    binding = workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"]
+    binding["auditor_stage_transaction_id"] = "fake-nonexistent-tx"
+    binding["stage_completion_event"]["transaction_id"] = "fake-nonexistent-tx"
+    _write_json(workflow_path, workflow)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDIT_BINDING_INVALID"
+    assert "auditor_stage_transaction_id" in payload["details"]["mismatches"]
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_rejects_stage_completion_event_tx_mismatch(
+    tmp_path,
+    capsys,
+):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    binding = workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"]
+    binding["stage_completion_event"]["transaction_id"] = "wrong-tx"
+    _write_json(workflow_path, workflow)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDIT_BINDING_INVALID"
+    assert "stage_completion_event.transaction_id" in payload["details"]["mismatches"]
+    assert not output.exists()
+
+
 def test_experiments_080_auditable_brief_register_requires_repair_ids_in_binding(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "workspace"
