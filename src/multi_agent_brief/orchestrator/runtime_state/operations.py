@@ -70,6 +70,8 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ILLEGAL_TRANSITION,
     E_QUALITY_GATE_REQUIRED,
     E_READER_FINAL_GATE_FAILED,
+    E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN,
+    E_REPAIR_NO_LEGAL_ROUTE,
     E_REPAIR_TRANSACTION_REQUIRED,
     E_REQUIRED_ARTIFACT_MISSING,
     E_RUN_ARCHIVE_FAILED,
@@ -3820,6 +3822,8 @@ def start_repair_transaction(
     workspace: str | Path,
     repo_workdir: str | Path | None = None,
     actor: str = "orchestrator",
+    route_index: int | None = None,
+    finding_id: str | None = None,
 ) -> dict[str, Any]:
     """Start an explicit owner-stage repair transaction from the deterministic route."""
 
@@ -3848,14 +3852,27 @@ def start_repair_transaction(
 
     from multi_agent_brief.repair.router import route_repair
 
-    route = route_repair(workspace=ws)
+    route = route_repair(workspace=ws, route_index=route_index, finding_id=finding_id)
     if not route.get("ok"):
         raise _repair_route_error(route)
+    if route.get("is_imported_fact_layer_forbidden") is True:
+        raise RuntimeStateError(
+            (
+                "This route targets imported frozen fact-layer artifacts. Start a fresh condition workspace "
+                "or use human review; do not repair imported fact layer artifacts in place."
+            ),
+            details={
+                "selected_route": route,
+                "allowed_artifacts": list(route.get("allowed_artifacts") or []),
+                "workspace": str(ws),
+            },
+            error_code=E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN,
+        )
     if route.get("repair_owner") in {None, "", "none"}:
         raise RuntimeStateError(
-            "No deterministic repair route found.",
+            "No legal deterministic repair route found." if route.get("no_legal_route") else "No deterministic repair route found.",
             details=route,
-            error_code=E_ILLEGAL_TRANSITION,
+            error_code=E_REPAIR_NO_LEGAL_ROUTE if route.get("no_legal_route") else E_ILLEGAL_TRANSITION,
         )
     if not route.get("allowed_artifacts"):
         raise RuntimeStateError(

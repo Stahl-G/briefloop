@@ -89,10 +89,31 @@ DOWNSTREAM_BLOCKED_EDITS = {
         "output/intermediate/audit_report.json",
     ],
 }
+IMPORTED_FACT_LAYER_FORBIDDEN_ARTIFACTS = {
+    "output/input_classification.json",
+    "output/intermediate/candidate_claims.json",
+    "output/intermediate/screened_candidates.json",
+    "output/intermediate/claim_ledger.json",
+}
+IMPORTED_FACT_LAYER_FORBIDDEN_PREFIXES = (
+    "input/sources/",
+)
 
 
-def route_repair(*, workspace: str | Path) -> dict[str, Any]:
+def route_repair(
+    *,
+    workspace: str | Path,
+    route_index: int | None = None,
+    finding_id: str | None = None,
+) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
+    if route_index is not None and finding_id is not None:
+        return {
+            "ok": False,
+            "error_code": "E_REPAIR_ROUTE_SELECTION_INVALID",
+            "message": "Use either --route-index or --finding-id, not both.",
+            "workspace": str(ws),
+        }
     if not (ws / "config.yaml").exists():
         return {
             "ok": False,
@@ -113,7 +134,16 @@ def route_repair(*, workspace: str | Path) -> dict[str, Any]:
     routes = [_route_for_finding(finding) for finding in findings]
     routes = [route for route in routes if route is not None]
     routes = sorted(routes, key=_route_priority)
-    selected = routes[0] if routes else _no_route()
+    routes = _annotated_routes(routes, imported_fact_layer=_workspace_has_fact_layer_import(payloads))
+    selected = _select_route(routes, route_index=route_index, finding_id=finding_id)
+    if not selected.get("ok", True):
+        return {
+            "ok": False,
+            "workspace": str(ws),
+            "routes": routes,
+            "finding_count": len(findings),
+            **selected,
+        }
     selected = _with_run_integrity_context(selected, payloads.get("workflow_state"))
     return {
         "ok": True,
@@ -192,6 +222,7 @@ def _findings_from_payload(payload: dict[str, Any], *, source: str, path: str) -
         return []
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
     source_stage_id = metadata.get("gate_stage_id") or metadata.get("stage_id")
+    report_status = payload.get("status") or payload.get("audit_status")
     normalized: list[dict[str, Any]] = []
     for idx, finding in enumerate(findings):
         if not isinstance(finding, dict):
@@ -200,6 +231,8 @@ def _findings_from_payload(payload: dict[str, Any], *, source: str, path: str) -
         item.setdefault("_source", source)
         item.setdefault("_source_path", path)
         item.setdefault("_source_index", idx)
+        if report_status:
+            item.setdefault("_report_status", report_status)
         if source_stage_id:
             item.setdefault("_source_stage_id", source_stage_id)
         normalized.append(item)
@@ -536,6 +569,9 @@ def _route(
             "finding_id": source.get("finding_id") or source.get("id"),
             "finding_type": source.get("finding_type") or source.get("category"),
             "artifact_id": source.get("artifact_id"),
+            "severity": source.get("severity"),
+            "status": source.get("_report_status") or source.get("status") or source.get("audit_status"),
+            "blocking": source.get("blocking"),
         },
     }
 
@@ -553,18 +589,171 @@ def _no_route() -> dict[str, Any]:
     }
 
 
-def _route_priority(route: dict[str, Any]) -> tuple[int, str, str]:
+def _no_legal_route() -> dict[str, Any]:
+    route = _no_route()
+    route["ok"] = False
+    route["error_code"] = "E_REPAIR_NO_LEGAL_ROUTE"
+    route["message"] = (
+        "No legal deterministic repair route found. Available routes target imported frozen fact-layer "
+        "artifacts or require human review."
+    )
+    route["reason"] = (
+        "No legal deterministic repair route found. Available routes target imported frozen fact-layer "
+        "artifacts or require human review."
+    )
+    route["recommended_action"] = "start_fresh_workspace_or_request_human_review"
+    route["no_legal_route"] = True
+    return route
+
+
+def _workspace_has_fact_layer_import(payloads: dict[str, dict[str, Any]]) -> bool:
+    manifest = payloads.get("runtime_manifest")
+    return isinstance(manifest, dict) and isinstance(manifest.get("fact_layer_import"), dict)
+
+
+def _annotated_routes(routes: list[dict[str, Any]], *, imported_fact_layer: bool) -> list[dict[str, Any]]:
+    annotated: list[dict[str, Any]] = []
+    for rank, route in enumerate(routes):
+        item = dict(route)
+        forbidden = imported_fact_layer and _route_targets_imported_fact_layer(item)
+        item["route_rank"] = rank
+        item["is_blocking"] = _route_is_blocking(item)
+        item["is_imported_fact_layer_forbidden"] = forbidden
+        item["default_selected"] = False
+        annotated.append(item)
+    default = _default_selected_route(annotated)
+    if default is not None:
+        default["default_selected"] = True
+    return annotated
+
+
+def _select_route(
+    routes: list[dict[str, Any]],
+    *,
+    route_index: int | None,
+    finding_id: str | None,
+) -> dict[str, Any]:
+    if finding_id is not None:
+        for route in routes:
+            source = route.get("source") if isinstance(route.get("source"), dict) else {}
+            if source.get("finding_id") == finding_id:
+                return _selected_route_or_forbidden_error(route)
+        return {
+            "ok": False,
+            "error_code": "E_REPAIR_ROUTE_NOT_FOUND",
+            "message": f"No deterministic repair route found for finding_id '{finding_id}'.",
+        }
+    if route_index is not None:
+        if route_index < 0 or route_index >= len(routes):
+            return {
+                "ok": False,
+                "error_code": "E_REPAIR_ROUTE_NOT_FOUND",
+                "message": f"No deterministic repair route found for route_index {route_index}.",
+            }
+        return _selected_route_or_forbidden_error(routes[route_index])
+    if not routes:
+        return _no_route()
+    selected = _default_selected_route(routes)
+    return selected if selected is not None else _no_legal_route()
+
+
+def _selected_route_or_forbidden_error(route: dict[str, Any]) -> dict[str, Any]:
+    if route.get("is_imported_fact_layer_forbidden") is not True:
+        return route
+    source = route.get("source") if isinstance(route.get("source"), dict) else {}
+    finding_id = source.get("finding_id") or source.get("finding_type") or "<unknown>"
+    return {
+        "ok": False,
+        "error_code": "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN",
+        "message": (
+            f"Repair route '{finding_id}' targets imported frozen fact-layer artifacts. "
+            "Start a fresh condition workspace or use human review; do not repair imported fact layer artifacts in place."
+        ),
+        "selected_route": route,
+        "allowed_artifacts": list(route.get("allowed_artifacts") or []),
+    }
+
+
+def _default_selected_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not routes:
+        return None
+    first = routes[0]
+    source = first.get("source") if isinstance(first.get("source"), dict) else {}
+    if source.get("route_classification") == "input_limitation":
+        return first
+    for route in routes:
+        if route.get("repair_owner") in {None, "", "none"}:
+            continue
+        if route.get("is_imported_fact_layer_forbidden") is True:
+            continue
+        return route
+    return None
+
+
+def _route_priority(route: dict[str, Any]) -> tuple[int, int, int, str, str]:
     source = route.get("source") if isinstance(route.get("source"), dict) else {}
     kind = str(source.get("kind") or "")
     finding_type = str(source.get("finding_type") or "")
     repair_owner = str(route.get("repair_owner") or "")
-    if kind == "transaction_integrity" or finding_type == "frozen_artifact_changed":
-        return (0, kind, finding_type)
     if source.get("route_classification") == "input_limitation":
-        return (5, kind, finding_type)
+        return (0, 0, 0, kind, finding_type)
+    blocking_priority = 0 if _route_is_blocking(route) else 1
+    kind_priority = {
+        "transaction_integrity": 0,
+        "auditor_quality_gate_report": 1,
+        "quality_gate_report": 1,
+        "finalize_quality_gate_report": 2,
+        "audit_report": 3,
+        "finalize_report": 4,
+        "artifact_registry": 5,
+    }.get(kind, 20)
+    if finding_type == "frozen_artifact_changed":
+        kind_priority = 0
     if repair_owner == "none":
-        return (90, kind, finding_type)
-    return (10, kind, finding_type)
+        kind_priority = 90
+    finding_id = str(source.get("finding_id") or "")
+    return (1, blocking_priority, kind_priority, finding_id, finding_type)
+
+
+def _route_is_blocking(route: dict[str, Any]) -> bool:
+    source = route.get("source") if isinstance(route.get("source"), dict) else {}
+    kind = str(source.get("kind") or "")
+    finding_type = str(source.get("finding_type") or "")
+    status = str(source.get("status") or "").lower()
+    severity = str(source.get("severity") or "").lower()
+    blocking = source.get("blocking")
+    if source.get("route_classification") == "input_limitation":
+        return True
+    if kind == "transaction_integrity" or finding_type == "frozen_artifact_changed":
+        return True
+    if isinstance(blocking, bool):
+        return blocking
+    if status in {"fail", "failed", "block", "blocked", "blocking"}:
+        return True
+    if kind in {"auditor_quality_gate_report", "finalize_quality_gate_report", "quality_gate_report"}:
+        return severity in {"high", "critical", "blocker", "blocking"}
+    if kind == "audit_report":
+        return severity in {"high", "critical", "blocker", "blocking"} or status in {"fail", "block", "blocking"}
+    return False
+
+
+def _route_targets_imported_fact_layer(route: dict[str, Any]) -> bool:
+    for artifact in route.get("allowed_artifacts") or []:
+        if _path_targets_imported_fact_layer(str(artifact)):
+            return True
+    return False
+
+
+def _path_targets_imported_fact_layer(path_or_pattern: str) -> bool:
+    normalized = path_or_pattern.strip().replace("\\", "/")
+    if not normalized:
+        return False
+    if normalized in {"input/sources", "input/sources/*"}:
+        return True
+    if normalized in IMPORTED_FACT_LAYER_FORBIDDEN_ARTIFACTS:
+        return True
+    stripped = normalized.rstrip("*")
+    return any(stripped.startswith(prefix) for prefix in IMPORTED_FACT_LAYER_FORBIDDEN_PREFIXES)
 
 
 def _with_run_integrity_context(route: dict[str, Any], workflow: dict[str, Any] | None) -> dict[str, Any]:

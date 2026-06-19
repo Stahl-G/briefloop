@@ -25,6 +25,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Show allowed repair owner/artifacts for the current workspace issue.",
     )
     route_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    route_parser.add_argument(
+        "--route-index",
+        type=int,
+        help="0-based route index to inspect explicitly.",
+    )
+    route_parser.add_argument(
+        "--finding-id",
+        help="Finding ID to inspect explicitly.",
+    )
     route_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     start_parser = actions.add_parser(
         "start",
@@ -40,6 +49,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default="orchestrator",
         choices=("cli", "orchestrator", "runtime", "system"),
         help="Actor recorded in event_log.jsonl.",
+    )
+    start_parser.add_argument(
+        "--route-index",
+        type=int,
+        help="0-based route index from `repair route --json` to start explicitly.",
+    )
+    start_parser.add_argument(
+        "--finding-id",
+        help="Finding ID from `repair route --json` to start explicitly.",
     )
     start_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     complete_parser = actions.add_parser(
@@ -64,7 +82,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def handle(args: argparse.Namespace) -> int:
     try:
         if args.repair_action == "route":
-            payload = route_repair(workspace=args.workspace)
+            payload = route_repair(
+                workspace=args.workspace,
+                route_index=getattr(args, "route_index", None),
+                finding_id=getattr(args, "finding_id", None),
+            )
             if getattr(args, "json", False):
                 print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
             else:
@@ -75,6 +97,8 @@ def handle(args: argparse.Namespace) -> int:
                 workspace=args.workspace,
                 repo_workdir=getattr(args, "repo_workdir", None),
                 actor=getattr(args, "actor", "orchestrator"),
+                route_index=getattr(args, "route_index", None),
+                finding_id=getattr(args, "finding_id", None),
             )
             if getattr(args, "json", False):
                 print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -109,6 +133,13 @@ def _print_route(payload: dict[str, Any]) -> None:
     print(f"[repair route] owner: {payload.get('repair_owner')}")
     print(f"[repair route] must_rerun_from: {payload.get('must_rerun_from') or 'none'}")
     print(f"[repair route] reason: {payload.get('reason')}")
+    if payload.get("default_selected") is True:
+        source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
+        finding_id = source.get("finding_id") or source.get("finding_type") or "selected route"
+        print(
+            f"[repair route] default: {finding_id} -> {payload.get('repair_owner')} "
+            f"-> {', '.join(payload.get('allowed_artifacts') or []) or 'none'}"
+        )
     print("[repair route] allowed_artifacts:")
     for artifact in payload.get("allowed_artifacts") or []:
         print(f"  - {artifact}")

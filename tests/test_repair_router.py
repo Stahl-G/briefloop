@@ -10,6 +10,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
     utc_now,
 )
+from multi_agent_brief.repair.router import route_repair
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -27,11 +28,11 @@ def _intermediate(ws: Path) -> Path:
     return path
 
 
-def _write_audit_report(ws: Path, finding: dict[str, object]) -> None:
+def _write_audit_report(ws: Path, finding: dict[str, object], *, audit_status: str = "fail") -> None:
     (_intermediate(ws) / "audit_report.json").write_text(
         json.dumps(
             {
-                "audit_status": "fail",
+                "audit_status": audit_status,
                 "audit_score": 40,
                 "findings": [finding],
             },
@@ -133,6 +134,34 @@ def _set_workflow_stages(ws: Path, *, completed: list[str], current_stage: str) 
     workflow["updated_at"] = now
     workflow["stage_statuses"] = statuses
     path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _mark_fact_layer_imported(ws: Path) -> None:
+    manifest_path = runtime_state_paths(ws)["runtime_manifest"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["recipe"] = "fast-rerun"
+    manifest["fact_layer_import"] = {
+        "schema_version": "mabw.fact_layer_import.v1",
+        "source_run_id": "mabw-seed-run",
+        "fact_layer_sha256": "0" * 64,
+        "satisfied_stage_ids": [
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+        ],
+        "imported_files": [
+            {
+                "artifact_id": "claim_ledger",
+                "workspace_path": "output/intermediate/claim_ledger.json",
+                "sha256": "1" * 64,
+                "size_bytes": 2,
+            }
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _write_valid_claim_ledger(ws: Path, statement: str = "ExampleCo opened a demo facility.") -> None:
@@ -682,6 +711,248 @@ def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, c
     assert payload["allowed_artifacts"] == []
     assert payload["source"]["route_classification"] == "input_limitation"
     assert payload["recommended_action"] == "request_human_review_or_start_fresh_workspace"
+
+
+def _write_imported_claim_ledger_audit_warning(ws: Path) -> None:
+    _write_audit_report(
+        ws,
+        {
+            "finding_id": "AUD-002",
+            "finding_type": "claim_ledger_support_warning",
+            "severity": "medium",
+            "artifact_id": "claim_ledger",
+            "repair_owner": "claim-ledger",
+            "repair_stage_id": "claim-ledger",
+            "repair_artifact_id": "claim_ledger",
+            "message": "Claim Ledger support looks weak but this is a warning.",
+        },
+        audit_status="warning",
+    )
+
+
+def _write_blocking_target_relevance_gate(ws: Path) -> None:
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "blocking": True,
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Executive summary does not mention the configured target.",
+        },
+    )
+
+
+def _imported_auditor_workspace_with_repair_routes(tmp_path: Path) -> Path:
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _mark_fact_layer_imported(ws)
+    _set_workflow_stages(
+        ws,
+        completed=[
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+        ],
+        current_stage="auditor",
+    )
+    _write_imported_claim_ledger_audit_warning(ws)
+    _write_blocking_target_relevance_gate(ws)
+    return ws
+
+
+def test_repair_route_selects_blocking_gate_before_imported_audit_warning(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair_owner"] == "editor"
+    assert payload["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001"
+    assert payload["default_selected"] is True
+    routes = {route["source"]["finding_id"]: route for route in payload["routes"]}
+    assert routes["QG_TARGET_RELEVANCE_001"]["default_selected"] is True
+    assert routes["QG_TARGET_RELEVANCE_001"]["is_blocking"] is True
+    assert routes["QG_TARGET_RELEVANCE_001"]["is_imported_fact_layer_forbidden"] is False
+    assert routes["AUD-002"]["default_selected"] is False
+    assert routes["AUD-002"]["is_blocking"] is False
+    assert routes["AUD-002"]["is_imported_fact_layer_forbidden"] is True
+
+
+def test_repair_start_defaults_to_blocking_gate_route_over_imported_warning(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    repair = payload["repair"]
+    workflow = payload["workflow_state"]
+    assert workflow["current_stage"] == "editor"
+    assert repair["repair_owner"] == "editor"
+    assert repair["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001"
+    assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert repair["must_rerun_from"] == "auditor"
+
+
+def test_repair_start_finding_id_selects_blocking_gate_route(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    rc = main([
+        "repair",
+        "start",
+        "--workspace",
+        str(ws),
+        "--finding-id",
+        "QG_TARGET_RELEVANCE_001",
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair"]["repair_owner"] == "editor"
+    assert payload["repair"]["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001"
+
+
+def test_repair_start_route_index_selects_blocking_gate_route(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--route-index", "0", "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["repair"]["repair_owner"] == "editor"
+    assert payload["repair"]["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001"
+
+
+def test_repair_start_rejects_ambiguous_route_selection_args(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    rc = main([
+        "repair",
+        "start",
+        "--workspace",
+        str(ws),
+        "--route-index",
+        "0",
+        "--finding-id",
+        "QG_TARGET_RELEVANCE_001",
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_REPAIR_ROUTE_SELECTION_INVALID"
+
+
+def test_repair_start_explicit_imported_fact_layer_route_fails(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+    before_workflow = runtime_state_paths(ws)["workflow_state"].read_bytes()
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--finding-id", "AUD-002", "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN"
+    assert "output/intermediate/claim_ledger.json" in payload["details"]["allowed_artifacts"]
+    assert runtime_state_paths(ws)["workflow_state"].read_bytes() == before_workflow
+
+
+def test_repair_route_explicit_imported_fact_layer_route_fails(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--finding-id", "AUD-002", "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN"
+    assert payload["selected_route"]["source"]["finding_id"] == "AUD-002"
+    assert payload["selected_route"]["is_imported_fact_layer_forbidden"] is True
+    assert any(route["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001" for route in payload["routes"])
+
+
+def test_route_repair_api_explicit_imported_fact_layer_route_fails(tmp_path):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    payload = route_repair(workspace=ws, finding_id="AUD-002")
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN"
+    assert payload["selected_route"]["source"]["finding_id"] == "AUD-002"
+    assert payload["selected_route"]["is_imported_fact_layer_forbidden"] is True
+
+
+def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _mark_fact_layer_imported(ws)
+    _set_workflow_stages(
+        ws,
+        completed=[
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+        ],
+        current_stage="auditor",
+    )
+    _write_imported_claim_ledger_audit_warning(ws)
+    before_workflow = runtime_state_paths(ws)["workflow_state"].read_bytes()
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_REPAIR_NO_LEGAL_ROUTE"
+    assert payload["details"]["routes"][0]["source"]["finding_id"] == "AUD-002"
+    assert payload["details"]["routes"][0]["is_imported_fact_layer_forbidden"] is True
+    assert runtime_state_paths(ws)["workflow_state"].read_bytes() == before_workflow
+
+
+def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _mark_fact_layer_imported(ws)
+    _set_workflow_stages(
+        ws,
+        completed=[
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+        ],
+        current_stage="auditor",
+    )
+    _write_imported_claim_ledger_audit_warning(ws)
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_NO_LEGAL_ROUTE"
+    assert payload["repair_owner"] == "none"
+    assert payload["routes"][0]["source"]["finding_id"] == "AUD-002"
+    assert payload["routes"][0]["is_imported_fact_layer_forbidden"] is True
 
 
 def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_path, capsys):
