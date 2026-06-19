@@ -68,6 +68,15 @@ RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
 BLIND_PACK_SCHEMA = "mabw.experiment_080.blind_pack.v1"
 BLIND_REVEAL_MAPPING_SCHEMA = "mabw.experiment_080.blind_reveal_mapping.v1"
 BLIND_ITEM_ID_RE = re.compile(r"^BI-[A-Z]$")
+DRAFT_SCORECARD_ASSESSMENT_BOUNDARY = (
+    "python_fills_deterministic_control_fields_only; "
+    "guidance_manifestation_requires_human_or_llm_assisted_human_review_import"
+)
+IMPORTED_ASSESSMENT_BOUNDARY = (
+    "python_validates_and_merges_imported_assessment_only; "
+    "guidance_manifestation_scores_are_external_human_or_llm_assisted_inputs"
+)
+IMPORTED_ASSESSMENT_NOTE = "Imported assessment was supplied externally; Python did not judge guidance manifestation."
 
 SCAFFOLD_METADATA_PATH = "experiment/080/condition.json"
 SCAFFOLD_INSTRUCTIONS_PATH = "experiment/080/operator_instructions.md"
@@ -2514,10 +2523,7 @@ def _build_scorecard_draft(
         "validity_class": validity_class,
         "assessment_status": "needs_assessment",
         "target_readiness": target_readiness,
-        "assessment_boundary": (
-            "python_fills_deterministic_control_fields_only; "
-            "guidance_manifestation_requires_human_or_llm_assisted_human_review_import"
-        ),
+        "assessment_boundary": DRAFT_SCORECARD_ASSESSMENT_BOUNDARY,
         "control_integrity": control_integrity,
         "frozen_fact_layer": {
             "matches_case": fact_layer_matches,
@@ -3070,18 +3076,14 @@ def _scorecard_with_imported_assessment(
     if blind_import_verified and isinstance(assessment.get("blind_artifact_sha256"), str):
         imported_assessment["blind_artifact_sha256"] = assessment["blind_artifact_sha256"]
     assessed["guidance_assessment"] = imported_assessment
-    assessed["assessment_boundary"] = (
-        "python_validates_and_merges_imported_assessment_only; "
-        "guidance_manifestation_scores_are_external_human_or_llm_assisted_inputs"
-    )
+    assessed["assessment_boundary"] = IMPORTED_ASSESSMENT_BOUNDARY
     assessed["validity_class"] = _scorecard_validity_class_with_assessment(
         scorecard=assessed,
         guidance_scores=guidance_scores,
     )
     notes = assessed.get("notes") if isinstance(assessed.get("notes"), list) else []
-    boundary_note = "Imported assessment was supplied externally; Python did not judge guidance manifestation."
-    if boundary_note not in notes:
-        notes = [*notes, boundary_note]
+    if IMPORTED_ASSESSMENT_NOTE not in notes:
+        notes = [*notes, IMPORTED_ASSESSMENT_NOTE]
     assessed["notes"] = notes
     return assessed
 
@@ -3736,19 +3738,77 @@ def _scorecard_blind_assessment_verified(scorecard: dict[str, Any]) -> bool:
     pack_blind_item_id = blind_pack.get("blind_item_id")
     pack_artifact_sha = blind_pack.get("artifact_sha256")
     pack_scorecard_sha = blind_pack.get("scorecard_sha256")
-    return (
-        guidance_assessment.get("source") == "imported_assessment"
-        and blind_pack.get("schema_version") == BLIND_PACK_SCHEMA
-        and blind_pack.get("hash_verified") is True
-        and isinstance(blind_item_id, str)
-        and BLIND_ITEM_ID_RE.match(blind_item_id) is not None
-        and pack_blind_item_id == blind_item_id
-        and isinstance(blind_artifact_sha, str)
-        and _SHA256_RE.match(blind_artifact_sha) is not None
-        and pack_artifact_sha == blind_artifact_sha
-        and isinstance(pack_scorecard_sha, str)
-        and _SHA256_RE.match(pack_scorecard_sha) is not None
+    if (
+        guidance_assessment.get("source") != "imported_assessment"
+        or blind_pack.get("schema_version") != BLIND_PACK_SCHEMA
+        or blind_pack.get("reveal_mapping_schema_version") != BLIND_REVEAL_MAPPING_SCHEMA
+        or blind_pack.get("hash_verified") is not True
+        or not isinstance(blind_item_id, str)
+        or BLIND_ITEM_ID_RE.match(blind_item_id) is None
+        or pack_blind_item_id != blind_item_id
+        or not isinstance(blind_artifact_sha, str)
+        or _SHA256_RE.match(blind_artifact_sha) is None
+        or pack_artifact_sha != blind_artifact_sha
+        or not isinstance(pack_scorecard_sha, str)
+        or _SHA256_RE.match(pack_scorecard_sha) is None
+    ):
+        return False
+    current_artifact_sha = _scorecard_audited_brief_target_sha(scorecard)
+    if _assessment_target(scorecard) == "auditable_brief" and current_artifact_sha is None:
+        return False
+    if current_artifact_sha is not None and current_artifact_sha != blind_artifact_sha:
+        return False
+    restored = _scorecard_without_imported_assessment(scorecard)
+    if restored is None:
+        return False
+    return _sha256_json(restored) == pack_scorecard_sha
+
+
+def _scorecard_audited_brief_target_sha(scorecard: dict[str, Any]) -> str | None:
+    target_artifacts = (
+        scorecard.get("target_artifacts")
+        if isinstance(scorecard.get("target_artifacts"), dict)
+        else {}
     )
+    audited = (
+        target_artifacts.get("audited_brief")
+        if isinstance(target_artifacts.get("audited_brief"), dict)
+        else {}
+    )
+    sha = audited.get("sha256")
+    return sha if isinstance(sha, str) and _SHA256_RE.match(sha) else None
+
+
+def _scorecard_without_imported_assessment(scorecard: dict[str, Any]) -> dict[str, Any] | None:
+    guidance_assessment = (
+        scorecard.get("guidance_assessment")
+        if isinstance(scorecard.get("guidance_assessment"), dict)
+        else {}
+    )
+    entry_ids = guidance_assessment.get("guidance_entry_ids")
+    if not isinstance(entry_ids, list) or not entry_ids:
+        return None
+    restored_entry_ids: list[str] = []
+    seen: set[str] = set()
+    for entry_id in entry_ids:
+        if not isinstance(entry_id, str) or not _GUIDANCE_ENTRY_ID_RE.match(entry_id) or entry_id in seen:
+            return None
+        restored_entry_ids.append(entry_id)
+        seen.add(entry_id)
+    restored = deepcopy(scorecard)
+    restored["validity_class"] = "invalid_incomplete"
+    restored["assessment_status"] = "needs_assessment"
+    restored["assessment_boundary"] = DRAFT_SCORECARD_ASSESSMENT_BOUNDARY
+    restored["guidance_assessment"] = {
+        "status": "needs_assessment",
+        "required_methods": sorted(A_CONTROLLED_ASSESSMENT_METHODS),
+        "guidance_entry_ids": restored_entry_ids,
+    }
+    restored["guidance_scores"] = []
+    notes = restored.get("notes")
+    if isinstance(notes, list):
+        restored["notes"] = [note for note in notes if note != IMPORTED_ASSESSMENT_NOTE]
+    return restored
 
 
 def _scorecard_invalid_reasons(scorecard: dict[str, Any]) -> list[str]:

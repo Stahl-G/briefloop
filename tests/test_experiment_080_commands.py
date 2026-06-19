@@ -128,6 +128,48 @@ def _sha256_json(payload: dict) -> str:
     ).hexdigest()
 
 
+def _pre_assessment_scorecard_for_test(payload: dict) -> dict:
+    restored = json.loads(json.dumps(payload))
+    guidance_assessment = restored.get("guidance_assessment")
+    entry_ids = (
+        guidance_assessment.get("guidance_entry_ids")
+        if isinstance(guidance_assessment, dict)
+        else ["AG-0001"]
+    )
+    restored["validity_class"] = "invalid_incomplete"
+    restored["assessment_status"] = "needs_assessment"
+    restored["assessment_boundary"] = (
+        "python_fills_deterministic_control_fields_only; "
+        "guidance_manifestation_requires_human_or_llm_assisted_human_review_import"
+    )
+    restored["guidance_assessment"] = {
+        "status": "needs_assessment",
+        "required_methods": ["human", "llm_assisted_human_review"],
+        "guidance_entry_ids": entry_ids,
+    }
+    restored["guidance_scores"] = []
+    notes = restored.get("notes")
+    if isinstance(notes, list):
+        restored["notes"] = [
+            note
+            for note in notes
+            if note != "Imported assessment was supplied externally; Python did not judge guidance manifestation."
+        ]
+    return restored
+
+
+def _bind_blind_metadata_for_test(payload: dict) -> dict:
+    guidance_assessment = payload.get("guidance_assessment")
+    if not isinstance(guidance_assessment, dict):
+        return payload
+    blind_pack = guidance_assessment.get("blind_pack")
+    if not isinstance(blind_pack, dict):
+        return payload
+    blind_pack["reveal_mapping_schema_version"] = "mabw.experiment_080.blind_reveal_mapping.v1"
+    blind_pack["scorecard_sha256"] = _sha256_json(_pre_assessment_scorecard_for_test(payload))
+    return payload
+
+
 def _write_case(case_dir: Path) -> None:
     case_dir.mkdir(parents=True)
     _write_json(case_dir / "case_manifest.json", _case_manifest())
@@ -876,13 +918,14 @@ def _scorecard_payload(
                 "blind_artifact_sha256": "4" * 64,
                 "blind_pack": {
                     "schema_version": "mabw.experiment_080.blind_pack.v1",
+                    "reveal_mapping_schema_version": "mabw.experiment_080.blind_reveal_mapping.v1",
                     "blind_item_id": "BI-A",
                     "artifact_sha256": "4" * 64,
-                    "scorecard_sha256": "5" * 64,
+                    "scorecard_sha256": "0" * 64,
                     "hash_verified": True,
                 },
             })
-    return {
+    payload = {
         "schema_version": "mabw.experiment_080.scorecard.v1",
         "experiment_id": "MABW-080",
         "case_id": "weekly_public_001",
@@ -890,6 +933,15 @@ def _scorecard_payload(
         "run_id": run_id,
         "validity_class": validity_class,
         "assessment_status": assessment_status,
+        "assessment_boundary": (
+            "python_validates_and_merges_imported_assessment_only; "
+            "guidance_manifestation_scores_are_external_human_or_llm_assisted_inputs"
+            if assessment_status != "needs_assessment"
+            else (
+                "python_fills_deterministic_control_fields_only; "
+                "guidance_manifestation_requires_human_or_llm_assisted_human_review_import"
+            )
+        ),
         "control_integrity": control_integrity,
         "frozen_fact_layer": frozen_fact_layer,
         "reader_clean": {"pass": reader_clean_pass},
@@ -921,6 +973,7 @@ def _scorecard_payload(
         "regression": {},
         "notes": [],
     }
+    return _bind_blind_metadata_for_test(payload)
 
 
 def _auditable_scorecard_payload(**overrides) -> dict:
@@ -978,12 +1031,29 @@ def _auditable_scorecard_payload(**overrides) -> dict:
         "relevant_repair_transaction_ids": [],
         "auditor_stage_transaction_id": "txn-auditor",
     }
+    payload["target_artifacts"] = {
+        "audited_brief": {
+            "path": "output/intermediate/audited_brief.md",
+            "sha256": "4" * 64,
+            "status": "valid",
+        },
+        "audit_report": {
+            "path": "output/intermediate/audit_report.json",
+            "sha256": "3" * 64,
+            "status": "valid",
+        },
+        "auditor_quality_gate_report": {
+            "path": "output/intermediate/gates/auditor_quality_gate_report.json",
+            "sha256": "6" * 64,
+            "status": "valid",
+        },
+    }
     payload["treatment_isolation"] = {
         "schema_version": "mabw.experiment_080.treatment_visibility.v1",
         "status": "pass",
         "condition": payload["condition"],
     }
-    return payload
+    return _bind_blind_metadata_for_test(payload)
 
 
 def _write_scorecard_draft_from_fixture(tmp_path: Path, capsys) -> tuple[Path, Path]:
@@ -4017,6 +4087,50 @@ def test_experiments_080_summarize_excludes_mismatched_blind_metadata_from_forma
     assert summary["manifestation"]["score_2_manifested_count"] == 0
     assert summary["scorecards"][0]["blind_assessment_verified"] is False
     assert summary["exclusions"][0]["condition"] == "memory"
+    assert "blind_assessment_not_hash_verified" in summary["exclusions"][0]["reasons"]
+
+
+def test_experiments_080_summarize_excludes_blind_metadata_when_target_artifact_changed(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    scorecard = _auditable_scorecard_payload(
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory01",
+        validity_class="A_controlled",
+        blind_assessment_verified=True,
+    )
+    scorecard["target_artifacts"]["audited_brief"]["sha256"] = "7" * 64
+    _write_json(case_dir / "memory.scorecard.json", scorecard)
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
+    assert summary["valid_interpretable_metrics"]["denominator"] == 0
+    assert summary["scorecards"][0]["blind_assessment_verified"] is False
+    assert "blind_assessment_not_hash_verified" in summary["exclusions"][0]["reasons"]
+
+
+def test_experiments_080_summarize_excludes_blind_metadata_when_scorecard_was_edited(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    scorecard = _auditable_scorecard_payload(
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory01",
+        validity_class="A_controlled",
+        blind_assessment_verified=True,
+    )
+    scorecard["notes"].append("Post-import manual edit.")
+    _write_json(case_dir / "memory.scorecard.json", scorecard)
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
+    assert summary["valid_interpretable_metrics"]["denominator"] == 0
+    assert summary["scorecards"][0]["blind_assessment_verified"] is False
     assert "blind_assessment_not_hash_verified" in summary["exclusions"][0]["reasons"]
 
 
