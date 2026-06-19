@@ -3095,35 +3095,50 @@ def raise_if_auditable_target_complete_blocks_downstream(
     auditor_gate = _read_json_if_exists(
         workspace / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
     )
+    event_records = read_event_log_records_strict(paths["event_log"]) if paths["event_log"].exists() else []
     projection = project_assessment_target_status(
         condition_metadata=condition_metadata,
         workflow_state=workflow,
         artifact_registry=registry,
         auditor_gate_report=auditor_gate,
+        event_records=event_records,
     )
-    if projection.get("target_complete") is not True:
-        return
     workspace_arg = shlex.quote(str(workspace))
-    raise RuntimeStateError(
-        (
+    target_complete = projection.get("target_complete") is True
+    if target_complete:
+        message = (
             "TARGET COMPLETE: auditable_brief. This 080 workspace has reached the auditable-brief "
             "assessment target; finalize/delivery actions are outside this target."
-        ),
+        )
+        next_allowed_commands = [
+            (
+                "multi-agent-brief experiments 080 register-run --case <case_dir> "
+                f"--condition {projection.get('condition') or '<condition>'} "
+                f"--workspace {workspace_arg} --output <run_record.json>"
+            ),
+            (
+                "multi-agent-brief experiments 080 score-run --case <case_dir> "
+                "--run-record <run_record.json> --output <scorecard.json>"
+            ),
+        ]
+    else:
+        message = (
+            "TARGET INCOMPLETE: auditable_brief. This 080 workspace uses the auditable-brief "
+            "assessment target; finalize/delivery actions are blocked until target controls pass."
+        )
+        next_allowed_commands = [
+            f"multi-agent-brief status --workspace {workspace_arg} --json",
+            f"multi-agent-brief state check --workspace {workspace_arg} --strict --json",
+            f"multi-agent-brief repair route --workspace {workspace_arg} --json",
+        ]
+    raise RuntimeStateError(
+        message,
         details={
             "assessment_target": "auditable_brief",
             "command": command,
-            "target_complete": True,
-            "next_allowed_commands": [
-                (
-                    "multi-agent-brief experiments 080 register-run --case <case_dir> "
-                    f"--condition {projection.get('condition') or '<condition>'} "
-                    f"--workspace {workspace_arg} --output <run_record.json>"
-                ),
-                (
-                    "multi-agent-brief experiments 080 score-run --case <case_dir> "
-                    "--run-record <run_record.json> --output <scorecard.json>"
-                ),
-            ],
+            "target_complete": target_complete,
+            "reasons": projection.get("reasons") or [],
+            "next_allowed_commands": next_allowed_commands,
             "forbidden_downstream_actions": [
                 "multi-agent-brief finalize",
                 "multi-agent-brief state finalize-complete",

@@ -37,6 +37,7 @@ ARTIFACT_MISSING = "missing"
 ARTIFACT_PRESENT = "present"
 ARTIFACT_VALID = "valid"
 ARTIFACT_INVALID = "invalid"
+ARTIFACT_STALE = "stale"
 CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE = (
     "claim_ledger.json is frozen. Do not hand-edit metadata or synchronize hashes manually. "
     "Rebuild the fact layer or use a deterministic metadata enrichment transaction when available."
@@ -470,6 +471,17 @@ def _artifact_record(
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
     sha256 = _sha256_file(path) if path.exists() and path.is_file() else None
+    stale_metadata = _producer_stage_stale_after_repair(workflow, producer_stage)
+    if stale_metadata and path.exists() and path.is_file():
+        status = ARTIFACT_STALE
+        validation_result = "stale_after_repair"
+        repair_tx = stale_metadata.get("repair_transaction_id") or "<unknown>"
+        repair_owner = stale_metadata.get("repair_owner") or "<unknown>"
+        blocking_reason = (
+            f"Artifact '{rel_path}' was produced before owner-stage repair "
+            f"{repair_tx} by '{repair_owner}'; rerun producer stage '{producer_stage}' "
+            "before consuming it."
+        )
 
     return {
         "artifact_id": artifact_id,
@@ -488,6 +500,18 @@ def _artifact_record(
         "mtime": mtime,
         "sha256": sha256,
     }
+
+
+def _producer_stage_stale_after_repair(
+    workflow: dict[str, Any],
+    producer_stage: str,
+) -> dict[str, Any] | None:
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    stage_status = statuses.get(producer_stage) if isinstance(statuses.get(producer_stage), dict) else {}
+    metadata = stage_status.get("metadata") if isinstance(stage_status.get("metadata"), dict) else {}
+    if metadata.get("stale_after_repair") is True:
+        return metadata
+    return None
 
 
 def _build_artifact_registry(
@@ -644,7 +668,13 @@ def _changed_artifact_events(
             })
 
         validated_changed = (
-            record.get("status") in {ARTIFACT_PRESENT, ARTIFACT_VALID, ARTIFACT_INVALID, ARTIFACT_MISSING}
+            record.get("status") in {
+                ARTIFACT_PRESENT,
+                ARTIFACT_VALID,
+                ARTIFACT_INVALID,
+                ARTIFACT_MISSING,
+                ARTIFACT_STALE,
+            }
             and (
                 old_record.get("status") != record.get("status")
                 or old_record.get("validation_result") != record.get("validation_result")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 from typing import Any
@@ -144,6 +145,7 @@ def project_assessment_target_status(
     workflow_state: dict[str, Any] | None,
     artifact_registry: dict[str, Any] | None,
     auditor_gate_report: dict[str, Any] | None,
+    event_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(condition_metadata, dict):
         return {"present": False}
@@ -168,6 +170,7 @@ def project_assessment_target_status(
         workflow_state=workflow_state,
         artifact_registry=artifact_registry,
         auditor_gate_report=auditor_gate_report,
+        event_records=event_records,
     )
     projection["target_complete"] = not reasons
     projection["status"] = "complete" if not reasons else "incomplete"
@@ -180,6 +183,7 @@ def _auditable_target_incomplete_reasons(
     workflow_state: dict[str, Any] | None,
     artifact_registry: dict[str, Any] | None,
     auditor_gate_report: dict[str, Any] | None,
+    event_records: list[dict[str, Any]] | None,
 ) -> list[str]:
     reasons: list[str] = []
     workflow = workflow_state if isinstance(workflow_state, dict) else {}
@@ -213,7 +217,12 @@ def _auditable_target_incomplete_reasons(
         if not isinstance(record.get("sha256"), str) or len(str(record.get("sha256"))) != 64:
             reasons.append(f"{artifact_id} has no frozen sha256")
 
-    _extend_audit_binding_reasons(reasons, workflow=workflow, artifacts=artifacts)
+    _extend_audit_binding_reasons(
+        reasons,
+        workflow=workflow,
+        artifacts=artifacts,
+        event_records=event_records,
+    )
 
     gate = auditor_gate_report if isinstance(auditor_gate_report, dict) else {}
     if gate.get("status") != "pass":
@@ -237,6 +246,7 @@ def _extend_audit_binding_reasons(
     *,
     workflow: dict[str, Any],
     artifacts: dict[str, Any],
+    event_records: list[dict[str, Any]] | None,
 ) -> None:
     statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
     auditor_status = statuses.get("auditor") if isinstance(statuses.get("auditor"), dict) else {}
@@ -264,14 +274,82 @@ def _extend_audit_binding_reasons(
             reasons.append(f"audit binding cannot verify {field.removesuffix('_sha256')}")
         elif actual != expected_sha:
             reasons.append(f"audit binding {field} does not match artifact_registry")
+    run_id = workflow.get("run_id")
+    run_id_text = run_id.strip() if isinstance(run_id, str) and run_id.strip() else ""
     repair_ids = binding.get("relevant_repair_transaction_ids")
     if not isinstance(repair_ids, list) or any(not isinstance(item, str) or not item for item in repair_ids):
         reasons.append("audit binding relevant_repair_transaction_ids is invalid")
-    if not isinstance(binding.get("auditor_stage_transaction_id"), str) or not binding.get("auditor_stage_transaction_id"):
+    elif event_records is not None:
+        if not run_id_text:
+            reasons.append("audit binding repair history cannot verify workflow run_id")
+        else:
+            expected_repair_ids = _auditable_brief_repair_transaction_ids(
+                event_records,
+                run_id=run_id_text,
+            )
+            if list(repair_ids) != expected_repair_ids:
+                reasons.append("audit binding relevant_repair_transaction_ids does not match event_log")
+    auditor_stage_transaction_id = binding.get("auditor_stage_transaction_id")
+    if not isinstance(auditor_stage_transaction_id, str) or not auditor_stage_transaction_id:
         reasons.append("audit binding auditor_stage_transaction_id is missing")
+    elif event_records is not None:
+        if not run_id_text:
+            reasons.append("audit binding auditor_stage_transaction_id cannot verify workflow run_id")
+        elif _auditable_auditor_completion_event(
+            event_records,
+            run_id=run_id_text,
+            transaction_id=auditor_stage_transaction_id,
+        ) is None:
+            reasons.append("audit binding auditor_stage_transaction_id does not match event_log")
 
 
 def _artifact_sha(artifacts: dict[str, Any], artifact_id: str) -> str | None:
     record = artifacts.get(artifact_id) if isinstance(artifacts.get(artifact_id), dict) else {}
     sha = record.get("sha256")
     return sha if isinstance(sha, str) else None
+
+
+def _auditable_brief_repair_transaction_ids(
+    records: list[dict[str, Any]],
+    *,
+    run_id: str,
+) -> list[str]:
+    ids: list[str] = []
+    artifact_path = "output/intermediate/audited_brief.md"
+    for event in records:
+        if event.get("run_id") != run_id:
+            continue
+        if event.get("event_type") != "repair_completed":
+            continue
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        allowed = [str(item) for item in metadata.get("allowed_artifacts") or []]
+        if not any(_artifact_path_matches(pattern, artifact_path) for pattern in allowed):
+            continue
+        transaction_id = metadata.get("transaction_id") or metadata.get("repair_transaction_id")
+        if isinstance(transaction_id, str) and transaction_id and transaction_id not in ids:
+            ids.append(transaction_id)
+    return ids
+
+
+def _artifact_path_matches(pattern: str, path: str) -> bool:
+    candidate = pattern.strip()
+    return bool(candidate and (path == candidate or fnmatch.fnmatch(path, candidate)))
+
+
+def _auditable_auditor_completion_event(
+    records: list[dict[str, Any]],
+    *,
+    run_id: str,
+    transaction_id: str,
+) -> dict[str, Any] | None:
+    for event in records:
+        if event.get("run_id") != run_id:
+            continue
+        if event.get("event_type") != "decision_recorded":
+            continue
+        if event.get("stage_id") != "auditor" or event.get("decision") != "continue":
+            continue
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        if metadata.get("transaction_id") == transaction_id:
+            return event
+    return None

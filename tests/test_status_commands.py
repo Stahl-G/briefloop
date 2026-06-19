@@ -280,6 +280,22 @@ def _write_auditable_target_complete_state(ws: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
+    with paths["event_log"].open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                _event(
+                    "auditor-complete",
+                    "decision_recorded",
+                    "2026-06-14T00:04:00Z",
+                    run_id=str(workflow.get("run_id") or "run-test"),
+                    stage_id="auditor",
+                    decision="continue",
+                    metadata={"transaction_id": "tx-auditor-complete"},
+                ),
+                sort_keys=True,
+            )
+            + "\n"
+        )
 
 
 def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys):
@@ -527,6 +543,86 @@ def test_status_command_replays_sticky_contamination_before_auditable_target(tmp
     assert rc == 0
     out = capsys.readouterr().out
     assert "[status] run_integrity: contaminated reference_eligible=False" in out
+    assert "[status] target_complete: auditable_brief" not in out
+    assert "[status] target_incomplete: auditable_brief" in out
+
+
+def test_status_command_rejects_auditable_target_with_unbound_repair_event(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    _write_auditable_target_complete_state(ws)
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    run_id = str(workflow.get("run_id") or "run-test")
+    with paths["event_log"].open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                _event(
+                    "repair-1",
+                    "repair_completed",
+                    "2026-06-14T00:06:00Z",
+                    run_id=run_id,
+                    stage_id="editor",
+                    reason="Editor repair completed.",
+                    metadata={
+                        "transaction_id": "repair-editor-1",
+                        "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+                    },
+                ),
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    experiment = payload["experiment_080"]
+    assert experiment["target_complete"] is False
+    assert "audit binding relevant_repair_transaction_ids does not match event_log" in experiment["reasons"]
+    assert "experiments 080 register-run" not in payload["suggested_next_command"]
+    assert payload["suggested_next_command"] == f"multi-agent-brief status --workspace {ws} --json"
+    assert "/mabw deliver" not in payload["suggested_next_command"]
+
+    rc = main(["status", "--workspace", str(ws)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[status] target_complete: auditable_brief" not in out
+    assert "[status] target_incomplete: auditable_brief" in out
+
+
+def test_status_command_rejects_auditable_target_with_fake_auditor_transaction(
+    tmp_path,
+    capsys,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    _write_auditable_target_complete_state(ws)
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"][
+        "auditor_stage_transaction_id"
+    ] = "fake-nonexistent-tx"
+    paths["workflow_state"].write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    experiment = payload["experiment_080"]
+    assert experiment["target_complete"] is False
+    assert "audit binding auditor_stage_transaction_id does not match event_log" in experiment["reasons"]
+    assert "experiments 080 register-run" not in payload["suggested_next_command"]
+
+    rc = main(["status", "--workspace", str(ws)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
     assert "[status] target_complete: auditable_brief" not in out
     assert "[status] target_incomplete: auditable_brief" in out
 

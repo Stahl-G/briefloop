@@ -98,6 +98,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         auditor_gate_report=auditor_quality_gate.get("payload")
         if auditor_quality_gate.get("status") == "present"
         else None,
+        event_records=event_records,
     )
     manifest_payload = manifest.get("payload") if manifest.get("status") == "present" else None
     payload["fact_layer_import"] = summarize_fact_layer_import(
@@ -355,6 +356,7 @@ def _artifact_summary(result: dict[str, Any]) -> dict[str, Any]:
         "missing_count": 0,
         "expected_count": 0,
         "ready_count": 0,
+        "stale_count": 0,
     }
     for record in iterable:
         if not isinstance(record, dict):
@@ -368,6 +370,8 @@ def _artifact_summary(result: dict[str, Any]) -> dict[str, Any]:
             counts["missing_count"] += 1
         elif status == "expected":
             counts["expected_count"] += 1
+        elif status == "stale":
+            counts["stale_count"] += 1
         elif status in {"present", "ready"}:
             counts["ready_count"] += 1
     return counts
@@ -559,6 +563,8 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
             f"--case <case_dir> --condition {condition} --workspace {workspace} "
             "--output <run_record.json>"
         )
+    if experiment_080.get("assessment_target") == "auditable_brief":
+        return f"multi-agent-brief status --workspace {workspace} --json"
     current_stage = workflow.get("current_stage")
     if fact_layer_import.get("status") == "valid" and current_stage == "analyst":
         return f"multi-agent-brief run --workspace {workspace} --recipe fast-rerun --skip-doctor"
