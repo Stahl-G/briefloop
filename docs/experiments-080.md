@@ -21,6 +21,7 @@ validate-case
 -> run each condition workspace
 -> register-run
 -> score-run
+-> export-blind-pack
 -> import-assessment
 -> summarize
 ```
@@ -288,7 +289,36 @@ brief, audit report, and auditor gate report recorded by `register-run`.
 
 It does not fill guidance manifestation scores.
 
-### 7. Import External Assessment
+### 7. Export A Condition-Blind Assessment Pack
+
+For formal auditable-brief assessment, export a condition-blind, hash-bound
+pack after scorecard drafts are ready:
+
+```bash
+multi-agent-brief experiments 080 export-blind-pack \
+  --case "$CASE" \
+  --scorecard "$CASE/scorecards/baseline.scorecard.json" \
+  --scorecard "$CASE/scorecards/memory.scorecard.json" \
+  --scorecard "$CASE/scorecards/prompt_only.scorecard.json" \
+  --output "$CASE/blind_assessment_pack"
+```
+
+The scorer-facing `blind_pack.json` and `items/BI-*/audited_brief.md` files
+strip condition names, run IDs, local paths, treatment metadata, Improvement
+Memory metadata, and prompt-only condition metadata. The shared rubric remains
+visible because 080 is condition-blind, not guidance-blind.
+
+The separate `reveal_mapping.json` binds:
+
+```text
+blind_item_id -> audited brief sha256 -> scorecard hash -> condition/run identity
+```
+
+Do not send the reveal mapping to the assessor. It is used only when importing
+the returned assessment so Python can verify the assessed blind artifact hash
+before assigning the assessment back to a condition.
+
+### 8. Import External Assessment
 
 Copy the assessment template and replace placeholders with the completed run
 identity and reviewer assessment:
@@ -305,6 +335,20 @@ multi-agent-brief experiments 080 import-assessment \
   --assessment "$CASE/assessments/baseline.assessment.json" \
   --output "$CASE/scorecards/baseline.assessed_scorecard.json"
 ```
+
+For blind assessment import, the assessment file references `blind_item_id` and
+`blind_artifact_sha256` instead of condition/run identity. Import with the blind
+pack and reveal mapping:
+
+```bash
+multi-agent-brief experiments 080 import-assessment \
+  --blind-pack "$CASE/blind_assessment_pack/blind_pack.json" \
+  --reveal-mapping "$CASE/blind_assessment_pack/reveal_mapping.json" \
+  --assessment "$CASE/assessments/BI-A.assessment.json" \
+  --output "$CASE/scorecards/BI-A.assessed_scorecard.json"
+```
+
+If the blind audited brief was modified after export, import fails closed.
 
 Assessment files may use:
 
@@ -328,7 +372,7 @@ Guidance scores use:
 
 `overapplication` must be `true` if and only if `manifestation_score` is `3`.
 
-### 8. Summarize The Case
+### 9. Summarize The Case
 
 ```bash
 multi-agent-brief experiments 080 summarize \

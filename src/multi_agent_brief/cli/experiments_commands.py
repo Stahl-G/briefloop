@@ -8,6 +8,7 @@ from typing import Any
 
 from multi_agent_brief.experiments import (
     Experiment080Error,
+    export_blind_pack,
     import_assessment,
     register_run_record,
     scaffold_condition,
@@ -69,10 +70,34 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "import-assessment",
         help="Import external guidance-manifestation assessment into an MABW-080 scorecard.",
     )
-    import_assessment_parser.add_argument("--scorecard", required=True, help="Path to scorecard.json.")
+    import_assessment_parser.add_argument("--scorecard", help="Path to scorecard.json.")
     import_assessment_parser.add_argument("--assessment", required=True, help="Path to assessment.json.")
     import_assessment_parser.add_argument("--output", required=True, help="Path to write assessed scorecard.json.")
+    import_assessment_parser.add_argument(
+        "--blind-pack",
+        help="Optional blind_pack.json for hash-bound condition-blind assessment import.",
+    )
+    import_assessment_parser.add_argument(
+        "--reveal-mapping",
+        help="Optional reveal_mapping.json that maps blind item IDs back to scorecards after hash verification.",
+    )
     import_assessment_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    blind_pack = exp080_sub.add_parser(
+        "export-blind-pack",
+        help="Export a condition-blind, hash-bound assessment pack from auditable scorecards.",
+    )
+    blind_pack.add_argument("--case", required=True, dest="case_dir", help="Path to experiments/080/cases/<case_id>.")
+    blind_pack.add_argument(
+        "--scorecard",
+        required=True,
+        action="append",
+        dest="scorecards",
+        help="Scorecard JSON path to include. Pass once per condition.",
+    )
+    blind_pack.add_argument("--output", required=True, help="Directory to write blind_pack.json and reveal_mapping.json.")
+    blind_pack.add_argument("--seed", help="Optional deterministic shuffle seed for repeatable exports.")
+    blind_pack.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     summarize = exp080_sub.add_parser(
         "summarize",
@@ -156,6 +181,8 @@ def handle(args: argparse.Namespace) -> int:
                 scorecard=args.scorecard,
                 assessment=args.assessment,
                 output=args.output,
+                blind_pack=args.blind_pack,
+                reveal_mapping=args.reveal_mapping,
             )
         except Experiment080Error as exc:
             payload = exc.to_dict()
@@ -172,6 +199,30 @@ def handle(args: argparse.Namespace) -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
             _print_import_assessment(payload)
+        return 0
+    if args.experiment_080_action == "export-blind-pack":
+        try:
+            payload = export_blind_pack(
+                case_dir=args.case_dir,
+                scorecards=args.scorecards,
+                output=args.output,
+                seed=args.seed,
+            )
+        except Experiment080Error as exc:
+            payload = exc.to_dict()
+            if getattr(args, "json", False):
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                print(f"[experiments 080 export-blind-pack] ok: False")
+                details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+                code = details.get("code")
+                suffix = f" ({code})" if code else ""
+                print(f"  - {payload.get('error')}{suffix}")
+            return 1
+        if getattr(args, "json", False):
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            _print_export_blind_pack(payload)
         return 0
     if args.experiment_080_action == "summarize":
         try:
@@ -291,6 +342,15 @@ def _print_import_assessment(payload: dict[str, Any]) -> None:
     print(f"[experiments 080 import-assessment] validity_class: {payload.get('validity_class')}")
     print(f"[experiments 080 import-assessment] assessment_status: {payload.get('assessment_status')}")
     print(f"[experiments 080 import-assessment] output: {payload.get('output')}")
+
+
+def _print_export_blind_pack(payload: dict[str, Any]) -> None:
+    print(f"[experiments 080 export-blind-pack] ok: {payload.get('ok')}")
+    print(f"[experiments 080 export-blind-pack] case_id: {payload.get('case_id')}")
+    print(f"[experiments 080 export-blind-pack] assessment_target: {payload.get('assessment_target')}")
+    print(f"[experiments 080 export-blind-pack] blind_item_count: {payload.get('blind_item_count')}")
+    print(f"[experiments 080 export-blind-pack] blind_pack: {payload.get('blind_pack')}")
+    print(f"[experiments 080 export-blind-pack] reveal_mapping: {payload.get('reveal_mapping')}")
 
 
 def _print_summarize(payload: dict[str, Any]) -> None:

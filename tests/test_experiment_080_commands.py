@@ -659,6 +659,47 @@ def _assessment_args(scorecard: Path, assessment: Path, output: Path) -> list[st
     ]
 
 
+def _blind_assessment_args(blind_pack: Path, reveal_mapping: Path, assessment: Path, output: Path) -> list[str]:
+    return [
+        "experiments",
+        "080",
+        "import-assessment",
+        "--blind-pack",
+        str(blind_pack),
+        "--reveal-mapping",
+        str(reveal_mapping),
+        "--assessment",
+        str(assessment),
+        "--output",
+        str(output),
+        "--json",
+    ]
+
+
+def _export_blind_pack_args(
+    case_dir: Path,
+    output: Path,
+    scorecards: list[Path],
+    *,
+    seed: str = "fixed-seed",
+) -> list[str]:
+    args = [
+        "experiments",
+        "080",
+        "export-blind-pack",
+        "--case",
+        str(case_dir),
+        "--output",
+        str(output),
+        "--seed",
+        seed,
+        "--json",
+    ]
+    for scorecard in scorecards:
+        args.extend(["--scorecard", str(scorecard)])
+    return args
+
+
 def _summarize_args(case_dir: Path, output: Path | None = None, *, scorecards: list[Path] | None = None) -> list[str]:
     args = [
         "experiments",
@@ -728,6 +769,51 @@ def _assessment_payload(
             }
         ],
     }
+
+
+def _blind_assessment_payload(*, blind_item_id: str, artifact_sha256: str, method: str = "human") -> dict:
+    payload = _assessment_payload(method=method)
+    payload.pop("condition", None)
+    payload.pop("run_id", None)
+    payload["blind_item_id"] = blind_item_id
+    payload["blind_artifact_sha256"] = artifact_sha256
+    return payload
+
+
+def _write_auditable_scorecard_for_condition(
+    tmp_path: Path,
+    capsys,
+    *,
+    case_dir: Path,
+    condition: str,
+    run_id: str,
+) -> Path:
+    ws = tmp_path / f"{condition}-workspace"
+    ws.mkdir()
+    _write_auditable_target_workspace(ws, run_id=run_id, source_archive_manifest=CLEAN_FIXTURE_MANIFEST)
+    if condition == "memory":
+        _write_treatment_condition_metadata(ws, condition=condition)
+        _write_improvement_memory_snapshot(ws)
+    elif condition == "prompt_only":
+        _write_treatment_condition_metadata(ws, condition=condition, prompt_block=True)
+    else:
+        _write_treatment_condition_metadata(ws, condition=condition)
+    run_record = ws / f"{condition}.run_record.json"
+    scorecard = ws / f"{condition}.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record, condition=condition)) == 0
+    capsys.readouterr()
+    assert main(_score_args(case_dir, run_record, scorecard)) == 0
+    capsys.readouterr()
+    return scorecard
+
+
+def _write_auditable_three_condition_case(case_dir: Path) -> None:
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    manifest["assessment_target"] = "auditable_brief"
+    manifest["conditions"] = ["baseline", "memory", "prompt_only"]
+    _write_json(case_dir / "case_manifest.json", manifest)
 
 
 def _scorecard_payload(
@@ -3090,6 +3176,162 @@ def test_experiments_080_score_run_rejects_invalid_run_record(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["details"]["code"] == "E_EXPERIMENT_080_RUN_RECORD_INVALID"
     assert not scorecard_path.exists()
+
+
+def test_experiments_080_export_blind_pack_strips_conditions_and_hash_binds(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecards = [
+        _write_auditable_scorecard_for_condition(
+            tmp_path,
+            capsys,
+            case_dir=case_dir,
+            condition=condition,
+            run_id=f"mabw-20260614T000000Z-{condition.replace('_', '')}0001",
+        )
+        for condition in ("baseline", "memory", "prompt_only")
+    ]
+    blind_dir = tmp_path / "blind-pack"
+
+    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["blind_item_count"] == 3
+    pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    reveal = json.loads((blind_dir / "reveal_mapping.json").read_text(encoding="utf-8"))
+    assert pack["schema_version"] == "mabw.experiment_080.blind_pack.v1"
+    assert pack["condition_blind"] is True
+    assert pack["hash_bound"] is True
+    assert pack["rubric"]["guidance_entries"][0]["entry_id"] == "AG-0001"
+    assert {item["blind_item_id"] for item in pack["items"]} == {"BI-A", "BI-B", "BI-C"}
+    assert {item["blind_item_id"] for item in reveal["items"]} == {"BI-A", "BI-B", "BI-C"}
+    scorer_visible = json.dumps(pack, ensure_ascii=False)
+    assert "baseline" not in scorer_visible
+    assert "memory" not in scorer_visible
+    assert "prompt_only" not in scorer_visible
+    assert "mabw-20260614" not in scorer_visible
+    assert "workspace" not in scorer_visible.lower()
+    for item in pack["items"]:
+        artifact = blind_dir / item["artifact_path"]
+        assert artifact.is_file()
+        assert _sha256_file(artifact) == item["artifact_sha256"]
+        item_json = json.loads((blind_dir / "items" / item["blind_item_id"] / "item.json").read_text(encoding="utf-8"))
+        assert item_json["artifact_sha256"] == item["artifact_sha256"]
+
+    repeat_dir = tmp_path / "blind-pack-repeat"
+    assert main(_export_blind_pack_args(case_dir, repeat_dir, scorecards, seed="080-fixed")) == 0
+    assert (repeat_dir / "blind_pack.json").read_text(encoding="utf-8") == (
+        blind_dir / "blind_pack.json"
+    ).read_text(encoding="utf-8")
+
+
+def test_experiments_080_import_blind_assessment_verifies_hash_and_reveals_identity(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecard = _write_auditable_scorecard_for_condition(
+        tmp_path,
+        capsys,
+        case_dir=case_dir,
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory0001",
+    )
+    blind_dir = tmp_path / "blind-pack"
+    assert main(_export_blind_pack_args(case_dir, blind_dir, [scorecard], seed="080-fixed")) == 0
+    capsys.readouterr()
+    pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    item = pack["items"][0]
+    assessment_path = tmp_path / "blind-assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(
+        assessment_path,
+        _blind_assessment_payload(
+            blind_item_id=item["blind_item_id"],
+            artifact_sha256=item["artifact_sha256"],
+        ),
+    )
+
+    rc = main(_blind_assessment_args(
+        blind_dir / "blind_pack.json",
+        blind_dir / "reveal_mapping.json",
+        assessment_path,
+        output_path,
+    ))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["validity_class"] == "A_controlled"
+    assessed = json.loads(output_path.read_text(encoding="utf-8"))
+    assert assessed["condition"] == "memory"
+    assert assessed["run_id"] == "mabw-20260614T000000Z-memory0001"
+    assert assessed["guidance_assessment"]["blind_item_id"] == item["blind_item_id"]
+    assert assessed["guidance_assessment"]["blind_pack"]["hash_verified"] is True
+
+
+def test_experiments_080_import_blind_assessment_rejects_modified_item(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecard = _write_auditable_scorecard_for_condition(
+        tmp_path,
+        capsys,
+        case_dir=case_dir,
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory0001",
+    )
+    blind_dir = tmp_path / "blind-pack"
+    assert main(_export_blind_pack_args(case_dir, blind_dir, [scorecard], seed="080-fixed")) == 0
+    capsys.readouterr()
+    pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    item = pack["items"][0]
+    (blind_dir / item["artifact_path"]).write_text("tampered\n", encoding="utf-8")
+    assessment_path = tmp_path / "blind-assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(
+        assessment_path,
+        _blind_assessment_payload(
+            blind_item_id=item["blind_item_id"],
+            artifact_sha256=item["artifact_sha256"],
+        ),
+    )
+
+    rc = main(_blind_assessment_args(
+        blind_dir / "blind_pack.json",
+        blind_dir / "reveal_mapping.json",
+        assessment_path,
+        output_path,
+    ))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID"
+    assert not output_path.exists()
+
+
+def test_experiments_080_import_blind_assessment_requires_reveal_mapping(tmp_path, capsys):
+    assessment_path = tmp_path / "blind-assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(
+        assessment_path,
+        _blind_assessment_payload(blind_item_id="BI-A", artifact_sha256="a" * 64),
+    )
+
+    rc = main([
+        "experiments",
+        "080",
+        "import-assessment",
+        "--blind-pack",
+        str(tmp_path / "blind_pack.json"),
+        "--assessment",
+        str(assessment_path),
+        "--output",
+        str(output_path),
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID"
+    assert not output_path.exists()
 
 
 def test_experiments_080_import_assessment_promotes_to_a_controlled(tmp_path, capsys):
