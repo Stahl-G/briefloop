@@ -3350,6 +3350,37 @@ def test_experiments_080_export_blind_pack_strips_conditions_and_hash_binds(tmp_
     ).read_text(encoding="utf-8")
 
 
+def test_experiments_080_export_blind_pack_checks_direct_artifact_before_recursive_search(
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    case_dir = tmp_path / "case"
+    _write_auditable_three_condition_case(case_dir)
+    scorecard = _write_auditable_scorecard_for_condition(
+        tmp_path,
+        capsys,
+        case_dir=case_dir,
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory0001",
+    )
+    blind_dir = tmp_path / "blind-pack"
+
+    def fail_rglob(self, pattern):
+        raise AssertionError(f"unexpected recursive search under {self} for {pattern}")
+
+    monkeypatch.setattr(Path, "rglob", fail_rglob)
+
+    rc = main(_export_blind_pack_args(case_dir, blind_dir, [scorecard], seed="080-fixed"))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["blind_item_count"] == 1
+    pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    artifact = blind_dir / pack["items"][0]["artifact_path"]
+    assert artifact.is_file()
+
+
 def test_experiments_080_export_blind_pack_resolves_artifacts_from_condition_workspaces(tmp_path, capsys):
     case_dir = tmp_path / "cases" / "weekly_public_001"
     _write_auditable_three_condition_case(case_dir)

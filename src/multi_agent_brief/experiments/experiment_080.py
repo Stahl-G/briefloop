@@ -2706,12 +2706,49 @@ def _resolve_blind_audited_brief(
             "scorecard target_artifacts.audited_brief.sha256 must be present before blind export.",
             scorecard_path=str(scorecard_path),
         )
-    candidates = _blind_artifact_candidates(
+    direct_candidates = _blind_artifact_direct_candidates(
         case_root=case_root,
         scorecard_path=scorecard_path,
         rel_path=rel_path,
     )
     mismatches: list[dict[str, str]] = []
+    direct_match = _matching_blind_artifact_candidate(
+        candidates=direct_candidates,
+        expected_sha=expected_sha,
+        mismatches=mismatches,
+    )
+    if direct_match is not None:
+        return direct_match
+    recursive_candidates = _blind_artifact_workspace_candidates(
+        case_root=case_root,
+        scorecard_path=scorecard_path,
+        rel_path=rel_path,
+    )
+    recursive_match = _matching_blind_artifact_candidate(
+        candidates=recursive_candidates,
+        expected_sha=expected_sha,
+        mismatches=mismatches,
+    )
+    if recursive_match is not None:
+        return recursive_match
+    searched = _unique_paths([*direct_candidates, *recursive_candidates])
+    _raise_experiment_error(
+        "E_EXPERIMENT_080_BLIND_PACK_INVALID",
+        "audited brief artifact could not be resolved for blind export. Place scorecards beside the workspace root, run export from the experiment root, or keep condition workspaces near the case directory.",
+        scorecard_path=str(scorecard_path),
+        artifact_path=rel_path,
+        expected_sha256=expected_sha,
+        mismatches=mismatches,
+        searched=[str(candidate) for candidate in searched],
+    )
+
+
+def _matching_blind_artifact_candidate(
+    *,
+    candidates: list[Path],
+    expected_sha: str,
+    mismatches: list[dict[str, str]],
+) -> tuple[Path, str] | None:
     for candidate in candidates:
         if candidate.is_file():
             actual_sha = _sha256_file(candidate)
@@ -2721,18 +2758,10 @@ def _resolve_blind_audited_brief(
                 "artifact_path": str(candidate),
                 "actual_sha256": actual_sha,
             })
-    _raise_experiment_error(
-        "E_EXPERIMENT_080_BLIND_PACK_INVALID",
-        "audited brief artifact could not be resolved for blind export. Place scorecards beside the workspace root, run export from the experiment root, or keep condition workspaces near the case directory.",
-        scorecard_path=str(scorecard_path),
-        artifact_path=rel_path,
-        expected_sha256=expected_sha,
-        mismatches=mismatches,
-        searched=[str(candidate) for candidate in candidates],
-    )
+    return None
 
 
-def _blind_artifact_candidates(*, case_root: Path, scorecard_path: Path, rel_path: str) -> list[Path]:
+def _blind_artifact_direct_candidates(*, case_root: Path, scorecard_path: Path, rel_path: str) -> list[Path]:
     direct_roots = _unique_paths([
         scorecard_path.parent,
         scorecard_path.parent.parent,
@@ -2752,13 +2781,41 @@ def _blind_artifact_candidates(*, case_root: Path, scorecard_path: Path, rel_pat
 
     for root in direct_roots:
         add(root / rel_path)
+    return candidates
 
-    for root in _unique_paths([case_root.parent, case_root.parent.parent]):
+
+def _blind_artifact_workspace_candidates(*, case_root: Path, scorecard_path: Path, rel_path: str) -> list[Path]:
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            candidates.append(resolved)
+
+    for root in _blind_artifact_workspace_search_roots(case_root=case_root, scorecard_path=scorecard_path):
         if not root.exists() or not root.is_dir():
             continue
         for candidate in sorted(root.rglob(rel_path), key=lambda item: item.as_posix()):
             add(candidate)
     return candidates
+
+
+def _blind_artifact_workspace_search_roots(*, case_root: Path, scorecard_path: Path) -> list[Path]:
+    parents = _unique_paths([
+        case_root,
+        case_root.parent,
+        case_root.parent.parent,
+        scorecard_path.parent,
+        scorecard_path.parent.parent,
+    ])
+    roots: list[Path] = []
+    for parent in parents:
+        if parent.name in {"workspace", "workspaces"}:
+            roots.append(parent)
+        roots.extend([parent / "workspaces", parent / "workspace"])
+    return _unique_paths(roots)
 
 
 def _unique_paths(paths: list[Path]) -> list[Path]:
