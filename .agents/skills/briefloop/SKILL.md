@@ -1,6 +1,6 @@
 ---
 name: briefloop
-description: BriefLoop/MABW operator protocol router. Use when a task involves operating a BriefLoop workspace, MABW-080 or BriefLoop-090 experiments, repair/gates/status/finalize/delivery decisions, repo-development contract changes, naming compatibility, or public claims about BriefLoop.
+description: BriefLoop/MABW operator protocol router. Use when a task involves operating a BriefLoop workspace, MABW-080 experiment tooling, future BriefLoop-090 readiness work, repair/gates/status/finalize/delivery decisions, repo-development contract changes, naming compatibility, or public claims about BriefLoop.
 ---
 
 # BriefLoop Operator Protocol
@@ -9,8 +9,9 @@ description: BriefLoop/MABW operator protocol router. Use when a task involves o
 
 This skill is the canonical repo-local operator protocol for BriefLoop, formerly
 MABW. It routes agents to the right public docs, runtime commands, and safety
-boundaries when operating workspaces, running 080/090 experiments, changing the
-repo, or writing public claims.
+boundaries when operating workspaces, running MABW-080 experiment tooling for
+080 cases or future 090 readiness work, changing the repo, or writing public
+claims.
 
 This skill is not the runtime handoff for a specific workspace and is not a
 complete CLI manual. Prefer the generated handoff for a run, current CLI help,
@@ -33,8 +34,9 @@ Use this skill when the user asks about any of these surfaces:
 
 - workspace operation, `/mabw`, `multi-agent-brief run`, status, gates, repair,
   finalize, delivery, or runtime handoff behavior
-- MABW-080 or BriefLoop-090 experiment setup, registration, scorecards,
-  blind packs, assessment import, or summaries
+- MABW-080 experiment setup, registration, scorecards, blind packs, assessment
+  import, summaries, or future BriefLoop-090 readiness/fresh-rerun work that
+  still uses the shipped `experiments 080` command namespace
 - repo-development changes that affect agent operation, control contracts,
   generated runtime assets, public docs, or release claims
 - BriefLoop/MABW naming, compatibility, or public support status
@@ -48,8 +50,9 @@ First classify the mode before acting:
 
 - `runtime-workspace`: a workspace with `config.yaml`, `sources.yaml`, `user.md`,
   `input/`, or `output/intermediate/`
-- `experiment-080-090`: an experiment case, condition workspace, scorecard,
-  blind pack, reveal mapping, or assessment file
+- `experiment-080-090`: an MABW-080 experiment case, condition workspace,
+  scorecard, blind pack, reveal mapping, assessment file, or future 090
+  readiness artifact using current 080 tooling
 - `repo-development`: this source repository, tests, runtime assets, CLI, docs,
   support matrix, generated agents, or release files
 - `public-claims`: README, release note, HN/GitHub wording, support status, or

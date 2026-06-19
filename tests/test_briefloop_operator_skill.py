@@ -50,6 +50,10 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "Planned / Not Yet Authoritative" in text
     assert "Atomic Claim Graph" in text
     assert "Claim-Support Matrix" in text
+    assert "MABW-080 experiment operations" in text
+    assert "MABW-080 / BriefLoop-090 experiment operations" not in text
+    assert "BriefLoop-090 is a future readiness/fresh-rerun label" in text
+    assert "not a current CLI namespace" in text
 
 
 def test_experiment_reference_separates_targets_and_stops_finalize() -> None:
@@ -58,7 +62,8 @@ def test_experiment_reference_separates_targets_and_stops_finalize() -> None:
     assert "delivery_brief" in text
     assert "do not run finalize or delivery" in text
     assert "not management-ready delivery" in text
-    assert "BriefLoop-090 is an experiment/readiness label" in text
+    assert "BriefLoop-090 is a future experiment/readiness label" in text
+    assert "MABW-080 remains the shipped experiment command namespace" in text
 
 
 def test_experiment_reference_uses_formal_blind_command_loop() -> None:

@@ -8,8 +8,9 @@ research summaries, or public experiment conclusions.
 - BriefLoop records where claims entered the workflow.
 - BriefLoop provides deterministic gates, ledgers, events, repair transactions,
   and archived control records.
-- MABW-080 / BriefLoop-090 scorecards can record deterministic readiness fields
-  and imported human or llm-assisted-human assessment.
+- MABW-080 scorecards can record deterministic readiness fields and imported
+  human or llm-assisted-human assessment. Future BriefLoop-090 reruns may use
+  this tooling only when a fresh experiment is explicitly run and documented.
 - A run or experiment observed a specific pattern under stated controls.
 
 ## Forbidden Claim Shapes
