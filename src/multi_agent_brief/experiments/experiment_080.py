@@ -2758,6 +2758,18 @@ def _scorecard_and_assessment_from_blind_import(
             "blind pack item hash does not match reveal mapping.",
             blind_item_id=blind_item_id,
         )
+    if pack_item.get("scorecard_sha256") != reveal_item.get("scorecard_sha256"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack item scorecard hash does not match reveal mapping.",
+            blind_item_id=blind_item_id,
+        )
+    if pack_item.get("guidance_entry_ids") != reveal_item.get("guidance_entry_ids"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack item guidance entry ids do not match reveal mapping.",
+            blind_item_id=blind_item_id,
+        )
     if assessment.get("blind_artifact_sha256") != artifact_sha:
         _raise_experiment_error(
             "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
@@ -2803,6 +2815,30 @@ def _scorecard_and_assessment_from_blind_import(
             "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
             "reveal mapping scorecard hash mismatch.",
             blind_item_id=blind_item_id,
+        )
+    target_artifacts = (
+        scorecard.get("target_artifacts")
+        if isinstance(scorecard.get("target_artifacts"), dict)
+        else {}
+    )
+    audited = target_artifacts.get("audited_brief") if isinstance(target_artifacts.get("audited_brief"), dict) else {}
+    if audited.get("sha256") != artifact_sha:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "reveal mapping scorecard audited brief hash does not match blind artifact hash.",
+            blind_item_id=blind_item_id,
+            scorecard_audited_brief_sha256=audited.get("sha256"),
+            blind_artifact_sha256=artifact_sha,
+        )
+    if scorecard.get("condition") != reveal_item.get("condition") or scorecard.get("run_id") != reveal_item.get("run_id"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "reveal mapping condition/run identity does not match embedded scorecard.",
+            blind_item_id=blind_item_id,
+            reveal_condition=reveal_item.get("condition"),
+            scorecard_condition=scorecard.get("condition"),
+            reveal_run_id=reveal_item.get("run_id"),
+            scorecard_run_id=scorecard.get("run_id"),
         )
     hydrated_assessment = deepcopy(assessment)
     hydrated_assessment["condition"] = reveal_item.get("condition")

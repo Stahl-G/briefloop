@@ -3307,6 +3307,56 @@ def test_experiments_080_import_blind_assessment_rejects_modified_item(tmp_path,
     assert not output_path.exists()
 
 
+def test_experiments_080_import_blind_assessment_rejects_rebound_scorecard(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecards = [
+        _write_auditable_scorecard_for_condition(
+            tmp_path,
+            capsys,
+            case_dir=case_dir,
+            condition=condition,
+            run_id=f"mabw-20260614T000000Z-{condition}0001",
+        )
+        for condition in ("baseline", "memory")
+    ]
+    blind_dir = tmp_path / "blind-pack"
+    assert main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed")) == 0
+    capsys.readouterr()
+    reveal_path = blind_dir / "reveal_mapping.json"
+    reveal = json.loads(reveal_path.read_text(encoding="utf-8"))
+    first, second = reveal["items"]
+    original_artifact_sha = first["artifact_sha256"]
+    first["condition"] = second["condition"]
+    first["run_id"] = second["run_id"]
+    first["scorecard"] = second["scorecard"]
+    first["scorecard_sha256"] = second["scorecard_sha256"]
+    first["guidance_entry_ids"] = second["guidance_entry_ids"]
+    first["artifact_sha256"] = original_artifact_sha
+    _write_json(reveal_path, reveal)
+    assessment_path = tmp_path / "blind-assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(
+        assessment_path,
+        _blind_assessment_payload(
+            blind_item_id=first["blind_item_id"],
+            artifact_sha256=original_artifact_sha,
+        ),
+    )
+
+    rc = main(_blind_assessment_args(
+        blind_dir / "blind_pack.json",
+        reveal_path,
+        assessment_path,
+        output_path,
+    ))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID"
+    assert not output_path.exists()
+
+
 def test_experiments_080_import_blind_assessment_requires_reveal_mapping(tmp_path, capsys):
     assessment_path = tmp_path / "blind-assessment.json"
     output_path = tmp_path / "assessed.scorecard.json"
