@@ -535,6 +535,8 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     assert "output/delivery/brief.md" not in data["expected_artifacts"]
     assert "finalize" not in {stage["stage_id"] for stage in data["stage_completion_protocol"]["stages"]}
     assert "TARGET COMPLETE: auditable_brief" in text
+    assert "auditor quality gates must have status pass before auditor stage-complete" in text
+    assert "warning is not enough even when there are 0 blocking findings" in text
     assert "register-run" in text
     assert "score-run" in text
     assert "Do not run finalize" in text

@@ -882,6 +882,8 @@ def _apply_experiment_080_assessment_target(handoff: AgentHandoff, workspace: Pa
         "Experiment target: auditable_brief.\n"
         "TARGET COMPLETE: auditable_brief when Analyst, Editor, Auditor, and auditor gates are complete and clean.\n"
         "This is an internal auditable-draft experiment target, not management-ready delivery.\n"
+        "For this target, auditor quality gates must have status pass before auditor stage-complete; "
+        "warning is not enough even when there are 0 blocking findings. Repair warnings before completing auditor.\n"
         "After auditor stage-complete succeeds, stop the runtime workflow and register/score the run with "
         "`multi-agent-brief experiments 080 register-run` and `multi-agent-brief experiments 080 score-run`.\n"
         "Do not run finalize, finalize-complete, deliver, DOCX/PDF rendering, reader-clean delivery checks, "

@@ -57,6 +57,25 @@ input:
     return ws
 
 
+def _write_auditable_condition_metadata(ws: Path) -> None:
+    path = ws / "experiment" / "080" / "condition.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "case_id": "solar_public_001_auditable",
+                "condition": "baseline",
+                "assessment_target": "auditable_brief",
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _repo_with_role_topology(
     tmp_path: Path,
     topology: str,
@@ -4225,6 +4244,48 @@ def test_auditor_stage_complete_passes_with_clean_quality_gate_report(tmp_path):
     )
 
     assert state["workflow_state"]["current_stage"] == "finalize"
+
+
+def test_auditor_stage_complete_allows_warning_gate_for_non_experiment_workflow(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws, status="warning", stage_id="auditor")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor and gates produced non-blocking warnings",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "finalize"
+
+
+def test_auditable_target_auditor_stage_complete_requires_gate_status_pass(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_auditable_condition_metadata(ws)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws, status="warning", stage_id="auditor")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            reason="auditor warning should not complete auditable target",
+        )
+
+    assert excinfo.value.error_code == "E_QUALITY_GATE_REQUIRED"
+    assert "080 auditable_brief target requires auditor quality gate report status pass" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["current_stage"] == "auditor"
+    events = _event_records(ws)
+    assert not any(
+        event.get("event_type") == "decision_recorded" and event.get("stage_id") == "auditor"
+        for event in events
+    )
 
 
 def test_auditor_stage_complete_ignores_legacy_quality_gate_projection(tmp_path):

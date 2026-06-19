@@ -3150,6 +3150,31 @@ def raise_if_auditable_target_complete_blocks_downstream(
     )
 
 
+def _auditable_target_auditor_gate_pass_reasons(
+    *,
+    workspace: Path,
+    stage_id: str,
+) -> list[str]:
+    if stage_id != "auditor":
+        return []
+    condition_metadata = load_experiment_080_condition_metadata(workspace)
+    if not isinstance(condition_metadata, dict) or condition_metadata.get("assessment_target") != "auditable_brief":
+        return []
+    gate_path = workspace / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
+    payload = _read_json_if_exists(gate_path)
+    if payload is None:
+        return [
+            "080 auditable_brief target requires output/intermediate/gates/auditor_quality_gate_report.json before auditor stage-complete."
+        ]
+    status = str(payload.get("status") or "")
+    if status != "pass":
+        return [
+            "080 auditable_brief target requires auditor quality gate report status pass before auditor stage-complete; "
+            f"got {status or '<missing>'}. Repair warnings before completing auditor."
+        ]
+    return []
+
+
 def _stale_expected_artifact_refresh_reasons(
     *,
     workspace: Path,
@@ -3375,6 +3400,12 @@ def _complete_stage_transaction(
         )
         if stage_id == "auditor":
             quality_reasons.extend(_quality_gate_pass_reasons(workspace=ws, stages=stages, artifacts=artifacts))
+            quality_reasons.extend(
+                _auditable_target_auditor_gate_pass_reasons(
+                    workspace=ws,
+                    stage_id=stage_id,
+                )
+            )
         if quality_reasons:
             _raise_completion_reasons(
                 message=f"Cannot complete stage '{stage_id}'",
