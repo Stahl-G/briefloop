@@ -122,8 +122,8 @@ N 公司宣布其示例州工厂一期产线于本周投产，规划年产能 2G
 **从源码安装 — macOS / Linux**
 
 ```bash
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 bash scripts/setup.sh
 ```
 
@@ -134,8 +134,8 @@ Windows 不需要 WSL 或 Git Bash；PowerShell 是推荐路径。
 ```powershell
 winget install Python.Python.3.12
 
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
@@ -166,7 +166,7 @@ bash scripts/demo-deep-dive.sh
 
 demo 是给 reviewer 和 GitHub 访客检查合成材料上的证据链，不是使用产品前的必经步骤。
 
-高级 Windows 安装器：`irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex` 已存在，但当前在 support matrix 中仍是 Experimental CLI-only installer asset。默认主路径是 source clone + `scripts/setup.ps1`。
+高级 Windows 安装器：`irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex` 已存在，但当前在 support matrix 中仍是 Experimental CLI-only installer asset。默认主路径是 source clone + `scripts/setup.ps1`。
 
 如果你使用 Claude Code writer 路径，再安装 writer 入口：
 
@@ -319,7 +319,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 
 * **试点用户**：你在战略、投研、IR、总裁办、研究所等岗位，每周真实地写行业周报、竞品跟踪或管理层简报，愿意用它跑自己的真实流程并反馈摩擦点。我们会优先支持试点场景的问题。
 * **评估合作者**：你在高校或研究机构做 LLM agent / 多智能体系统方向，对"契约治理的工作流 vs 单模型基线"的对照实验、消融实验感兴趣。系统、真实场景和运行数据由项目方提供。
-* **贡献者**：从一个 [good first issue](https://github.com/Stahl-G/multi-agent-brief-workflow/issues) 开始即可；提交前请读 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
+* **贡献者**：从一个 [good first issue](https://github.com/Stahl-G/briefloop/issues) 开始即可；提交前请读 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
 
 ## 术语表（Glossary）
 

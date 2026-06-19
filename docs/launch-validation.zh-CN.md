@@ -117,8 +117,8 @@ EOF
 ### 试点步骤
 
 ```bash
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 bash scripts/setup.sh
 source .venv/bin/activate
 which multi-agent-brief

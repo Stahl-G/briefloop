@@ -26,8 +26,8 @@ The core claim is deliberately narrow: **traceability, not semantic proof yet.**
 **Install From Source — macOS / Linux**
 
 ```bash
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 bash scripts/setup.sh
 ```
 
@@ -38,8 +38,8 @@ Windows does not require WSL or Git Bash. PowerShell is the recommended Windows 
 ```powershell
 winget install Python.Python.3.12
 
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
@@ -70,7 +70,7 @@ bash scripts/demo-deep-dive.sh
 
 The demo is for reviewers and visitors who want to inspect the evidence chain on synthetic materials. Real use starts with onboarding and a workspace created for your own brief.
 
-Advanced Windows installer: `irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex` exists, but is currently an Experimental CLI-only installer asset. The default path is source clone plus `scripts/setup.ps1`.
+Advanced Windows installer: `irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex` exists, but is currently an Experimental CLI-only installer asset. The default path is source clone plus `scripts/setup.ps1`.
 
 1,000+ deterministic tests run in CI with zero LLM calls.
 
@@ -208,7 +208,7 @@ The runtime orchestrator is named after the office in the Chinese ritual-music t
 
 This project needs real scenarios more than it needs features. If you write recurring briefings in strategy, equity research, IR, policy tracking, or similar work and want to run your real workflow through it, open an issue or discussion. If you research agent evaluation and want a dogfooded process-accountability system with run data, that is also welcome.
 
-Start with a [good first issue](https://github.com/Stahl-G/multi-agent-brief-workflow/issues). Read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md) first.
+Start with a [good first issue](https://github.com/Stahl-G/briefloop/issues). Read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md) first.
 
 ## License
 

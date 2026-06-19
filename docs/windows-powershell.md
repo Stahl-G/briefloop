@@ -33,8 +33,8 @@ a new PowerShell window.
 ## Clone And Set Up
 
 ```powershell
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 multi-agent-brief version
@@ -102,7 +102,7 @@ multi-agent-brief init my-workspace --from-onboarding onboarding.json
 There is also a Windows installer asset:
 
 ```powershell
-irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex
 ```
 
 It is currently listed in the support matrix as an Experimental CLI-only
@@ -204,7 +204,7 @@ Remove-Item Env:PYTHONPATH
 Quote paths that contain spaces:
 
 ```powershell
-cd "C:\Users\you\Documents\multi-agent-brief-workflow"
+cd "C:\Users\you\Documents\briefloop"
 python scripts/generate_agent_configs.py --check
 ```
 

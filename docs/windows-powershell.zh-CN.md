@@ -30,8 +30,8 @@ https://www.python.org/downloads/windows/
 ## Clone And Setup
 
 ```powershell
-git clone https://github.com/Stahl-G/multi-agent-brief-workflow.git
-cd multi-agent-brief-workflow
+git clone https://github.com/Stahl-G/briefloop.git
+cd briefloop
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 multi-agent-brief version
@@ -95,7 +95,7 @@ Answer the interactive onboarding questions. For non-interactive agent runs, gen
 Windows 用户安装器也可用：
 
 ```powershell
-irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex
 ```
 
 但它当前在 support matrix 中仍是 Experimental CLI-only installer asset。README 首页推荐的默认路径仍是 source clone + `scripts/setup.ps1`。
@@ -194,7 +194,7 @@ Remove-Item Env:PYTHONPATH
 路径中有空格时请加引号：
 
 ```powershell
-cd "C:\Users\you\Documents\multi-agent-brief-workflow"
+cd "C:\Users\you\Documents\briefloop"
 python scripts/generate_agent_configs.py --check
 ```
 

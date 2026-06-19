@@ -1,6 +1,6 @@
 # User installer for multi-agent-brief-workflow.
 # Intended for:
-#   irm https://raw.githubusercontent.com/Stahl-G/multi-agent-brief-workflow/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex
 
 [CmdletBinding()]
 param(
@@ -17,7 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $Repo) {
-    $Repo = "https://github.com/Stahl-G/multi-agent-brief-workflow"
+    $Repo = "https://github.com/Stahl-G/briefloop"
 }
 if (-not $Ref) {
     $Ref = "main"

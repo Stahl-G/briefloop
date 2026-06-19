@@ -20,7 +20,7 @@ from multi_agent_brief.sources.base import SourceItem, SourceProvider, SourceQue
 
 COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL_TEMPLATE = "https://data.sec.gov/submissions/CIK{cik_str}.json"
-DEFAULT_USER_AGENT = "multi-agent-brief-workflow/0.1.0 (github.com/Stahl-G/multi-agent-brief-workflow)"
+DEFAULT_USER_AGENT = "multi-agent-brief-workflow/0.1.0 (github.com/Stahl-G/briefloop)"
 DEFAULT_FORM_TYPES = ("10-K", "10-Q", "8-K")
 
 # In-memory cache for company tickers
