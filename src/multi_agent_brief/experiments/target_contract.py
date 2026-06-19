@@ -10,6 +10,7 @@ from typing import Any
 ALLOWED_ASSESSMENT_TARGETS = {"auditable_brief", "delivery_brief"}
 DEFAULT_ASSESSMENT_TARGET = "delivery_brief"
 EXPERIMENT_080_CONDITION_PATH = Path("experiment/080/condition.json")
+AUDIT_BINDING_SCHEMA = "mabw.auditable_audit_binding.v1"
 
 AUDITABLE_TARGET_ARTIFACTS = {
     "audited_brief": "output/intermediate/audited_brief.md",
@@ -97,7 +98,7 @@ def assessment_target_manifest(target: str) -> dict[str, Any]:
             "included_control_scope": ASSESSMENT_TARGET_INCLUDED_CONTROLS[target],
             "claim_scope": ASSESSMENT_TARGET_CLAIM_SCOPE[target],
             "excluded_claim_scope": ASSESSMENT_TARGET_EXCLUDED_CLAIM_SCOPE[target],
-            "audit_binding_status": "pending_pr1_not_checked",
+            "audit_binding_status": "required_python_owned",
             "timing_semantics": "diagnostic_only",
             "reader_clean_required": False,
             "delivery_archive_required": False,
@@ -212,6 +213,8 @@ def _auditable_target_incomplete_reasons(
         if not isinstance(record.get("sha256"), str) or len(str(record.get("sha256"))) != 64:
             reasons.append(f"{artifact_id} has no frozen sha256")
 
+    _extend_audit_binding_reasons(reasons, workflow=workflow, artifacts=artifacts)
+
     gate = auditor_gate_report if isinstance(auditor_gate_report, dict) else {}
     if gate.get("status") != "pass":
         reasons.append("auditor quality gate report status is not pass")
@@ -227,3 +230,48 @@ def _auditable_target_incomplete_reasons(
             break
 
     return reasons
+
+
+def _extend_audit_binding_reasons(
+    reasons: list[str],
+    *,
+    workflow: dict[str, Any],
+    artifacts: dict[str, Any],
+) -> None:
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    auditor_status = statuses.get("auditor") if isinstance(statuses.get("auditor"), dict) else {}
+    auditor_metadata = (
+        auditor_status.get("metadata")
+        if isinstance(auditor_status.get("metadata"), dict)
+        else {}
+    )
+    binding = (
+        auditor_metadata.get("audit_binding")
+        if isinstance(auditor_metadata.get("audit_binding"), dict)
+        else {}
+    )
+    if binding.get("schema_version") != AUDIT_BINDING_SCHEMA:
+        reasons.append("auditor audit_binding is missing or has unsupported schema")
+        return
+    expected = {
+        "claim_ledger_sha256": _artifact_sha(artifacts, "claim_ledger"),
+        "audited_brief_sha256": _artifact_sha(artifacts, "audited_brief"),
+        "audit_report_sha256": _artifact_sha(artifacts, "audit_report"),
+    }
+    for field, expected_sha in expected.items():
+        actual = binding.get(field)
+        if not isinstance(expected_sha, str) or len(expected_sha) != 64:
+            reasons.append(f"audit binding cannot verify {field.removesuffix('_sha256')}")
+        elif actual != expected_sha:
+            reasons.append(f"audit binding {field} does not match artifact_registry")
+    repair_ids = binding.get("relevant_repair_transaction_ids")
+    if not isinstance(repair_ids, list) or any(not isinstance(item, str) or not item for item in repair_ids):
+        reasons.append("audit binding relevant_repair_transaction_ids is invalid")
+    if not isinstance(binding.get("auditor_stage_transaction_id"), str) or not binding.get("auditor_stage_transaction_id"):
+        reasons.append("audit binding auditor_stage_transaction_id is missing")
+
+
+def _artifact_sha(artifacts: dict[str, Any], artifact_id: str) -> str | None:
+    record = artifacts.get(artifact_id) if isinstance(artifacts.get(artifact_id), dict) else {}
+    sha = record.get("sha256")
+    return sha if isinstance(sha, str) else None

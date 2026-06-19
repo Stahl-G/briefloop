@@ -12,6 +12,7 @@ fast-rerun import transaction.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -24,6 +25,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from multi_agent_brief.experiments.target_contract import (
+    AUDIT_BINDING_SCHEMA,
     ALLOWED_ASSESSMENT_TARGETS,
     ASSESSMENT_TARGET_CLAIM_SCOPE,
     ASSESSMENT_TARGET_EXCLUDED_CLAIM_SCOPE,
@@ -94,6 +96,7 @@ AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
     "run_integrity_clean",
     "reference_eligible",
     "artifact_registry_valid",
+    "audit_binding_valid",
     "audited_brief_frozen_valid",
     "audit_report_frozen_valid",
     "auditor_gate_report_valid",
@@ -495,6 +498,11 @@ def validate_run_record(payload: dict[str, Any]) -> list[Experiment080Diagnostic
         ))
     target_artifacts = payload.get("target_artifacts")
     if target == "auditable_brief":
+        _validate_auditable_audit_binding_schema(
+            payload.get("audit_binding"),
+            diagnostics,
+            path="run_record.audit_binding",
+        )
         if not isinstance(target_artifacts, dict):
             diagnostics.append(_diag(
                 "invalid_target_artifacts",
@@ -526,6 +534,49 @@ def validate_run_record(payload: dict[str, Any]) -> list[Experiment080Diagnostic
                         path=f"{artifact_path}.sha256",
                     ))
     return diagnostics
+
+
+def _validate_auditable_audit_binding_schema(
+    binding: Any,
+    diagnostics: list[Experiment080Diagnostic],
+    *,
+    path: str,
+) -> None:
+    if not isinstance(binding, dict):
+        diagnostics.append(_diag(
+            "invalid_audit_binding",
+            f"{path} must be an object for auditable_brief.",
+            path=path,
+        ))
+        return
+    if binding.get("schema_version") != AUDIT_BINDING_SCHEMA:
+        diagnostics.append(_diag(
+            "invalid_audit_binding_schema",
+            f"{path}.schema_version must be {AUDIT_BINDING_SCHEMA}.",
+            path=f"{path}.schema_version",
+        ))
+    for field in ("claim_ledger_sha256", "audited_brief_sha256", "audit_report_sha256"):
+        value = binding.get(field)
+        if not isinstance(value, str) or not _SHA256_RE.match(value):
+            diagnostics.append(_diag(
+                "invalid_audit_binding_sha256",
+                f"{path}.{field} must be a lowercase SHA-256 hex digest.",
+                path=f"{path}.{field}",
+            ))
+    repair_ids = binding.get("relevant_repair_transaction_ids")
+    if not isinstance(repair_ids, list) or any(
+        not isinstance(item, str) or not item.strip() for item in repair_ids
+    ):
+        diagnostics.append(_diag(
+            "invalid_audit_binding_repair_ids",
+            f"{path}.relevant_repair_transaction_ids must be a list of non-empty strings.",
+            path=f"{path}.relevant_repair_transaction_ids",
+        ))
+    _require_non_empty_string(
+        binding.get("auditor_stage_transaction_id"),
+        diagnostics,
+        path=f"{path}.auditor_stage_transaction_id",
+    )
 
 
 def register_run_record(
@@ -587,6 +638,7 @@ def register_run_record(
     workflow_integrity = _registered_run_integrity(workflow_state, path="workflow_state.run_integrity")
     target_artifacts: dict[str, Any] | None = None
     target_workflow: dict[str, Any] | None = None
+    audit_binding: dict[str, Any] | None = None
     run_archive_path = ""
     if assessment_target == "delivery_brief":
         _validate_terminal_workflow(workflow_state)
@@ -639,6 +691,11 @@ def register_run_record(
             runtime_manifest=runtime_manifest,
         )
         target_artifacts = _auditable_target_artifacts(workspace=ws, repo_workdir=repo_workdir)
+        audit_binding = _auditable_audit_binding_projection(
+            workspace=ws,
+            workflow_state=workflow_state,
+            target_artifacts=target_artifacts,
+        )
         target_workflow = _auditable_target_workflow(workflow_state)
         timing = _run_record_timing(
             derive_control_timing_from_path(
@@ -676,6 +733,8 @@ def register_run_record(
     }
     if target_artifacts is not None:
         run_record["target_artifacts"] = target_artifacts
+    if audit_binding is not None:
+        run_record["audit_binding"] = audit_binding
     if target_workflow is not None:
         run_record["target_workflow"] = target_workflow
     model = _model_identity(runtime_manifest, workflow_state)
@@ -1505,6 +1564,12 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             path="scorecard.reader_clean",
         ))
         reader_clean = {}
+    if target == "auditable_brief":
+        _validate_auditable_audit_binding_schema(
+            payload.get("audit_binding"),
+            diagnostics,
+            path="scorecard.audit_binding",
+        )
 
     guidance_scores = payload.get("guidance_scores")
     if not isinstance(guidance_scores, list):
@@ -1728,6 +1793,7 @@ def _build_scorecard_draft(
             else False,
             "auditor_complete": _auditable_scorecard_auditor_complete(run_record),
             "artifact_registry_valid": target_projection["artifact_registry_valid"],
+            "audit_binding_valid": target_projection["audit_binding_valid"],
             "audited_brief_frozen_valid": target_projection["audited_brief_frozen_valid"],
             "audit_report_frozen_valid": target_projection["audit_report_frozen_valid"],
             "auditor_gate_report_valid": target_projection["auditor_gate_report_valid"],
@@ -1806,6 +1872,7 @@ def _build_scorecard_draft(
     }
     if assessment_target == "auditable_brief":
         scorecard["target_artifacts"] = run_record.get("target_artifacts", {})
+        scorecard["audit_binding"] = run_record.get("audit_binding", {})
     return scorecard
 
 
@@ -2636,12 +2703,14 @@ def _auditable_scorecard_target_projection(run_record: dict[str, Any]) -> dict[s
         if isinstance(target_artifacts.get("auditor_quality_gate_report"), dict)
         else {}
     )
+    audit_binding = run_record.get("audit_binding") if isinstance(run_record.get("audit_binding"), dict) else {}
     return {
         "artifact_registry_valid": all(
             isinstance(target_artifacts.get(artifact_id), dict)
             and target_artifacts[artifact_id].get("frozen_valid") is True
             for artifact_id in AUDITABLE_TARGET_ARTIFACTS
         ),
+        "audit_binding_valid": audit_binding.get("status") == "valid",
         "audited_brief_frozen_valid": audited.get("frozen_valid") is True,
         "audit_report_frozen_valid": audit.get("frozen_valid") is True,
         "auditor_gate_report_valid": gate.get("frozen_valid") is True,
@@ -3045,6 +3114,223 @@ def _auditable_target_workflow(workflow_state: dict[str, Any]) -> dict[str, Any]
             for stage_id in ("analyst", "editor", "auditor", "finalize")
         },
     }
+
+
+def _auditable_audit_binding_projection(
+    *,
+    workspace: Path,
+    workflow_state: dict[str, Any],
+    target_artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    statuses = workflow_state.get("stage_statuses") if isinstance(workflow_state.get("stage_statuses"), dict) else {}
+    auditor_status = statuses.get("auditor") if isinstance(statuses.get("auditor"), dict) else {}
+    metadata = auditor_status.get("metadata") if isinstance(auditor_status.get("metadata"), dict) else {}
+    binding = metadata.get("audit_binding") if isinstance(metadata.get("audit_binding"), dict) else None
+    if binding is None:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+            "auditable_brief registration requires Python-owned auditor audit_binding metadata.",
+        )
+    diagnostics: list[Experiment080Diagnostic] = []
+    _validate_auditable_audit_binding_schema(binding, diagnostics, path="workflow_state.stage_statuses.auditor.metadata.audit_binding")
+    if diagnostics:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+            "Auditor audit_binding metadata failed schema validation.",
+            errors=[diagnostic.to_dict() for diagnostic in diagnostics],
+        )
+
+    registry = _load_json_object(
+        workspace / "output" / "intermediate" / "artifact_registry.json",
+        label="artifact_registry",
+    )
+    artifacts = registry.get("artifacts") if isinstance(registry.get("artifacts"), dict) else {}
+    expected = {
+        "claim_ledger_sha256": _registry_artifact_sha(artifacts, "claim_ledger"),
+        "audited_brief_sha256": _target_artifact_sha(target_artifacts, "audited_brief"),
+        "audit_report_sha256": _target_artifact_sha(target_artifacts, "audit_report"),
+    }
+    mismatches: dict[str, dict[str, Any]] = {}
+    for field, expected_sha in expected.items():
+        actual = binding.get(field)
+        if actual != expected_sha:
+            mismatches[field] = {"expected": expected_sha, "actual": actual}
+    event_records = _read_event_log_for_experiment(workspace / "output" / "intermediate" / "event_log.jsonl")
+    run_id = _auditable_binding_run_id(workflow_state)
+    expected_repair_ids = _auditable_brief_repair_transaction_ids(
+        event_records,
+        run_id=run_id,
+    )
+    actual_repair_ids = [
+        str(item)
+        for item in binding.get("relevant_repair_transaction_ids", [])
+        if isinstance(item, str) and item.strip()
+    ]
+    if actual_repair_ids != expected_repair_ids:
+        mismatches["relevant_repair_transaction_ids"] = {
+            "expected": expected_repair_ids,
+            "actual": actual_repair_ids,
+        }
+    auditor_event = _auditable_auditor_completion_event(
+        event_records,
+        run_id=run_id,
+        transaction_id=str(binding["auditor_stage_transaction_id"]),
+    )
+    binding_stage_event = (
+        binding.get("stage_completion_event")
+        if isinstance(binding.get("stage_completion_event"), dict)
+        else {}
+    )
+    binding_stage_event_tx = binding_stage_event.get("transaction_id")
+    if (
+        binding_stage_event_tx is not None
+        and binding_stage_event_tx != binding["auditor_stage_transaction_id"]
+    ):
+        mismatches["stage_completion_event.transaction_id"] = {
+            "expected": binding["auditor_stage_transaction_id"],
+            "actual": binding_stage_event_tx,
+        }
+    if auditor_event is None:
+        mismatches["auditor_stage_transaction_id"] = {
+            "expected": "current-run auditor decision_recorded event",
+            "actual": binding["auditor_stage_transaction_id"],
+        }
+    if mismatches:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+            "Auditor audit_binding does not match current control-plane hashes or repair history.",
+            mismatches=mismatches,
+        )
+    return {
+        "schema_version": AUDIT_BINDING_SCHEMA,
+        "status": "valid",
+        "source": "workflow_state.stage_statuses.auditor.metadata.audit_binding",
+        "claim_ledger_sha256": binding["claim_ledger_sha256"],
+        "audited_brief_sha256": binding["audited_brief_sha256"],
+        "audit_report_sha256": binding["audit_report_sha256"],
+        "relevant_repair_transaction_ids": actual_repair_ids,
+        "auditor_stage_transaction_id": binding["auditor_stage_transaction_id"],
+        "stage_completion_event": auditor_event or {},
+    }
+
+
+def _registry_artifact_sha(artifacts: dict[str, Any], artifact_id: str) -> str:
+    record = artifacts.get(artifact_id) if isinstance(artifacts.get(artifact_id), dict) else {}
+    sha = record.get("sha256")
+    if isinstance(sha, str) and _SHA256_RE.match(sha):
+        return sha
+    _raise_experiment_error(
+        "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+        "Auditor audit_binding requires a valid frozen artifact sha256.",
+        artifact_id=artifact_id,
+    )
+
+
+def _target_artifact_sha(target_artifacts: dict[str, Any], artifact_id: str) -> str:
+    record = target_artifacts.get(artifact_id) if isinstance(target_artifacts.get(artifact_id), dict) else {}
+    sha = record.get("sha256")
+    if isinstance(sha, str) and _SHA256_RE.match(sha):
+        return sha
+    _raise_experiment_error(
+        "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+        "Auditor audit_binding requires a valid target artifact sha256.",
+        artifact_id=artifact_id,
+    )
+
+
+def _auditable_binding_run_id(workflow_state: dict[str, Any]) -> str:
+    run_id = workflow_state.get("run_id")
+    if isinstance(run_id, str) and run_id.strip():
+        return run_id.strip()
+    _raise_experiment_error(
+        "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+        "Auditor audit_binding verification requires workflow_state.run_id.",
+    )
+
+
+def _auditable_brief_repair_transaction_ids(
+    records: list[dict[str, Any]],
+    *,
+    run_id: str,
+) -> list[str]:
+    ids: list[str] = []
+    artifact_path = "output/intermediate/audited_brief.md"
+    for event in records:
+        if event.get("run_id") != run_id:
+            continue
+        if event.get("event_type") != "repair_completed":
+            continue
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        allowed = [str(item) for item in metadata.get("allowed_artifacts") or []]
+        if not any(_artifact_path_matches(pattern, artifact_path) for pattern in allowed):
+            continue
+        transaction_id = metadata.get("transaction_id") or metadata.get("repair_transaction_id")
+        if isinstance(transaction_id, str) and transaction_id and transaction_id not in ids:
+            ids.append(transaction_id)
+    return ids
+
+
+def _auditable_auditor_completion_event(
+    records: list[dict[str, Any]],
+    *,
+    run_id: str,
+    transaction_id: str,
+) -> dict[str, Any] | None:
+    for event in records:
+        if event.get("run_id") != run_id:
+            continue
+        if event.get("event_type") != "decision_recorded":
+            continue
+        if event.get("stage_id") != "auditor" or event.get("decision") != "continue":
+            continue
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        if metadata.get("transaction_id") != transaction_id:
+            continue
+        return {
+            "event_type": "decision_recorded",
+            "event_id": event.get("event_id"),
+            "created_at": event.get("created_at"),
+            "stage_id": "auditor",
+            "decision": "continue",
+            "transaction_id": transaction_id,
+        }
+    return None
+
+
+def _artifact_path_matches(pattern: str, path: str) -> bool:
+    return bool(pattern.strip() and (path == pattern.strip() or fnmatch.fnmatch(path, pattern.strip())))
+
+
+def _read_event_log_for_experiment(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+            "Auditor audit_binding verification requires event_log.jsonl.",
+            path=str(path),
+        )
+    records: list[dict[str, Any]] = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+                "event_log.jsonl contains invalid JSON.",
+                path=str(path),
+                line=lineno,
+                error=str(exc),
+            )
+        if not isinstance(payload, dict):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_AUDIT_BINDING_INVALID",
+                "event_log.jsonl records must be objects.",
+                path=str(path),
+                line=lineno,
+            )
+        records.append(payload)
+    return records
 
 
 def _auditable_imported_fact_layer_comparison(

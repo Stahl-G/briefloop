@@ -401,6 +401,7 @@ def test_experiment_080_auditable_brief_a_controlled_does_not_require_timing_ava
         "run_integrity_clean": True,
         "reference_eligible": True,
         "artifact_registry_valid": True,
+        "audit_binding_valid": True,
         "audited_brief_frozen_valid": True,
         "audit_report_frozen_valid": True,
         "auditor_gate_report_valid": True,
@@ -413,6 +414,16 @@ def test_experiment_080_auditable_brief_a_controlled_does_not_require_timing_ava
         "pass": None,
         "status": "not_required_for_target",
         "source": "assessment_target.auditable_brief",
+    }
+    scorecard["audit_binding"] = {
+        "schema_version": "mabw.auditable_audit_binding.v1",
+        "status": "valid",
+        "source": "workflow_state.stage_statuses.auditor.metadata.audit_binding",
+        "claim_ledger_sha256": SHA,
+        "audited_brief_sha256": SHA,
+        "audit_report_sha256": SHA,
+        "relevant_repair_transaction_ids": [],
+        "auditor_stage_transaction_id": "tx-auditor-complete",
     }
 
     diagnostics = validate_scorecard(scorecard)

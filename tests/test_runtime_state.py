@@ -762,6 +762,32 @@ def test_state_decide_continue_requires_completion_transaction(tmp_path):
     assert after == before
 
 
+def test_auditor_stage_complete_records_python_owned_audit_binding(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws, stage_id="auditor")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor report passed",
+    )
+
+    workflow = state["workflow_state"]
+    binding = workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"]
+    assert binding["schema_version"] == "mabw.auditable_audit_binding.v1"
+    assert binding["source"] == "auditor_stage_complete"
+    assert binding["claim_ledger_sha256"] == _sha256_file(_intermediate(ws) / "claim_ledger.json")
+    assert binding["audited_brief_sha256"] == _sha256_file(_intermediate(ws) / "audited_brief.md")
+    assert binding["audit_report_sha256"] == _sha256_file(_intermediate(ws) / "audit_report.json")
+    assert binding["relevant_repair_transaction_ids"] == []
+    assert binding["auditor_stage_transaction_id"] == state["transaction"]["transaction_id"]
+    assert binding["stage_completion_event"]["event_type"] == "decision_recorded"
+    assert binding["stage_completion_event"]["availability"] == "not_available_until_event_append"
+
+
 def test_state_decide_finalize_requires_completion_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

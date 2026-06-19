@@ -395,6 +395,196 @@ def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Pa
     assert not (intermediate / "finalize_report.json").exists()
 
 
+def test_finalize_cli_replays_sticky_contamination_before_auditable_target_block(
+    tmp_path: Path,
+    capsys,
+):
+    workspace = tmp_path / "workspace"
+    input_dir = workspace / "input"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    gates_dir = intermediate / "gates"
+    input_dir.mkdir(parents=True)
+    gates_dir.mkdir(parents=True)
+    (input_dir / "source.md").write_text("dummy", encoding="utf-8")
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: Auditable Target Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n",
+        encoding="utf-8",
+    )
+    condition = workspace / "experiment" / "080" / "condition.json"
+    condition.parent.mkdir(parents=True)
+    condition.write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.experiment_080.condition.v1",
+                "experiment_id": "MABW-080",
+                "case_id": "solar_public_001",
+                "condition": "memory",
+                "assessment_target": "auditable_brief",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    audited = intermediate / "audited_brief.md"
+    audited.write_text("# Brief\n\nExampleCo opened a demo facility. [src:CL-001]\n", encoding="utf-8")
+    audit_report = intermediate / "audit_report.json"
+    audit_report.write_text(
+        json.dumps(_passing_audit_payload(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    gate_report = gates_dir / "auditor_quality_gate_report.json"
+    gate_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "pass",
+                "metadata": {"gate_stage_id": "auditor", "stage_id": "auditor"},
+                "gate_results": [
+                    {"gate_id": "material_fact", "status": "pass", "blocking": False, "finding_ids": []},
+                    {"gate_id": "freshness", "status": "pass", "blocking": False, "finding_ids": []},
+                    {"gate_id": "target_relevance", "status": "pass", "blocking": False, "finding_ids": []},
+                ],
+                "findings": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    paths = runtime_state_paths(workspace)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    ledger_sha = _sha256_file(intermediate / "claim_ledger.json")
+    audited_sha = _sha256_file(audited)
+    audit_sha = _sha256_file(audit_report)
+    gate_sha = _sha256_file(gate_report)
+    workflow["current_stage"] = "finalize"
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["run_integrity"] = {
+        "status": "clean",
+        "reference_eligible": True,
+        "clean_single_shot": True,
+        "reasons": [],
+    }
+    statuses = dict(workflow.get("stage_statuses") or {})
+    for stage_id, entry in statuses.items():
+        if stage_id in {"analyst", "editor"}:
+            entry["status"] = "complete"
+            entry["reason"] = f"{stage_id} complete"
+        elif stage_id == "auditor":
+            entry["status"] = "complete"
+            entry["reason"] = "auditor complete"
+            entry["metadata"] = {
+                "audit_binding": {
+                    "schema_version": "mabw.auditable_audit_binding.v1",
+                    "source": "auditor_stage_complete",
+                    "claim_ledger_sha256": ledger_sha,
+                    "audited_brief_sha256": audited_sha,
+                    "audit_report_sha256": audit_sha,
+                    "relevant_repair_transaction_ids": [],
+                    "auditor_stage_transaction_id": "tx-auditor-complete",
+                }
+            }
+        elif stage_id == "finalize":
+            entry["status"] = "ready"
+            entry["reason"] = ""
+        elif entry.get("status") not in {"complete", "skipped"}:
+            entry["status"] = "complete"
+            entry["reason"] = f"{stage_id} complete"
+    workflow["stage_statuses"] = statuses
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    paths["artifact_registry"].write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-artifact-registry/v1",
+                "run_id": workflow["run_id"],
+                "artifacts": {
+                    "claim_ledger": {
+                        "artifact_id": "claim_ledger",
+                        "path": "output/intermediate/claim_ledger.json",
+                        "status": "valid",
+                        "sha256": ledger_sha,
+                    },
+                    "audited_brief": {
+                        "artifact_id": "audited_brief",
+                        "path": "output/intermediate/audited_brief.md",
+                        "status": "valid",
+                        "sha256": audited_sha,
+                    },
+                    "audit_report": {
+                        "artifact_id": "audit_report",
+                        "path": "output/intermediate/audit_report.json",
+                        "status": "valid",
+                        "sha256": audit_sha,
+                    },
+                    "auditor_quality_gate_report": {
+                        "artifact_id": "auditor_quality_gate_report",
+                        "path": "output/intermediate/gates/auditor_quality_gate_report.json",
+                        "status": "valid",
+                        "sha256": gate_sha,
+                    },
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with paths["event_log"].open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "schema_version": "multi-agent-brief-event-log/v1",
+                    "event_id": "contam-1",
+                    "run_id": workflow["run_id"],
+                    "created_at": "2026-06-14T00:05:00+00:00",
+                    "event_type": "run_integrity_contaminated",
+                    "actor": "cli",
+                    "stage_id": "editor",
+                    "artifact_id": "audited_brief",
+                    "decision": None,
+                    "reason": "Synthetic sticky contamination.",
+                    "metadata": {
+                        "reason_code": "frozen_artifact_changed",
+                        "message": "Synthetic sticky contamination.",
+                        "stage_id": "editor",
+                        "artifact_id": "audited_brief",
+                    },
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
+    captured = capsys.readouterr()
+
+    assert "run integrity is not clean before finalize" in captured.err
+    assert "TARGET COMPLETE: auditable_brief" not in captured.err
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+    assert not (intermediate / "finalize_report.json").exists()
+    refreshed = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    assert refreshed["run_integrity"]["status"] == "contaminated"
+    assert refreshed["run_integrity"]["reference_eligible"] is False
+
+
 def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_path: Path, capsys):
     workspace = tmp_path / "workspace"
     input_dir = workspace / "input"

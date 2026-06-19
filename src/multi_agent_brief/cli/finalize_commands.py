@@ -17,6 +17,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     raise_if_active_repair_open,
     runtime_state_paths,
 )
+from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
 
@@ -109,6 +110,22 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
         raise RuntimeStateError("workflow_state.json must contain an object before finalize.")
     try:
         raise_if_active_repair_open(workspace=workspace, workflow=workflow)
+        if paths["runtime_manifest"].exists():
+            try:
+                check_runtime_state(workspace=workspace, actor="cli")
+            except RuntimeStateError:
+                raise
+            except Exception as exc:
+                raise RuntimeStateError(f"Unable to verify runtime state integrity before finalize: {exc}") from exc
+            try:
+                workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeStateError(
+                    f"workflow_state.json is unreadable after runtime state refresh: {exc}",
+                ) from exc
+            if not isinstance(workflow, dict):
+                raise RuntimeStateError("workflow_state.json must contain an object after runtime state refresh.")
+            _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow)
         raise_if_auditable_target_complete_blocks_downstream(
             workspace=workspace,
             workflow=workflow,
@@ -119,11 +136,17 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
             raise
         if exc.error_code == E_ASSESSMENT_TARGET_COMPLETE:
             raise
-        raise RuntimeStateError(f"Unable to verify runtime state before finalize: {exc}") from exc
-    if paths["runtime_manifest"].exists():
-        try:
-            check_runtime_state(workspace=workspace, actor="cli")
-        except RuntimeStateError:
+        if exc.error_code == E_TRANSACTION_INTEGRITY:
             raise
-        except Exception as exc:
-            raise RuntimeStateError(f"Unable to verify runtime state integrity before finalize: {exc}") from exc
+        raise RuntimeStateError(f"Unable to verify runtime state before finalize: {exc}") from exc
+
+
+def _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow: dict[str, object]) -> None:
+    integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
+    if integrity.get("status") == "clean" and integrity.get("reference_eligible") is True:
+        return
+    raise RuntimeStateError(
+        "Runtime state integrity check failed because run integrity is not clean before finalize.",
+        details={"run_integrity": integrity},
+        error_code=E_TRANSACTION_INTEGRITY,
+    )

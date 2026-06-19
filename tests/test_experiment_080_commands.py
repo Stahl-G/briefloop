@@ -251,8 +251,9 @@ def _write_auditable_target_workspace(
     audited = intermediate / "audited_brief.md"
     audit = intermediate / "audit_report.json"
     gate = gates / "auditor_quality_gate_report.json"
+    claim_ledger = intermediate / "claim_ledger.json"
     audited.write_text("# Audited brief\n\nBusiness implication first. [src:CL-0001]\n", encoding="utf-8")
-    _write_json(audit, {"schema_version": "multi-agent-brief-audit-report/v1", "status": "pass", "findings": []})
+    _write_json(audit, {"audit_status": "pass", "audit_score": 100, "findings": []})
     _write_json(
         gate,
         {
@@ -281,7 +282,27 @@ def _write_auditable_target_workspace(
         "claim-ledger": {"status": "complete", "metadata": {"satisfied_by_import": True}},
         "analyst": {"status": "complete"},
         "editor": {"status": "complete"},
-        "auditor": {"status": "complete"},
+        "auditor": {
+            "status": "complete",
+            "metadata": {
+                "audit_binding": {
+                    "schema_version": "mabw.auditable_audit_binding.v1",
+                    "source": "auditor_stage_complete",
+                    "claim_ledger_sha256": _sha256_file(claim_ledger),
+                    "audited_brief_sha256": _sha256_file(audited),
+                    "audit_report_sha256": _sha256_file(audit),
+                    "relevant_repair_transaction_ids": [],
+                    "auditor_stage_transaction_id": "txn-auditor",
+                    "stage_completion_event": {
+                        "event_type": "decision_recorded",
+                        "transaction_id": "txn-auditor",
+                        "event_id": None,
+                        "sequence": None,
+                        "availability": "not_available_until_event_append",
+                    },
+                }
+            },
+        },
         "finalize": {"status": "ready"},
     }
     _write_terminal_runtime(
@@ -321,6 +342,12 @@ def _write_auditable_target_workspace(
         {
             "schema_version": "multi-agent-brief-artifact-registry/v1",
             "artifacts": {
+                "claim_ledger": {
+                    "path": "output/intermediate/claim_ledger.json",
+                    "status": "valid",
+                    "validation_result": "valid_claim_ledger_schema",
+                    "sha256": _sha256_file(claim_ledger),
+                },
                 "audited_brief": {
                     "path": "output/intermediate/audited_brief.md",
                     "status": "valid",
@@ -710,6 +737,7 @@ def _auditable_scorecard_payload(**overrides) -> dict:
         "run_integrity_clean": True,
         "reference_eligible": True,
         "artifact_registry_valid": True,
+        "audit_binding_valid": True,
         "audited_brief_frozen_valid": True,
         "audit_report_frozen_valid": True,
         "auditor_gate_report_valid": True,
@@ -728,6 +756,16 @@ def _auditable_scorecard_payload(**overrides) -> dict:
         "report_status": "not_required_for_target",
     }
     payload["archive"] = {"present": False, "schema_valid": False}
+    payload["audit_binding"] = {
+        "schema_version": "mabw.auditable_audit_binding.v1",
+        "status": "valid",
+        "source": "workflow_state.stage_statuses.auditor.metadata.audit_binding",
+        "claim_ledger_sha256": "1" * 64,
+        "audited_brief_sha256": "2" * 64,
+        "audit_report_sha256": "3" * 64,
+        "relevant_repair_transaction_ids": [],
+        "auditor_stage_transaction_id": "txn-auditor",
+    }
     return payload
 
 
@@ -1595,8 +1633,11 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert record["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
     assert record["assessment_target_manifest"]["timing_semantics"] == "diagnostic_only"
     assert record["assessment_target_manifest"]["reader_clean_required"] is False
-    assert record["assessment_target_manifest"]["audit_binding_status"] == "pending_pr1_not_checked"
+    assert record["assessment_target_manifest"]["audit_binding_status"] == "required_python_owned"
     assert record["run_archive_path"] == ""
+    assert record["audit_binding"]["status"] == "valid"
+    assert record["audit_binding"]["source"] == "workflow_state.stage_statuses.auditor.metadata.audit_binding"
+    assert record["audit_binding"]["relevant_repair_transaction_ids"] == []
     assert record["target_artifacts"]["audited_brief"]["path"] == "output/intermediate/audited_brief.md"
     assert [stage["stage_id"] for stage in record["timing"]["stages"]] == ["analyst", "editor", "auditor"]
     assert record["timing"]["status"] == "available"
@@ -1610,7 +1651,8 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert scorecard["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
     assert scorecard["assessment_target_manifest"]["timing_semantics"] == "diagnostic_only"
     assert scorecard["assessment_target_manifest"]["reader_clean_required"] is False
-    assert scorecard["assessment_target_manifest"]["audit_binding_status"] == "pending_pr1_not_checked"
+    assert scorecard["assessment_target_manifest"]["audit_binding_status"] == "required_python_owned"
+    assert scorecard["audit_binding"]["status"] == "valid"
     assert scorecard["target_readiness"]["assessment_target"] == "auditable_brief"
     assert scorecard["target_readiness"]["status"] == "complete"
     assert scorecard["target_readiness"]["ready_for_assessment_import"] is True
@@ -1624,6 +1666,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert scorecard["reader_clean"]["status"] == "not_required_for_target"
     assert scorecard["finalize"]["complete"] is False
     assert scorecard["control_integrity"]["auditor_complete"] is True
+    assert scorecard["control_integrity"]["audit_binding_valid"] is True
     assert scorecard["control_integrity"]["auditor_gates_no_blocking"] is True
     assert scorecard["control_integrity"]["timing_available"] is True
     assert scorecard["validity_class"] == "invalid_incomplete"
@@ -1726,6 +1769,171 @@ def test_experiments_080_auditable_brief_register_rejects_active_repair(tmp_path
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["details"]["code"] == "E_EXPERIMENT_080_ACTIVE_REPAIR_OPEN"
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_requires_audit_binding(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["stage_statuses"]["auditor"]["metadata"].pop("audit_binding")
+    _write_json(workflow_path, workflow)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDIT_BINDING_INVALID"
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_rejects_mismatched_audit_binding(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"]["audited_brief_sha256"] = "0" * 64
+    _write_json(workflow_path, workflow)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDIT_BINDING_INVALID"
+    assert "audited_brief_sha256" in payload["details"]["mismatches"]
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_requires_auditor_completion_event(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    binding = workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"]
+    binding["auditor_stage_transaction_id"] = "fake-nonexistent-tx"
+    binding["stage_completion_event"]["transaction_id"] = "fake-nonexistent-tx"
+    _write_json(workflow_path, workflow)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDIT_BINDING_INVALID"
+    assert "auditor_stage_transaction_id" in payload["details"]["mismatches"]
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_rejects_stage_completion_event_tx_mismatch(
+    tmp_path,
+    capsys,
+):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+    binding = workflow["stage_statuses"]["auditor"]["metadata"]["audit_binding"]
+    binding["stage_completion_event"]["transaction_id"] = "wrong-tx"
+    _write_json(workflow_path, workflow)
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDIT_BINDING_INVALID"
+    assert "stage_completion_event.transaction_id" in payload["details"]["mismatches"]
+    assert not output.exists()
+
+
+def test_experiments_080_auditable_brief_register_requires_repair_ids_in_binding(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    event_log = ws / "output" / "intermediate" / "event_log.jsonl"
+    repair_event = {
+        "schema_version": "multi-agent-brief-event-log/v1",
+        "event_id": "repair-event-1",
+        "run_id": "mabw-20260614T000000Z-auditable0001",
+        "created_at": "2026-06-14T00:04:00+00:00",
+        "event_type": "repair_completed",
+        "actor": "cli",
+        "stage_id": "editor",
+        "artifact_id": None,
+        "decision": "repair_complete",
+        "reason": "editor repair completed",
+        "metadata": {
+            "transaction_id": "repair-editor-1",
+            "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+        },
+    }
+    with event_log.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(repair_event, sort_keys=True) + "\n")
+    output = tmp_path / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_AUDIT_BINDING_INVALID"
+    assert payload["details"]["mismatches"]["relevant_repair_transaction_ids"]["expected"] == ["repair-editor-1"]
     assert not output.exists()
 
 

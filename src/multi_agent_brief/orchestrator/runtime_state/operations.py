@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.experiments.target_contract import (
+    AUDIT_BINDING_SCHEMA,
     load_experiment_080_condition_metadata,
     project_assessment_target_status,
 )
@@ -2714,6 +2715,8 @@ def _auditor_completion_metadata(
     *,
     workspace: Path,
     registry: dict[str, Any],
+    event_records: list[dict[str, Any]],
+    transaction_id: str,
 ) -> dict[str, Any]:
     ledger_sha = _artifact_registry_sha(registry, "claim_ledger")
     audited_brief_sha = _artifact_registry_sha(registry, "audited_brief")
@@ -2763,6 +2766,26 @@ def _auditor_completion_metadata(
             },
             error_code=E_TRANSACTION_INTEGRITY,
         )
+    relevant_repair_transaction_ids = _repair_transaction_ids_for_artifact(
+        event_records,
+        artifact_path="output/intermediate/audited_brief.md",
+    )
+    audit_binding = {
+        "schema_version": AUDIT_BINDING_SCHEMA,
+        "source": "auditor_stage_complete",
+        "claim_ledger_sha256": ledger_sha,
+        "audited_brief_sha256": audited_brief_sha,
+        "audit_report_sha256": audit_sha,
+        "relevant_repair_transaction_ids": relevant_repair_transaction_ids,
+        "auditor_stage_transaction_id": transaction_id,
+        "stage_completion_event": {
+            "event_type": "decision_recorded",
+            "transaction_id": transaction_id,
+            "event_id": None,
+            "sequence": None,
+            "availability": "not_available_until_event_append",
+        },
+    }
     return {
         "upstream_artifact_sha256": {
             "claim_ledger": ledger_sha,
@@ -2771,7 +2794,27 @@ def _auditor_completion_metadata(
         "produced_artifact_sha256": {
             "audit_report": audit_sha,
         },
+        "audit_binding": audit_binding,
     }
+
+
+def _repair_transaction_ids_for_artifact(
+    event_records: list[dict[str, Any]],
+    *,
+    artifact_path: str,
+) -> list[str]:
+    ids: list[str] = []
+    for event in event_records:
+        if event.get("event_type") != "repair_completed":
+            continue
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        allowed = [str(item) for item in metadata.get("allowed_artifacts") or []]
+        if not _artifact_allowed(artifact_path, allowed):
+            continue
+        transaction_id = metadata.get("transaction_id") or metadata.get("repair_transaction_id")
+        if isinstance(transaction_id, str) and transaction_id and transaction_id not in ids:
+            ids.append(transaction_id)
+    return ids
 
 
 def _stage_runtime_provenance(
@@ -3105,7 +3148,7 @@ def _complete_stage_transaction(
 ) -> dict[str, Any]:
     ws = _require_workspace(workspace)
     paths = runtime_state_paths(ws)
-    _preflight_transaction_files(paths)
+    event_records = _preflight_transaction_files(paths)
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
     raise_if_active_repair_open(workspace=ws, workflow=workflow)
     if finalize:
@@ -3338,6 +3381,8 @@ def _complete_stage_transaction(
             auditor_metadata.update(_auditor_completion_metadata(
                 workspace=ws,
                 registry=registry,
+                event_records=event_records,
+                transaction_id=transaction_id,
             ))
             auditor_status["metadata"] = auditor_metadata
             statuses["auditor"] = auditor_status
