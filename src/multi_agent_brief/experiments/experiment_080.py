@@ -1570,13 +1570,15 @@ def _memory_snapshot_treatment_status(*, workspace: Path, guidance_entry_ids: li
         return {"status": "fail", "reason": "memory_snapshot_unreadable", "path": rel_path, "error": str(exc)}
     if "mabw:improvement-memory-snapshot" not in text:
         return {"status": "fail", "reason": "memory_snapshot_marker_missing", "path": rel_path}
-    missing = [entry_id for entry_id in guidance_entry_ids if entry_id not in _snapshot_selected_entry_ids(text)]
-    if missing:
+    expected = set(guidance_entry_ids)
+    actual = _snapshot_selected_entry_ids(text)
+    if actual != expected:
         return {
             "status": "fail",
-            "reason": "memory_snapshot_missing_guidance_entry_ids",
+            "reason": "memory_snapshot_guidance_entry_ids_mismatch",
             "path": rel_path,
-            "missing_entry_ids": missing,
+            "missing_entry_ids": sorted(expected - actual),
+            "unexpected_entry_ids": sorted(actual - expected),
         }
     return {"status": "pass", "path": rel_path}
 
@@ -1610,13 +1612,29 @@ def _prompt_guidance_block_status(
         return {"status": "fail", "reason": "prompt_guidance_block_guidance_not_list"}
     expected = {entry["entry_id"]: entry["guidance_text"] for entry in guidance_entries}
     actual: dict[str, str] = {}
+    duplicate_entry_ids: set[str] = set()
     for item in guidance:
         if not isinstance(item, dict):
             continue
         entry_id = item.get("entry_id")
         text = item.get("guidance_text")
         if isinstance(entry_id, str) and isinstance(text, str):
+            if entry_id in actual:
+                duplicate_entry_ids.add(entry_id)
             actual[entry_id] = text
+    if duplicate_entry_ids:
+        return {
+            "status": "fail",
+            "reason": "prompt_guidance_block_duplicate_guidance_entry_ids",
+            "duplicate_entry_ids": sorted(duplicate_entry_ids),
+        }
+    unexpected = sorted(set(actual) - set(expected))
+    if unexpected:
+        return {
+            "status": "fail",
+            "reason": "prompt_guidance_block_unexpected_guidance",
+            "unexpected_entry_ids": unexpected,
+        }
     missing = [entry_id for entry_id in expected if actual.get(entry_id) != expected[entry_id]]
     if missing:
         return {
@@ -1965,6 +1983,11 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             diagnostics,
             path="scorecard.audit_binding",
         )
+    treatment_isolation = (
+        payload.get("treatment_isolation")
+        if isinstance(payload.get("treatment_isolation"), dict)
+        else {}
+    )
 
     guidance_scores = payload.get("guidance_scores")
     if not isinstance(guidance_scores, list):
@@ -2010,6 +2033,7 @@ def validate_scorecard(payload: dict[str, Any]) -> list[Experiment080Diagnostic]
             guidance_scores=guidance_scores,
             reader_clean=reader_clean,
             assessment_target=target,
+            treatment_isolation=treatment_isolation,
             diagnostics=diagnostics,
         )
     return diagnostics
@@ -2487,6 +2511,8 @@ def _scorecard_validity_class_with_assessment(
         return "invalid_fact_layer_mismatch"
     if any(control_integrity.get(key) is not True for key in _control_keys_for_target(assessment_target)):
         return "invalid_incomplete"
+    if not _scorecard_treatment_isolation_status_passed(scorecard, assessment_target=assessment_target):
+        return "invalid_incomplete"
     if _reader_clean_required_for_target(assessment_target) and reader_clean.get("pass") is not True:
         return "invalid_incomplete"
     relevant_scores = [score for score in guidance_scores if score.get("relevant") is True]
@@ -2495,6 +2521,17 @@ def _scorecard_validity_class_with_assessment(
     if all(score.get("assessment_method") in A_CONTROLLED_ASSESSMENT_METHODS for score in relevant_scores):
         return "A_controlled"
     return "B_integration"
+
+
+def _scorecard_treatment_isolation_status_passed(
+    scorecard: dict[str, Any],
+    *,
+    assessment_target: str,
+) -> bool:
+    if assessment_target != "auditable_brief":
+        return True
+    treatment = scorecard.get("treatment_isolation")
+    return isinstance(treatment, dict) and treatment.get("status") == "pass"
 
 
 def _discover_case_scorecards(
@@ -4498,6 +4535,7 @@ def _validate_a_controlled_scorecard(
     guidance_scores: list[Any],
     reader_clean: dict[str, Any],
     assessment_target: str,
+    treatment_isolation: dict[str, Any],
     diagnostics: list[Experiment080Diagnostic],
 ) -> None:
     required_values = {
@@ -4507,6 +4545,10 @@ def _validate_a_controlled_scorecard(
         },
         "frozen_fact_layer.matches_case": fact_layer.get("matches_case"),
     }
+    if assessment_target == "auditable_brief":
+        required_values["treatment_isolation.status_passed"] = (
+            treatment_isolation.get("status") == "pass"
+        )
     if _reader_clean_required_for_target(assessment_target):
         required_values["reader_clean.pass"] = reader_clean.get("pass")
     invalid_types = [field for field, value in required_values.items() if not isinstance(value, bool)]

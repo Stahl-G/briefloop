@@ -213,6 +213,7 @@ def _write_treatment_condition_metadata(
     condition: str,
     prompt_block: bool = False,
     leak_guidance: bool = False,
+    extra_prompt_guidance: bool = False,
 ) -> None:
     allowed = {
         "baseline": [],
@@ -241,15 +242,21 @@ def _write_treatment_condition_metadata(
         "handoff": {},
     }
     if prompt_block:
+        guidance = [
+            {
+                "entry_id": "AG-0001",
+                "guidance_text": "Lead with business implication before news recap.",
+            }
+        ]
+        if extra_prompt_guidance:
+            guidance.append({
+                "entry_id": "AG-9999",
+                "guidance_text": "Add an extra treatment angle not present in the assessment set.",
+            })
         metadata["handoff"]["prompt_guidance_block"] = {
             "schema_version": "mabw.experiment_080.prompt_guidance_block.v1",
             "source": "case_guidance_set",
-            "guidance": [
-                {
-                    "entry_id": "AG-0001",
-                    "guidance_text": "Lead with business implication before news recap.",
-                }
-            ],
+            "guidance": guidance,
         }
     if leak_guidance:
         metadata["treatment"]["guidance_entries"] = [
@@ -264,16 +271,22 @@ def _write_treatment_condition_metadata(
     _write_json(path, metadata)
 
 
-def _write_improvement_memory_snapshot(ws: Path, *, guidance_text: bool = True) -> None:
+def _write_improvement_memory_snapshot(
+    ws: Path,
+    *,
+    guidance_text: bool = True,
+    selected_entry_ids: list[str] | None = None,
+) -> None:
     path = ws / "output" / "intermediate" / "improvement_memory_snapshot.md"
     path.parent.mkdir(parents=True, exist_ok=True)
+    selected = ", ".join(selected_entry_ids or ["AG-0001"])
     body = [
         "<!-- mabw:improvement-memory-snapshot",
         "schema: multi-agent-brief-improvement-memory/v1",
         "run_id: mabw-20260614T000000Z-public0001",
         "ledger_sha256: " + "a" * 64,
         "memory_sha256: " + "b" * 64,
-        "selected_entry_ids: AG-0001",
+        f"selected_entry_ids: {selected}",
         "-->",
         "",
         "# Improvement Memory Snapshot",
@@ -851,6 +864,11 @@ def _auditable_scorecard_payload(**overrides) -> dict:
         "relevant_repair_transaction_ids": [],
         "auditor_stage_transaction_id": "txn-auditor",
     }
+    payload["treatment_isolation"] = {
+        "schema_version": "mabw.experiment_080.treatment_visibility.v1",
+        "status": "pass",
+        "condition": payload["condition"],
+    }
     return payload
 
 
@@ -1427,6 +1445,32 @@ def test_experiments_080_register_run_rejects_memory_prompt_guidance_block(tmp_p
     assert not output.exists()
 
 
+def test_experiments_080_register_run_rejects_memory_snapshot_extra_guidance_ids(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    _write_treatment_condition_metadata(ws, condition="memory")
+    _write_improvement_memory_snapshot(ws, selected_entry_ids=["AG-0001", "AG-9999"])
+    output = tmp_path / "runs" / "memory.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output, condition="memory"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_TREATMENT_CONTAMINATION"
+    assert {
+        "status": "fail",
+        "reason": "memory_snapshot_guidance_entry_ids_mismatch",
+        "path": "output/intermediate/improvement_memory_snapshot.md",
+        "missing_entry_ids": [],
+        "unexpected_entry_ids": ["AG-9999"],
+    } in payload["details"]["treatment_isolation"]["details"]
+    assert not output.exists()
+
+
 def test_experiments_080_register_run_rejects_memory_live_store_guidance_leak(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "workspace"
@@ -1480,6 +1524,38 @@ def test_experiments_080_register_run_rejects_prompt_only_improvement_memory_sna
     assert {
         "reason": "prompt_only_improvement_memory_snapshot_present",
         "path": "output/intermediate/improvement_memory_snapshot.md",
+    } in payload["details"]["treatment_isolation"]["details"]
+    assert not output.exists()
+
+
+def test_experiments_080_register_run_rejects_prompt_only_extra_guidance_ids(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["conditions"] = ["baseline", "memory", "prompt_only"]
+    case_manifest["allowed_claims"]["memory_mechanism_adds_over_prompt"] = True
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    _write_treatment_condition_metadata(
+        ws,
+        condition="prompt_only",
+        prompt_block=True,
+        extra_prompt_guidance=True,
+    )
+    output = tmp_path / "runs" / "prompt.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output, condition="prompt_only"))
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["details"]["code"] == "E_EXPERIMENT_080_TREATMENT_CONTAMINATION"
+    assert {
+        "status": "fail",
+        "reason": "prompt_guidance_block_unexpected_guidance",
+        "unexpected_entry_ids": ["AG-9999"],
     } in payload["details"]["treatment_isolation"]["details"]
     assert not output.exists()
 
@@ -2012,6 +2088,22 @@ def test_experiments_080_auditable_brief_missing_treatment_isolation_stays_incom
     assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
     assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
     assert assessed["validity_class"] == "invalid_incomplete"
+
+    tampered_scorecard_path = tmp_path / "scorecards" / "memory.tampered.scorecard.json"
+    tampered_assessed_path = tmp_path / "assessed.tampered.scorecard.json"
+    scorecard["control_integrity"]["treatment_isolation_passed"] = True
+    scorecard["treatment_isolation"] = {
+        "schema_version": "mabw.experiment_080.treatment_visibility.v1",
+        "status": "fail",
+        "condition": "memory",
+    }
+    _write_json(tampered_scorecard_path, scorecard)
+    assert validate_scorecard(scorecard) == []
+
+    capsys.readouterr()
+    assert main(_assessment_args(tampered_scorecard_path, assessment_path, tampered_assessed_path)) == 0
+    tampered_assessed = json.loads(tampered_assessed_path.read_text(encoding="utf-8"))
+    assert tampered_assessed["validity_class"] == "invalid_incomplete"
 
 
 def test_experiments_080_auditable_brief_target_blocks_finalize(tmp_path, capsys):
