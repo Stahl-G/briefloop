@@ -153,6 +153,7 @@ AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
     "audit_report_frozen_valid",
     "auditor_gate_report_valid",
     "auditor_gates_no_blocking",
+    "quality_gates_passed",
     "fact_layer_matches",
     "treatment_isolation_passed",
 )
@@ -2830,7 +2831,28 @@ def _blind_artifact_workspace_search_roots(*, case_root: Path, scorecard_path: P
         if parent.name in {"workspace", "workspaces"}:
             roots.append(parent)
         roots.extend([parent / "workspaces", parent / "workspace"])
+        if parent.parent == parent:
+            continue
+        if parent.exists() and parent.is_dir():
+            try:
+                children = sorted(parent.iterdir(), key=lambda item: item.name)
+            except OSError:
+                children = []
+            for child in children:
+                if child.is_dir() and _looks_like_condition_workspace(child):
+                    roots.append(child)
     return _unique_paths(roots)
+
+
+def _looks_like_condition_workspace(path: Path) -> bool:
+    name = path.name.lower()
+    return (
+        re.match(r"^(baseline|memory|prompt_only)([-_].+)?$", name) is not None
+        or name.startswith("080-")
+        or name.endswith("-workspace")
+        or name.endswith("_workspace")
+        or name in {"workspace", "workspaces"}
+    )
 
 
 def _unique_paths(paths: list[Path]) -> list[Path]:
@@ -3143,6 +3165,7 @@ def _scorecard_with_imported_assessment(
         imported_assessment["assessment_notes_present"] = isinstance(assessment.get("notes"), list)
     if blind_import_verified and isinstance(assessment.get("blind_pack"), dict):
         imported_assessment["blind_pack"] = deepcopy(assessment["blind_pack"])
+        imported_assessment["blind_pack"]["guidance_scores_sha256"] = _sha256_json(guidance_scores)
     if blind_import_verified and isinstance(assessment.get("blind_item_id"), str):
         imported_assessment["blind_item_id"] = assessment["blind_item_id"]
     if blind_import_verified and isinstance(assessment.get("blind_artifact_sha256"), str):
@@ -3823,6 +3846,7 @@ def _scorecard_blind_assessment_verified(scorecard: dict[str, Any]) -> bool:
     pack_blind_item_id = blind_pack.get("blind_item_id")
     pack_artifact_sha = blind_pack.get("artifact_sha256")
     pack_scorecard_sha = blind_pack.get("scorecard_sha256")
+    pack_guidance_scores_sha = blind_pack.get("guidance_scores_sha256")
     if (
         guidance_assessment.get("source") != "imported_assessment"
         or blind_pack.get("schema_version") != BLIND_PACK_SCHEMA
@@ -3836,7 +3860,12 @@ def _scorecard_blind_assessment_verified(scorecard: dict[str, Any]) -> bool:
         or pack_artifact_sha != blind_artifact_sha
         or not isinstance(pack_scorecard_sha, str)
         or _SHA256_RE.match(pack_scorecard_sha) is None
+        or not isinstance(pack_guidance_scores_sha, str)
+        or _SHA256_RE.match(pack_guidance_scores_sha) is None
     ):
+        return False
+    guidance_scores = scorecard.get("guidance_scores")
+    if not isinstance(guidance_scores, list) or _sha256_json(guidance_scores) != pack_guidance_scores_sha:
         return False
     current_artifact_sha = _scorecard_audited_brief_target_sha(scorecard)
     if _assessment_target(scorecard) == "auditable_brief" and current_artifact_sha is None:
@@ -4011,7 +4040,8 @@ def _scorecard_archive_projection(
     auditor_warning_types = _quality_gate_warning_finding_types(auditor_report)
     finalize_warning_types = _quality_gate_warning_finding_types(finalize_gate_report)
     quality_gates = {
-        "passed": auditor_status == "pass" and finalize_gate_status == "pass",
+        "passed": _quality_gate_report_control_passed(auditor_report)
+        and _quality_gate_report_control_passed(finalize_gate_report),
         "auditor_status": auditor_status,
         "finalize_status": finalize_gate_status,
         "source": "archive_gate_reports",
@@ -4103,6 +4133,31 @@ def _quality_gate_warning_finding_types(report: Any) -> list[str]:
         if isinstance(finding_type, str) and finding_type:
             warning_types.append(finding_type)
     return sorted(dict.fromkeys(warning_types))
+
+
+def _quality_gate_report_control_passed(report: Any) -> bool:
+    status = _status_from_report(report)
+    return status in {"pass", "warning"} and not _quality_gate_report_has_blocking(report)
+
+
+def _quality_gate_report_has_blocking(report: Any) -> bool:
+    if not isinstance(report, dict):
+        return True
+    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
+            return True
+    gate_results = report.get("gate_results") if isinstance(report.get("gate_results"), list) else []
+    for result in gate_results:
+        if not isinstance(result, dict):
+            continue
+        if result.get("blocking") is True:
+            return True
+        if result.get("status") in {"fail", "blocking"}:
+            return True
+    return False
 
 
 def _auditable_scorecard_auditor_complete(run_record: dict[str, Any]) -> bool:

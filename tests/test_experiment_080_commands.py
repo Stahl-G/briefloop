@@ -167,6 +167,9 @@ def _bind_blind_metadata_for_test(payload: dict) -> dict:
         return payload
     blind_pack["reveal_mapping_schema_version"] = "mabw.experiment_080.blind_reveal_mapping.v1"
     blind_pack["scorecard_sha256"] = _sha256_json(_pre_assessment_scorecard_for_test(payload))
+    guidance_scores = payload.get("guidance_scores")
+    if isinstance(guidance_scores, list):
+        blind_pack["guidance_scores_sha256"] = _sha256_json(guidance_scores)
     return payload
 
 
@@ -600,6 +603,24 @@ def _add_scorecard_archive_reports(archive_manifest: Path) -> None:
         {"schema_version": "multi-agent-brief-artifact-registry/v1", "artifacts": {}},
     )
     _write_json(archive_manifest, manifest)
+
+
+def _replace_archived_json(archive_manifest: Path, *, original_path: str, payload: dict) -> None:
+    archive_root = archive_manifest.parent
+    manifest = json.loads(archive_manifest.read_text(encoding="utf-8"))
+    for record in manifest.get("files", []):
+        if not isinstance(record, dict) or record.get("original_path") != original_path:
+            continue
+        archive_path = record.get("archive_path")
+        if not isinstance(archive_path, str):
+            continue
+        path = archive_root / archive_path
+        _write_json(path, payload)
+        record["sha256"] = _sha256_file(path)
+        record["size_bytes"] = path.stat().st_size
+        _write_json(archive_manifest, manifest)
+        return
+    raise AssertionError(f"missing archived file for {original_path}")
 
 
 def _write_terminal_runtime(
@@ -2174,6 +2195,61 @@ def test_experiments_080_score_run_writes_deterministic_scorecard_draft(tmp_path
     assert "Python does not score guidance manifestation" in scorecard["notes"][1]
 
 
+def test_experiments_080_score_run_treats_warning_only_gate_reports_as_control_pass(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    warning_report = {
+        "status": "warning",
+        "gate_results": [
+            {
+                "gate_id": "material_fact",
+                "status": "warning",
+                "blocking": False,
+                "finding_ids": ["QG_MATERIAL_FACT_001"],
+            }
+        ],
+        "findings": [
+            {
+                "finding_id": "QG_MATERIAL_FACT_001",
+                "finding_type": "unsupported_strategic_implication",
+                "blocking_level": "warning",
+                "blocking": False,
+            }
+        ],
+    }
+    _replace_archived_json(
+        archive_manifest,
+        original_path="output/intermediate/gates/auditor_quality_gate_report.json",
+        payload=warning_report,
+    )
+    _replace_archived_json(
+        archive_manifest,
+        original_path="output/intermediate/gates/finalize_quality_gate_report.json",
+        payload=warning_report,
+    )
+    run_id = archive_manifest.parent.name
+    _write_terminal_runtime(ws, run_id=run_id)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+
+    rc = main(_score_args(case_dir, run_record, scorecard_path))
+
+    assert rc == 0
+    json.loads(capsys.readouterr().out)
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["control_integrity"]["quality_gates_passed"] is True
+    assert scorecard["quality_gates"]["passed"] is True
+    assert scorecard["quality_gates"]["auditor_status"] == "warning"
+    assert scorecard["quality_gates"]["finalize_status"] == "warning"
+    assert scorecard["quality_gates"]["warning_finding_types"] == ["unsupported_strategic_implication"]
+
+
 def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "workspace"
@@ -2263,6 +2339,47 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     no_timing_assessed = json.loads(no_timing_assessed_path.read_text(encoding="utf-8"))
     assert no_timing_assessed["control_integrity"]["timing_available"] is False
     assert no_timing_assessed["validity_class"] == "A_controlled"
+
+
+def test_experiments_080_auditable_brief_warning_gate_is_not_control_passed(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    run_id = "mabw-20260614T000000Z-auditable0001"
+    _write_auditable_target_workspace(ws, run_id=run_id, source_archive_manifest=CLEAN_FIXTURE_MANIFEST)
+    _write_treatment_condition_metadata(ws, condition="memory")
+    _write_improvement_memory_snapshot(ws)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
+    assessment_path = tmp_path / "assessment.json"
+    assessed_path = tmp_path / "assessed.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    record = json.loads(run_record.read_text(encoding="utf-8"))
+    gate = record["target_artifacts"]["auditor_quality_gate_report"]
+    gate["report_status"] = "warning"
+    gate["no_blocking"] = True
+    gate["warning_finding_types"] = ["unsupported_strategic_implication"]
+    _write_json(run_record, record)
+    capsys.readouterr()
+
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["quality_gates"]["auditor_status"] == "warning"
+    assert scorecard["quality_gates"]["passed"] is False
+    assert scorecard["control_integrity"]["quality_gates_passed"] is False
+    assert scorecard["target_readiness"]["status"] == "incomplete"
+    assert scorecard["validity_class"] == "invalid_incomplete"
+    _write_json(assessment_path, _assessment_payload(method="human", run_id=run_id))
+    capsys.readouterr()
+
+    assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
+    assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
+    assert assessed["validity_class"] == "invalid_incomplete"
 
 
 def test_experiments_080_auditable_brief_missing_treatment_isolation_stays_incomplete(
@@ -3447,6 +3564,70 @@ def test_experiments_080_export_blind_pack_resolves_artifacts_from_condition_wor
         assert (blind_dir / item["artifact_path"]).is_file()
 
 
+def test_experiments_080_export_blind_pack_resolves_artifacts_from_experiment_root_workspaces(tmp_path, capsys):
+    case_dir = tmp_path / "cases" / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecard_dir = case_dir / "scorecards"
+    scorecard_dir.mkdir(parents=True)
+    scorecards: list[Path] = []
+    for condition in ("baseline", "memory", "prompt_only"):
+        workspace_scorecard = _write_auditable_scorecard_for_condition(
+            tmp_path,
+            capsys,
+            case_dir=case_dir,
+            condition=condition,
+            run_id=f"mabw-20260614T000000Z-{condition.replace('_', '')}0001",
+        )
+        scorecard = scorecard_dir / f"{condition}.scorecard.json"
+        shutil.copyfile(workspace_scorecard, scorecard)
+        scorecards.append(scorecard)
+    blind_dir = case_dir / "blind-pack"
+
+    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["blind_item_count"] == 3
+    pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    for item in pack["items"]:
+        assert (blind_dir / item["artifact_path"]).is_file()
+
+
+def test_experiments_080_export_blind_pack_resolves_numbered_condition_workspaces(tmp_path, capsys):
+    case_dir = tmp_path / "cases" / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecard_dir = case_dir / "scorecards"
+    scorecard_dir.mkdir(parents=True)
+    numbered_names = {
+        "baseline": "baseline_02",
+        "memory": "memory_03",
+        "prompt_only": "prompt_only_02",
+    }
+    scorecards: list[Path] = []
+    for condition, numbered_name in numbered_names.items():
+        workspace_scorecard = _write_auditable_scorecard_for_condition(
+            tmp_path,
+            capsys,
+            case_dir=case_dir,
+            condition=condition,
+            run_id=f"mabw-20260614T000000Z-{condition.replace('_', '')}0001",
+        )
+        scorecard = scorecard_dir / f"{condition}.scorecard.json"
+        shutil.copyfile(workspace_scorecard, scorecard)
+        workspace_scorecard.parent.rename(tmp_path / numbered_name)
+        scorecards.append(scorecard)
+    blind_dir = case_dir / "blind-pack"
+
+    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["blind_item_count"] == 3
+    pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    for item in pack["items"]:
+        assert (blind_dir / item["artifact_path"]).is_file()
+
+
 def test_experiments_080_import_blind_assessment_verifies_hash_and_reveals_identity(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     _write_auditable_three_condition_case(case_dir)
@@ -4151,6 +4332,34 @@ def test_experiments_080_summarize_excludes_mismatched_blind_metadata_from_forma
     assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
     assert summary["valid_interpretable_metrics"]["denominator"] == 0
     assert summary["manifestation"]["score_2_manifested_count"] == 0
+    assert summary["scorecards"][0]["blind_assessment_verified"] is False
+    assert summary["exclusions"][0]["condition"] == "memory"
+    assert "blind_assessment_not_hash_verified" in summary["exclusions"][0]["reasons"]
+
+
+def test_experiments_080_summarize_excludes_blind_assessment_when_guidance_scores_edited(
+    tmp_path,
+    capsys,
+):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    scorecard = _auditable_scorecard_payload(
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory01",
+        validity_class="A_controlled",
+        blind_assessment_verified=True,
+    )
+    scorecard["guidance_scores"][0]["manifestation_score"] = 3
+    scorecard["guidance_scores"][0]["overapplication"] = True
+    _write_json(case_dir / "memory.scorecard.json", scorecard)
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert summary["raw_observed_assessments"]["score_3_overapplication_count"] == 1
+    assert summary["valid_interpretable_metrics"]["denominator"] == 0
+    assert summary["manifestation"]["score_3_overapplication_count"] == 0
     assert summary["scorecards"][0]["blind_assessment_verified"] is False
     assert summary["exclusions"][0]["condition"] == "memory"
     assert "blind_assessment_not_hash_verified" in summary["exclusions"][0]["reasons"]
