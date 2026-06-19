@@ -668,7 +668,13 @@ def _changed_artifact_events(
             })
 
         validated_changed = (
-            record.get("status") in {ARTIFACT_PRESENT, ARTIFACT_VALID, ARTIFACT_INVALID, ARTIFACT_MISSING}
+            record.get("status") in {
+                ARTIFACT_PRESENT,
+                ARTIFACT_VALID,
+                ARTIFACT_INVALID,
+                ARTIFACT_MISSING,
+                ARTIFACT_STALE,
+            }
             and (
                 old_record.get("status") != record.get("status")
                 or old_record.get("validation_result") != record.get("validation_result")

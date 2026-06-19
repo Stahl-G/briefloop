@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
+from multi_agent_brief.experiments.target_contract import load_experiment_080_condition_metadata
 from multi_agent_brief.orchestrator.runtime_state import (
     E_ACTIVE_REPAIR_OPEN,
     E_ASSESSMENT_TARGET_COMPLETE,
@@ -125,7 +126,8 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
                 ) from exc
             if not isinstance(workflow, dict):
                 raise RuntimeStateError("workflow_state.json must contain an object after runtime state refresh.")
-            _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow)
+            if _workspace_uses_auditable_brief_target(workspace):
+                _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow)
         raise_if_auditable_target_complete_blocks_downstream(
             workspace=workspace,
             workflow=workflow,
@@ -150,3 +152,8 @@ def _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow: dic
         details={"run_integrity": integrity},
         error_code=E_TRANSACTION_INTEGRITY,
     )
+
+
+def _workspace_uses_auditable_brief_target(workspace: Path) -> bool:
+    metadata = load_experiment_080_condition_metadata(workspace)
+    return isinstance(metadata, dict) and metadata.get("assessment_target") == "auditable_brief"

@@ -563,6 +563,8 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
             f"--case <case_dir> --condition {condition} --workspace {workspace} "
             "--output <run_record.json>"
         )
+    if experiment_080.get("assessment_target") == "auditable_brief":
+        return f"multi-agent-brief status --workspace {workspace} --json"
     current_stage = workflow.get("current_stage")
     if fact_layer_import.get("status") == "valid" and current_stage == "analyst":
         return f"multi-agent-brief run --workspace {workspace} --recipe fast-rerun --skip-doctor"

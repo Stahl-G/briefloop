@@ -585,6 +585,73 @@ def test_finalize_cli_replays_sticky_contamination_before_auditable_target_block
     assert refreshed["run_integrity"]["reference_eligible"] is False
 
 
+def test_finalize_cli_allows_contaminated_delivery_run_to_render_local_outputs(
+    tmp_path: Path,
+    capsys,
+):
+    workspace = tmp_path / "workspace"
+    input_dir = workspace / "input"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    input_dir.mkdir(parents=True)
+    intermediate.mkdir(parents=True)
+    (input_dir / "source.md").write_text("dummy", encoding="utf-8")
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: Repaired Delivery Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    paths = runtime_state_paths(workspace)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    run_id = str(workflow["run_id"])
+    with paths["event_log"].open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "schema_version": "multi-agent-brief-event-log/v1",
+                    "event_id": "contam-delivery-1",
+                    "run_id": run_id,
+                    "created_at": "2026-06-14T00:05:00+00:00",
+                    "event_type": "run_integrity_contaminated",
+                    "actor": "cli",
+                    "stage_id": "editor",
+                    "artifact_id": "audited_brief",
+                    "decision": None,
+                    "reason": "Prior legal repair keeps this run non-reference.",
+                    "metadata": {
+                        "reason_code": "prior_repair",
+                        "message": "Prior legal repair keeps this run non-reference.",
+                        "stage_id": "editor",
+                        "artifact_id": "audited_brief",
+                    },
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 0
+    captured = capsys.readouterr()
+
+    assert "run integrity is not clean before finalize" not in captured.err
+    assert (output_dir / "delivery" / "brief.md").exists()
+    assert (intermediate / "finalize_report.json").exists()
+    refreshed = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    assert refreshed["run_integrity"]["status"] == "contaminated"
+    assert refreshed["run_integrity"]["reference_eligible"] is False
+
+
 def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_path: Path, capsys):
     workspace = tmp_path / "workspace"
     input_dir = workspace / "input"

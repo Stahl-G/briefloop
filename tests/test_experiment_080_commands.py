@@ -7,6 +7,9 @@ from pathlib import Path
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.experiments import validate_run_record, validate_scorecard
+from multi_agent_brief.orchestrator.runtime_state import (
+    raise_if_auditable_target_complete_blocks_downstream,
+)
 
 
 SHA = "b" * 64
@@ -1718,6 +1721,50 @@ def test_experiments_080_auditable_brief_target_blocks_finalize(tmp_path, capsys
     assert "outside this target" in captured.err
     assert not (ws / "output" / "delivery" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "finalize_report.json").exists()
+
+
+def test_experiments_080_auditable_brief_target_block_uses_event_log_repair_binding(
+    tmp_path,
+):
+    ws = tmp_path / "workspace"
+    _write_scaffold_workspace(ws)
+    _write_auditable_condition_metadata(ws)
+    _write_auditable_target_workspace(
+        ws,
+        run_id="mabw-20260614T000000Z-auditable0001",
+        source_archive_manifest=CLEAN_FIXTURE_MANIFEST,
+    )
+    event_log = ws / "output" / "intermediate" / "event_log.jsonl"
+    with event_log.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "schema_version": "multi-agent-brief-event-log/v1",
+                    "event_id": "repair-event-1",
+                    "run_id": "mabw-20260614T000000Z-auditable0001",
+                    "created_at": "2026-06-14T00:04:00+00:00",
+                    "event_type": "repair_completed",
+                    "actor": "cli",
+                    "stage_id": "editor",
+                    "artifact_id": None,
+                    "decision": "repair_complete",
+                    "reason": "editor repair completed",
+                    "metadata": {
+                        "transaction_id": "repair-editor-1",
+                        "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+                    },
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+    workflow = json.loads((ws / "output" / "intermediate" / "workflow_state.json").read_text(encoding="utf-8"))
+
+    raise_if_auditable_target_complete_blocks_downstream(
+        workspace=ws,
+        workflow=workflow,
+        command="finalize",
+    )
 
 
 def test_experiments_080_auditable_brief_target_blocks_finalize_complete(tmp_path, capsys):

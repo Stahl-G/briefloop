@@ -3711,6 +3711,17 @@ def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downs
     events = _event_records(ws)
     assert events[-1]["event_type"] == "repair_completed"
     assert events[-1]["metadata"]["repair_owner"] == "editor"
+    stale_validated_events = [
+        event
+        for event in events
+        if event["event_type"] == "artifact_validated"
+        and event["artifact_id"] in {"audit_report", "auditor_quality_gate_report"}
+        and event["metadata"].get("status") == "stale"
+    ]
+    assert {event["artifact_id"] for event in stale_validated_events} == {
+        "audit_report",
+        "auditor_quality_gate_report",
+    }
     checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     assert checked["workflow_state"]["run_integrity"]["status"] == "clean"
     checked_artifacts = checked["artifact_registry"]["artifacts"]

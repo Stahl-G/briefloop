@@ -3095,11 +3095,13 @@ def raise_if_auditable_target_complete_blocks_downstream(
     auditor_gate = _read_json_if_exists(
         workspace / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
     )
+    event_records = read_event_log_records_strict(paths["event_log"]) if paths["event_log"].exists() else []
     projection = project_assessment_target_status(
         condition_metadata=condition_metadata,
         workflow_state=workflow,
         artifact_registry=registry,
         auditor_gate_report=auditor_gate,
+        event_records=event_records,
     )
     if projection.get("target_complete") is not True:
         return

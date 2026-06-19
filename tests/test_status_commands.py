@@ -566,6 +566,8 @@ def test_status_command_rejects_auditable_target_with_unbound_repair_event(tmp_p
     assert experiment["target_complete"] is False
     assert "audit binding relevant_repair_transaction_ids does not match event_log" in experiment["reasons"]
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
+    assert payload["suggested_next_command"] == f"multi-agent-brief status --workspace {ws} --json"
+    assert "/mabw deliver" not in payload["suggested_next_command"]
 
     rc = main(["status", "--workspace", str(ws)])
 
