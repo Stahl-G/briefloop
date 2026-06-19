@@ -688,7 +688,6 @@ def _claim_ledger_support_text(ledger: ClaimLedger) -> str:
             claim.statement,
             claim.evidence_text,
             claim.applicability_reason,
-            *claim.limitations,
         ])
         for value in claim.metadata.values():
             if isinstance(value, str):
