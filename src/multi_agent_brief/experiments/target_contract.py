@@ -46,7 +46,8 @@ ASSESSMENT_TARGET_INCLUDED_CONTROLS = {
         "editor complete",
         "auditor complete",
         "auditor gates pass",
-        "audit report bound to audited brief",
+        "audit report artifact present",
+        "auditor gate report artifact present",
         "run integrity clean",
     ],
     "delivery_brief": [
@@ -63,9 +64,9 @@ AUDITABLE_TARGET_NEXT_ALLOWED = [
 ]
 
 AUDITABLE_TARGET_FORBIDDEN = [
-    "multi-agent-brief finalize",
-    "multi-agent-brief state finalize-complete",
-    "multi-agent-brief deliver",
+    "finalize",
+    "finalize-complete",
+    "deliver",
     "DOCX/PDF delivery quality claims",
     "reader-clean delivery claims",
 ]
@@ -96,6 +97,7 @@ def assessment_target_manifest(target: str) -> dict[str, Any]:
             "included_control_scope": ASSESSMENT_TARGET_INCLUDED_CONTROLS[target],
             "claim_scope": ASSESSMENT_TARGET_CLAIM_SCOPE[target],
             "excluded_claim_scope": ASSESSMENT_TARGET_EXCLUDED_CLAIM_SCOPE[target],
+            "audit_binding_status": "pending_pr1_not_checked",
             "timing_semantics": "diagnostic_only",
             "reader_clean_required": False,
             "delivery_archive_required": False,
@@ -115,6 +117,7 @@ def assessment_target_manifest(target: str) -> dict[str, Any]:
         "included_control_scope": ASSESSMENT_TARGET_INCLUDED_CONTROLS[target],
         "claim_scope": ASSESSMENT_TARGET_CLAIM_SCOPE[target],
         "excluded_claim_scope": ASSESSMENT_TARGET_EXCLUDED_CLAIM_SCOPE[target],
+        "audit_binding_status": "not_applicable",
         "timing_semantics": "required_control_for_a_controlled",
         "reader_clean_required": True,
         "delivery_archive_required": True,
@@ -154,6 +157,7 @@ def project_assessment_target_status(
         "assessment_target_manifest": manifest,
         "target_complete": False,
         "status": "not_applicable" if target != "auditable_brief" else "incomplete",
+        "audit_binding_status": manifest.get("audit_binding_status"),
         "reasons": [],
     }
     if target != "auditable_brief":

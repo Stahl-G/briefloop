@@ -523,11 +523,16 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     text = data["prompt"] + "\n" + "\n".join(data["notes"]) + "\n" + md
     assert data["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
     assert data["assessment_target_manifest"]["reader_clean_required"] is False
+    assert data["assessment_target_manifest"]["audit_binding_status"] == "pending_pr1_not_checked"
     assert "output/delivery/brief.md" not in data["expected_artifacts"]
+    assert "finalize" not in {stage["stage_id"] for stage in data["stage_completion_protocol"]["stages"]}
     assert "TARGET COMPLETE: auditable_brief" in text
     assert "register-run" in text
     assert "score-run" in text
     assert "Do not run finalize" in text
+    assert "multi-agent-brief finalize" not in text
+    assert "state finalize-complete" not in text
+    assert "--stage finalize" not in text
     assert "docx_pdf_delivery_quality" in text
 
 

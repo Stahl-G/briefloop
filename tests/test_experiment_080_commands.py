@@ -1595,6 +1595,7 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert record["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
     assert record["assessment_target_manifest"]["timing_semantics"] == "diagnostic_only"
     assert record["assessment_target_manifest"]["reader_clean_required"] is False
+    assert record["assessment_target_manifest"]["audit_binding_status"] == "pending_pr1_not_checked"
     assert record["run_archive_path"] == ""
     assert record["target_artifacts"]["audited_brief"]["path"] == "output/intermediate/audited_brief.md"
     assert [stage["stage_id"] for stage in record["timing"]["stages"]] == ["analyst", "editor", "auditor"]
@@ -1609,6 +1610,11 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert scorecard["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
     assert scorecard["assessment_target_manifest"]["timing_semantics"] == "diagnostic_only"
     assert scorecard["assessment_target_manifest"]["reader_clean_required"] is False
+    assert scorecard["assessment_target_manifest"]["audit_binding_status"] == "pending_pr1_not_checked"
+    assert scorecard["target_readiness"]["assessment_target"] == "auditable_brief"
+    assert scorecard["target_readiness"]["status"] == "complete"
+    assert scorecard["target_readiness"]["ready_for_assessment_import"] is True
+    assert scorecard["target_readiness"]["missing_control_keys"] == []
     assert scorecard["claim_scope"] == [
         "guidance_manifestation_in_audited_brief",
         "evidence_use_under_frozen_fact_layer",

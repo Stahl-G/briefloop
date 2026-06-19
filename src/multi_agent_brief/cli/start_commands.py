@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -549,11 +550,11 @@ def build_handoff(
     handoff.recipe = recipe
     if recipe == RUNTIME_RECIPE_FAST_RERUN:
         _apply_fast_rerun_recipe(handoff, ws)
-    _apply_experiment_080_assessment_target(handoff, ws)
 
     handoff.stage_completion_protocol = _build_stage_completion_protocol(repo)
     protocol_text = _render_stage_completion_protocol_prompt(handoff.stage_completion_protocol)
     handoff.prompt = f"{handoff.prompt}\n\n{protocol_text}"
+    _apply_experiment_080_assessment_target(handoff, ws)
 
     if run_doctor:
         rc, status = _run_doctor(ws)
@@ -847,6 +848,13 @@ def _apply_experiment_080_assessment_target(handoff: AgentHandoff, workspace: Pa
     handoff.assessment_target_manifest = manifest
     if target != "auditable_brief":
         return
+    handoff.prompt = _without_auditable_delivery_steps(handoff.prompt)
+    handoff.notes = [
+        note
+        for note in handoff.notes
+        if not _is_auditable_delivery_step_note(note)
+    ]
+    handoff.stage_completion_protocol = _without_auditable_delivery_protocol(handoff.stage_completion_protocol)
     text = (
         "Experiment target: auditable_brief.\n"
         "TARGET COMPLETE: auditable_brief when Analyst, Editor, Auditor, and auditor gates are complete and clean.\n"
@@ -862,10 +870,69 @@ def _apply_experiment_080_assessment_target(handoff: AgentHandoff, workspace: Pa
         artifact for artifact in handoff.expected_artifacts if artifact != "output/delivery/brief.md"
     ]
     handoff.next_steps = (
-        f"{handoff.next_steps}\n"
         "080 auditable_brief target: stop after auditor stage-complete; next allowed commands are "
         "experiments 080 register-run and score-run."
-    ).strip()
+    )
+
+
+def _without_auditable_delivery_steps(text: str) -> str:
+    replacements = {
+        " → auditor → finalize": " → auditor",
+        " -> auditor -> finalize": " -> auditor",
+        "auditor → finalize": "auditor",
+        "auditor -> finalize": "auditor",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    blocked_fragments = (
+        "multi-agent-brief finalize",
+        "state finalize-complete",
+        "--stage finalize",
+        "formatter/finalize ->",
+        "Finalize is a Python delivery/rendering tool",
+        "Final status must list the delivery bundle",
+        "Continue through Analyst, Editor, Auditor, gates, finalize",
+        "After all artifacts are ready",
+        "Before finalize,",
+        "After the finalize tool writes",
+        "The 'auditor' step and required gates check must run before finalize",
+        "Record finalize completion",
+        "Formatter/finalize may only write",
+    )
+    kept: list[str] = []
+    for line in text.splitlines():
+        if any(fragment in line for fragment in blocked_fragments):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
+
+
+def _is_auditable_delivery_step_note(note: str) -> bool:
+    blocked_fragments = (
+        FINALIZE_GATE_NOTE,
+        "finalize",
+        "delivery bundle",
+        "delivery artifacts",
+        "formatter",
+    )
+    return any(fragment in note for fragment in blocked_fragments)
+
+
+def _without_auditable_delivery_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(protocol, dict):
+        return protocol
+    rewritten = deepcopy(protocol)
+    rewritten["stages"] = [
+        stage
+        for stage in rewritten.get("stages", [])
+        if not (isinstance(stage, dict) and stage.get("stage_id") == "finalize")
+    ]
+    rewritten["rules"] = [
+        rule
+        for rule in rewritten.get("rules", [])
+        if "finalize" not in str(rule).lower() and "reader delivery" not in str(rule).lower()
+    ]
+    return rewritten
 
 
 def render_handoff_cli(handoff: AgentHandoff) -> str:
