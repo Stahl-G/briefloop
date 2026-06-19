@@ -343,6 +343,14 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "append to candidate_claims.json from chunk workers" in text
     assert "topology satisfaction: default: satisfied by scout" in text
     assert "independent MUST produce (strict): screened_candidates at output/intermediate/screened_candidates.json" in text
+    assert "role MUST produce freeze input: audited_brief at output/intermediate/audited_brief.md" in text
+    assert (
+        "control transaction before stage-complete: "
+        "multi-agent-brief state stage-complete --workspace <workspace> --stage analyst "
+        "(reads audited_brief at output/intermediate/audited_brief.md; "
+        "writes analyst_draft_snapshot at output/intermediate/analyst_draft_snapshot.md)"
+    ) in text
+    assert "MUST produce: analyst_draft_snapshot at output/intermediate/analyst_draft_snapshot.md" not in text
     assert (
         "- screener:\n"
         "  required input artifacts: candidate_claims at output/intermediate/candidate_claims.json\n"

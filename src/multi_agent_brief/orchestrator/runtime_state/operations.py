@@ -4366,7 +4366,10 @@ def _snapshot_analyst_draft(workspace: Path) -> None:
     target = workspace / ANALYST_DRAFT_SNAPSHOT_PATH
     if not source.exists():
         raise RuntimeStateError(
-            "Cannot snapshot Analyst draft because audited_brief.md is missing.",
+            "Cannot snapshot Analyst draft because output/intermediate/audited_brief.md is missing. "
+            "The Analyst role must write audited_brief.md as the working draft; "
+            "state stage-complete --stage analyst is the only writer that freezes "
+            "output/intermediate/analyst_draft_snapshot.md.",
             details={"path": _workspace_relative(workspace, source)},
             error_code=E_REQUIRED_ARTIFACT_MISSING,
         )

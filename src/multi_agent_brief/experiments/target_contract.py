@@ -12,6 +12,7 @@ ALLOWED_ASSESSMENT_TARGETS = {"auditable_brief", "delivery_brief"}
 DEFAULT_ASSESSMENT_TARGET = "delivery_brief"
 EXPERIMENT_080_CONDITION_PATH = Path("experiment/080/condition.json")
 AUDIT_BINDING_SCHEMA = "mabw.auditable_audit_binding.v1"
+AUDITABLE_TARGET_DOWNSTREAM_STAGES = ("analyst", "editor", "auditor")
 
 AUDITABLE_TARGET_ARTIFACTS = {
     "audited_brief": "output/intermediate/audited_brief.md",
@@ -92,6 +93,7 @@ def assessment_target_manifest(target: str) -> dict[str, Any]:
                 "analyst_complete",
                 "editor_complete",
                 "auditor_complete",
+                "analyst_editor_auditor_stage_completion_events_bound",
                 "auditor_quality_gates_pass",
                 "run_integrity_clean",
                 "no_active_repair",
@@ -197,10 +199,16 @@ def _auditable_target_incomplete_reasons(
         reasons.append("active repair is open")
 
     statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
-    for stage_id in ("analyst", "editor", "auditor"):
+    for stage_id in AUDITABLE_TARGET_DOWNSTREAM_STAGES:
         stage_status = statuses.get(stage_id) if isinstance(statuses.get(stage_id), dict) else {}
         if stage_status.get("status") != "complete":
             reasons.append(f"{stage_id} stage is not complete")
+    reasons.extend(
+        auditable_stage_completion_event_reasons(
+            workflow_state=workflow,
+            event_records=event_records,
+        )
+    )
 
     integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
     if integrity.get("status") != "clean":
@@ -238,6 +246,25 @@ def _auditable_target_incomplete_reasons(
             reasons.append("auditor quality gate report contains blocking findings")
             break
 
+    return reasons
+
+
+def auditable_stage_completion_event_reasons(
+    *,
+    workflow_state: dict[str, Any] | None,
+    event_records: list[dict[str, Any]] | None,
+) -> list[str]:
+    workflow = workflow_state if isinstance(workflow_state, dict) else {}
+    if event_records is None:
+        return ["stage completion event log is unavailable"]
+    run_id = workflow.get("run_id")
+    run_id_text = run_id.strip() if isinstance(run_id, str) and run_id.strip() else ""
+    if not run_id_text:
+        return ["stage completion events cannot verify workflow run_id"]
+    reasons: list[str] = []
+    for stage_id in AUDITABLE_TARGET_DOWNSTREAM_STAGES:
+        if _auditable_stage_completion_event(event_records, run_id=run_id_text, stage_id=stage_id) is None:
+            reasons.append(f"{stage_id} stage completion decision_recorded event is missing")
     return reasons
 
 
@@ -351,5 +378,25 @@ def _auditable_auditor_completion_event(
             continue
         metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
         if metadata.get("transaction_id") == transaction_id:
+            return event
+    return None
+
+
+def _auditable_stage_completion_event(
+    records: list[dict[str, Any]],
+    *,
+    run_id: str,
+    stage_id: str,
+) -> dict[str, Any] | None:
+    for event in records:
+        if event.get("run_id") != run_id:
+            continue
+        if event.get("event_type") != "decision_recorded":
+            continue
+        if event.get("stage_id") != stage_id or event.get("decision") != "continue":
+            continue
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        transaction_id = metadata.get("transaction_id")
+        if isinstance(transaction_id, str) and transaction_id:
             return event
     return None
