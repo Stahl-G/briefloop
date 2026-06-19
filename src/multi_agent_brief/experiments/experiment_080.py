@@ -5068,10 +5068,9 @@ def _validate_a_controlled_scorecard(
         },
         "frozen_fact_layer.matches_case": fact_layer.get("matches_case"),
     }
-    if assessment_target == "auditable_brief":
-        required_values["treatment_isolation.status_passed"] = (
-            treatment_isolation.get("status") == "pass"
-        )
+    required_values["treatment_isolation.status_passed"] = (
+        treatment_isolation.get("status") == "pass"
+    )
     if _reader_clean_required_for_target(assessment_target):
         required_values["reader_clean.pass"] = reader_clean.get("pass")
     invalid_types = [field for field, value in required_values.items() if not isinstance(value, bool)]
