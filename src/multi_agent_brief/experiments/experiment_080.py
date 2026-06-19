@@ -97,6 +97,10 @@ PROMPT_ONLY_GUIDANCE_TEXT_ALLOWED_FILES = {
     "output/intermediate/agent_handoff.json",
     "output/intermediate/runtime_handoff.json",
 }
+MEMORY_APPROVED_LIVE_STORE_FILES = {
+    "improvement/ledger.jsonl",
+    "improvement/memory.md",
+}
 ALLOWED_VALIDITY_CLASSES = {
     "A_controlled",
     "B_integration",
@@ -121,6 +125,7 @@ DELIVERY_BRIEF_REQUIRED_CONTROL_KEYS = (
     "finalize_complete",
     "finalize_report_pass",
     "timing_available",
+    "treatment_isolation_passed",
 )
 AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
     "auditor_complete",
@@ -1415,7 +1420,10 @@ def _treatment_guidance_leaks(
             if (
                 condition == "memory"
                 and marker["field"] == "guidance_text"
-                and rel_path == "output/intermediate/improvement_memory_snapshot.md"
+                and (
+                    rel_path == "output/intermediate/improvement_memory_snapshot.md"
+                    or rel_path in MEMORY_APPROVED_LIVE_STORE_FILES
+                )
             ):
                 continue
             leaks.append({
@@ -2528,8 +2536,6 @@ def _scorecard_treatment_isolation_status_passed(
     *,
     assessment_target: str,
 ) -> bool:
-    if assessment_target != "auditable_brief":
-        return True
     treatment = scorecard.get("treatment_isolation")
     return isinstance(treatment, dict) and treatment.get("status") == "pass"
 

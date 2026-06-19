@@ -103,6 +103,12 @@ def _valid_scorecard() -> dict:
             "finalize_complete": True,
             "finalize_report_pass": True,
             "timing_available": True,
+            "treatment_isolation_passed": True,
+        },
+        "treatment_isolation": {
+            "schema_version": "mabw.experiment_080.treatment_visibility.v1",
+            "status": "pass",
+            "condition": "memory",
         },
         "frozen_fact_layer": {"matches_case": True, "mismatches": []},
         "reader_clean": {"pass": True},
@@ -371,6 +377,7 @@ def test_experiment_080_a_controlled_rejects_missing_required_control_key():
         "finalize_complete",
         "finalize_report_pass",
         "timing_available",
+        "treatment_isolation_passed",
     ):
         scorecard = _valid_scorecard()
         del scorecard["control_integrity"][key]

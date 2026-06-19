@@ -754,6 +754,7 @@ def _scorecard_payload(
         "finalize_complete": True,
         "finalize_report_pass": True,
         "timing_available": timing_status == "available",
+        "treatment_isolation_passed": True,
     }
     frozen_fact_layer = {"matches_case": True, "mismatches": []}
     if validity_class == "invalid_contaminated":
@@ -804,6 +805,11 @@ def _scorecard_payload(
             else {"status": "not_computed", "reason": "test"}
         ),
         "guidance_scores": guidance_scores,
+        "treatment_isolation": {
+            "schema_version": "mabw.experiment_080.treatment_visibility.v1",
+            "status": "pass",
+            "condition": condition,
+        },
         "regression": {},
         "notes": [],
     }
@@ -880,6 +886,8 @@ def _write_scorecard_draft_from_fixture(tmp_path: Path, capsys) -> tuple[Path, P
     archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
     _add_scorecard_archive_reports(archive_manifest)
     _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    _write_treatment_condition_metadata(ws, condition="memory")
+    _write_improvement_memory_snapshot(ws)
     run_record = ws / "memory.run_record.json"
     scorecard_path = tmp_path / "memory.scorecard.json"
     assert main(_register_args(case_dir, ws, run_record)) == 0
@@ -1471,7 +1479,7 @@ def test_experiments_080_register_run_rejects_memory_snapshot_extra_guidance_ids
     assert not output.exists()
 
 
-def test_experiments_080_register_run_rejects_memory_live_store_guidance_leak(tmp_path, capsys):
+def test_experiments_080_register_run_accepts_memory_live_store_guidance(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -1489,6 +1497,30 @@ def test_experiments_080_register_run_rejects_memory_live_store_guidance_leak(tm
     output = tmp_path / "runs" / "memory.run_record.json"
 
     rc = main(_register_args(case_dir, ws, output, condition="memory"))
+
+    assert rc == 0
+    json.loads(capsys.readouterr().out)
+    record = json.loads(output.read_text(encoding="utf-8"))
+    assert record["treatment_isolation"]["status"] == "pass"
+
+
+def test_experiments_080_register_run_rejects_baseline_live_memory_store(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    _write_treatment_condition_metadata(ws, condition="baseline")
+    improvement_dir = ws / "improvement"
+    improvement_dir.mkdir()
+    (improvement_dir / "memory.md").write_text(
+        "# Improvement Memory\n\n- Guidance: Lead with business implication before news recap.\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "runs" / "baseline.run_record.json"
+
+    rc = main(_register_args(case_dir, ws, output, condition="baseline"))
 
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
@@ -3112,6 +3144,36 @@ def test_experiments_080_import_assessment_promotes_to_a_controlled(tmp_path, ca
     assert assessed["guidance_scores"][0]["assessment_method"] == "human"
     assert assessed["guidance_assessment"]["source"] == "imported_assessment"
     assert "Python did not judge guidance manifestation" in assessed["notes"][-1]
+
+
+def test_experiments_080_import_assessment_requires_delivery_treatment_isolation(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    archive_manifest = _copy_archive_to_workspace(ws, CLEAN_FIXTURE_MANIFEST)
+    _add_scorecard_archive_reports(archive_manifest)
+    _write_terminal_runtime(ws, run_id=archive_manifest.parent.name)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "memory.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    capsys.readouterr()
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["assessment_target"] == "delivery_brief"
+    assert scorecard["control_integrity"]["treatment_isolation_passed"] is False
+    capsys.readouterr()
+    assessment_path = tmp_path / "assessment.json"
+    output_path = tmp_path / "assessed.scorecard.json"
+    _write_json(assessment_path, _assessment_payload(method="human"))
+
+    rc = main(_assessment_args(scorecard_path, assessment_path, output_path))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["validity_class"] == "invalid_incomplete"
+    assessed = json.loads(output_path.read_text(encoding="utf-8"))
+    assert assessed["validity_class"] == "invalid_incomplete"
 
 
 def test_experiments_080_import_assessment_llm_only_becomes_b_integration(tmp_path, capsys):
