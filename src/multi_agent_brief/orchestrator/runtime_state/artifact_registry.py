@@ -482,8 +482,19 @@ def _artifact_record(
             f"{repair_tx} by '{repair_owner}'; rerun producer stage '{producer_stage}' "
             "before consuming it."
         )
+    stale_baseline_sha256 = None
+    if stale_metadata:
+        baselines = (
+            stale_metadata.get("stale_artifact_baselines")
+            if isinstance(stale_metadata.get("stale_artifact_baselines"), dict)
+            else {}
+        )
+        baseline = baselines.get(artifact_id) if isinstance(baselines.get(artifact_id), dict) else {}
+        baseline_sha = baseline.get("sha256")
+        if isinstance(baseline_sha, str) and baseline_sha:
+            stale_baseline_sha256 = baseline_sha
 
-    return {
+    record = {
         "artifact_id": artifact_id,
         "path": rel_path,
         "format": fmt,
@@ -500,6 +511,9 @@ def _artifact_record(
         "mtime": mtime,
         "sha256": sha256,
     }
+    if stale_baseline_sha256:
+        record["stale_baseline_sha256"] = stale_baseline_sha256
+    return record
 
 
 def _producer_stage_stale_after_repair(

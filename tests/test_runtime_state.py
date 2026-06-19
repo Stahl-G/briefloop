@@ -3759,11 +3759,20 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
         reason="editor repaired audited brief from deterministic route",
     )
     repair_transaction_id = repaired["transaction"]["transaction_id"]
-    assert repaired["artifact_registry"]["artifacts"]["audit_report"]["status"] == "stale"
+    stale_audit_record = repaired["artifact_registry"]["artifacts"]["audit_report"]
+    assert stale_audit_record["status"] == "stale"
+    stale_audit_sha = stale_audit_record["stale_baseline_sha256"]
 
     refreshed_report = json.loads(_valid_audit_report_payload())
     refreshed_report["repair_reviewed"] = True
     _write_json_artifact(ws, "audit_report.json", json.dumps(refreshed_report) + "\n")
+    refreshed_audit_sha = _sha256_file(_intermediate(ws) / "audit_report.json")
+    assert refreshed_audit_sha != stale_audit_sha
+    refreshed_state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    refreshed_audit_record = refreshed_state["artifact_registry"]["artifacts"]["audit_report"]
+    assert refreshed_audit_record["status"] == "stale"
+    assert refreshed_audit_record["sha256"] == refreshed_audit_sha
+    assert refreshed_audit_record["stale_baseline_sha256"] == stale_audit_sha
     _write_quality_gate_report(ws, stage_id="auditor")
     audited_state = complete_stage_transaction(
         workspace=ws,

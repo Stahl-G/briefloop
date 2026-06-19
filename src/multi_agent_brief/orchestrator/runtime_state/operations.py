@@ -3153,6 +3153,7 @@ def raise_if_auditable_target_complete_blocks_downstream(
 def _stale_expected_artifact_refresh_reasons(
     *,
     workspace: Path,
+    workflow: dict[str, Any],
     stage: dict[str, Any],
     artifacts_by_id: dict[str, dict[str, Any]],
     old_registry: dict[str, Any],
@@ -3176,7 +3177,12 @@ def _stale_expected_artifact_refresh_reasons(
         path = workspace / rel_path
         if not path.is_file():
             continue
-        stale_sha = record.get("sha256")
+        stale_sha = _stale_artifact_baseline_sha(
+            workflow=workflow,
+            stage_id=str(stage.get("stage_id") or ""),
+            artifact_id=artifact_id,
+            record=record,
+        )
         current_sha = _sha256_file(path)
         if isinstance(stale_sha, str) and stale_sha == current_sha:
             reasons.append(
@@ -3184,6 +3190,32 @@ def _stale_expected_artifact_refresh_reasons(
                 "and still has the stale hash; rerun the producer stage and refresh the artifact before stage-complete."
             )
     return reasons
+
+
+def _stale_artifact_baseline_sha(
+    *,
+    workflow: dict[str, Any],
+    stage_id: str,
+    artifact_id: str,
+    record: dict[str, Any],
+) -> str | None:
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    stage_status = statuses.get(stage_id) if isinstance(statuses.get(stage_id), dict) else {}
+    metadata = stage_status.get("metadata") if isinstance(stage_status.get("metadata"), dict) else {}
+    baselines = (
+        metadata.get("stale_artifact_baselines")
+        if isinstance(metadata.get("stale_artifact_baselines"), dict)
+        else {}
+    )
+    baseline = baselines.get(artifact_id) if isinstance(baselines.get(artifact_id), dict) else {}
+    baseline_sha = baseline.get("sha256")
+    if isinstance(baseline_sha, str) and baseline_sha:
+        return baseline_sha
+    record_baseline_sha = record.get("stale_baseline_sha256")
+    if isinstance(record_baseline_sha, str) and record_baseline_sha:
+        return record_baseline_sha
+    record_sha = record.get("sha256")
+    return record_sha if isinstance(record_sha, str) and record_sha else None
 
 
 def _complete_stage_transaction(
@@ -3259,6 +3291,7 @@ def _complete_stage_transaction(
         old_registry_for_stale_check = _read_json_if_exists(paths["artifact_registry"])
         stale_artifact_reasons = _stale_expected_artifact_refresh_reasons(
             workspace=ws,
+            workflow=workflow,
             stage=stage,
             artifacts_by_id=artifacts_by_id,
             old_registry=old_registry_for_stale_check,
@@ -3967,6 +4000,25 @@ def _repair_changed_artifact_reasons(
     return reasons, allowed_changed
 
 
+def _stale_artifact_baselines_for_stage(
+    *,
+    stage: dict[str, Any],
+    baseline_records: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    baselines: dict[str, dict[str, Any]] = {}
+    for artifact_id in [str(item) for item in (stage.get("expected_artifacts") or [])]:
+        record = baseline_records.get(artifact_id) if isinstance(baseline_records, dict) else None
+        if not isinstance(record, dict):
+            continue
+        baselines[artifact_id] = {
+            "path": record.get("path"),
+            "status": record.get("status"),
+            "validation_result": record.get("validation_result"),
+            "sha256": record.get("sha256"),
+        }
+    return baselines
+
+
 def _workflow_after_repair_completion(
     *,
     workflow: dict[str, Any],
@@ -3985,6 +4037,12 @@ def _workflow_after_repair_completion(
             error_code=E_ILLEGAL_TRANSITION,
         )
     owner_index = stage_ids.index(owner)
+    stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
+    baseline_records = (
+        active_repair.get("artifact_baseline")
+        if isinstance(active_repair.get("artifact_baseline"), dict)
+        else {}
+    )
     requested_rerun = str(active_repair.get("must_rerun_from") or "")
     rerun_stage = requested_rerun if requested_rerun in stage_ids else _next_stage_id(stages, owner)
     statuses = dict(workflow.get("stage_statuses") or {})
@@ -3999,6 +4057,10 @@ def _workflow_after_repair_completion(
         },
     )
     for stage_id in stage_ids[owner_index + 1:]:
+        stale_artifact_baselines = _stale_artifact_baselines_for_stage(
+            stage=stage_by_id.get(stage_id) or {},
+            baseline_records=baseline_records,
+        )
         if stage_id == rerun_stage:
             statuses[stage_id] = _status_entry(
                 STAGE_READY,
@@ -4008,6 +4070,7 @@ def _workflow_after_repair_completion(
                     "stale_after_repair": True,
                     "repair_transaction_id": transaction_id,
                     "repair_owner": owner,
+                    "stale_artifact_baselines": stale_artifact_baselines,
                 },
             )
         else:
@@ -4019,6 +4082,7 @@ def _workflow_after_repair_completion(
                     "stale_after_repair": True,
                     "repair_transaction_id": transaction_id,
                     "repair_owner": owner,
+                    "stale_artifact_baselines": stale_artifact_baselines,
                 },
             )
     updated = dict(workflow)
