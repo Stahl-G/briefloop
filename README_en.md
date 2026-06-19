@@ -11,7 +11,7 @@ MABW: A Process-Accountable Business Briefing Loop
 
 MABW is an **agent briefing workflow** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns briefing into an accountable loop: collect sources, build a Claim Ledger, let agents draft, run gates, and have a human deliver the final brief.
 
-The v0.8.5 preview release adds the MABW-080 experiment harness path: validate an experiment case, register a completed run, build a deterministic scorecard draft, and import external manifestation assessment. It is measurement infrastructure, not proof that output quality improved.
+The v0.8.5 release ships the MABW-080 experiment harness path: validate an experiment case, scaffold same-evidence conditions, register completed runs, build deterministic scorecard drafts, import external assessment, and summarize case results. It includes pilot-level observation of the expected memory manifestation pattern, but it is measurement infrastructure, not proof that output quality improved.
 
 It is built for:
 
@@ -23,7 +23,7 @@ It is built for:
   <a href="#quick-start">🚀 Quick Start</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
-  <a href="docs/releases/v0.8.5.md">📦 v0.8.5 Preview</a>
+  <a href="docs/releases/v0.8.5.md">📦 v0.8.5 Release</a>
 </p>
 
 ## Why It Is Worth Looking At 👀
@@ -67,7 +67,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. MABW traced how errors propagated; it did not prove semantic correctness.
-- [v0.8.5 preview release note](docs/releases/v0.8.5.md): MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, and delivery snapshot convenience copies. The operator sequence is documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- [v0.8.5 release notes](docs/releases/v0.8.5.md): MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, pilot observation boundaries, and delivery snapshot convenience copies. The operator sequence is documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -183,7 +183,7 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 Current version: **v0.8.5**
 
-The v0.8.5 preview release ships the existing runtime-control spine plus MABW-080 experiment harness tooling: case validation, run registration, deterministic scorecard draft building, and external assessment import. It is a preview of measurement infrastructure, not a claim of output-quality improvement, model-performance measurement, or semantic support proof. 1000+ deterministic tests run in CI without LLM calls.
+The v0.8.5 release ships the existing runtime-control spine plus MABW-080 experiment harness tooling: case validation, same-evidence condition scaffolding, run registration, deterministic scorecard draft building, external assessment import, and case summarization. It is measurement infrastructure with pilot-level observation, not a claim of output-quality improvement, model-performance measurement, or semantic support proof. 1000+ deterministic tests run in CI without LLM calls.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -347,7 +347,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Improvement Ledger](docs/modules/improvement.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
-[v0.8.5 Preview](docs/releases/v0.8.5.md) ·
+[v0.8.5 Release](docs/releases/v0.8.5.md) ·
 [MABW-080 experiment guide](docs/experiments-080.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·

@@ -143,6 +143,8 @@ summarize cases, or create Improvement Memory.
 
 For the full experimental command sequence and public-claim boundaries, see
 [MABW-080 experiment guide](experiments-080.md).
+v0.8.5 includes pilot-level observation, but formal A-controlled claims remain
+out of scope until v0.8.6 hardening and a fresh rerun.
 
 ## Runtimes
 
