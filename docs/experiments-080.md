@@ -145,6 +145,11 @@ It is useful for exercising the command loop and public-safety checks. It is
 not a completed baseline, memory, or prompt-only condition run, and it does not
 contain A/B evidence.
 
+The completed public-safe BriefLoop-090 pilot is documented separately as a
+reference note:
+
+- [BriefLoop-090 A-controlled auditable-brief pilot](reference-runs/briefloop-090-a-controlled-pilot.md)
+
 ## End-To-End Flow
 
 The examples below use:
@@ -474,7 +479,17 @@ Avoid these patterns:
 
 ## Current Completion Boundary
 
-As of v0.8.5, MABW has the 080 command loop and pilot-level observation. The
-pilot can be interpreted as effect observed, not effect proven.
+As of v0.9.0, BriefLoop has the 080 command loop and one completed
+public-safe `auditable_brief` pilot using condition-blind, hash-bound
+assessment. The pilot can be interpreted as effect observed in that synthetic
+case, not as a general output-quality proof.
 
-Formal A-controlled rerun requires v0.8.6 hardening and a fresh 090 experiment.
+The completed pilot has three A-controlled arms under the `auditable_brief`
+target:
+
+- `baseline`: manifestation score 1, no overapplication.
+- `memory`: manifestation score 2, no overapplication.
+- `prompt_only`: manifestation score 3, overapplication.
+
+Broader quality, management-ready delivery, DOCX/PDF delivery quality,
+source-support sufficiency, and generalization claims remain out of scope.

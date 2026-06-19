@@ -26,7 +26,7 @@ tree is fully bilingual.
 | Brief-loop engineering | [brief-loop-engineering.md](brief-loop-engineering.md) | English-first |
 | Migration notes | [MIGRATION.md](MIGRATION.md) | [MIGRATION.zh-CN.md](MIGRATION.zh-CN.md) |
 | What MABW tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
-| MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | Planned |
+| MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | English-first |
 
 ## English-First Reference Docs
 
@@ -40,6 +40,7 @@ tree is fully bilingual.
 - [Runtime recipes](runtime-recipes.md)
 - [Support matrix](support-matrix.md)
 - [Red lines and anti-patterns](red-lines-and-anti-patterns.md)
+- [BriefLoop-090 A-controlled auditable-brief pilot](reference-runs/briefloop-090-a-controlled-pilot.md)
 - [Security](security.md)
 
 ## Chinese-Only Or Memo Docs
