@@ -591,6 +591,12 @@ def _no_route() -> dict[str, Any]:
 
 def _no_legal_route() -> dict[str, Any]:
     route = _no_route()
+    route["ok"] = False
+    route["error_code"] = "E_REPAIR_NO_LEGAL_ROUTE"
+    route["message"] = (
+        "No legal deterministic repair route found. Available routes target imported frozen fact-layer "
+        "artifacts or require human review."
+    )
     route["reason"] = (
         "No legal deterministic repair route found. Available routes target imported frozen fact-layer "
         "artifacts or require human review."
@@ -631,7 +637,7 @@ def _select_route(
         for route in routes:
             source = route.get("source") if isinstance(route.get("source"), dict) else {}
             if source.get("finding_id") == finding_id:
-                return route
+                return _selected_route_or_forbidden_error(route)
         return {
             "ok": False,
             "error_code": "E_REPAIR_ROUTE_NOT_FOUND",
@@ -644,11 +650,28 @@ def _select_route(
                 "error_code": "E_REPAIR_ROUTE_NOT_FOUND",
                 "message": f"No deterministic repair route found for route_index {route_index}.",
             }
-        return routes[route_index]
+        return _selected_route_or_forbidden_error(routes[route_index])
     if not routes:
         return _no_route()
     selected = _default_selected_route(routes)
     return selected if selected is not None else _no_legal_route()
+
+
+def _selected_route_or_forbidden_error(route: dict[str, Any]) -> dict[str, Any]:
+    if route.get("is_imported_fact_layer_forbidden") is not True:
+        return route
+    source = route.get("source") if isinstance(route.get("source"), dict) else {}
+    finding_id = source.get("finding_id") or source.get("finding_type") or "<unknown>"
+    return {
+        "ok": False,
+        "error_code": "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN",
+        "message": (
+            f"Repair route '{finding_id}' targets imported frozen fact-layer artifacts. "
+            "Start a fresh condition workspace or use human review; do not repair imported fact layer artifacts in place."
+        ),
+        "selected_route": route,
+        "allowed_artifacts": list(route.get("allowed_artifacts") or []),
+    }
 
 
 def _default_selected_route(routes: list[dict[str, Any]]) -> dict[str, Any] | None:

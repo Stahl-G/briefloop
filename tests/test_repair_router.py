@@ -10,6 +10,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
     utc_now,
 )
+from multi_agent_brief.repair.router import route_repair
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -867,6 +868,31 @@ def test_repair_start_explicit_imported_fact_layer_route_fails(tmp_path, capsys)
     assert runtime_state_paths(ws)["workflow_state"].read_bytes() == before_workflow
 
 
+def test_repair_route_explicit_imported_fact_layer_route_fails(tmp_path, capsys):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--finding-id", "AUD-002", "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN"
+    assert payload["selected_route"]["source"]["finding_id"] == "AUD-002"
+    assert payload["selected_route"]["is_imported_fact_layer_forbidden"] is True
+    assert any(route["source"]["finding_id"] == "QG_TARGET_RELEVANCE_001" for route in payload["routes"])
+
+
+def test_route_repair_api_explicit_imported_fact_layer_route_fails(tmp_path):
+    ws = _imported_auditor_workspace_with_repair_routes(tmp_path)
+
+    payload = route_repair(workspace=ws, finding_id="AUD-002")
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN"
+    assert payload["selected_route"]["source"]["finding_id"] == "AUD-002"
+    assert payload["selected_route"]["is_imported_fact_layer_forbidden"] is True
+
+
 def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
@@ -896,6 +922,37 @@ def test_repair_start_fails_when_only_imported_fact_layer_routes_exist(tmp_path,
     assert payload["details"]["routes"][0]["source"]["finding_id"] == "AUD-002"
     assert payload["details"]["routes"][0]["is_imported_fact_layer_forbidden"] is True
     assert runtime_state_paths(ws)["workflow_state"].read_bytes() == before_workflow
+
+
+def test_repair_route_fails_when_only_imported_fact_layer_routes_exist(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _mark_fact_layer_imported(ws)
+    _set_workflow_stages(
+        ws,
+        completed=[
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+        ],
+        current_stage="auditor",
+    )
+    _write_imported_claim_ledger_audit_warning(ws)
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_NO_LEGAL_ROUTE"
+    assert payload["repair_owner"] == "none"
+    assert payload["routes"][0]["source"]["finding_id"] == "AUD-002"
+    assert payload["routes"][0]["is_imported_fact_layer_forbidden"] is True
 
 
 def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_path, capsys):

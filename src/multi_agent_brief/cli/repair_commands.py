@@ -25,6 +25,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Show allowed repair owner/artifacts for the current workspace issue.",
     )
     route_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    route_parser.add_argument(
+        "--route-index",
+        type=int,
+        help="0-based route index to inspect explicitly.",
+    )
+    route_parser.add_argument(
+        "--finding-id",
+        help="Finding ID to inspect explicitly.",
+    )
     route_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     start_parser = actions.add_parser(
         "start",
@@ -73,7 +82,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def handle(args: argparse.Namespace) -> int:
     try:
         if args.repair_action == "route":
-            payload = route_repair(workspace=args.workspace)
+            payload = route_repair(
+                workspace=args.workspace,
+                route_index=getattr(args, "route_index", None),
+                finding_id=getattr(args, "finding_id", None),
+            )
             if getattr(args, "json", False):
                 print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
             else:
