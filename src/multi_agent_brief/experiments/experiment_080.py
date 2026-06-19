@@ -2846,7 +2846,7 @@ def _blind_artifact_workspace_search_roots(*, case_root: Path, scorecard_path: P
 def _looks_like_condition_workspace(path: Path) -> bool:
     name = path.name.lower()
     return (
-        name in {"baseline", "memory", "prompt_only"}
+        re.match(r"^(baseline|memory|prompt_only)([-_].+)?$", name) is not None
         or name.startswith("080-")
         or name.endswith("-workspace")
         or name.endswith("_workspace")

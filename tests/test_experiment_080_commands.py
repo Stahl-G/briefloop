@@ -3552,6 +3552,41 @@ def test_experiments_080_export_blind_pack_resolves_artifacts_from_experiment_ro
         assert (blind_dir / item["artifact_path"]).is_file()
 
 
+def test_experiments_080_export_blind_pack_resolves_numbered_condition_workspaces(tmp_path, capsys):
+    case_dir = tmp_path / "cases" / "weekly_public_001"
+    _write_auditable_three_condition_case(case_dir)
+    scorecard_dir = case_dir / "scorecards"
+    scorecard_dir.mkdir(parents=True)
+    numbered_names = {
+        "baseline": "baseline_02",
+        "memory": "memory_03",
+        "prompt_only": "prompt_only_02",
+    }
+    scorecards: list[Path] = []
+    for condition, numbered_name in numbered_names.items():
+        workspace_scorecard = _write_auditable_scorecard_for_condition(
+            tmp_path,
+            capsys,
+            case_dir=case_dir,
+            condition=condition,
+            run_id=f"mabw-20260614T000000Z-{condition.replace('_', '')}0001",
+        )
+        scorecard = scorecard_dir / f"{condition}.scorecard.json"
+        shutil.copyfile(workspace_scorecard, scorecard)
+        workspace_scorecard.parent.rename(tmp_path / numbered_name)
+        scorecards.append(scorecard)
+    blind_dir = case_dir / "blind-pack"
+
+    rc = main(_export_blind_pack_args(case_dir, blind_dir, scorecards, seed="080-fixed"))
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["blind_item_count"] == 3
+    pack = json.loads((blind_dir / "blind_pack.json").read_text(encoding="utf-8"))
+    for item in pack["items"]:
+        assert (blind_dir / item["artifact_path"]).is_file()
+
+
 def test_experiments_080_import_blind_assessment_verifies_hash_and_reveals_identity(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     _write_auditable_three_condition_case(case_dir)
