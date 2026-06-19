@@ -2341,6 +2341,47 @@ def test_experiments_080_auditable_brief_target_scores_without_finalize(tmp_path
     assert no_timing_assessed["validity_class"] == "A_controlled"
 
 
+def test_experiments_080_auditable_brief_warning_gate_is_not_control_passed(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    _write_case_from_archive(case_dir, CLEAN_FIXTURE_MANIFEST)
+    _copy_archive_to_case_source(case_dir, CLEAN_FIXTURE_MANIFEST)
+    case_manifest = json.loads((case_dir / "case_manifest.json").read_text(encoding="utf-8"))
+    case_manifest["assessment_target"] = "auditable_brief"
+    _write_json(case_dir / "case_manifest.json", case_manifest)
+    run_id = "mabw-20260614T000000Z-auditable0001"
+    _write_auditable_target_workspace(ws, run_id=run_id, source_archive_manifest=CLEAN_FIXTURE_MANIFEST)
+    _write_treatment_condition_metadata(ws, condition="memory")
+    _write_improvement_memory_snapshot(ws)
+    run_record = ws / "memory.run_record.json"
+    scorecard_path = tmp_path / "scorecards" / "memory.scorecard.json"
+    assessment_path = tmp_path / "assessment.json"
+    assessed_path = tmp_path / "assessed.scorecard.json"
+    assert main(_register_args(case_dir, ws, run_record)) == 0
+    record = json.loads(run_record.read_text(encoding="utf-8"))
+    gate = record["target_artifacts"]["auditor_quality_gate_report"]
+    gate["report_status"] = "warning"
+    gate["no_blocking"] = True
+    gate["warning_finding_types"] = ["unsupported_strategic_implication"]
+    _write_json(run_record, record)
+    capsys.readouterr()
+
+    assert main(_score_args(case_dir, run_record, scorecard_path)) == 0
+    scorecard = json.loads(scorecard_path.read_text(encoding="utf-8"))
+    assert scorecard["quality_gates"]["auditor_status"] == "warning"
+    assert scorecard["quality_gates"]["passed"] is False
+    assert scorecard["control_integrity"]["quality_gates_passed"] is False
+    assert scorecard["target_readiness"]["status"] == "incomplete"
+    assert scorecard["validity_class"] == "invalid_incomplete"
+    _write_json(assessment_path, _assessment_payload(method="human", run_id=run_id))
+    capsys.readouterr()
+
+    assert main(_assessment_args(scorecard_path, assessment_path, assessed_path)) == 0
+    assessed = json.loads(assessed_path.read_text(encoding="utf-8"))
+    assert assessed["validity_class"] == "invalid_incomplete"
+
+
 def test_experiments_080_auditable_brief_missing_treatment_isolation_stays_incomplete(
     tmp_path, capsys
 ):

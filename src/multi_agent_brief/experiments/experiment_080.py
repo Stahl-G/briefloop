@@ -153,6 +153,7 @@ AUDITABLE_BRIEF_REQUIRED_CONTROL_KEYS = (
     "audit_report_frozen_valid",
     "auditor_gate_report_valid",
     "auditor_gates_no_blocking",
+    "quality_gates_passed",
     "fact_layer_matches",
     "treatment_isolation_passed",
 )
@@ -4106,7 +4107,7 @@ def _auditable_scorecard_gate_status(run_record: dict[str, Any]) -> dict[str, An
     )
     auditor_status = gate.get("report_status") if isinstance(gate.get("report_status"), str) else "missing"
     return {
-        "passed": auditor_status in {"pass", "warning"} and gate.get("no_blocking") is True,
+        "passed": auditor_status == "pass" and gate.get("no_blocking") is True,
         "auditor_status": auditor_status,
         "finalize_status": "not_required_for_target",
         "source": "run_record.target_artifacts",
