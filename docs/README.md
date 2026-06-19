@@ -1,4 +1,9 @@
-# MABW Public Documentation
+# BriefLoop Public Documentation
+
+BriefLoop is the public project name. MABW remains the implementation lineage
+and compatibility surface for CLI commands, runtime commands, package/module
+paths, artifact names, workspace formats, and experiment IDs during the v0.9
+compatibility period.
 
 This index separates the current English documentation path from Chinese
 operator notes and legacy/memo documents. It does not claim the whole `docs/`
@@ -17,6 +22,8 @@ tree is fully bilingual.
 | Architecture overview | [architecture.md](architecture.md) | [architecture.zh-CN.md](architecture.zh-CN.md) |
 | Orchestrator contracts | [orchestrator-contracts.md](orchestrator-contracts.md) | [orchestrator-contracts.zh-CN.md](orchestrator-contracts.zh-CN.md) |
 | Roadmap | [roadmap.md](roadmap.md) | [roadmap.zh-CN.md](roadmap.zh-CN.md) |
+| BriefLoop naming policy | [briefloop-naming.md](briefloop-naming.md) | English-first |
+| Brief-loop engineering | [brief-loop-engineering.md](brief-loop-engineering.md) | English-first |
 | Migration notes | [MIGRATION.md](MIGRATION.md) | [MIGRATION.zh-CN.md](MIGRATION.zh-CN.md) |
 | What MABW tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
 | MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | Planned |
@@ -25,6 +32,8 @@ tree is fully bilingual.
 
 - [Claude Code quickstart](claude-code-quickstart.md)
 - [Runtime agent contract](agent-contract.md)
+- [BriefLoop naming policy](briefloop-naming.md)
+- [Brief-loop engineering](brief-loop-engineering.md)
 - [MABW-080 experiment guide](experiments-080.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)

@@ -2,6 +2,10 @@
 
 This page records public-safe rationale for v0.6 control-surface regression checks.
 
+Naming note: BriefLoop is the public project name, and MABW remains the current
+implementation lineage and compatibility surface. The red lines apply to both
+names.
+
 ## Red Lines
 
 - Do not turn `multi-agent-brief run` into a Python brief generator.
@@ -19,6 +23,7 @@ This page records public-safe rationale for v0.6 control-surface regression chec
 - Do not present coverage checks or Screener output as full-recall proof.
 - Do not execute arbitrary shell strings from evaluation fixtures.
 - Do not ship private prompts, internal paths, real URLs, tokens, or commercial benchmark cases as public fixtures.
+- Do not treat the BriefLoop public naming layer as a runtime rename; `multi-agent-brief`, `/mabw`, package/module paths, artifact names, workspace formats, and MABW experiment IDs remain compatible until an explicit migration changes them.
 
 ## Anti-Patterns
 

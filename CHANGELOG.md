@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Nothing yet.
 
+## [0.9.0] — 2026-06-19
+
+### Added
+
+- **BriefLoop public project name**: introduced BriefLoop as the public
+  project-facing name for the v0.9 compatibility period.
+- **Naming and compatibility policy**: added `docs/briefloop-naming.md` to
+  define BriefLoop, brief-loop engineering, the reserved BriefCI technical
+  sub-layer, and the MABW compatibility surface.
+- **Brief-loop engineering explainer**: added
+  `docs/brief-loop-engineering.md` to define the failure -> finding -> repair
+  -> regression -> human review -> release decision loop.
+
+### Changed
+
+- **Public framing**: README, documentation index, support matrix, architecture
+  status, red lines, and roadmap now describe BriefLoop as the public name and
+  MABW as the implementation lineage / compatibility surface.
+- **v0.9 roadmap direction**: changed the public v0.9 direction from
+  distribution/reference workflows to support sufficiency and brief-loop
+  engineering.
+
+### Compatibility
+
+- No runtime surface was renamed in v0.9.0. The `multi-agent-brief` CLI,
+  `/mabw` commands, `multi_agent_brief` Python package/module path,
+  `multi-agent-brief-workflow` distribution name, workspace formats, artifact
+  names, and MABW experiment IDs remain compatible.
+
+### Boundaries
+
+- v0.9.0 is a brand/public-framing preview release. It does not implement
+  Atomic Claim Graph, Evidence Span Registry, Claim-Support Matrix, semantic
+  proof, automatic hallucination elimination, autonomous repair, or
+  ready-to-send output guarantees.
+
 ## [0.8.5] — 2026-06-16
 
 ### Added

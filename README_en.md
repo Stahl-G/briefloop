@@ -1,17 +1,25 @@
-# Multi-Agent-Brief-Workflow
-MABW: A Process-Accountable Business Briefing Loop
+# BriefLoop
+
+**Open-source loop engineering for auditable business briefings.**
+Formerly **MABW — Multi-Agent Brief Workflow**.
+
 <p align="center">
   <a href="README.md">English</a> |
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+Current version: **v0.9.0**
+Public framing: **BriefLoop / MABW compatibility period**
+Current CLI: `multi-agent-brief`
+Current Claude commands: `/mabw ...`
+
 ## AI briefs that can answer "where did this number come from?"
 
-> When someone asks "where did this number come from?", MABW does not ask the model to improvise an explanation. It opens the ledger.
+> When someone asks "where did this number come from?", BriefLoop does not ask the model to improvise an explanation. It opens the ledger.
 
-MABW is an **agent briefing workflow** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns briefing into an accountable loop: collect sources, build a Claim Ledger, let agents draft, run gates, and have a human deliver the final brief.
+BriefLoop is an **open-source brief-loop engineering harness** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns recurring briefings into governed loops: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records.
 
-The v0.8.5 release ships the MABW-080 experiment harness path: validate an experiment case, scaffold same-evidence conditions, register completed runs, build deterministic scorecard drafts, import external assessment, and summarize case results. It includes pilot-level observation of the expected memory manifestation pattern, but it is measurement infrastructure, not proof that output quality improved.
+The v0.9.0 preview introduces the BriefLoop public name while keeping MABW as the implementation lineage and compatibility surface. Runtime commands, the Python package, workspace formats, artifact names, and MABW-080 experiment IDs remain unchanged.
 
 It is built for:
 
@@ -23,7 +31,7 @@ It is built for:
   <a href="#quick-start">🚀 Quick Start</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
-  <a href="docs/releases/v0.8.5.md">📦 v0.8.5 Release</a>
+  <a href="docs/releases/v0.9.0.md">📦 v0.9.0 Preview</a>
 </p>
 
 ## Why It Is Worth Looking At 👀
@@ -32,7 +40,7 @@ It is built for:
 
 **For team leads**: briefing quality does not live only in someone's memory. Sources, formats, reader preferences, and quality boundaries can become reusable workflow assets.
 
-**For researchers and investors**: MABW is a dogfooded process-accountability agent workflow. It publishes not only success evidence, but also failure boundaries.
+**For researchers and investors**: BriefLoop is a dogfooded process-accountability agent workflow. It publishes not only success evidence, but also failure boundaries.
 
 The core claim is deliberately narrow: **traceability, not semantic proof yet**. Important claims link to registered source entries with source/date/gate metadata. That tells you where the claim entered the workflow; it does not yet prove that the source semantically supports every sub-claim.
 
@@ -59,15 +67,15 @@ The writer-facing model is not "how many control surfaces exist." Each run is me
 | What reader preferences were approved | Human-approved reader guidance only; unapproved suggestions do not take effect | `improvement/ledger.jsonl`, `improvement_memory_snapshot.md` |
 | What checks are guarding delivery | Completion transactions, reader-final gate, source appendix, and delivery checks | `finalize_report.json`, `reader_clean`, `state finalize-complete` |
 
-> MABW can observe and suggest, but only what you approve is remembered, and every approved memory stays in an inspectable ledger you can undo.
+> BriefLoop can observe and suggest, but only what you approve is remembered, and every approved memory stays in an inspectable ledger you can undo.
 
 See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the user-facing explanation.
 
 ## Evidence To Inspect 🔬
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
-- [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. MABW traced how errors propagated; it did not prove semantic correctness.
-- [v0.8.5 release notes](docs/releases/v0.8.5.md): MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, pilot observation boundaries, and delivery snapshot convenience copies. The operator sequence is documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. BriefLoop traced how errors propagated; it did not prove semantic correctness.
+- [v0.9.0 preview notes](docs/releases/v0.9.0.md): BriefLoop public naming, MABW compatibility rules, and the v0.9 support-sufficiency direction. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -181,9 +189,9 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 ## Product Boundary 🧱
 
-Current version: **v0.8.5**
+Current release baseline: v0.9.0
 
-The v0.8.5 release ships the existing runtime-control spine plus MABW-080 experiment harness tooling: case validation, same-evidence condition scaffolding, run registration, deterministic scorecard draft building, external assessment import, and case summarization. It is measurement infrastructure with pilot-level observation, not a claim of output-quality improvement, model-performance measurement, or semantic support proof. 1000+ deterministic tests run in CI without LLM calls.
+The v0.9.0 preview is a public-framing and naming release. It introduces BriefLoop as the public project name and keeps MABW as the implementation lineage and compatibility surface. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs, and it does not implement Atomic Claim Graph, Evidence Span Registry, or Claim-Support Matrix yet.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -197,7 +205,7 @@ Software engineering improves through tests, Git history, CI, and review. This p
 
 ## Three On-Ramps
 
-MABW does not have a "lite mode." The entry cost can be reduced, but the accountability spine stays: Claim Ledger, gates, human delivery, execution trace, and frozen snapshots.
+BriefLoop does not have a "lite mode." The entry cost can be reduced, but the accountability spine stays: Claim Ledger, gates, human delivery, execution trace, and frozen snapshots.
 
 | Path | Best for | How to start | What does not get lighter |
 |---|---|---|---|
@@ -205,20 +213,20 @@ MABW does not have a "lite mode." The entry cost can be reduced, but the account
 | Run once | You want to try a few local materials | Skip search backend setup, use a small set of local text sources, and follow the [golden path](docs/golden-path.md) | Claim Ledger, gates, reader-final gate, and human delivery still apply |
 | Live with it | You want a weekly workflow | Configure search sources, cadence, feedback, and approved preferences with the [weekly-use script](docs/weekly-use.md) | Unapproved preferences do not take effect; approved preferences only affect later frozen runs |
 
-Do not use "audit an arbitrary external AI report" as the lightweight entrypoint. Without a Claim Ledger, external drafts can only receive shallow checks and cannot provide MABW's accountability guarantees.
+Do not use "audit an arbitrary external AI report" as the lightweight entrypoint. Without a Claim Ledger, external drafts can only receive shallow checks and cannot provide BriefLoop's accountability guarantees.
 
 ## Opening A New Sector
 
-MABW is useful when a one-off sector study needs to become a long-running, traceable monitoring workflow. For a new sector such as organoids, AI power demand, energy-storage supply chains, or a regulatory theme, start this way:
+BriefLoop is useful when a one-off sector study needs to become a long-running, traceable monitoring workflow. For a new sector such as organoids, AI power demand, energy-storage supply chains, or a regulatory theme, start this way:
 
 1. **Do one exploration pass first**: use Deep Research, human research, or expert interviews to build an initial map of the key questions, regulators, company universe, product categories, keywords, databases, media sources, and event types worth tracking.
 2. **Do not treat the exploration report as the evidence layer**: it is a draft source universe, watchlist, and taxonomy. Important claims in later briefs still need to trace back to original filings, regulatory documents, company releases, financing disclosures, papers, or trusted media.
 3. **Turn the map into workspace configuration**: encode policy, company/product, financing, and commercialization sections in `user.md` / onboarding config, and maintain reusable source lists, keywords, and company watchlists.
-4. **Run weekly before going daily**: first use MABW to process new weekly information, deduplicate, screen stale items, build the Claim Ledger, render the source appendix, and learn which events actually change judgment.
+4. **Run weekly before going daily**: first use BriefLoop to process new weekly information, deduplicate, screen stale items, build the Claim Ledger, render the source appendix, and learn which events actually change judgment.
 5. **Use feedback to shape the workflow**: stable requirements such as "lead with business impact before background," "do not make management decisions for the reader," or "verify this data type from primary sources" should enter feedback first, then be human-approved into the Improvement Ledger or later templates/gates.
 6. **Increase cadence only after the shape stabilizes**: move from weekly to daily alerts or topic-specific monitoring only after the source pool, section structure, reader preferences, and gates are stable.
 
-In short: Deep Research is for opening the map; MABW is for monitoring the territory. Sector research is not a one-time search dump. It is an ongoing information-governance process.
+In short: Deep Research is for opening the map; BriefLoop is for monitoring the territory. Sector research is not a one-time search dump. It is an ongoing information-governance process.
 
 ## Run Your Own Materials
 
@@ -332,7 +340,7 @@ This project is developed from real manufacturing and briefing work. It needs mo
 
 - **v0.7**: Improvement Ledger — freeze human-authored, human-approved reader preferences into per-run Improvement Memory snapshots; no automatic learning, FrictionStore auto-detection, or output-quality guarantee.
 - **v0.8**: measurement, fast-rerun, role topology, and evaluation — timing projection, same-evidence reruns, default/strict topology choices, and controlled experiment tooling without weakening accountable artifacts.
-- **v0.9**: distribution and reference workflows — easier no-API-key setup, reference runs, and documentation cleanup.
+- **v0.9**: support sufficiency and brief-loop engineering. Minimum path: Atomic Claim Graph -> Evidence Span Registry -> Claim-Support Matrix. Later v0.9.x candidates include semantic assessment proposals, human adjudication, coverage/omission gates, semantic regression, release eligibility, quality packs, and finding-to-repair workflows.
 - **v1.0**: stable baseline — frozen schemas, stable CLI surfaces, security threat model, and clear support boundaries.
 
 See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, see [architecture status](docs/architecture-status.md).
@@ -347,7 +355,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Improvement Ledger](docs/modules/improvement.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
-[v0.8.5 Release](docs/releases/v0.8.5.md) ·
+[v0.9.0 Preview](docs/releases/v0.9.0.md) ·
 [MABW-080 experiment guide](docs/experiments-080.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·

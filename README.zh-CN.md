@@ -1,5 +1,7 @@
-# Multi-Agent-Brief-Workflow
-多Agent简报工作流：一个过程可问责的商业简报Loop
+# BriefLoop
+
+**面向可审计企业简报的开源 Loop Engineering 参考实现。**
+原 **MABW — Multi-Agent Brief Workflow**。
 
 <p align="center">
   <a href="README.md">English</a> |
@@ -8,11 +10,16 @@
 
 ## 让 AI 简报经得起追问
 
-> 当有人问“这个数字哪来的？”MABW 不让模型临场解释，它让系统打开账本。
+当前版本：**v0.9.0**
+公开定位：**BriefLoop / MABW 兼容期**
+当前 CLI：`multi-agent-brief`
+当前 Claude 命令：`/mabw ...`
 
-MABW 是一个面向商业、研究、市场、政策、公司跟踪和管理层汇报的 **agent briefing workflow**。它不是“让 AI 写得更快”的 prompt，而是把简报拆成可追溯、可审计、可交付的工作循环：找来源、建事实账本、让 agent 写作、用门禁把关、由人定稿交付。
+> 当有人问“这个数字哪来的？”BriefLoop 不让模型临场解释，它让系统打开账本。
 
-v0.8.5 release 提供 MABW-080 experiment harness 路径：验证实验 case、scaffold 同证据条件、登记 completed run、生成 deterministic scorecard draft、导入外部 assessment，并汇总 case 结果。它包含 pilot-level observation，说明预期 memory manifestation pattern 可被观察到；但它仍是 measurement infrastructure，不是输出质量提升证明。
+BriefLoop 是一个面向商业、研究、市场、政策、公司跟踪和管理层汇报的 **open-source brief-loop engineering harness**。它不是“让 AI 写得更快”的 prompt，而是把周期性简报变成受治理的闭环：来源包、Claim Ledger、质量门禁、人类决策、结构化 finding、有边界 repair、回归用例和发布记录。
+
+v0.9.0 preview 引入 BriefLoop 作为公开项目名，同时保留 MABW 作为实现血统和兼容面。runtime 命令、Python 包、workspace 格式、artifact 名称和 MABW-080 实验 ID 均不变。
 
 它适合这些人：
 
@@ -24,7 +31,7 @@ v0.8.5 release 提供 MABW-080 experiment harness 路径：验证实验 case、s
   <a href="#快速开始">🚀 快速开始</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md">🔬 公开运行摘要</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md">🧯 失败研究</a> ·
-  <a href="docs/releases/v0.8.5.md">📦 v0.8.5 Release</a>
+  <a href="docs/releases/v0.9.0.md">📦 v0.9.0 Preview</a>
 </p>
 
 ## 为什么值得看 👀
@@ -33,9 +40,9 @@ v0.8.5 release 提供 MABW-080 experiment harness 路径：验证实验 case、s
 
 **给团队负责人**：简报工作不再只靠“某个人记得怎么写”，而是沉淀成可复用的来源、格式、读者偏好和质量边界。
 
-**给研究者和投资人**：这是一个真实 dogfood 出来的 process-accountability agent workflow，不只展示成功样例，也公开失败边界。
+**给研究者和投资人**：BriefLoop 是一个真实 dogfood 出来的 process-accountability agent workflow，不只展示成功样例，也公开失败边界。
 
-MABW 的核心承诺很窄，也很硬：**traceability, not semantic proof yet**。重要主张会链接到登记过的来源条目，并保留来源、日期和门禁记录；这说明“它从哪里进入流水线”，不自动证明来源语义上支持每个子主张。
+BriefLoop 的核心承诺很窄，也很硬：**traceability, not semantic proof yet**。重要主张会链接到登记过的来源条目，并保留来源、日期和门禁记录；这说明“它从哪里进入流水线”，不自动证明来源语义上支持每个子主张。
 
 ## 它怎么工作 🧭
 
@@ -51,7 +58,7 @@ MABW 的核心承诺很窄，也很硬：**traceability, not semantic proof yet*
 
 ## 每周它替你记住四件事 🧩
 
-MABW 的用户心智模型不是“有多少个控制面”，而是每次简报运行时它替你守住四件事：
+BriefLoop 的用户心智模型不是“有多少个控制面”，而是每次简报运行时它替你守住四件事：
 
 | 问题 | 它记录什么 | 你在哪里看 |
 |---|---|---|
@@ -67,8 +74,8 @@ MABW 的用户心智模型不是“有多少个控制面”，而是每次简报
 ## 看一眼证据 🔬
 
 * [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)：展示 Improvement Memory materialization、门禁执行、控制面闭环。它是 integration reference，不是输出质量提升或严格因果效果证明。
-* [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。MABW 当前能追溯错误传播链，但还不能证明每个来源语义支持每个子主张。
-* [v0.8.5 release notes](docs/releases/v0.8.5.md)：MABW-080 experiment harness metadata、deterministic scorecard draft、assessment import、pilot observation boundary，以及 delivery snapshot convenience copies。080 operator sequence 见 [MABW-080 experiment guide](docs/experiments-080.md)。
+* [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。BriefLoop 当前能追溯错误传播链，但还不能证明每个来源语义支持每个子主张。
+* [v0.9.0 preview notes](docs/releases/v0.9.0.md)：BriefLoop 公开命名、MABW 兼容规则和 v0.9 support-sufficiency 方向。MABW-080 operator sequence 仍见 [MABW-080 experiment guide](docs/experiments-080.md)。
 
 我们公开失败分析，因为问责也适用于这个项目自己。
 
@@ -182,9 +189,9 @@ multi-agent-brief claude install --repo-workdir .
 
 ## 产品承诺与边界 🧱
 
-当前版本：**v0.8.5**
+当前 release baseline：v0.9.0
 
-v0.8.5 release 保留既有 runtime control spine，并提供 MABW-080 experiment harness tooling：case validation、same-evidence condition scaffolding、run registration、deterministic scorecard draft building、external assessment import，以及 case summarization。它是带有 pilot-level observation 的 measurement infrastructure，不是输出质量提升、模型性能测量或语义支撑证明。1000+ 确定性测试在 CI 中通过，不依赖任何 LLM 调用。
+v0.9.0 preview 是一次 public-framing 与 naming release。它引入 BriefLoop 作为公开项目名，并保留 MABW 作为实现血统和兼容面。它不重命名 CLI、Python 包、workspace artifacts 或实验 ID，也尚未实现 Atomic Claim Graph、Evidence Span Registry 或 Claim-Support Matrix。
 
 它仍然不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统，也不是投资建议工具、交易信号生成器或人工审核替代品。详见 [当前架构状态](docs/architecture-status.zh-CN.md)、[路线图](docs/roadmap.zh-CN.md) 和 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
 
@@ -198,13 +205,13 @@ v0.8.5 release 保留既有 runtime control spine，并提供 MABW-080 experimen
 
 ### 为什么叫「司乐师」？
 
-英文 orchestrator 来自管弦乐编配与协调的语境，在软件工程中常译为“编排器”。MABW 选择译作「司乐师」：它不直接替各个角色写作，而是调度专业角色按契约合奏。默认 topology 下 Scout 同时承担发现和筛选，但 `screened_candidates.json` 仍是独立 artifact；strict topology 仍可保留独立筛选师。
+英文 orchestrator 来自管弦乐编配与协调的语境，在软件工程中常译为“编排器”。BriefLoop 选择译作「司乐师」：它不直接替各个角色写作，而是调度专业角色按契约合奏。默认 topology 下 Scout 同时承担发现和筛选，但 `screened_candidates.json` 仍是独立 artifact；strict topology 仍可保留独立筛选师。
 
 「司乐」也借用了中国礼乐传统中掌管乐政、乐教的意象。这里不是对古代官职的严格复原，而是一个项目术语：负责维持节奏、边界、秩序和交付。
 
 ## 三条上手路径
 
-MABW 没有“轻量版”。降低的是进入成本，不降低的是信任标准：事实账本、门禁、人工交付、运行轨迹和冻结快照仍然在场。
+BriefLoop 没有“轻量版”。降低的是进入成本，不降低的是信任标准：事实账本、门禁、人工交付、运行轨迹和冻结快照仍然在场。
 
 | 路径 | 适合谁 | 怎么做 | 不降低什么 |
 |---|---|---|---|
@@ -212,20 +219,20 @@ MABW 没有“轻量版”。降低的是进入成本，不降低的是信任标
 | 跑一遍 | 想用几份本地材料试一次 | 不配搜索后端，只放少量本地文本材料，按 [黄金路径](docs/golden-path.zh-CN.md) 走 `new → run → status → deliver` | Claim Ledger、gates、reader-final gate 和人工 deliver 仍然执行 |
 | 过日子 | 想每周稳定使用 | 配置搜索后端、来源节奏、feedback 和已批准偏好，按 [每周使用脚本](docs/weekly-use.zh-CN.md) 运行 | 未批准偏好不会生效，已批准偏好只在后续 run 冻结 |
 
-不要把外部 AI 报告直接丢进来“审计”当作轻量入口。没有 Claim Ledger 的外来稿只能做浅层检查，不能提供 MABW 的核心问责能力。
+不要把外部 AI 报告直接丢进来“审计”当作轻量入口。没有 Claim Ledger 的外来稿只能做浅层检查，不能提供 BriefLoop 的核心问责能力。
 
 ## 开荒一个新行业
 
-MABW 适合把一个行业从“一次性调研”转成“长期、可追踪、可反馈修正的监控流程”。如果你要跟踪一个新赛道，例如类器官、AI 电力需求、储能供应链或新政策主题，建议这样开始：
+BriefLoop 适合把一个行业从“一次性调研”转成“长期、可追踪、可反馈修正的监控流程”。如果你要跟踪一个新赛道，例如类器官、AI 电力需求、储能供应链或新政策主题，建议这样开始：
 
 1. **先做一次开荒研究**：用 Deep Research、人工研究或行业专家访谈建立初始地图，包括核心问题、监管机构、公司宇宙、产品类型、关键词、数据库、常用媒体和需要持续跟踪的事件类型。
 2. **不要把开荒报告当作事实来源**：它只能作为 source universe、watchlist 和分类框架的草稿。后续简报里的关键事实仍必须回到原始公告、监管文件、公司新闻、投融资披露、论文或可信媒体。
 3. **把行业地图转成 workspace 配置**：把政策、公司/产品、投融资、商业化信号等栏目写入 `user.md` / onboarding 配置，把常用来源、关键词和公司名单整理成可复用 watchlist。
-4. **先按周跑，不急着日报化**：第一阶段用 MABW 每周处理新增信息，去重、筛旧、建立 Claim Ledger、生成来源附录，并记录哪些信息真正影响判断。
+4. **先按周跑，不急着日报化**：第一阶段用 BriefLoop 每周处理新增信息，去重、筛旧、建立 Claim Ledger、生成来源附录，并记录哪些信息真正影响判断。
 5. **用反馈修正口径**：当你发现“先讲影响再讲背景”“不要替管理层下决策”“某类数据必须核原始来源”这类稳定要求，先记录为反馈，再由人工批准进入 Improvement Ledger 或后续模板/门禁。
 6. **稳定后再提高频率**：只有当来源池、栏目结构、读者偏好和门禁规则稳定后，再把周报拆成日报、预警或专题跟踪。
 
-一句话：Deep Research 适合开荒，MABW 适合长期监控。行业研究不是一次性“多搜一点”，而是一个持续的信息治理流程。
+一句话：Deep Research 适合开荒，BriefLoop 适合长期监控。行业研究不是一次性“多搜一点”，而是一个持续的信息治理流程。
 
 ## 跑自己的材料
 
@@ -331,7 +338,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 
 * **v0.7**：改进账本（Improvement Ledger）——把人工撰写、人工批准的读者偏好按运行冻结为 Improvement Memory snapshot；不做自动学习、FrictionStore 自动检测或输出质量承诺。
 * **v0.8**：measurement、fast-rerun、role topology 与 evaluation——计时投影、同证据 rerun、default / strict topology 选择，以及不削弱问责 artifacts 的受控实验工具。
-* **v0.9**：分发与参考工作流——零 API key 快速上手、参考运行、文档整顿。
+* **v0.9**：support sufficiency 与 brief-loop engineering。最低路径：Atomic Claim Graph -> Evidence Span Registry -> Claim-Support Matrix。后续 v0.9.x 候选包括 semantic assessment proposals、human adjudication、coverage/omission gates、semantic regression、release eligibility、quality packs 和 finding-to-repair workflows。
 * **v1.0**：稳定基线——schema 冻结、CLI 表面冻结、安全威胁模型、明确支持边界。
 
 完整版见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)；已实现 vs 目标的区分见 [docs/architecture-status.zh-CN.md](docs/architecture-status.zh-CN.md)。
@@ -349,7 +356,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 [每周使用脚本](docs/weekly-use.zh-CN.md) ·
 [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
 [失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md) ·
-[v0.8.5 Release](docs/releases/v0.8.5.md) ·
+[v0.9.0 Preview](docs/releases/v0.9.0.md) ·
 [MABW-080 experiment guide](docs/experiments-080.md) ·
 [发布验证清单](docs/launch-validation.zh-CN.md) ·
 [支持矩阵](docs/support-matrix.md) ·

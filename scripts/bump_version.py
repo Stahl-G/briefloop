@@ -21,7 +21,7 @@ def main() -> int:
     # 1. pyproject.toml
     changed += _replace_in_file(
         ROOT / "pyproject.toml",
-        r'version\s*=\s*"[^"]*"',
+        r'(?m)^version\s*=\s*"[^"]*"',
         f'version = "{version}"',
         "pyproject.toml",
     )

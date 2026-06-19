@@ -1,10 +1,10 @@
 # 公开路线图
 
-这是 Multi-Agent Brief Workflow 的公开路线图。它只描述产品方向和版本目标。详细实现计划、schema 草案、prompt notes、私有评测样例和商业化场景设计，在代码稳定前不放进公开仓库。
+这是 BriefLoop（原 MABW — Multi-Agent Brief Workflow）的公开路线图。它只描述产品方向和版本目标。详细实现计划、schema 草案、prompt notes、私有评测样例和商业化场景设计，在代码稳定前不放进公开仓库。
 
 ## 方向
 
-Multi-Agent Brief Workflow 的下一阶段是一个由司乐师（Orchestrator）管理、由契约（contracts）约束、可审计的简报工作流：
+BriefLoop 的下一阶段是一个由司乐师（Orchestrator）管理、由契约（contracts）约束、可审计的简报工作流：
 
 ```text
 subagent-first runtime
@@ -232,15 +232,29 @@ Non-goals:
 - 不做 `lite mode`，不做跳过 gates 的 fast path，不做部分 fact-layer import。
 - v0.8 协议实际执行前，不声称 v0.7 Improvement Memory 已经改善输出质量。
 
-### v0.9 — Distribution And Reference Workflows
+### v0.9 — Support Sufficiency And Brief-loop Engineering
 
-目标：降低新用户安装和试跑 demo workflow 的门槛。
+目标：从 source-level traceability 推进到 support sufficiency，同时保留现有 MABW 兼容面。
 
 公开范围：
 
-- 改进 package assets、install checks 和 runtime setup diagnostics。
-- 提供 public-safe reference workflows。
+- 使用 BriefLoop 作为公开项目名，同时保留 MABW 作为历史实现名和兼容面。
+- 定义最低 support-sufficiency 路径：
+  - Atomic Claim Graph
+  - Evidence Span Registry
+  - Claim-Support Matrix
+- v0.9 兼容期内保留 `multi-agent-brief`、`/mabw`、Python package/module paths、artifact names、workspace formats 和 MABW experiment IDs。
 - 对不稳定能力继续标注 experimental、interface-only 或 CLI-only。
+
+后续 v0.9.x 候选：
+
+- semantic assessment proposals
+- human adjudication
+- coverage and omission gates
+- semantic regression
+- release eligibility
+- quality packs
+- finding-to-repair workflows
 
 ### v1.0 — Stable Orchestrated Brief Workflow
 

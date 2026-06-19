@@ -1,5 +1,10 @@
 # Support Matrix
 
+BriefLoop is the public project name during the v0.9 compatibility period.
+MABW remains the implementation lineage and compatibility surface. This matrix
+continues to list supported CLI/runtime surfaces by their current compatible
+names such as `multi-agent-brief`, `/mabw`, and MABW-080.
+
 Each capability has one of the following statuses:
 
 | Status | Meaning |
@@ -143,8 +148,8 @@ summarize cases, or create Improvement Memory.
 
 For the full experimental command sequence and public-claim boundaries, see
 [MABW-080 experiment guide](experiments-080.md).
-v0.8.5 includes pilot-level observation, but formal A-controlled claims remain
-out of scope until v0.8.6 hardening and a fresh rerun.
+v0.8.5 included pilot-level observation, but formal A-controlled claims remain
+out of scope until a fresh post-hardening rerun.
 
 ## Runtimes
 

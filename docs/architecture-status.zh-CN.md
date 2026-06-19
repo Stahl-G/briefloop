@@ -2,6 +2,10 @@
 
 本页用于区分当前实现状态和 roadmap 目标。按 roadmap 做开发前，先读这里。
 
+公开命名说明：BriefLoop 是 v0.9 兼容期的公开项目名。MABW 仍是实现血统和兼容面，
+包括 `multi-agent-brief`、`/mabw`、Python package/module 路径、artifact 名称、
+workspace 格式和实验 ID。本页描述当前已实现 runtime 能力，不代表 breaking rename。
+
 ## 已实现的公开基线
 
 - 标准用户路径是 subagent-first。
@@ -37,6 +41,8 @@ roadmap 中提到的概念不一定已经实现。除非代码、测试和 suppo
 - public-safe reference workflows
 - smart routing or automatic taste learning
 - FrictionStore、retrieval memory、runtime-specific guidance filtering 和 output-quality validation
+- v0.9 support-sufficiency 结构，例如 Atomic Claim Graph、Evidence Span Registry 和
+  Claim-Support Matrix
 
 ## Experimental 或有限能力
 

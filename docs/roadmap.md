@@ -1,10 +1,10 @@
 # Public Roadmap
 
-This is the public roadmap for Multi-Agent Brief Workflow. It describes product direction and version goals at a high level. Detailed implementation planning, schema drafts, prompt notes, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until they are stabilized in code.
+This is the public roadmap for BriefLoop, formerly MABW — Multi-Agent Brief Workflow. It describes product direction and version goals at a high level. Detailed implementation planning, schema drafts, prompt notes, private evaluation cases, and commercial scenario design are intentionally kept out of the public repository until they are stabilized in code.
 
 ## Direction
 
-Multi-Agent Brief Workflow is moving toward an orchestrated, contract-governed briefing workflow:
+BriefLoop is moving toward an orchestrated, contract-governed briefing workflow:
 
 ```text
 subagent-first runtime
@@ -232,15 +232,29 @@ Non-goals:
 - no `lite mode`, no gate-skipping fast path, and no partial fact-layer imports
 - no claim that v0.7 Improvement Memory has already improved output quality before the v0.8 protocol is run
 
-### v0.9 — Distribution And Reference Workflows
+### v0.9 — Support Sufficiency And Brief-loop Engineering
 
-Goal: make installation and demo workflows easier for new users.
+Goal: move from source-level traceability toward support sufficiency while preserving the existing MABW compatibility surfaces.
 
 Public scope:
 
-- Improve package assets, install checks, and runtime setup diagnostics.
-- Provide public-safe reference workflows.
+- Use BriefLoop as the public project name while keeping MABW as the historical implementation name and compatibility surface.
+- Define the minimum support-sufficiency path:
+  - Atomic Claim Graph
+  - Evidence Span Registry
+  - Claim-Support Matrix
+- Keep `multi-agent-brief`, `/mabw`, Python package/module paths, artifact names, workspace formats, and MABW experiment IDs compatible during the v0.9 period.
 - Keep unsupported channels clearly labeled as experimental, interface-only, or CLI-only.
+
+Later v0.9.x candidates:
+
+- semantic assessment proposals
+- human adjudication
+- coverage and omission gates
+- semantic regression
+- release eligibility
+- quality packs
+- finding-to-repair workflows
 
 ### v1.0 — Stable Orchestrated Brief Workflow
 

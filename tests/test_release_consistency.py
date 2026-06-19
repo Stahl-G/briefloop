@@ -11,6 +11,7 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_release_consistency.py"
 VERSION_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_version_consistency.py"
+BUMP_VERSION_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "bump_version.py"
 RELEASE_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "release.sh"
 
 
@@ -117,6 +118,45 @@ def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, mo
     monkeypatch.setattr(module, "VERSION_FILE", root / "VERSION")
 
     assert module.main() == 1
+
+
+def test_bump_version_does_not_rewrite_ruff_target_version(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("bump_version_test", BUMP_VERSION_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    root = tmp_path
+    (root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text(
+        "[project]\n"
+        'version = "0.0.1"\n'
+        "\n"
+        "[tool.ruff]\n"
+        'target-version = "py39"\n',
+        encoding="utf-8",
+    )
+    (root / "README.md").write_text("Current version: **v0.0.1**\n", encoding="utf-8")
+    (root / "README_en.md").write_text("Current version: **v0.0.1**\n", encoding="utf-8")
+    (root / "README.zh-CN.md").write_text("当前版本：**v0.0.1**\n", encoding="utf-8")
+    adapter = root / "src" / "multi_agent_brief" / "hermes" / "adapter.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text('version="v0.0.1"\nversion: 0.0.1\nversion: str = "v0.0.1"\n', encoding="utf-8")
+    skill = root / ".agents" / "hermes-skills" / "multi-agent-brief-hermes" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("version: 0.0.1\n", encoding="utf-8")
+    formula = root / "Formula" / "multi-agent-brief.rb"
+    formula.parent.mkdir()
+    formula.write_text("url \"https://example.invalid/refs/tags/v0.0.1.tar.gz\"\n", encoding="utf-8")
+
+    monkeypatch.setattr(module, "ROOT", root)
+    monkeypatch.setattr(module, "VERSION_FILE", root / "VERSION")
+
+    assert module.main() == 0
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "1.2.3"' in pyproject
+    assert 'target-version = "py39"' in pyproject
+    assert 'target-version = "1.2.3"' not in pyproject
 
 
 def test_release_script_syntax():

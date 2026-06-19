@@ -2,6 +2,12 @@
 
 This page separates current implementation state from roadmap goals. Use it before planning roadmap-driven changes.
 
+Public naming note: BriefLoop is the public project name for the v0.9
+compatibility period. MABW remains the implementation lineage and compatibility
+surface for `multi-agent-brief`, `/mabw`, Python package/module paths, artifact
+names, workspace formats, and experiment IDs. This page describes implemented
+runtime capability, not a breaking rename.
+
 ## Implemented Public Baseline
 
 - The standard user path is subagent-first.
@@ -37,6 +43,8 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 - policy packs
 - public-safe reference workflows
 - FrictionStore, autonomous learning, retrieval memory, runtime-specific guidance filtering, and output-quality validation
+- v0.9 support-sufficiency structures such as Atomic Claim Graph, Evidence Span
+  Registry, and Claim-Support Matrix
 
 ## Experimental Or Limited Surfaces
 

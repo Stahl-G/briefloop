@@ -1,19 +1,23 @@
-# 🧾 MABW — Process Accountability for the Briefing Loop
+# 🧾 BriefLoop
 
-**An AI briefing workflow that can answer "where did this number come from?"**
+**Open-source loop engineering for auditable business briefings.**
+Formerly **MABW — Multi-Agent Brief Workflow**.
 
 <p align="center">
   <a href="README.md">English</a> |
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Current version: **v0.8.5**
+Current version: **v0.9.0**
+Public framing: **BriefLoop / MABW compatibility period**
+Current CLI: `multi-agent-brief`
+Current Claude commands: `/mabw ...`
 
-> When someone asks where a number came from, MABW does not ask the model to improvise an explanation. It opens the ledger.
+> When someone asks where a number came from, BriefLoop does not ask the model to improvise an explanation. It opens the ledger.
 
-MABW turns AI-assisted business briefing into an accountable loop with four steps: **find and screen evidence -> freeze key facts into a Claim Ledger -> write only from the ledger -> audit independently.** A human delivers the final brief. Always.
+BriefLoop turns AI-assisted business briefing into a governed loop: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records. It is not a prompt that makes AI write faster; it is a process-accountability harness for recurring business briefings.
 
-The v0.8.5 release ships the MABW-080 experiment harness path: validate an experiment case, scaffold same-evidence conditions, register completed runs, build deterministic scorecard drafts, import external assessment, and summarize case results. It includes pilot-level observation of the expected memory manifestation pattern, but it is measurement infrastructure, not proof that output quality improved.
+The v0.9.0 preview introduces the BriefLoop public name while keeping MABW as the implementation lineage and compatibility surface. The runtime commands, Python package, workspace format, artifact names, and MABW-080 experiment IDs are unchanged.
 
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
@@ -141,13 +145,13 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 
 - **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
-- **[v0.8.5 release notes](docs/releases/v0.8.5.md)**: MABW-080 experiment harness metadata, deterministic scorecard drafts, assessment import, pilot observation boundaries, and delivery snapshot convenience copies. The operator sequence is documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- **[v0.9.0 preview notes](docs/releases/v0.9.0.md)**: BriefLoop public naming, MABW compatibility rules, and the v0.9 support-sufficiency direction. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.
 
 ## 🚫 What It Is Not
 
-MABW is not an autonomous agent. It does not auto-edit brief content, does not auto-learn, has no long-term memory system, and is not an investment-advice tool or a replacement for human review.
+BriefLoop is not an autonomous agent. It does not auto-edit brief content, does not auto-learn, has no long-term memory system, and is not an investment-advice tool or a replacement for human review.
 
 The current first-class writer path is Claude Code. Hermes is supported as a delegated / scheduled runtime. OpenCode, Codex, and manual entrypoints exist, but they are not yet end-to-end validated as the primary writer path.
 
@@ -155,7 +159,7 @@ The current first-class writer path is Claude Code. Hermes is supported as a del
 
 Coding agents improved fast because their loop has infrastructure: tests, CI, git history, code review. Business briefings have none of that. A junior analyst gets corrected verbally and the correction evaporates; the next hire repeats the mistake. A stale number slips into a brief and nobody can say at which step. The work is important, repetitive, and structurally unable to get better.
 
-MABW moves that same machinery: auditability, structured feedback, human gating, execution traces, into a domain with no clean reward signal, where the human *is* the reward channel and deterministic gates build the reward surface.
+BriefLoop moves that same machinery: auditability, structured feedback, human gating, execution traces, into a domain with no clean reward signal, where the human *is* the reward channel and deterministic gates build the reward surface.
 
 ## 🧑‍💻 Using It For Real Work
 
@@ -186,7 +190,7 @@ Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden 
 
 ## 🧭 A Note On Provenance
 
-I build and use MABW as part of my actual weekly briefing work at a listed manufacturer, in a role that touches strategy and investor relations. Nothing from my employer enters this repository: no data, no documents, no non-public information. What crosses over is discipline, not data: patterns rewritten from memory in vocabulary that holds for any company. And where this project makes guarantees, they are written as mechanisms: schemas, gates, transactions, tests, not as promises.
+I build and use BriefLoop as part of my actual weekly briefing work at a listed manufacturer, in a role that touches strategy and investor relations. Nothing from my employer enters this repository: no data, no documents, no non-public information. What crosses over is discipline, not data: patterns rewritten from memory in vocabulary that holds for any company. And where this project makes guarantees, they are written as mechanisms: schemas, gates, transactions, tests, not as promises.
 
 ## 🎼 Why The Orchestrator Is Called 司乐师
 
@@ -196,7 +200,7 @@ The runtime orchestrator is named after the office in the Chinese ritual-music t
 
 **v0.8**: measurement, fast-rerun, role topology, and evaluation — timing projection, same-evidence reruns, default/strict topology choices, and controlled experiment tooling without weakening accountable artifacts.
 
-**v0.9**: distribution and reference workflows.
+**v0.9**: support sufficiency and brief-loop engineering. Minimum path: Atomic Claim Graph -> Evidence Span Registry -> Claim-Support Matrix. Later v0.9.x candidates include semantic assessment proposals, human adjudication, coverage/omission gates, semantic regression, release eligibility, quality packs, and finding-to-repair workflows.
 
 **v1.0**: frozen schemas and CLI surface, compatibility policy, and threat model.
 
