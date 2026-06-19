@@ -486,6 +486,21 @@ def test_experiment_080_auditable_brief_a_controlled_requires_treatment_isolatio
     assert "a_controlled_requirements_not_met" in _codes(diagnostics)
 
 
+def test_experiment_080_delivery_brief_a_controlled_requires_treatment_isolation_pass():
+    scorecard = _valid_scorecard()
+    scorecard["assessment_target"] = "delivery_brief"
+    scorecard["control_integrity"]["treatment_isolation_passed"] = True
+    scorecard["treatment_isolation"] = {
+        "schema_version": "mabw.experiment_080.treatment_visibility.v1",
+        "status": "fail",
+        "condition": "memory",
+    }
+
+    diagnostics = validate_scorecard(scorecard)
+
+    assert "a_controlled_requirements_not_met" in _codes(diagnostics)
+
+
 def test_experiment_080_scorecard_requires_non_empty_guidance_scores():
     scorecard = _valid_scorecard()
     scorecard["guidance_scores"] = []
