@@ -145,6 +145,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 
 - **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
+- **[BriefLoop-090 A-controlled auditable-brief pilot](docs/reference-runs/briefloop-090-a-controlled-pilot.md)**: one public-safe synthetic case with condition-blind, hash-bound `auditable_brief` assessment. In this case, memory showed the approved guidance without obvious harm, while prompt-only over-applied the same guidance. It is not a general output-quality claim.
 - **[v0.9.0 preview notes](docs/releases/v0.9.0.md)**: BriefLoop public naming, MABW compatibility rules, and the v0.9 support-sufficiency direction. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.

@@ -148,8 +148,10 @@ summarize cases, or create Improvement Memory.
 
 For the full experimental command sequence and public-claim boundaries, see
 [MABW-080 experiment guide](experiments-080.md).
-v0.8.5 included pilot-level observation, but formal A-controlled claims remain
-out of scope until a fresh post-hardening rerun.
+v0.9.0 includes one completed public-safe synthetic `auditable_brief` pilot with
+condition-blind, hash-bound assessment. This supports only the documented
+single-case observation; broader quality, delivery-readiness, factual
+correctness, and generalization claims remain out of scope.
 
 ## Runtimes
 
