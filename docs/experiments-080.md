@@ -405,6 +405,10 @@ Use these patterns:
 Avoid these patterns:
 
 - "MABW proved the guidance improved quality."
+- "MABW proved Improvement Memory works."
+- "A-controlled effect validated."
+- "Memory improves output quality."
+- "Prompt-only is worse."
 - "Python judged the guidance manifested."
 - "The skeleton fixture demonstrates a win."
 - "The model performed better."
@@ -412,8 +416,7 @@ Avoid these patterns:
 
 ## Current Completion Boundary
 
-As of v0.8.5 preview, MABW has the command loop and a public-safe pilot
-skeleton. A complete public result still requires completed condition runs,
-registered run records, deterministic scorecards, imported assessment, and a
-case summary. Until that exists, the public skeleton remains setup material,
-not an experiment result.
+As of v0.8.5, MABW has the 080 command loop and pilot-level observation. The
+pilot can be interpreted as effect observed, not effect proven.
+
+Formal A-controlled rerun requires v0.8.6 hardening and a fresh 090 experiment.
