@@ -3825,6 +3825,32 @@ def test_experiments_080_summarize_excludes_binding_invalid_scorecards_from_form
     assert "control_integrity.audit_binding_valid_not_true" in summary["exclusions"][0]["reasons"]
 
 
+def test_experiments_080_summarize_excludes_mismatched_blind_metadata_from_formal_metrics(tmp_path, capsys):
+    case_dir = tmp_path / "weekly_public_001"
+    _write_case(case_dir)
+    scorecard = _auditable_scorecard_payload(
+        condition="memory",
+        run_id="mabw-20260614T000000Z-memory01",
+        validity_class="A_controlled",
+        blind_assessment_verified=True,
+    )
+    scorecard["guidance_assessment"]["blind_pack"]["blind_item_id"] = "BI-Z"
+    scorecard["guidance_assessment"]["blind_pack"]["artifact_sha256"] = "b" * 64
+    scorecard["guidance_assessment"]["blind_pack"]["scorecard_sha256"] = "not-a-sha"
+    _write_json(case_dir / "memory.scorecard.json", scorecard)
+
+    rc = main(_summarize_args(case_dir))
+
+    assert rc == 0
+    summary = json.loads(capsys.readouterr().out)["summary"]
+    assert summary["raw_observed_assessments"]["score_2_manifested_count"] == 1
+    assert summary["valid_interpretable_metrics"]["denominator"] == 0
+    assert summary["manifestation"]["score_2_manifested_count"] == 0
+    assert summary["scorecards"][0]["blind_assessment_verified"] is False
+    assert summary["exclusions"][0]["condition"] == "memory"
+    assert "blind_assessment_not_hash_verified" in summary["exclusions"][0]["reasons"]
+
+
 def test_experiments_080_summarize_handles_missing_condition_scorecards(tmp_path, capsys):
     case_dir = tmp_path / "weekly_public_001"
     _write_case(case_dir)

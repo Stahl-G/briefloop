@@ -3667,10 +3667,23 @@ def _scorecard_blind_assessment_verified(scorecard: dict[str, Any]) -> bool:
         if isinstance(guidance_assessment.get("blind_pack"), dict)
         else {}
     )
+    blind_item_id = guidance_assessment.get("blind_item_id")
+    blind_artifact_sha = guidance_assessment.get("blind_artifact_sha256")
+    pack_blind_item_id = blind_pack.get("blind_item_id")
+    pack_artifact_sha = blind_pack.get("artifact_sha256")
+    pack_scorecard_sha = blind_pack.get("scorecard_sha256")
     return (
-        blind_pack.get("hash_verified") is True
-        and isinstance(guidance_assessment.get("blind_item_id"), str)
-        and isinstance(guidance_assessment.get("blind_artifact_sha256"), str)
+        guidance_assessment.get("source") == "imported_assessment"
+        and blind_pack.get("schema_version") == BLIND_PACK_SCHEMA
+        and blind_pack.get("hash_verified") is True
+        and isinstance(blind_item_id, str)
+        and BLIND_ITEM_ID_RE.match(blind_item_id) is not None
+        and pack_blind_item_id == blind_item_id
+        and isinstance(blind_artifact_sha, str)
+        and _SHA256_RE.match(blind_artifact_sha) is not None
+        and pack_artifact_sha == blind_artifact_sha
+        and isinstance(pack_scorecard_sha, str)
+        and _SHA256_RE.match(pack_scorecard_sha) is not None
     )
 
 
