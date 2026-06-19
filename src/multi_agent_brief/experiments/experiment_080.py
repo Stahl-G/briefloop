@@ -16,6 +16,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import random
 import re
 import shlex
 import subprocess
@@ -64,6 +65,9 @@ CASE_SUMMARY_SCHEMA = "mabw.experiment_080.case_summary.v1"
 SCAFFOLD_CONDITION_SCHEMA = "mabw.experiment_080.scaffold_condition.v1"
 CASE_VALIDATION_SCHEMA = "mabw.experiment_080.case_validation.v1"
 RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
+BLIND_PACK_SCHEMA = "mabw.experiment_080.blind_pack.v1"
+BLIND_REVEAL_MAPPING_SCHEMA = "mabw.experiment_080.blind_reveal_mapping.v1"
+BLIND_ITEM_ID_RE = re.compile(r"^BI-[A-Z]$")
 
 SCAFFOLD_METADATA_PATH = "experiment/080/condition.json"
 SCAFFOLD_INSTRUCTIONS_PATH = "experiment/080/operator_instructions.md"
@@ -916,11 +920,232 @@ def score_run_record(
     }
 
 
+def export_blind_pack(
+    *,
+    case_dir: str | Path,
+    scorecards: list[str | Path],
+    output: str | Path,
+    seed: str | None = None,
+) -> dict[str, Any]:
+    """Export a condition-blind, hash-bound assessment pack.
+
+    The scorer-facing pack strips condition names, run IDs, workspace paths,
+    treatment metadata, and scorecard control metadata. The separate reveal
+    mapping binds each blind item to the source scorecard, condition, run ID,
+    and audited-brief artifact hash for later deterministic assessment import.
+    """
+
+    case_root = Path(case_dir).expanduser().resolve()
+    output_dir = Path(output).expanduser()
+    if not output_dir.is_absolute():
+        output_dir = (Path.cwd() / output_dir).resolve()
+    else:
+        output_dir = output_dir.resolve()
+    if output_dir.exists() and not output_dir.is_dir():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_OUTPUT_EXISTS",
+            "blind pack output path exists but is not a directory.",
+            output=str(output_dir),
+        )
+    if not scorecards:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "export-blind-pack requires at least one --scorecard path.",
+        )
+
+    case_validation = validate_case_dir(case_root)
+    if not case_validation.get("ok"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_CASE_INVALID",
+            "MABW-080 case validation failed.",
+            errors=case_validation.get("errors") or [],
+            warnings=case_validation.get("warnings") or [],
+        )
+    case_manifest = _load_json_object(case_root / "case_manifest.json", label="case_manifest")
+    guidance_set = _load_json_object(case_root / "guidance_set.json", label="guidance_set")
+    case_target = _assessment_target(case_manifest)
+    if case_target != "auditable_brief":
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_ASSESSMENT_TARGET_INVALID",
+            "blind assessment packs are currently supported only for assessment_target=auditable_brief.",
+            assessment_target=case_target,
+        )
+
+    loaded: list[dict[str, Any]] = []
+    for raw_path in scorecards:
+        scorecard_path = Path(raw_path).expanduser()
+        if not scorecard_path.is_absolute():
+            scorecard_path = (Path.cwd() / scorecard_path).resolve()
+        else:
+            scorecard_path = scorecard_path.resolve()
+        scorecard = _read_scorecard_file(scorecard_path)
+        if scorecard.get("case_id") != case_manifest.get("case_id"):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_SCORECARD_INVALID",
+                "scorecard.case_id does not match case_manifest.case_id.",
+                scorecard_case_id=scorecard.get("case_id"),
+                case_id=case_manifest.get("case_id"),
+            )
+        if _assessment_target(scorecard) != "auditable_brief":
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_ASSESSMENT_TARGET_INVALID",
+                "blind assessment pack scorecards must use assessment_target=auditable_brief.",
+                scorecard_assessment_target=_assessment_target(scorecard),
+            )
+        target_readiness = (
+            scorecard.get("target_readiness")
+            if isinstance(scorecard.get("target_readiness"), dict)
+            else {}
+        )
+        if target_readiness.get("ready_for_assessment_import") is not True:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_SCORECARD_INVALID",
+                "blind assessment pack scorecards must be ready for assessment import.",
+                scorecard_path=str(scorecard_path),
+                target_readiness=target_readiness,
+            )
+        artifact_path, artifact_sha = _resolve_blind_audited_brief(
+            scorecard_path=scorecard_path,
+            scorecard=scorecard,
+        )
+        loaded.append({
+            "path": scorecard_path,
+            "scorecard": scorecard,
+            "scorecard_sha256": _sha256_json(scorecard),
+            "artifact_path": artifact_path,
+            "artifact_sha256": artifact_sha,
+        })
+
+    if len(loaded) > 26:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "export-blind-pack supports at most 26 scorecards for A-Z blind labels.",
+            scorecard_count=len(loaded),
+        )
+
+    ordered = sorted(
+        loaded,
+        key=lambda item: (
+            str(item["scorecard"].get("condition") or ""),
+            str(item["scorecard"].get("run_id") or ""),
+            item["scorecard_sha256"],
+        ),
+    )
+    rng = random.Random(seed) if seed is not None else random.SystemRandom()
+    shuffled = list(ordered)
+    rng.shuffle(shuffled)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    items_dir = output_dir / "items"
+    items_dir.mkdir(parents=True, exist_ok=True)
+
+    pack_items: list[dict[str, Any]] = []
+    reveal_items: list[dict[str, Any]] = []
+    for idx, item in enumerate(shuffled):
+        label = chr(ord("A") + idx)
+        blind_item_id = f"BI-{label}"
+        item_dir = items_dir / blind_item_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+        artifact_rel = f"items/{blind_item_id}/audited_brief.md"
+        artifact_bytes = item["artifact_path"].read_bytes()
+        _write_experiment_output_idempotently(
+            output_dir / artifact_rel,
+            artifact_bytes,
+            artifact_label="blind audited brief artifact",
+        )
+        artifact_sha = _sha256_file(output_dir / artifact_rel)
+        if artifact_sha != item["artifact_sha256"]:
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_BLIND_PACK_INVALID",
+                "blind item artifact hash changed while exporting.",
+                blind_item_id=blind_item_id,
+            )
+        guidance_ids = _scorecard_guidance_entry_ids(item["scorecard"])
+        item_record = {
+            "schema_version": BLIND_PACK_SCHEMA,
+            "blind_item_id": blind_item_id,
+            "display_label": label,
+            "assessment_target": "auditable_brief",
+            "artifact_role": "audited_brief",
+            "artifact_path": artifact_rel,
+            "artifact_sha256": artifact_sha,
+            "scorecard_sha256": item["scorecard_sha256"],
+            "guidance_entry_ids": guidance_ids,
+            "condition_blind": True,
+            "hash_bound": True,
+        }
+        _write_experiment_output_idempotently(
+            item_dir / "item.json",
+            _json_bytes(item_record),
+            artifact_label="blind item metadata",
+        )
+        pack_items.append(item_record)
+        reveal_items.append({
+            "blind_item_id": blind_item_id,
+            "condition": item["scorecard"]["condition"],
+            "run_id": item["scorecard"]["run_id"],
+            "scorecard_sha256": item["scorecard_sha256"],
+            "artifact_sha256": artifact_sha,
+            "guidance_entry_ids": guidance_ids,
+            "scorecard": item["scorecard"],
+        })
+
+    pack = {
+        "schema_version": BLIND_PACK_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": case_manifest["case_id"],
+        "assessment_target": "auditable_brief",
+        "condition_blind": True,
+        "guidance_blind": False,
+        "hash_bound": True,
+        "rubric": _blind_pack_rubric(guidance_set),
+        "items": pack_items,
+        "notes": [
+            "Scorer-facing pack intentionally strips condition names, run IDs, local paths, and treatment metadata.",
+            "This pack is for external assessment only; it is not a delivery artifact.",
+        ],
+    }
+    reveal = {
+        "schema_version": BLIND_REVEAL_MAPPING_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": case_manifest["case_id"],
+        "assessment_target": "auditable_brief",
+        "blind_pack_schema_version": BLIND_PACK_SCHEMA,
+        "randomization_seed": seed if seed is not None else None,
+        "items": reveal_items,
+    }
+    pack_written = _write_experiment_output_idempotently(
+        output_dir / "blind_pack.json",
+        _json_bytes(pack),
+        artifact_label="blind pack",
+    )
+    reveal_written = _write_experiment_output_idempotently(
+        output_dir / "reveal_mapping.json",
+        _json_bytes(reveal),
+        artifact_label="blind reveal mapping",
+    )
+    return {
+        "ok": True,
+        "schema_version": BLIND_PACK_SCHEMA,
+        "experiment_id": EXPERIMENT_080_ID,
+        "case_id": case_manifest["case_id"],
+        "assessment_target": "auditable_brief",
+        "output": str(output_dir),
+        "blind_pack": str(output_dir / "blind_pack.json"),
+        "reveal_mapping": str(output_dir / "reveal_mapping.json"),
+        "blind_item_count": len(pack_items),
+        "blind_item_ids": [item["blind_item_id"] for item in pack_items],
+        "written": pack_written or reveal_written,
+    }
+
+
 def import_assessment(
     *,
-    scorecard: str | Path,
+    scorecard: str | Path | None,
     assessment: str | Path,
     output: str | Path,
+    blind_pack: str | Path | None = None,
+    reveal_mapping: str | Path | None = None,
 ) -> dict[str, Any]:
     """Import human/assisted manifestation assessment into a scorecard.
 
@@ -929,11 +1154,26 @@ def import_assessment(
     regressions occurred.
     """
 
-    scorecard_path = Path(scorecard).expanduser()
-    if not scorecard_path.is_absolute():
-        scorecard_path = (Path.cwd() / scorecard_path).resolve()
-    else:
-        scorecard_path = scorecard_path.resolve()
+    blind_pack_path = _optional_resolved_path(blind_pack)
+    reveal_mapping_path = _optional_resolved_path(reveal_mapping)
+    if (blind_pack_path is None) != (reveal_mapping_path is None):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind assessment import requires both --blind-pack and --reveal-mapping.",
+        )
+    if blind_pack_path is None and scorecard is None:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_SCORECARD_INVALID",
+            "import-assessment requires --scorecard unless --blind-pack and --reveal-mapping are supplied.",
+        )
+
+    scorecard_path: Path | None = None
+    if scorecard is not None:
+        scorecard_path = Path(scorecard).expanduser()
+        if not scorecard_path.is_absolute():
+            scorecard_path = (Path.cwd() / scorecard_path).resolve()
+        else:
+            scorecard_path = scorecard_path.resolve()
     assessment_path = Path(assessment).expanduser()
     if not assessment_path.is_absolute():
         assessment_path = (Path.cwd() / assessment_path).resolve()
@@ -945,7 +1185,17 @@ def import_assessment(
     else:
         output_path = output_path.resolve()
 
-    scorecard_payload = _load_json_object(scorecard_path, label="scorecard")
+    if blind_pack_path is not None and reveal_mapping_path is not None:
+        scorecard_payload, assessment_payload = _scorecard_and_assessment_from_blind_import(
+            blind_pack_path=blind_pack_path,
+            reveal_mapping_path=reveal_mapping_path,
+            assessment_path=assessment_path,
+        )
+    else:
+        assert scorecard_path is not None
+        scorecard_payload = _load_json_object(scorecard_path, label="scorecard")
+        assessment_payload = _load_json_object(assessment_path, label="assessment")
+
     scorecard_diagnostics = validate_scorecard(scorecard_payload)
     if scorecard_diagnostics:
         _raise_experiment_error(
@@ -953,7 +1203,6 @@ def import_assessment(
             "scorecard.json failed schema validation.",
             errors=[diagnostic.to_dict() for diagnostic in scorecard_diagnostics],
         )
-    assessment_payload = _load_json_object(assessment_path, label="assessment")
     assessment_diagnostics = validate_assessment(assessment_payload)
     if assessment_diagnostics:
         _raise_experiment_error(
@@ -2397,6 +2646,268 @@ def _validate_assessment_identity(scorecard: dict[str, Any], assessment: dict[st
         )
 
 
+def _optional_resolved_path(value: str | Path | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        return (Path.cwd() / path).resolve()
+    return path.resolve()
+
+
+def _resolve_blind_audited_brief(*, scorecard_path: Path, scorecard: dict[str, Any]) -> tuple[Path, str]:
+    target_artifacts = (
+        scorecard.get("target_artifacts")
+        if isinstance(scorecard.get("target_artifacts"), dict)
+        else {}
+    )
+    audited = target_artifacts.get("audited_brief") if isinstance(target_artifacts.get("audited_brief"), dict) else {}
+    rel_path = audited.get("path")
+    expected_sha = audited.get("sha256")
+    if not isinstance(rel_path, str) or _unsafe_relative_archive_path(rel_path):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_PACK_INVALID",
+            "scorecard target_artifacts.audited_brief.path must be a safe relative path.",
+            scorecard_path=str(scorecard_path),
+        )
+    if not isinstance(expected_sha, str) or not _SHA256_RE.match(expected_sha):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_PACK_INVALID",
+            "scorecard target_artifacts.audited_brief.sha256 must be present before blind export.",
+            scorecard_path=str(scorecard_path),
+        )
+    candidates = [
+        scorecard_path.parent / rel_path,
+        scorecard_path.parent.parent / rel_path,
+        Path.cwd() / rel_path,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            actual_sha = _sha256_file(candidate)
+            if actual_sha != expected_sha:
+                _raise_experiment_error(
+                    "E_EXPERIMENT_080_BLIND_PACK_INVALID",
+                    "audited brief artifact bytes do not match scorecard target artifact hash.",
+                    scorecard_path=str(scorecard_path),
+                    artifact_path=str(candidate),
+                    expected_sha256=expected_sha,
+                    actual_sha256=actual_sha,
+                )
+            return candidate.resolve(), actual_sha
+    _raise_experiment_error(
+        "E_EXPERIMENT_080_BLIND_PACK_INVALID",
+        "audited brief artifact could not be resolved for blind export. Place scorecards beside the workspace root or run export from the workspace root.",
+        scorecard_path=str(scorecard_path),
+        artifact_path=rel_path,
+    )
+
+
+def _blind_pack_rubric(guidance_set: dict[str, Any]) -> dict[str, Any]:
+    entries = guidance_set.get("entries") if isinstance(guidance_set.get("entries"), list) else []
+    rubric_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        rubric_entries.append({
+            "entry_id": entry.get("entry_id"),
+            "guidance_text": entry.get("guidance_text"),
+            "expected_manifestation": entry.get("expected_manifestation"),
+            "relevance_rule": entry.get("relevance_rule"),
+        })
+    return {
+        "question": (
+            "Assess whether each shared guidance entry manifests in the blind audited brief "
+            "under the frozen fact layer and auditor gate boundary."
+        ),
+        "score_vocabulary": {
+            "0": "not_observed",
+            "1": "weak_or_partial",
+            "2": "manifested",
+            "3": "overapplied_or_harmful_template",
+        },
+        "guidance_entries": rubric_entries,
+    }
+
+
+def _scorecard_guidance_entry_ids(scorecard: dict[str, Any]) -> list[str]:
+    guidance = scorecard.get("guidance_assessment") if isinstance(scorecard.get("guidance_assessment"), dict) else {}
+    entry_ids = guidance.get("guidance_entry_ids") if isinstance(guidance.get("guidance_entry_ids"), list) else []
+    return sorted(entry_id for entry_id in entry_ids if isinstance(entry_id, str))
+
+
+def _scorecard_and_assessment_from_blind_import(
+    *,
+    blind_pack_path: Path,
+    reveal_mapping_path: Path,
+    assessment_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    pack = _load_json_object(blind_pack_path, label="blind pack")
+    reveal = _load_json_object(reveal_mapping_path, label="reveal mapping")
+    assessment = _load_json_object(assessment_path, label="assessment")
+    _validate_blind_pack_and_reveal(pack=pack, reveal=reveal)
+    blind_item_id = assessment.get("blind_item_id")
+    if not isinstance(blind_item_id, str) or not BLIND_ITEM_ID_RE.match(blind_item_id):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind assessment must reference a BI-A style blind_item_id.",
+            blind_item_id=blind_item_id,
+        )
+    if "condition" in assessment or "run_id" in assessment:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind assessment files must not include condition or run_id; reveal mapping supplies them after hash verification.",
+        )
+    pack_item = _blind_item_by_id(pack, blind_item_id)
+    reveal_item = _blind_item_by_id(reveal, blind_item_id)
+    artifact_sha = reveal_item.get("artifact_sha256")
+    if pack_item.get("artifact_sha256") != artifact_sha:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack item hash does not match reveal mapping.",
+            blind_item_id=blind_item_id,
+        )
+    if pack_item.get("scorecard_sha256") != reveal_item.get("scorecard_sha256"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack item scorecard hash does not match reveal mapping.",
+            blind_item_id=blind_item_id,
+        )
+    if pack_item.get("guidance_entry_ids") != reveal_item.get("guidance_entry_ids"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack item guidance entry ids do not match reveal mapping.",
+            blind_item_id=blind_item_id,
+        )
+    if assessment.get("blind_artifact_sha256") != artifact_sha:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind assessment artifact hash does not match reveal mapping.",
+            blind_item_id=blind_item_id,
+            assessment_sha256=assessment.get("blind_artifact_sha256"),
+            expected_sha256=artifact_sha,
+        )
+    artifact_path = pack_item.get("artifact_path")
+    if not isinstance(artifact_path, str) or _unsafe_relative_archive_path(artifact_path):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack item artifact_path must be safe and relative.",
+            blind_item_id=blind_item_id,
+        )
+    artifact_file = (blind_pack_path.parent / artifact_path).resolve()
+    try:
+        artifact_file.relative_to(blind_pack_path.parent.resolve())
+    except ValueError:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack item artifact_path escapes blind pack directory.",
+            blind_item_id=blind_item_id,
+        )
+    if not artifact_file.is_file():
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack artifact is missing.",
+            blind_item_id=blind_item_id,
+        )
+    actual_sha = _sha256_file(artifact_file)
+    if actual_sha != artifact_sha:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack artifact hash mismatch.",
+            blind_item_id=blind_item_id,
+            expected_sha256=artifact_sha,
+            actual_sha256=actual_sha,
+        )
+    scorecard = reveal_item.get("scorecard") if isinstance(reveal_item.get("scorecard"), dict) else {}
+    if _sha256_json(scorecard) != reveal_item.get("scorecard_sha256"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "reveal mapping scorecard hash mismatch.",
+            blind_item_id=blind_item_id,
+        )
+    target_artifacts = (
+        scorecard.get("target_artifacts")
+        if isinstance(scorecard.get("target_artifacts"), dict)
+        else {}
+    )
+    audited = target_artifacts.get("audited_brief") if isinstance(target_artifacts.get("audited_brief"), dict) else {}
+    if audited.get("sha256") != artifact_sha:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "reveal mapping scorecard audited brief hash does not match blind artifact hash.",
+            blind_item_id=blind_item_id,
+            scorecard_audited_brief_sha256=audited.get("sha256"),
+            blind_artifact_sha256=artifact_sha,
+        )
+    if scorecard.get("condition") != reveal_item.get("condition") or scorecard.get("run_id") != reveal_item.get("run_id"):
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "reveal mapping condition/run identity does not match embedded scorecard.",
+            blind_item_id=blind_item_id,
+            reveal_condition=reveal_item.get("condition"),
+            scorecard_condition=scorecard.get("condition"),
+            reveal_run_id=reveal_item.get("run_id"),
+            scorecard_run_id=scorecard.get("run_id"),
+        )
+    hydrated_assessment = deepcopy(assessment)
+    hydrated_assessment["condition"] = reveal_item.get("condition")
+    hydrated_assessment["run_id"] = reveal_item.get("run_id")
+    hydrated_assessment["case_id"] = reveal.get("case_id")
+    hydrated_assessment.setdefault("experiment_id", EXPERIMENT_080_ID)
+    hydrated_assessment["blind_pack"] = {
+        "schema_version": pack.get("schema_version"),
+        "reveal_mapping_schema_version": reveal.get("schema_version"),
+        "blind_item_id": blind_item_id,
+        "artifact_sha256": artifact_sha,
+        "scorecard_sha256": reveal_item.get("scorecard_sha256"),
+        "hash_verified": True,
+    }
+    return scorecard, hydrated_assessment
+
+
+def _validate_blind_pack_and_reveal(*, pack: dict[str, Any], reveal: dict[str, Any]) -> None:
+    if pack.get("schema_version") != BLIND_PACK_SCHEMA:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            f"blind_pack.schema_version must be {BLIND_PACK_SCHEMA}.",
+        )
+    if reveal.get("schema_version") != BLIND_REVEAL_MAPPING_SCHEMA:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            f"reveal_mapping.schema_version must be {BLIND_REVEAL_MAPPING_SCHEMA}.",
+        )
+    for key in ("experiment_id", "case_id", "assessment_target"):
+        if pack.get(key) != reveal.get(key):
+            _raise_experiment_error(
+                "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+                "blind pack and reveal mapping identity mismatch.",
+                mismatch=key,
+                blind_pack_value=pack.get(key),
+                reveal_mapping_value=reveal.get(key),
+            )
+    if pack.get("condition_blind") is not True or pack.get("hash_bound") is not True:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind pack must be condition_blind and hash_bound.",
+        )
+
+
+def _blind_item_by_id(container: dict[str, Any], blind_item_id: str) -> dict[str, Any]:
+    items = container.get("items") if isinstance(container.get("items"), list) else []
+    matches = [
+        item
+        for item in items
+        if isinstance(item, dict) and item.get("blind_item_id") == blind_item_id
+    ]
+    if len(matches) != 1:
+        _raise_experiment_error(
+            "E_EXPERIMENT_080_BLIND_ASSESSMENT_INVALID",
+            "blind_item_id must resolve to exactly one item.",
+            blind_item_id=blind_item_id,
+            match_count=len(matches),
+        )
+    return matches[0]
+
+
 def _assessment_guidance_scores_for_scorecard(
     *,
     scorecard_payload: dict[str, Any],
@@ -2487,6 +2998,12 @@ def _scorecard_with_imported_assessment(
     }
     if "notes" in assessment:
         imported_assessment["assessment_notes_present"] = isinstance(assessment.get("notes"), list)
+    if isinstance(assessment.get("blind_pack"), dict):
+        imported_assessment["blind_pack"] = deepcopy(assessment["blind_pack"])
+    if isinstance(assessment.get("blind_item_id"), str):
+        imported_assessment["blind_item_id"] = assessment["blind_item_id"]
+    if isinstance(assessment.get("blind_artifact_sha256"), str):
+        imported_assessment["blind_artifact_sha256"] = assessment["blind_artifact_sha256"]
     assessed["guidance_assessment"] = imported_assessment
     assessed["assessment_boundary"] = (
         "python_validates_and_merges_imported_assessment_only; "
