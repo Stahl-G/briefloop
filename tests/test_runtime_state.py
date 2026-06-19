@@ -3794,6 +3794,65 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
     assert artifacts["analyst_draft_snapshot"]["status"] == "valid"
 
 
+def test_auditor_rerun_after_editor_repair_accepts_new_artifact_without_stale_baseline(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor draft needing repair. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    _write_editor_repair_gate_report(ws)
+    start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+    audited.write_text("# Brief\n\nEditor repaired draft. [src:CL-001]\n", encoding="utf-8")
+    repaired = complete_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="editor repaired audited brief before auditor wrote audit report",
+    )
+    repair_transaction_id = repaired["transaction"]["transaction_id"]
+    auditor_metadata = repaired["workflow_state"]["stage_statuses"]["auditor"]["metadata"]
+    baselines = auditor_metadata["stale_artifact_baselines"]
+    assert baselines["audit_report"]["sha256"] is None
+
+    _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
+    refreshed_audit_sha = _sha256_file(_intermediate(ws) / "audit_report.json")
+    refreshed_state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    refreshed_audit_record = refreshed_state["artifact_registry"]["artifacts"]["audit_report"]
+    assert refreshed_audit_record["status"] == "stale"
+    assert refreshed_audit_record["sha256"] == refreshed_audit_sha
+    assert "stale_baseline_sha256" not in refreshed_audit_record
+    _write_quality_gate_report(ws, stage_id="auditor")
+
+    audited_state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor generated audit report after editor repair",
+    )
+
+    assert audited_state["workflow_state"]["current_stage"] == "finalize"
+    auditor_metadata = audited_state["workflow_state"]["stage_statuses"]["auditor"]["metadata"]
+    assert auditor_metadata["audit_binding"]["relevant_repair_transaction_ids"] == [
+        repair_transaction_id
+    ]
+    artifacts = audited_state["artifact_registry"]["artifacts"]
+    assert artifacts["audit_report"]["status"] == "valid"
+    assert artifacts["auditor_quality_gate_report"]["status"] == "valid"
+
+
 def test_auditor_rerun_rejects_unrefreshed_stale_audit_report(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

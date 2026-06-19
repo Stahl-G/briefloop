@@ -3214,8 +3214,7 @@ def _stale_artifact_baseline_sha(
     record_baseline_sha = record.get("stale_baseline_sha256")
     if isinstance(record_baseline_sha, str) and record_baseline_sha:
         return record_baseline_sha
-    record_sha = record.get("sha256")
-    return record_sha if isinstance(record_sha, str) and record_sha else None
+    return None
 
 
 def _complete_stage_transaction(
