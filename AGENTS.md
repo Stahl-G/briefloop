@@ -14,6 +14,8 @@ In repository development mode, files under `.agents/skills/`, `.agents/hermes-s
 
 Use `multi-agent-brief run --workspace <workspace>` to create a runtime handoff. The handoff artifact, not this repository manual, is the execution contract for a specific brief run.
 
+For BriefLoop operator protocol, use `.agents/skills/briefloop/SKILL.md`.
+
 ## Environment Separation
 
 Keep three instruction environments separate:
