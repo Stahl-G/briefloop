@@ -173,6 +173,18 @@ for auditor review, not a Python proof that the implication is unsupported.
 Downgrade the language, remove the implication, or add support through the
 proper owner stages.
 
+#### atomic-claim-graph
+
+When `output/intermediate/atomic_claim_graph.json` is present and valid, it is
+an optional experimental decomposition aid for frozen Claim Ledger claims. It is
+not source evidence, a reader citation surface, or proof of support.
+
+`atomic_atom_id_residue` and `atomic_graph_process_residue` findings mean
+reader-facing prose exposed atom IDs or Atomic Claim Graph process wording.
+Remove the residue and keep reader citations in `[src:<claim_id>]` form. Do not
+create, edit, repair, or extend the graph from Analyst, Editor, or delivery
+roles.
+
 #### editor_introduced_new_fact
 
 The Editor added factual tokens not present in
