@@ -134,14 +134,12 @@ class AtomicClaimGraphContract(Contract):
         if not claims:
             violations.append(FieldViolation(field="claims", error="must be a non-empty list"))
 
-        seen_claim_ids: set[str] = set()
         seen_atom_ids: set[str] = set()
         for claim_idx, claim in enumerate(claims):
             violations.extend(
                 _validate_claim_entry(
                     claim,
                     idx=claim_idx,
-                    seen_claim_ids=seen_claim_ids,
                     seen_atom_ids=seen_atom_ids,
                 )
             )
@@ -157,7 +155,6 @@ def _validate_claim_entry(
     claim: Any,
     *,
     idx: int,
-    seen_claim_ids: set[str],
     seen_atom_ids: set[str],
 ) -> list[FieldViolation]:
     prefix = f"claims[{idx}]"
@@ -172,9 +169,6 @@ def _validate_claim_entry(
     else:
         claim_id = str(claim_id).strip()
         canonical_claim_match = CLAIM_ID_RE.match(claim_id)
-        if claim_id in seen_claim_ids:
-            violations.append(FieldViolation(field=f"{prefix}.claim_id", error=f"duplicate claim_id:{claim_id}"))
-        seen_claim_ids.add(claim_id)
 
     statement = claim.get("statement")
     if statement is not None and not _non_empty_string(statement):

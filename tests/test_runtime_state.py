@@ -182,6 +182,28 @@ def _valid_claim_ledger_payload(
     ) + "\n"
 
 
+def _claim_ledger_payload(claims: list[dict[str, object]]) -> str:
+    return json.dumps(claims) + "\n"
+
+
+def _claim_dict(
+    claim_id: str,
+    *,
+    claim_type: str = "fact",
+    limitations: list[str] | None = None,
+) -> dict[str, object]:
+    claim: dict[str, object] = {
+        "claim_id": claim_id,
+        "statement": f"{claim_id} statement.",
+        "source_id": f"SRC-{claim_id[-4:]}",
+        "evidence_text": f"{claim_id} evidence.",
+        "claim_type": claim_type,
+    }
+    if limitations is not None:
+        claim["limitations"] = limitations
+    return claim
+
+
 def _valid_atomic_claim_graph_payload(claim_id: str = "CL-001", atom_id: str = "AC-0001-01") -> str:
     return json.dumps(
         {
@@ -204,6 +226,28 @@ def _valid_atomic_claim_graph_payload(claim_id: str = "CL-001", atom_id: str = "
             "metadata": {},
         }
     ) + "\n"
+
+
+def _atomic_claim_graph_payload(claim_roles: dict[str, list[str]]) -> str:
+    claims = []
+    for claim_id, roles in claim_roles.items():
+        claim_number = claim_id.rsplit("-", 1)[-1]
+        claims.append(
+            {
+                "claim_id": claim_id,
+                "atoms": [
+                    {
+                        "atom_id": f"AC-{claim_number}-{idx:02d}",
+                        "text": f"{claim_id} atom {idx}.",
+                        "claim_role": role,
+                        "materiality": "high",
+                    }
+                    for idx, role in enumerate(roles, start=1)
+                ],
+                "edges": [],
+            }
+        )
+    return json.dumps({"schema_version": "mabw.atomic_claim_graph.v1", "claims": claims}) + "\n"
 
 
 def _cross_claim_edge_atomic_claim_graph_payload() -> str:
@@ -3241,6 +3285,43 @@ def test_state_check_validates_present_atomic_claim_graph_against_claim_ledger(t
     assert record["validation_result"] == "experimental_atomic_claim_graph_schema"
 
 
+def test_state_check_validates_complete_typed_atomic_claim_graph(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "claim_ledger.json",
+        _claim_ledger_payload(
+            [
+                _claim_dict("CL-0001", claim_type="number"),
+                _claim_dict("CL-0002", claim_type="forecast"),
+                _claim_dict("CL-0003", claim_type="risk"),
+                _claim_dict("CL-0004", limitations=["Evidence does not establish adoption."]),
+                _claim_dict("CL-0005", claim_type="date"),
+            ]
+        ),
+    )
+    _write_json_artifact(
+        ws,
+        "atomic_claim_graph.json",
+        _atomic_claim_graph_payload(
+            {
+                "CL-0001": ["numeric_fact"],
+                "CL-0002": ["forward_looking_inference"],
+                "CL-0003": ["risk_or_limitation"],
+                "CL-0004": ["risk_or_limitation"],
+                "CL-0005": ["observed_fact"],
+            }
+        ),
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "experimental_atomic_claim_graph_schema"
+
+
 def test_state_check_marks_atomic_claim_graph_unknown_claim_id_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -3252,8 +3333,71 @@ def test_state_check_marks_atomic_claim_graph_unknown_claim_id_invalid(tmp_path)
 
     assert record["status"] == "invalid"
     assert record["validation_result"] == (
-        "atomic_claim_graph_schema_error:claims[0].claim_id_unknown:CL-9999"
+        "atomic_claim_graph_validation_error:unknown_claim_reference:CL-9999"
     )
+
+
+def test_state_check_marks_atomic_claim_graph_missing_claim_coverage_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "claim_ledger.json",
+        _claim_ledger_payload(
+            [
+                _claim_dict("CL-0003"),
+                _claim_dict("CL-0002"),
+                _claim_dict("CL-0001"),
+            ]
+        ),
+    )
+    _write_json_artifact(ws, "atomic_claim_graph.json", _atomic_claim_graph_payload({"CL-0001": ["observed_fact"]}))
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "atomic_claim_graph_validation_error:missing_claim_coverage:CL-0002"
+
+
+def test_state_check_marks_atomic_claim_graph_duplicate_claim_coverage_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _claim_ledger_payload([_claim_dict("CL-0001")]))
+    graph = {
+        "schema_version": "mabw.atomic_claim_graph.v1",
+        "claims": [
+            {
+                "claim_id": "CL-0001",
+                "atoms": [
+                    {
+                        "atom_id": "AC-0001-01",
+                        "text": "First atom.",
+                        "claim_role": "observed_fact",
+                        "materiality": "high",
+                    }
+                ],
+            },
+            {
+                "claim_id": "CL-0001",
+                "atoms": [
+                    {
+                        "atom_id": "AC-0001-02",
+                        "text": "Second atom.",
+                        "claim_role": "observed_fact",
+                        "materiality": "medium",
+                    }
+                ],
+            },
+        ],
+    }
+    _write_json_artifact(ws, "atomic_claim_graph.json", json.dumps(graph) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "atomic_claim_graph_validation_error:duplicate_claim_coverage:CL-0001"
 
 
 def test_state_check_marks_atomic_claim_graph_cross_claim_edge_invalid(tmp_path):
@@ -3289,6 +3433,63 @@ def test_state_check_marks_atomic_claim_graph_cross_claim_edge_invalid(tmp_path)
     assert record["validation_result"] == "atomic_claim_graph_schema_error:claims[0].edges[0].to"
 
 
+@pytest.mark.parametrize(
+    ("claim", "roles", "reason"),
+    [
+        (
+            _claim_dict("CL-0001", claim_type="number"),
+            ["observed_fact"],
+            "claim_type_number_missing_numeric_fact:CL-0001",
+        ),
+        (
+            _claim_dict("CL-0002", claim_type="forecast"),
+            ["observed_fact"],
+            "claim_type_forecast_missing_forward_looking_inference:CL-0002",
+        ),
+        (
+            _claim_dict("CL-0003", claim_type="risk"),
+            ["observed_fact"],
+            "claim_type_risk_missing_risk_atom:CL-0003",
+        ),
+        (
+            _claim_dict("CL-0004", limitations=["Source does not establish demand."]),
+            ["observed_fact"],
+            "claim_limitations_missing_risk_atom:CL-0004",
+        ),
+    ],
+)
+def test_state_check_marks_atomic_claim_graph_type_consistency_invalid(
+    tmp_path,
+    claim: dict[str, object],
+    roles: list[str],
+    reason: str,
+):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    claim_id = str(claim["claim_id"])
+    _write_json_artifact(ws, "claim_ledger.json", _claim_ledger_payload([claim]))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _atomic_claim_graph_payload({claim_id: roles}))
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == f"atomic_claim_graph_validation_error:{reason}"
+
+
+def test_state_check_does_not_require_numeric_atom_for_date_claim(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _claim_ledger_payload([_claim_dict("CL-0001", claim_type="date")]))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _atomic_claim_graph_payload({"CL-0001": ["observed_fact"]}))
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "experimental_atomic_claim_graph_schema"
+
+
 def test_state_check_marks_atomic_claim_graph_missing_claim_ledger_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -3298,7 +3499,7 @@ def test_state_check_marks_atomic_claim_graph_missing_claim_ledger_invalid(tmp_p
     record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
 
     assert record["status"] == "invalid"
-    assert record["validation_result"] == "atomic_claim_graph_schema_error:claim_ledger_missing"
+    assert record["validation_result"] == "atomic_claim_graph_validation_error:claim_ledger_missing"
 
 
 def test_state_check_marks_malformed_atomic_claim_graph_invalid(tmp_path):

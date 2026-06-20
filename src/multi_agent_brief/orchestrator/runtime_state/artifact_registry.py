@@ -18,6 +18,10 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
+from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
+    ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
+    validate_atomic_claim_graph_against_ledger,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_TRANSACTION_INTEGRITY,
     RuntimeStateError,
@@ -425,21 +429,16 @@ def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -
         ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
         ledger_claims = ClaimLedger._claim_items_from_json(ledger_payload)
     except FileNotFoundError:
-        return ARTIFACT_INVALID, "atomic_claim_graph_schema_error:claim_ledger_missing"
+        return ARTIFACT_INVALID, f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:claim_ledger_missing"
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        return ARTIFACT_INVALID, f"atomic_claim_graph_schema_error:claim_ledger_unreadable:{exc}"
+        return ARTIFACT_INVALID, f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:claim_ledger_unreadable:{exc}"
 
-    ledger_claim_ids = {
-        str(claim.get("claim_id")).strip()
-        for claim in ledger_claims
-        if isinstance(claim, dict) and isinstance(claim.get("claim_id"), str) and claim.get("claim_id").strip()
-    }
-    for idx, claim in enumerate(payload.get("claims") or []):
-        claim_id = str(claim.get("claim_id") or "").strip() if isinstance(claim, dict) else ""
-        if claim_id not in ledger_claim_ids:
-            return ARTIFACT_INVALID, (
-                f"atomic_claim_graph_schema_error:claims[{idx}].claim_id_unknown:{claim_id}"
-            )
+    reason = validate_atomic_claim_graph_against_ledger(
+        graph_payload=payload,
+        ledger_claims=ledger_claims,
+    )
+    if reason:
+        return ARTIFACT_INVALID, f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:{reason}"
 
     return ARTIFACT_VALID, "experimental_atomic_claim_graph_schema"
 

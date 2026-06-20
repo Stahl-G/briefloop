@@ -175,14 +175,6 @@ class TestAtomicClaimGraphContract:
         assert any(violation.field == field for violation in violations)
         assert not AtomicClaimGraphContract.is_valid(payload)
 
-    def test_rejects_duplicate_claim_id(self):
-        graph = _valid_atomic_claim_graph()
-        graph["claims"].append(dict(graph["claims"][0]))
-
-        violations = AtomicClaimGraphContract.validate(graph)
-
-        assert any(violation.field == "claims[1].claim_id" for violation in violations)
-
     def test_rejects_duplicate_atom_id(self):
         graph = _valid_atomic_claim_graph()
         graph["claims"][0]["atoms"][1]["atom_id"] = "AC-0001-01"
