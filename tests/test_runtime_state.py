@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -224,6 +225,36 @@ def _valid_atomic_claim_graph_payload(claim_id: str = "CL-001", atom_id: str = "
                 }
             ],
             "metadata": {},
+        }
+    ) + "\n"
+
+
+def _span_hash(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _valid_evidence_span_registry_payload() -> str:
+    raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
+    return json.dumps(
+        {
+            "schema_version": "mabw.evidence_span_registry.v1",
+            "sources": [
+                {
+                    "source_id": "SRC-001",
+                    "source_type": "company_release",
+                    "url": "https://example.com/release",
+                    "published_at": "2026-06-10",
+                    "source_tier": "company_official",
+                    "spans": [
+                        {
+                            "span_id": "ESP-001-01",
+                            "raw_excerpt": raw_excerpt,
+                            "hash": _span_hash(raw_excerpt),
+                            "span_role": "numeric_observation",
+                        }
+                    ],
+                }
+            ],
         }
     ) + "\n"
 
@@ -766,6 +797,9 @@ def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
     assert registry["atomic_claim_graph"]["status"] == "expected"
     assert registry["atomic_claim_graph"]["required"] is False
     assert registry["atomic_claim_graph"]["validation_result"] == "not_checked"
+    assert registry["evidence_span_registry"]["status"] == "expected"
+    assert registry["evidence_span_registry"]["required"] is False
+    assert registry["evidence_span_registry"]["validation_result"] == "not_checked"
     assert registry["audited_brief"]["status"] == "expected"
     assert registry["reader_brief"]["status"] == "expected"
     assert registry["auditor_quality_gate_report"]["status"] == "expected"
@@ -3431,6 +3465,47 @@ def test_state_check_marks_atomic_claim_graph_cross_claim_edge_invalid(tmp_path)
 
     assert record["status"] == "invalid"
     assert record["validation_result"] == "atomic_claim_graph_schema_error:claims[0].edges[0].to"
+
+
+def test_state_check_validates_present_evidence_span_registry(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "valid"
+    assert record["required"] is False
+    assert record["validation_result"] == "experimental_evidence_span_registry_schema"
+
+
+def test_state_check_marks_evidence_span_registry_hash_mismatch_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    payload = json.loads(_valid_evidence_span_registry_payload())
+    payload["sources"][0]["spans"][0]["hash"] = _span_hash("different excerpt")
+    _write_json_artifact(ws, "evidence_span_registry.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_schema_error:sources[0].spans[0].hash"
+
+
+def test_state_check_marks_evidence_span_registry_missing_source_date_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    payload = json.loads(_valid_evidence_span_registry_payload())
+    payload["sources"][0].pop("published_at")
+    _write_json_artifact(ws, "evidence_span_registry.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_schema_error:sources[0].source_date"
 
 
 @pytest.mark.parametrize(

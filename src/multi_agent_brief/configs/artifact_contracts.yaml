@@ -135,6 +135,21 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
+  - artifact_id: evidence_span_registry
+    path: output/intermediate/evidence_span_registry.json
+    format: json
+    required: false
+    producer_stage: claim-ledger
+    producer_role: claim-ledger
+    consumer_stages: []
+    validation_result: experimental_evidence_span_registry_schema
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - retry_stage
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
   - artifact_id: audited_brief
     path: output/intermediate/audited_brief.md
     format: markdown

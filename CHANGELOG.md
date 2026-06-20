@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Experimental Evidence Span Registry schema**: added an optional
+  `output/intermediate/evidence_span_registry.json` contract and runtime
+  validation for source-level evidence spans with recomputable raw-excerpt
+  hashes. This is schema foundation only and does not perform semantic support
+  assessment, Evidence Span support scoring, Claim-Support Matrix generation,
+  or support-sufficiency gating.
+
 ## [0.9.1] — 2026-06-20
 
 ### Added

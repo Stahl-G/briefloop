@@ -111,6 +111,25 @@ def test_atomic_claim_graph_contract_is_optional_experimental_schema_foundation(
         assert "atomic_claim_graph" not in claim_ledger_stage.expected_artifacts
 
 
+def test_evidence_span_registry_contract_is_optional_experimental_schema_foundation():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        span_registry = registry.artifact("evidence_span_registry")
+        claim_ledger_stage = registry.stage("claim-ledger")
+        assert span_registry is not None
+        assert claim_ledger_stage is not None
+        assert span_registry.required is False
+        assert span_registry.path == "output/intermediate/evidence_span_registry.json"
+        assert span_registry.producer_stage == "claim-ledger"
+        assert span_registry.producer_role == "claim-ledger"
+        assert span_registry.consumer_stages == ()
+        assert span_registry.validation_result == "experimental_evidence_span_registry_schema"
+        assert "evidence_span_registry" not in claim_ledger_stage.produces
+        assert "evidence_span_registry" not in claim_ledger_stage.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"

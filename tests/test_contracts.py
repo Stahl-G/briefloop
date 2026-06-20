@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
@@ -11,6 +13,7 @@ from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemCont
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract, claim_draft_diagnostics
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
+from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.analysis_pack import (
     MarketEventContract,
@@ -28,6 +31,7 @@ class TestSchemaRegistry:
         assert SchemaRegistry.get("claim") is ClaimContract
         assert SchemaRegistry.get("claim_drafts") is ClaimDraftContract
         assert SchemaRegistry.get("atomic_claim_graph") is AtomicClaimGraphContract
+        assert SchemaRegistry.get("evidence_span_registry") is EvidenceSpanRegistryContract
 
     def test_get_unknown_returns_none(self):
         assert SchemaRegistry.get("nonexistent") is None
@@ -296,6 +300,144 @@ class TestAtomicClaimGraphContract:
         violations = AtomicClaimGraphContract.validate(graph)
 
         assert any(violation.field == field for violation in violations)
+
+
+def _span_hash(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _valid_evidence_span_registry() -> dict:
+    raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
+    return {
+        "schema_version": "mabw.evidence_span_registry.v1",
+        "sources": [
+            {
+                "source_id": "SRC-001",
+                "source_type": "company_release",
+                "url": "https://example.com/release",
+                "published_at": "2026-06-10",
+                "source_tier": "company_official",
+                "spans": [
+                    {
+                        "span_id": "ESP-001-01",
+                        "raw_excerpt": raw_excerpt,
+                        "hash": _span_hash(raw_excerpt),
+                        "span_role": "numeric_observation",
+                        "char_start": 10,
+                        "char_end": 64,
+                    }
+                ],
+            }
+        ],
+        "metadata": {},
+    }
+
+
+class TestEvidenceSpanRegistryContract:
+    def test_valid_minimal_registry_passes(self):
+        assert EvidenceSpanRegistryContract.validate(_valid_evidence_span_registry()) == []
+        assert EvidenceSpanRegistryContract.is_valid(_valid_evidence_span_registry())
+
+    @pytest.mark.parametrize(
+        ("payload", "field"),
+        [
+            ([], "<root>"),
+            ({"schema_version": "wrong", "sources": []}, "schema_version"),
+            ({"schema_version": "mabw.evidence_span_registry.v1", "sources": []}, "sources"),
+            ({"schema_version": "mabw.evidence_span_registry.v1"}, "sources"),
+        ],
+    )
+    def test_rejects_invalid_root_version_or_empty_sources(self, payload, field):
+        violations = EvidenceSpanRegistryContract.validate(payload)
+
+        assert any(violation.field == field for violation in violations)
+        assert not EvidenceSpanRegistryContract.is_valid(payload)
+
+    @pytest.mark.parametrize(
+        ("field", "value", "expected_field"),
+        [
+            ("source_type", "", "sources[0].source_type"),
+            ("source_tier", "", "sources[0].source_tier"),
+            ("url", "", "sources[0].source_identity"),
+            ("published_at", "", "sources[0].source_date"),
+        ],
+    )
+    def test_rejects_missing_source_metadata(self, field, value, expected_field):
+        registry = _valid_evidence_span_registry()
+        registry["sources"][0][field] = value
+
+        violations = EvidenceSpanRegistryContract.validate(registry)
+
+        assert any(violation.field == expected_field for violation in violations)
+
+    def test_accepts_source_path_and_retrieved_at_identity(self):
+        registry = _valid_evidence_span_registry()
+        source = registry["sources"][0]
+        source.pop("url")
+        source.pop("published_at")
+        source["source_path"] = "input/sources/source-001.md"
+        source["retrieved_at"] = "2026-06-15T00:00:00Z"
+
+        assert EvidenceSpanRegistryContract.validate(registry) == []
+
+    def test_rejects_duplicate_source_id(self):
+        registry = _valid_evidence_span_registry()
+        second = _valid_evidence_span_registry()["sources"][0]
+        second["spans"][0]["span_id"] = "ESP-001-02"
+        registry["sources"].append(second)
+
+        violations = EvidenceSpanRegistryContract.validate(registry)
+
+        assert any(violation.field == "sources[1].source_id" for violation in violations)
+
+    def test_rejects_duplicate_span_id(self):
+        registry = _valid_evidence_span_registry()
+        registry["sources"][0]["spans"].append(dict(registry["sources"][0]["spans"][0]))
+
+        violations = EvidenceSpanRegistryContract.validate(registry)
+
+        assert any(violation.field == "sources[0].spans[1].span_id" for violation in violations)
+
+    def test_rejects_source_span_prefix_mismatch(self):
+        registry = _valid_evidence_span_registry()
+        registry["sources"][0]["spans"][0]["span_id"] = "ESP-002-01"
+
+        violations = EvidenceSpanRegistryContract.validate(registry)
+
+        assert any(violation.field == "sources[0].spans[0].span_id" for violation in violations)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("raw_excerpt", ""),
+            ("hash", "sha256:bad"),
+            ("span_role", "support_proof"),
+        ],
+    )
+    def test_rejects_invalid_span_fields(self, field, value):
+        registry = _valid_evidence_span_registry()
+        registry["sources"][0]["spans"][0][field] = value
+
+        violations = EvidenceSpanRegistryContract.validate(registry)
+
+        assert any(violation.field == f"sources[0].spans[0].{field}" for violation in violations)
+
+    def test_rejects_hash_mismatch(self):
+        registry = _valid_evidence_span_registry()
+        registry["sources"][0]["spans"][0]["hash"] = _span_hash("different excerpt")
+
+        violations = EvidenceSpanRegistryContract.validate(registry)
+
+        assert any(violation.field == "sources[0].spans[0].hash" for violation in violations)
+
+    def test_rejects_invalid_char_range(self):
+        registry = _valid_evidence_span_registry()
+        registry["sources"][0]["spans"][0]["char_start"] = 100
+        registry["sources"][0]["spans"][0]["char_end"] = 10
+
+        violations = EvidenceSpanRegistryContract.validate(registry)
+
+        assert any(violation.field == "sources[0].spans[0].char_end" for violation in violations)
 
 
 # ── ClaimDraftContract ──

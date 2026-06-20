@@ -14,6 +14,7 @@ from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
+from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
@@ -110,6 +111,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_claim_drafts_payload(payload)
             if artifact_id == "atomic_claim_graph":
                 return _validate_atomic_claim_graph_payload(payload, artifact_path=path)
+            if artifact_id == "evidence_span_registry":
+                return _validate_evidence_span_registry_payload(payload)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
             if artifact_id == "candidate_claims":
@@ -441,6 +444,17 @@ def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -
         return ARTIFACT_INVALID, f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:{reason}"
 
     return ARTIFACT_VALID, "experimental_atomic_claim_graph_schema"
+
+
+def _validate_evidence_span_registry_payload(payload: Any) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ARTIFACT_INVALID, "evidence_span_registry_schema_error:not_object"
+    violations = EvidenceSpanRegistryContract.validate(payload)
+    errors = [violation for violation in violations if violation.severity == "error"]
+    if errors:
+        first = errors[0]
+        return ARTIFACT_INVALID, f"evidence_span_registry_schema_error:{first.field}"
+    return ARTIFACT_VALID, "experimental_evidence_span_registry_schema"
 
 
 def _validate_audit_report_payload(payload: Any) -> tuple[str, str]:

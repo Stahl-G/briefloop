@@ -10,6 +10,7 @@ from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemCont
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
+from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 
 __all__ = [
     "AnalysisCardContract",
@@ -18,6 +19,7 @@ __all__ = [
     "CandidateItemContract",
     "ClaimDraftContract",
     "ClaimContract",
+    "EvidenceSpanRegistryContract",
     "MarketEventContract",
     "SourceItemContract",
 ]

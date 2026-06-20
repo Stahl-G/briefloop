@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.schemas import (
     CandidateItemContract,
     ClaimDraftContract,
     ClaimContract,
+    EvidenceSpanRegistryContract,
     SourceItemContract,
 )
 from multi_agent_brief.contracts.migrations import migrate_claim_v1_to_v2
@@ -30,6 +31,7 @@ __all__ = [
     "CandidateItemContract",
     "ClaimDraftContract",
     "ClaimContract",
+    "EvidenceSpanRegistryContract",
     "SourceItemContract",
     "migrate_claim_v1_to_v2",
 ]
