@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
+from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -103,6 +104,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_claim_ledger_payload(payload)
             if artifact_id == "claim_drafts":
                 return _validate_claim_drafts_payload(payload)
+            if artifact_id == "atomic_claim_graph":
+                return _validate_atomic_claim_graph_payload(payload, artifact_path=path)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
             if artifact_id == "candidate_claims":
@@ -406,6 +409,39 @@ def _validate_claim_drafts_payload(payload: Any) -> tuple[str, str]:
         first = errors[0]
         return ARTIFACT_INVALID, f"claim_drafts_schema_error:{first.field}"
     return ARTIFACT_VALID, "valid_claim_drafts_schema"
+
+
+def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ARTIFACT_INVALID, "atomic_claim_graph_schema_error:not_object"
+    violations = AtomicClaimGraphContract.validate(payload)
+    errors = [violation for violation in violations if violation.severity == "error"]
+    if errors:
+        first = errors[0]
+        return ARTIFACT_INVALID, f"atomic_claim_graph_schema_error:{first.field}"
+
+    ledger_path = artifact_path.with_name("claim_ledger.json")
+    try:
+        ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        ledger_claims = ClaimLedger._claim_items_from_json(ledger_payload)
+    except FileNotFoundError:
+        return ARTIFACT_INVALID, "atomic_claim_graph_schema_error:claim_ledger_missing"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return ARTIFACT_INVALID, f"atomic_claim_graph_schema_error:claim_ledger_unreadable:{exc}"
+
+    ledger_claim_ids = {
+        str(claim.get("claim_id")).strip()
+        for claim in ledger_claims
+        if isinstance(claim, dict) and isinstance(claim.get("claim_id"), str) and claim.get("claim_id").strip()
+    }
+    for idx, claim in enumerate(payload.get("claims") or []):
+        claim_id = str(claim.get("claim_id") or "").strip() if isinstance(claim, dict) else ""
+        if claim_id not in ledger_claim_ids:
+            return ARTIFACT_INVALID, (
+                f"atomic_claim_graph_schema_error:claims[{idx}].claim_id_unknown:{claim_id}"
+            )
+
+    return ARTIFACT_VALID, "experimental_atomic_claim_graph_schema"
 
 
 def _validate_audit_report_payload(payload: Any) -> tuple[str, str]:

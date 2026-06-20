@@ -92,6 +92,25 @@ def test_claim_drafts_contract_is_optional_experimental_freeze_input():
         assert "claim_ledger" in claim_ledger_stage.expected_artifacts
 
 
+def test_atomic_claim_graph_contract_is_optional_experimental_schema_foundation():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        atomic_graph = registry.artifact("atomic_claim_graph")
+        claim_ledger_stage = registry.stage("claim-ledger")
+        assert atomic_graph is not None
+        assert claim_ledger_stage is not None
+        assert atomic_graph.required is False
+        assert atomic_graph.path == "output/intermediate/atomic_claim_graph.json"
+        assert atomic_graph.producer_stage == "claim-ledger"
+        assert atomic_graph.producer_role == "claim-ledger"
+        assert atomic_graph.consumer_stages == ()
+        assert atomic_graph.validation_result == "experimental_atomic_claim_graph_schema"
+        assert "atomic_claim_graph" not in claim_ledger_stage.produces
+        assert "atomic_claim_graph" not in claim_ledger_stage.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"

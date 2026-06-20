@@ -8,6 +8,7 @@ from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import ContractError, FieldViolation
 from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
 from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemContract
+from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract, claim_draft_diagnostics
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
@@ -26,6 +27,7 @@ class TestSchemaRegistry:
         assert SchemaRegistry.get("source_item") is SourceItemContract
         assert SchemaRegistry.get("claim") is ClaimContract
         assert SchemaRegistry.get("claim_drafts") is ClaimDraftContract
+        assert SchemaRegistry.get("atomic_claim_graph") is AtomicClaimGraphContract
 
     def test_get_unknown_returns_none(self):
         assert SchemaRegistry.get("nonexistent") is None
@@ -114,6 +116,167 @@ class TestClaimContract:
         }
         violations = ClaimContract.validate(data)
         assert any(v.field == "confidence" for v in violations)
+
+
+# ── AtomicClaimGraphContract ──
+
+
+def _valid_atomic_claim_graph() -> dict:
+    return {
+        "schema_version": "mabw.atomic_claim_graph.v1",
+        "claims": [
+            {
+                "claim_id": "CL-0001",
+                "statement": "ExampleCo opened a demo facility.",
+                "atoms": [
+                    {
+                        "atom_id": "AC-0001-01",
+                        "text": "ExampleCo opened a demo facility.",
+                        "claim_role": "observed_fact",
+                        "materiality": "high",
+                    },
+                    {
+                        "atom_id": "AC-0001-02",
+                        "text": "The facility is a demo facility.",
+                        "claim_role": "background_context",
+                        "materiality": "medium",
+                    },
+                ],
+                "edges": [
+                    {
+                        "from": "AC-0001-01",
+                        "to": "AC-0001-02",
+                        "relation": "qualifies_context",
+                    }
+                ],
+            }
+        ],
+        "metadata": {},
+    }
+
+
+class TestAtomicClaimGraphContract:
+    def test_valid_minimal_graph_passes(self):
+        assert AtomicClaimGraphContract.validate(_valid_atomic_claim_graph()) == []
+        assert AtomicClaimGraphContract.is_valid(_valid_atomic_claim_graph())
+
+    @pytest.mark.parametrize(
+        ("payload", "field"),
+        [
+            ([], "<root>"),
+            ({"schema_version": "wrong", "claims": []}, "schema_version"),
+            ({"schema_version": "mabw.atomic_claim_graph.v1", "claims": []}, "claims"),
+            ({"schema_version": "mabw.atomic_claim_graph.v1"}, "claims"),
+        ],
+    )
+    def test_rejects_invalid_root_version_or_empty_claims(self, payload, field):
+        violations = AtomicClaimGraphContract.validate(payload)
+
+        assert any(violation.field == field for violation in violations)
+        assert not AtomicClaimGraphContract.is_valid(payload)
+
+    def test_rejects_duplicate_claim_id(self):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"].append(dict(graph["claims"][0]))
+
+        violations = AtomicClaimGraphContract.validate(graph)
+
+        assert any(violation.field == "claims[1].claim_id" for violation in violations)
+
+    def test_rejects_duplicate_atom_id(self):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"][0]["atoms"][1]["atom_id"] = "AC-0001-01"
+
+        violations = AtomicClaimGraphContract.validate(graph)
+
+        assert any(violation.field == "claims[0].atoms[1].atom_id" for violation in violations)
+
+    def test_rejects_invalid_atom_id(self):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"][0]["atoms"][0]["atom_id"] = "ATOM-1"
+
+        violations = AtomicClaimGraphContract.validate(graph)
+
+        assert any(violation.field == "claims[0].atoms[0].atom_id" for violation in violations)
+
+    def test_rejects_canonical_claim_atom_prefix_mismatch(self):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"][0]["atoms"][0]["atom_id"] = "AC-0002-01"
+
+        violations = AtomicClaimGraphContract.validate(graph)
+
+        assert any(violation.field == "claims[0].atoms[0].atom_id" for violation in violations)
+
+    def test_allows_non_canonical_claim_id_without_prefix_rejection(self):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"][0]["claim_id"] = "CLAIM-LOCAL-A"
+
+        assert AtomicClaimGraphContract.validate(graph) == []
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("text", ""),
+            ("claim_role", "unsupported_role"),
+            ("materiality", "critical"),
+        ],
+    )
+    def test_rejects_invalid_atom_fields(self, field, value):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"][0]["atoms"][0][field] = value
+
+        violations = AtomicClaimGraphContract.validate(graph)
+
+        assert any(violation.field == f"claims[0].atoms[0].{field}" for violation in violations)
+
+    def test_rejects_missing_atom_required_fields(self):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"][0]["atoms"][0] = {"atom_id": "AC-0001-01"}
+
+        violations = AtomicClaimGraphContract.validate(graph)
+        fields = {violation.field for violation in violations}
+
+        assert {
+            "claims[0].atoms[0].text",
+            "claims[0].atoms[0].claim_role",
+            "claims[0].atoms[0].materiality",
+        } <= fields
+
+    @pytest.mark.parametrize(
+        ("edge", "field"),
+        [
+            ({"to": "AC-0001-02", "relation": "r"}, "from"),
+            ({"from": "AC-0001-01", "relation": "r"}, "to"),
+            ({"from": "AC-0001-01", "to": "AC-0001-02", "relation": ""}, "relation"),
+            ({"from": "AC-9999-01", "to": "AC-0001-02", "relation": "r"}, "from"),
+        ],
+    )
+    def test_rejects_invalid_edges(self, edge, field):
+        graph = _valid_atomic_claim_graph()
+        graph["claims"][0]["edges"] = [edge]
+
+        violations = AtomicClaimGraphContract.validate(graph)
+
+        assert any(violation.field == f"claims[0].edges[0].{field}" for violation in violations)
+
+    @pytest.mark.parametrize(
+        ("path", "value", "field"),
+        [
+            (("metadata",), [], "metadata"),
+            (("claims", 0, "metadata"), [], "claims[0].metadata"),
+            (("claims", 0, "statement"), "", "claims[0].statement"),
+        ],
+    )
+    def test_rejects_invalid_metadata_or_statement(self, path, value, field):
+        graph = _valid_atomic_claim_graph()
+        target = graph
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = value
+
+        violations = AtomicClaimGraphContract.validate(graph)
+
+        assert any(violation.field == field for violation in violations)
 
 
 # ── ClaimDraftContract ──

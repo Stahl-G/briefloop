@@ -182,6 +182,30 @@ def _valid_claim_ledger_payload(
     ) + "\n"
 
 
+def _valid_atomic_claim_graph_payload(claim_id: str = "CL-001", atom_id: str = "AC-0001-01") -> str:
+    return json.dumps(
+        {
+            "schema_version": "mabw.atomic_claim_graph.v1",
+            "claims": [
+                {
+                    "claim_id": claim_id,
+                    "statement": "ExampleCo opened a demo facility.",
+                    "atoms": [
+                        {
+                            "atom_id": atom_id,
+                            "text": "ExampleCo opened a demo facility.",
+                            "claim_role": "observed_fact",
+                            "materiality": "high",
+                        }
+                    ],
+                    "edges": [],
+                }
+            ],
+            "metadata": {},
+        }
+    ) + "\n"
+
+
 def _valid_claim_drafts_payload(*, duplicate: bool = False) -> str:
     drafts = [
         {
@@ -655,6 +679,9 @@ def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
     assert workflow["stage_statuses"]["doctor"]["status"] == "ready"
     assert workflow["stage_statuses"]["claim-ledger"]["status"] == "pending"
     assert registry["claim_ledger"]["status"] == "expected"
+    assert registry["atomic_claim_graph"]["status"] == "expected"
+    assert registry["atomic_claim_graph"]["required"] is False
+    assert registry["atomic_claim_graph"]["validation_result"] == "not_checked"
     assert registry["audited_brief"]["status"] == "expected"
     assert registry["reader_brief"]["status"] == "expected"
     assert registry["auditor_quality_gate_report"]["status"] == "expected"
@@ -3158,6 +3185,60 @@ def test_state_check_marks_claim_drafts_with_non_string_required_fields_invalid(
     record = state["artifact_registry"]["artifacts"]["claim_drafts"]
     assert record["status"] == "invalid"
     assert record["validation_result"] == "claim_drafts_schema_error:drafts[0].statement"
+
+
+def test_state_check_validates_present_atomic_claim_graph_against_claim_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001"))
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "valid"
+    assert record["required"] is False
+    assert record["validation_result"] == "experimental_atomic_claim_graph_schema"
+
+
+def test_state_check_marks_atomic_claim_graph_unknown_claim_id_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-9999", "AC-9999-01"))
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == (
+        "atomic_claim_graph_schema_error:claims[0].claim_id_unknown:CL-9999"
+    )
+
+
+def test_state_check_marks_atomic_claim_graph_missing_claim_ledger_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001"))
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "atomic_claim_graph_schema_error:claim_ledger_missing"
+
+
+def test_state_check_marks_malformed_atomic_claim_graph_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    _write_json_artifact(ws, "atomic_claim_graph.json", json.dumps({"claims": []}) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "atomic_claim_graph_schema_error:schema_version"
 
 
 def test_claim_ledger_stage_complete_rejects_nested_meta_ai_shape(tmp_path):

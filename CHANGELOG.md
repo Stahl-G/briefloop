@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet.
+### Added
+
+- **Experimental Atomic Claim Graph schema**: added an optional
+  `output/intermediate/atomic_claim_graph.json` contract and runtime validation
+  for structured atomic decomposition of Claim Ledger claims. This is a schema
+  foundation only and does not perform semantic atomization, evidence-span
+  extraction, claim-support scoring, or support-sufficiency gating.
 
 ## [0.9.0] — 2026-06-19
 
