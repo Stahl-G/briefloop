@@ -110,13 +110,16 @@ Before writing onboarding.json, show a short "values I will write" summary:
 
 If any value was inferred rather than explicitly provided, stop and ask.
 
-After successful setup, tell the writer that `/mabw run <workspace>` is the
-normal next writer command. If the writer explicitly wants direct full
-subagent execution, the advanced/debug workflow command is:
+After successful setup, tell the writer that the workspace handoff has already
+been created. The next writer command to produce the brief is:
 
 ```text
 /generate-brief <workspace>
 ```
+
+If they only want to inspect or refresh the handoff later, use
+`/mabw status <workspace>` first; `/mabw run <workspace>` refreshes handoff
+files only and does not execute specialists.
 
 ## `run <workspace>`
 

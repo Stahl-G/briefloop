@@ -501,6 +501,19 @@ def test_claude_mabw_new_forbids_private_company_inference():
     assert "Before writing onboarding.json" in new_section
 
 
+def test_claude_mabw_new_points_to_generation_after_handoff_setup():
+    text = _read(".claude/commands/mabw.md")
+    new_section = text.split("## `new`", 1)[1].split("## `run <workspace>`", 1)[0]
+    normalized = " ".join(new_section.split())
+    assert "workspace handoff has already been created" in normalized
+    assert "The next writer command to produce the brief is:" in normalized
+    assert "/generate-brief <workspace>" in normalized
+    assert "`/mabw status <workspace>` first" in normalized
+    assert "`/mabw run <workspace>` refreshes handoff" in normalized
+    assert "does not execute specialists" in normalized
+    assert "`/mabw run <workspace>` is the normal next writer command" not in normalized
+
+
 def test_claude_mabw_status_is_read_only_and_feedback_is_bounded():
     text = _read(".claude/commands/mabw.md")
     status_section = text.split("## `status <workspace>`", 1)[1].split(
