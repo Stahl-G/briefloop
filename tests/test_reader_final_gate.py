@@ -174,6 +174,17 @@ def test_reader_final_gate_allows_generic_atom_domain_wording() -> None:
     assert result.counts["process_wording_count"] == 0
 
 
+def test_reader_final_gate_detects_natural_language_atom_id_residue() -> None:
+    markdown = "Do not cite atom IDs in reader-facing prose."
+
+    result = detect_reader_residue(markdown, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["atom_id_count"] == 0
+    assert result.counts["process_wording_count"] == 1
+    assert any(finding.kind == "process_wording" and finding.text == "atom IDs" for finding in result.findings)
+
+
 def test_reader_final_gate_still_detects_internal_atom_markers() -> None:
     markdown = "Internal field atom_id should not ship, and neither should AC-0001-01."
 

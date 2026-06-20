@@ -41,6 +41,7 @@ _CONTEXTUAL_SRC_ID_RE = re.compile(
 _LOCAL_PATH_RE = re.compile(r"(?:/Users/[^\s)]+|/mnt/data/[^\s)]+|file://[^\s)]+|[A-Za-z]:\\[^\s)]+)")
 _DEBUG_RE = re.compile(r"\b(?:DEBUG|TRACE)\b")
 _ATOM_ID_RE = re.compile(r"(?<![A-Za-z0-9_])AC-\d{4}-\d{2}(?![A-Za-z0-9_])")
+_ATOM_ID_WORDING_RE = re.compile(r"\batom(?:\s+|-)+ids?\b", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
@@ -381,6 +382,16 @@ def _collect_process_wording_findings(
             ReaderResidueFinding(
                 kind="process_wording",
                 text=_shorten(wording),
+                line=line_number,
+                artifact=artifact,
+                message="Reader-facing output contains internal workflow/process wording.",
+            )
+        )
+    for match in _ATOM_ID_WORDING_RE.finditer(line):
+        findings.append(
+            ReaderResidueFinding(
+                kind="process_wording",
+                text=_shorten(match.group(0)),
                 line=line_number,
                 artifact=artifact,
                 message="Reader-facing output contains internal workflow/process wording.",
