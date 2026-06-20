@@ -338,6 +338,13 @@ class TestEvidenceSpanRegistryContract:
         assert EvidenceSpanRegistryContract.validate(_valid_evidence_span_registry()) == []
         assert EvidenceSpanRegistryContract.is_valid(_valid_evidence_span_registry())
 
+    def test_url_only_source_identity_is_schema_valid(self):
+        registry = _valid_evidence_span_registry()
+        assert "url" in registry["sources"][0]
+        assert "source_path" not in registry["sources"][0]
+
+        assert EvidenceSpanRegistryContract.validate(registry) == []
+
     @pytest.mark.parametrize(
         ("payload", "field"),
         [

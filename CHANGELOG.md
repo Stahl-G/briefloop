@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hashes. This is schema foundation only and does not perform semantic support
   assessment, Evidence Span support scoring, Claim-Support Matrix generation,
   or support-sufficiency gating.
+- **Evidence span source-pack binding**: present Evidence Span Registry
+  artifacts now validate that each span points to a durable `input/sources/`
+  file and that the declared raw excerpt and optional character offsets match
+  the source bytes. This is source-pack binding only; it does not add semantic
+  support assessment, Claim-Support Matrix behavior, support-sufficiency gates,
+  archive integration, or source appendix UI.
 
 ## [0.9.1] — 2026-06-20
 

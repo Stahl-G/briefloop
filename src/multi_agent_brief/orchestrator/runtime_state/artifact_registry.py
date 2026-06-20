@@ -23,6 +23,10 @@ from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
     ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
     validate_atomic_claim_graph_against_ledger,
 )
+from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+    EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
+    validate_evidence_span_registry_against_source_pack,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_TRANSACTION_INTEGRITY,
     RuntimeStateError,
@@ -112,7 +116,7 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             if artifact_id == "atomic_claim_graph":
                 return _validate_atomic_claim_graph_payload(payload, artifact_path=path)
             if artifact_id == "evidence_span_registry":
-                return _validate_evidence_span_registry_payload(payload)
+                return _validate_evidence_span_registry_payload(payload, artifact_path=path)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
             if artifact_id == "candidate_claims":
@@ -446,7 +450,7 @@ def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -
     return ARTIFACT_VALID, "experimental_atomic_claim_graph_schema"
 
 
-def _validate_evidence_span_registry_payload(payload: Any) -> tuple[str, str]:
+def _validate_evidence_span_registry_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "evidence_span_registry_schema_error:not_object"
     violations = EvidenceSpanRegistryContract.validate(payload)
@@ -454,6 +458,15 @@ def _validate_evidence_span_registry_payload(payload: Any) -> tuple[str, str]:
     if errors:
         first = errors[0]
         return ARTIFACT_INVALID, f"evidence_span_registry_schema_error:{first.field}"
+
+    workspace = artifact_path.parents[2]
+    reason = validate_evidence_span_registry_against_source_pack(
+        registry_payload=payload,
+        workspace=workspace,
+    )
+    if reason:
+        return ARTIFACT_INVALID, f"{EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX}:{reason}"
+
     return ARTIFACT_VALID, "experimental_evidence_span_registry_schema"
 
 

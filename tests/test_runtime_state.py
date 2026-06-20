@@ -259,6 +259,54 @@ def _valid_evidence_span_registry_payload() -> str:
     ) + "\n"
 
 
+def _source_backed_evidence_span_registry_payload(
+    *,
+    source_path: str = "input/sources/source-001.md",
+    source_id: str = "SRC-001",
+    raw_excerpt: str = "ExampleCo said module shipments reached 12 MW in Q2.",
+    include_offsets: bool = False,
+    source_text: str | None = None,
+) -> str:
+    span = {
+        "span_id": "ESP-001-01",
+        "raw_excerpt": raw_excerpt,
+        "hash": _span_hash(raw_excerpt),
+        "span_role": "numeric_observation",
+    }
+    if include_offsets:
+        text = source_text or f"Intro.\n{raw_excerpt}\nOutro.\n"
+        start = text.index(raw_excerpt)
+        span["char_start"] = start
+        span["char_end"] = start + len(raw_excerpt)
+    return json.dumps(
+        {
+            "schema_version": "mabw.evidence_span_registry.v1",
+            "sources": [
+                {
+                    "source_id": source_id,
+                    "source_type": "company_release",
+                    "source_path": source_path,
+                    "published_at": "2026-06-10",
+                    "source_tier": "company_official",
+                    "spans": [span],
+                }
+            ],
+        }
+    ) + "\n"
+
+
+def _write_source_text(
+    ws: Path,
+    *,
+    name: str = "source-001.md",
+    text: str = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n",
+) -> Path:
+    source_path = ws / "input" / "sources" / name
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(text, encoding="utf-8")
+    return source_path
+
+
 def _atomic_claim_graph_payload(claim_roles: dict[str, list[str]]) -> str:
     claims = []
     for claim_id, roles in claim_roles.items():
@@ -3470,7 +3518,13 @@ def test_state_check_marks_atomic_claim_graph_cross_claim_edge_invalid(tmp_path)
 def test_state_check_validates_present_evidence_span_registry(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
-    _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
+    source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
+    _write_source_text(ws, text=source_text)
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(include_offsets=True, source_text=source_text),
+    )
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
@@ -3478,6 +3532,22 @@ def test_state_check_validates_present_evidence_span_registry(tmp_path):
     assert record["status"] == "valid"
     assert record["required"] is False
     assert record["validation_result"] == "experimental_evidence_span_registry_schema"
+
+
+def test_state_check_marks_url_only_evidence_span_registry_runtime_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert (
+        record["validation_result"]
+        == "evidence_span_registry_validation_error:source_path_missing:SRC-001"
+    )
 
 
 def test_state_check_marks_evidence_span_registry_hash_mismatch_invalid(tmp_path):
@@ -3506,6 +3576,206 @@ def test_state_check_marks_evidence_span_registry_missing_source_date_invalid(tm
 
     assert record["status"] == "invalid"
     assert record["validation_result"] == "evidence_span_registry_schema_error:sources[0].source_date"
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    [
+        "/tmp/source-001.md",
+        "../input/sources/source-001.md",
+        "input/source-001.md",
+        "input/sources/../source-001.md",
+        r"input\sources\source-001.md",
+    ],
+)
+def test_state_check_marks_evidence_span_registry_unsafe_source_path_invalid(tmp_path, source_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_source_text(ws)
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(source_path=source_path),
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_path_unsafe:SRC-001"
+
+
+def test_state_check_marks_evidence_span_registry_symlink_escape_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    outside = tmp_path / "outside-source.md"
+    outside.write_text("ExampleCo said module shipments reached 12 MW in Q2.\n", encoding="utf-8")
+    source_path = ws / "input" / "sources" / "source-001.md"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        source_path.symlink_to(outside)
+    except OSError as exc:
+        pytest.skip(f"symlink creation not available: {exc}")
+    _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_path_unsafe:SRC-001"
+
+
+def test_state_check_marks_evidence_span_registry_non_evidence_source_path_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_source_text(ws, name="README.md")
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(source_path="input/sources/README.md"),
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_path_not_evidence:SRC-001"
+
+
+def test_state_check_marks_evidence_span_registry_missing_source_file_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_file_missing:SRC-001"
+
+
+def test_state_check_marks_evidence_span_registry_unreadable_source_file_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    source_path = ws / "input" / "sources" / "source-001.md"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"\xff\xfe\xfd")
+    _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_file_unreadable:SRC-001"
+
+
+def test_state_check_marks_evidence_span_registry_missing_excerpt_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_source_text(ws, text="Different source text.\n")
+    _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:span_excerpt_not_found:ESP-001-01"
+
+
+def test_state_check_allows_duplicate_evidence_span_excerpt_without_offsets(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
+    _write_source_text(ws, text=f"{raw_excerpt}\nRepeated.\n{raw_excerpt}\n")
+    _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "experimental_evidence_span_registry_schema"
+
+
+def test_state_check_marks_evidence_span_registry_incomplete_offset_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_source_text(ws)
+    payload = json.loads(_source_backed_evidence_span_registry_payload())
+    payload["sources"][0]["spans"][0]["char_start"] = 7
+    _write_json_artifact(ws, "evidence_span_registry.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:span_offset_incomplete:ESP-001-01"
+
+
+def test_state_check_marks_evidence_span_registry_offset_mismatch_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_source_text(ws)
+    payload = json.loads(_source_backed_evidence_span_registry_payload())
+    payload["sources"][0]["spans"][0]["char_start"] = 0
+    payload["sources"][0]["spans"][0]["char_end"] = len(payload["sources"][0]["spans"][0]["raw_excerpt"])
+    _write_json_artifact(ws, "evidence_span_registry.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:span_offset_mismatch:ESP-001-01"
+
+
+def test_state_check_validates_evidence_span_registry_against_json_content(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
+    source_path = ws / "input" / "sources" / "source-001.json"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    content = f"Intro.\n{raw_excerpt}\nOutro.\n"
+    source_path.write_text(
+        json.dumps({"source_id": "SRC-001", "content": content}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(
+            source_path="input/sources/source-001.json",
+            include_offsets=True,
+            source_text=content,
+        ),
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "experimental_evidence_span_registry_schema"
+
+
+def test_state_check_marks_evidence_span_registry_json_source_id_mismatch_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
+    source_path = ws / "input" / "sources" / "source-001.json"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(
+        json.dumps({"source_id": "SRC-999", "content": raw_excerpt}, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(source_path="input/sources/source-001.json"),
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_id_mismatch:SRC-001"
 
 
 @pytest.mark.parametrize(
