@@ -8,7 +8,7 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Current version: **v0.9.0**
+Current version: **v0.9.1**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief`
 Current Claude commands: `/mabw ...`
@@ -19,7 +19,7 @@ Current Claude commands: `/mabw ...`
 
 BriefLoop is an **open-source brief-loop engineering harness** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns recurring briefings into governed loops: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records.
 
-The v0.9.0 preview introduces the BriefLoop public name while keeping MABW as the implementation lineage and compatibility surface. Runtime commands, the Python package, workspace formats, artifact names, and MABW-080 experiment IDs remain unchanged.
+The v0.9.1 release adds the first experimental Atomic Claim Graph control surfaces while keeping MABW as the implementation lineage and compatibility surface. Runtime commands, the Python package, workspace formats, artifact names, and MABW-080 experiment IDs remain unchanged.
 
 It is built for:
 
@@ -31,7 +31,7 @@ It is built for:
   <a href="#quick-start">🚀 Quick Start</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
-  <a href="docs/releases/v0.9.0.md">📦 v0.9.0 Preview</a>
+  <a href="docs/releases/v0.9.1.md">📦 v0.9.1</a>
 </p>
 
 ## Why It Is Worth Looking At 👀
@@ -75,7 +75,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. BriefLoop traced how errors propagated; it did not prove semantic correctness.
-- [v0.9.0 preview notes](docs/releases/v0.9.0.md): BriefLoop public naming, MABW compatibility rules, and the v0.9 support-sufficiency direction. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- [v0.9.1 release notes](docs/releases/v0.9.1.md): experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -189,9 +189,9 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 ## Product Boundary 🧱
 
-Current release baseline: v0.9.0
+Current release baseline: v0.9.1
 
-The v0.9.0 preview is a public-framing and naming release. It introduces BriefLoop as the public project name and keeps MABW as the implementation lineage and compatibility surface. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs, and it does not implement Atomic Claim Graph, Evidence Span Registry, or Claim-Support Matrix yet.
+The v0.9.1 release adds experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundaries, and reader-residue projection. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs, and it still does not implement Evidence Span Registry, Claim-Support Matrix, semantic proof, or support-sufficiency gating.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -355,7 +355,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Improvement Ledger](docs/modules/improvement.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
-[v0.9.0 Preview](docs/releases/v0.9.0.md) ·
+[v0.9.1](docs/releases/v0.9.1.md) ·
 [MABW-080 experiment guide](docs/experiments-080.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·
