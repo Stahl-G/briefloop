@@ -110,6 +110,33 @@ def _write_supported_target_ledger(ws: Path) -> None:
     )
 
 
+def _write_atomic_graph(ws: Path, *, claim_id: str = "CL-001") -> None:
+    (_intermediate(ws) / "atomic_claim_graph.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.atomic_claim_graph.v1",
+                "claims": [
+                    {
+                        "claim_id": claim_id,
+                        "atoms": [
+                            {
+                                "atom_id": "AC-0001-01",
+                                "text": "TargetCo opened a demo facility.",
+                                "claim_role": "observed_fact",
+                                "materiality": "high",
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_supported_strategic_ledger(ws: Path) -> None:
     _write_ledger(
         ws,
@@ -841,6 +868,64 @@ def test_quality_gates_do_not_warn_when_strategic_implication_is_ledger_supporte
         for finding in state["quality_gate_report"]["findings"]
         if finding.get("finding_type") == "unsupported_strategic_implication"
     ]
+
+
+def test_quality_gate_report_includes_atomic_reader_projection_metadata(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    _write_atomic_graph(ws)
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    projection = state["quality_gate_report"]["metadata"]["atomic_reader_projection"]
+    assert projection["status"] == "pass"
+    assert projection["claim_citation_coverage"]["cited_graph_claim_ids"] == ["CL-001"]
+    assert projection["summary_counts"]["graph_atom_count"] == 1
+
+
+def test_quality_gate_atom_residue_is_warning_only(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    _write_atomic_graph(ws)
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. AC-0001-01 [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    atom_findings = [
+        finding for finding in report["findings"] if finding.get("finding_type") == "atomic_atom_id_residue"
+    ]
+    assert report["status"] == "warning"
+    assert len(atom_findings) == 1
+    assert atom_findings[0]["blocking_level"] == "warning"
+    assert atom_findings[0]["blocking"] is False
+    assert atom_findings[0]["metadata"]["semantic_boundary"] == "deterministic_id_and_citation_projection_only"
+
+
+def test_quality_gate_invalid_atomic_graph_is_non_blocking(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    (_intermediate(ws) / "atomic_claim_graph.json").write_text(
+        json.dumps({"claims": []}) + "\n",
+        encoding="utf-8",
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    projection = state["quality_gate_report"]["metadata"]["atomic_reader_projection"]
+    assert projection["status"] == "invalid_graph"
+    assert projection["atom_residue_findings"] == []
 
 
 def test_gates_show_and_validate_are_machine_readable(tmp_path, capsys):

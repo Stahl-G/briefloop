@@ -35,6 +35,9 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_TRANSACTION_INTEGRITY,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.outputs.atomic_reader_projection import (
+    project_atomic_reader_text_from_workspace,
+)
 from multi_agent_brief.quality_gates.contract import (
     GATE_IDS,
     QUALITY_GATE_SCHEMA,
@@ -124,6 +127,18 @@ FINDING_RULES: dict[str, dict[str, str]] = {
             "as a non-blocking warning for auditor review."
         ),
         "docs_anchor": "docs/agent-contract.md#unsupported_strategic_implication",
+    },
+    "atomic_atom_id_residue": {
+        "rule_summary": (
+            "Atomic Claim Graph atom IDs are internal decomposition aids and must not appear in reader-facing prose."
+        ),
+        "docs_anchor": "docs/agent-contract.md#atomic-claim-graph",
+    },
+    "atomic_graph_process_residue": {
+        "rule_summary": (
+            "Atomic Claim Graph process wording is internal control-plane residue and must not appear in reader-facing prose."
+        ),
+        "docs_anchor": "docs/agent-contract.md#atomic-claim-graph",
     },
 }
 
@@ -681,6 +696,61 @@ def _unsupported_strategic_implication_findings(
     return findings
 
 
+def _atomic_reader_projection_findings(
+    *,
+    projection: dict[str, Any],
+    start_idx: int,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    reader_facing_mode: bool,
+) -> list[dict[str, Any]]:
+    residue_findings = projection.get("atom_residue_findings")
+    if not isinstance(residue_findings, list):
+        return []
+    stage_id = _stage_or_none(stages, "editor")
+    artifact_id = _artifact_or_none(artifacts, "reader_brief" if reader_facing_mode else "audited_brief")
+    findings: list[dict[str, Any]] = []
+    for item in residue_findings:
+        if not isinstance(item, dict):
+            continue
+        raw_type = str(item.get("finding_type") or "")
+        if raw_type == "atomic_graph_process_residue":
+            finding_type = "atomic_graph_process_residue"
+            description = "Reader-facing text contains Atomic Claim Graph process wording."
+        else:
+            finding_type = "atomic_atom_id_residue"
+            description = "Reader-facing text contains an Atomic Claim Graph atom ID."
+        evidence_ref = str(item.get("atom_id") or item.get("text") or "")
+        findings.append(
+            _finding(
+                finding_id=f"QG_MATERIAL_FACT_{start_idx + len(findings):03d}",
+                gate_id="material_fact",
+                finding_type=finding_type,
+                severity="medium",
+                blocking_level="warning",
+                repair_owner="editor",
+                stage_id=stage_id,
+                artifact_id=artifact_id,
+                claim_id=item.get("claim_id") if isinstance(item.get("claim_id"), str) else None,
+                description=description,
+                recommendation=(
+                    "Remove Atomic Claim Graph residue from reader-facing prose and preserve only "
+                    "`[src:<claim_id>]` Claim Ledger citations."
+                ),
+                category="atomic_reader_residue",
+                line_number=item.get("line") if isinstance(item.get("line"), int) else None,
+                evidence_ref=evidence_ref,
+                metadata={
+                    "target_artifact": projection.get("target_artifact"),
+                    "projection_status": projection.get("status"),
+                    "semantic_boundary": projection.get("semantic_boundary"),
+                    "raw_projection_finding": item,
+                },
+            )
+        )
+    return findings
+
+
 def _claim_ledger_support_text(ledger: ClaimLedger) -> str:
     parts: list[str] = []
     for claim in ledger:
@@ -1199,6 +1269,21 @@ def check_quality_gates(
         strict=strict,
         reader_facing_mode=reader_mode,
     )
+    atomic_projection = project_atomic_reader_text_from_workspace(
+        workspace=ws,
+        target_text=markdown,
+        target_artifact=_workspace_relative(ws, brief_path),
+        ledger_claims=claim_ledger.to_list(),
+    )
+    gate_findings["material_fact"].extend(
+        _atomic_reader_projection_findings(
+            projection=atomic_projection,
+            start_idx=len(gate_findings["material_fact"]) + 1,
+            stages=stages,
+            artifacts=artifacts,
+            reader_facing_mode=reader_mode,
+        )
+    )
     for gate_id in sorted(GATE_IDS):
         gate_findings[gate_id] = _apply_gate_context(
             gate_findings[gate_id],
@@ -1228,6 +1313,7 @@ def check_quality_gates(
             "stage_id": gate_stage_id,
             "gate_stage_id": gate_stage_id,
             "gate_artifact_id": gate_artifact_id,
+            "atomic_reader_projection": atomic_projection,
         },
     }
 

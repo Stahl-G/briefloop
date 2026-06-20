@@ -150,6 +150,17 @@ This appendix lists source records used by the brief; it is not a semantic proof
     assert result.to_report_dict()["sample_findings"] == []
 
 
+def test_reader_final_gate_detects_atomic_claim_graph_residue() -> None:
+    markdown = "TargetCo opened a demo facility. See AC-0001-01 from the Atomic Claim Graph."
+
+    result = detect_reader_residue(markdown, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["atom_id_count"] == 1
+    assert any(finding.kind == "atom_id" for finding in result.findings)
+    assert any(finding.kind == "process_wording" and "Atomic Claim Graph" in finding.text for finding in result.findings)
+
+
 def test_reader_final_gate_scans_docx_headers_and_footers(tmp_path: Path) -> None:
     docx = pytest.importorskip("docx", reason="python-docx not installed")
     document = docx.Document()

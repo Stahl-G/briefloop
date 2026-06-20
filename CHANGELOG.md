@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now treat present `atomic_claim_graph.json` files as optional experimental
   decomposition aids only. The Claim Ledger remains the factual evidence base;
   this adds no no-new-atom checker, gate, CLI, or support-sufficiency claim.
+- **Atomic reader residue and coverage projection**: present valid Atomic Claim
+  Graphs now produce deterministic reader-text projection metadata for atom ID
+  residue and Claim Ledger citation coverage. The quality-gate projection is
+  warning-only; reader-final residue checks remain blocking for delivery output.
+  This does not perform semantic matching or support-sufficiency assessment.
 
 ## [0.9.0] — 2026-06-19
 

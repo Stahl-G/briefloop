@@ -14,6 +14,7 @@ FindingKind = Literal[
     "blank_citation_row",
     "local_path",
     "debug_residue",
+    "atom_id",
 ]
 
 COUNT_KEYS = {
@@ -24,6 +25,7 @@ COUNT_KEYS = {
     "blank_citation_row": "blank_citation_row_count",
     "local_path": "local_path_count",
     "debug_residue": "debug_residue_count",
+    "atom_id": "atom_id_count",
 }
 
 _SRC_MARKER_RE = re.compile(r"\[(?:src|source):[^\]]+\]", re.IGNORECASE)
@@ -38,6 +40,7 @@ _CONTEXTUAL_SRC_ID_RE = re.compile(
 )
 _LOCAL_PATH_RE = re.compile(r"(?:/Users/[^\s)]+|/mnt/data/[^\s)]+|file://[^\s)]+|[A-Za-z]:\\[^\s)]+)")
 _DEBUG_RE = re.compile(r"\b(?:DEBUG|TRACE)\b")
+_ATOM_ID_RE = re.compile(r"(?<![A-Za-z0-9_])AC-\d{4}-\d{2}(?![A-Za-z0-9_])")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
@@ -55,6 +58,10 @@ _PROCESS_WORDINGS = [
     "agent_handoff",
     "claim_ledger.json",
     "finalize_report.json",
+    "atomic_claim_graph",
+    "Atomic Claim Graph",
+    "atom_id",
+    "atom id",
     "事实账本",
     "声明账本",
     "分析师子代理",
@@ -201,6 +208,15 @@ def detect_reader_residue(
             line_number=line_number,
             artifact=artifact,
             message="Reader-facing output contains debug or trace residue.",
+        )
+        _collect_regex_findings(
+            findings,
+            kind="atom_id",
+            regex=_ATOM_ID_RE,
+            line=line,
+            line_number=line_number,
+            artifact=artifact,
+            message="Reader-facing output contains an Atomic Claim Graph atom ID.",
         )
         _collect_process_wording_findings(
             findings,
