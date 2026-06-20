@@ -8,7 +8,7 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Current version: **v0.9.0**
+Current version: **v0.9.1**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief`
 Current Claude commands: `/mabw ...`
@@ -17,7 +17,7 @@ Current Claude commands: `/mabw ...`
 
 BriefLoop turns AI-assisted business briefing into a governed loop: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records. It is not a prompt that makes AI write faster; it is a process-accountability harness for recurring business briefings.
 
-The v0.9.0 preview introduces the BriefLoop public name while keeping MABW as the implementation lineage and compatibility surface. The runtime commands, Python package, workspace format, artifact names, and MABW-080 experiment IDs are unchanged.
+The v0.9.1 release adds the first experimental Atomic Claim Graph control surfaces while keeping MABW as the implementation lineage and compatibility surface. The runtime commands, Python package, workspace format, artifact names, and MABW-080 experiment IDs are unchanged.
 
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
@@ -146,7 +146,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 - **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
 - **[BriefLoop-090 A-controlled auditable-brief pilot](docs/reference-runs/briefloop-090-a-controlled-pilot.md)**: one public-safe synthetic case with condition-blind, hash-bound `auditable_brief` assessment. In this case, memory showed the approved guidance without obvious harm, while prompt-only over-applied the same guidance. It is not a general output-quality claim.
-- **[v0.9.0 preview notes](docs/releases/v0.9.0.md)**: BriefLoop public naming, MABW compatibility rules, and the v0.9 support-sufficiency direction. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- **[v0.9.1 release notes](docs/releases/v0.9.1.md)**: experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 
 We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.
 

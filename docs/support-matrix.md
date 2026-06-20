@@ -35,6 +35,7 @@ validation unless that is stated separately.
 | Orchestrator control switchboard (`orchestrator_control_switchboard.json`, optional `control_selections.json`) | Supported |
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Stage-scoped quality gate control files (`gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json`; legacy latest projection `quality_gate_report.json`) | Supported |
+| Atomic Claim Graph (`atomic_claim_graph.json` schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -99,6 +100,14 @@ metadata, and requires the frozen ledger before Claim Ledger stage completion.
 This controls identity and freezing; it is not semantic proof or automatic claim
 deduplication.
 
+Atomic Claim Graph support is experimental. When present,
+`atomic_claim_graph.json` is validated as an optional structural decomposition
+of frozen Claim Ledger claims; Python checks schema, whole-ledger coverage,
+deterministic type consistency, and reader-facing atom/process residue. The
+graph is not source evidence, not a reader citation surface, and not support
+sufficiency. Evidence Span Registry and Claim-Support Matrix are not shipped in
+v0.9.1.
+
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
 Fast-rerun fact-layer import is an experimental control transaction. It can
@@ -148,7 +157,7 @@ summarize cases, or create Improvement Memory.
 
 For the full experimental command sequence and public-claim boundaries, see
 [MABW-080 experiment guide](experiments-080.md).
-v0.9.0 includes one completed public-safe synthetic `auditable_brief` pilot with
+v0.9.1 includes one completed public-safe synthetic `auditable_brief` pilot with
 condition-blind, hash-bound assessment. This supports only the documented
 single-case observation; broader quality, delivery-readiness, factual
 correctness, and generalization claims remain out of scope.
