@@ -19,6 +19,8 @@ BriefLoop turns AI-assisted business briefing into a governed loop: source packs
 
 The v0.9.1 release adds the first experimental Atomic Claim Graph control surfaces while keeping MABW as the implementation lineage and compatibility surface. The runtime commands, Python package, workspace format, artifact names, and MABW-080 experiment IDs are unchanged.
 
+Mainline after v0.9.1 also includes experimental Evidence Span Registry surfaces: optional span schema validation, source-pack byte binding, archive hash projection, and a Source Appendix trace audit copy. These are traceability and reproducibility controls, not semantic support proof or support-sufficiency gates.
+
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
 ## 🚀 Get Started
@@ -118,6 +120,8 @@ its sample-state factory started production, with planned capacity of 2 GW...
 
 `output/intermediate/gates/auditor_quality_gate_report.json` and `output/intermediate/gates/finalize_quality_gate_report.json`: deterministic checks that can block audit completion or delivery. `output/intermediate/quality_gate_report.json` is a latest/legacy projection. There is no force flag.
 
+When optional `output/intermediate/evidence_span_registry.json` is present and valid, finalize can add reader-safe span counts to the Source Appendix and write raw span details only to `output/source_appendix_trace.md` as an audit copy. That trace file is not copied into `output/delivery/`.
+
 ```json
 {
   "gate_id": "freshness",
@@ -187,7 +191,7 @@ Three on-ramps, one spine. There is no lite mode: entry cost drops, the accounta
 | Run once | ~30 min | A few local text files, no search backend, `new -> run -> status -> deliver` |
 | Live with it | weekly | Configured sources, feedback loop, approved preferences |
 
-Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [Evidence Span Registry](docs/evidence-span-registry.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
 
 ## 🧭 A Note On Provenance
 

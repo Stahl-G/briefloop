@@ -1,7 +1,7 @@
 # BriefLoop Skill Version Matrix
 
 Skill contract version: `briefloop-operator-skill-v0.1`
-Last verified against BriefLoop runtime: `v0.9.1`
+Last verified against BriefLoop runtime: `v0.9.1` plus post-v0.9.1 mainline Evidence Span Registry surfaces
 Public project name: BriefLoop
 Historical implementation name: MABW
 
@@ -15,6 +15,9 @@ Historical implementation name: MABW
 - Assessment targets:
   - `delivery_brief`
   - `auditable_brief`
+- Experimental optional artifacts on mainline after v0.9.1:
+  - Atomic Claim Graph: `atomic_claim_graph.json`
+  - Evidence Span Registry: `evidence_span_registry.json`
 - MABW-080 experiment operations:
   - `validate-case`
   - `scaffold-condition`
@@ -28,7 +31,7 @@ Historical implementation name: MABW
 
 - Do not rename runtime surfaces unless the task is explicitly a compatibility
   migration.
-- Do not describe planned v0.9+ support-sufficiency controls as implemented.
+- Do not describe planned v0.9+ support-sufficiency controls as completed.
 - BriefLoop-090 is a future readiness/fresh-rerun label, not a current CLI namespace or supported command surface. Current experiment commands remain under `multi-agent-brief experiments 080`.
 - If runtime behavior conflicts with this skill, prefer:
   - `docs/architecture-status.md`
@@ -41,8 +44,6 @@ Historical implementation name: MABW
 These are roadmap directions unless current code, tests, and support matrix say
 otherwise:
 
-- Atomic Claim Graph
-- Evidence Span Registry
 - Claim-Support Matrix
 - Finding Candidate System
 - Release Eligibility Scorecard

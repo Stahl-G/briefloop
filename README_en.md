@@ -21,6 +21,8 @@ BriefLoop is an **open-source brief-loop engineering harness** for business, res
 
 The v0.9.1 release adds the first experimental Atomic Claim Graph control surfaces while keeping MABW as the implementation lineage and compatibility surface. Runtime commands, the Python package, workspace formats, artifact names, and MABW-080 experiment IDs remain unchanged.
 
+Mainline after v0.9.1 also includes experimental Evidence Span Registry surfaces: optional span schema validation, source-pack byte binding, archive hash projection, and a Source Appendix trace audit copy. These are traceability and reproducibility controls, not semantic support proof or support-sufficiency gates.
+
 It is built for:
 
 - people who produce weekly market briefs, competitor tracking, policy notes, IR drafts, or leadership updates;
@@ -76,6 +78,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. BriefLoop traced how errors propagated; it did not prove semantic correctness.
 - [v0.9.1 release notes](docs/releases/v0.9.1.md): experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- [Evidence Span Registry](docs/evidence-span-registry.md): mainline experimental span schema, source-pack byte binding, archive projection, and Source Appendix trace view. It is not a Claim-Support Matrix or support-sufficiency gate.
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -191,7 +194,7 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 Current release baseline: v0.9.1
 
-The v0.9.1 release adds experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundaries, and reader-residue projection. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs, and it still does not implement Evidence Span Registry, Claim-Support Matrix, semantic proof, or support-sufficiency gating.
+The v0.9.1 release adds experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundaries, and reader-residue projection. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. Mainline after v0.9.1 adds optional experimental Evidence Span Registry controls, but this still does not implement Claim-Support Matrix, semantic proof, or support-sufficiency gating.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -356,6 +359,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Quality gates](docs/harness.md) ·
 [Evaluation cases](docs/evaluation-cases.md) ·
 [Improvement Ledger](docs/modules/improvement.md) ·
+[Evidence Span Registry](docs/evidence-span-registry.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
 [v0.9.1](docs/releases/v0.9.1.md) ·

@@ -36,6 +36,7 @@ validation unless that is stated separately.
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Stage-scoped quality gate control files (`gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json`; legacy latest projection `quality_gate_report.json`) | Supported |
 | Atomic Claim Graph (`atomic_claim_graph.json` schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection) | Experimental |
+| Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -105,8 +106,14 @@ Atomic Claim Graph support is experimental. When present,
 of frozen Claim Ledger claims; Python checks schema, whole-ledger coverage,
 deterministic type consistency, and reader-facing atom/process residue. The
 graph is not source evidence, not a reader citation surface, and not support
-sufficiency. Evidence Span Registry and Claim-Support Matrix are not shipped in
-v0.9.1.
+sufficiency.
+
+Evidence Span Registry support is experimental on main after the v0.9.1 release.
+When present, `evidence_span_registry.json` is validated as an optional span
+trace artifact; Python checks schema, source-pack byte binding, raw-excerpt
+hashes, optional offsets, archive hash projection, and Source Appendix trace
+surfaces. It is not source-support judgment, not a Claim-Support Matrix, not a
+support-sufficiency gate, and not a reader citation contract.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
