@@ -259,6 +259,28 @@ def _valid_evidence_span_registry_payload() -> str:
     ) + "\n"
 
 
+def _valid_claim_support_matrix_payload() -> str:
+    return json.dumps(
+        {
+            "schema_version": "mabw.claim_support_matrix.v1",
+            "rows": [
+                {
+                    "row_id": "CSM-0001",
+                    "claim_id": "CL-0001",
+                    "atom_id": "AC-0001-01",
+                    "evidence_span_id": "ESP-001-01",
+                    "support_label": "partial_support",
+                    "support_strength": "medium",
+                    "support_reason": "The span supports activity but not acceleration wording.",
+                    "required_action": "downgrade_wording",
+                    "repair_owner": "analyst",
+                    "decision_source": "human",
+                }
+            ],
+        }
+    ) + "\n"
+
+
 def _source_backed_evidence_span_registry_payload(
     *,
     source_path: str = "input/sources/source-001.md",
@@ -865,6 +887,9 @@ def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
     assert registry["evidence_span_registry"]["status"] == "expected"
     assert registry["evidence_span_registry"]["required"] is False
     assert registry["evidence_span_registry"]["validation_result"] == "not_checked"
+    assert registry["claim_support_matrix"]["status"] == "expected"
+    assert registry["claim_support_matrix"]["required"] is False
+    assert registry["claim_support_matrix"]["validation_result"] == "not_checked"
     assert registry["audited_brief"]["status"] == "expected"
     assert registry["reader_brief"]["status"] == "expected"
     assert registry["auditor_quality_gate_report"]["status"] == "expected"
@@ -3549,6 +3574,32 @@ def test_state_check_validates_present_evidence_span_registry(tmp_path):
     assert record["status"] == "valid"
     assert record["required"] is False
     assert record["validation_result"] == "experimental_evidence_span_registry_schema"
+
+
+def test_state_check_validates_present_claim_support_matrix_schema(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert record["status"] == "valid"
+    assert record["required"] is False
+    assert record["validation_result"] == "experimental_claim_support_matrix_schema"
+
+
+def test_state_check_marks_malformed_claim_support_matrix_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_support_matrix.json", json.dumps({"rows": []}) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert record["validation_result"] == "claim_support_matrix_schema_error:schema_version"
 
 
 def test_state_check_marks_url_only_evidence_span_registry_runtime_invalid(tmp_path):

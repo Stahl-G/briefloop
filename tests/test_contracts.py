@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemCont
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract, claim_draft_diagnostics
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
+from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.analysis_pack import (
@@ -30,6 +31,7 @@ class TestSchemaRegistry:
         assert SchemaRegistry.get("source_item") is SourceItemContract
         assert SchemaRegistry.get("claim") is ClaimContract
         assert SchemaRegistry.get("claim_drafts") is ClaimDraftContract
+        assert SchemaRegistry.get("claim_support_matrix") is ClaimSupportMatrixContract
         assert SchemaRegistry.get("atomic_claim_graph") is AtomicClaimGraphContract
         assert SchemaRegistry.get("evidence_span_registry") is EvidenceSpanRegistryContract
 
@@ -445,6 +447,134 @@ class TestEvidenceSpanRegistryContract:
         violations = EvidenceSpanRegistryContract.validate(registry)
 
         assert any(violation.field == "sources[0].spans[0].char_end" for violation in violations)
+
+
+# ── ClaimSupportMatrixContract ──
+
+
+def _valid_claim_support_matrix() -> dict:
+    return {
+        "schema_version": "mabw.claim_support_matrix.v1",
+        "rows": [
+            {
+                "row_id": "CSM-0001",
+                "atom_id": "AC-0001-01",
+                "claim_id": "CL-0001",
+                "evidence_span_id": "ESP-001-01",
+                "support_label": "partial_support",
+                "support_strength": "medium",
+                "support_reason": "The span supports the observed activity but not the full trend wording.",
+                "required_action": "downgrade_wording",
+                "repair_owner": "analyst",
+                "decision_source": "human",
+            }
+        ],
+        "metadata": {},
+    }
+
+
+class TestClaimSupportMatrixContract:
+    def test_valid_minimal_matrix_passes(self):
+        assert ClaimSupportMatrixContract.validate(_valid_claim_support_matrix()) == []
+        assert ClaimSupportMatrixContract.is_valid(_valid_claim_support_matrix())
+
+    @pytest.mark.parametrize(
+        ("payload", "field"),
+        [
+            ([], "<root>"),
+            ({"schema_version": "wrong", "rows": []}, "schema_version"),
+            ({"schema_version": "mabw.claim_support_matrix.v1", "rows": []}, "rows"),
+            ({"schema_version": "mabw.claim_support_matrix.v1"}, "rows"),
+        ],
+    )
+    def test_rejects_invalid_root_version_or_empty_rows(self, payload, field):
+        violations = ClaimSupportMatrixContract.validate(payload)
+
+        assert any(violation.field == field for violation in violations)
+        assert not ClaimSupportMatrixContract.is_valid(payload)
+
+    def test_rejects_duplicate_row_id(self):
+        matrix = _valid_claim_support_matrix()
+        matrix["rows"].append(dict(matrix["rows"][0]))
+
+        violations = ClaimSupportMatrixContract.validate(matrix)
+
+        assert any(violation.field == "rows[1].row_id" for violation in violations)
+
+    def test_allows_multiple_rows_for_same_atom(self):
+        matrix = _valid_claim_support_matrix()
+        second = dict(matrix["rows"][0])
+        second["row_id"] = "CSM-0002"
+        second["evidence_span_id"] = "ESP-002-01"
+        matrix["rows"].append(second)
+
+        assert ClaimSupportMatrixContract.validate(matrix) == []
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("row_id", "ROW-1"),
+            ("atom_id", "ATOM-1"),
+            ("claim_id", "CLAIM-1"),
+            ("support_label", "proof"),
+            ("support_strength", "certain"),
+            ("support_reason", ""),
+            ("required_action", "approve_release"),
+            ("repair_owner", "llm"),
+            ("decision_source", "model"),
+        ],
+    )
+    def test_rejects_invalid_row_fields(self, field, value):
+        matrix = _valid_claim_support_matrix()
+        matrix["rows"][0][field] = value
+
+        violations = ClaimSupportMatrixContract.validate(matrix)
+
+        assert any(violation.field == f"rows[0].{field}" for violation in violations)
+
+    def test_rejects_atom_claim_prefix_mismatch(self):
+        matrix = _valid_claim_support_matrix()
+        matrix["rows"][0]["atom_id"] = "AC-0002-01"
+
+        violations = ClaimSupportMatrixContract.validate(matrix)
+
+        assert any(violation.field == "rows[0].atom_id" for violation in violations)
+
+    def test_allows_null_evidence_span_id_for_negative_or_policy_row(self):
+        matrix = _valid_claim_support_matrix()
+        matrix["rows"][0]["evidence_span_id"] = None
+        matrix["rows"][0]["support_label"] = "unsupported"
+        matrix["rows"][0]["support_strength"] = "none"
+        matrix["rows"][0]["required_action"] = "block_release"
+        matrix["rows"][0]["repair_owner"] = "editor"
+
+        assert ClaimSupportMatrixContract.validate(matrix) == []
+
+    def test_rejects_invalid_span_id(self):
+        matrix = _valid_claim_support_matrix()
+        matrix["rows"][0]["evidence_span_id"] = "SPAN-1"
+
+        violations = ClaimSupportMatrixContract.validate(matrix)
+
+        assert any(violation.field == "rows[0].evidence_span_id" for violation in violations)
+
+    def test_requires_evidence_span_id_field_even_when_nullable(self):
+        matrix = _valid_claim_support_matrix()
+        matrix["rows"][0].pop("evidence_span_id")
+
+        violations = ClaimSupportMatrixContract.validate(matrix)
+
+        assert any(violation.field == "rows[0].evidence_span_id" for violation in violations)
+
+    def test_rejects_invalid_metadata(self):
+        matrix = _valid_claim_support_matrix()
+        matrix["metadata"] = []
+        matrix["rows"][0]["metadata"] = []
+
+        violations = ClaimSupportMatrixContract.validate(matrix)
+        fields = {violation.field for violation in violations}
+
+        assert {"metadata", "rows[0].metadata"} <= fields
 
 
 # ── ClaimDraftContract ──
