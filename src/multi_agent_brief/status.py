@@ -18,6 +18,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
+from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_reader_text_from_workspace
 
 
 INTERMEDIATE_DIR = Path("output/intermediate")
@@ -46,6 +47,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "feedback": {},
         "experiment_080": {},
         "fact_layer_import": {},
+        "atomic_reader_projection": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -106,6 +108,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         workflow_payload if isinstance(workflow_payload, dict) else None,
         workspace=ws,
     )
+    payload["atomic_reader_projection"] = _atomic_reader_projection_summary(ws)
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -158,6 +161,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     fact_layer_import = status.get("fact_layer_import") or {}
     improvement = status.get("improvement") or {}
     experiment_080 = status.get("experiment_080") or {}
+    atomic_projection = status.get("atomic_reader_projection") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -203,6 +207,20 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             ),
         ]
     )
+    audited_projection = (
+        atomic_projection.get("audited_brief")
+        if isinstance(atomic_projection.get("audited_brief"), dict)
+        else {}
+    )
+    if audited_projection.get("status") not in {None, "not_available"}:
+        counts = audited_projection.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        lines.append(
+            "[status] atomic_reader_projection: "
+            f"{audited_projection.get('status')} "
+            f"atom_residue={counts.get('atom_residue_count', 0)} "
+            f"process_residue={counts.get('process_residue_count', 0)}"
+        )
     for marker in status.get("stale_or_unknown") or []:
         lines.append(f"[status] stale_or_unknown: {marker}")
     lines.append(f"[status] suggested_next: {status.get('suggested_next_command')}")
@@ -296,6 +314,41 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {"status": "error", "path": str(path), "payload": None, "error": "JSON root is not an object"}
     return {"status": "present", "path": str(path), "payload": payload}
+
+
+def _read_optional_text(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _atomic_reader_projection_summary(workspace: Path) -> dict[str, Any]:
+    graph_present = (workspace / INTERMEDIATE_DIR / "atomic_claim_graph.json").exists()
+    targets = {
+        "audited_brief": (workspace / INTERMEDIATE_DIR / "audited_brief.md", "output/intermediate/audited_brief.md"),
+        "reader_brief": (workspace / "output" / "brief.md", "output/brief.md"),
+    }
+    summary: dict[str, Any] = {}
+    for key, (path, artifact) in targets.items():
+        text = _read_optional_text(path)
+        if text is None or not text.strip():
+            summary[key] = {
+                "status": "not_available",
+                "target_artifact": artifact,
+                "graph_present": graph_present,
+                "reason": f"{artifact}:missing",
+                "summary_counts": {},
+            }
+            continue
+        summary[key] = project_atomic_reader_text_from_workspace(
+            workspace=workspace,
+            target_text=text,
+            target_artifact=artifact,
+        )
+    return summary
 
 
 def _runtime_summary(result: dict[str, Any]) -> dict[str, Any]:
