@@ -26,6 +26,7 @@ class SourceAppendixRecord:
     label: str
     title: str
     source_id: str = ""
+    source_ids: list[str] = field(default_factory=list)
     publisher: str = ""
     published_at: str = ""
     retrieved_at: str = ""
@@ -106,7 +107,7 @@ def build_source_appendix(
     ledger = ClaimLedger.import_json(ledger_path)
     records_by_key: dict[str, SourceAppendixRecord] = {}
     claim_source_keys: dict[str, str] = {}
-    source_ids_by_key: dict[str, str] = {}
+    source_ids_by_key: dict[str, list[str]] = {}
     order: list[str] = []
     resolved_claim_count = 0
 
@@ -124,13 +125,19 @@ def build_source_appendix(
             records_by_key[key] = source_record
         records_by_key[key].claim_count += 1
         claim_source_keys[claim_id] = key
-        if claim.source_id and key not in source_ids_by_key:
-            source_ids_by_key[key] = claim.source_id.strip()
+        if claim.source_id:
+            source_id = claim.source_id.strip()
+            if source_id:
+                source_ids = source_ids_by_key.setdefault(key, [])
+                if source_id not in source_ids:
+                    source_ids.append(source_id)
 
     records = [records_by_key[key] for key in order]
     for idx, record in enumerate(records, start=1):
         record.label = f"S{idx}"
-        record.source_id = source_ids_by_key.get(order[idx - 1], "")
+        source_ids = source_ids_by_key.get(order[idx - 1], [])
+        record.source_ids = list(source_ids)
+        record.source_id = source_ids[0] if source_ids else ""
     citation_labels = {
         claim_id: records_by_key[key].label
         for claim_id, key in claim_source_keys.items()
@@ -341,12 +348,16 @@ def _build_source_appendix_trace(
             f"{EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX}:{reason}"
         )
 
-    records_by_source_id = {
-        record.source_id: record
-        for record in records
-        if record.source_id
-    }
+    records_by_source_id: dict[str, SourceAppendixRecord] = {}
+    trace_spans_by_label: dict[str, int] = {}
+    trace_roles_by_label: dict[str, set[str]] = {}
     trace_sources: list[dict[str, Any]] = []
+    for record in records:
+        source_ids = record.source_ids or ([record.source_id] if record.source_id else [])
+        for source_id in source_ids:
+            normalized = str(source_id or "").strip()
+            if normalized:
+                records_by_source_id[normalized] = record
     for source in sorted(
         (item for item in payload.get("sources", []) if isinstance(item, dict)),
         key=lambda item: str(item.get("source_id") or ""),
@@ -367,8 +378,8 @@ def _build_source_appendix_trace(
             for span in spans
             if str(span.get("span_role") or "").strip()
         })
-        record.span_count = len(spans)
-        record.span_roles = roles
+        trace_spans_by_label[record.label] = trace_spans_by_label.get(record.label, 0) + len(spans)
+        trace_roles_by_label.setdefault(record.label, set()).update(roles)
         trace_sources.append({
             "label": record.label,
             "title": record.title,
@@ -379,6 +390,12 @@ def _build_source_appendix_trace(
 
     if not trace_sources:
         return _trace_skip("Evidence span trace skipped because no registry sources matched cited claims.")
+
+    for record in records:
+        if not record.label:
+            continue
+        record.span_count = trace_spans_by_label.get(record.label, 0)
+        record.span_roles = sorted(trace_roles_by_label.get(record.label, set()))
 
     markdown = render_source_appendix_trace(trace_sources)
     return {

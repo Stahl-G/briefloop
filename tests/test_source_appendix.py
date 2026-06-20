@@ -290,6 +290,99 @@ def test_source_appendix_adds_reader_safe_span_summary_and_audit_trace(tmp_path:
     assert "traceability surface only" in result.trace_markdown
 
 
+def test_source_appendix_aggregates_trace_spans_for_deduped_source_ids(tmp_path: Path):
+    ws = tmp_path / "workspace"
+    intermediate = ws / "output" / "intermediate"
+    source_dir = ws / "input" / "sources"
+    intermediate.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    excerpt_1 = "ExampleCo said module shipments reached 12 MW in Q2."
+    excerpt_2 = "ExampleCo said module shipments reached 18 MW in Q3."
+    (source_dir / "source-001.md").write_text(f"Intro.\n{excerpt_1}\n", encoding="utf-8")
+    (source_dir / "source-002.md").write_text(f"Intro.\n{excerpt_2}\n", encoding="utf-8")
+    ledger = intermediate / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            _claim(
+                "CL-001",
+                source_id="SRC-001",
+                source_url="https://example.com/shared",
+                statement="ExampleCo shipments reached 12 MW.",
+                evidence_text=excerpt_1,
+                metadata={"source_title": "Shared Source", "publisher": "Example News"},
+            ),
+            _claim(
+                "CL-002",
+                source_id="SRC-002",
+                source_url="https://example.com/shared",
+                statement="ExampleCo shipments reached 18 MW.",
+                evidence_text=excerpt_2,
+                metadata={"source_title": "Shared Source", "publisher": "Example News"},
+            ),
+        ],
+    )
+    registry = intermediate / "evidence_span_registry.json"
+    registry.write_text(
+        json.dumps({
+            "schema_version": "mabw.evidence_span_registry.v1",
+            "sources": [
+                {
+                    "source_id": "SRC-001",
+                    "source_type": "local_file",
+                    "source_tier": "primary",
+                    "source_path": "input/sources/source-001.md",
+                    "retrieved_at": "2026-06-02",
+                    "spans": [
+                        {
+                            "span_id": "ESP-001-01",
+                            "raw_excerpt": excerpt_1,
+                            "hash": _span_hash(excerpt_1),
+                            "span_role": "numeric_observation",
+                        }
+                    ],
+                },
+                {
+                    "source_id": "SRC-002",
+                    "source_type": "local_file",
+                    "source_tier": "primary",
+                    "source_path": "input/sources/source-002.md",
+                    "retrieved_at": "2026-06-02",
+                    "spans": [
+                        {
+                            "span_id": "ESP-002-01",
+                            "raw_excerpt": excerpt_2,
+                            "hash": _span_hash(excerpt_2),
+                            "span_role": "direct_statement",
+                        }
+                    ],
+                },
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = build_source_appendix(
+        audited_markdown=(
+            "ExampleCo shipments reached 12 MW. [src:CL-001]\n"
+            "ExampleCo shipments reached 18 MW. [src:CL-002]\n"
+        ),
+        ledger_path=ledger,
+        evidence_span_registry_path=registry,
+        workspace=ws,
+    )
+
+    assert result.source_count == 1
+    assert result.records[0].source_ids == ["SRC-001", "SRC-002"]
+    assert result.trace_status == "generated"
+    assert result.trace_span_count == 2
+    assert "Evidence trace: 2 spans; roles: direct statement, numeric observation" in result.markdown
+    assert "ESP-001-01" in result.trace_markdown
+    assert "ESP-002-01" in result.trace_markdown
+    assert "SRC-001" in result.trace_markdown
+    assert "SRC-002" in result.trace_markdown
+
+
 def test_source_appendix_skips_trace_non_blockingly_when_source_pack_mismatches(tmp_path: Path):
     ws = tmp_path / "workspace"
     intermediate = ws / "output" / "intermediate"
