@@ -81,7 +81,11 @@ def _source_file_for_path(
         return None, f"source_path_unsafe:{source_id}"
 
     ws = workspace.expanduser().resolve()
-    source_root = (ws / "input" / "sources").resolve()
+    input_root = ws / "input"
+    source_root_path = input_root / "sources"
+    if input_root.is_symlink() or source_root_path.is_symlink():
+        return None, f"source_path_unsafe:{source_id}"
+    source_root = source_root_path.resolve()
     candidate = ws.joinpath(*posix_path.parts)
     if not candidate.exists():
         return None, f"source_file_missing:{source_id}"

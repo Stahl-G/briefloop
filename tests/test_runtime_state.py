@@ -3625,6 +3625,53 @@ def test_state_check_marks_evidence_span_registry_symlink_escape_invalid(tmp_pat
     assert record["validation_result"] == "evidence_span_registry_validation_error:source_path_unsafe:SRC-001"
 
 
+def test_state_check_marks_evidence_span_registry_symlinked_source_root_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    outside_sources = tmp_path / "outside-sources"
+    outside_sources.mkdir()
+    (outside_sources / "source-001.md").write_text(
+        "ExampleCo said module shipments reached 12 MW in Q2.\n",
+        encoding="utf-8",
+    )
+    source_root = ws / "input" / "sources"
+    try:
+        source_root.symlink_to(outside_sources, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation not available: {exc}")
+    _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_path_unsafe:SRC-001"
+
+
+def test_state_check_marks_evidence_span_registry_symlinked_input_root_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    outside_input = tmp_path / "outside-input"
+    outside_sources = outside_input / "sources"
+    outside_sources.mkdir(parents=True)
+    (outside_sources / "source-001.md").write_text(
+        "ExampleCo said module shipments reached 12 MW in Q2.\n",
+        encoding="utf-8",
+    )
+    shutil.rmtree(ws / "input")
+    try:
+        (ws / "input").symlink_to(outside_input, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation not available: {exc}")
+    _write_json_artifact(ws, "evidence_span_registry.json", _source_backed_evidence_span_registry_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "evidence_span_registry_validation_error:source_path_unsafe:SRC-001"
+
+
 def test_state_check_marks_evidence_span_registry_non_evidence_source_path_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
