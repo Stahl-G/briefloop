@@ -13,7 +13,7 @@
 当前版本：**v0.9.1**
 公开定位：**BriefLoop / MABW 兼容期**
 当前 CLI：`multi-agent-brief`
-当前 Claude 命令：`/mabw ...`
+当前 Claude 命令：`/mabw`（BriefLoop writer command）
 
 > 当有人问“这个数字哪来的？”BriefLoop 不让模型临场解释，它让系统打开账本。
 
@@ -257,7 +257,7 @@ multi-agent-brief claude install --repo-workdir .
 /mabw deliver <workspace>
 ```
 
-`/mabw` 是 writer-facing 入口；完整 delegated subagent workflow 仍由 `/generate-brief <workspace>` 执行。`status` 调用只读的 `multi-agent-brief status`，`feedback` 只记录和分诊，`deliver` 必须经过 gates、reader-final gate 和 `state finalize-complete`。
+`/mabw` 是 BriefLoop writer command；命令名在 BriefLoop 过渡期保留为兼容名。`status` 调用只读的 `multi-agent-brief status`，`feedback` 只记录和分诊，`deliver` 必须经过 gates、reader-final gate 和 `state finalize-complete`。`/generate-brief <workspace>` 仍是高级/legacy 的完整 delegated workflow 命令，用于调试或直接执行子代理流程；它不是新用户第一路径。
 
 详细流程见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。中文写作者可直接看 [MABW 黄金路径](docs/golden-path.zh-CN.md) 和 [我每周怎么用 MABW](docs/weekly-use.zh-CN.md)。
 

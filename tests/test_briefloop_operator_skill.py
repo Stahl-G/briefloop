@@ -42,9 +42,11 @@ def test_claude_projection_is_thin_wrapper() -> None:
 
 def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> None:
     text = _read(CANONICAL / "references" / "version-matrix.md")
-    assert "v0.9.0 Preview" in text
+    assert "v0.9.1" in text
     assert "multi-agent-brief" in text
     assert "/mabw" in text
+    assert "No `/briefloop` user command" in text
+    assert "BriefLoop skill is an agent protocol surface" in text
     assert "auditable_brief" in text
     assert "delivery_brief" in text
     assert "Planned / Not Yet Authoritative" in text
