@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for structured atomic decomposition of Claim Ledger claims. This is a schema
   foundation only and does not perform semantic atomization, evidence-span
   extraction, claim-support scoring, or support-sufficiency gating.
+- **Atomic Claim Graph coverage/type validation**: present
+  `atomic_claim_graph.json` artifacts now receive deterministic whole-ledger
+  coverage and Claim Ledger type-consistency checks. The graph remains optional
+  and this does not perform semantic atomization or support-sufficiency
+  assessment.
 
 ## [0.9.0] — 2026-06-19
 
