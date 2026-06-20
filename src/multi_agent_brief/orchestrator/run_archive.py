@@ -11,12 +11,17 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
+from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+    EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
+    validate_evidence_span_registry_against_source_pack,
+)
 from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 
 
 RUN_ARCHIVE_SCHEMA = "mabw.run_archive.v1"
 RUN_ARCHIVE_FACT_LAYER_SCHEMA = "mabw.run_archive.fact_layer.v1"
+RUN_ARCHIVE_EVIDENCE_SPAN_REGISTRY_SCHEMA = "mabw.run_archive.evidence_span_registry.v1"
 E_RUN_ARCHIVE_CONFLICT = "E_RUN_ARCHIVE_CONFLICT"
 E_RUN_ARCHIVE_FAILED = "E_RUN_ARCHIVE_FAILED"
 
@@ -80,6 +85,7 @@ def archive_finalized_run(
         manifest,
         freshness_at_finalize=fast_rerun_freshness_at_finalize,
     )
+    evidence_span_registry = archive_plan["evidence_span_registry"]
     archive_manifest = {
         "schema_version": RUN_ARCHIVE_SCHEMA,
         "run_id": run_id,
@@ -94,12 +100,15 @@ def archive_finalized_run(
         "event_log_semantics": "copied_before_current_archive_event",
         "files": files,
     }
+    if evidence_span_registry is not None:
+        archive_manifest["evidence_span_registry"] = evidence_span_registry
     if archive_root.exists():
         _verify_existing_archive_matches_plan(
             archive_root=archive_root,
             planned_files=files,
             planned_fact_layer=archive_plan["fact_layer"],
             planned_fast_rerun=fast_rerun,
+            planned_evidence_span_registry=evidence_span_registry,
         )
         return _archive_result(archive_root)
 
@@ -153,14 +162,16 @@ def preflight_finalized_run_archive(
         manifest,
         freshness_at_finalize=fast_rerun_freshness_at_finalize,
     )
+    evidence_span_registry = archive_plan["evidence_span_registry"]
     if archive_root.exists():
         return _verify_existing_archive_matches_plan(
             archive_root=archive_root,
             planned_files=files,
             planned_fact_layer=archive_plan["fact_layer"],
             planned_fast_rerun=fast_rerun,
+            planned_evidence_span_registry=evidence_span_registry,
         )
-    return {
+    result: dict[str, Any] = {
         "archive_path": str(archive_root),
         "file_count": len(files),
         "would_create": True,
@@ -172,6 +183,9 @@ def preflight_finalized_run_archive(
         "fast_rerun": fast_rerun,
         "fact_layer": archive_plan["fact_layer"],
     }
+    if evidence_span_registry is not None:
+        result["evidence_span_registry"] = evidence_span_registry
+    return result
 
 
 def _archive_plan(
@@ -245,11 +259,27 @@ def _archive_plan(
             archive_path=archive_path,
             artifact_id=str(artifact_id),
         )
+    evidence_span_registry = intermediate_dir / "evidence_span_registry.json"
+    if evidence_span_registry.exists() and evidence_span_registry.is_file():
+        _add_file_record(
+            records,
+            seen_archive_paths,
+            role="intermediate",
+            source=evidence_span_registry,
+            original_path=_workspace_relative(workspace, evidence_span_registry),
+            archive_path=Path("intermediate") / "evidence_span_registry.json",
+            artifact_id="evidence_span_registry",
+        )
 
     fact_layer = _add_fact_layer_records(
         records=records,
         seen_archive_paths=seen_archive_paths,
         workspace=workspace,
+    )
+    evidence_span_registry = _evidence_span_registry_projection(
+        workspace=workspace,
+        artifact_registry=artifact_registry,
+        records=records,
     )
 
     for name in _CONTROL_FILES:
@@ -263,7 +293,11 @@ def _archive_plan(
                 original_path=_workspace_relative(workspace, source),
                 archive_path=Path("control") / name,
             )
-    return {"files": records, "fact_layer": fact_layer}
+    return {
+        "files": records,
+        "fact_layer": fact_layer,
+        "evidence_span_registry": evidence_span_registry,
+    }
 
 
 def _add_fact_layer_records(
@@ -358,6 +392,142 @@ def _iter_durable_source_files(workspace: Path) -> list[Path]:
         for path in sorted(source_dir.rglob("*"))
         if path.is_file() and is_evidence_input_path(path, workspace)
     ]
+
+
+def _evidence_span_registry_projection(
+    *,
+    workspace: Path,
+    artifact_registry: dict[str, Any],
+    records: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    artifacts = artifact_registry.get("artifacts") if isinstance(artifact_registry.get("artifacts"), dict) else {}
+    registry_record = artifacts.get("evidence_span_registry") if isinstance(artifacts, dict) else None
+    registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
+    if not registry_path.exists() or not registry_path.is_file():
+        return None
+
+    registry_sha = _sha256_file(registry_path)
+    projection_base: dict[str, Any] = {
+        "schema_version": RUN_ARCHIVE_EVIDENCE_SPAN_REGISTRY_SCHEMA,
+        "registry_path": "output/intermediate/evidence_span_registry.json",
+        "registry_archive_path": "intermediate/evidence_span_registry.json",
+        "registry_sha256": registry_sha,
+        "registry_size_bytes": registry_path.stat().st_size,
+    }
+    if not isinstance(registry_record, dict) or registry_record.get("status") != "valid":
+        projection_base.update({
+            "status": "invalid",
+            "validation_result": (
+                registry_record.get("validation_result")
+                if isinstance(registry_record, dict) and isinstance(registry_record.get("validation_result"), str)
+                else "not_checked"
+            ),
+        })
+        return projection_base
+
+    if registry_record.get("sha256") and registry_record.get("sha256") != registry_sha:
+        raise RunArchiveError(
+            "Evidence Span Registry artifact registry hash does not match current file bytes.",
+            details={
+                "artifact_id": "evidence_span_registry",
+                "registry_path": "output/intermediate/evidence_span_registry.json",
+                "registry_sha256": registry_sha,
+                "artifact_registry_sha256": registry_record.get("sha256"),
+            },
+        )
+
+    try:
+        payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RunArchiveError(
+            "Evidence Span Registry is marked valid but cannot be read for archive projection.",
+            details={"registry_path": "output/intermediate/evidence_span_registry.json", "reason": str(exc)},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RunArchiveError(
+            "Evidence Span Registry is marked valid but does not contain an object.",
+            details={"registry_path": "output/intermediate/evidence_span_registry.json"},
+        )
+    validation_reason = validate_evidence_span_registry_against_source_pack(
+        registry_payload=payload,
+        workspace=workspace,
+    )
+    if validation_reason:
+        raise RunArchiveError(
+            "Evidence Span Registry is marked valid but no longer matches current source-pack bytes.",
+            details={
+                "registry_path": "output/intermediate/evidence_span_registry.json",
+                "validation_result": f"{EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX}:{validation_reason}",
+            },
+        )
+
+    records_by_original_path = {
+        str(record.get("original_path")): record
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("original_path"), str)
+    }
+    projected_sources: list[dict[str, Any]] = []
+    span_count = 0
+    for source in sorted(
+        (item for item in payload.get("sources", []) if isinstance(item, dict)),
+        key=lambda item: (str(item.get("source_id") or ""), str(item.get("source_path") or "")),
+    ):
+        source_id = _stripped_string(source.get("source_id")) or "<unknown_source>"
+        source_path = _stripped_string(source.get("source_path"))
+        if source_path is None:
+            raise RunArchiveError(
+                "Evidence Span Registry is marked valid but a source is missing source_path.",
+                details={"source_id": source_id},
+            )
+        source_record = records_by_original_path.get(source_path)
+        if not isinstance(source_record, dict) or not str(source_record.get("archive_path") or "").startswith(
+            "fact_layer/input/sources/"
+        ):
+            raise RunArchiveError(
+                "Evidence Span Registry source is not present in archived fact-layer source pack.",
+                details={"source_id": source_id, "source_path": source_path},
+            )
+        spans: list[dict[str, Any]] = []
+        for span in sorted(
+            (item for item in source.get("spans", []) if isinstance(item, dict)),
+            key=lambda item: str(item.get("span_id") or ""),
+        ):
+            span_id = _stripped_string(span.get("span_id")) or "<unknown_span>"
+            projected_span: dict[str, Any] = {
+                "span_id": span_id,
+                "raw_excerpt_hash": _stripped_string(span.get("hash")) or "",
+                "span_role": _stripped_string(span.get("span_role")) or "",
+            }
+            if isinstance(span.get("char_start"), int):
+                projected_span["char_start"] = span["char_start"]
+            if isinstance(span.get("char_end"), int):
+                projected_span["char_end"] = span["char_end"]
+            spans.append(projected_span)
+            span_count += 1
+        projected_sources.append({
+            "source_id": source_id,
+            "source_path": source_path,
+            "archive_path": source_record["archive_path"],
+            "source_sha256": source_record["sha256"],
+            "source_size_bytes": source_record["size_bytes"],
+            "span_count": len(spans),
+            "spans": spans,
+        })
+
+    projection_base.update({
+        "status": "valid",
+        "validation_result": "experimental_evidence_span_registry_schema",
+        "source_count": len(projected_sources),
+        "span_count": span_count,
+        "sources": projected_sources,
+    })
+    return projection_base
+
+
+def _stripped_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _fact_layer_artifact_record(
@@ -486,6 +656,7 @@ def _verify_existing_archive_matches_plan(
     planned_files: list[dict[str, Any]],
     planned_fact_layer: dict[str, Any],
     planned_fast_rerun: dict[str, Any],
+    planned_evidence_span_registry: dict[str, Any] | None,
 ) -> dict[str, Any]:
     result = _verify_existing_archive(archive_root=archive_root)
     existing_files = result["manifest"].get("files")
@@ -557,6 +728,16 @@ def _verify_existing_archive_matches_plan(
             details={
                 "archive_path": _workspaceish(archive_root),
                 "field": "fast_rerun",
+            },
+            error_code=E_RUN_ARCHIVE_CONFLICT,
+        )
+    existing_evidence_span_registry = result["manifest"].get("evidence_span_registry")
+    if existing_evidence_span_registry != planned_evidence_span_registry:
+        raise RunArchiveError(
+            "Existing run archive evidence_span_registry projection differs from the current finalized run.",
+            details={
+                "archive_path": _workspaceish(archive_root),
+                "field": "evidence_span_registry",
             },
             error_code=E_RUN_ARCHIVE_CONFLICT,
         )

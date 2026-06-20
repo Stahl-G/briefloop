@@ -20,7 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file and that the declared raw excerpt and optional character offsets match
   the source bytes. This is source-pack binding only; it does not add semantic
   support assessment, Claim-Support Matrix behavior, support-sufficiency gates,
-  archive integration, or source appendix UI.
+  or source appendix UI.
+- **Evidence span archive projection**: finalized run archives now include a
+  hash-only Evidence Span Registry projection when a present registry is valid,
+  including registry bytes, archived source-pack paths, source file hashes,
+  source sizes, span IDs, raw-excerpt hashes, and offsets. Invalid registries
+  are recorded as invalid without span/source projection. This is archive
+  reproducibility only; it does not add semantic support assessment,
+  Claim-Support Matrix behavior, support-sufficiency gates, or source appendix
+  UI.
 
 ## [0.9.1] — 2026-06-20
 

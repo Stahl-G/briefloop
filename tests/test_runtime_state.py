@@ -730,6 +730,23 @@ def _write_fact_layer_inputs(ws: Path) -> None:
     )
 
 
+def _write_archivable_evidence_span_registry(ws: Path) -> str:
+    raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
+    source_text = f"Intro.\n{raw_excerpt}\nOutro.\n"
+    _write_fact_layer_inputs(ws)
+    (ws / "input" / "sources" / "source-001.md").write_text(source_text, encoding="utf-8")
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(
+            raw_excerpt=raw_excerpt,
+            include_offsets=True,
+            source_text=source_text,
+        ),
+    )
+    return raw_excerpt
+
+
 def _set_current_stage(ws: Path, stage_id: str) -> None:
     stages = runtime_state.load_stage_specs(ROOT)
     stage_ids = [str(stage.get("stage_id") or "") for stage in stages if stage.get("stage_id")]
@@ -5538,6 +5555,151 @@ def test_run_archive_manifest_records_complete_fact_layer(tmp_path):
             assert record["sha256"] == _sha256_file(path)
             assert not Path(record["archive_path"]).is_absolute()
             assert not Path(record["original_path"]).is_absolute()
+
+
+def test_run_archive_omits_evidence_span_projection_when_registry_absent(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_fact_layer_inputs(ws)
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+
+    assert "evidence_span_registry" not in manifest
+
+
+def test_run_archive_projects_valid_evidence_span_registry_hashes(tmp_path):
+    ws = _write_workspace(tmp_path)
+    raw_excerpt = _write_archivable_evidence_span_registry(ws)
+
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    projection = manifest["evidence_span_registry"]
+    source_projection = projection["sources"][0]
+    span_projection = source_projection["spans"][0]
+    archived_source = archive / source_projection["archive_path"]
+    archived_registry = archive / projection["registry_archive_path"]
+    archived_registry_payload = json.loads(archived_registry.read_text(encoding="utf-8"))
+
+    assert projection["schema_version"] == "mabw.run_archive.evidence_span_registry.v1"
+    assert projection["status"] == "valid"
+    assert projection["validation_result"] == "experimental_evidence_span_registry_schema"
+    assert projection["registry_path"] == "output/intermediate/evidence_span_registry.json"
+    assert projection["registry_archive_path"] == "intermediate/evidence_span_registry.json"
+    assert projection["registry_sha256"] == _sha256_file(_intermediate(ws) / "evidence_span_registry.json")
+    assert projection["registry_sha256"] == _sha256_file(archived_registry)
+    assert projection["source_count"] == 1
+    assert projection["span_count"] == 1
+    assert source_projection["source_id"] == "SRC-001"
+    assert source_projection["source_path"] == "input/sources/source-001.md"
+    assert source_projection["archive_path"] == "fact_layer/input/sources/source-001.md"
+    assert source_projection["source_sha256"] == _sha256_file(archived_source)
+    assert source_projection["source_size_bytes"] == archived_source.stat().st_size
+    assert span_projection["span_id"] == "ESP-001-01"
+    assert span_projection["raw_excerpt_hash"] == _span_hash(raw_excerpt)
+    assert span_projection["span_role"] == "numeric_observation"
+    assert archived_source.read_text(encoding="utf-8")[
+        span_projection["char_start"]:span_projection["char_end"]
+    ] == raw_excerpt
+    assert archived_registry_payload["sources"][0]["spans"][0]["raw_excerpt"] == raw_excerpt
+    assert "raw_excerpt" not in span_projection
+
+
+def test_run_archive_revalidates_evidence_span_registry_against_current_source_bytes(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_archivable_evidence_span_registry(ws)
+    state = _complete_finalized_workspace(ws)
+    archive_root = ws / "output" / "runs" / state["manifest"]["run_id"]
+    shutil.rmtree(archive_root)
+    (ws / "input" / "sources" / "source-001.md").write_text(
+        "# Source 001\n\nThe original span text was removed after validation.\n",
+        encoding="utf-8",
+    )
+    finalize_report = json.loads((_intermediate(ws) / "finalize_report.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(runtime_state.operations.RunArchiveError) as excinfo:
+        archive_finalized_run(
+            workspace=ws,
+            run_id=state["manifest"]["run_id"],
+            manifest=state["manifest"],
+            workflow=state["workflow_state"],
+            artifact_registry=state["artifact_registry"],
+            finalize_report=finalize_report,
+        )
+
+    assert "no longer matches current source-pack bytes" in str(excinfo.value)
+    assert (
+        excinfo.value.details["validation_result"]
+        == "evidence_span_registry_validation_error:span_excerpt_not_found:ESP-001-01"
+    )
+    assert not archive_root.exists()
+
+
+def test_run_archive_records_invalid_evidence_span_registry_without_span_projection(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_fact_layer_inputs(ws)
+    _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
+
+    state = _complete_finalized_workspace(ws)
+    archive = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    projection = manifest["evidence_span_registry"]
+
+    assert projection["status"] == "invalid"
+    assert projection["registry_path"] == "output/intermediate/evidence_span_registry.json"
+    assert projection["registry_archive_path"] == "intermediate/evidence_span_registry.json"
+    assert projection["registry_sha256"] == _sha256_file(_intermediate(ws) / "evidence_span_registry.json")
+    assert (
+        projection["validation_result"]
+        == "evidence_span_registry_validation_error:source_path_missing:SRC-001"
+    )
+    assert "sources" not in projection
+    assert (archive / "intermediate" / "evidence_span_registry.json").exists()
+
+
+def test_run_archive_with_evidence_span_projection_is_idempotent(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_archivable_evidence_span_registry(ws)
+    state = _complete_finalized_workspace(ws)
+    archive = state["run_archive"]
+    finalize_report = json.loads((_intermediate(ws) / "finalize_report.json").read_text(encoding="utf-8"))
+
+    result = archive_finalized_run(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        manifest=state["manifest"],
+        workflow=state["workflow_state"],
+        artifact_registry=state["artifact_registry"],
+        finalize_report=finalize_report,
+    )
+
+    assert result["archive_manifest_sha256"] == archive["archive_manifest_sha256"]
+    assert result["manifest"]["evidence_span_registry"] == archive["manifest"]["evidence_span_registry"]
+
+
+def test_existing_archive_rejects_corrupted_evidence_span_projection(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_archivable_evidence_span_registry(ws)
+    state = _complete_finalized_workspace(ws)
+    archive_root = ws / "output" / "runs" / state["manifest"]["run_id"]
+    manifest_path = archive_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["evidence_span_registry"]["sources"][0]["spans"][0]["raw_excerpt_hash"] = "sha256:" + "0" * 64
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    finalize_report = json.loads((_intermediate(ws) / "finalize_report.json").read_text(encoding="utf-8"))
+
+    with pytest.raises(runtime_state.operations.RunArchiveError) as excinfo:
+        archive_finalized_run(
+            workspace=ws,
+            run_id=state["manifest"]["run_id"],
+            manifest=state["manifest"],
+            workflow=state["workflow_state"],
+            artifact_registry=state["artifact_registry"],
+            finalize_report=finalize_report,
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_RUN_ARCHIVE_CONFLICT
+    assert "evidence_span_registry projection differs" in str(excinfo.value)
 
 
 def test_run_archive_manifest_groups_multiple_source_files_as_one_source_pack(tmp_path):
