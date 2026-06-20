@@ -130,6 +130,29 @@ def test_evidence_span_registry_contract_is_optional_experimental_schema_foundat
         assert "evidence_span_registry" not in claim_ledger_stage.expected_artifacts
 
 
+def test_claim_support_matrix_contract_is_optional_experimental_schema_foundation():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        support_matrix = registry.artifact("claim_support_matrix")
+        auditor_stage = registry.stage("auditor")
+        claim_ledger_stage = registry.stage("claim-ledger")
+        assert support_matrix is not None
+        assert auditor_stage is not None
+        assert claim_ledger_stage is not None
+        assert support_matrix.required is False
+        assert support_matrix.path == "output/intermediate/claim_support_matrix.json"
+        assert support_matrix.producer_stage == "auditor"
+        assert support_matrix.producer_role == "auditor"
+        assert support_matrix.consumer_stages == ()
+        assert support_matrix.validation_result == "experimental_claim_support_matrix_schema"
+        assert "claim_support_matrix" not in auditor_stage.produces
+        assert "claim_support_matrix" not in auditor_stage.expected_artifacts
+        assert "claim_support_matrix" not in claim_ledger_stage.produces
+        assert "claim_support_matrix" not in claim_ledger_stage.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"

@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as an audit copy. This does not add semantic support assessment,
   Claim-Support Matrix behavior, support-sufficiency gates, or a delivery
   artifact.
+- **Experimental Claim-Support Matrix schema**: added an optional
+  `output/intermediate/claim_support_matrix.json` contract and runtime
+  schema validation for atom-to-evidence-span support records. This is schema
+  and vocabulary foundation only; it does not assess support, validate
+  cross-artifact references, route repairs, add gates, decide release
+  eligibility, or claim support sufficiency.
 
 ## [0.9.1] — 2026-06-20
 
