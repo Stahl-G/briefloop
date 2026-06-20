@@ -1,9 +1,13 @@
 ---
-description: MABW five-verb writer entrypoint for Claude Code
+description: BriefLoop writer command for Claude Code, retained as /mabw for compatibility
 argument-hint: "new | run <workspace> | status <workspace> | feedback <workspace> [text-or-file] | deliver <workspace>"
 ---
 
-You are the Claude Code first-class MABW writer entrypoint.
+You are the Claude Code first-class BriefLoop writer command.
+
+The command name `/mabw` is retained for compatibility during the BriefLoop
+transition. Do not introduce or recommend a separate `/briefloop` slash command;
+the BriefLoop skill is an agent protocol surface, not a user command.
 
 This command is the product-facing route for writer intent. It is not a second
 workflow engine. Python remains the deterministic setup, validation, control,
@@ -54,8 +58,9 @@ For relative workspace paths, resolve from the current Claude Code project
 folder. If the workspace cannot be found and the verb is not `new`, ask for an
 absolute workspace path before proceeding.
 
-Use existing deterministic MABW commands. Do not run specialist stages unless
-the user explicitly switches to the full `/generate-brief <workspace>` workflow.
+Use existing deterministic BriefLoop/MABW commands. Do not run specialist stages
+unless the user explicitly switches to the advanced full
+`/generate-brief <workspace>` workflow.
 
 ## `new`
 
@@ -105,7 +110,9 @@ Before writing onboarding.json, show a short "values I will write" summary:
 
 If any value was inferred rather than explicitly provided, stop and ask.
 
-After successful setup, tell the writer that the next full workflow command is:
+After successful setup, tell the writer that `/mabw run <workspace>` is the
+normal next writer command. If the writer explicitly wants direct full
+subagent execution, the advanced/debug workflow command is:
 
 ```text
 /generate-brief <workspace>
@@ -132,7 +139,8 @@ Do not execute the full pipeline. Do not invoke specialist agents. Do not mark
 stages complete. Do not use `state decide --decision continue` or
 `state decide --decision finalize`.
 
-If the writer wants the full delegated workflow after handoff, point them to:
+If the writer explicitly wants the full delegated workflow after handoff, point
+them to the advanced/debug command:
 
 ```text
 /generate-brief <workspace>

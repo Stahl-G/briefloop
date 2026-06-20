@@ -22,7 +22,7 @@ The current compatibility surfaces remain:
 
 - `https://github.com/Stahl-G/briefloop` public repository URL
 - `multi-agent-brief` CLI
-- `/mabw` Claude commands
+- `/mabw` Claude command
 - `multi_agent_brief` Python package/module path
 - `multi-agent-brief-workflow` distribution package name
 - existing artifact names and workspace formats
@@ -40,6 +40,19 @@ should use `https://github.com/Stahl-G/briefloop`.
 - BriefCI: reserved optional technical sub-layer for gates, regression checks,
   and release eligibility; not the public project name
 - MABW: historical implementation name and compatibility surface
+
+## Entrypoint layers
+
+| Layer | Entrypoint | Audience |
+|---|---|---|
+| Public product name | BriefLoop | Docs, releases, repository identity |
+| Writer command | `/mabw` | Claude Code writers; retained for compatibility |
+| Agent protocol | BriefLoop skill | Runtime/coding agents reading operation rules |
+| Deterministic control plane | `multi-agent-brief` | CLI transactions, validators, tests, scripts |
+| Full delegated workflow | `/generate-brief <workspace>` | Advanced/debug direct subagent execution |
+
+`/briefloop` is not a user command in this repository. The BriefLoop skill is
+an agent protocol surface, not a slash-command entrypoint.
 
 ## Allowed language
 

@@ -1,7 +1,7 @@
 # BriefLoop Skill Version Matrix
 
 Skill contract version: `briefloop-operator-skill-v0.1`
-Last verified against BriefLoop runtime: `v0.9.0 Preview`
+Last verified against BriefLoop runtime: `v0.9.1`
 Public project name: BriefLoop
 Historical implementation name: MABW
 
@@ -9,6 +9,7 @@ Historical implementation name: MABW
 
 - CLI: `multi-agent-brief`
 - Claude command: `/mabw`
+- No `/briefloop` user command; BriefLoop skill is an agent protocol surface.
 - Python package/module path: `multi_agent_brief`
 - Distribution package name: `multi-agent-brief-workflow`
 - Assessment targets:

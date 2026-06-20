@@ -161,6 +161,29 @@ def test_reader_final_gate_detects_atomic_claim_graph_residue() -> None:
     assert any(finding.kind == "process_wording" and "Atomic Claim Graph" in finding.text for finding in result.findings)
 
 
+def test_reader_final_gate_allows_generic_atom_domain_wording() -> None:
+    markdown = (
+        "The materials appendix describes atom identity checks and atom identification methods "
+        "without exposing internal graph IDs."
+    )
+
+    result = detect_reader_residue(markdown, artifact="output/brief.md")
+
+    assert result.status == "pass"
+    assert result.counts["atom_id_count"] == 0
+    assert result.counts["process_wording_count"] == 0
+
+
+def test_reader_final_gate_still_detects_internal_atom_markers() -> None:
+    markdown = "Internal field atom_id should not ship, and neither should AC-0001-01."
+
+    result = detect_reader_residue(markdown, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["atom_id_count"] == 1
+    assert any(finding.kind == "process_wording" and finding.text == "atom_id" for finding in result.findings)
+
+
 def test_reader_final_gate_scans_docx_headers_and_footers(tmp_path: Path) -> None:
     docx = pytest.importorskip("docx", reason="python-docx not installed")
     document = docx.Document()

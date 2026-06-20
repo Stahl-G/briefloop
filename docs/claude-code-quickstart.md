@@ -1,7 +1,8 @@
 # Claude Code Quickstart
 
-This quickstart shows the first-class five-verb writer path for MABW in Claude
-Code. The verbs are:
+This quickstart shows the first-class five-verb writer path for BriefLoop in
+Claude Code. The command name remains `/mabw` for compatibility during the
+BriefLoop transition. The verbs are:
 
 ```text
 /mabw new
@@ -11,8 +12,9 @@ Code. The verbs are:
 /mabw deliver <workspace>
 ```
 
-`/mabw` is the writer-facing entrypoint. `/generate-brief` remains the
-compatibility command for the full delegated subagent workflow.
+`/mabw` is the BriefLoop writer command. `/generate-brief` remains an
+advanced/legacy command for the full delegated subagent workflow; it is not the
+first path for new writers.
 
 For writer-facing operation notes, see:
 
@@ -74,7 +76,10 @@ You can also use the standard CLI handoff instead:
 multi-agent-brief run --workspace ../mabw-workspace
 ```
 
-To execute the full delegated workflow from Claude Code after handoff, use:
+## Advanced: Direct Full Delegated Workflow
+
+Most writers should stay on `/mabw`. To execute the full delegated workflow from
+Claude Code after handoff for debugging or direct subagent execution, use:
 
 ```text
 /generate-brief ../mabw-workspace
@@ -222,7 +227,7 @@ User: I need to create a weekly brief for my solar manufacturing company.
 Claude Code:
   1. Uses source-planner to resolve source discovery.
   2. Runs /mabw run to create handoff/control files.
-  3. Runs /generate-brief inside Claude Code for the delegated subagent workflow.
+  3. If direct full workflow execution is needed, runs /generate-brief inside Claude Code.
   4. Runs /mabw deliver after audit and gates pass.
   5. Uses status and auditor findings to report artifact status and limitations.
 ```

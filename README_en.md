@@ -11,7 +11,7 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
 Current version: **v0.9.1**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief`
-Current Claude commands: `/mabw ...`
+Current Claude command: `/mabw` (BriefLoop writer command)
 
 ## AI briefs that can answer "where did this number come from?"
 
@@ -252,10 +252,13 @@ tab:
 /mabw deliver <workspace>
 ```
 
-`/mabw` is the writer-facing entrypoint. The full delegated subagent workflow
-still runs through `/generate-brief <workspace>`. `status` calls the read-only
-`multi-agent-brief status` helper, `feedback` records and triages without acting downstream, and `deliver` must go
-through gates, the reader-final gate, and `state finalize-complete`.
+`/mabw` is the BriefLoop writer command. The name is retained for compatibility
+during the BriefLoop transition. `status` calls the read-only
+`multi-agent-brief status` helper, `feedback` records and triages without
+acting downstream, and `deliver` must go through gates, the reader-final gate,
+and `state finalize-complete`. `/generate-brief <workspace>` remains an
+advanced/legacy full delegated workflow command for debugging or direct
+subagent execution; it is not the first path for new writers.
 
 See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Writer-facing operator notes are available in [docs/golden-path.md](docs/golden-path.md) and [docs/weekly-use.md](docs/weekly-use.md); Chinese versions are [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
 

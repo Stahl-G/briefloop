@@ -11,7 +11,7 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
 Current version: **v0.9.1**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief`
-Current Claude commands: `/mabw ...`
+Current Claude command: `/mabw` (BriefLoop writer command)
 
 > When someone asks where a number came from, BriefLoop does not ask the model to improvise an explanation. It opens the ledger.
 

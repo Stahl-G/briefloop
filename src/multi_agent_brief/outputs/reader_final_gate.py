@@ -61,7 +61,6 @@ _PROCESS_WORDINGS = [
     "atomic_claim_graph",
     "Atomic Claim Graph",
     "atom_id",
-    "atom id",
     "事实账本",
     "声明账本",
     "分析师子代理",
