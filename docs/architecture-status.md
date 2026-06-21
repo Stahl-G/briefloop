@@ -32,6 +32,18 @@ runtime capability, not a breaking rename.
   deterministic Claim Ledger type consistency, expose Analyst/Editor
   no-new-atom contract boundaries, and project atom-ID reader residue. This is
   structural visibility only, not evidence-span support sufficiency.
+- Experimental Evidence Span Registry controls can validate an optional
+  `output/intermediate/evidence_span_registry.json`, bind declared spans to
+  durable `input/sources/` bytes, archive span/source hashes, and project a
+  reader-safe source appendix span summary plus a separate
+  `output/source_appendix_trace.md` audit copy. This is span-level
+  traceability and archive reproducibility only, not semantic support
+  assessment or support-sufficiency gating.
+- Experimental Claim-Support Matrix controls can validate an optional
+  `output/intermediate/claim_support_matrix.json` schema and project explicit
+  atom-to-evidence support rows into deterministic atom-level policy signals.
+  This is support-record structure only, not automatic support assessment,
+  semantic proof, or release eligibility.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.
@@ -48,8 +60,8 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 - policy packs
 - public-safe reference workflows
 - FrictionStore, autonomous learning, retrieval memory, runtime-specific guidance filtering, and output-quality validation
-- later v0.9 support-sufficiency structures such as Evidence Span Registry,
-  Claim-Support Matrix, semantic support scoring, and support-sufficiency gates
+- later v0.9 support-sufficiency structures such as semantic support scoring,
+  human adjudication, release eligibility, and support-sufficiency gates
 
 ## Experimental Or Limited Surfaces
 

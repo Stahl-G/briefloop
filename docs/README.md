@@ -34,6 +34,7 @@ tree is fully bilingual.
 - [Runtime agent contract](agent-contract.md)
 - [BriefLoop naming policy](briefloop-naming.md)
 - [Brief-loop engineering](brief-loop-engineering.md)
+- [Evidence Span Registry](evidence-span-registry.md)
 - [MABW-080 experiment guide](experiments-080.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)
