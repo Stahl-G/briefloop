@@ -35,6 +35,7 @@ tree is fully bilingual.
 - [BriefLoop naming policy](briefloop-naming.md)
 - [Brief-loop engineering](brief-loop-engineering.md)
 - [Evidence Span Registry](evidence-span-registry.md)
+- [Claim-Support Matrix](claim-support-matrix.md)
 - [MABW-080 experiment guide](experiments-080.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)

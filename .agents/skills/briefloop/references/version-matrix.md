@@ -19,6 +19,9 @@ Historical implementation name: MABW
   - Atomic Claim Graph: `atomic_claim_graph.json`
   - Evidence Span Registry: `evidence_span_registry.json`
   - Claim-Support Matrix: `claim_support_matrix.json`
+    - schema and vocabulary validation
+    - cross-artifact reference validation
+    - read-only status projection and quality-gate findings from explicit rows
 - MABW-080 experiment operations:
   - `validate-case`
   - `scaffold-condition`

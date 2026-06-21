@@ -37,7 +37,7 @@ validation unless that is stated separately.
 | Stage-scoped quality gate control files (`gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json`; legacy latest projection `quality_gate_report.json`) | Supported |
 | Atomic Claim Graph (`atomic_claim_graph.json` schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection) | Experimental |
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
-| Claim-Support Matrix (`claim_support_matrix.json` schema and deterministic policy projection) | Experimental |
+| Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -118,10 +118,15 @@ support-sufficiency gate, and not a reader citation contract.
 
 Claim-Support Matrix support is experimental on main after the v0.9.1 release.
 When present, `claim_support_matrix.json` is validated as an optional
-atom-to-evidence support-record artifact; Python checks schema vocabulary and
-can project explicit rows into atom-level policy signals. It does not assess
-semantic support, validate full cross-artifact support sufficiency, route
-repairs, add gates, decide release eligibility, or prove truth.
+atom-to-evidence support-record artifact; Python checks schema vocabulary,
+Claim Ledger / Atomic Claim Graph / Evidence Span Registry references,
+high-materiality atom row coverage, and duplicate atom-span relation rows. A
+present valid matrix can project explicit rows into read-only status summaries
+and quality-gate findings for unsupported, contradicted, weak, or inferential
+support records. Missing matrices remain non-blocking, and invalid matrices are
+not consumed for support projection findings. This does not assess semantic
+support, create automatic support records, decide release eligibility, or prove
+truth.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 

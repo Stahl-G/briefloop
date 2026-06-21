@@ -59,6 +59,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this does not assess semantic support, prove truth, or decide release
   eligibility.
 
+### Changed
+
+- **Claim-Support Matrix public documentation alignment**: updated README,
+  support matrix, architecture status, and operator-skill references to describe
+  the current experimental support-record control plane: schema validation,
+  cross-artifact validation, and gate/status projection from explicit rows. This
+  remains separate from semantic support assessment, truth proof, release
+  eligibility, or support-sufficiency gates.
+
 ## [0.9.1] — 2026-06-20
 
 ### Added
