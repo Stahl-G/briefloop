@@ -4,6 +4,7 @@ from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     CLAIM_SUPPORT_MATRIX_POLICY_PROJECTION_SCHEMA_VERSION,
     project_claim_support_matrix_policy,
     project_claim_support_policy,
+    validate_claim_support_matrix_against_artifacts,
 )
 
 
@@ -31,6 +32,179 @@ def _row(
         "repair_owner": repair_owner,
         "decision_source": decision_source,
     }
+
+
+def _ledger_claims() -> list[dict]:
+    return [
+        {
+            "claim_id": "CL-0001",
+            "statement": "ExampleCo opened a demo facility.",
+            "source_id": "SRC-001",
+            "evidence_text": "Example evidence.",
+            "claim_type": "fact",
+        }
+    ]
+
+
+def _atomic_graph(*, include_second_high_atom: bool = False) -> dict:
+    atoms = [
+        {
+            "atom_id": "AC-0001-01",
+            "text": "ExampleCo opened a demo facility.",
+            "claim_role": "observed_fact",
+            "materiality": "high",
+        }
+    ]
+    if include_second_high_atom:
+        atoms.append(
+            {
+                "atom_id": "AC-0001-02",
+                "text": "The facility is strategically important.",
+                "claim_role": "trend_interpretation",
+                "materiality": "high",
+            }
+        )
+    return {
+        "schema_version": "mabw.atomic_claim_graph.v1",
+        "claims": [
+            {
+                "claim_id": "CL-0001",
+                "atoms": atoms,
+                "edges": [],
+            }
+        ],
+    }
+
+
+def _evidence_span_registry() -> dict:
+    return {
+        "schema_version": "mabw.evidence_span_registry.v1",
+        "sources": [
+            {
+                "source_id": "SRC-001",
+                "source_type": "company_release",
+                "source_tier": "company_official",
+                "url": "https://example.com/release",
+                "published_at": "2026-06-10",
+                "spans": [
+                    {
+                        "span_id": "ESP-001-01",
+                        "raw_excerpt": "ExampleCo opened a demo facility.",
+                        "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                        "span_role": "direct_statement",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _validation_reason(
+    *,
+    rows: list[dict],
+    ledger_claims: list[dict] | None = None,
+    graph_payload: dict | None = None,
+    evidence_span_registry_payload: dict | None = None,
+) -> str | None:
+    return validate_claim_support_matrix_against_artifacts(
+        matrix_payload={"schema_version": "mabw.claim_support_matrix.v1", "rows": rows},
+        ledger_claims=ledger_claims if ledger_claims is not None else _ledger_claims(),
+        graph_payload=graph_payload if graph_payload is not None else _atomic_graph(),
+        evidence_span_registry_payload=(
+            evidence_span_registry_payload
+            if evidence_span_registry_payload is not None
+            else _evidence_span_registry()
+        ),
+    )
+
+
+def test_claim_support_matrix_cross_artifact_valid_complete_matrix_passes():
+    assert _validation_reason(rows=[_row("CSM-0001")]) is None
+
+
+def test_claim_support_matrix_cross_artifact_rejects_unknown_claim():
+    reason = _validation_reason(
+        rows=[_row("CSM-0001", claim_id="CL-9999", atom_id="AC-9999-01")],
+        graph_payload={
+            "schema_version": "mabw.atomic_claim_graph.v1",
+            "claims": [
+                {
+                    "claim_id": "CL-9999",
+                    "atoms": [
+                        {
+                            "atom_id": "AC-9999-01",
+                            "text": "Unknown claim atom.",
+                            "claim_role": "observed_fact",
+                            "materiality": "high",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+
+    assert reason == "unknown_claim_reference:CL-9999"
+
+
+def test_claim_support_matrix_cross_artifact_rejects_unknown_atom():
+    reason = _validation_reason(rows=[_row("CSM-0001", atom_id="AC-0001-99")])
+
+    assert reason == "unknown_atom_reference:AC-0001-99"
+
+
+def test_claim_support_matrix_cross_artifact_rejects_atom_claim_mismatch():
+    reason = _validation_reason(
+        rows=[_row("CSM-0001", claim_id="CL-0002")],
+        ledger_claims=[
+            *_ledger_claims(),
+            {
+                "claim_id": "CL-0002",
+                "statement": "Second claim.",
+                "source_id": "SRC-001",
+                "evidence_text": "Example evidence.",
+                "claim_type": "fact",
+            },
+        ],
+    )
+
+    assert reason == "atom_claim_mismatch:AC-0001-01:CL-0002:CL-0001"
+
+
+def test_claim_support_matrix_cross_artifact_rejects_unknown_span():
+    reason = _validation_reason(rows=[_row("CSM-0001", evidence_span_id="ESP-001-99")])
+
+    assert reason == "unknown_evidence_span_reference:ESP-001-99"
+
+
+def test_claim_support_matrix_cross_artifact_requires_high_materiality_atom_rows():
+    reason = _validation_reason(
+        rows=[_row("CSM-0001")],
+        graph_payload=_atomic_graph(include_second_high_atom=True),
+    )
+
+    assert reason == "high_materiality_atom_missing_row:AC-0001-02"
+
+
+def test_claim_support_matrix_cross_artifact_requires_span_for_support_labels():
+    reason = _validation_reason(rows=[_row("CSM-0001", evidence_span_id=None, support_label="direct_support")])
+
+    assert reason == "support_label_requires_span:CSM-0001"
+
+
+def test_claim_support_matrix_cross_artifact_allows_null_span_negative_rows():
+    assert (
+        _validation_reason(
+            rows=[
+                _row(
+                    "CSM-0001",
+                    evidence_span_id=None,
+                    support_label="insufficient_evidence",
+                    support_strength="none",
+                )
+            ]
+        )
+        is None
+    )
 
 
 def test_claim_support_policy_empty_rows_is_not_available():
