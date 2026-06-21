@@ -8,6 +8,13 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  <a href="docs/features.md">🧭 Function Map</a> ·
+  <a href="docs/golden-path.md">🚀 Golden Path</a> ·
+  <a href="docs/architecture-status.md">🧱 Architecture Status</a> ·
+  <a href="docs/roadmap.md">🗺️ Roadmap</a>
+</p>
+
 Current version: **v0.9.3**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief`
@@ -40,6 +47,7 @@ It is built for:
 
 <p align="center">
   <a href="#quick-start">🚀 Quick Start</a> ·
+  <a href="docs/features.md">🧭 Function Map</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
   <a href="docs/releases/v0.9.3.md">📦 v0.9.3</a>
@@ -363,6 +371,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 
 ## Documentation Index
 
+[Function Map](docs/features.md) ·
 [Architecture](docs/architecture.md) ·
 [Technical reference v0.1.2](docs/mabw-architecture-reference-v0.1.2.md) ·
 [Orchestrator contracts](docs/orchestrator-contracts.md) ·

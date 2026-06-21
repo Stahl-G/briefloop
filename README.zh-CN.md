@@ -8,6 +8,13 @@
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  <a href="docs/features.zh-CN.md">🧭 功能地图</a> ·
+  <a href="docs/golden-path.zh-CN.md">🚀 黄金路径</a> ·
+  <a href="docs/architecture-status.zh-CN.md">🧱 架构状态</a> ·
+  <a href="docs/roadmap.zh-CN.md">🗺️ 路线图</a>
+</p>
+
 ## 让 AI 简报经得起追问
 
 当前版本：**v0.9.3**
@@ -37,6 +44,7 @@ copy、显式 atom-to-evidence support records、cross-artifact validation，以
 
 <p align="center">
   <a href="#快速开始">🚀 快速开始</a> ·
+  <a href="docs/features.zh-CN.md">🧭 功能地图</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md">🔬 公开运行摘要</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md">🧯 失败研究</a> ·
   <a href="docs/releases/v0.9.3.md">📦 v0.9.3</a>
@@ -356,6 +364,7 @@ multi-agent-brief run --workspace <workspace> --skip-doctor
 
 ## 文档索引
 
+[功能地图](docs/features.zh-CN.md) ·
 [架构](docs/architecture.zh-CN.md) ·
 [文档语言索引](docs/README.md) ·
 [技术报告 v0.1.2](docs/mabw-architecture-reference-v0.1.2.md) ·

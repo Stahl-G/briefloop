@@ -8,6 +8,13 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
+<p align="center">
+  <a href="docs/features.md">🧭 Function Map</a> ·
+  <a href="docs/golden-path.md">🚀 Golden Path</a> ·
+  <a href="docs/architecture-status.md">🧱 Architecture Status</a> ·
+  <a href="docs/roadmap.md">🗺️ Roadmap</a>
+</p>
+
 Current version: **v0.9.3**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief`
@@ -204,7 +211,7 @@ Three on-ramps, one spine. There is no lite mode: entry cost drops, the accounta
 | Run once | ~30 min | A few local text files, no search backend, `new -> run -> status -> deliver` |
 | Live with it | weekly | Configured sources, feedback loop, approved preferences |
 
-Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [Evidence Span Registry](docs/evidence-span-registry.md) · [Claim-Support Matrix](docs/claim-support-matrix.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+Full paths: [function map](docs/features.md) · [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [Evidence Span Registry](docs/evidence-span-registry.md) · [Claim-Support Matrix](docs/claim-support-matrix.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
 
 ## 🧭 A Note On Provenance
 

@@ -14,6 +14,7 @@ tree is fully bilingual.
 | Topic | English | Chinese |
 |---|---|---|
 | README | [README.md](../README.md) / [README_en.md](../README_en.md) | [README.zh-CN.md](../README.zh-CN.md) |
+| Function map | [features.md](features.md) | [features.zh-CN.md](features.zh-CN.md) |
 | Windows PowerShell setup | [windows-powershell.md](windows-powershell.md) | [windows-powershell.zh-CN.md](windows-powershell.zh-CN.md) |
 | Golden path | [golden-path.md](golden-path.md) | [golden-path.zh-CN.md](golden-path.zh-CN.md) |
 | Weekly use script | [weekly-use.md](weekly-use.md) | [weekly-use.zh-CN.md](weekly-use.zh-CN.md) |
@@ -31,6 +32,7 @@ tree is fully bilingual.
 ## English-First Reference Docs
 
 - [Claude Code quickstart](claude-code-quickstart.md)
+- [Function map](features.md)
 - [Runtime agent contract](agent-contract.md)
 - [BriefLoop naming policy](briefloop-naming.md)
 - [Brief-loop engineering](brief-loop-engineering.md)
