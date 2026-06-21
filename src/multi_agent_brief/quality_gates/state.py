@@ -29,6 +29,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
     show_runtime_state,
     utc_now,
 )
+from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+    project_claim_support_matrix_from_workspace,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ACTIVE_REPAIR_OPEN,
     E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
@@ -139,6 +142,25 @@ FINDING_RULES: dict[str, dict[str, str]] = {
             "Atomic Claim Graph process wording is internal control-plane residue and must not appear in reader-facing prose."
         ),
         "docs_anchor": "docs/agent-contract.md#atomic-claim-graph",
+    },
+    "claim_support_matrix_blocking_support": {
+        "rule_summary": (
+            "A present valid Claim-Support Matrix explicitly records a high-materiality atom as unsupported, "
+            "contradicted, or insufficiently evidenced."
+        ),
+        "docs_anchor": "docs/agent-contract.md#claim-support-matrix",
+    },
+    "claim_support_matrix_weak_support": {
+        "rule_summary": (
+            "A present valid Claim-Support Matrix explicitly records weak support requiring downgrade or adjudication."
+        ),
+        "docs_anchor": "docs/agent-contract.md#claim-support-matrix",
+    },
+    "claim_support_matrix_inference_framing": {
+        "rule_summary": (
+            "A present valid Claim-Support Matrix explicitly records inferential support requiring reader-facing framing."
+        ),
+        "docs_anchor": "docs/agent-contract.md#claim-support-matrix",
     },
 }
 
@@ -751,6 +773,180 @@ def _atomic_reader_projection_findings(
     return findings
 
 
+def _claim_support_matrix_findings(
+    *,
+    projection: dict[str, Any],
+    start_idx: int,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    reader_facing_mode: bool,
+) -> list[dict[str, Any]]:
+    if projection.get("status") != "valid":
+        return []
+    policy_projection = projection.get("policy_projection")
+    atoms = policy_projection.get("atoms") if isinstance(policy_projection, dict) else None
+    if not isinstance(atoms, list):
+        return []
+
+    findings: list[dict[str, Any]] = []
+    emitted_row_ids: set[str] = set()
+    for atom in atoms:
+        if not isinstance(atom, dict):
+            continue
+        for row in _row_list(atom.get("blocking_rows")):
+            _append_claim_support_matrix_finding(
+                findings,
+                row=row,
+                atom=atom,
+                start_idx=start_idx,
+                finding_type="claim_support_matrix_blocking_support",
+                severity="high",
+                blocking_level="blocking",
+                description="Claim-Support Matrix records a high-materiality atom with blocking support state.",
+                recommendation=(
+                    "Do not release this wording as supported. Follow the matrix required_action, "
+                    "or route repair/human review through the declared owner."
+                ),
+                stages=stages,
+                artifacts=artifacts,
+                reader_facing_mode=reader_facing_mode,
+                emitted_row_ids=emitted_row_ids,
+                projection=projection,
+            )
+        for row in [
+            *_row_list(atom.get("weak_rows")),
+            *_row_list(atom.get("downgrade_required_rows")),
+            *_row_list(atom.get("adjudication_required_rows")),
+        ]:
+            _append_claim_support_matrix_finding(
+                findings,
+                row=row,
+                atom=atom,
+                start_idx=start_idx,
+                finding_type="claim_support_matrix_weak_support",
+                severity="medium",
+                blocking_level="warning",
+                description="Claim-Support Matrix records weak support, downgrade, or adjudication need.",
+                recommendation=(
+                    "Downgrade the wording or complete the declared adjudication/repair path before "
+                    "treating the atom as cleanly supported."
+                ),
+                stages=stages,
+                artifacts=artifacts,
+                reader_facing_mode=reader_facing_mode,
+                emitted_row_ids=emitted_row_ids,
+                projection=projection,
+            )
+        for row in _row_list(atom.get("inference_framing_required_rows")):
+            _append_claim_support_matrix_finding(
+                findings,
+                row=row,
+                atom=atom,
+                start_idx=start_idx,
+                finding_type="claim_support_matrix_inference_framing",
+                severity="medium",
+                blocking_level="warning",
+                description="Claim-Support Matrix records inferential support that needs explicit framing.",
+                recommendation=(
+                    "Frame this statement as an inference or clarify the inference boundary in reader-facing prose."
+                ),
+                stages=stages,
+                artifacts=artifacts,
+                reader_facing_mode=reader_facing_mode,
+                emitted_row_ids=emitted_row_ids,
+                projection=projection,
+            )
+    return findings
+
+
+def _row_list(value: Any) -> list[dict[str, Any]]:
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def _append_claim_support_matrix_finding(
+    findings: list[dict[str, Any]],
+    *,
+    row: dict[str, Any],
+    atom: dict[str, Any],
+    start_idx: int,
+    finding_type: str,
+    severity: str,
+    blocking_level: str,
+    description: str,
+    recommendation: str,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    reader_facing_mode: bool,
+    emitted_row_ids: set[str],
+    projection: dict[str, Any],
+) -> None:
+    row_id = str(row.get("row_id") or "")
+    if row_id and row_id in emitted_row_ids:
+        return
+    if row_id:
+        emitted_row_ids.add(row_id)
+
+    repair_owner = str(row.get("repair_owner") or "human_review")
+    stage_id = _claim_support_repair_stage(repair_owner, stages)
+    artifact_id = _claim_support_repair_artifact(
+        repair_owner=repair_owner,
+        artifacts=artifacts,
+        reader_facing_mode=reader_facing_mode,
+    )
+    row_action = str(row.get("required_action") or "unknown")
+    row_label = str(row.get("support_label") or "unknown")
+    atom_id = str(row.get("atom_id") or atom.get("atom_id") or "")
+    findings.append(
+        _finding(
+            finding_id=f"QG_MATERIAL_FACT_{start_idx + len(findings):03d}",
+            gate_id="material_fact",
+            finding_type=finding_type,
+            severity=severity,
+            blocking_level=blocking_level,
+            repair_owner=repair_owner if repair_owner else "human_review",
+            stage_id=stage_id,
+            artifact_id=artifact_id,
+            claim_id=str(row.get("claim_id") or "") or None,
+            source_id=None,
+            description=f"{description} row={row_id or 'unknown'} atom={atom_id} label={row_label}.",
+            recommendation=f"{recommendation} required_action={row_action}.",
+            category="claim_support_matrix",
+            evidence_ref=row_id,
+            metadata={
+                "row": row,
+                "atom_id": atom_id,
+                "atom_materiality": atom.get("materiality"),
+                "atom_verdict": atom.get("verdict"),
+                "matrix_status": projection.get("status"),
+                "semantic_boundary": projection.get("semantic_boundary"),
+            },
+        )
+    )
+
+
+def _claim_support_repair_stage(repair_owner: str, stages: list[dict[str, Any]]) -> str | None:
+    if repair_owner in {"analyst", "editor", "auditor", "claim-ledger"}:
+        return _stage_or_none(stages, repair_owner)
+    return None
+
+
+def _claim_support_repair_artifact(
+    *,
+    repair_owner: str,
+    artifacts: list[dict[str, Any]],
+    reader_facing_mode: bool,
+) -> str | None:
+    if repair_owner == "claim-ledger":
+        return _artifact_or_none(artifacts, "claim_ledger")
+    if repair_owner == "editor":
+        if reader_facing_mode:
+            return _artifact_or_none(artifacts, "reader_brief")
+        return _artifact_or_none(artifacts, "audited_brief")
+    if repair_owner == "auditor":
+        return _artifact_or_none(artifacts, "audit_report")
+    return None
+
+
 def _claim_ledger_support_text(ledger: ClaimLedger) -> str:
     parts: list[str] = []
     for claim in ledger:
@@ -1284,6 +1480,16 @@ def check_quality_gates(
             reader_facing_mode=reader_mode,
         )
     )
+    claim_support_projection = project_claim_support_matrix_from_workspace(ws)
+    gate_findings["material_fact"].extend(
+        _claim_support_matrix_findings(
+            projection=claim_support_projection,
+            start_idx=len(gate_findings["material_fact"]) + 1,
+            stages=stages,
+            artifacts=artifacts,
+            reader_facing_mode=reader_mode,
+        )
+    )
     for gate_id in sorted(GATE_IDS):
         gate_findings[gate_id] = _apply_gate_context(
             gate_findings[gate_id],
@@ -1314,6 +1520,7 @@ def check_quality_gates(
             "gate_stage_id": gate_stage_id,
             "gate_artifact_id": gate_artifact_id,
             "atomic_reader_projection": atomic_projection,
+            "claim_support_matrix_projection": claim_support_projection,
         },
     }
 

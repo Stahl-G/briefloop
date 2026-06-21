@@ -17,6 +17,9 @@ from multi_agent_brief.orchestrator.run_integrity import (
     workflow_with_sticky_contamination_events,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
+from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+    project_claim_support_matrix_from_workspace,
+)
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_reader_text_from_workspace
 
@@ -48,6 +51,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "experiment_080": {},
         "fact_layer_import": {},
         "atomic_reader_projection": {},
+        "claim_support_matrix": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -109,6 +113,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         workspace=ws,
     )
     payload["atomic_reader_projection"] = _atomic_reader_projection_summary(ws)
+    payload["claim_support_matrix"] = project_claim_support_matrix_from_workspace(ws)
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -162,6 +167,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     improvement = status.get("improvement") or {}
     experiment_080 = status.get("experiment_080") or {}
     atomic_projection = status.get("atomic_reader_projection") or {}
+    claim_support_matrix = status.get("claim_support_matrix") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -220,6 +226,16 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"{audited_projection.get('status')} "
             f"atom_residue={counts.get('atom_residue_count', 0)} "
             f"process_residue={counts.get('process_residue_count', 0)}"
+        )
+    if claim_support_matrix.get("status") not in {None, "not_available"}:
+        counts = claim_support_matrix.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        lines.append(
+            "[status] claim_support_matrix: "
+            f"{claim_support_matrix.get('status')} "
+            f"blocking_atoms={counts.get('blocking_atom_count', 0)} "
+            f"weak_atoms={counts.get('weak_atom_count', 0)} "
+            f"adjudication_atoms={counts.get('adjudication_required_atom_count', 0)}"
         )
     for marker in status.get("stale_or_unknown") or []:
         lines.append(f"[status] stale_or_unknown: {marker}")

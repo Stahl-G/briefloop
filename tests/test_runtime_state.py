@@ -3623,6 +3623,48 @@ def test_state_check_marks_claim_support_matrix_missing_claim_ledger_invalid(tmp
     assert record["validation_result"] == "claim_support_matrix_validation_error:claim_ledger_missing"
 
 
+def test_state_check_marks_claim_support_matrix_runtime_invalid_claim_ledger_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    duplicate_ledger = [
+        {
+            "claim_id": "CL-0001",
+            "statement": "ExampleCo opened a demo facility.",
+            "source_id": "SRC-001",
+            "evidence_text": "Example evidence.",
+        },
+        {
+            "claim_id": "CL-0001",
+            "statement": "ExampleCo reported duplicate evidence.",
+            "source_id": "SRC-001",
+            "evidence_text": "Duplicate evidence.",
+        },
+    ]
+    _write_json_artifact(ws, "claim_ledger.json", _claim_ledger_payload(duplicate_ledger))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
+    source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
+    _write_source_text(ws, text=source_text)
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(include_offsets=True, source_text=source_text),
+    )
+    _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    ledger_record = state["artifact_registry"]["artifacts"]["claim_ledger"]
+    matrix_record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert ledger_record["status"] == "invalid"
+    assert ledger_record["validation_result"] == "claim_ledger_schema_error:duplicate_claim_id:CL-0001"
+    assert matrix_record["status"] == "invalid"
+    assert matrix_record["required"] is False
+    assert (
+        matrix_record["validation_result"]
+        == "claim_support_matrix_validation_error:claim_ledger_invalid:duplicate_claim_id:CL-0001"
+    )
+
+
 def test_state_check_marks_claim_support_matrix_runtime_invalid_atomic_graph_invalid(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
