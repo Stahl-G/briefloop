@@ -8,7 +8,7 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
   <a href="README.zh-CN.md">简体中文</a>
 </p>
 
-Current version: **v0.9.1**
+Current version: **v0.9.3**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief`
 Current Claude command: `/mabw` (BriefLoop writer command)
@@ -19,10 +19,13 @@ Current Claude command: `/mabw` (BriefLoop writer command)
 
 BriefLoop is an **open-source brief-loop engineering harness** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns recurring briefings into governed loops: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records.
 
-The v0.9.1 release adds the first experimental Atomic Claim Graph control surfaces while keeping MABW as the implementation lineage and compatibility surface. Runtime commands, the Python package, workspace formats, artifact names, and MABW-080 experiment IDs remain unchanged.
+The v0.9.3 release includes the experimental Atomic Claim Graph, Evidence Span
+Registry, and Claim-Support Matrix control surfaces while keeping MABW as the
+implementation lineage and compatibility surface. Runtime commands, the Python
+package, workspace formats, artifact names, and MABW-080 experiment IDs remain
+unchanged.
 
-Mainline after v0.9.1 also includes experimental Evidence Span Registry and
-Claim-Support Matrix control surfaces. These add optional span schema
+These experimental surfaces add optional atomic-claim structure, span schema
 validation, source-pack byte binding, archive hash projection, Source Appendix
 trace audit copies, explicit atom-to-evidence support records, cross-artifact
 validation, and gate/status projection from those explicit records. They are
@@ -39,7 +42,7 @@ It is built for:
   <a href="#quick-start">🚀 Quick Start</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
-  <a href="docs/releases/v0.9.1.md">📦 v0.9.1</a>
+  <a href="docs/releases/v0.9.3.md">📦 v0.9.3</a>
 </p>
 
 ## Why It Is Worth Looking At 👀
@@ -83,7 +86,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. BriefLoop traced how errors propagated; it did not prove semantic correctness.
-- [v0.9.1 release notes](docs/releases/v0.9.1.md): experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- [v0.9.3 release notes](docs/releases/v0.9.3.md): experimental Atomic Claim Graph, Evidence Span Registry, and Claim-Support Matrix control surfaces through gate/status projection from explicit records. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 - [Evidence Span Registry](docs/evidence-span-registry.md): mainline experimental span schema, source-pack byte binding, archive projection, and Source Appendix trace view. It is not semantic support proof or a support-sufficiency gate.
 - [Claim-Support Matrix](docs/claim-support-matrix.md): mainline experimental support-record schema, cross-artifact validation, and gate/status projection from explicit atom-to-evidence rows. It is not automatic support assessment, truth proof, or release eligibility.
 
@@ -199,9 +202,9 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 ## Product Boundary 🧱
 
-Current release baseline: v0.9.1
+Current release baseline: v0.9.3
 
-The v0.9.1 release adds experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundaries, and reader-residue projection. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. Mainline after v0.9.1 adds optional experimental Evidence Span Registry controls and Claim-Support Matrix schema, cross-artifact validation, and gate/status projection from explicit support records, but this still does not implement semantic proof, automatic support assessment, release eligibility, or support-sufficiency gating.
+The v0.9.3 release includes experimental Atomic Claim Graph schema and projection, Evidence Span Registry source-pack and archive traceability, and Claim-Support Matrix schema, cross-artifact validation, and gate/status projection from explicit support records. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. It still does not implement semantic proof, automatic support assessment, release eligibility, or support-sufficiency gating.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -370,7 +373,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Claim-Support Matrix](docs/claim-support-matrix.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
-[v0.9.1](docs/releases/v0.9.1.md) ·
+[v0.9.3](docs/releases/v0.9.3.md) ·
 [MABW-080 experiment guide](docs/experiments-080.md) ·
 [Support matrix](docs/support-matrix.md) ·
 [Security](docs/security.md) ·

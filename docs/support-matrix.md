@@ -109,14 +109,14 @@ deterministic type consistency, and reader-facing atom/process residue. The
 graph is not source evidence, not a reader citation surface, and not support
 sufficiency.
 
-Evidence Span Registry support is experimental on main after the v0.9.1 release.
+Evidence Span Registry support is experimental in the v0.9.3 release.
 When present, `evidence_span_registry.json` is validated as an optional span
 trace artifact; Python checks schema, source-pack byte binding, raw-excerpt
 hashes, optional offsets, archive hash projection, and Source Appendix trace
 surfaces. It is not source-support judgment, not a Claim-Support Matrix, not a
 support-sufficiency gate, and not a reader citation contract.
 
-Claim-Support Matrix support is experimental on main after the v0.9.1 release.
+Claim-Support Matrix support is experimental in the v0.9.3 release.
 When present, `claim_support_matrix.json` is validated as an optional
 atom-to-evidence support-record artifact; Python checks schema vocabulary,
 Claim Ledger / Atomic Claim Graph / Evidence Span Registry references,

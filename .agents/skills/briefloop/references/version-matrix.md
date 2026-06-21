@@ -1,7 +1,7 @@
 # BriefLoop Skill Version Matrix
 
 Skill contract version: `briefloop-operator-skill-v0.1`
-Last verified against BriefLoop runtime: `v0.9.1` plus post-v0.9.1 mainline support-record surfaces
+Last verified against BriefLoop runtime: `v0.9.3`
 Public project name: BriefLoop
 Historical implementation name: MABW
 
@@ -15,7 +15,7 @@ Historical implementation name: MABW
 - Assessment targets:
   - `delivery_brief`
   - `auditable_brief`
-- Experimental optional artifacts on mainline after v0.9.1:
+- Experimental optional artifacts:
   - Atomic Claim Graph: `atomic_claim_graph.json`
   - Evidence Span Registry: `evidence_span_registry.json`
   - Claim-Support Matrix: `claim_support_matrix.json`

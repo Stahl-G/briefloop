@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet.
+
+## [0.9.3] — 2026-06-21
+
 ### Added
 
 - **Experimental Evidence Span Registry schema**: added an optional
