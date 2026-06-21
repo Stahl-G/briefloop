@@ -33,6 +33,10 @@ from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import 
     EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
     validate_evidence_span_registry_against_source_pack,
 )
+from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX,
+    validate_semantic_assessment_report_against_artifacts,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_TRANSACTION_INTEGRITY,
     RuntimeStateError,
@@ -126,7 +130,7 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             if artifact_id == "claim_support_matrix":
                 return _validate_claim_support_matrix_payload(payload, artifact_path=path)
             if artifact_id == "semantic_assessment_report":
-                return _validate_semantic_assessment_report_payload(payload)
+                return _validate_semantic_assessment_report_payload(payload, artifact_path=path)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
             if artifact_id == "candidate_claims":
@@ -512,7 +516,7 @@ def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path)
     return ARTIFACT_VALID, "experimental_claim_support_matrix_schema"
 
 
-def _validate_semantic_assessment_report_payload(payload: Any) -> tuple[str, str]:
+def _validate_semantic_assessment_report_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "semantic_assessment_report_schema_error:not_object"
     violations = SemanticAssessmentReportContract.validate(payload)
@@ -520,6 +524,27 @@ def _validate_semantic_assessment_report_payload(payload: Any) -> tuple[str, str
     if errors:
         first = errors[0]
         return ARTIFACT_INVALID, f"semantic_assessment_report_schema_error:{first.field}"
+
+    ledger_claims, reason = _claim_support_matrix_ledger_claims(artifact_path.with_name("claim_ledger.json"))
+    if reason:
+        return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
+    graph_payload, reason = _claim_support_matrix_atomic_graph_payload(artifact_path.with_name("atomic_claim_graph.json"))
+    if reason:
+        return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
+    evidence_payload, reason = _claim_support_matrix_evidence_span_registry_payload(
+        artifact_path.with_name("evidence_span_registry.json")
+    )
+    if reason:
+        return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
+
+    reason = validate_semantic_assessment_report_against_artifacts(
+        report_payload=payload,
+        ledger_claims=ledger_claims or [],
+        graph_payload=graph_payload or {},
+        evidence_span_registry_payload=evidence_payload or {},
+    )
+    if reason:
+        return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
     return ARTIFACT_VALID, "experimental_semantic_assessment_report_schema"
 
 
