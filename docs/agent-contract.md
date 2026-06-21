@@ -185,6 +185,20 @@ Remove the residue and keep reader citations in `[src:<claim_id>]` form. Do not
 create, edit, repair, or extend the graph from Analyst, Editor, or delivery
 roles.
 
+#### claim-support-matrix
+
+When `output/intermediate/claim_support_matrix.json` is present and valid, it
+records explicit atom-to-evidence-span support relations. Gate findings derived
+from it are deterministic projections of those records only. They are not
+Python semantic support assessment, truth proof, or release eligibility.
+
+`claim_support_matrix_blocking_support` means a present valid matrix explicitly
+records a high-materiality atom as unsupported, contradicted, or insufficiently
+evidenced. `claim_support_matrix_weak_support` means the matrix records weak
+support, downgrade, or adjudication needs. `claim_support_matrix_inference_framing`
+means the matrix records inferential support that should be framed as inference
+in reader-facing prose.
+
 #### editor_introduced_new_fact
 
 The Editor added factual tokens not present in

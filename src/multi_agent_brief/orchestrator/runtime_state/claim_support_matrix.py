@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 from typing import Any
+
+from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
+from multi_agent_brief.contracts.schemas.claim import ClaimContract
+from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
+from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
+from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.core.schemas import Claim
+from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
+    ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
+    validate_atomic_claim_graph_against_ledger,
+)
+from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+    EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
+    validate_evidence_span_registry_against_source_pack,
+)
 
 
 CLAIM_SUPPORT_MATRIX_POLICY_PROJECTION_SCHEMA_VERSION = "mabw.claim_support_matrix.policy_projection.v1"
+CLAIM_SUPPORT_MATRIX_WORKSPACE_PROJECTION_SCHEMA_VERSION = "mabw.claim_support_matrix.workspace_projection.v1"
 CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX = "claim_support_matrix_validation_error"
 
 BLOCKING_SUPPORT_LABELS = {"unsupported", "contradicted", "insufficient_evidence"}
@@ -72,6 +90,80 @@ def project_claim_support_matrix_policy(
         rows=rows if isinstance(rows, list) else [],
         atom_materiality=atom_materiality,
     )
+
+
+def project_claim_support_matrix_from_workspace(workspace: str | Path) -> dict[str, Any]:
+    """Read and project a present, valid Claim-Support Matrix from a workspace.
+
+    This is a read-only projection surface. It validates machine-checkable
+    sibling artifact bindings before projecting explicit support records, but it
+    does not assess support, prove truth, write state, or decide release
+    eligibility.
+    """
+
+    ws = Path(workspace).expanduser().resolve()
+    intermediate = ws / "output" / "intermediate"
+    matrix_path = intermediate / "claim_support_matrix.json"
+    base = _workspace_projection_base(workspace=ws, matrix_path=matrix_path)
+    if not matrix_path.exists():
+        return {
+            **base,
+            "status": "not_available",
+            "matrix_present": False,
+            "reason": "claim_support_matrix_missing",
+            "policy_projection": _empty_policy_projection(),
+        }
+
+    matrix_payload, reason = _read_json_mapping(matrix_path, label="claim_support_matrix")
+    if reason:
+        return _invalid_workspace_projection(base, reason=reason)
+    assert matrix_payload is not None
+
+    reason = _schema_error_reason(
+        ClaimSupportMatrixContract.validate(matrix_payload),
+        prefix="claim_support_matrix_schema_error",
+    )
+    if reason:
+        return _invalid_workspace_projection(base, reason=reason)
+
+    ledger_claims, reason = _workspace_ledger_claims(intermediate / "claim_ledger.json")
+    if reason:
+        return _invalid_workspace_projection(base, reason=reason)
+    graph_payload, reason = _workspace_atomic_graph_payload(
+        intermediate / "atomic_claim_graph.json",
+        ledger_claims=ledger_claims or [],
+    )
+    if reason:
+        return _invalid_workspace_projection(base, reason=reason)
+    evidence_payload, reason = _workspace_evidence_span_registry_payload(
+        intermediate / "evidence_span_registry.json",
+        workspace=ws,
+    )
+    if reason:
+        return _invalid_workspace_projection(base, reason=reason)
+
+    reason = validate_claim_support_matrix_against_artifacts(
+        matrix_payload=matrix_payload,
+        ledger_claims=ledger_claims or [],
+        graph_payload=graph_payload or {},
+        evidence_span_registry_payload=evidence_payload or {},
+    )
+    if reason:
+        return _invalid_workspace_projection(base, reason=f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}")
+
+    policy_projection = project_claim_support_matrix_policy(
+        matrix_payload,
+        atom_materiality=_atom_materiality(graph_payload or {}),
+    )
+    return {
+        **base,
+        "status": "valid",
+        "matrix_present": True,
+        "reason": None,
+        "policy_projection": policy_projection,
+        "summary_counts": policy_projection.get("summary_counts") or {},
+        "atoms": policy_projection.get("atoms") if isinstance(policy_projection.get("atoms"), list) else [],
+    }
 
 
 def validate_claim_support_matrix_against_artifacts(
@@ -160,6 +252,158 @@ def validate_claim_support_matrix_against_artifacts(
         return f"support_label_requires_span:{support_rows_without_span[0]}"
 
     return None
+
+
+def _workspace_projection_base(*, workspace: Path, matrix_path: Path) -> dict[str, Any]:
+    try:
+        rendered_path = matrix_path.relative_to(workspace).as_posix()
+    except ValueError:
+        rendered_path = matrix_path.name
+    return {
+        "schema_version": CLAIM_SUPPORT_MATRIX_WORKSPACE_PROJECTION_SCHEMA_VERSION,
+        "semantic_boundary": "explicit_support_record_projection_only_not_support_assessment",
+        "matrix_path": rendered_path,
+    }
+
+
+def _invalid_workspace_projection(base: Mapping[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        **dict(base),
+        "status": "invalid_matrix",
+        "matrix_present": True,
+        "reason": reason,
+        "policy_projection": _empty_policy_projection(),
+        "summary_counts": {},
+        "atoms": [],
+    }
+
+
+def _empty_policy_projection() -> dict[str, Any]:
+    return project_claim_support_policy(rows=[], atom_materiality={})
+
+
+def _read_json_mapping(path: Path, *, label: str) -> tuple[dict[str, Any] | None, str | None]:
+    payload, reason = _read_json_payload(path, label=label)
+    if reason:
+        return None, reason
+    if not isinstance(payload, dict):
+        return None, f"{label}_schema_error:not_object"
+    return payload, None
+
+
+def _read_json_payload(path: Path, *, label: str) -> tuple[Any | None, str | None]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, f"{label}_missing"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return None, f"{label}_unreadable:{exc}"
+    return payload, None
+
+
+def _schema_error_reason(violations: Iterable[Any], *, prefix: str) -> str | None:
+    errors = [violation for violation in violations if getattr(violation, "severity", "error") == "error"]
+    if not errors:
+        return None
+    first = errors[0]
+    return f"{prefix}:{getattr(first, 'field', '<root>')}"
+
+
+def _workspace_ledger_claims(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
+    payload, reason = _read_json_payload(path, label="claim_ledger")
+    if reason:
+        return None, reason
+    assert payload is not None
+    reason = _claim_ledger_validation_reason(payload)
+    if reason:
+        return None, reason
+    try:
+        return ClaimLedger._claim_items_from_json(payload), None
+    except (TypeError, ValueError) as exc:
+        return None, f"claim_ledger_unreadable:{exc}"
+
+
+def _claim_ledger_validation_reason(payload: Any) -> str | None:
+    try:
+        claims = ClaimLedger._claim_items_from_json(payload)
+    except ValueError as exc:
+        return f"claim_ledger_schema_error:{exc}"
+
+    seen_ids: set[str] = set()
+    for idx, claim in enumerate(claims):
+        for field in ("claim_id", "statement", "source_id", "evidence_text"):
+            value = claim.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return f"claim_ledger_schema_error:claim[{idx}].{field}"
+        claim_id = str(claim["claim_id"]).strip()
+        if claim_id in seen_ids:
+            return f"claim_ledger_schema_error:duplicate_claim_id:{claim_id}"
+        seen_ids.add(claim_id)
+        errors = [violation for violation in ClaimContract.validate(claim) if violation.severity == "error"]
+        if errors:
+            return f"claim_ledger_schema_error:claim[{idx}].{errors[0].field}"
+
+    try:
+        ledger = ClaimLedger([Claim.from_dict(item) for item in claims])
+    except (TypeError, ValueError) as exc:
+        return f"claim_ledger_schema_error:{exc}"
+    errors = ledger.validate_claims()
+    if errors:
+        return f"claim_ledger_schema_error:{errors[0]}"
+    return None
+
+
+def _workspace_atomic_graph_payload(
+    path: Path,
+    *,
+    ledger_claims: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str | None]:
+    payload, reason = _read_json_mapping(path, label="atomic_claim_graph")
+    if reason:
+        return None, reason
+    assert payload is not None
+    reason = _schema_error_reason(AtomicClaimGraphContract.validate(payload), prefix="atomic_claim_graph_schema_error")
+    if reason:
+        return None, reason
+    reason = validate_atomic_claim_graph_against_ledger(
+        graph_payload=payload,
+        ledger_claims=ledger_claims,
+    )
+    if reason:
+        return None, f"{ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX}:{reason}"
+    return payload, None
+
+
+def _workspace_evidence_span_registry_payload(
+    path: Path,
+    *,
+    workspace: Path,
+) -> tuple[dict[str, Any] | None, str | None]:
+    payload, reason = _read_json_mapping(path, label="evidence_span_registry")
+    if reason:
+        return None, reason
+    assert payload is not None
+    reason = _schema_error_reason(
+        EvidenceSpanRegistryContract.validate(payload),
+        prefix="evidence_span_registry_schema_error",
+    )
+    if reason:
+        return None, reason
+    reason = validate_evidence_span_registry_against_source_pack(
+        registry_payload=payload,
+        workspace=workspace,
+    )
+    if reason:
+        return None, f"{EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX}:{reason}"
+    return payload, None
+
+
+def _atom_materiality(graph_payload: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        atom_id: atom["materiality"]
+        for atom_id, atom in _graph_atom_index(graph_payload).items()
+        if atom.get("materiality")
+    }
 
 
 def _ledger_claim_ids(ledger_claims: Iterable[Mapping[str, Any]]) -> set[str]:

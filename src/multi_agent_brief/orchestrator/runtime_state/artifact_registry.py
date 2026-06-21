@@ -512,10 +512,20 @@ def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path)
 def _claim_support_matrix_ledger_claims(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        claims = ClaimLedger._claim_items_from_json(payload)
     except FileNotFoundError:
         return None, "claim_ledger_missing"
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return None, f"claim_ledger_unreadable:{exc}"
+    status, validation_result = _validate_claim_ledger_payload(payload)
+    if status != ARTIFACT_VALID:
+        return None, _dependency_invalid_reason(
+            "claim_ledger",
+            validation_result,
+            prefixes=("claim_ledger_schema_error",),
+        )
+    try:
+        claims = ClaimLedger._claim_items_from_json(payload)
+    except ValueError as exc:
         return None, f"claim_ledger_unreadable:{exc}"
     return claims, None
 

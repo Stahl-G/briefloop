@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,127 @@ def _write_atomic_graph(ws: Path, *, claim_id: str = "CL-001") -> None:
                                 "materiality": "high",
                             }
                         ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _span_hash(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _write_claim_support_matrix_fixture(
+    ws: Path,
+    *,
+    support_label: str,
+    support_strength: str = "none",
+    required_action: str = "block_release",
+    repair_owner: str = "editor",
+    evidence_span_id: str | None = None,
+) -> None:
+    raw_excerpt = "TargetCo opened a demo facility and reported 42 deployments."
+    source_text = f"Intro.\n{raw_excerpt}\nOutro.\n"
+    source_path = ws / "input" / "sources" / "source-001.md"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(source_text, encoding="utf-8")
+    start = source_text.index(raw_excerpt)
+    _write_ledger(
+        ws,
+        [
+            {
+                "claim_id": "CL-0001",
+                "statement": "TargetCo opened a demo facility and reported 42 deployments.",
+                "source_id": "SRC-001",
+                "evidence_text": raw_excerpt,
+                "source_url": "https://example.com/targetco-demo",
+                "source_type": "web_search",
+                "claim_type": "fact",
+                "metadata": {
+                    "source_title": "TargetCo Demo Facility",
+                    "publisher": "Example News",
+                    "published_at": "2026-06-01",
+                    "importance": "high",
+                },
+            }
+        ],
+    )
+    intermediate = _intermediate(ws)
+    (intermediate / "atomic_claim_graph.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.atomic_claim_graph.v1",
+                "claims": [
+                    {
+                        "claim_id": "CL-0001",
+                        "atoms": [
+                            {
+                                "atom_id": "AC-0001-01",
+                                "text": "TargetCo opened a demo facility.",
+                                "claim_role": "observed_fact",
+                                "materiality": "high",
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (intermediate / "evidence_span_registry.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.evidence_span_registry.v1",
+                "sources": [
+                    {
+                        "source_id": "SRC-001",
+                        "source_type": "company_release",
+                        "source_path": "input/sources/source-001.md",
+                        "published_at": "2026-06-01",
+                        "source_tier": "company_official",
+                        "spans": [
+                            {
+                                "span_id": "ESP-001-01",
+                                "raw_excerpt": raw_excerpt,
+                                "hash": _span_hash(raw_excerpt),
+                                "span_role": "direct_statement",
+                                "char_start": start,
+                                "char_end": start + len(raw_excerpt),
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (intermediate / "claim_support_matrix.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_support_matrix.v1",
+                "rows": [
+                    {
+                        "row_id": "CSM-0001",
+                        "claim_id": "CL-0001",
+                        "atom_id": "AC-0001-01",
+                        "evidence_span_id": evidence_span_id,
+                        "support_label": support_label,
+                        "support_strength": support_strength,
+                        "support_reason": "Explicit support record for gate projection.",
+                        "required_action": required_action,
+                        "repair_owner": repair_owner,
+                        "decision_source": "human",
                     }
                 ],
             },
@@ -926,6 +1048,225 @@ def test_quality_gate_invalid_atomic_graph_is_non_blocking(tmp_path):
     projection = state["quality_gate_report"]["metadata"]["atomic_reader_projection"]
     assert projection["status"] == "invalid_graph"
     assert projection["atom_residue_findings"] == []
+
+
+def test_quality_gate_claim_support_matrix_blocking_row_blocks(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="unsupported",
+        support_strength="none",
+        required_action="block_release",
+        evidence_span_id=None,
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    projection = report["metadata"]["claim_support_matrix_projection"]
+    csm_findings = [
+        finding
+        for finding in report["findings"]
+        if finding.get("finding_type") == "claim_support_matrix_blocking_support"
+    ]
+    assert projection["status"] == "valid"
+    assert projection["summary_counts"]["blocking_atom_count"] == 1
+    assert report["status"] == "fail"
+    assert len(csm_findings) == 1
+    assert csm_findings[0]["blocking_level"] == "blocking"
+    assert csm_findings[0]["metadata"]["semantic_boundary"] == (
+        "explicit_support_record_projection_only_not_support_assessment"
+    )
+
+
+def test_quality_gate_claim_support_matrix_weak_support_warns(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="weak_support",
+        support_strength="low",
+        required_action="downgrade_wording",
+        evidence_span_id="ESP-001-01",
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    csm_findings = [
+        finding
+        for finding in report["findings"]
+        if finding.get("finding_type") == "claim_support_matrix_weak_support"
+    ]
+    assert report["status"] == "warning"
+    assert len(csm_findings) == 1
+    assert csm_findings[0]["blocking"] is False
+    assert csm_findings[0]["metadata"]["row"]["required_action"] == "downgrade_wording"
+
+
+def test_quality_gate_claim_support_matrix_inferential_support_warns(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="inferential_support",
+        support_strength="medium",
+        required_action="mark_as_inference",
+        evidence_span_id="ESP-001-01",
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    csm_findings = [
+        finding
+        for finding in report["findings"]
+        if finding.get("finding_type") == "claim_support_matrix_inference_framing"
+    ]
+    assert report["status"] == "warning"
+    assert len(csm_findings) == 1
+    assert csm_findings[0]["blocking"] is False
+    assert csm_findings[0]["metadata"]["row"]["required_action"] == "mark_as_inference"
+
+
+def test_quality_gate_claim_support_matrix_auditor_owner_targets_audit_report(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="weak_support",
+        support_strength="low",
+        required_action="human_adjudication",
+        repair_owner="auditor",
+        evidence_span_id="ESP-001-01",
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    csm_finding = next(
+        finding
+        for finding in report["findings"]
+        if finding.get("finding_type") == "claim_support_matrix_weak_support"
+    )
+    assert csm_finding["repair_owner"] == "auditor"
+    assert csm_finding["stage_id"] == "auditor"
+    assert csm_finding["artifact_id"] == "audit_report"
+    assert csm_finding["repair_artifact_id"] == "audit_report"
+
+
+def test_quality_gate_claim_support_matrix_human_review_owner_has_no_repair_artifact(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="unsupported",
+        support_strength="none",
+        required_action="block_release",
+        repair_owner="human_review",
+        evidence_span_id=None,
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    csm_finding = next(
+        finding
+        for finding in report["findings"]
+        if finding.get("finding_type") == "claim_support_matrix_blocking_support"
+    )
+    assert csm_finding["repair_owner"] == "human_review"
+    assert csm_finding["stage_id"] is None
+    assert csm_finding["artifact_id"] is None
+    assert csm_finding["repair_artifact_id"] is None
+
+
+def test_quality_gate_invalid_claim_support_matrix_does_not_create_findings(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="unsupported",
+        support_strength="none",
+        required_action="block_release",
+        evidence_span_id=None,
+    )
+    payload = json.loads((_intermediate(ws) / "claim_support_matrix.json").read_text(encoding="utf-8"))
+    payload["rows"][0]["atom_id"] = "AC-0001-99"
+    (_intermediate(ws) / "claim_support_matrix.json").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    assert report["metadata"]["claim_support_matrix_projection"]["status"] == "invalid_matrix"
+    assert not [
+        finding
+        for finding in report["findings"]
+        if str(finding.get("finding_type") or "").startswith("claim_support_matrix_")
+    ]
+
+
+def test_quality_gate_invalid_claim_ledger_dependency_skips_claim_support_findings(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_claim_support_matrix_fixture(
+        ws,
+        support_label="unsupported",
+        support_strength="none",
+        required_action="block_release",
+        evidence_span_id=None,
+    )
+    _write_ledger(
+        ws,
+        [
+            {
+                "claim_id": "CL-0001",
+                "statement": "TargetCo opened a demo facility.",
+                "source_id": "SRC-001",
+                "evidence_text": "TargetCo opened a demo facility.",
+            },
+            {
+                "claim_id": "CL-0001",
+                "statement": "Duplicate TargetCo claim.",
+                "source_id": "SRC-001",
+                "evidence_text": "Duplicate evidence.",
+            },
+        ],
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-0001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    projection = report["metadata"]["claim_support_matrix_projection"]
+    assert projection["status"] == "invalid_matrix"
+    assert projection["reason"] == "claim_ledger_schema_error:duplicate_claim_id:CL-0001"
+    assert not [
+        finding
+        for finding in report["findings"]
+        if str(finding.get("finding_type") or "").startswith("claim_support_matrix_")
+    ]
 
 
 def test_gates_show_and_validate_are_machine_readable(tmp_path, capsys):

@@ -53,6 +53,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   high-materiality atoms to have explicit support rows. Missing matrices remain
   optional; this does not assess semantic support, add gates/status
   integration, or decide release eligibility.
+- **Claim-Support Matrix gate/status projection**: present valid matrices now
+  project explicit atom-level support records into quality-gate findings and
+  read-only status summaries. Missing or invalid matrices remain non-blocking;
+  this does not assess semantic support, prove truth, or decide release
+  eligibility.
 
 ## [0.9.1] — 2026-06-20
 
