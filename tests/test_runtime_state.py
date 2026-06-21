@@ -3750,14 +3750,28 @@ def test_state_check_marks_semantic_assessment_report_unknown_candidate_span_inv
     assert record["validation_result"] == "semantic_assessment_report_validation_error:unknown_evidence_span_reference:ESP-999-01"
 
 
-def test_state_check_marks_llm_only_high_materiality_uncertain_semantic_row_invalid_without_adjudication(tmp_path):
+@pytest.mark.parametrize(
+    ("uncertainty", "disagreement"),
+    [
+        ("high", "none"),
+        ("unknown", "none"),
+        ("low", "high"),
+        ("low", "unknown"),
+    ],
+)
+def test_state_check_marks_llm_only_high_materiality_unresolved_semantic_row_invalid_without_adjudication(
+    tmp_path,
+    uncertainty,
+    disagreement,
+):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _write_valid_claim_support_matrix_dependencies(ws)
     payload = json.loads(_valid_semantic_assessment_report_payload())
     payload["assessors"][0]["assessment_method"] = "llm_only"
     payload["rows"][0]["assessment_method"] = "llm_only"
-    payload["rows"][0]["uncertainty"] = "high"
+    payload["rows"][0]["uncertainty"] = uncertainty
+    payload["rows"][0]["disagreement"] = disagreement
     payload["rows"][0]["requires_human_adjudication"] = False
     _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
 

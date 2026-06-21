@@ -20,6 +20,9 @@ from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateErro
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
 )
+from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    project_semantic_assessment_report_from_workspace,
+)
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_reader_text_from_workspace
 
@@ -52,6 +55,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "fact_layer_import": {},
         "atomic_reader_projection": {},
         "claim_support_matrix": {},
+        "semantic_assessment_report": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -114,6 +118,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     )
     payload["atomic_reader_projection"] = _atomic_reader_projection_summary(ws)
     payload["claim_support_matrix"] = project_claim_support_matrix_from_workspace(ws)
+    payload["semantic_assessment_report"] = project_semantic_assessment_report_from_workspace(ws)
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -168,6 +173,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     experiment_080 = status.get("experiment_080") or {}
     atomic_projection = status.get("atomic_reader_projection") or {}
     claim_support_matrix = status.get("claim_support_matrix") or {}
+    semantic_assessment_report = status.get("semantic_assessment_report") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -236,6 +242,18 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"blocking_atoms={counts.get('blocking_atom_count', 0)} "
             f"weak_atoms={counts.get('weak_atom_count', 0)} "
             f"adjudication_atoms={counts.get('adjudication_required_atom_count', 0)}"
+        )
+    if semantic_assessment_report.get("status") not in {None, "not_available"}:
+        counts = semantic_assessment_report.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        lines.append(
+            "[status] semantic_assessment_report: "
+            f"{semantic_assessment_report.get('status')} "
+            f"proposals={counts.get('proposal_row_count', 0)} "
+            f"llm_only={counts.get('llm_only_count', 0)} "
+            f"high_uncertainty={counts.get('high_uncertainty_count', 0)} "
+            f"high_disagreement={counts.get('high_disagreement_count', 0)} "
+            f"adjudication={counts.get('requires_human_adjudication_count', 0)}"
         )
     for marker in status.get("stale_or_unknown") or []:
         lines.append(f"[status] stale_or_unknown: {marker}")

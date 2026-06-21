@@ -4,13 +4,105 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
+
+from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
+from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+    _read_json_mapping,
+    _schema_error_reason,
+    _workspace_atomic_graph_payload,
+    _workspace_evidence_span_registry_payload,
+    _workspace_ledger_claims,
+)
 
 
 SEMANTIC_ASSESSMENT_PROPOSAL_PROJECTION_SCHEMA_VERSION = (
     "mabw.semantic_assessment_report.proposal_projection.v1"
 )
+SEMANTIC_ASSESSMENT_WORKSPACE_PROJECTION_SCHEMA_VERSION = (
+    "mabw.semantic_assessment_report.workspace_projection.v1"
+)
 SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX = "semantic_assessment_report_validation_error"
+UNRESOLVED_SEMANTIC_ASSESSMENT_LEVELS = {"high", "unknown"}
+
+
+def project_semantic_assessment_report_from_workspace(workspace: str | Path) -> dict[str, Any]:
+    """Read and project a present, valid Semantic Assessment Report.
+
+    This is a read-only status surface. It validates machine-checkable sibling
+    artifact bindings before projecting proposal rows, but it does not accept
+    support truth, mutate the Claim-Support Matrix, create adjudication queue
+    items, write workspace state, gate delivery, or decide release eligibility.
+    """
+
+    ws = Path(workspace).expanduser().resolve()
+    intermediate = ws / "output" / "intermediate"
+    report_path = intermediate / "semantic_assessment_report.json"
+    base = _workspace_projection_base(workspace=ws, report_path=report_path)
+    if not report_path.exists():
+        return {
+            **base,
+            "status": "not_available",
+            "report_present": False,
+            "reason": "semantic_assessment_report_missing",
+            "proposal_projection": _empty_proposal_projection(),
+            "summary_counts": {},
+            "proposed_claim_support_rows": [],
+        }
+
+    report_payload, reason = _read_json_mapping(report_path, label="semantic_assessment_report")
+    if reason:
+        return _invalid_workspace_projection(base, reason=reason)
+    assert report_payload is not None
+
+    reason = _schema_error_reason(
+        SemanticAssessmentReportContract.validate(report_payload),
+        prefix="semantic_assessment_report_schema_error",
+    )
+    if reason:
+        return _invalid_workspace_projection(base, reason=reason)
+
+    ledger_claims, reason = _workspace_ledger_claims(intermediate / "claim_ledger.json")
+    if reason:
+        return _invalid_workspace_projection(base, reason=f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}")
+    graph_payload, reason = _workspace_atomic_graph_payload(
+        intermediate / "atomic_claim_graph.json",
+        ledger_claims=ledger_claims or [],
+    )
+    if reason:
+        return _invalid_workspace_projection(base, reason=f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}")
+    evidence_payload, reason = _workspace_evidence_span_registry_payload(
+        intermediate / "evidence_span_registry.json",
+        workspace=ws,
+    )
+    if reason:
+        return _invalid_workspace_projection(base, reason=f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}")
+
+    reason = validate_semantic_assessment_report_against_artifacts(
+        report_payload=report_payload,
+        ledger_claims=ledger_claims or [],
+        graph_payload=graph_payload or {},
+        evidence_span_registry_payload=evidence_payload or {},
+    )
+    if reason:
+        return _invalid_workspace_projection(
+            base,
+            reason=f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}",
+        )
+
+    proposal_projection = project_semantic_assessment_proposals(report_payload)
+    return {
+        **base,
+        "status": "valid",
+        "report_present": True,
+        "reason": None,
+        "proposal_projection": proposal_projection,
+        "summary_counts": proposal_projection.get("summary_counts") or {},
+        "proposed_claim_support_rows": proposal_projection.get("proposed_claim_support_rows")
+        if isinstance(proposal_projection.get("proposed_claim_support_rows"), list)
+        else [],
+    }
 
 
 def project_semantic_assessment_proposals(report_payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -44,6 +136,40 @@ def project_semantic_assessment_proposals(report_payload: Mapping[str, Any]) -> 
             "candidate_rows": deepcopy(proposed_rows),
         },
     }
+
+
+def _workspace_projection_base(*, workspace: Path, report_path: Path) -> dict[str, Any]:
+    try:
+        rendered_path = report_path.relative_to(workspace).as_posix()
+    except ValueError:
+        rendered_path = report_path.name
+    return {
+        "schema_version": SEMANTIC_ASSESSMENT_WORKSPACE_PROJECTION_SCHEMA_VERSION,
+        "semantic_boundary": "proposal_projection_only_not_accepted_support_truth",
+        "report_path": rendered_path,
+    }
+
+
+def _invalid_workspace_projection(base: Mapping[str, Any], *, reason: str) -> dict[str, Any]:
+    return {
+        **dict(base),
+        "status": "invalid_report",
+        "report_present": True,
+        "reason": reason,
+        "proposal_projection": _empty_proposal_projection(),
+        "summary_counts": {},
+        "proposed_claim_support_rows": [],
+    }
+
+
+def _empty_proposal_projection() -> dict[str, Any]:
+    return project_semantic_assessment_proposals(
+        {
+            "schema_version": "",
+            "assessors": [],
+            "rows": [],
+        }
+    )
 
 
 def validate_semantic_assessment_report_against_artifacts(
@@ -211,7 +337,10 @@ def _requires_llm_only_high_materiality_adjudication(
         return False
     if row.get("requires_human_adjudication") is True:
         return False
-    return _text(row.get("uncertainty")) == "high" or _text(row.get("disagreement")) == "high"
+    return (
+        _text(row.get("uncertainty")) in UNRESOLVED_SEMANTIC_ASSESSMENT_LEVELS
+        or _text(row.get("disagreement")) in UNRESOLVED_SEMANTIC_ASSESSMENT_LEVELS
+    )
 
 
 def _candidate_span_ids(row: Mapping[str, Any]) -> list[str]:
