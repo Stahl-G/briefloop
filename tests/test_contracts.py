@@ -15,6 +15,7 @@ from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract, 
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
+from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.analysis_pack import (
     MarketEventContract,
@@ -34,6 +35,7 @@ class TestSchemaRegistry:
         assert SchemaRegistry.get("claim_support_matrix") is ClaimSupportMatrixContract
         assert SchemaRegistry.get("atomic_claim_graph") is AtomicClaimGraphContract
         assert SchemaRegistry.get("evidence_span_registry") is EvidenceSpanRegistryContract
+        assert SchemaRegistry.get("semantic_assessment_report") is SemanticAssessmentReportContract
 
     def test_get_unknown_returns_none(self):
         assert SchemaRegistry.get("nonexistent") is None
@@ -611,6 +613,149 @@ class TestClaimSupportMatrixContract:
         fields = {violation.field for violation in violations}
 
         assert {"metadata", "rows[0].metadata"} <= fields
+
+
+# ── SemanticAssessmentReportContract ──
+
+
+def _valid_semantic_assessment_report() -> dict:
+    return {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+            {
+                "assessor_id": "ASR-001",
+                "assessment_method": "llm_assisted_human",
+                "label": "Reviewer A",
+            }
+        ],
+        "rows": [
+            {
+                "row_id": "SAR-0001",
+                "claim_id": "CL-0001",
+                "atom_id": "AC-0001-01",
+                "evidence_span_id": "ESP-001-01",
+                "proposed_support_label": "partial_support",
+                "confidence": 0.72,
+                "uncertainty": "medium",
+                "disagreement": "none",
+                "requires_human_adjudication": True,
+                "assessment_method": "llm_assisted_human",
+                "assessor_id": "ASR-001",
+                "rationale": "The span supports activity but not the stronger trend wording.",
+            }
+        ],
+        "metadata": {},
+    }
+
+
+class TestSemanticAssessmentReportContract:
+    def test_valid_minimal_report_passes(self):
+        assert SemanticAssessmentReportContract.validate(_valid_semantic_assessment_report()) == []
+        assert SemanticAssessmentReportContract.is_valid(_valid_semantic_assessment_report())
+
+    @pytest.mark.parametrize(
+        ("payload", "field"),
+        [
+            ([], "<root>"),
+            ({"schema_version": "wrong", "assessors": [], "rows": []}, "schema_version"),
+            ({"schema_version": "mabw.semantic_assessment_report.v1", "assessors": [], "rows": []}, "assessors"),
+            (
+                {"schema_version": "mabw.semantic_assessment_report.v1", "assessors": [{"assessor_id": "A"}]},
+                "rows",
+            ),
+        ],
+    )
+    def test_rejects_invalid_root_version_or_empty_lists(self, payload, field):
+        violations = SemanticAssessmentReportContract.validate(payload)
+
+        assert any(violation.field == field for violation in violations)
+        assert not SemanticAssessmentReportContract.is_valid(payload)
+
+    def test_rejects_duplicate_row_id_and_assessor_id(self):
+        report = _valid_semantic_assessment_report()
+        report["rows"].append(dict(report["rows"][0]))
+        report["assessors"].append(dict(report["assessors"][0]))
+
+        violations = SemanticAssessmentReportContract.validate(report)
+        fields = {violation.field for violation in violations}
+
+        assert {"rows[1].row_id", "assessors[1].assessor_id"} <= fields
+
+    def test_rejects_row_missing_assessor_id(self):
+        report = _valid_semantic_assessment_report()
+        report["rows"][0].pop("assessor_id")
+
+        violations = SemanticAssessmentReportContract.validate(report)
+
+        assert any(violation.field == "rows[0].assessor_id" for violation in violations)
+        assert not SemanticAssessmentReportContract.is_valid(report)
+
+    def test_rejects_row_unknown_assessor_id(self):
+        report = _valid_semantic_assessment_report()
+        report["rows"][0]["assessor_id"] = "ASR-999"
+
+        violations = SemanticAssessmentReportContract.validate(report)
+
+        assert any(
+            violation.field == "rows[0].assessor_id" and "unknown assessor_id:ASR-999" in violation.error
+            for violation in violations
+        )
+        assert not SemanticAssessmentReportContract.is_valid(report)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("row_id", "ROW-1"),
+            ("claim_id", "CLAIM-1"),
+            ("atom_id", "ATOM-1"),
+            ("proposed_support_label", "truth_proven"),
+            ("confidence", 1.2),
+            ("uncertainty", "certain"),
+            ("disagreement", "split_vote"),
+            ("requires_human_adjudication", "yes"),
+            ("assessment_method", "authoritative_human"),
+            ("rationale", ""),
+        ],
+    )
+    def test_rejects_invalid_row_fields(self, field, value):
+        report = _valid_semantic_assessment_report()
+        report["rows"][0][field] = value
+
+        violations = SemanticAssessmentReportContract.validate(report)
+
+        assert any(violation.field == f"rows[0].{field}" for violation in violations)
+
+    def test_rejects_atom_claim_prefix_mismatch(self):
+        report = _valid_semantic_assessment_report()
+        report["rows"][0]["atom_id"] = "AC-0002-01"
+
+        violations = SemanticAssessmentReportContract.validate(report)
+
+        assert any(violation.field == "rows[0].atom_id" for violation in violations)
+
+    def test_requires_single_or_candidate_evidence_span_binding(self):
+        report = _valid_semantic_assessment_report()
+        report["rows"][0].pop("evidence_span_id")
+
+        violations = SemanticAssessmentReportContract.validate(report)
+
+        assert any(violation.field == "rows[0].evidence_span_binding" for violation in violations)
+
+    def test_accepts_candidate_evidence_span_ids_instead_of_single_span(self):
+        report = _valid_semantic_assessment_report()
+        report["rows"][0].pop("evidence_span_id")
+        report["rows"][0]["candidate_evidence_span_ids"] = ["ESP-001-01", "ESP-001-02"]
+
+        assert SemanticAssessmentReportContract.validate(report) == []
+
+    def test_rejects_invalid_candidate_evidence_span_id(self):
+        report = _valid_semantic_assessment_report()
+        report["rows"][0].pop("evidence_span_id")
+        report["rows"][0]["candidate_evidence_span_ids"] = ["ESP-001-01", "SPAN-2"]
+
+        violations = SemanticAssessmentReportContract.validate(report)
+
+        assert any(violation.field == "rows[0].candidate_evidence_span_ids[1]" for violation in violations)
 
 
 # ── ClaimDraftContract ──

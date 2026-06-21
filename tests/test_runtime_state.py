@@ -281,6 +281,37 @@ def _valid_claim_support_matrix_payload() -> str:
     ) + "\n"
 
 
+def _valid_semantic_assessment_report_payload() -> str:
+    return json.dumps(
+        {
+            "schema_version": "mabw.semantic_assessment_report.v1",
+            "assessors": [
+                {
+                    "assessor_id": "ASR-001",
+                    "assessment_method": "llm_assisted_human",
+                    "label": "Reviewer A",
+                }
+            ],
+            "rows": [
+                {
+                    "row_id": "SAR-0001",
+                    "claim_id": "CL-0001",
+                    "atom_id": "AC-0001-01",
+                    "evidence_span_id": "ESP-001-01",
+                    "proposed_support_label": "partial_support",
+                    "confidence": 0.72,
+                    "uncertainty": "medium",
+                    "disagreement": "none",
+                    "requires_human_adjudication": True,
+                    "assessment_method": "llm_assisted_human",
+                    "assessor_id": "ASR-001",
+                    "rationale": "The span supports activity but not acceleration wording.",
+                }
+            ],
+        }
+    ) + "\n"
+
+
 def _write_valid_claim_support_matrix_dependencies(ws: Path) -> None:
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
     _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
@@ -902,6 +933,9 @@ def test_state_check_fresh_workspace_is_not_globally_blocked(tmp_path):
     assert registry["claim_support_matrix"]["status"] == "expected"
     assert registry["claim_support_matrix"]["required"] is False
     assert registry["claim_support_matrix"]["validation_result"] == "not_checked"
+    assert registry["semantic_assessment_report"]["status"] == "expected"
+    assert registry["semantic_assessment_report"]["required"] is False
+    assert registry["semantic_assessment_report"]["validation_result"] == "not_checked"
     assert registry["audited_brief"]["status"] == "expected"
     assert registry["reader_brief"]["status"] == "expected"
     assert registry["auditor_quality_gate_report"]["status"] == "expected"
@@ -3600,6 +3634,34 @@ def test_state_check_validates_present_claim_support_matrix_schema(tmp_path):
     assert record["status"] == "valid"
     assert record["required"] is False
     assert record["validation_result"] == "experimental_claim_support_matrix_schema"
+
+
+def test_state_check_validates_present_semantic_assessment_report_schema(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "semantic_assessment_report.json", _valid_semantic_assessment_report_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "valid"
+    assert record["required"] is False
+    assert record["validation_result"] == "experimental_semantic_assessment_report_schema"
+
+
+def test_state_check_marks_invalid_semantic_assessment_report_schema_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["rows"][0].pop("evidence_span_id")
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert record["validation_result"] == "semantic_assessment_report_schema_error:rows[0].evidence_span_binding"
 
 
 def test_state_check_marks_claim_support_matrix_missing_claim_ledger_invalid(tmp_path):

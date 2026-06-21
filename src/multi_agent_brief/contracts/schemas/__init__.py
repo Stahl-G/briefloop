@@ -12,6 +12,7 @@ from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
 from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
+from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 
 __all__ = [
     "AnalysisCardContract",
@@ -23,5 +24,6 @@ __all__ = [
     "ClaimSupportMatrixContract",
     "EvidenceSpanRegistryContract",
     "MarketEventContract",
+    "SemanticAssessmentReportContract",
     "SourceItemContract",
 ]

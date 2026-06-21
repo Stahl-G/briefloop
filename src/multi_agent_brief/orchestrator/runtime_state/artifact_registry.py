@@ -16,6 +16,7 @@ from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
+from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
@@ -124,6 +125,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_evidence_span_registry_payload(payload, artifact_path=path)
             if artifact_id == "claim_support_matrix":
                 return _validate_claim_support_matrix_payload(payload, artifact_path=path)
+            if artifact_id == "semantic_assessment_report":
+                return _validate_semantic_assessment_report_payload(payload)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
             if artifact_id == "candidate_claims":
@@ -507,6 +510,17 @@ def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path)
     if reason:
         return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
     return ARTIFACT_VALID, "experimental_claim_support_matrix_schema"
+
+
+def _validate_semantic_assessment_report_payload(payload: Any) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ARTIFACT_INVALID, "semantic_assessment_report_schema_error:not_object"
+    violations = SemanticAssessmentReportContract.validate(payload)
+    errors = [violation for violation in violations if violation.severity == "error"]
+    if errors:
+        first = errors[0]
+        return ARTIFACT_INVALID, f"semantic_assessment_report_schema_error:{first.field}"
+    return ARTIFACT_VALID, "experimental_semantic_assessment_report_schema"
 
 
 def _claim_support_matrix_ledger_claims(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
