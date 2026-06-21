@@ -153,6 +153,25 @@ def test_claim_support_matrix_contract_is_optional_experimental_schema_foundatio
         assert "claim_support_matrix" not in claim_ledger_stage.expected_artifacts
 
 
+def test_semantic_assessment_report_contract_is_optional_experimental_schema_foundation():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        assessment_report = registry.artifact("semantic_assessment_report")
+        auditor_stage = registry.stage("auditor")
+        assert assessment_report is not None
+        assert auditor_stage is not None
+        assert assessment_report.required is False
+        assert assessment_report.path == "output/intermediate/semantic_assessment_report.json"
+        assert assessment_report.producer_stage == "auditor"
+        assert assessment_report.producer_role == "auditor"
+        assert assessment_report.consumer_stages == ()
+        assert assessment_report.validation_result == "experimental_semantic_assessment_report_schema"
+        assert "semantic_assessment_report" not in auditor_stage.produces
+        assert "semantic_assessment_report" not in auditor_stage.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"

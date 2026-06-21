@@ -165,6 +165,21 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
+  - artifact_id: semantic_assessment_report
+    path: output/intermediate/semantic_assessment_report.json
+    format: json
+    required: false
+    producer_stage: auditor
+    producer_role: auditor
+    consumer_stages: []
+    validation_result: experimental_semantic_assessment_report_schema
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - retry_stage
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
   - artifact_id: audited_brief
     path: output/intermediate/audited_brief.md
     format: markdown

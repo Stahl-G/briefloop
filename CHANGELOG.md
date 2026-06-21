@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet.
+### Added
+
+- **Experimental Semantic Assessment Report schema**: added an optional
+  `output/intermediate/semantic_assessment_report.json` contract for auditable
+  semantic support assessment proposals over claim atoms and evidence spans.
+  This is schema foundation only; it does not judge truth, mutate the
+  Claim-Support Matrix, create human adjudication queue items, gate delivery,
+  decide release eligibility, or grant support authority.
 
 ## [0.9.3] — 2026-06-21
 
