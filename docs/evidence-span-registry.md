@@ -67,4 +67,5 @@ Do not use the Evidence Span Registry to claim:
 
 It provides span-level traceability and archive reproducibility. Current
 Claim-Support Matrix controls are separate experimental support-record surfaces;
-they still do not assess semantic support or decide release eligibility.
+they can validate and project explicit support records, but still do not assess
+semantic support or decide release eligibility.

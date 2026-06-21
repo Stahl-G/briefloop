@@ -22,9 +22,10 @@ The v0.9.1 release adds the first experimental Atomic Claim Graph control surfac
 Mainline after v0.9.1 also includes experimental Evidence Span Registry and
 Claim-Support Matrix control surfaces: optional span schema validation,
 source-pack byte binding, archive hash projection, Source Appendix trace audit
-copies, and explicit atom-to-evidence support records. These are traceability
-and support-record controls, not semantic support proof or support-sufficiency
-gates.
+copies, explicit atom-to-evidence support records, cross-artifact validation,
+and gate/status projection from those explicit records. These are traceability
+and support-record controls, not semantic support proof, automatic support
+assessment, release eligibility, or support-sufficiency gates.
 
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
@@ -159,6 +160,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
 - **[BriefLoop-090 A-controlled auditable-brief pilot](docs/reference-runs/briefloop-090-a-controlled-pilot.md)**: one public-safe synthetic case with condition-blind, hash-bound `auditable_brief` assessment. In this case, memory showed the approved guidance without obvious harm, while prompt-only over-applied the same guidance. It is not a general output-quality claim.
 - **[v0.9.1 release notes](docs/releases/v0.9.1.md)**: experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
+- **[Claim-Support Matrix](docs/claim-support-matrix.md)**: mainline experimental support-record schema, cross-artifact validation, and gate/status projection from explicit atom-to-evidence rows. It is not automatic support assessment, truth proof, or release eligibility.
 
 We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.
 
@@ -199,7 +201,7 @@ Three on-ramps, one spine. There is no lite mode: entry cost drops, the accounta
 | Run once | ~30 min | A few local text files, no search backend, `new -> run -> status -> deliver` |
 | Live with it | weekly | Configured sources, feedback loop, approved preferences |
 
-Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [Evidence Span Registry](docs/evidence-span-registry.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+Full paths: [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [Evidence Span Registry](docs/evidence-span-registry.md) · [Claim-Support Matrix](docs/claim-support-matrix.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
 
 ## 🧭 A Note On Provenance
 

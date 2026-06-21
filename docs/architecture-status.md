@@ -40,10 +40,13 @@ runtime capability, not a breaking rename.
   traceability and archive reproducibility only, not semantic support
   assessment or support-sufficiency gating.
 - Experimental Claim-Support Matrix controls can validate an optional
-  `output/intermediate/claim_support_matrix.json` schema and project explicit
-  atom-to-evidence support rows into deterministic atom-level policy signals.
-  This is support-record structure only, not automatic support assessment,
-  semantic proof, or release eligibility.
+  `output/intermediate/claim_support_matrix.json` schema, validate its Claim
+  Ledger / Atomic Claim Graph / Evidence Span Registry references, require
+  high-materiality atom row coverage when the matrix is present, and project
+  explicit atom-to-evidence rows into status summaries and quality-gate
+  findings. This is a support-record control plane only, not automatic support
+  assessment, semantic proof, release eligibility, or a support-sufficiency
+  gate.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.

@@ -24,9 +24,10 @@ The v0.9.1 release adds the first experimental Atomic Claim Graph control surfac
 Mainline after v0.9.1 also includes experimental Evidence Span Registry and
 Claim-Support Matrix control surfaces. These add optional span schema
 validation, source-pack byte binding, archive hash projection, Source Appendix
-trace audit copies, and explicit atom-to-evidence support records. They are
-traceability and support-record controls, not semantic support proof or
-support-sufficiency gates.
+trace audit copies, explicit atom-to-evidence support records, cross-artifact
+validation, and gate/status projection from those explicit records. They are
+traceability and support-record controls, not semantic support proof, automatic
+support assessment, release eligibility, or support-sufficiency gates.
 
 It is built for:
 
@@ -84,6 +85,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. BriefLoop traced how errors propagated; it did not prove semantic correctness.
 - [v0.9.1 release notes](docs/releases/v0.9.1.md): experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 - [Evidence Span Registry](docs/evidence-span-registry.md): mainline experimental span schema, source-pack byte binding, archive projection, and Source Appendix trace view. It is not semantic support proof or a support-sufficiency gate.
+- [Claim-Support Matrix](docs/claim-support-matrix.md): mainline experimental support-record schema, cross-artifact validation, and gate/status projection from explicit atom-to-evidence rows. It is not automatic support assessment, truth proof, or release eligibility.
 
 We publish failure analysis because accountability applies to this project too.
 
@@ -199,7 +201,7 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 Current release baseline: v0.9.1
 
-The v0.9.1 release adds experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundaries, and reader-residue projection. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. Mainline after v0.9.1 adds optional experimental Evidence Span Registry controls and Claim-Support Matrix schema/policy projection, but this still does not implement semantic proof, automatic support assessment, or support-sufficiency gating.
+The v0.9.1 release adds experimental Atomic Claim Graph schema, coverage/type validation, Analyst/Editor contract boundaries, and reader-residue projection. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. Mainline after v0.9.1 adds optional experimental Evidence Span Registry controls and Claim-Support Matrix schema, cross-artifact validation, and gate/status projection from explicit support records, but this still does not implement semantic proof, automatic support assessment, release eligibility, or support-sufficiency gating.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -365,6 +367,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Evaluation cases](docs/evaluation-cases.md) ·
 [Improvement Ledger](docs/modules/improvement.md) ·
 [Evidence Span Registry](docs/evidence-span-registry.md) ·
+[Claim-Support Matrix](docs/claim-support-matrix.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
 [v0.9.1](docs/releases/v0.9.1.md) ·
