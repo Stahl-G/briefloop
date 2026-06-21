@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Matrix delta candidates after callers have validated the report. The
   projection does not write accepted support rows, create adjudication queue
   items, gate delivery, judge support semantics, or decide release eligibility.
+- **Semantic Assessment Report status surface**: `status --json` and the
+  human-readable status report now expose read-only proposal counts for present
+  valid Semantic Assessment Reports, including `llm_only`, high uncertainty,
+  high disagreement, and human-adjudication flags. This does not add delivery
+  gates, release authority, adjudication queue items, or accepted
+  Claim-Support Matrix writes.
 
 ## [0.9.3] — 2026-06-21
 
