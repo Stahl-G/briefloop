@@ -1,0 +1,311 @@
+{
+  "schema_version": "mabw.semantic_assessment_dogfood_fixture.v1",
+  "metadata": {
+    "purpose": "Synthetic public-safe fixtures for Semantic Assessment Report proposal validation.",
+    "boundary": "Fixtures exercise proposal records only. They are not support truth, release authority, or semantic proof."
+  },
+  "base": {
+    "source_files": {
+      "input/sources/source-001.md": "TargetCo opened a demo facility in May 2026.\nTargetCo reported 12 MW of pilot shipments in Q2 2026.\nThe source did not state that shipments accelerated year over year.\nThe source provided no profitability guidance.\n"
+    },
+    "claim_ledger": [
+      {
+        "claim_id": "CL-0001",
+        "statement": "TargetCo opened a demo facility, reported 12 MW of pilot shipments, may be accelerating shipments, and has a profitability outlook.",
+        "source_id": "SRC-001",
+        "evidence_text": "TargetCo opened a demo facility in May 2026. TargetCo reported 12 MW of pilot shipments in Q2 2026.",
+        "claim_type": "fact"
+      }
+    ],
+    "atomic_claim_graph": {
+      "schema_version": "mabw.atomic_claim_graph.v1",
+      "claims": [
+        {
+          "claim_id": "CL-0001",
+          "statement": "TargetCo opened a demo facility, reported 12 MW of pilot shipments, may be accelerating shipments, and has a profitability outlook.",
+          "atoms": [
+            {
+              "atom_id": "AC-0001-01",
+              "text": "TargetCo opened a demo facility in May 2026.",
+              "claim_role": "observed_fact",
+              "materiality": "high"
+            },
+            {
+              "atom_id": "AC-0001-02",
+              "text": "TargetCo reported 12 MW of pilot shipments in Q2 2026.",
+              "claim_role": "numeric_fact",
+              "materiality": "high"
+            },
+            {
+              "atom_id": "AC-0001-03",
+              "text": "TargetCo shipments are accelerating year over year.",
+              "claim_role": "trend_interpretation",
+              "materiality": "high"
+            },
+            {
+              "atom_id": "AC-0001-04",
+              "text": "TargetCo has a positive profitability outlook.",
+              "claim_role": "forward_looking_inference",
+              "materiality": "high"
+            }
+          ],
+          "edges": []
+        }
+      ],
+      "metadata": {}
+    },
+    "evidence_span_registry": {
+      "schema_version": "mabw.evidence_span_registry.v1",
+      "sources": [
+        {
+          "source_id": "SRC-001",
+          "source_type": "synthetic_release",
+          "source_path": "input/sources/source-001.md",
+          "published_at": "2026-06-01",
+          "source_tier": "company_official",
+          "spans": [
+            {
+              "span_id": "ESP-001-01",
+              "raw_excerpt": "TargetCo opened a demo facility in May 2026.",
+              "hash": "sha256:5533936bf2848190f133f45b0960e828ffcc6be7d784872f6f14e1e13f682497",
+              "span_role": "direct_statement"
+            },
+            {
+              "span_id": "ESP-001-02",
+              "raw_excerpt": "TargetCo reported 12 MW of pilot shipments in Q2 2026.",
+              "hash": "sha256:4a2d1d7bc3f38cbff52210db51a58645e8dcec65dca532e499e06913c87c009c",
+              "span_role": "numeric_observation"
+            },
+            {
+              "span_id": "ESP-001-03",
+              "raw_excerpt": "The source did not state that shipments accelerated year over year.",
+              "hash": "sha256:d2f6e3a89afc7dc726657b743e865f46fc460506fe0a9ed55e0a8f0aa790535b",
+              "span_role": "limitation"
+            },
+            {
+              "span_id": "ESP-001-04",
+              "raw_excerpt": "The source provided no profitability guidance.",
+              "hash": "sha256:bacaa66c05b5d3ae1466f7d0cae42c226ac89a8c46da47b0f0a50935fd0a89c9",
+              "span_role": "limitation"
+            }
+          ]
+        }
+      ],
+      "metadata": {}
+    }
+  },
+  "cases": [
+    {
+      "case_id": "mixed_valid_proposals",
+      "description": "Valid proposal rows covering direct support, partial support, weak support, unsupported proposal, high uncertainty, and high disagreement.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-001",
+            "assessment_method": "human",
+            "label": "Human reviewer"
+          },
+          {
+            "assessor_id": "ASR-002",
+            "assessment_method": "llm_assisted_human",
+            "label": "Assisted reviewer"
+          },
+          {
+            "assessor_id": "ASR-003",
+            "assessment_method": "llm_only",
+            "label": "Synthetic model proposal"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-01",
+            "evidence_span_id": "ESP-001-01",
+            "proposed_support_label": "direct_support",
+            "confidence": 0.93,
+            "uncertainty": "low",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "human",
+            "assessor_id": "ASR-001",
+            "rationale": "The span directly states the demo facility timing."
+          },
+          {
+            "row_id": "SAR-0002",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-02",
+            "evidence_span_id": "ESP-001-02",
+            "proposed_support_label": "partial_support",
+            "confidence": 0.72,
+            "uncertainty": "medium",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "llm_assisted_human",
+            "assessor_id": "ASR-002",
+            "rationale": "The span states the 12 MW pilot shipment figure but does not broaden it beyond pilot shipments."
+          },
+          {
+            "row_id": "SAR-0003",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-03",
+            "candidate_evidence_span_ids": [
+              "ESP-001-02",
+              "ESP-001-03"
+            ],
+            "proposed_support_label": "weak_support",
+            "confidence": 0.41,
+            "uncertainty": "high",
+            "disagreement": "high",
+            "requires_human_adjudication": true,
+            "assessment_method": "llm_only",
+            "assessor_id": "ASR-003",
+            "rationale": "The candidate spans show shipments and a limitation, but do not establish acceleration."
+          },
+          {
+            "row_id": "SAR-0004",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-04",
+            "candidate_evidence_span_ids": [
+              "ESP-001-04"
+            ],
+            "proposed_support_label": "unsupported",
+            "confidence": 0.22,
+            "uncertainty": "high",
+            "disagreement": "high",
+            "requires_human_adjudication": true,
+            "assessment_method": "llm_only",
+            "assessor_id": "ASR-003",
+            "rationale": "The candidate span explicitly says profitability guidance was not provided."
+          }
+        ],
+        "metadata": {
+          "fixture": "mixed_valid_proposals"
+        }
+      },
+      "expected": {
+        "artifact_status": "valid",
+        "validation_result": "experimental_semantic_assessment_report_schema",
+        "projection_status": "valid",
+        "summary_counts": {
+          "proposal_row_count": 4,
+          "single_span_proposal_count": 2,
+          "candidate_span_proposal_count": 2,
+          "requires_human_adjudication_count": 2,
+          "llm_only_count": 2,
+          "high_uncertainty_count": 2,
+          "high_disagreement_count": 2
+        }
+      }
+    },
+    {
+      "case_id": "unknown_atom_invalid",
+      "description": "Schema-valid report row that references an atom absent from the Atomic Claim Graph.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-001",
+            "assessment_method": "human",
+            "label": "Human reviewer"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-99",
+            "evidence_span_id": "ESP-001-01",
+            "proposed_support_label": "direct_support",
+            "confidence": 0.9,
+            "uncertainty": "low",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "human",
+            "assessor_id": "ASR-001",
+            "rationale": "This row intentionally references an unknown atom."
+          }
+        ]
+      },
+      "expected": {
+        "artifact_status": "invalid",
+        "validation_result": "semantic_assessment_report_validation_error:unknown_atom_reference:AC-0001-99",
+        "projection_status": "invalid_report"
+      }
+    },
+    {
+      "case_id": "unknown_span_invalid",
+      "description": "Schema-valid report row that references a missing Evidence Span Registry span.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-001",
+            "assessment_method": "human",
+            "label": "Human reviewer"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-01",
+            "evidence_span_id": "ESP-999-01",
+            "proposed_support_label": "direct_support",
+            "confidence": 0.9,
+            "uncertainty": "low",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "human",
+            "assessor_id": "ASR-001",
+            "rationale": "This row intentionally references an unknown span."
+          }
+        ]
+      },
+      "expected": {
+        "artifact_status": "invalid",
+        "validation_result": "semantic_assessment_report_validation_error:unknown_evidence_span_reference:ESP-999-01",
+        "projection_status": "invalid_report"
+      }
+    },
+    {
+      "case_id": "llm_only_high_materiality_unadjudicated_invalid",
+      "description": "A high-materiality llm_only proposal with unresolved uncertainty must be flagged for human adjudication.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-003",
+            "assessment_method": "llm_only",
+            "label": "Synthetic model proposal"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-03",
+            "candidate_evidence_span_ids": [
+              "ESP-001-02",
+              "ESP-001-03"
+            ],
+            "proposed_support_label": "weak_support",
+            "confidence": 0.41,
+            "uncertainty": "unknown",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "llm_only",
+            "assessor_id": "ASR-003",
+            "rationale": "This row intentionally leaves unresolved llm_only uncertainty without the adjudication flag."
+          }
+        ]
+      },
+      "expected": {
+        "artifact_status": "invalid",
+        "validation_result": "semantic_assessment_report_validation_error:llm_only_high_materiality_requires_human_adjudication:SAR-0001",
+        "projection_status": "invalid_report"
+      }
+    }
+  ]
+}

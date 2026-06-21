@@ -249,6 +249,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
         lines.append(
             "[status] semantic_assessment_report: "
             f"{semantic_assessment_report.get('status')} "
+            "boundary=proposal_only "
             f"proposals={counts.get('proposal_row_count', 0)} "
             f"llm_only={counts.get('llm_only_count', 0)} "
             f"high_uncertainty={counts.get('high_uncertainty_count', 0)} "

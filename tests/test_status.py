@@ -308,7 +308,7 @@ def test_status_derives_semantic_assessment_report_projection_without_writes(tmp
     assert projection["proposal_projection"]["proposed_csm_delta"]["accepted_csm_rows"] == []
     assert projection["proposed_claim_support_rows"][0]["accepted_support_truth"] is False
     assert (
-        "[status] semantic_assessment_report: valid proposals=1 llm_only=1 "
+        "[status] semantic_assessment_report: valid boundary=proposal_only proposals=1 llm_only=1 "
         "high_uncertainty=1 high_disagreement=1 adjudication=1"
     ) in formatted
     assert not (intermediate / "quality_gate_report.json").exists()
@@ -331,6 +331,6 @@ def test_status_reports_invalid_semantic_assessment_report_without_writes(tmp_pa
     assert projection["status"] == "invalid_report"
     assert projection["reason"] == "semantic_assessment_report_validation_error:unknown_atom_reference:AC-0001-99"
     assert projection["proposal_projection"]["status"] == "not_available"
-    assert "[status] semantic_assessment_report: invalid_report proposals=0" in formatted
+    assert "[status] semantic_assessment_report: invalid_report boundary=proposal_only proposals=0" in formatted
     assert not (intermediate / "quality_gate_report.json").exists()
     assert not (intermediate / "event_log.jsonl").exists()

@@ -30,9 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Semantic Assessment Report status surface**: `status --json` and the
   human-readable status report now expose read-only proposal counts for present
   valid Semantic Assessment Reports, including `llm_only`, high uncertainty,
-  high disagreement, and human-adjudication flags. This does not add delivery
-  gates, release authority, adjudication queue items, or accepted
+  high disagreement, and human-adjudication flags. The human-readable status
+  line explicitly labels the surface as `proposal_only`. This does not add
+  delivery gates, release authority, adjudication queue items, or accepted
   Claim-Support Matrix writes.
+- **Semantic Assessment Report dogfood fixtures**: added public-safe synthetic
+  fixtures for direct support, partial/weak support, unsupported proposals,
+  assessor disagreement, high uncertainty, unknown references, and
+  high-materiality `llm_only` adjudication requirements. These fixtures validate
+  the proposal surface only; they do not create support truth, adjudication
+  queues, delivery gates, or release authority.
 
 ## [0.9.3] — 2026-06-21
 
