@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for human adjudication. This remains proposal validation only; it does not
   judge support semantics, write the Claim-Support Matrix, create an
   adjudication queue, or decide release eligibility.
+- **Semantic Assessment Report proposal projection**: added a pure helper that
+  projects Semantic Assessment Report rows into proposal-only Claim-Support
+  Matrix delta candidates after callers have validated the report. The
+  projection does not write accepted support rows, create adjudication queue
+  items, gate delivery, judge support semantics, or decide release eligibility.
 
 ## [0.9.3] — 2026-06-21
 

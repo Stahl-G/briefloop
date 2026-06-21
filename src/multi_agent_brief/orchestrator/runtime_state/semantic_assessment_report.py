@@ -3,10 +3,47 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from typing import Any
 
 
+SEMANTIC_ASSESSMENT_PROPOSAL_PROJECTION_SCHEMA_VERSION = (
+    "mabw.semantic_assessment_report.proposal_projection.v1"
+)
 SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX = "semantic_assessment_report_validation_error"
+
+
+def project_semantic_assessment_proposals(report_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Project report rows into proposal-only Claim-Support Matrix deltas.
+
+    This helper is intentionally read-only and non-authoritative. It does not
+    create accepted Claim-Support Matrix rows, write workspace state, create
+    adjudication records, judge semantic support, or decide release eligibility.
+    """
+
+    rows = [row for row in report_payload.get("rows", []) if isinstance(row, Mapping)]
+    assessor_methods = _assessor_method_index(report_payload)
+    assessor_labels = _assessor_label_index(report_payload)
+    proposed_rows = [
+        _project_report_row(row, assessor_methods=assessor_methods, assessor_labels=assessor_labels)
+        for row in rows
+    ]
+    proposed_rows.sort(key=lambda item: str(item.get("proposal_id") or ""))
+    summary_counts = _proposal_summary_counts(proposed_rows)
+    return {
+        "schema_version": SEMANTIC_ASSESSMENT_PROPOSAL_PROJECTION_SCHEMA_VERSION,
+        "status": "projected" if proposed_rows else "not_available",
+        "semantic_boundary": "proposal_projection_only_not_accepted_support_truth",
+        "source_report_schema_version": _text(report_payload.get("schema_version")),
+        "proposal_count": len(proposed_rows),
+        "summary_counts": summary_counts,
+        "proposed_claim_support_rows": proposed_rows,
+        "proposed_csm_delta": {
+            "status": "proposal_only" if proposed_rows else "not_available",
+            "accepted_csm_rows": [],
+            "candidate_rows": deepcopy(proposed_rows),
+        },
+    }
 
 
 def validate_semantic_assessment_report_against_artifacts(
@@ -99,6 +136,52 @@ def validate_semantic_assessment_report_against_artifacts(
     return None
 
 
+def _project_report_row(
+    row: Mapping[str, Any],
+    *,
+    assessor_methods: Mapping[str, str],
+    assessor_labels: Mapping[str, str],
+) -> dict[str, Any]:
+    assessor_id = _text(row.get("assessor_id"))
+    evidence_span_id = _text(row.get("evidence_span_id")) or None
+    candidate_span_ids = _candidate_span_ids(row)
+    relation_status = "single_span" if evidence_span_id else "candidate_spans"
+    assessment_method = assessor_methods.get(assessor_id) or _text(row.get("assessment_method"))
+    return {
+        "proposal_id": _text(row.get("row_id")),
+        "source_row_id": _text(row.get("row_id")),
+        "claim_id": _text(row.get("claim_id")),
+        "atom_id": _text(row.get("atom_id")),
+        "evidence_span_id": evidence_span_id,
+        "candidate_evidence_span_ids": candidate_span_ids,
+        "relation_status": relation_status,
+        "proposed_support_label": _text(row.get("proposed_support_label")),
+        "proposed_support_reason": _text(row.get("rationale")),
+        "confidence": row.get("confidence") if isinstance(row.get("confidence"), (int, float)) else None,
+        "uncertainty": _text(row.get("uncertainty")),
+        "disagreement": _text(row.get("disagreement")),
+        "requires_human_adjudication": row.get("requires_human_adjudication") is True,
+        "assessor_id": assessor_id,
+        "assessor_label": assessor_labels.get(assessor_id, ""),
+        "assessment_method": assessment_method,
+        "accepted_support_truth": False,
+        "writes_claim_support_matrix": False,
+        "metadata": deepcopy(row.get("metadata")) if isinstance(row.get("metadata"), Mapping) else {},
+    }
+
+
+def _proposal_summary_counts(rows: list[Mapping[str, Any]]) -> dict[str, int]:
+    return {
+        "proposal_row_count": len(rows),
+        "single_span_proposal_count": sum(1 for row in rows if row.get("relation_status") == "single_span"),
+        "candidate_span_proposal_count": sum(1 for row in rows if row.get("relation_status") == "candidate_spans"),
+        "requires_human_adjudication_count": sum(1 for row in rows if row.get("requires_human_adjudication") is True),
+        "llm_only_count": sum(1 for row in rows if row.get("assessment_method") == "llm_only"),
+        "high_uncertainty_count": sum(1 for row in rows if row.get("uncertainty") == "high"),
+        "high_disagreement_count": sum(1 for row in rows if row.get("disagreement") == "high"),
+    }
+
+
 def _unknown_span_ids(*, rows: Iterable[Mapping[str, Any]], evidence_span_ids: set[str]) -> set[str]:
     unknown: set[str] = set()
     for row in rows:
@@ -131,6 +214,13 @@ def _requires_llm_only_high_materiality_adjudication(
     return _text(row.get("uncertainty")) == "high" or _text(row.get("disagreement")) == "high"
 
 
+def _candidate_span_ids(row: Mapping[str, Any]) -> list[str]:
+    candidates = row.get("candidate_evidence_span_ids")
+    if not isinstance(candidates, list):
+        return []
+    return [candidate_id for candidate in candidates if (candidate_id := _text(candidate))]
+
+
 def _assessor_method_index(report_payload: Mapping[str, Any]) -> dict[str, str]:
     assessor_methods: dict[str, str] = {}
     assessors = report_payload.get("assessors") if isinstance(report_payload, Mapping) else None
@@ -142,6 +232,19 @@ def _assessor_method_index(report_payload: Mapping[str, Any]) -> dict[str, str]:
         if assessor_id and assessment_method and assessor_id not in assessor_methods:
             assessor_methods[assessor_id] = assessment_method
     return assessor_methods
+
+
+def _assessor_label_index(report_payload: Mapping[str, Any]) -> dict[str, str]:
+    assessor_labels: dict[str, str] = {}
+    assessors = report_payload.get("assessors") if isinstance(report_payload, Mapping) else None
+    for assessor in assessors if isinstance(assessors, list) else []:
+        if not isinstance(assessor, Mapping):
+            continue
+        assessor_id = _text(assessor.get("assessor_id"))
+        label = _text(assessor.get("label"))
+        if assessor_id and label and assessor_id not in assessor_labels:
+            assessor_labels[assessor_id] = label
+    return assessor_labels
 
 
 def _ledger_claim_ids(ledger_claims: Iterable[Mapping[str, Any]]) -> set[str]:
