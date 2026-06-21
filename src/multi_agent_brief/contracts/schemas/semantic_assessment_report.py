@@ -85,6 +85,10 @@ class SemanticAssessmentReportContract(Contract):
                             "assessor_id",
                             "rationale",
                         ],
+                        "anyOf": [
+                            {"required": ["evidence_span_id"]},
+                            {"required": ["candidate_evidence_span_ids"]},
+                        ],
                         "properties": {
                             "row_id": {"type": "string", "pattern": SEMANTIC_ASSESSMENT_ROW_ID_RE.pattern},
                             "claim_id": {"type": "string", "pattern": CLAIM_ID_RE.pattern},
@@ -147,6 +151,7 @@ class SemanticAssessmentReportContract(Contract):
             violations.append(FieldViolation(field="metadata", error="must be an object"))
 
         declared_assessor_ids: set[str] = set()
+        declared_assessor_methods: dict[str, str] = {}
         assessors = data.get("assessors")
         if not isinstance(assessors, list):
             violations.append(FieldViolation(field="assessors", error="must be a non-empty list"))
@@ -159,6 +164,7 @@ class SemanticAssessmentReportContract(Contract):
                         assessor,
                         idx=idx,
                         seen_assessor_ids=declared_assessor_ids,
+                        declared_assessor_methods=declared_assessor_methods,
                     )
                 )
 
@@ -177,6 +183,7 @@ class SemanticAssessmentReportContract(Contract):
                     idx=idx,
                     seen_row_ids=seen_row_ids,
                     declared_assessor_ids=declared_assessor_ids,
+                    declared_assessor_methods=declared_assessor_methods,
                 )
             )
 
@@ -192,6 +199,7 @@ def _validate_assessor_entry(
     *,
     idx: int,
     seen_assessor_ids: set[str],
+    declared_assessor_methods: dict[str, str],
 ) -> list[FieldViolation]:
     prefix = f"assessors[{idx}]"
     violations: list[FieldViolation] = []
@@ -207,6 +215,7 @@ def _validate_assessor_entry(
             violations.append(FieldViolation(field=f"{prefix}.assessor_id", error=f"duplicate assessor_id:{normalized}"))
         seen_assessor_ids.add(normalized)
 
+    assessment_method = assessor.get("assessment_method")
     _validate_enum_field(
         assessor,
         field="assessment_method",
@@ -214,6 +223,11 @@ def _validate_assessor_entry(
         allowed=VALID_ASSESSMENT_METHODS,
         violations=violations,
     )
+    if _non_empty_string(assessor_id) and isinstance(assessment_method, str):
+        normalized_assessor_id = str(assessor_id).strip()
+        normalized_method = assessment_method.strip()
+        if normalized_method in VALID_ASSESSMENT_METHODS and normalized_assessor_id not in declared_assessor_methods:
+            declared_assessor_methods[normalized_assessor_id] = normalized_method
 
     metadata = assessor.get("metadata")
     if metadata is not None and not isinstance(metadata, dict):
@@ -228,6 +242,7 @@ def _validate_row_entry(
     idx: int,
     seen_row_ids: set[str],
     declared_assessor_ids: set[str],
+    declared_assessor_methods: dict[str, str],
 ) -> list[FieldViolation]:
     prefix = f"rows[{idx}]"
     violations: list[FieldViolation] = []
@@ -293,6 +308,7 @@ def _validate_row_entry(
     )
 
     assessor_id = row.get("assessor_id")
+    normalized_assessor_id = ""
     if not _non_empty_string(assessor_id):
         violations.append(FieldViolation(field=f"{prefix}.assessor_id", error="must be a non-empty string"))
     else:
@@ -304,6 +320,15 @@ def _validate_row_entry(
                     error=f"unknown assessor_id:{normalized_assessor_id}",
                 )
             )
+    row_method = row.get("assessment_method")
+    declared_method = declared_assessor_methods.get(normalized_assessor_id)
+    if isinstance(row_method, str) and declared_method and row_method.strip() != declared_method:
+        violations.append(
+            FieldViolation(
+                field=f"{prefix}.assessment_method",
+                error=f"must match assessor_id:{normalized_assessor_id} assessment_method:{declared_method}",
+            )
+        )
 
     if not isinstance(row.get("requires_human_adjudication"), bool):
         violations.append(FieldViolation(field=f"{prefix}.requires_human_adjudication", error="must be a boolean flag"))

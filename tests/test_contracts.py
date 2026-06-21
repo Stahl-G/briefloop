@@ -653,6 +653,12 @@ class TestSemanticAssessmentReportContract:
         assert SemanticAssessmentReportContract.validate(_valid_semantic_assessment_report()) == []
         assert SemanticAssessmentReportContract.is_valid(_valid_semantic_assessment_report())
 
+    def test_json_schema_requires_evidence_span_binding(self):
+        row_schema = SemanticAssessmentReportContract.json_schema()["properties"]["rows"]["items"]
+
+        assert {"required": ["evidence_span_id"]} in row_schema["anyOf"]
+        assert {"required": ["candidate_evidence_span_ids"]} in row_schema["anyOf"]
+
     @pytest.mark.parametrize(
         ("payload", "field"),
         [
@@ -698,6 +704,20 @@ class TestSemanticAssessmentReportContract:
 
         assert any(
             violation.field == "rows[0].assessor_id" and "unknown assessor_id:ASR-999" in violation.error
+            for violation in violations
+        )
+        assert not SemanticAssessmentReportContract.is_valid(report)
+
+    def test_rejects_row_assessment_method_mismatch_with_assessor(self):
+        report = _valid_semantic_assessment_report()
+        report["assessors"][0]["assessment_method"] = "llm_only"
+        report["rows"][0]["assessment_method"] = "human"
+
+        violations = SemanticAssessmentReportContract.validate(report)
+
+        assert any(
+            violation.field == "rows[0].assessment_method"
+            and "must match assessor_id:ASR-001 assessment_method:llm_only" in violation.error
             for violation in violations
         )
         assert not SemanticAssessmentReportContract.is_valid(report)

@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This is schema foundation only; it does not judge truth, mutate the
   Claim-Support Matrix, create human adjudication queue items, gate delivery,
   decide release eligibility, or grant support authority.
+- **Semantic Assessment Report reference validation**: present Semantic
+  Assessment Report artifacts now validate machine-checkable references to
+  Claim Ledger claims, Atomic Claim Graph atoms, and Evidence Span Registry
+  spans, and require uncertain high-materiality `llm_only` rows to be flagged
+  for human adjudication. This remains proposal validation only; it does not
+  judge support semantics, write the Claim-Support Matrix, create an
+  adjudication queue, or decide release eligibility.
 
 ## [0.9.3] — 2026-06-21
 

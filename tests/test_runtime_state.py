@@ -14,6 +14,9 @@ import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_l
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import interpret_frozen_artifact_integrity
+from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    validate_semantic_assessment_report_against_artifacts,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     RUNTIME_STATE_FILES,
     RuntimeStateError,
@@ -3639,6 +3642,7 @@ def test_state_check_validates_present_claim_support_matrix_schema(tmp_path):
 def test_state_check_validates_present_semantic_assessment_report_schema(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
     _write_json_artifact(ws, "semantic_assessment_report.json", _valid_semantic_assessment_report_payload())
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -3647,6 +3651,159 @@ def test_state_check_validates_present_semantic_assessment_report_schema(tmp_pat
     assert record["status"] == "valid"
     assert record["required"] is False
     assert record["validation_result"] == "experimental_semantic_assessment_report_schema"
+
+
+def test_state_check_marks_semantic_assessment_report_missing_claim_ledger_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "semantic_assessment_report.json", _valid_semantic_assessment_report_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert record["validation_result"] == "semantic_assessment_report_validation_error:claim_ledger_missing"
+
+
+def test_state_check_marks_semantic_assessment_report_runtime_invalid_evidence_registry_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
+    _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
+    _write_json_artifact(ws, "semantic_assessment_report.json", _valid_semantic_assessment_report_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    evidence_record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+    report_record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert evidence_record["status"] == "invalid"
+    assert evidence_record["validation_result"] == "evidence_span_registry_validation_error:source_path_missing:SRC-001"
+    assert report_record["status"] == "invalid"
+    assert report_record["required"] is False
+    assert (
+        report_record["validation_result"]
+        == "semantic_assessment_report_validation_error:evidence_span_registry_invalid:source_path_missing:SRC-001"
+    )
+
+
+def test_state_check_marks_semantic_assessment_report_unknown_claim_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["rows"][0]["claim_id"] = "CL-9999"
+    payload["rows"][0]["atom_id"] = "AC-9999-01"
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "semantic_assessment_report_validation_error:unknown_claim_reference:CL-9999"
+
+
+def test_state_check_marks_semantic_assessment_report_unknown_atom_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["rows"][0]["atom_id"] = "AC-0001-99"
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "semantic_assessment_report_validation_error:unknown_atom_reference:AC-0001-99"
+
+
+def test_state_check_marks_semantic_assessment_report_unknown_span_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["rows"][0]["evidence_span_id"] = "ESP-999-01"
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "semantic_assessment_report_validation_error:unknown_evidence_span_reference:ESP-999-01"
+
+
+def test_state_check_marks_semantic_assessment_report_unknown_candidate_span_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["rows"][0].pop("evidence_span_id")
+    payload["rows"][0]["candidate_evidence_span_ids"] = ["ESP-001-01", "ESP-999-01"]
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "semantic_assessment_report_validation_error:unknown_evidence_span_reference:ESP-999-01"
+
+
+def test_state_check_marks_llm_only_high_materiality_uncertain_semantic_row_invalid_without_adjudication(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["assessors"][0]["assessment_method"] = "llm_only"
+    payload["rows"][0]["assessment_method"] = "llm_only"
+    payload["rows"][0]["uncertainty"] = "high"
+    payload["rows"][0]["requires_human_adjudication"] = False
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert (
+        record["validation_result"]
+        == "semantic_assessment_report_validation_error:llm_only_high_materiality_requires_human_adjudication:SAR-0001"
+    )
+
+
+def test_state_check_rejects_semantic_assessment_row_method_mismatch(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["assessors"][0]["assessment_method"] = "llm_only"
+    payload["rows"][0]["assessment_method"] = "human"
+    payload["rows"][0]["uncertainty"] = "high"
+    payload["rows"][0]["requires_human_adjudication"] = False
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "semantic_assessment_report_schema_error:rows[0].assessment_method"
+
+
+def test_semantic_assessment_runtime_validator_derives_method_from_declared_assessor():
+    report_payload = json.loads(_valid_semantic_assessment_report_payload())
+    report_payload["assessors"][0]["assessment_method"] = "llm_only"
+    report_payload["rows"][0]["assessment_method"] = "human"
+    report_payload["rows"][0]["uncertainty"] = "high"
+    report_payload["rows"][0]["requires_human_adjudication"] = False
+
+    reason = validate_semantic_assessment_report_against_artifacts(
+        report_payload=report_payload,
+        ledger_claims=json.loads(_valid_claim_ledger_payload("CL-0001")),
+        graph_payload=json.loads(_valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01")),
+        evidence_span_registry_payload=json.loads(_valid_evidence_span_registry_payload()),
+    )
+
+    assert reason == "assessment_method_mismatch:SAR-0001:ASR-001:human:llm_only"
 
 
 def test_state_check_marks_invalid_semantic_assessment_report_schema_invalid(tmp_path):
