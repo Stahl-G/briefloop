@@ -24,6 +24,10 @@ from multi_agent_brief.orchestrator.runtime_state.atomic_claim_graph import (
     ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX,
     validate_atomic_claim_graph_against_ledger,
 )
+from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
+    CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX,
+    validate_claim_support_matrix_against_artifacts,
+)
 from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
     EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX,
     validate_evidence_span_registry_against_source_pack,
@@ -119,7 +123,7 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             if artifact_id == "evidence_span_registry":
                 return _validate_evidence_span_registry_payload(payload, artifact_path=path)
             if artifact_id == "claim_support_matrix":
-                return _validate_claim_support_matrix_payload(payload)
+                return _validate_claim_support_matrix_payload(payload, artifact_path=path)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
             if artifact_id == "candidate_claims":
@@ -473,7 +477,7 @@ def _validate_evidence_span_registry_payload(payload: Any, *, artifact_path: Pat
     return ARTIFACT_VALID, "experimental_evidence_span_registry_schema"
 
 
-def _validate_claim_support_matrix_payload(payload: Any) -> tuple[str, str]:
+def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "claim_support_matrix_schema_error:not_object"
     violations = ClaimSupportMatrixContract.validate(payload)
@@ -481,7 +485,86 @@ def _validate_claim_support_matrix_payload(payload: Any) -> tuple[str, str]:
     if errors:
         first = errors[0]
         return ARTIFACT_INVALID, f"claim_support_matrix_schema_error:{first.field}"
+
+    ledger_claims, reason = _claim_support_matrix_ledger_claims(artifact_path.with_name("claim_ledger.json"))
+    if reason:
+        return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
+    graph_payload, reason = _claim_support_matrix_atomic_graph_payload(artifact_path.with_name("atomic_claim_graph.json"))
+    if reason:
+        return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
+    evidence_payload, reason = _claim_support_matrix_evidence_span_registry_payload(
+        artifact_path.with_name("evidence_span_registry.json")
+    )
+    if reason:
+        return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
+
+    reason = validate_claim_support_matrix_against_artifacts(
+        matrix_payload=payload,
+        ledger_claims=ledger_claims or [],
+        graph_payload=graph_payload or {},
+        evidence_span_registry_payload=evidence_payload or {},
+    )
+    if reason:
+        return ARTIFACT_INVALID, f"{CLAIM_SUPPORT_MATRIX_VALIDATION_PREFIX}:{reason}"
     return ARTIFACT_VALID, "experimental_claim_support_matrix_schema"
+
+
+def _claim_support_matrix_ledger_claims(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        claims = ClaimLedger._claim_items_from_json(payload)
+    except FileNotFoundError:
+        return None, "claim_ledger_missing"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return None, f"claim_ledger_unreadable:{exc}"
+    return claims, None
+
+
+def _claim_support_matrix_atomic_graph_payload(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    payload, reason = _read_claim_support_matrix_json(path, missing_reason="atomic_claim_graph_missing")
+    if reason:
+        return None, reason
+    assert payload is not None
+    status, validation_result = _validate_atomic_claim_graph_payload(payload, artifact_path=path)
+    if status != ARTIFACT_VALID:
+        return None, _dependency_invalid_reason(
+            "atomic_claim_graph",
+            validation_result,
+            prefixes=("atomic_claim_graph_schema_error", ATOMIC_CLAIM_GRAPH_VALIDATION_PREFIX),
+        )
+    return payload, None
+
+
+def _claim_support_matrix_evidence_span_registry_payload(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    payload, reason = _read_claim_support_matrix_json(path, missing_reason="evidence_span_registry_missing")
+    if reason:
+        return None, reason
+    assert payload is not None
+    status, validation_result = _validate_evidence_span_registry_payload(payload, artifact_path=path)
+    if status != ARTIFACT_VALID:
+        return None, _dependency_invalid_reason(
+            "evidence_span_registry",
+            validation_result,
+            prefixes=("evidence_span_registry_schema_error", EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX),
+        )
+    return payload, None
+
+
+def _read_claim_support_matrix_json(path: Path, *, missing_reason: str) -> tuple[Any | None, str | None]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except FileNotFoundError:
+        return None, missing_reason
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return None, f"{missing_reason.removesuffix('_missing')}_unreadable:{exc}"
+
+
+def _dependency_invalid_reason(label: str, validation_result: str, *, prefixes: tuple[str, ...]) -> str:
+    for prefix in prefixes:
+        marker = f"{prefix}:"
+        if validation_result.startswith(marker):
+            return f"{label}_invalid:{validation_result.removeprefix(marker)}"
+    return f"{label}_invalid:{validation_result}"
 
 
 def _validate_audit_report_payload(payload: Any) -> tuple[str, str]:

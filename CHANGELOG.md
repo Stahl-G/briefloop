@@ -47,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requirements, and inference-framing requirements. This does not assess
   semantic support, write workspace state, add gates/status integration, or
   decide release eligibility.
+- **Claim-Support Matrix cross-artifact validation**: present matrices now
+  validate claim, atom, and evidence-span references against sibling Claim
+  Ledger, Atomic Claim Graph, and Evidence Span Registry artifacts, and require
+  high-materiality atoms to have explicit support rows. Missing matrices remain
+  optional; this does not assess semantic support, add gates/status
+  integration, or decide release eligibility.
 
 ## [0.9.1] — 2026-06-20
 

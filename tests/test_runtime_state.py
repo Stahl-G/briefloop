@@ -281,6 +281,18 @@ def _valid_claim_support_matrix_payload() -> str:
     ) + "\n"
 
 
+def _write_valid_claim_support_matrix_dependencies(ws: Path) -> None:
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
+    source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
+    _write_source_text(ws, text=source_text)
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(include_offsets=True, source_text=source_text),
+    )
+
+
 def _source_backed_evidence_span_registry_payload(
     *,
     source_path: str = "input/sources/source-001.md",
@@ -3579,6 +3591,7 @@ def test_state_check_validates_present_evidence_span_registry(tmp_path):
 def test_state_check_validates_present_claim_support_matrix_schema(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
     _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -3587,6 +3600,163 @@ def test_state_check_validates_present_claim_support_matrix_schema(tmp_path):
     assert record["status"] == "valid"
     assert record["required"] is False
     assert record["validation_result"] == "experimental_claim_support_matrix_schema"
+
+
+def test_state_check_marks_claim_support_matrix_missing_claim_ledger_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
+    source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
+    _write_source_text(ws, text=source_text)
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(include_offsets=True, source_text=source_text),
+    )
+    _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert record["validation_result"] == "claim_support_matrix_validation_error:claim_ledger_missing"
+
+
+def test_state_check_marks_claim_support_matrix_runtime_invalid_atomic_graph_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-9999", "AC-9999-01"))
+    source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
+    _write_source_text(ws, text=source_text)
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(include_offsets=True, source_text=source_text),
+    )
+    _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    graph_record = state["artifact_registry"]["artifacts"]["atomic_claim_graph"]
+    matrix_record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert graph_record["status"] == "invalid"
+    assert graph_record["validation_result"] == "atomic_claim_graph_validation_error:unknown_claim_reference:CL-9999"
+    assert matrix_record["status"] == "invalid"
+    assert matrix_record["required"] is False
+    assert (
+        matrix_record["validation_result"]
+        == "claim_support_matrix_validation_error:atomic_claim_graph_invalid:unknown_claim_reference:CL-9999"
+    )
+
+
+def test_state_check_marks_claim_support_matrix_runtime_invalid_evidence_span_registry_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    _write_json_artifact(ws, "atomic_claim_graph.json", _valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
+    _write_json_artifact(ws, "evidence_span_registry.json", _valid_evidence_span_registry_payload())
+    _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    evidence_record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+    matrix_record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert evidence_record["status"] == "invalid"
+    assert evidence_record["validation_result"] == "evidence_span_registry_validation_error:source_path_missing:SRC-001"
+    assert matrix_record["status"] == "invalid"
+    assert matrix_record["required"] is False
+    assert (
+        matrix_record["validation_result"]
+        == "claim_support_matrix_validation_error:evidence_span_registry_invalid:source_path_missing:SRC-001"
+    )
+
+
+def test_state_check_marks_claim_support_matrix_unknown_atom_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_claim_support_matrix_payload())
+    payload["rows"][0]["atom_id"] = "AC-0001-99"
+    _write_json_artifact(ws, "claim_support_matrix.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert record["validation_result"] == "claim_support_matrix_validation_error:unknown_atom_reference:AC-0001-99"
+
+
+def test_state_check_marks_claim_support_matrix_unknown_span_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_claim_support_matrix_payload())
+    payload["rows"][0]["evidence_span_id"] = "ESP-001-99"
+    _write_json_artifact(ws, "claim_support_matrix.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert (
+        record["validation_result"]
+        == "claim_support_matrix_validation_error:unknown_evidence_span_reference:ESP-001-99"
+    )
+
+
+def test_state_check_marks_claim_support_matrix_missing_high_materiality_atom_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload("CL-0001"))
+    graph = json.loads(_valid_atomic_claim_graph_payload("CL-0001", "AC-0001-01"))
+    graph["claims"][0]["atoms"].append(
+        {
+            "atom_id": "AC-0001-02",
+            "text": "The demo facility is strategically important.",
+            "claim_role": "trend_interpretation",
+            "materiality": "high",
+        }
+    )
+    _write_json_artifact(ws, "atomic_claim_graph.json", json.dumps(graph) + "\n")
+    source_text = "Intro.\nExampleCo said module shipments reached 12 MW in Q2.\nOutro.\n"
+    _write_source_text(ws, text=source_text)
+    _write_json_artifact(
+        ws,
+        "evidence_span_registry.json",
+        _source_backed_evidence_span_registry_payload(include_offsets=True, source_text=source_text),
+    )
+    _write_json_artifact(ws, "claim_support_matrix.json", _valid_claim_support_matrix_payload())
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert (
+        record["validation_result"]
+        == "claim_support_matrix_validation_error:high_materiality_atom_missing_row:AC-0001-02"
+    )
+
+
+def test_state_check_marks_claim_support_matrix_support_label_without_span_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    payload = json.loads(_valid_claim_support_matrix_payload())
+    payload["rows"][0]["evidence_span_id"] = None
+    payload["rows"][0]["support_label"] = "direct_support"
+    _write_json_artifact(ws, "claim_support_matrix.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["claim_support_matrix"]
+
+    assert record["status"] == "invalid"
+    assert record["required"] is False
+    assert record["validation_result"] == "claim_support_matrix_validation_error:support_label_requires_span:CSM-0001"
 
 
 def test_state_check_marks_malformed_claim_support_matrix_invalid(tmp_path):
