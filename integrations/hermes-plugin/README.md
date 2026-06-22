@@ -1,13 +1,26 @@
 # MABW Hermes Plugin
 
-A thin Hermes plugin adapter for Multi-Agent Brief Workflow.
+A thin Hermes plugin adapter for Multi-Agent Brief Workflow / BriefLoop.
 
-Three Hermes tools + one slash command:
+Hermes tools + one slash command:
 
+- `mabw_env_doctor` — inspect local MABW/Hermes readiness
 - `mabw_create_onboarding` — write `onboarding.json` from chat-collected answers
 - `mabw_init_workspace` — `multi-agent-brief init --from-onboarding`
 - `mabw_run_handoff` — `multi-agent-brief run --workspace --runtime hermes`
 - `/mabw <workspace>` — print the workflow path
+
+## Installed Skills
+
+- `briefloop`: BriefLoop operator protocol. Use with `skill_view("briefloop")`
+  when deciding how to operate workspaces, gates, repair, status, public claims,
+  or compatibility surfaces.
+- `mabw-workflow`: Hermes runtime workflow helper. Use with
+  `skill_view("mabw-workflow")` when running the MABW workflow through Hermes
+  delegation.
+
+`briefloop` is not a slash command. `mabw-workflow` is not the canonical
+BriefLoop operator protocol; it is the Hermes workflow helper.
 
 ## Install
 
