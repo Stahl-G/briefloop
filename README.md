@@ -39,6 +39,11 @@ support-record, and proposal controls, not semantic support proof, accepted
 support truth, adjudication queues, delivery gates, release eligibility, or
 support-sufficiency gates.
 
+Unreleased Product OS surfaces add experimental ReportSpec, ReportPack,
+ReportTemplate, and delivery/audit bundle manifest contracts. They are
+metadata and projection controls only; they do not render templates, move
+artifacts, bypass gates, deliver reports, or authorize publication.
+
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
 ## 🚀 Get Started

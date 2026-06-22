@@ -40,7 +40,7 @@ validation unless that is stated separately.
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
-| ReportSpec / ReportPack registry and workspace skeletons (`report_spec.yaml` contract, packaged `market_weekly` and `management_monthly` pack registry, `packs` / `validate-report-spec` CLI, and `new <pack> <workspace>` local-first setup) | Experimental |
+| ReportSpec / ReportPack / ReportTemplate registry, workspace skeletons, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly` and `management_monthly` pack/template registry, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, and `packs bundle` delivery/audit manifest projection) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -144,13 +144,15 @@ projected. This does not create support truth, write the Claim-Support Matrix,
 create adjudication queue items, gate delivery, decide release eligibility, or
 prove truth.
 
-ReportSpec / ReportPack registry support is experimental. Product-layer report
-contracts can describe report type metadata and required control-spine
-preservation, and the CLI can list packaged packs, validate a
-`report_spec.yaml`, or create a conservative local-first workspace skeleton
-from a packaged pack. This setup path does not run subagents, run gates, render
-templates, deliver reports, authorize publication, or provide a
-lite/force-deliver path.
+ReportSpec / ReportPack / ReportTemplate registry support is experimental.
+Product-layer report contracts can describe report type metadata, required
+control-spine preservation, stable section order, conservative local-first
+workspace skeletons, and a delivery/audit bundle manifest projection over
+existing finalized artifacts. The CLI can list packaged packs/templates,
+validate a `report_spec.yaml`, create a workspace skeleton with
+`new <pack> <workspace>`, or write a bundle manifest with `packs bundle`. These
+surfaces do not run subagents, run gates, render templates, deliver reports,
+authorize publication, or provide a lite/force-deliver path.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 

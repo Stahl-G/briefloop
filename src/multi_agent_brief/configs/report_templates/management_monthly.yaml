@@ -1,0 +1,16 @@
+schema_version: briefloop.report_template.v1
+template_id: management_monthly
+report_type: management_monthly
+display_name: Management Monthly Template
+status: experimental
+section_order:
+  - executive_summary
+  - operating_context
+  - key_decisions
+  - financial_and_market_indicators
+  - risks_and_dependencies
+  - next_month_watchlist
+  - source_appendix
+metadata:
+  product_layer: report_template_registry
+  boundary: section_order_contract_only

@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BriefLoop alias help polish**: `briefloop --help` now displays
   `usage: briefloop` while `multi-agent-brief --help` keeps the stable engine
   CLI name.
+- **Experimental ReportTemplate registry and bundle projection**: added
+  packaged `market_weekly` and `management_monthly` section-order template
+  contracts plus `multi-agent-brief packs templates` and
+  `multi-agent-brief packs bundle --workspace <workspace>` for a reproducible
+  delivery/audit bundle manifest over finalized workspace artifacts. This is a
+  projection surface only; it does not render templates, move artifacts, bypass
+  gates, deliver reports, or authorize publication.
 
 ## [0.9.4] — 2026-06-22
 

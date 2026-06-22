@@ -1,0 +1,244 @@
+"""Tests for experimental product-layer bundle projections."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import yaml
+
+from multi_agent_brief.cli.main import main
+from multi_agent_brief.product.bundle_projection import (
+    ReportBundleProjectionError,
+    build_report_bundle_manifest,
+    write_report_bundle_manifest,
+)
+from multi_agent_brief.product.template_registry import ReportTemplateRegistry
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _finalized_workspace(tmp_path: Path) -> Path:
+    ws = tmp_path / "ws"
+    delivery = ws / "output" / "delivery"
+    intermediate = ws / "output" / "intermediate"
+    gates = intermediate / "gates"
+    delivery.mkdir(parents=True)
+    gates.mkdir(parents=True)
+    (ws / "config.yaml").write_text("project:\n  name: Bundle Test\n", encoding="utf-8")
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "briefloop.report_spec.v1",
+                "report_pack": "market_weekly",
+                "report_type": "market_weekly",
+                "title": "Market Weekly Brief",
+                "cadence": "weekly",
+                "audience": {"label": "business reader", "language": "en-US"},
+                "source_policy": {
+                    "mode": "local_first",
+                    "hidden_autonomous_crawling": False,
+                },
+                "control_spine": {
+                    "claim_ledger": True,
+                    "artifact_registry": True,
+                    "quality_gates": True,
+                    "event_log": True,
+                    "archive": True,
+                    "source_appendix": True,
+                    "support_records": True,
+                    "human_delivery_approval": True,
+                    "frozen_artifact_integrity": True,
+                },
+                "outputs": ["markdown", "docx"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    brief = delivery / "brief.md"
+    brief.write_text("# Reader Brief\n\nClean reader text.\n", encoding="utf-8")
+    trace = ws / "output" / "source_appendix_trace.md"
+    trace.write_text("# Audit trace only\n", encoding="utf-8")
+    appendix = ws / "output" / "source_appendix.md"
+    appendix.write_text("# Source Appendix\n", encoding="utf-8")
+    control_files = {
+        "claim_ledger.json": {"claims": []},
+        "audit_report.json": {"audit_status": "pass"},
+        "artifact_registry.json": {"artifacts": {}},
+        "runtime_manifest.json": {"run_id": "mabw-test-run"},
+        "workflow_state.json": {"current_stage": "finalize"},
+        "atomic_claim_graph.json": {"schema_version": "mabw.atomic_claim_graph.v1"},
+        "claim_support_matrix.json": {"schema_version": "mabw.claim_support_matrix.v1"},
+    }
+    for filename, payload in control_files.items():
+        (intermediate / filename).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    (intermediate / "event_log.jsonl").write_text(
+        json.dumps({"event_type": "finalize_completed"}) + "\n",
+        encoding="utf-8",
+    )
+    (gates / "auditor_quality_gate_report.json").write_text(
+        json.dumps({"status": "pass"}) + "\n",
+        encoding="utf-8",
+    )
+    (gates / "finalize_quality_gate_report.json").write_text(
+        json.dumps({"status": "pass"}) + "\n",
+        encoding="utf-8",
+    )
+    finalize_report = {
+        "status": "pass",
+        "reader_clean": {"status": "pass", "sample_findings": []},
+        "delivery_artifacts": ["output/delivery/brief.md"],
+        "delivery_artifact_sha256": {"output/delivery/brief.md": _sha256_file(brief)},
+        "source_appendix": "output/source_appendix.md",
+        "source_appendix_trace": "output/source_appendix_trace.md",
+        "source_appendix_trace_generation": "generated",
+    }
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps(finalize_report, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return ws
+
+
+def test_report_template_registry_discovers_root_and_packaged_templates() -> None:
+    root = ReportTemplateRegistry.from_config_dir(ROOT / "configs" / "report_templates")
+    package = ReportTemplateRegistry.from_package()
+
+    for registry in (root, package):
+        assert not registry.validation_errors
+        assert registry.template_ids() == {"market_weekly", "management_monthly"}
+        market = registry.get_by_report_type("market_weekly")
+        assert market is not None
+        assert market.section_order[0] == "executive_summary"
+        assert market.section_order[-1] == "source_appendix"
+
+
+def test_report_template_config_parity_between_root_and_package_copy() -> None:
+    root_dir = ROOT / "configs" / "report_templates"
+    package_dir = ROOT / "src" / "multi_agent_brief" / "configs" / "report_templates"
+
+    for path in sorted(root_dir.glob("*.yaml")):
+        package_path = package_dir / path.name
+        assert package_path.exists()
+        assert yaml.safe_load(path.read_text(encoding="utf-8")) == yaml.safe_load(
+            package_path.read_text(encoding="utf-8")
+        )
+
+
+def test_report_bundle_manifest_splits_delivery_and_audit_artifacts(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+
+    manifest = build_report_bundle_manifest(workspace=ws)
+
+    assert manifest["template"]["template_id"] == "market_weekly"
+    assert manifest["template"]["section_order"][0] == "executive_summary"
+    delivery_paths = {item["path"] for item in manifest["delivery_bundle"]["artifacts"]}
+    audit_paths = {item["path"] for item in manifest["audit_bundle"]["artifacts"]}
+    assert delivery_paths == {"output/delivery/brief.md"}
+    assert "output/source_appendix_trace.md" in audit_paths
+    assert "output/source_appendix.md" in audit_paths
+    assert "output/intermediate/finalize_report.json" in audit_paths
+    assert "output/intermediate/claim_ledger.json" in audit_paths
+    assert not any(path.startswith("output/delivery/") for path in audit_paths)
+    assert manifest["delivery_bundle"]["semantics"] == "reader_facing_artifacts_only"
+    assert manifest["audit_bundle"]["semantics"] == "audit_control_artifacts_only_not_reader_delivery"
+
+
+def test_report_bundle_manifest_rejects_stale_delivery_hash(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    (ws / "output" / "delivery" / "brief.md").write_text("changed\n", encoding="utf-8")
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "delivery artifact hash mismatch" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected stale delivery hash rejection")
+
+
+def test_report_bundle_manifest_rejects_missing_delivery_hash_map(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.pop("delivery_artifact_sha256")
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "delivery_artifact_sha256 must be a non-empty object" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected missing delivery hash map rejection")
+
+
+def test_report_bundle_manifest_rejects_missing_per_artifact_hash(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifact_sha256"] = {"output/delivery/other.md": "a" * 64}
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "delivery artifact hash missing: output/delivery/brief.md" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected missing per-artifact hash rejection")
+
+
+def test_packs_bundle_cli_writes_manifest_without_copying_trace_to_delivery(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+
+    assert main(["packs", "bundle", "--workspace", str(ws), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    manifest_path = ws / payload["manifest_path"]
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["delivery_bundle"]["artifact_count"] == 1
+    assert manifest["audit_bundle"]["artifact_count"] >= 6
+    assert not (ws / "output" / "delivery" / "source_appendix_trace.md").exists()
+    assert manifest["non_goals"] == [
+        "template_rendering",
+        "delivery_approval",
+        "gate_bypass",
+        "publication_authorization",
+    ]
+
+
+def test_report_bundle_manifest_output_must_stay_in_workspace(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+
+    try:
+        write_report_bundle_manifest(workspace=ws, output_path=tmp_path / "outside.json")
+    except ReportBundleProjectionError as exc:
+        assert "must stay inside the workspace" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected outside manifest output rejection")
+
+
+def test_packs_templates_cli_lists_packaged_templates(capsys) -> None:
+    assert main(["packs", "templates", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is True
+    assert {item["template_id"] for item in payload["templates"]} == {
+        "market_weekly",
+        "management_monthly",
+    }

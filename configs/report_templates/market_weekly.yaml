@@ -1,0 +1,16 @@
+schema_version: briefloop.report_template.v1
+template_id: market_weekly
+report_type: market_weekly
+display_name: Market Weekly Template
+status: experimental
+section_order:
+  - executive_summary
+  - market_signals
+  - demand_and_supply
+  - competitor_moves
+  - policy_and_regulatory
+  - risks_and_watchlist
+  - source_appendix
+metadata:
+  product_layer: report_template_registry
+  boundary: section_order_contract_only

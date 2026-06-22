@@ -10,12 +10,17 @@ from typing import Any
 
 import yaml
 
+from multi_agent_brief.product.bundle_projection import (
+    ReportBundleProjectionError,
+    write_report_bundle_manifest,
+)
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import (
     ReportSpecLoadError,
     load_report_spec,
     validate_report_spec_payload,
 )
+from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
 
 def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
@@ -56,6 +61,23 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
     show_parser = actions.add_parser("show", help="Show a packaged ReportPack.")
     show_parser.add_argument("pack_id", help="ReportPack id, for example market_weekly.")
     show_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    templates_parser = actions.add_parser(
+        "templates",
+        help="List packaged experimental ReportTemplate contracts.",
+    )
+    templates_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    bundle_parser = actions.add_parser(
+        "bundle",
+        help="Write a delivery/audit bundle projection for a finalized workspace.",
+    )
+    bundle_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    bundle_parser.add_argument(
+        "--output",
+        help="Manifest output path. Defaults to <workspace>/output/report_bundle_manifest.json.",
+    )
+    bundle_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
 def register_validate_report_spec(subparsers: argparse._SubParsersAction) -> None:
@@ -129,6 +151,30 @@ def handle_packs(args: argparse.Namespace) -> int:
         _print_payload("packs show", payload, as_json=getattr(args, "json", False))
         return 0
 
+    if args.packs_action == "templates":
+        template_registry = ReportTemplateRegistry.from_package()
+        payload = template_registry.to_list_payload()
+        _print_payload("packs templates", payload, as_json=getattr(args, "json", False))
+        return 0 if payload["ok"] else 1
+
+    if args.packs_action == "bundle":
+        try:
+            payload = write_report_bundle_manifest(
+                workspace=getattr(args, "workspace"),
+                output_path=getattr(args, "output", None),
+            )
+        except ReportBundleProjectionError as exc:
+            payload = {
+                "ok": False,
+                "error": str(exc),
+                "workspace": str(getattr(args, "workspace")),
+            }
+            _print_payload("packs bundle", payload, as_json=getattr(args, "json", False))
+            return 1
+        payload["ok"] = True
+        _print_payload("packs bundle", payload, as_json=getattr(args, "json", False))
+        return 0
+
     return 1
 
 
@@ -174,6 +220,11 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"- {item.get('pack_id')}: {item.get('display_name')} ({item.get('status')})")
         for error in payload.get("errors", []):
             print(f"[error] {error.get('field')}: {error.get('error')}")
+    elif label == "packs templates":
+        for item in payload.get("templates", []):
+            print(f"- {item.get('template_id')}: {item.get('display_name')} ({item.get('status')})")
+        for error in payload.get("errors", []):
+            print(f"[error] {error.get('field')}: {error.get('error')}")
     elif label == "packs show":
         if payload.get("ok"):
             pack = payload.get("pack", {})
@@ -204,6 +255,14 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             available = payload.get("available_packs") or []
             if available:
                 print(f"available_packs: {', '.join(available)}")
+    elif label == "packs bundle":
+        if payload.get("ok"):
+            print(f"manifest: {payload.get('manifest_path')}")
+            print(f"delivery_artifacts: {payload.get('delivery_bundle', {}).get('artifact_count')}")
+            print(f"audit_artifacts: {payload.get('audit_bundle', {}).get('artifact_count')}")
+            print("boundary: projection only; no render, delivery, approval, or gate bypass")
+        else:
+            print(payload.get("error"))
     else:
         print(f"report_pack: {payload.get('report_pack')}")
         print(f"report_type: {payload.get('report_type')}")

@@ -23,6 +23,7 @@ Current baseline: **v0.9.4**.
 | Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `multi-agent-brief run --workspace <workspace>` |
 | Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/briefloop status`, `multi-agent-brief status` |
 | Delivery bundle | Produces reader-facing Markdown and DOCX outputs after finalize checks | Always on | `/briefloop deliver`, `multi-agent-brief finalize`, `state finalize-complete` |
+| Delivery/audit bundle projection | Writes a manifest that separates reader delivery artifacts from audit/control artifacts by hash | Experimental | `multi-agent-brief packs bundle --workspace <workspace>` |
 
 ## Source And Input Collection
 

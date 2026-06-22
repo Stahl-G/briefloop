@@ -50,15 +50,16 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   Matrix delta candidates，并暴露 read-only status counts。这只是 proposal
   surface，不是 accepted support truth、adjudication queue creation、delivery
   gate、release authority 或 semantic proof。
-- 实验性 ReportSpec / ReportPack 控制可以校验 product-layer
-  `report_spec.yaml`，查看 packaged report pack contracts，例如
-  `market_weekly` 和 `management_monthly`，并通过 `briefloop new <pack>
-  <workspace>` / `multi-agent-brief new <pack> <workspace>` 创建保守的
-  local-first workspace skeleton。这些契约只在现有 Claim Ledger、artifact
-  registry、gates、event log、archive、source appendix、support records、
-  frozen-artifact integrity 和 human delivery approval 主链之上描述 report type
-  metadata。workspace skeleton creation 不运行 stages、不渲染 templates、不绕过
-  gates、不交付 reports，也不授权发布。
+- 实验性 ReportSpec / ReportPack / ReportTemplate 控制可以校验
+  product-layer `report_spec.yaml`，查看 packaged report pack 和 section-order
+  template contracts，例如 `market_weekly` 和 `management_monthly`，通过
+  `briefloop new <pack> <workspace>` / `multi-agent-brief new <pack>
+  <workspace>` 创建保守的 local-first workspace skeleton，并把已 finalize 的
+  workspace artifacts 投影为显式 delivery/audit bundle manifest。这些契约只在
+  现有 Claim Ledger、artifact registry、gates、event log、archive、source
+  appendix、support records、frozen-artifact integrity 和 human delivery
+  approval 主链之上描述 report type metadata。这些 product-layer surfaces 不运行
+  stages、不渲染 templates、不绕过 gates、不交付 reports，也不授权发布。
 - Python 命令负责 setup、source tooling、validation、audit support 和 rendering。
 - Hermes、Claude Code、Codex、OpenCode 和 manual fallback 都是 agent runtime surfaces。
 - Input governance 可以先用 MinerU 把受支持的非文本输入抽取为 Markdown，再区分 evidence、feedback、instructions 和 background context。

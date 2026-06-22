@@ -55,16 +55,17 @@ breaking rename.
   Claim-Support Matrix delta candidates, and surface read-only status counts.
   This is a proposal surface only, not accepted support truth, adjudication
   queue creation, delivery gating, release authority, or semantic proof.
-- Experimental ReportSpec / ReportPack controls can validate a product-layer
-  `report_spec.yaml`, inspect packaged report pack contracts such as
-  `market_weekly` and `management_monthly`, and create conservative
-  local-first workspace skeletons with `briefloop new <pack> <workspace>` /
-  `multi-agent-brief new <pack> <workspace>`. These contracts describe report
-  type metadata over the existing Claim Ledger, artifact registry, gates, event
-  log, archive, source appendix, support records, frozen-artifact integrity, and
-  human delivery approval spine. Workspace skeleton creation does not run
-  stages, render templates, bypass gates, deliver reports, or authorize
-  publication.
+- Experimental ReportSpec / ReportPack / ReportTemplate controls can validate
+  a product-layer `report_spec.yaml`, inspect packaged report pack and section
+  order template contracts such as `market_weekly` and `management_monthly`,
+  create conservative local-first workspace skeletons with `briefloop new
+  <pack> <workspace>` / `multi-agent-brief new <pack> <workspace>`, and project
+  finalized workspace artifacts into explicit delivery/audit bundle manifests.
+  These contracts describe report type metadata over the existing Claim Ledger,
+  artifact registry, gates, event log, archive, source appendix, support
+  records, frozen-artifact integrity, and human delivery approval spine. These
+  product-layer surfaces do not run stages, render templates, bypass gates,
+  deliver reports, or authorize publication.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.

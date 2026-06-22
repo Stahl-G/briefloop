@@ -42,6 +42,11 @@ support-record, and proposal controls, not semantic support proof, accepted
 support truth, adjudication queues, delivery gates, release eligibility, or
 support-sufficiency gates.
 
+Unreleased Product OS surfaces add experimental ReportSpec, ReportPack,
+ReportTemplate, and delivery/audit bundle manifest contracts. They are
+metadata and projection controls only; they do not render templates, move
+artifacts, bypass gates, deliver reports, or authorize publication.
+
 It is built for:
 
 - people who produce weekly market briefs, competitor tracking, policy notes, IR drafts, or leadership updates;
