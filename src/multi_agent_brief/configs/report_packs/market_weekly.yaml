@@ -4,9 +4,11 @@ report_type: market_weekly
 display_name: Market Weekly
 status: experimental
 description: Weekly market-tracking report pack contract over the existing BriefLoop control spine.
+default_policy_profile: manufacturing_default
 default_report_spec:
   schema_version: briefloop.report_spec.v1
   report_pack: market_weekly
+  policy_profile: manufacturing_default
   report_type: market_weekly
   title: Market Weekly Brief
   cadence: weekly

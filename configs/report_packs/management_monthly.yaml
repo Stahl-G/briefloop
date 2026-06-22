@@ -4,9 +4,11 @@ report_type: management_monthly
 display_name: Management Monthly
 status: experimental
 description: Monthly management-review report pack contract over the existing BriefLoop control spine.
+default_policy_profile: manufacturing_default
 default_report_spec:
   schema_version: briefloop.report_spec.v1
   report_pack: management_monthly
+  policy_profile: manufacturing_default
   report_type: management_monthly
   title: Management Monthly Brief
   cadence: monthly

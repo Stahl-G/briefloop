@@ -126,6 +126,8 @@ def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["report_pack"] == "market_weekly"
+    assert payload["policy_profile"] == "manufacturing_default"
+    assert payload["resolved_policy_profile"] == "manufacturing_default"
 
 
 def test_validate_report_spec_cli_rejects_disabled_spine(tmp_path: Path, capsys) -> None:
@@ -177,6 +179,7 @@ def test_new_report_pack_workspace_creates_local_first_skeleton(tmp_path: Path, 
 
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
     assert spec["report_pack"] == "market_weekly"
+    assert spec["policy_profile"] == "manufacturing_default"
     assert spec["source_policy"]["mode"] == "local_first"
     assert spec["source_policy"]["hidden_autonomous_crawling"] is False
 

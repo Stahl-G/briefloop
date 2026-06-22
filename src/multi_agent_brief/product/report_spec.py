@@ -16,6 +16,8 @@ from multi_agent_brief.contracts.schemas.report_spec import ReportSpecContract
 class ReportSpecValidationResult:
     ok: bool
     report_pack: str | None
+    policy_profile: str | None
+    resolved_policy_profile: str | None
     report_type: str | None
     errors: tuple[FieldViolation, ...]
     warnings: tuple[FieldViolation, ...]
@@ -24,6 +26,8 @@ class ReportSpecValidationResult:
         return {
             "ok": self.ok,
             "report_pack": self.report_pack,
+            "policy_profile": self.policy_profile,
+            "resolved_policy_profile": self.resolved_policy_profile,
             "report_type": self.report_type,
             "errors": [_violation_to_dict(item) for item in self.errors],
             "warnings": [_violation_to_dict(item) for item in self.warnings],
@@ -56,10 +60,14 @@ def validate_report_spec_payload(
     *,
     known_report_packs: set[str] | None = None,
     report_type_by_pack: dict[str, str] | None = None,
+    known_policy_profiles: set[str] | None = None,
+    default_policy_profile_by_pack: dict[str, str] | None = None,
 ) -> ReportSpecValidationResult:
     violations = list(ReportSpecContract.validate(payload))
     report_pack = _text(payload.get("report_pack"))
+    policy_profile = _text(payload.get("policy_profile"))
     report_type = _text(payload.get("report_type"))
+    resolved_policy_profile = policy_profile
 
     if known_report_packs is not None:
         if not report_pack or report_pack not in known_report_packs:
@@ -72,11 +80,33 @@ def validate_report_spec_payload(
                 FieldViolation(field="report_type", error=f"must match report pack type:{expected}")
             )
 
+    if not resolved_policy_profile and default_policy_profile_by_pack is not None and report_pack:
+        resolved_policy_profile = _text(default_policy_profile_by_pack.get(report_pack))
+        if known_report_packs is None or report_pack in known_report_packs:
+            if not resolved_policy_profile:
+                violations.append(
+                    FieldViolation(
+                        field="policy_profile",
+                        error=f"missing default policy profile for report_pack:{report_pack}",
+                    )
+                )
+
+    if known_policy_profiles is not None:
+        if resolved_policy_profile and resolved_policy_profile not in known_policy_profiles:
+            violations.append(
+                FieldViolation(
+                    field="policy_profile",
+                    error=f"unknown policy_profile:{resolved_policy_profile}",
+                )
+            )
+
     errors = tuple(item for item in violations if item.severity == "error")
     warnings = tuple(item for item in violations if item.severity != "error")
     return ReportSpecValidationResult(
         ok=not errors,
         report_pack=report_pack or None,
+        policy_profile=policy_profile or None,
+        resolved_policy_profile=resolved_policy_profile or None,
         report_type=report_type or None,
         errors=errors,
         warnings=warnings,

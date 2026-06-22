@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delivery/audit bundle manifest over finalized workspace artifacts. This is a
   projection surface only; it does not render templates, move artifacts, bypass
   gates, deliver reports, or authorize publication.
+- **Experimental PolicyProfile registry**: added a product-layer
+  `PolicyProfile` schema/registry with packaged `manufacturing_default`, plus
+  ReportPack default binding and optional ReportSpec override validation.
+  `validate-report-spec` now reports the resolved policy profile. This records
+  deterministic product defaults only; it does not adapt quality gates, change
+  runtime behavior, judge industry compliance, decide truth, or authorize
+  release.
 
 ## [0.9.4] — 2026-06-22
 

@@ -30,12 +30,14 @@ REQUIRED_PACKAGE_FILES = [
     "src/multi_agent_brief/configs/stage_specs.yaml",
     "src/multi_agent_brief/configs/artifact_contracts.yaml",
     "src/multi_agent_brief/configs/policy_packs/default.yaml",
+    "src/multi_agent_brief/configs/policy_profiles/manufacturing_default.yaml",
     "src/multi_agent_brief/evaluation_cases/fixtures/manifest.yaml",
 ]
 
 REQUIRED_PACKAGE_DATA_PATTERNS = [
     '"configs/*.yaml"',
     '"configs/policy_packs/*.yaml"',
+    '"configs/policy_profiles/*.yaml"',
     '"evaluation_cases/fixtures/*.yaml"',
     '"evaluation_cases/fixtures/cases/*/workspace/*.yaml"',
     '"evaluation_cases/fixtures/cases/*/workspace/*.md"',
