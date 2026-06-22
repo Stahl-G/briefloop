@@ -58,16 +58,17 @@ breaking rename.
 - Experimental ReportSpec / ReportPack / ReportTemplate / PolicyProfile
   controls can validate a product-layer `report_spec.yaml`, inspect packaged
   report pack, section order template, and policy default contracts such as
-  `market_weekly`, `management_monthly`, and `manufacturing_default`, create
-  conservative local-first workspace skeletons with `briefloop new <pack>
-  <workspace>` / `multi-agent-brief new <pack> <workspace>`, and project
-  finalized workspace artifacts into explicit delivery/audit bundle manifests.
+  `market_weekly`, `management_monthly`, `manufacturing_default`,
+  `finance_default`, and `internet_default`, create conservative local-first
+  workspace skeletons with `briefloop new <pack> <workspace>` /
+  `multi-agent-brief new <pack> <workspace>`, and project finalized workspace
+  artifacts into explicit delivery/audit bundle manifests.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These
   product-layer surfaces do not run stages, render templates, adapt gates,
-  judge industry compliance, bypass gates, deliver reports, or authorize
-  publication.
+  judge industry compliance, verify internet rumors, bypass gates, deliver
+  reports, or authorize publication.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.

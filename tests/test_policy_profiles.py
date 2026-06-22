@@ -25,6 +25,12 @@ def _manufacturing_profile() -> dict:
     )
 
 
+def _policy_profile(profile_id: str) -> dict:
+    return yaml.safe_load(
+        (ROOT / "configs" / "policy_profiles" / f"{profile_id}.yaml").read_text(encoding="utf-8")
+    )
+
+
 def _market_pack() -> dict:
     return yaml.safe_load((ROOT / "configs" / "report_packs" / "market_weekly.yaml").read_text(encoding="utf-8"))
 
@@ -83,8 +89,25 @@ def test_policy_profile_registry_discovers_root_and_packaged_profiles() -> None:
 
     for registry in (root_registry, package_registry):
         assert not registry.validation_errors
-        assert registry.profile_ids() == {"manufacturing_default"}
+        assert registry.profile_ids() == {"finance_default", "internet_default", "manufacturing_default"}
+        assert registry.get("finance_default") is not None
+        assert registry.get("internet_default") is not None
         assert registry.get("manufacturing_default") is not None
+
+
+def test_finance_and_internet_profiles_are_conservative_skeletons() -> None:
+    for profile_id, required_boundary in (
+        ("finance_default", "no_finance_compliance_judgment"),
+        ("internet_default", "no_rumor_verification"),
+    ):
+        payload = _policy_profile(profile_id)
+
+        assert PolicyProfileContract.validate(payload) == []
+        assert "tier_weights" not in payload["source_policy"]
+        assert payload["metadata"]["boundary"] == "experimental_policy_profile_only"
+        assert payload["metadata"]["maturity"] == "conservative_skeleton"
+        assert required_boundary in payload["metadata"]["non_claims"]
+        assert "no_release_authority" in payload["metadata"]["non_claims"]
 
 
 def test_policy_profile_config_parity_between_root_and_package_copy() -> None:
