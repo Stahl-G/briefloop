@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Mapping
+from urllib.parse import urlparse
 
 SOURCE_CATEGORY_FIELD = "source_category"
 VALID_SOURCE_CATEGORIES = {
@@ -30,7 +31,8 @@ def source_url_error(value: Any) -> str | None:
     stripped = value.strip()
     if not stripped:
         return None
-    if not stripped.startswith(("http://", "https://")):
+    parsed = urlparse(stripped)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return "must be an http(s) URL"
     return None
 

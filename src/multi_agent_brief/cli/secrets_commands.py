@@ -126,7 +126,7 @@ def import_workspace_secrets(
             f"requested key(s) missing from source env: {', '.join(missing)}"
         )
 
-    workspace.mkdir(parents=True, exist_ok=True)
+    _require_existing_workspace(workspace)
     target = workspace / ".env"
     _write_workspace_env(target, {key: source_values[key] for key in requested})
 
@@ -143,6 +143,23 @@ def import_workspace_secrets(
             for key in requested
         ],
     }
+
+
+def _require_existing_workspace(workspace: Path) -> None:
+    if not workspace.exists():
+        raise SecretImportError(
+            f"workspace not found: {workspace}. Run briefloop new or multi-agent-brief init first."
+        )
+    if not workspace.is_dir():
+        raise SecretImportError(f"workspace path is not a directory: {workspace}")
+    markers = [
+        workspace / "config.yaml",
+        workspace / "output" / "intermediate" / "runtime_manifest.json",
+    ]
+    if not any(marker.exists() for marker in markers):
+        raise SecretImportError(
+            f"not a BriefLoop workspace: {workspace}. Expected config.yaml or runtime manifest."
+        )
 
 
 def _normalize_keys(keys: list[str]) -> list[str]:

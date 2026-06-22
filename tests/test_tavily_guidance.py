@@ -10,12 +10,21 @@ import pytest
 from multi_agent_brief.cli.main import main
 
 
+def _write_workspace_marker(workspace: Path) -> None:
+    workspace.mkdir(parents=True)
+    (workspace / "config.yaml").write_text(
+        "project:\n  name: Test Workspace\n",
+        encoding="utf-8",
+    )
+
+
 class TestSecretsImport:
     """Deterministic workspace .env import without secret disclosure."""
 
     def test_secrets_import_writes_env_but_redacts_output(self, tmp_path, capsys):
         source = tmp_path / "private.env"
         workspace = tmp_path / "workspace"
+        _write_workspace_marker(workspace)
         tavily_secret = "tvly-super-secret-123"
         exa_secret = "sk-exa-super-secret-456"
         source.write_text(
@@ -53,6 +62,7 @@ class TestSecretsImport:
     def test_secrets_import_json_output_is_redacted(self, tmp_path, capsys):
         source = tmp_path / "private.env"
         workspace = tmp_path / "workspace"
+        _write_workspace_marker(workspace)
         secret = "tvly-json-secret-123"
         source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
 
@@ -79,6 +89,7 @@ class TestSecretsImport:
     def test_secrets_import_rejects_unknown_key_without_leaking_values(self, tmp_path, capsys):
         source = tmp_path / "private.env"
         workspace = tmp_path / "workspace"
+        _write_workspace_marker(workspace)
         source.write_text(
             "TAVILY_API_KEY=tvly-super-secret-123\n"
             "PRIVATE_VENDOR_TOKEN=not-for-briefloop\n",
@@ -101,6 +112,57 @@ class TestSecretsImport:
         combined_output = captured.out + captured.err
         assert "unsupported secret key" in combined_output
         assert "not-for-briefloop" not in combined_output
+        assert "tvly-" not in combined_output
+        assert not (workspace / ".env").exists()
+
+    def test_secrets_import_rejects_nonexistent_workspace_without_creating_it(self, tmp_path, capsys):
+        source = tmp_path / "private.env"
+        workspace = tmp_path / "typo-workspace"
+        secret = "tvly-super-secret-123"
+        source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
+
+        exit_code = main([
+            "secrets",
+            "import",
+            "--workspace",
+            str(workspace),
+            "--from",
+            str(source),
+            "--keys",
+            "TAVILY_API_KEY",
+        ])
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        combined_output = captured.out + captured.err
+        assert "workspace not found" in combined_output
+        assert secret not in combined_output
+        assert "tvly-" not in combined_output
+        assert not workspace.exists()
+
+    def test_secrets_import_rejects_directory_without_workspace_marker(self, tmp_path, capsys):
+        source = tmp_path / "private.env"
+        workspace = tmp_path / "plain-dir"
+        workspace.mkdir()
+        secret = "tvly-super-secret-123"
+        source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
+
+        exit_code = main([
+            "secrets",
+            "import",
+            "--workspace",
+            str(workspace),
+            "--from",
+            str(source),
+            "--keys",
+            "TAVILY_API_KEY",
+        ])
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        combined_output = captured.out + captured.err
+        assert "not a BriefLoop workspace" in combined_output
+        assert secret not in combined_output
         assert "tvly-" not in combined_output
         assert not (workspace / ".env").exists()
 

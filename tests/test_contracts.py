@@ -8,6 +8,7 @@ import pytest
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import ContractError, FieldViolation
+from multi_agent_brief.contracts.source_metadata import source_url_error
 from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
 from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemContract
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
@@ -148,6 +149,10 @@ class TestClaimContract:
         }
         violations = ClaimContract.validate(data)
         assert any(v.field == "source_url" for v in violations)
+
+    @pytest.mark.parametrize("source_url", ["https://", "http://", "https:///source"])
+    def test_source_url_requires_network_location(self, source_url):
+        assert source_url_error(source_url) == "must be an http(s) URL"
 
 
 # ── AtomicClaimGraphContract ──
