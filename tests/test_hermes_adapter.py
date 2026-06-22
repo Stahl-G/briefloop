@@ -330,6 +330,24 @@ def test_hermes_prompt_contains_artifact_paths():
     assert "output/delivery/brief.md" in prompt
 
 
+def test_hermes_skill_and_prompt_lock_source_metadata_contract():
+    skill = render_hermes_skill()
+    prompt = render_hermes_prompt(
+        workspace="/tmp/test-ws",
+        repo_workdir="/tmp/test-repo",
+        venv_path="/tmp/test-repo/.venv/bin/activate",
+    )
+    combined = "\n".join([skill, prompt])
+
+    assert "source_url only for HTTP(S) URLs" in combined
+    assert "source_path for local/package sources" in combined
+    assert "source_category" in combined
+    assert "source_type" in combined
+    assert "never put titles" in combined.lower()
+    assert "Write: output/intermediate/claim_drafts.json" in combined
+    assert "state freeze-claim-ledger" in combined
+
+
 def test_hermes_prompt_contains_doctor_and_sources():
     prompt = render_hermes_prompt(
         workspace="/tmp/test-ws",

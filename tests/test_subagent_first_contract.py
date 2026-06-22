@@ -27,6 +27,17 @@ def _assert_scout_chunk_contract(path: str) -> None:
     assert "silently drop" in normalized, path
 
 
+def _assert_source_metadata_contract(path: str) -> None:
+    text = _read(path)
+    normalized = " ".join(text.replace("`", "").split())
+
+    assert "source_url only for HTTP(S) URLs" in normalized, path
+    assert "source_path for local/package sources" in normalized, path
+    assert "source_category" in normalized, path
+    assert "source_type" in normalized, path
+    assert "Never put titles" in normalized, path
+
+
 def _assert_generate_brief_repair_transaction(path: str) -> None:
     text = _read(path)
     normalized = " ".join(text.replace("`", "").split())
@@ -107,6 +118,14 @@ def test_agents_md_stays_bounded_and_actionable():
     assert "Version And Release Semantics" in text
     assert "Packaging And Install Paths" in text
     assert "Common Validation" in text
+
+
+def test_generate_brief_commands_lock_source_metadata_contract():
+    for path in [
+        ".claude/commands/generate-brief.md",
+        ".opencode/commands/generate-brief.md",
+    ]:
+        _assert_source_metadata_contract(path)
 
 
 def test_agents_md_uses_standard_entry_path():

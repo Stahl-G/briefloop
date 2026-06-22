@@ -1744,17 +1744,30 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
             f"multi-agent-brief repair start --workspace {workspace} --json",
             f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
         ])
+        repair_steps = [
+            "Run repair start to open an owner-stage repair transaction.",
+            "Delegate only the reported repair_owner role.",
+            "Allow edits only to repair_route.allowed_artifacts.",
+            "Run repair complete after the owner edits.",
+            "Rerun downstream stages from repair_route.must_rerun_from.",
+        ]
     else:
         required_commands.extend([
             f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
             f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision block_run --reason \"<reason>\" --json",
         ])
+        repair_steps = [
+            "No deterministic owner-stage repair route is available.",
+            "Use request_human_review or block_run instead of editing artifacts directly.",
+        ]
 
     return {
         "required_commands": required_commands,
+        "repair_steps": repair_steps,
         "repair_route": repair_route,
         "repair_warnings": [
             "Do not edit frozen artifacts directly.",
             "Direct edits will mark the run contaminated and non-reference-eligible.",
+            "Never manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields.",
         ],
     }

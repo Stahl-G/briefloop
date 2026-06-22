@@ -58,7 +58,11 @@ Use after source discovery, doctor, and input governance have identified evidenc
 - Do NOT read or extract claims from `input/feedback/`, `input/instructions/`, or `input/context/` -- these contain editorial direction, task requirements, and background context, not factual evidence.
 - If `input_classification.json` is available, use it as the authoritative file list.
 - Discover broadly. Do not pre-filter by relevance, capacity, freshness, or ranking during discovery.
-- Extract candidate reportable items with source identity, evidence text, source date, topic, claim type, and confidence.
+- Extract candidate reportable items with statement, evidence text, source identity, source date, topic, claim type, and confidence.
+- Source identity must preserve either `source_url` for HTTP(S) web sources or `source_path` for local/package sources, plus `source_id` when available.
+- Preserve `source_title` or `source_name`, publisher/institution when known, `source_category`, provider `source_type`, published date, retrieved date, and evidence text.
+- `source_url` is a URL field only. Never put a title, search query, generic source label, internal source ID, or local path in `source_url`; use `source_title`/`source_name` and `source_path`.
+- `source_type` is provider/storage type, such as `local_file` or `web_search`. `source_category` is reader-facing evidence category, such as `regulator`, `peer_reviewed_paper`, `company_press_release`, `market_report`, `news_media`, or `other`.
 - Mark vague, stale-looking, duplicate-looking, or low-confidence candidates without dropping them.
 - Keep source wording and evidence traceable.
 - Write the complete joined `candidate_claims.json` once before screening starts.

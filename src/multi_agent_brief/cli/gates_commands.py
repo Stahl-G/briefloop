@@ -130,6 +130,11 @@ def _print_repair_guidance(label: str, state: dict[str, Any]) -> None:
         print(f"[{label}] repair_warnings:")
         for warning in repair_warnings:
             print(f"  - {warning}")
+    repair_steps = state.get("repair_steps") or []
+    if repair_steps:
+        print(f"[{label}] repair_steps:")
+        for step in repair_steps:
+            print(f"  - {step}")
     repair_route = state.get("repair_route")
     if not isinstance(repair_route, dict):
         return

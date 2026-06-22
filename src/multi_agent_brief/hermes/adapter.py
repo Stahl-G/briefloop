@@ -627,7 +627,9 @@ Write:
 - default topology only: <workspace>/output/intermediate/screened_candidates.json
 
 Discovery output must capture the found universe before screening.
-Each item should preserve source path or URL, source date if available, evidence text, topic, claim type, and confidence.
+Each item should preserve source identity, source date if available, evidence text, topic, claim type, and confidence.
+Use source_url only for HTTP(S) URLs. Use source_path for local/package sources.
+Preserve source_title/source_name, publisher when known, source_category, and provider source_type.
 In default topology, also rank, dedupe, freshness-check, capacity-cap, and write selected/excluded candidates with reasons plus a screening_policy snapshot.
 Return a summary with candidate count, selected count, excluded count, and source gaps.
 """,
@@ -671,10 +673,11 @@ delegate_task(
     context="""
 Workspace: <workspace>
 Input: output/intermediate/screened_candidates.json
-Write: output/intermediate/claim_ledger.json
+Write: output/intermediate/claim_drafts.json
 
-Create stable claim IDs and source-grounded claim entries.
-Preserve evidence text, source URL/path, publication date, retrieved date, topic, claim type, and confidence.
+Create source-grounded claim drafts without claim_id fields.
+Preserve evidence text, source URL/path, source title/name, publisher, source_category, provider source_type, publication date, retrieved date, topic, claim type, and confidence.
+source_url is only for HTTP(S) URLs; never put titles, source names, source IDs, search queries, or local paths in source_url.
 Return claim count and schema issues found.
 """,
     toolsets=["file", "terminal"]
@@ -962,6 +965,7 @@ As the Hermes Orchestrator main agent, execute:
    Goal: "Extract candidate reportable items for a MABW brief; in default topology, screen them in the same Scout stage"
    Write: output/intermediate/candidate_claims.json
    Default topology also writes: output/intermediate/screened_candidates.json
+   Source identity: source_url is only for HTTP(S) URLs; use source_path for local/package sources. Preserve source_title/source_name, publisher, source_category, source_type, source dates, and evidence text.
    toolsets: ["file", "terminal", "web"]
 
 13. If role_topology is `strict`, after candidate_claims.json exists and is non-empty, delegate screener child. If role_topology is `default`, Scout must already have written screened_candidates.json and the screener stage is satisfied by topology:
@@ -973,10 +977,11 @@ As the Hermes Orchestrator main agent, execute:
 14. After screened_candidates.json exists, delegate claim-ledger child:
    Goal: "Build the MABW Claim Ledger"
    Input: output/intermediate/screened_candidates.json
-   Write: output/intermediate/claim_ledger.json
+   Write: output/intermediate/claim_drafts.json
+   Preserve source_url/source_path, source_title/source_name, publisher, source_category, source_type, published_at/retrieved_at, and evidence text. Never put titles, source names, source IDs, search queries, or local paths in source_url.
    toolsets: ["file", "terminal"]
 
-15. After claim_ledger.json exists, delegate analyst child:
+15. After claim_drafts.json exists, run `multi-agent-brief state freeze-claim-ledger --workspace {workspace}` and confirm claim_ledger.json exists. Then delegate analyst child:
    Goal: "Draft the audited MABW brief"
    Inputs: user.md and output/intermediate/claim_ledger.json
    Write: output/intermediate/audited_brief.md as the Analyst working draft
