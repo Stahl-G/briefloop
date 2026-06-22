@@ -1,0 +1,34 @@
+schema_version: briefloop.report_pack.v1
+pack_id: market_weekly
+report_type: market_weekly
+display_name: Market Weekly
+status: experimental
+description: Weekly market-tracking report pack contract over the existing BriefLoop control spine.
+default_report_spec:
+  schema_version: briefloop.report_spec.v1
+  report_pack: market_weekly
+  report_type: market_weekly
+  title: Market Weekly Brief
+  cadence: weekly
+  audience:
+    label: business reader
+    language: en-US
+  source_policy:
+    mode: local_first
+    hidden_autonomous_crawling: false
+  control_spine:
+    claim_ledger: true
+    artifact_registry: true
+    quality_gates: true
+    event_log: true
+    archive: true
+    source_appendix: true
+    support_records: true
+    human_delivery_approval: true
+    frozen_artifact_integrity: true
+  outputs:
+    - markdown
+    - docx
+  metadata:
+    product_layer: report_pack_registry
+    boundary: experimental_contract_only

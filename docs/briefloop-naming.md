@@ -22,7 +22,9 @@ The current compatibility surfaces remain:
 
 - `https://github.com/Stahl-G/briefloop` public repository URL
 - `multi-agent-brief` CLI
-- `/mabw` Claude command
+- `briefloop` shell CLI alias for `multi-agent-brief`
+- `/briefloop` Claude writer command
+- `/mabw` Claude command retained for compatibility
 - `multi_agent_brief` Python package/module path
 - `multi-agent-brief-workflow` distribution package name
 - existing artifact names and workspace formats
@@ -46,13 +48,14 @@ should use `https://github.com/Stahl-G/briefloop`.
 | Layer | Entrypoint | Audience |
 |---|---|---|
 | Public product name | BriefLoop | Docs, releases, repository identity |
-| Writer command | `/mabw` | Claude Code writers; retained for compatibility |
+| Writer command | `/briefloop` | Claude Code writers |
+| Compatibility writer command | `/mabw` | Claude Code writers during compatibility period |
 | Agent protocol | BriefLoop skill | Runtime/coding agents reading operation rules |
-| Deterministic control plane | `multi-agent-brief` | CLI transactions, validators, tests, scripts |
+| Deterministic control plane | `multi-agent-brief`, `briefloop` | CLI transactions, validators, tests, scripts |
 | Full delegated workflow | `/generate-brief <workspace>` | Advanced/debug direct subagent execution |
 
-`/briefloop` is not a user command in this repository. The BriefLoop skill is
-an agent protocol surface, not a slash-command entrypoint.
+`/briefloop` is the Claude writer command. The BriefLoop skill is an agent
+operator protocol surface, not the slash-command implementation.
 
 ## Allowed language
 
@@ -61,7 +64,7 @@ an agent protocol surface, not a slash-command entrypoint.
 - BriefLoop is open-source loop engineering for auditable business briefings
 - BriefLoop turns briefing failures into findings, repairs, regression cases,
   and release decisions
-- MABW remains the current CLI/runtime compatibility surface
+- MABW remains a CLI/runtime compatibility surface
 
 ## Forbidden language
 

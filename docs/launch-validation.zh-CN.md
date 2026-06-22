@@ -9,7 +9,7 @@
 
 ## 1. 黄金路径自测
 
-目标：验证 [MABW 黄金路径](golden-path.zh-CN.md) 是否能让维护者在不翻代码、不靠记忆的情况下完成一次真实简报。
+目标：验证 [BriefLoop 黄金路径](golden-path.zh-CN.md) 是否能让维护者在不翻代码、不靠记忆的情况下完成一次真实简报。
 
 ### 前提
 
@@ -33,7 +33,7 @@ multi-agent-brief claude install --repo-workdir .
 记录一个新的测试目录：
 
 ```bash
-BASE="$HOME/mabw-runs/golden-path-self-test-$(date +%Y%m%d-%H%M)"
+BASE="$HOME/briefloop-runs/golden-path-self-test-$(date +%Y%m%d-%H%M)"
 mkdir -p "$BASE"
 ```
 
@@ -68,12 +68,12 @@ EOF
 按黄金路径执行：
 
 ```text
-/mabw new
-/mabw run <workspace>
+/briefloop new
+/briefloop run <workspace>
 /generate-brief <workspace>
-/mabw status <workspace>
-/mabw feedback <workspace> "..."
-/mabw deliver <workspace>
+/briefloop status <workspace>
+/briefloop feedback <workspace> "..."
+/briefloop deliver <workspace>
 ```
 
 每次出现“下一步该按哪个键”的犹豫，必须写进 `Confusions`。
@@ -81,7 +81,7 @@ EOF
 ### 通过标准
 
 - 能不靠私有计划完成一次 run。
-- 能解释 `/mabw run` 与 `/generate-brief` 的区别。
+- 能解释 `/briefloop run` 与 `/generate-brief` 的区别。
 - `status` 没有写状态。
 - `deliver` 经过 gates、reader-final gate 和 `finalize-complete`。
 - 最终 reader output 没有内部 claim ID、流程词、本地路径或空 source 行。
@@ -124,24 +124,24 @@ source .venv/bin/activate
 which multi-agent-brief
 multi-agent-brief version
 python3 -m pytest -q tests/test_runtime_assets.py tests/test_subagent_first_contract.py tests/test_status_commands.py
-multi-agent-brief init /tmp/mabw-demo --demo --force
+multi-agent-brief init /tmp/briefloop-demo --demo --force
 multi-agent-brief claude install --repo-workdir .
 ```
 
 然后在 Claude Code 中尝试：
 
 ```text
-/mabw run /tmp/mabw-demo
-/mabw status /tmp/mabw-demo
-/generate-brief /tmp/mabw-demo
-/mabw deliver /tmp/mabw-demo
+/briefloop run /tmp/briefloop-demo
+/briefloop status /tmp/briefloop-demo
+/generate-brief /tmp/briefloop-demo
+/briefloop deliver /tmp/briefloop-demo
 ```
 
 如果没有 Claude Code 环境，则只测 CLI demo：
 
 ```bash
-multi-agent-brief doctor --config /tmp/mabw-demo/config.yaml
-multi-agent-brief run --workspace /tmp/mabw-demo --skip-doctor
+multi-agent-brief doctor --config /tmp/briefloop-demo/config.yaml
+multi-agent-brief run --workspace /tmp/briefloop-demo --skip-doctor
 ```
 
 ### 需要她反馈什么
@@ -159,7 +159,7 @@ multi-agent-brief run --workspace /tmp/mabw-demo --skip-doctor
 - fresh clone 能完成 setup。
 - demo workspace 能初始化。
 - 至少能生成 runtime handoff。
-- 如果有 Claude Code，能看到 `/mabw` 五动词。
+- 如果有 Claude Code，能看到 `/briefloop` 五动词。
 - 卡点可以归类为文档、环境、runtime、模型或产品理解问题。
 
 ## 3. 发布前泄漏扫描

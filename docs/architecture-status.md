@@ -4,9 +4,10 @@ This page separates current implementation state from roadmap goals. Use it befo
 
 Public naming note: BriefLoop is the public project name for the v0.9
 compatibility period. MABW remains the implementation lineage and compatibility
-surface for `multi-agent-brief`, `/mabw`, Python package/module paths, artifact
-names, workspace formats, and experiment IDs. This page describes implemented
-runtime capability, not a breaking rename.
+surface for `multi-agent-brief`, the `briefloop` shell alias, `/briefloop`,
+`/mabw`, Python package/module paths, artifact names, workspace formats, and
+experiment IDs. This page describes implemented runtime capability, not a
+breaking rename.
 
 ## Implemented Public Baseline
 
@@ -54,6 +55,13 @@ runtime capability, not a breaking rename.
   Claim-Support Matrix delta candidates, and surface read-only status counts.
   This is a proposal surface only, not accepted support truth, adjudication
   queue creation, delivery gating, release authority, or semantic proof.
+- Experimental ReportSpec / ReportPack controls can validate a product-layer
+  `report_spec.yaml` and inspect packaged report pack contracts such as
+  `market_weekly` and `management_monthly`. These contracts describe report
+  type metadata over the existing Claim Ledger, artifact registry, gates, event
+  log, archive, source appendix, support records, frozen-artifact integrity, and
+  human delivery approval spine. They do not create workspaces, run stages,
+  render templates, bypass gates, deliver reports, or authorize publication.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.
@@ -70,8 +78,9 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 - policy packs
 - public-safe reference workflows
 - FrictionStore, autonomous learning, retrieval memory, runtime-specific guidance filtering, and output-quality validation
-- later v0.9 support-sufficiency structures such as semantic support scoring,
-  human adjudication, release eligibility, and support-sufficiency gates
+- deferred semantic-governance structures such as semantic support scoring,
+  human adjudication, release eligibility, and support-sufficiency gates; these
+  are not the next default implementation track after the v0.9 support core
 
 ## Experimental Or Limited Surfaces
 

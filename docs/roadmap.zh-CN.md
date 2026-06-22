@@ -232,23 +232,23 @@ Non-goals:
 - 不做 `lite mode`，不做跳过 gates 的 fast path，不做部分 fact-layer import。
 - v0.8 协议实际执行前，不声称 v0.7 Improvement Memory 已经改善输出质量。
 
-### v0.9 — Support Sufficiency And Brief-loop Engineering
+### v0.9 — Support Sufficiency Core
 
-目标：从 source-level traceability 推进到 support sufficiency，同时保留现有 MABW 兼容面。
+目标：从 source-level traceability 推进到最低可用的 support-sufficiency core，同时保留现有 MABW 兼容面。
 
 公开范围：
 
 - 使用 BriefLoop 作为公开项目名，同时保留 MABW 作为历史实现名和兼容面。
-- 定义最低 support-sufficiency 路径：
+- 实现最低 support-sufficiency 路径：
   - Atomic Claim Graph
   - Evidence Span Registry
   - Claim-Support Matrix
-- v0.9 兼容期内保留 `multi-agent-brief`、`/mabw`、Python package/module paths、artifact names、workspace formats 和 MABW experiment IDs。
+- 保持 Semantic Assessment Report 为 proposal-only 实验面：semantic assessment 可以提出 support labels、uncertainty、disagreement 和 adjudication needs，但不能修改 Claim-Support Matrix、创建 adjudication queue items、阻断 delivery、决定 release eligibility 或证明真理。
+- v0.9 兼容期内保留 `multi-agent-brief`、`briefloop` shell alias、`/briefloop`、`/mabw`、Python package/module paths、artifact names、workspace formats 和 MABW experiment IDs。
 - 对不稳定能力继续标注 experimental、interface-only 或 CLI-only。
 
-后续 v0.9.x 候选：
+延后处理的 semantic-governance surfaces：
 
-- semantic assessment proposals
 - human adjudication
 - coverage and omission gates
 - semantic regression
@@ -256,26 +256,56 @@ Non-goals:
 - quality packs
 - finding-to-repair workflows
 
-### v1.0 — Stable Orchestrated Brief Workflow
+这些不再是默认下一阶段实现主线。等 product layer 拥有稳定 report contracts 和真实用户路径之后，再决定是否重开。
 
-目标：冻结一个 local-first、file-state-driven、契约治理 的稳定简报工作流基线。
+### v0.10 — Product OS And Report Packs
+
+目标：在不削弱问责主链的前提下，把 support-sufficiency core 包装成可用的 recurring-report product layer。
+
+公开范围：
+
+- 新增 ReportSpec 和 ReportPack 契约，让 BriefLoop 知道正在生产哪类报告。
+- 引入初始 report packs，例如 `market_weekly`、`management_monthly`，以及后续 `evidence_extract`。
+- 改善 zero-config workspace 创建，同时保留 `multi-agent-brief` 作为稳定 engine CLI，保留 `briefloop` 作为 shell alias，保留 `/briefloop` 作为 writer command，保留 `/mabw` 作为兼容 writer command。
+- 把 reader-facing delivery bundle 和 audit/control bundle 分成 export/projection 层，但不静默移动或删除现有控制 artifacts。
+- 本地文件和简单来源配置继续是一等路径；大范围 connector 和 UI 工作放到后面。
+- 为内部 review workflow 增加 release modes 和 human approval records，但不声称外部发布授权。
+
+Non-goals：
+
+- 不做 SaaS-first product。
+- CLI product path 跑通前，不做 heavy UI。
+- 不声称 IR/disclosure readiness。
+- 不允许 report pack 绕过 Claim Ledger、gates、event log、archive、reader-final gate、source appendix 或 human delivery。
+- 不混淆 `/briefloop` writer command 和 BriefLoop skill operator protocol surface。
+- 不做自动 external publication 或 public release command。
+
+### v1.0 — Stable Weekly/Monthly Brief Product
+
+目标：冻结一个 modest、local-first、file-state-driven、契约治理 的 recurring business reports CLI product。
 
 v1.0 应包含：
 
-- 清晰的 司乐师-first workflow。
-- 可审计 artifacts。
-- evidence-aware drafting 和 audit gates。
-- 带明确 machine、human 或 mixed gate 语义的 checkpointed stage transitions。
-- 区分 correctness 契约 和 taste preferences 的 workspace-local memory。
-- 面向常见 brief workflow 入口的 public-safe mode registry。
-- supported agent surfaces 的 runtime parity。
-- public-safe evaluation coverage。
-- 可靠的 rendered outputs。
-- 清晰的 support 和 security boundaries。
+- `multi-agent-brief new market-weekly` 或等价 zero-config entrypoint。
+- `multi-agent-brief new management-monthly` 或等价 zero-config entrypoint。
+- 一个面向 page/span-cited document work 的 `evidence_extract` report pack。
+- 本地文件优先的 report loop。
+- 稳定 Markdown 和 DOCX 输出。
+- 保留 Claim Ledger、source appendix、gates、event log、support records 和 archive surfaces。
+- 稳定 ReportSpec 和 ReportPack 契约。
+- 至少三个 report packs。
+- 明确 delivery/audit bundle separation。
+- 显式 human delivery。
+- 无 force-deliver path。
+- 清晰 runtime dependence、support status 和 non-goals。
 
 ## 研究轨道
 
-v2.0 是未来研究轨道，不是短期产品承诺。v1.0 后，项目可以探索更正式的 multi-agent runtime，包括 shared state、task boards、replay 和更丰富的 coordination protocols。
+v1.1+ 可以在 CLI product path 跑通后增加 local Studio preview。Studio 必须调用现有 CLI/service transactions，不得直接修改 frozen artifacts，也不得提供 force-deliver path。
+
+v1.2+ 可以增加 IR/disclosure support packs，但它们是 review-support surfaces，不是 publication automation。这些 pack 可以标记 forward-looking statements、materiality review items、KPI consistency issues 和 evidence-annex gaps，但不能声称自动判断 materiality、自动生成 SEC-ready filing，或替代律师、审计师、IR 负责人和 disclosure committee。
+
+v2.0 是未来研究轨道，不是短期产品承诺。product baseline 稳定后，项目可以探索更正式的 multi-agent runtime，包括 shared state、task boards、replay 和更丰富的 coordination protocols。
 
 v1.0 前不优先做：
 

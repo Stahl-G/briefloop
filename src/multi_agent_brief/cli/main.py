@@ -36,6 +36,7 @@ from multi_agent_brief.cli import (
     runtime_commands,
     improve_commands,
     experiments_commands,
+    product_commands,
 )
 
 
@@ -105,6 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Workspace runtime kit install
     runtime_commands.register(subparsers)
+
+    # Experimental product-layer report contracts
+    product_commands.register_packs(subparsers)
+    product_commands.register_validate_report_spec(subparsers)
 
     # Claude Code install helpers
     claude_commands.register(subparsers)
@@ -211,6 +216,12 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "runtime":
         return runtime_commands.handle(args)
+
+    if cmd == "packs":
+        return product_commands.handle_packs(args)
+
+    if cmd == "validate-report-spec":
+        return product_commands.handle_validate_report_spec(args)
 
     if cmd == "claude":
         return claude_commands.handle(args)

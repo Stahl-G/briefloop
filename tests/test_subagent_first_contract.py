@@ -449,7 +449,7 @@ def test_claude_mabw_command_is_five_verb_writer_surface():
     text = _read(".claude/commands/mabw.md")
     assert "BriefLoop writer command" in text
     assert "The command name `/mabw` is retained for compatibility" in text
-    assert "Do not introduce or recommend a separate `/briefloop` slash command" in text
+    assert "`/briefloop` is also supported as a writer command alias" in text
     assert "Claude Code is the first-class writer / five-verb path." in text
     assert "Hermes remains a supported delegated/scheduled runtime path." in text
     assert "Do not mirror this five-verb command into Hermes, OpenCode, Codex" in text
@@ -471,23 +471,46 @@ def test_claude_mabw_command_is_five_verb_writer_surface():
     assert "runtime install" not in first_screen
 
 
-def test_briefloop_does_not_define_user_slash_command():
-    assert not Path(".claude/commands/briefloop.md").exists()
+def test_claude_briefloop_command_is_five_verb_writer_surface():
+    text = _read(".claude/commands/briefloop.md")
+    assert "BriefLoop writer command" in text
+    assert "`/briefloop` and `/mabw` are compatibility aliases" in text
+    assert "follow `.claude/commands/mabw.md` exactly" in text
+
+    first_screen = text.split("## First-Screen Writer Help", 1)[1].split(
+        "Do not put", 1
+    )[0]
+    expected = [
+        "/briefloop new",
+        "/briefloop run <workspace>",
+        "/briefloop status <workspace>",
+        "/briefloop feedback <workspace> [text-or-file]",
+        "/briefloop deliver <workspace>",
+    ]
+    for verb in expected:
+        assert verb in first_screen
+    assert "/briefloop doctor" not in first_screen
+    assert "eval-cases" not in first_screen
+    assert "runtime install" not in first_screen
+
+
+def test_briefloop_skill_is_not_slash_command_implementation():
+    assert Path(".claude/commands/briefloop.md").exists()
     naming = _read("docs/briefloop-naming.md")
-    assert "`/briefloop` is not a user command" in naming
-    assert "The BriefLoop skill is" in naming
-    assert "an agent protocol surface" in naming
+    assert "`/briefloop` is the Claude writer command" in naming
+    assert "The BriefLoop skill is an agent" in naming
+    assert "not the slash-command implementation" in naming
 
 
-def test_readme_first_screen_uses_mabw_as_briefloop_writer_command():
+def test_readme_first_screen_uses_briefloop_as_writer_command():
     readme_paths = ["README.md", "README_en.md", "README.zh-CN.md"]
     for path in readme_paths:
         text = _read(path)
         first_screen = "\n".join(text.splitlines()[:32])
+        assert "/briefloop" in first_screen
         assert "/mabw" in first_screen
         assert "BriefLoop" in first_screen
         assert "/generate-brief" not in first_screen
-        assert "`/briefloop" not in first_screen
 
 
 def test_claude_mabw_new_forbids_private_company_inference():

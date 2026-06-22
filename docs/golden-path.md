@@ -1,4 +1,4 @@
-# MABW Golden Path
+# BriefLoop Golden Path
 
 This is the shortest operator path for writers. It does not explain every
 control surface. It answers one practical question: from zero, what sequence
@@ -6,7 +6,7 @@ gets a brief to delivery without bypassing accountability?
 
 ## 0. Before You Start
 
-Confirm that you are in the MABW project and that the `/mabw` command is
+Confirm that you are in the BriefLoop project and that the `/briefloop` command is
 available in Claude Code if you plan to use the Claude writer path.
 
 From the repository directory, verify that the CLI points to the current
@@ -25,7 +25,7 @@ source .venv/bin/activate
 multi-agent-brief version
 ```
 
-If `/mabw` is not available in Claude Code, run:
+If `/briefloop` is not available in Claude Code, run:
 
 ```bash
 multi-agent-brief claude install --repo-workdir .
@@ -33,22 +33,22 @@ multi-agent-brief claude install --repo-workdir .
 
 ## First Run Variant: Local Materials, No API Keys
 
-If you only want to try MABW on a few local files, do not configure a search
+If you only want to try BriefLoop on a few local files, do not configure a search
 backend first. Use the smallest path:
 
-1. Use `/mabw new` to create a workspace.
+1. Use `/briefloop new` to create a workspace.
 2. Put a few prepared local text files into `input/sources/`.
-3. Use `/mabw run <workspace>` to create the handoff.
+3. Use `/briefloop run <workspace>` to create the handoff.
 4. Use `/generate-brief <workspace>` to execute the delegated workflow.
-5. Use `/mabw status <workspace>` to see what is blocked.
-6. Use `/mabw deliver <workspace>` to deliver.
+5. Use `/briefloop status <workspace>` to see what is blocked.
+6. Use `/briefloop deliver <workspace>` to deliver.
 
 For a first run, use 3-5 Markdown or plain-text files. If PDF or DOCX files
 are not readable through the current input-governance path, convert them to
 text before placing them in `input/sources/`. Do not skip the Claim Ledger,
 gates, or reader-final gate for speed.
 
-## 1. `/mabw new`
+## 1. `/briefloop new`
 
 Use this to create a new brief workspace.
 
@@ -62,7 +62,7 @@ You will answer questions about:
 It creates the workspace, basic configuration, and handoff context. It does
 not generate the brief and does not approve any long-term preference.
 
-## 2. `/mabw run <workspace>`
+## 2. `/briefloop run <workspace>`
 
 Use this to create or refresh the current runtime handoff.
 
@@ -75,7 +75,7 @@ To execute the delegated subagent workflow, follow the handoff and use:
 /generate-brief <workspace>
 ```
 
-## 3. Use `/mabw status <workspace>` Whenever You Are Unsure
+## 3. Use `/briefloop status <workspace>` Whenever You Are Unsure
 
 `status` is read-only. It answers four things:
 
@@ -92,7 +92,7 @@ run the named command. It is not a failure by itself.
 Start with:
 
 ```text
-/mabw status <workspace>
+/briefloop status <workspace>
 ```
 
 Classify the blocker:
@@ -105,12 +105,12 @@ Classify the blocker:
 | Reader preference | Write it as guidance, propose it to the Improvement Ledger, and approve it explicitly. |
 | Already enforced by the system | Open the linked gate/report instead of duplicating it in memory. |
 
-## 5. `/mabw feedback <workspace> "..."`
+## 5. `/briefloop feedback <workspace> "..."`
 
 When you review a draft, write the feedback in plain language:
 
 ```text
-/mabw feedback <workspace> "This section reads like a news digest. Lead with the impact on our company."
+/briefloop feedback <workspace> "This section reads like a news digest. Lead with the impact on our company."
 ```
 
 Feedback is recorded first. Acting on it requires a later explicit step:
@@ -132,16 +132,16 @@ already been created.
 It takes effect the next time you run:
 
 ```text
-/mabw run <workspace>
+/briefloop run <workspace>
 ```
 
 or the equivalent `run` / `start` / `handoff` command that freezes a new
 `output/intermediate/improvement_memory_snapshot.md`.
 
-MABW can observe and propose, but only human-approved guidance is remembered,
+BriefLoop can observe and propose, but only human-approved guidance is remembered,
 and it is remembered in a ledger you can inspect and revert.
 
-## 7. `/mabw deliver <workspace>`
+## 7. `/briefloop deliver <workspace>`
 
 Use this to deliver the final reader files.
 

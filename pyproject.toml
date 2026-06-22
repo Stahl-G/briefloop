@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 multi-agent-brief = "multi_agent_brief.cli.main:main"
+briefloop = "multi_agent_brief.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -36,6 +37,7 @@ where = ["src"]
 multi_agent_brief = [
   "configs/*.yaml",
   "configs/policy_packs/*.yaml",
+  "configs/report_packs/*.yaml",
   "evaluation_cases/fixtures/*.yaml",
   "evaluation_cases/fixtures/cases/*/workspace/*.yaml",
   "evaluation_cases/fixtures/cases/*/workspace/*.md",

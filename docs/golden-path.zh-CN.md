@@ -1,10 +1,10 @@
-# MABW 黄金路径
+# BriefLoop 黄金路径
 
 这是一份给写作者看的最短操作路径。它不解释所有控制面，只回答一件事：从零开始，按什么顺序把一份简报交付出去。
 
 ## 0. 开始前
 
-确认你正在 Claude Code 的 MABW 项目里，并且 `/mabw` 命令可用。
+确认你正在 Claude Code 的 BriefLoop 项目里，并且 `/briefloop` 命令可用。
 
 先在仓库目录确认你实际调用到的是当前版本：
 
@@ -21,7 +21,7 @@ source .venv/bin/activate
 multi-agent-brief version
 ```
 
-如果 `/mabw` 不可用，先在仓库目录运行：
+如果 `/briefloop` 不可用，先在仓库目录运行：
 
 ```bash
 multi-agent-brief claude install --repo-workdir .
@@ -31,16 +31,16 @@ multi-agent-brief claude install --repo-workdir .
 
 如果你只是想用自己的几份材料跑一遍，不要先配置搜索后端。先走最小路径：
 
-1. 用 `/mabw new` 创建 workspace。
+1. 用 `/briefloop new` 创建 workspace。
 2. 把少量已整理好的本地文本材料放进 `input/sources/`。
-3. 用 `/mabw run <workspace>` 生成 handoff。
+3. 用 `/briefloop run <workspace>` 生成 handoff。
 4. 用 `/generate-brief <workspace>` 执行 delegated workflow。
-5. 用 `/mabw status <workspace>` 看哪里被拦住。
-6. 用 `/mabw deliver <workspace>` 交付。
+5. 用 `/briefloop status <workspace>` 看哪里被拦住。
+6. 用 `/briefloop deliver <workspace>` 交付。
 
 第一次建议只放 3-5 份 Markdown 或纯文本材料。PDF / DOCX 如果不能被当前输入治理路径直接读取，先转成文本再放入 `input/sources/`。不要为了快而绕过 Claim Ledger、gates 或 reader-final gate。
 
-## 1. `/mabw new`
+## 1. `/briefloop new`
 
 用它创建一份新简报工作区。
 
@@ -53,7 +53,7 @@ multi-agent-brief claude install --repo-workdir .
 
 它会创建 workspace、配置基础文件，并准备本期运行交接单。它不会生成简报，也不会自动批准任何偏好。
 
-## 2. `/mabw run <workspace>`
+## 2. `/briefloop run <workspace>`
 
 用它创建或刷新本期 runtime handoff。
 
@@ -65,7 +65,7 @@ multi-agent-brief claude install --repo-workdir .
 /generate-brief <workspace>
 ```
 
-## 3. 中途随时 `/mabw status <workspace>`
+## 3. 中途随时 `/briefloop status <workspace>`
 
 `status` 是只读的。它只回答四件事：
 
@@ -81,7 +81,7 @@ multi-agent-brief claude install --repo-workdir .
 先运行：
 
 ```text
-/mabw status <workspace>
+/briefloop status <workspace>
 ```
 
 看清楚拦住的是哪一类：
@@ -94,14 +94,14 @@ multi-agent-brief claude install --repo-workdir .
 | 读者偏好 | 由人写成 guidance，进入 Improvement Ledger proposal，再由人批准。 |
 | 已由系统执行 | 查看它指向的 gate/report，不要重复写进 memory。 |
 
-## 5. `/mabw feedback <workspace> "..."`
+## 5. `/briefloop feedback <workspace> "..."`
 
 读草稿时，不顺眼的地方直接用人话说。
 
 例子：
 
 ```text
-/mabw feedback <workspace> "这一段太像新闻摘要了，先说对我们公司的影响。"
+/briefloop feedback <workspace> "这一段太像新闻摘要了，先说对我们公司的影响。"
 ```
 
 它会先记录反馈。后续处置必须再确认：
@@ -121,14 +121,14 @@ multi-agent-brief claude install --repo-workdir .
 它只会在下一次：
 
 ```text
-/mabw run <workspace>
+/briefloop run <workspace>
 ```
 
 或等价的 `run` / `start` / `handoff` 中被冻结为新的 `output/intermediate/improvement_memory_snapshot.md`。
 
 一句话：它会观察、会提议；但只有你点头的，才会被记住，而且记在一本你随时能翻、能撤销的账上。
 
-## 7. `/mabw deliver <workspace>`
+## 7. `/briefloop deliver <workspace>`
 
 用它交付最终读者文件。
 

@@ -23,7 +23,7 @@ names.
 - Do not present coverage checks or Screener output as full-recall proof.
 - Do not execute arbitrary shell strings from evaluation fixtures.
 - Do not ship private prompts, internal paths, real URLs, tokens, or commercial benchmark cases as public fixtures.
-- Do not treat the BriefLoop public naming layer as a runtime rename; `multi-agent-brief`, `/mabw`, package/module paths, artifact names, workspace formats, and MABW experiment IDs remain compatible until an explicit migration changes them.
+- Do not treat the BriefLoop public naming layer as a runtime rename; `multi-agent-brief`, `briefloop`, `/briefloop`, `/mabw`, package/module paths, artifact names, workspace formats, and MABW experiment IDs remain compatible until an explicit migration changes them.
 
 ## Anti-Patterns
 

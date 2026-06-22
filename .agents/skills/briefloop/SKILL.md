@@ -32,8 +32,9 @@ Keep BriefLoop operation aligned with the control-plane architecture:
 
 Use this skill when the user asks about any of these surfaces:
 
-- workspace operation, `/mabw`, `multi-agent-brief run`, status, gates, repair,
-  finalize, delivery, or runtime handoff behavior
+- workspace operation, `/briefloop`, `/mabw`, `briefloop`,
+  `multi-agent-brief run`, status, gates, repair, finalize, delivery, or
+  runtime handoff behavior
 - MABW-080 experiment setup, registration, scorecards, blind packs, assessment
   import, summaries, or future BriefLoop-090 readiness/fresh-rerun work that
   still uses the shipped `experiments 080` command namespace

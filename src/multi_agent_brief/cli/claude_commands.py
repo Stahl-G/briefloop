@@ -24,7 +24,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     install = actions.add_parser(
         "install",
-        help="Install /mabw, /generate-brief, and MABW subagents into ~/.claude.",
+        help="Install /briefloop, /mabw, /generate-brief, and MABW subagents into ~/.claude.",
     )
     install.add_argument(
         "--repo-workdir",
@@ -63,10 +63,13 @@ def _install(args: argparse.Namespace) -> int:
     target = Path(args.target).expanduser().resolve()
     command_dir = repo / ".claude" / "commands"
     generate_src = command_dir / "generate-brief.md"
+    briefloop_src = command_dir / "briefloop.md"
     mabw_src = command_dir / "mabw.md"
     agents_src = repo / ".claude" / "agents"
     if not generate_src.exists():
         raise RuntimeError(f"Claude command not found: {generate_src}")
+    if not briefloop_src.exists():
+        raise RuntimeError(f"Claude command not found: {briefloop_src}")
     if not mabw_src.exists():
         raise RuntimeError(f"Claude command not found: {mabw_src}")
     if not agents_src.exists():
@@ -74,7 +77,7 @@ def _install(args: argparse.Namespace) -> int:
 
     agents_dst = target / "agents" / "mabw"
 
-    command_sources = [mabw_src, generate_src]
+    command_sources = [briefloop_src, mabw_src, generate_src]
     writes: list[PlannedWrite] = [
         PlannedWrite(
             target / "commands" / src.name,
@@ -105,8 +108,8 @@ def _install(args: argparse.Namespace) -> int:
         print(f"[claude install] wrote {dst}")
 
     print("")
-    print("[claude install] Installed /mabw and /generate-brief for Claude Code CLI and Claude Desktop Code tab.")
-    print("[claude install] In Claude Code, type '/' and confirm /mabw is listed.")
+    print("[claude install] Installed /briefloop, /mabw, and /generate-brief for Claude Code CLI and Claude Desktop Code tab.")
+    print("[claude install] In Claude Code, type '/' and confirm /briefloop or /mabw is listed.")
     return 0
 
 

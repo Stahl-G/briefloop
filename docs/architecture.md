@@ -23,7 +23,7 @@ Gray steps (source governance, finalize) run via Python CLI. White steps (Scout 
 
 ### Claude Code (First-Class Writer Path)
 
-Claude Code is the first-class writer / five-verb path. The `/mabw` command exposes `new`, `run`, `status`, `feedback`, and `deliver`; `/generate-brief` remains the delegated subagent workflow command.
+Claude Code is the first-class writer / five-verb path. The `/briefloop` command exposes `new`, `run`, `status`, `feedback`, and `deliver`; `/mabw` remains a compatibility alias, and `/generate-brief` remains the delegated subagent workflow command.
 
 ### Hermes (Delegated / Scheduled Runtime Path)
 

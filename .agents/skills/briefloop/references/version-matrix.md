@@ -8,8 +8,11 @@ Historical implementation name: MABW
 ## Supported Current Surfaces
 
 - CLI: `multi-agent-brief`
-- Claude command: `/mabw`
-- No `/briefloop` user command; BriefLoop skill is an agent protocol surface.
+- Shell CLI alias: `briefloop`
+- Claude writer command: `/briefloop`
+- Compatibility Claude command: `/mabw`
+- BriefLoop skill is an agent protocol surface, not the `/briefloop` slash
+  command implementation.
 - Python package/module path: `multi_agent_brief`
 - Distribution package name: `multi-agent-brief-workflow`
 - Assessment targets:
@@ -26,6 +29,13 @@ Historical implementation name: MABW
     - schema and reference validation
     - proposal-only Claim-Support Matrix delta projection
     - read-only status visibility
+- Experimental product-layer contracts:
+  - `multi-agent-brief packs list`
+  - `multi-agent-brief packs show <pack_id>`
+  - `multi-agent-brief validate-report-spec <report_spec.yaml>`
+  - packaged ReportPacks: `market_weekly`, `management_monthly`
+  - no workspace creation, template rendering, delivery, publication approval,
+    or gate bypass
 - MABW-080 experiment operations:
   - `validate-case`
   - `scaffold-condition`
@@ -39,7 +49,11 @@ Historical implementation name: MABW
 
 - Do not rename runtime surfaces unless the task is explicitly a compatibility
   migration.
-- Do not describe planned v0.9+ support-sufficiency controls as completed.
+- Keep `multi-agent-brief`, `briefloop`, `/briefloop`, and `/mabw` as
+  compatibility surfaces unless the task is explicitly a breaking migration.
+- Do not describe deferred semantic-governance surfaces or v0.10 Product OS
+  roadmap goals as completed unless the support matrix and current CLI expose
+  the exact surface.
 - BriefLoop-090 is a future readiness/fresh-rerun label, not a current CLI namespace or supported command surface. Current experiment commands remain under `multi-agent-brief experiments 080`.
 - If runtime behavior conflicts with this skill, prefer:
   - `docs/architecture-status.md`
@@ -56,3 +70,5 @@ otherwise:
 - Release Eligibility Scorecard
 - semantic support scoring
 - support-sufficiency gates
+- human adjudication queues
+- semantic regression harnesses

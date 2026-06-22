@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_SOURCE_ASSETS = [
     ".agents/skills/orchestrator/SKILL.md",
     ".agents/hermes-skills/multi-agent-brief-hermes/SKILL.md",
+    ".claude/commands/briefloop.md",
     ".claude/commands/mabw.md",
     ".claude/commands/generate-brief.md",
     ".claude/agents/orchestrator.md",

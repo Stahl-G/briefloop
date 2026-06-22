@@ -1,18 +1,18 @@
 # Claude Code Quickstart
 
 This quickstart shows the first-class five-verb writer path for BriefLoop in
-Claude Code. The command name remains `/mabw` for compatibility during the
-BriefLoop transition. The verbs are:
+Claude Code. The primary command is `/briefloop`; `/mabw` remains a
+compatibility alias during the BriefLoop transition. The verbs are:
 
 ```text
-/mabw new
-/mabw run <workspace>
-/mabw status <workspace>
-/mabw feedback <workspace> [text-or-file]
-/mabw deliver <workspace>
+/briefloop new
+/briefloop run <workspace>
+/briefloop status <workspace>
+/briefloop feedback <workspace> [text-or-file]
+/briefloop deliver <workspace>
 ```
 
-`/mabw` is the BriefLoop writer command. `/generate-brief` remains an
+`/briefloop` is the BriefLoop writer command. `/generate-brief` remains an
 advanced/legacy command for the full delegated subagent workflow; it is not the
 first path for new writers.
 
@@ -30,11 +30,11 @@ Chinese versions:
 
 | Verb | Product meaning |
 |---|---|
-| `/mabw new` | Start a new brief workspace by answering who it is for, what this issue covers, and what to watch. |
-| `/mabw run <workspace>` | Create or refresh this run's handoff without executing specialist agents or marking stages complete. |
-| `/mabw status <workspace>` | See where the run stands. Strictly read-only. |
-| `/mabw feedback <workspace> [text-or-file]` | Record what feels wrong; triage, repair, improvement proposals, and approvals require explicit confirmation. |
-| `/mabw deliver <workspace>` | Deliver only after gates, the reader-final gate, and `state finalize-complete` pass. |
+| `/briefloop new` | Start a new brief workspace by answering who it is for, what this issue covers, and what to watch. |
+| `/briefloop run <workspace>` | Create or refresh this run's handoff without executing specialist agents or marking stages complete. |
+| `/briefloop status <workspace>` | See where the run stands. Strictly read-only. |
+| `/briefloop feedback <workspace> [text-or-file]` | Record what feels wrong; triage, repair, improvement proposals, and approvals require explicit confirmation. |
+| `/briefloop deliver <workspace>` | Deliver only after gates, the reader-final gate, and `state finalize-complete` pass. |
 
 `doctor` is still available for diagnostics, but it is not a sixth writer verb.
 
@@ -54,14 +54,14 @@ multi-agent-brief init ..\mabw-workspace --demo
 
 Run this slash command inside the Claude Code CLI or the Claude Desktop Code
 tab with this repository selected as the project folder, so
-`.claude/commands/mabw.md` is loaded:
+`.claude/commands/briefloop.md` and `.claude/commands/mabw.md` are loaded:
 
 ```text
-/mabw run ../mabw-workspace
-/mabw status ../mabw-workspace
+/briefloop run ../mabw-workspace
+/briefloop status ../mabw-workspace
 ```
 
-If Claude Code returns `Unknown command: /mabw`, the current session
+If Claude Code returns `Unknown command: /briefloop`, the current session
 has not discovered this project command. Confirm the project folder is the MABW
 repository root, type `/` to inspect available commands, or install the command
 for user-level discovery:
@@ -78,7 +78,7 @@ multi-agent-brief run --workspace ../mabw-workspace
 
 ## Advanced: Direct Full Delegated Workflow
 
-Most writers should stay on `/mabw`. To execute the full delegated workflow from
+Most writers should stay on `/briefloop`. To execute the full delegated workflow from
 Claude Code after handoff for debugging or direct subagent execution, use:
 
 ```text
@@ -91,9 +91,9 @@ The delegated workflow follows this sequence:
 source discovery -> doctor -> scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> finalize
 ```
 
-## What `/mabw status` Means
+## What `/briefloop status` Means
 
-`/mabw status <workspace>` is a read-only dashboard. It should help a writer
+`/briefloop status <workspace>` is a read-only dashboard. It should help a writer
 understand four things without exposing a schema inventory:
 
 | Question | What status should tell you |
@@ -108,9 +108,9 @@ artifact registry, initialize runtime state, refresh the switchboard, append
 events, or write a status file. If records may be stale, it reports that and
 names the explicit command the operator can run.
 
-## How `/mabw feedback` Is Routed
+## How `/briefloop feedback` Is Routed
 
-`/mabw feedback <workspace> [text-or-file]` records feedback first. Recording
+`/briefloop feedback <workspace> [text-or-file]` records feedback first. Recording
 feedback is allowed immediately; acting on it is not automatic.
 
 Downstream actions still require explicit confirmation:
@@ -180,7 +180,7 @@ After `audited_brief.md` exists and the auditor/quality gates are ready, use
 the writer-facing delivery verb:
 
 ```text
-/mabw deliver ../mabw-workspace
+/briefloop deliver ../mabw-workspace
 ```
 
 It runs the deterministic finalize path, verifies completion with
@@ -226,9 +226,9 @@ User: I need to create a weekly brief for my solar manufacturing company.
 
 Claude Code:
   1. Uses source-planner to resolve source discovery.
-  2. Runs /mabw run to create handoff/control files.
+  2. Runs /briefloop run to create handoff/control files.
   3. If direct full workflow execution is needed, runs /generate-brief inside Claude Code.
-  4. Runs /mabw deliver after audit and gates pass.
+  4. Runs /briefloop deliver after audit and gates pass.
   5. Uses status and auditor findings to report artifact status and limitations.
 ```
 
@@ -252,5 +252,5 @@ Claude Code:
 - Use CLI tools for deterministic setup, validation, audit, and rendering.
 - Use subagents for source extraction, screening, analysis, editing, and final review.
 - Check `output/intermediate/audit_report.json` before distributing a brief.
-- `/mabw status` calls `multi-agent-brief status --workspace <workspace> --json`;
+- `/briefloop status` calls `multi-agent-brief status --workspace <workspace> --json`;
   it reports stale control files instead of refreshing them.

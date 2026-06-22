@@ -232,23 +232,28 @@ Non-goals:
 - no `lite mode`, no gate-skipping fast path, and no partial fact-layer imports
 - no claim that v0.7 Improvement Memory has already improved output quality before the v0.8 protocol is run
 
-### v0.9 — Support Sufficiency And Brief-loop Engineering
+### v0.9 — Support Sufficiency Core
 
-Goal: move from source-level traceability toward support sufficiency while preserving the existing MABW compatibility surfaces.
+Goal: move from source-level traceability toward a minimum support-sufficiency
+core while preserving the existing MABW compatibility surfaces.
 
 Public scope:
 
 - Use BriefLoop as the public project name while keeping MABW as the historical implementation name and compatibility surface.
-- Define the minimum support-sufficiency path:
+- Implement the minimum support-sufficiency path:
   - Atomic Claim Graph
   - Evidence Span Registry
   - Claim-Support Matrix
-- Keep `multi-agent-brief`, `/mabw`, Python package/module paths, artifact names, workspace formats, and MABW experiment IDs compatible during the v0.9 period.
+- Keep Semantic Assessment Report as a proposal-only experimental surface:
+  semantic assessments may propose support labels, uncertainty, disagreement,
+  and adjudication needs, but they do not mutate the Claim-Support Matrix,
+  create adjudication queue items, gate delivery, decide release eligibility, or
+  prove truth.
+- Keep `multi-agent-brief`, the `briefloop` shell alias, `/briefloop`, `/mabw`, Python package/module paths, artifact names, workspace formats, and MABW experiment IDs compatible during the v0.9 period.
 - Keep unsupported channels clearly labeled as experimental, interface-only, or CLI-only.
 
-Later v0.9.x candidates:
+Deferred semantic-governance surfaces:
 
-- semantic assessment proposals
 - human adjudication
 - coverage and omission gates
 - semantic regression
@@ -256,26 +261,80 @@ Later v0.9.x candidates:
 - quality packs
 - finding-to-repair workflows
 
-### v1.0 — Stable Orchestrated Brief Workflow
+These are not the next default implementation track. They may reopen after the
+product layer has stable report contracts and real user paths.
 
-Goal: freeze a stable, local-first, file-state-driven, contract-governed briefing workflow baseline.
+### v0.10 — Product OS And Report Packs
+
+Goal: wrap the support-sufficiency core in a usable recurring-report product
+layer without weakening the accountability spine.
+
+Public scope:
+
+- Add ReportSpec and ReportPack contracts so BriefLoop can know what kind of
+  report is being produced.
+- Introduce initial report packs such as `market_weekly`,
+  `management_monthly`, and later `evidence_extract`.
+- Improve zero-config workspace creation while keeping `multi-agent-brief` as
+  the stable engine CLI, `briefloop` as its shell alias, `/briefloop` as the
+  writer command, and `/mabw` as the compatibility writer command.
+- Separate reader-facing delivery bundles from audit/control bundles as an
+  export/projection layer, without silently moving or deleting existing control
+  artifacts.
+- Keep local files and simple source setup first-class; broad connector and UI
+  work stays later.
+- Add release modes and human approval records for internal review workflows,
+  without claiming external publication authorization.
+
+Non-goals:
+
+- no SaaS-first product
+- no heavy UI before the CLI product path works
+- no IR/disclosure readiness claim
+- no report pack that bypasses Claim Ledger, gates, event log, archive,
+  reader-final gate, source appendix, or human delivery
+- no confusion between the `/briefloop` writer command and the BriefLoop skill
+  operator protocol surface
+- no automatic public release or external publication command
+
+### v1.0 — Stable Weekly/Monthly Brief Product
+
+Goal: freeze a modest, local-first, file-state-driven, contract-governed CLI
+product for recurring business reports.
 
 v1.0 should provide:
 
-- a clear Orchestrator-first workflow
-- auditable artifacts
-- evidence-aware drafting and audit gates
-- checkpointed stage transitions with explicit machine, human, or mixed gate semantics
-- workspace-local memory that separates correctness contracts from taste preferences
-- a public-safe mode registry for common brief workflow entry points
-- runtime parity across supported agent surfaces
-- public-safe evaluation coverage
-- reliable rendered outputs
-- clear support and security boundaries
+- `multi-agent-brief new market-weekly` or equivalent zero-config entrypoint
+- `multi-agent-brief new management-monthly` or equivalent zero-config entrypoint
+- an `evidence_extract` report pack for page/span-cited document work
+- local-file first runs through the report loop
+- stable Markdown and DOCX output
+- preserved Claim Ledger, source appendix, gates, event log, support records,
+  and archive surfaces
+- stable ReportSpec and ReportPack contracts
+- at least three report packs
+- clear delivery/audit bundle separation
+- explicit human delivery
+- no force-deliver path
+- clear runtime dependence, support status, and non-goals
 
 ## Research Track
 
-v2.0 is a future research track, not the short-term product promise. After v1.0, the project may explore a more formal multi-agent runtime, including shared state, task boards, replay, and richer coordination protocols.
+v1.1+ may add a local Studio preview after the CLI product path works. Studio
+must call existing CLI/service transactions, must not mutate frozen artifacts
+directly, and must not provide a force-deliver path.
+
+v1.2+ may add IR/disclosure support packs as review-support surfaces, not
+publication automation. Those packs may flag forward-looking statements,
+materiality review items, KPI consistency issues, and evidence-annex gaps, but
+they must not claim automatic materiality decisions, SEC-ready filing
+automation, or replacement of lawyers, auditors, IR officers, or disclosure
+committees.
+
+v2.0 is a future research track, not the short-term product promise. After the
+product baseline is stable, the project may explore a more formal multi-agent
+runtime, including shared state, task boards, replay, and richer coordination
+protocols.
 
 Before v1.0, the project will not prioritize:
 

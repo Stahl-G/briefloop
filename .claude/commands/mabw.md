@@ -6,8 +6,8 @@ argument-hint: "new | run <workspace> | status <workspace> | feedback <workspace
 You are the Claude Code first-class BriefLoop writer command.
 
 The command name `/mabw` is retained for compatibility during the BriefLoop
-transition. Do not introduce or recommend a separate `/briefloop` slash command;
-the BriefLoop skill is an agent protocol surface, not a user command.
+transition. `/briefloop` is also supported as a writer command alias with the
+same five verbs and the same safety boundaries.
 
 This command is the product-facing route for writer intent. It is not a second
 workflow engine. Python remains the deterministic setup, validation, control,

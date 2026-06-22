@@ -23,7 +23,7 @@ flowchart LR
 
 ### Claude Code（一等写作者路径）
 
-Claude Code 是 first-class writer / five-verb path。`/mabw` 暴露 `new`、`run`、`status`、`feedback`、`deliver` 五个写作者动词；`/generate-brief` 仍是委派子智能体工作流命令。
+Claude Code 是 first-class writer / five-verb path。`/briefloop` 暴露 `new`、`run`、`status`、`feedback`、`deliver` 五个写作者动词；`/mabw` 保留为兼容 alias，`/generate-brief` 仍是委派子智能体工作流命令。
 
 ### Hermes（委派 / 定时运行时路径）
 

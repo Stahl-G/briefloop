@@ -10,7 +10,7 @@ It is not a feature spec and does not define new runtime behavior.
 
 ## 1. Golden Path Self-Test
 
-Goal: verify that [MABW Golden Path](golden-path.md) lets the maintainer finish
+Goal: verify that [BriefLoop Golden Path](golden-path.md) lets the maintainer finish
 a real brief without reading code or relying on private memory.
 
 ### Preconditions
@@ -37,7 +37,7 @@ the install path before starting the self-test.
 Create a test directory:
 
 ```bash
-BASE="$HOME/mabw-runs/golden-path-self-test-$(date +%Y%m%d-%H%M)"
+BASE="$HOME/briefloop-runs/golden-path-self-test-$(date +%Y%m%d-%H%M)"
 mkdir -p "$BASE"
 ```
 
@@ -72,12 +72,12 @@ EOF
 Then follow the golden path:
 
 ```text
-/mabw new
-/mabw run <workspace>
+/briefloop new
+/briefloop run <workspace>
 /generate-brief <workspace>
-/mabw status <workspace>
-/mabw feedback <workspace> "..."
-/mabw deliver <workspace>
+/briefloop status <workspace>
+/briefloop feedback <workspace> "..."
+/briefloop deliver <workspace>
 ```
 
 Every moment of "what button or command comes next?" goes into `Confusions`.
@@ -85,7 +85,7 @@ Every moment of "what button or command comes next?" goes into `Confusions`.
 ### Pass Criteria
 
 - A run can be completed without private planning.
-- The operator can explain the difference between `/mabw run` and
+- The operator can explain the difference between `/briefloop run` and
   `/generate-brief`.
 - `status` does not write state.
 - `deliver` goes through gates, reader-final gate, and `finalize-complete`.
@@ -135,24 +135,24 @@ source .venv/bin/activate
 which multi-agent-brief
 multi-agent-brief version
 python3 -m pytest -q tests/test_runtime_assets.py tests/test_subagent_first_contract.py tests/test_status_commands.py
-multi-agent-brief init /tmp/mabw-demo --demo --force
+multi-agent-brief init /tmp/briefloop-demo --demo --force
 multi-agent-brief claude install --repo-workdir .
 ```
 
 Then, in Claude Code:
 
 ```text
-/mabw run /tmp/mabw-demo
-/mabw status /tmp/mabw-demo
-/generate-brief /tmp/mabw-demo
-/mabw deliver /tmp/mabw-demo
+/briefloop run /tmp/briefloop-demo
+/briefloop status /tmp/briefloop-demo
+/generate-brief /tmp/briefloop-demo
+/briefloop deliver /tmp/briefloop-demo
 ```
 
 If Claude Code is not available, test the CLI demo handoff:
 
 ```bash
-multi-agent-brief doctor --config /tmp/mabw-demo/config.yaml
-multi-agent-brief run --workspace /tmp/mabw-demo --skip-doctor
+multi-agent-brief doctor --config /tmp/briefloop-demo/config.yaml
+multi-agent-brief run --workspace /tmp/briefloop-demo --skip-doctor
 ```
 
 ### What To Ask For
@@ -170,7 +170,7 @@ multi-agent-brief run --workspace /tmp/mabw-demo --skip-doctor
 - Fresh clone can complete setup.
 - Demo workspace can initialize.
 - Runtime handoff can be generated.
-- If Claude Code is available, the `/mabw` five-verb entrypoint is visible.
+- If Claude Code is available, the `/briefloop` five-verb entrypoint is visible.
 - Friction can be classified as docs, environment, runtime, model, or product
   understanding.
 

@@ -18,10 +18,10 @@ Current baseline: **v0.9.3**.
 | Function | What it does | Status | Entry points |
 |---|---|---|---|
 | Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `multi-agent-brief onboard`, `multi-agent-brief init --from-onboarding` |
-| Claude writer command | Gives writers a five-verb interface for normal work | Optional, first-class writer path | `/mabw new`, `/mabw run`, `/mabw status`, `/mabw feedback`, `/mabw deliver` |
+| Claude writer command | Gives writers a five-verb interface for normal work | Optional, first-class writer path | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`; `/mabw` remains a compatibility alias |
 | Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `multi-agent-brief run --workspace <workspace>` |
-| Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/mabw status`, `multi-agent-brief status` |
-| Delivery bundle | Produces reader-facing Markdown and DOCX outputs after finalize checks | Always on | `/mabw deliver`, `multi-agent-brief finalize`, `state finalize-complete` |
+| Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/briefloop status`, `multi-agent-brief status` |
+| Delivery bundle | Produces reader-facing Markdown and DOCX outputs after finalize checks | Always on | `/briefloop deliver`, `multi-agent-brief finalize`, `state finalize-complete` |
 
 ## Source And Input Collection
 

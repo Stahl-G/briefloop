@@ -3,7 +3,8 @@
 BriefLoop is the public project name during the v0.9 compatibility period.
 MABW remains the implementation lineage and compatibility surface. This matrix
 continues to list supported CLI/runtime surfaces by their current compatible
-names such as `multi-agent-brief`, `/mabw`, and MABW-080.
+names such as `multi-agent-brief`, `briefloop`, `/briefloop`, `/mabw`, and
+MABW-080.
 
 Each capability has one of the following statuses:
 
@@ -39,9 +40,12 @@ validation unless that is stated separately.
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
+| ReportSpec / ReportPack registry (`report_spec.yaml` contract, packaged `market_weekly` and `management_monthly` pack registry, and read-only `packs` / `validate-report-spec` CLI) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
+| `multi-agent-brief` CLI | Supported |
+| `briefloop` shell CLI alias | Supported |
 | `multi-agent-brief run --workspace <path>` | Supported |
 | `multi-agent-brief run --workspace <path> --recipe fast-rerun` | Experimental |
 | `multi-agent-brief status --workspace <path>` | Supported |
@@ -140,6 +144,13 @@ projected. This does not create support truth, write the Claim-Support Matrix,
 create adjudication queue items, gate delivery, decide release eligibility, or
 prove truth.
 
+ReportSpec / ReportPack registry support is experimental. Product-layer report
+contracts can describe report type metadata and required control-spine
+preservation, and the CLI can list packaged packs or validate a
+`report_spec.yaml`. This does not create workspaces, run subagents, run gates,
+render templates, deliver reports, authorize publication, or provide a
+lite/force-deliver path.
+
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
 Fast-rerun fact-layer import is an experimental control transaction. It can
@@ -199,7 +210,7 @@ correctness, and generalization claims remain out of scope.
 | Runtime | Status |
 |---|---|
 | Hermes (`delegate_task` native pipeline + cron) | Supported |
-| Claude Code (`/mabw` five-verb writer entrypoint + `/generate-brief` compatibility; installable with `multi-agent-brief claude install`) | Supported |
+| Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` compatibility; installable with `multi-agent-brief claude install`) | Supported |
 | OpenCode (subagent workflow) | Supported |
 | Codex (custom-agent workflow via `runtime install`) | Experimental |
 | Manual (print workflow steps) | Supported |
