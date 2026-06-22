@@ -60,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forbidden-phrase checks. This is a limited adapter over existing gates, not a
   second gate engine, semantic support assessment, industry compliance
   judgment, truth proof, release authority, or force-delivery path.
+- **PolicyProfile dogfood fixtures**: added public-safe synthetic fixtures for
+  resolved profile projection, deterministic gate-adapter strictness, and
+  reader-final forbidden-phrase checks. These fixtures do not establish
+  industry compliance, investment-advice detection, rumor verification,
+  release readiness, truth proof, or report quality claims.
 
 ## [0.9.4] — 2026-06-22
 

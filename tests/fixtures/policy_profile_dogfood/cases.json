@@ -1,0 +1,119 @@
+{
+  "schema_version": "briefloop.policy_profile_dogfood_fixture.v1",
+  "metadata": {
+    "synthetic": true,
+    "public_safe": true,
+    "boundary": "PolicyProfile dogfood fixtures exercise deterministic product defaults only. They do not provide industry compliance judgment, investment advice detection, internet rumor verification, truth proof, release readiness, or report quality claims.",
+    "non_goals": [
+      "no_industry_compliance_judgment",
+      "no_investment_advice_detection",
+      "no_internet_rumor_verification",
+      "no_truth_proof",
+      "no_release_authority"
+    ]
+  },
+  "base": {
+    "report_spec": {
+      "schema_version": "briefloop.report_spec.v1",
+      "report_pack": "market_weekly",
+      "report_type": "market_weekly",
+      "title": "Synthetic Market Weekly Brief",
+      "cadence": "weekly",
+      "audience": {
+        "label": "business reader",
+        "language": "en-US"
+      },
+      "source_policy": {
+        "mode": "local_first",
+        "hidden_autonomous_crawling": false
+      },
+      "control_spine": {
+        "claim_ledger": true,
+        "artifact_registry": true,
+        "quality_gates": true,
+        "event_log": true,
+        "archive": true,
+        "source_appendix": true,
+        "support_records": true,
+        "human_delivery_approval": true,
+        "frozen_artifact_integrity": true
+      },
+      "outputs": [
+        "markdown",
+        "docx"
+      ]
+    },
+    "claim_ledger": [
+      {
+        "claim_id": "CL-001",
+        "statement": "TargetCo opened a synthetic demo facility in June 2026.",
+        "source_id": "SRC-001",
+        "evidence_text": "TargetCo opened a synthetic demo facility in June 2026.",
+        "source_url": "https://example.com/targetco-demo",
+        "source_type": "web_search",
+        "metadata": {
+          "source_title": "TargetCo Synthetic Demo Facility",
+          "publisher": "Example News",
+          "published_at": "2026-06-01",
+          "importance": "high"
+        }
+      }
+    ]
+  },
+  "cases": [
+    {
+      "case_id": "manufacturing_pack_default_projection",
+      "description": "ReportPack default resolves to manufacturing_default without changing runtime behavior beyond deterministic adapter metadata.",
+      "policy_profile": null,
+      "audited_brief": "## Executive Summary\nTargetCo opened a synthetic demo facility. [src:CL-001]\n",
+      "expected": {
+        "resolved_policy_profile": "manufacturing_default",
+        "source": "report_pack.default_policy_profile",
+        "adapter_status": "applied",
+        "target_relevance_strict": false,
+        "forbidden_phrases_any": true
+      }
+    },
+    {
+      "case_id": "finance_strict_target_relevance_blocks_missing_summary",
+      "description": "finance_default tightens existing target-relevance gate strictness without becoming a finance-compliance judgment.",
+      "policy_profile": "finance_default",
+      "audited_brief": "TargetCo update appears outside an executive summary. [src:CL-001]\n",
+      "expected": {
+        "resolved_policy_profile": "finance_default",
+        "source": "report_spec.policy_profile",
+        "adapter_status": "applied",
+        "target_relevance_strict": true,
+        "quality_gate_finding_type": "target_relevance_gap",
+        "quality_gate_blocking": true
+      }
+    },
+    {
+      "case_id": "finance_forbidden_phrase_blocks_reader_final",
+      "description": "finance_default forbidden phrases are reader-final deterministic residue checks, not investment-advice detection.",
+      "policy_profile": "finance_default",
+      "audited_brief": "## Executive Summary\nTargetCo opened a synthetic demo facility and this report must not promise a guaranteed return. [src:CL-001]\n",
+      "expected": {
+        "resolved_policy_profile": "finance_default",
+        "source": "report_spec.policy_profile",
+        "adapter_status": "applied",
+        "target_relevance_strict": true,
+        "reader_clean_status": "fail",
+        "reader_clean_finding_kind": "policy_forbidden_phrase"
+      }
+    },
+    {
+      "case_id": "internet_profile_standard_target_relevance",
+      "description": "internet_default resolves and keeps target_relevance standard while still exposing deterministic adapter metadata.",
+      "policy_profile": "internet_default",
+      "audited_brief": "TargetCo update appears outside an executive summary. [src:CL-001]\n",
+      "expected": {
+        "resolved_policy_profile": "internet_default",
+        "source": "report_spec.policy_profile",
+        "adapter_status": "applied",
+        "target_relevance_strict": false,
+        "quality_gate_target_relevance_findings": 0
+      }
+    }
+  ]
+}
