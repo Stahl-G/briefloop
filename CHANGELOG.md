@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inputs. The transaction still only enriches metadata, updates hashes,
   registry, workflow, and events atomically, and remains fail-closed after
   finalize or downstream completion.
+- **Secret and source URL safety hardening**: `secrets import` now fails closed
+  unless the target already looks like a BriefLoop workspace, preventing typo
+  paths from creating stray `.env` files, and source metadata URL validation now
+  requires an HTTP(S) scheme with a network location.
 
 ## [0.10.1] — 2026-06-22
 
