@@ -54,9 +54,21 @@ def source_category_missing(record: Mapping[str, Any]) -> bool:
     return not non_empty_text(record.get(SOURCE_CATEGORY_FIELD))
 
 
-def local_file_without_url_missing_identity(record: Mapping[str, Any]) -> str | None:
+def local_file_without_url_missing_identity(
+    record: Mapping[str, Any],
+    *,
+    default_source_type: str | None = None,
+) -> str | None:
     source_type = record.get("source_type")
-    if not isinstance(source_type, str) or source_type.strip() != "local_file":
+    if isinstance(source_type, str):
+        normalized_source_type = source_type.strip() or default_source_type
+    elif source_type is None:
+        normalized_source_type = default_source_type
+    else:
+        return None
+    if not normalized_source_type:
+        return None
+    if normalized_source_type != "local_file":
         return None
     if has_valid_source_url(record):
         return None
