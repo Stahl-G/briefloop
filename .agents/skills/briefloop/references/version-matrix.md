@@ -45,8 +45,10 @@ Historical implementation name: MABW
     `policy_profile` override validation
   - resolved PolicyProfile projection in `validate-report-spec`, read-only
     status, and generated handoff artifacts
+  - limited PolicyProfile deterministic gate adapter for existing gate
+    strictness and reader-final forbidden-phrase checks
   - no stage execution, template rendering, delivery, publication approval, or
-    gate adaptation/bypass
+    gate bypass; no second gate engine
 - MABW-080 experiment operations:
   - `validate-case`
   - `scaffold-condition`

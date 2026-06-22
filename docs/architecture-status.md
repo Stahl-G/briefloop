@@ -65,12 +65,14 @@ breaking rename.
   artifacts into explicit delivery/audit bundle manifests.
   Workspaces with `report_spec.yaml` expose the resolved PolicyProfile in
   read-only status and generated handoff artifacts so defaults are traceable.
+  Resolved PolicyProfiles may tighten existing deterministic quality-gate
+  strictness and reader-final forbidden-phrase checks through a limited adapter.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These
-  product-layer surfaces do not run stages, render templates, adapt gates,
-  judge industry compliance, verify internet rumors, bypass gates, deliver
-  reports, or authorize publication.
+  product-layer surfaces do not run stages, render templates, create a second
+  gate engine, judge industry compliance, verify internet rumors, bypass gates,
+  deliver reports, or authorize publication.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.

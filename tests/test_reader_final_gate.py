@@ -185,6 +185,20 @@ def test_reader_final_gate_detects_natural_language_atom_id_residue() -> None:
     assert any(finding.kind == "process_wording" and finding.text == "atom IDs" for finding in result.findings)
 
 
+def test_reader_final_gate_detects_policy_forbidden_phrases() -> None:
+    markdown = "This summary should not describe a guaranteed return."
+
+    result = detect_reader_residue(
+        markdown,
+        artifact="output/brief.md",
+        forbidden_phrases=("guaranteed return",),
+    )
+
+    assert result.status == "fail"
+    assert result.counts["policy_forbidden_phrase_count"] == 1
+    assert any(finding.kind == "policy_forbidden_phrase" for finding in result.findings)
+
+
 def test_reader_final_gate_still_detects_internal_atom_markers() -> None:
     markdown = "Internal field atom_id should not ship, and neither should AC-0001-01."
 

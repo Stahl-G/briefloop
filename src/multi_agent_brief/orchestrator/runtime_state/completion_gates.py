@@ -39,6 +39,10 @@ from multi_agent_brief.outputs.reader_final_gate import (
     detect_reader_residue,
     detect_reader_residue_in_docx,
 )
+from multi_agent_brief.product.policy_gate_adapter import (
+    policy_forbidden_phrases,
+    resolve_workspace_policy_gate_adapter,
+)
 
 
 def _role_topology_from_policy_pack(policy_pack: dict[str, Any] | None) -> str:
@@ -624,17 +628,24 @@ def _finalize_completion_reasons(
         return reasons
 
     gate_results = []
+    forbidden_phrases = policy_forbidden_phrases(resolve_workspace_policy_gate_adapter(workspace))
     for path in artifact_paths:
         suffix = path.suffix.lower()
         if suffix in {".md", ".markdown"}:
             try:
                 gate_results.append(
-                    detect_reader_residue(path.read_text(encoding="utf-8"), artifact=str(path))
+                    detect_reader_residue(
+                        path.read_text(encoding="utf-8"),
+                        artifact=str(path),
+                        forbidden_phrases=forbidden_phrases,
+                    )
                 )
             except OSError as exc:
                 reasons.append(f"Reader artifact could not be read: {path}: {exc}")
         elif suffix == ".docx":
-            gate_results.append(detect_reader_residue_in_docx(path, artifact=str(path)))
+            gate_results.append(
+                detect_reader_residue_in_docx(path, artifact=str(path), forbidden_phrases=forbidden_phrases)
+            )
     if gate_results:
         reader_gate = combine_reader_final_gate_results(gate_results)
         if reader_gate.status == "fail":

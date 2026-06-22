@@ -32,6 +32,10 @@ from multi_agent_brief.outputs.reader_final_gate import (
     detect_reader_residue,
     detect_reader_residue_in_docx,
 )
+from multi_agent_brief.product.policy_gate_adapter import (
+    policy_forbidden_phrases,
+    resolve_workspace_policy_gate_adapter,
+)
 
 
 E_DELIVERY_BUNDLE_MISSING = "E_DELIVERY_BUNDLE_MISSING"
@@ -405,6 +409,7 @@ def _hash_for_delivery_artifact(
 def _verify_current_delivery_artifacts(bundle: DeliveryBundle) -> None:
     markdown_results = []
     docx_results = []
+    forbidden_phrases = policy_forbidden_phrases(resolve_workspace_policy_gate_adapter(bundle.workspace))
     for artifact in bundle.artifacts:
         rel = _workspace_relative(bundle.workspace, artifact)
         suffix = artifact.suffix.lower()
@@ -413,10 +418,13 @@ def _verify_current_delivery_artifacts(bundle: DeliveryBundle) -> None:
                 detect_reader_residue(
                     artifact.read_text(encoding="utf-8"),
                     artifact=rel,
+                    forbidden_phrases=forbidden_phrases,
                 )
             )
         elif suffix == ".docx":
-            docx_results.append(detect_reader_residue_in_docx(artifact, artifact=rel))
+            docx_results.append(
+                detect_reader_residue_in_docx(artifact, artifact=rel, forbidden_phrases=forbidden_phrases)
+            )
         else:
             raise DeliverCommandError(
                 f"Unsupported delivery artifact type: {rel}",

@@ -53,8 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status and generated runtime handoff artifacts now surface the resolved
   PolicyProfile id, source, hash, and compact product-policy summary when a
   workspace has `report_spec.yaml`. This is traceability for product metadata
-  only; it does not adapt gates, change runtime behavior, judge compliance or
-  truth, bypass the control spine, or authorize release.
+  only; it does not judge compliance or truth, bypass the control spine, or
+  authorize release.
+- **PolicyProfile deterministic gate adapter**: resolved PolicyProfiles can
+  tighten existing deterministic quality-gate strictness and reader-final
+  forbidden-phrase checks. This is a limited adapter over existing gates, not a
+  second gate engine, semantic support assessment, industry compliance
+  judgment, truth proof, release authority, or force-delivery path.
 
 ## [0.9.4] — 2026-06-22
 

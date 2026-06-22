@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import yaml
 
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
 from multi_agent_brief.cli.main import main
@@ -108,6 +109,37 @@ def _write_supported_target_ledger(ws: Path) -> None:
                 },
             }
         ],
+    )
+
+
+def _write_report_spec(ws: Path, *, policy_profile: str) -> None:
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "briefloop.report_spec.v1",
+                "report_pack": "market_weekly",
+                "policy_profile": policy_profile,
+                "report_type": "market_weekly",
+                "title": "Market Weekly Brief",
+                "cadence": "weekly",
+                "audience": {"label": "business reader", "language": "en-US"},
+                "source_policy": {"mode": "local_first", "hidden_autonomous_crawling": False},
+                "control_spine": {
+                    "claim_ledger": True,
+                    "artifact_registry": True,
+                    "quality_gates": True,
+                    "event_log": True,
+                    "archive": True,
+                    "source_appendix": True,
+                    "support_records": True,
+                    "human_delivery_approval": True,
+                    "frozen_artifact_integrity": True,
+                },
+                "outputs": ["markdown", "docx"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
     )
 
 
@@ -1617,6 +1649,34 @@ input:
     assert report["report_date"] == "2026-06-08"
     assert report["metadata"]["max_source_age_days"] == 0
     assert any(finding["finding_type"] == "stale_source" for finding in report["findings"])
+
+
+def test_policy_profile_strict_target_relevance_tightens_existing_gate(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    _write_report_spec(ws, policy_profile="finance_default")
+    _write_supported_target_ledger(ws)
+    _write_audited_brief(ws, "TargetCo update is discussed outside a summary. [src:CL-001]\n")
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    adapter = report["metadata"]["policy_gate_adapter"]
+    assert adapter["status"] == "applied"
+    assert adapter["policy_profile_id"] == "finance_default"
+    assert report["metadata"]["gate_strictness"]["target_relevance"] is True
+    finding = next(item for item in report["findings"] if item["gate_id"] == "target_relevance")
+    assert finding["finding_type"] == "target_relevance_gap"
+    assert finding["blocking_level"] == "blocking"
+    assert finding["metadata"]["strict"] is True
 
 
 def test_quality_gates_enabled_blocks_required_stage_when_report_missing(tmp_path, capsys):

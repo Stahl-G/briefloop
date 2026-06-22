@@ -23,6 +23,10 @@ from multi_agent_brief.outputs.source_appendix import (
     cited_claim_ids,
     replace_claim_citations_with_labels,
 )
+from multi_agent_brief.product.policy_gate_adapter import (
+    policy_forbidden_phrases,
+    resolve_workspace_policy_gate_adapter,
+)
 
 _SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
 _AUDIT_CLAIM_ID_RE = re.compile(
@@ -72,6 +76,7 @@ class FinalizeResult:
     delivery_snapshot_error: str = ""
     reader_clean: dict[str, Any] | None = None
     audit_binding: dict[str, Any] | None = None
+    policy_gate_adapter: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -170,6 +175,9 @@ def finalize_reader_outputs(
     Claim Ledger evidence is available.
     """
     out = Path(output_dir)
+    workspace = out.resolve().parent
+    policy_gate_adapter = resolve_workspace_policy_gate_adapter(workspace)
+    forbidden_phrases = policy_forbidden_phrases(policy_gate_adapter)
     intermediate_dir = out / "intermediate"
     audited_path = intermediate_dir / "audited_brief.md"
     if not audited_path.exists():
@@ -297,6 +305,7 @@ def finalize_reader_outputs(
             intermediate_dir=intermediate_dir,
             audited_markdown=audited_markdown,
         ),
+        policy_gate_adapter=policy_gate_adapter,
     )
     delivery_bundle = _build_delivery_bundle(
         output_dir=out,
@@ -325,6 +334,7 @@ def finalize_reader_outputs(
             for path in (Path(result.delivery_docx) if result.delivery_docx else None,)
             if path is not None and path.exists()
         ],
+        forbidden_phrases=forbidden_phrases,
     )
     result.reader_clean = reader_clean
     if result.audit_binding and result.audit_binding.get("status") == "fail":
@@ -506,13 +516,18 @@ def _reader_clean_report(
     *,
     markdown_paths: list[Path],
     docx_paths: list[Path],
+    forbidden_phrases: tuple[str, ...] | list[str] = (),
 ) -> dict[str, Any]:
     results = [
-        detect_reader_residue(path.read_text(encoding="utf-8"), artifact=str(path))
+        detect_reader_residue(
+            path.read_text(encoding="utf-8"),
+            artifact=str(path),
+            forbidden_phrases=forbidden_phrases,
+        )
         for path in markdown_paths
     ]
     results.extend(
-        detect_reader_residue_in_docx(path, artifact=str(path))
+        detect_reader_residue_in_docx(path, artifact=str(path), forbidden_phrases=forbidden_phrases)
         for path in docx_paths
     )
     return combine_reader_final_gate_results(results).to_report_dict()
@@ -528,6 +543,8 @@ def _empty_reader_clean_report() -> dict[str, Any]:
         "blank_citation_row_count": 0,
         "local_path_count": 0,
         "debug_residue_count": 0,
+        "atom_id_count": 0,
+        "policy_forbidden_phrase_count": 0,
         "sample_findings": [],
     }
 

@@ -41,6 +41,10 @@ from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.outputs.atomic_reader_projection import (
     project_atomic_reader_text_from_workspace,
 )
+from multi_agent_brief.product.policy_gate_adapter import (
+    policy_gate_is_strict,
+    resolve_workspace_policy_gate_adapter,
+)
 from multi_agent_brief.quality_gates.contract import (
     GATE_IDS,
     QUALITY_GATE_SCHEMA,
@@ -1232,6 +1236,7 @@ def _target_relevance_findings(
     config: dict[str, Any],
     user_text: str,
     reader_facing_mode: bool,
+    strict: bool,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -1239,26 +1244,27 @@ def _target_relevance_findings(
     artifact_id = _artifact_or_none(artifacts, "audited_brief")
     terms = _target_terms(config, user_text=user_text)
     if not terms:
+        blocking_level = "blocking" if strict else "warning"
         return [
             _finding(
                 finding_id="QG_TARGET_RELEVANCE_001",
                 gate_id="target_relevance",
                 finding_type="target_mapping_ambiguous",
-                severity="medium",
-                blocking_level="warning",
+                severity="high" if strict else "medium",
+                blocking_level=blocking_level,
                 repair_owner="human",
                 stage_id=stage_id,
                 artifact_id=artifact_id,
                 description="Target entity or topic could not be derived from workspace config or user context.",
                 recommendation="Ask the Orchestrator or human reviewer to clarify the target before enforcing relevance.",
                 category="audience_mismatch",
-                metadata={},
+                metadata={"strict": strict},
             )
         ]
 
     summary = _section_between(markdown, ("executive summary", "摘要", "summary"))
     findings: list[dict[str, Any]] = []
-    if summary and not _mentions_any(summary, terms):
+    if strict and not summary:
         findings.append(
             _finding(
                 finding_id="QG_TARGET_RELEVANCE_001",
@@ -1269,10 +1275,27 @@ def _target_relevance_findings(
                 repair_owner="editor",
                 stage_id=stage_id,
                 artifact_id=artifact_id,
+                description="Executive summary section is missing, so configured target visibility cannot be verified.",
+                recommendation="Add an executive summary that makes the configured target visible in reader-facing context.",
+                category="audience_mismatch",
+                metadata={"target_terms": terms, "strict": strict},
+            )
+        )
+    if summary and not _mentions_any(summary, terms):
+        findings.append(
+            _finding(
+                finding_id=f"QG_TARGET_RELEVANCE_{len(findings)+1:03d}",
+                gate_id="target_relevance",
+                finding_type="target_relevance_gap",
+                severity="high",
+                blocking_level="blocking",
+                repair_owner="editor",
+                stage_id=stage_id,
+                artifact_id=artifact_id,
                 description="Executive summary does not mention the configured target entity or topic.",
                 recommendation="Revise the summary so the target is visible in the reader-facing decision context.",
                 category="audience_mismatch",
-                metadata={"target_terms": terms},
+                metadata={"target_terms": terms, "strict": strict},
             )
         )
 
@@ -1338,6 +1361,7 @@ def evaluate_quality_gate_findings(
     reader_facing_mode: bool,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
+    policy_gate_adapter: dict[str, Any] | None = None,
     parallel: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Evaluate deterministic quality gates from preloaded inputs without writes.
@@ -1349,11 +1373,14 @@ def evaluate_quality_gate_findings(
 
     gate_findings: dict[str, list[dict[str, Any]]] = {gate_id: [] for gate_id in sorted(GATE_IDS)}
     gate_tasks: dict[str, Callable[[], list[dict[str, Any]]]] = {}
+    material_fact_strict = policy_gate_is_strict(policy_gate_adapter, "material_fact", cli_strict=strict)
+    freshness_strict = policy_gate_is_strict(policy_gate_adapter, "freshness", cli_strict=strict)
+    target_relevance_strict = policy_gate_is_strict(policy_gate_adapter, "target_relevance", cli_strict=strict)
     if not reader_facing_mode:
         gate_tasks["material_fact"] = lambda: _material_findings(
             markdown=markdown,
             ledger=ledger,
-            strict=strict,
+            strict=material_fact_strict,
             stages=stages,
             artifacts=artifacts,
         )
@@ -1362,7 +1389,7 @@ def evaluate_quality_gate_findings(
             ledger=ledger,
             report_date=report_date,
             max_source_age_days=max_source_age_days,
-            strict=strict,
+            strict=freshness_strict,
             stages=stages,
             artifacts=artifacts,
         )
@@ -1381,6 +1408,7 @@ def evaluate_quality_gate_findings(
         config=config,
         user_text=user_text,
         reader_facing_mode=reader_facing_mode,
+        strict=target_relevance_strict,
         stages=stages,
         artifacts=artifacts,
     )
@@ -1451,6 +1479,13 @@ def check_quality_gates(
         report_date=report_date,
         max_source_age_days=max_source_age_days,
     )
+    policy_gate_adapter = resolve_workspace_policy_gate_adapter(ws)
+    gate_strictness = {
+        "material_fact": policy_gate_is_strict(policy_gate_adapter, "material_fact", cli_strict=strict),
+        "freshness": policy_gate_is_strict(policy_gate_adapter, "freshness", cli_strict=strict),
+        "target_relevance": policy_gate_is_strict(policy_gate_adapter, "target_relevance", cli_strict=strict),
+        "editor_new_fact": strict,
+    }
 
     gate_findings = evaluate_quality_gate_findings(
         markdown=markdown,
@@ -1462,6 +1497,7 @@ def check_quality_gates(
         max_source_age_days=max_source_age_days,
         stages=stages,
         artifacts=artifacts,
+        policy_gate_adapter=policy_gate_adapter,
         strict=strict,
         reader_facing_mode=reader_mode,
     )
@@ -1515,10 +1551,12 @@ def check_quality_gates(
             "ledger": _workspace_relative(ws, ledger_path),
             "reader_facing_mode": reader_mode,
             "strict": strict,
+            "gate_strictness": gate_strictness,
             "max_source_age_days": max_source_age_days,
             "stage_id": gate_stage_id,
             "gate_stage_id": gate_stage_id,
             "gate_artifact_id": gate_artifact_id,
+            "policy_gate_adapter": policy_gate_adapter,
             "atomic_reader_projection": atomic_projection,
             "claim_support_matrix_projection": claim_support_projection,
         },

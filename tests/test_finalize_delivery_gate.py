@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
@@ -103,6 +104,37 @@ def _write_single_claim_ledger(path: Path, *, claim_id: str = "CL-001") -> None:
         }
     ]
     path.write_text(json.dumps(claims, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _write_report_spec(workspace: Path, *, policy_profile: str = "finance_default") -> None:
+    (workspace / "report_spec.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "briefloop.report_spec.v1",
+                "report_pack": "market_weekly",
+                "policy_profile": policy_profile,
+                "report_type": "market_weekly",
+                "title": "Market Weekly Brief",
+                "cadence": "weekly",
+                "audience": {"label": "business reader", "language": "en-US"},
+                "source_policy": {"mode": "local_first", "hidden_autonomous_crawling": False},
+                "control_spine": {
+                    "claim_ledger": True,
+                    "artifact_registry": True,
+                    "quality_gates": True,
+                    "event_log": True,
+                    "archive": True,
+                    "source_appendix": True,
+                    "support_records": True,
+                    "human_delivery_approval": True,
+                    "frozen_artifact_integrity": True,
+                },
+                "outputs": ["markdown", "docx"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _span_hash(text: str) -> str:
@@ -1895,6 +1927,34 @@ def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
     assert report["reader_clean"]["status"] == "fail"
     assert report["reader_clean"]["bare_claim_id_count"] == 1
     assert report["reader_clean"]["sample_findings"][0]["artifact"].endswith("brief.md")
+
+
+def test_finalize_applies_policy_profile_forbidden_phrases(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_report_spec(tmp_path, policy_profile="finance_default")
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "The report must not promise a guaranteed return to the reader.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["policy_gate_adapter"]["status"] == "applied"
+    assert report["policy_gate_adapter"]["policy_profile_id"] == "finance_default"
+    reader_clean = report["reader_clean"]
+    assert reader_clean["status"] == "fail"
+    assert reader_clean["policy_forbidden_phrase_count"] == 1
+    assert reader_clean["sample_findings"][0]["kind"] == "policy_forbidden_phrase"
 
 
 def test_finalize_fails_on_common_internal_id_reader_residue(tmp_path: Path):

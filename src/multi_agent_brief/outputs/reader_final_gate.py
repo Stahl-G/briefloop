@@ -15,6 +15,7 @@ FindingKind = Literal[
     "local_path",
     "debug_residue",
     "atom_id",
+    "policy_forbidden_phrase",
 ]
 
 COUNT_KEYS = {
@@ -26,6 +27,7 @@ COUNT_KEYS = {
     "local_path": "local_path_count",
     "debug_residue": "debug_residue_count",
     "atom_id": "atom_id_count",
+    "policy_forbidden_phrase": "policy_forbidden_phrase_count",
 }
 
 _SRC_MARKER_RE = re.compile(r"\[(?:src|source):[^\]]+\]", re.IGNORECASE)
@@ -141,6 +143,7 @@ def detect_reader_residue(
     artifact: str,
     *,
     allow_compliance_footer: bool = False,
+    forbidden_phrases: tuple[str, ...] | list[str] = (),
 ) -> ReaderFinalGateResult:
     findings: list[ReaderResidueFinding] = []
     in_citation_section = False
@@ -225,6 +228,13 @@ def detect_reader_residue(
             artifact=artifact,
             allow_compliance_footer=allow_compliance_footer,
         )
+        _collect_policy_forbidden_phrase_findings(
+            findings,
+            line=line,
+            line_number=line_number,
+            artifact=artifact,
+            forbidden_phrases=forbidden_phrases,
+        )
         cells = _table_cells(line)
         if cells is None:
             source_table_header = None
@@ -282,6 +292,7 @@ def detect_reader_residue_in_docx(
     *,
     artifact: str | None = None,
     allow_compliance_footer: bool = False,
+    forbidden_phrases: tuple[str, ...] | list[str] = (),
 ) -> ReaderFinalGateResult:
     try:
         from docx import Document  # type: ignore
@@ -294,6 +305,7 @@ def detect_reader_residue_in_docx(
         text,
         artifact=artifact or str(path),
         allow_compliance_footer=allow_compliance_footer,
+        forbidden_phrases=forbidden_phrases,
     )
 
 
@@ -395,6 +407,40 @@ def _collect_process_wording_findings(
                 line=line_number,
                 artifact=artifact,
                 message="Reader-facing output contains internal workflow/process wording.",
+            )
+        )
+
+
+def _collect_policy_forbidden_phrase_findings(
+    findings: list[ReaderResidueFinding],
+    *,
+    line: str,
+    line_number: int,
+    artifact: str,
+    forbidden_phrases: tuple[str, ...] | list[str],
+) -> None:
+    line_lower = line.lower()
+    seen_on_line: set[str] = set()
+    for phrase in forbidden_phrases:
+        if not isinstance(phrase, str):
+            continue
+        text = " ".join(phrase.split()).strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen_on_line:
+            continue
+        found = text in line if _has_cjk(text) else key in line_lower
+        if not found:
+            continue
+        seen_on_line.add(key)
+        findings.append(
+            ReaderResidueFinding(
+                kind="policy_forbidden_phrase",
+                text=_shorten(text),
+                line=line_number,
+                artifact=artifact,
+                message="Reader-facing output contains a PolicyProfile forbidden phrase.",
             )
         )
 

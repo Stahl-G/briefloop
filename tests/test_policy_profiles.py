@@ -11,6 +11,11 @@ from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts.registry import ContractRegistry
 from multi_agent_brief.contracts.schemas.policy_profile import PolicyProfileContract
 from multi_agent_brief.product.policy_profile import validate_policy_profile_payload
+from multi_agent_brief.product.policy_gate_adapter import (
+    policy_forbidden_phrases,
+    policy_gate_is_strict,
+    resolve_workspace_policy_gate_adapter,
+)
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
 from multi_agent_brief.product.report_pack import validate_report_pack_payload
@@ -252,6 +257,35 @@ def test_workspace_policy_projection_absent_report_spec_is_non_blocking(tmp_path
 
     assert projection["status"] == "not_available"
     assert projection["runtime_effect"] == "none"
+
+
+def test_workspace_policy_gate_adapter_resolves_deterministic_knobs(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    spec = _market_spec()
+    spec["policy_profile"] = "finance_default"
+    (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    adapter = resolve_workspace_policy_gate_adapter(ws)
+
+    assert adapter["status"] == "applied"
+    assert adapter["runtime_effect"] == "tighten_existing_deterministic_gates_only"
+    assert adapter["policy_profile_id"] == "finance_default"
+    assert policy_gate_is_strict(adapter, "freshness") is True
+    assert policy_gate_is_strict(adapter, "target_relevance") is True
+    assert "guaranteed return" in policy_forbidden_phrases(adapter)
+
+
+def test_workspace_policy_gate_adapter_absent_spec_has_no_runtime_effect(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    adapter = resolve_workspace_policy_gate_adapter(ws)
+
+    assert adapter["status"] == "not_available"
+    assert adapter["runtime_effect"] == "none"
+    assert policy_gate_is_strict(adapter, "freshness") is False
+    assert policy_forbidden_phrases(adapter) == ()
 
 
 def test_validate_report_spec_cli_reports_resolved_policy_profile(tmp_path: Path, capsys) -> None:
