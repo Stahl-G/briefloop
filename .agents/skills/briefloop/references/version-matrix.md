@@ -39,7 +39,8 @@ Historical implementation name: MABW
     for conservative local-first workspace skeletons
   - packaged ReportPacks: `market_weekly`, `management_monthly`
   - packaged ReportTemplates: `market_weekly`, `management_monthly`
-  - packaged PolicyProfiles: `manufacturing_default`
+  - packaged PolicyProfiles: `manufacturing_default`, `finance_default`,
+    `internet_default`
   - ReportPack default policy profile binding and optional ReportSpec
     `policy_profile` override validation
   - no stage execution, template rendering, delivery, publication approval, or

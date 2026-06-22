@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic product defaults only; it does not adapt quality gates, change
   runtime behavior, judge industry compliance, decide truth, or authorize
   release.
+- **Experimental PolicyProfile skeletons**: added conservative
+  `finance_default` and `internet_default` profile skeletons alongside
+  `manufacturing_default`. These are public-safe product defaults only; they do
+  not provide finance compliance judgment, investment-advice detection, internet
+  rumor verification, source authority, gate adaptation, or release authority.
 
 ## [0.9.4] — 2026-06-22
 

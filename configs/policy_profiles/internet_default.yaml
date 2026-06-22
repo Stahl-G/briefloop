@@ -1,0 +1,44 @@
+schema_version: briefloop.policy_profile.v1
+policy_profile_id: internet_default
+industry: internet
+source_policy:
+  freshness_days_by_tier:
+    official: 14
+    product_docs: 14
+    market_data: 7
+    trade_press: 7
+  preferred_source_tiers:
+    - official
+    - product_docs
+    - market_data
+    - trade_press
+  discouraged_source_tiers:
+    - social
+    - product_rumor
+    - anonymous_forum
+claim_policy:
+  materiality_terms:
+    - users
+    - retention
+    - engagement
+    - monetization
+    - launch
+    - pricing
+    - churn
+wording_policy:
+  forbidden_phrases:
+    - confirmed by rumors
+    - users are saying
+    - viral proof
+    - guaranteed adoption
+gate_policy:
+  freshness: strict
+  material_fact: strict
+  target_relevance: standard
+metadata:
+  boundary: experimental_policy_profile_only
+  maturity: conservative_skeleton
+  non_claims:
+    - no_rumor_verification
+    - no_social_source_authority
+    - no_release_authority

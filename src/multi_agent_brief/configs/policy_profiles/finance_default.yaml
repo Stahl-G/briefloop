@@ -1,0 +1,44 @@
+schema_version: briefloop.policy_profile.v1
+policy_profile_id: finance_default
+industry: finance
+source_policy:
+  freshness_days_by_tier:
+    official: 14
+    filing: 30
+    market_data: 3
+    trade_press: 7
+  preferred_source_tiers:
+    - official
+    - filing
+    - market_data
+    - trade_press
+  discouraged_source_tiers:
+    - social
+    - unattributed_commentary
+claim_policy:
+  materiality_terms:
+    - revenue
+    - margin
+    - guidance
+    - liquidity
+    - leverage
+    - capex
+    - valuation
+wording_policy:
+  forbidden_phrases:
+    - 投资建议
+    - 买入
+    - 卖出
+    - guaranteed return
+    - risk-free
+gate_policy:
+  freshness: strict
+  material_fact: strict
+  target_relevance: strict
+metadata:
+  boundary: experimental_policy_profile_only
+  maturity: conservative_skeleton
+  non_claims:
+    - no_finance_compliance_judgment
+    - no_investment_advice_detection
+    - no_release_authority
