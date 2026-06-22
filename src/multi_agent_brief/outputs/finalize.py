@@ -114,11 +114,20 @@ _FINALIZE_REPORT_PATH_HASH_FIELDS = (
 )
 
 
-def _finalize_report_payload(result: FinalizeResult, *, output_dir: Path) -> dict[str, Any]:
+def _finalize_report_payload(
+    result: FinalizeResult,
+    *,
+    output_dir: Path,
+    workspace_dir: Path | None = None,
+) -> dict[str, Any]:
     """Serialize finalize reports with workspace-relative path identities."""
 
     payload = result.to_dict()
-    workspace = output_dir.resolve().parent
+    workspace = (
+        workspace_dir.resolve()
+        if workspace_dir is not None
+        else output_dir.resolve().parent
+    )
     for field_name in _FINALIZE_REPORT_PATH_FIELDS:
         payload[field_name] = _workspace_relative_value(workspace, payload.get(field_name))
     for field_name in _FINALIZE_REPORT_PATH_LIST_FIELDS:
@@ -134,9 +143,19 @@ def _finalize_report_payload(result: FinalizeResult, *, output_dir: Path) -> dic
     return payload
 
 
-def _write_finalize_report(path: Path, result: FinalizeResult, *, output_dir: Path) -> None:
+def _write_finalize_report(
+    path: Path,
+    result: FinalizeResult,
+    *,
+    output_dir: Path,
+    workspace_dir: Path | None = None,
+) -> None:
     path.write_text(
-        json.dumps(_finalize_report_payload(result, output_dir=output_dir), ensure_ascii=False, indent=2),
+        json.dumps(
+            _finalize_report_payload(result, output_dir=output_dir, workspace_dir=workspace_dir),
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -164,6 +183,7 @@ def finalize_reader_outputs(
     output_filename_tokens: dict[str, str] | None = None,
     docx_template: str = "default",
     source_appendix_config: dict[str, Any] | None = None,
+    workspace_dir: str | Path | None = None,
 ) -> FinalizeResult:
     """Regenerate reader-facing artifacts from internal audited markdown.
 
@@ -175,7 +195,11 @@ def finalize_reader_outputs(
     Claim Ledger evidence is available.
     """
     out = Path(output_dir)
-    workspace = out.resolve().parent
+    workspace = (
+        Path(workspace_dir).expanduser().resolve()
+        if workspace_dir is not None
+        else out.resolve().parent
+    )
     policy_gate_adapter = resolve_workspace_policy_gate_adapter(workspace)
     forbidden_phrases = policy_forbidden_phrases(policy_gate_adapter)
     intermediate_dir = out / "intermediate"
@@ -339,7 +363,7 @@ def finalize_reader_outputs(
     result.reader_clean = reader_clean
     if result.audit_binding and result.audit_binding.get("status") == "fail":
         result.status = "fail"
-        _write_finalize_report(report_path, result, output_dir=out)
+        _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
         findings = result.audit_binding.get("findings") or []
         raise RuntimeError(
             "Audit report binding check failed: "
@@ -348,7 +372,7 @@ def finalize_reader_outputs(
         )
     if reader_clean["status"] == "fail":
         result.status = "fail"
-        _write_finalize_report(report_path, result, output_dir=out)
+        _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
         finding_count = len(reader_clean.get("sample_findings", []))
         total_count = sum(
             int(value)
@@ -368,14 +392,14 @@ def finalize_reader_outputs(
     except Exception as exc:
         result.status = "fail"
         result.delivery_snapshot_error = f"{type(exc).__name__}: {exc}"
-        _write_finalize_report(report_path, result, output_dir=out)
+        _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
         raise RuntimeError(
             f"Delivery snapshot creation failed. See {report_path}."
         ) from exc
     result.delivery_snapshot_dir = delivery_snapshot["delivery_snapshot_dir"]
     result.delivery_snapshot_artifacts = delivery_snapshot["delivery_snapshot_artifacts"]
     result.delivery_snapshot_artifact_sha256 = delivery_snapshot["delivery_snapshot_artifact_sha256"]
-    _write_finalize_report(report_path, result, output_dir=out)
+    _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
     return result
 
 

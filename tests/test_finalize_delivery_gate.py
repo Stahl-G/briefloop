@@ -1957,6 +1957,46 @@ def test_finalize_applies_policy_profile_forbidden_phrases(tmp_path: Path):
     assert reader_clean["sample_findings"][0]["kind"] == "policy_forbidden_phrase"
 
 
+def test_finalize_cli_resolves_policy_profile_from_workspace_for_nested_output(
+    tmp_path: Path,
+    capsys,
+):
+    workspace = tmp_path / "workspace"
+    output_dir = workspace / "nested" / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_report_spec(workspace, policy_profile="finance_default")
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: ExampleCo Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: nested/output\n"
+        "  formats:\n"
+        "    - markdown\n"
+        "  named_outputs: false\n",
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "The report must not promise a guaranteed return to the reader.\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
+    captured = capsys.readouterr()
+
+    assert rc == 1
+    assert "Reader final output gate failed" in captured.err
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["policy_gate_adapter"]["status"] == "applied"
+    assert report["policy_gate_adapter"]["policy_profile_id"] == "finance_default"
+    assert report["reader_brief"] == "nested/output/brief.md"
+    assert report["reader_clean"]["status"] == "fail"
+    assert report["reader_clean"]["policy_forbidden_phrase_count"] == 1
+
+
 def test_finalize_fails_on_common_internal_id_reader_residue(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
