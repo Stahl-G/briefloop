@@ -37,6 +37,7 @@ where = ["src"]
 multi_agent_brief = [
   "configs/*.yaml",
   "configs/policy_packs/*.yaml",
+  "configs/policy_profiles/*.yaml",
   "configs/report_packs/*.yaml",
   "configs/report_templates/*.yaml",
   "evaluation_cases/fixtures/*.yaml",

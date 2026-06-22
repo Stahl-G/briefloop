@@ -1,0 +1,33 @@
+schema_version: briefloop.policy_profile.v1
+policy_profile_id: manufacturing_default
+industry: manufacturing
+source_policy:
+  freshness_days_by_tier:
+    official: 30
+    trade_press: 14
+    market_data: 7
+  preferred_source_tiers:
+    - official
+    - market_data
+    - trade_press
+  discouraged_source_tiers:
+    - social
+claim_policy:
+  materiality_terms:
+    - capacity
+    - utilization
+    - shipment
+    - ASP
+    - inventory
+    - opex
+wording_policy:
+  forbidden_phrases:
+    - 投资建议
+    - 买入
+    - 卖出
+gate_policy:
+  freshness: strict
+  material_fact: strict
+  target_relevance: standard
+metadata:
+  boundary: experimental_policy_profile_only

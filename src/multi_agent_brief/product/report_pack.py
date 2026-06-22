@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from multi_agent_brief.contracts.errors import FieldViolation
+from multi_agent_brief.contracts.schemas.policy_profile import POLICY_PROFILE_ID_RE
 from multi_agent_brief.contracts.schemas.report_spec import REPORT_PACK_ID_RE
 from multi_agent_brief.product.report_spec import validate_report_spec_payload
 
@@ -20,6 +21,7 @@ class ReportPack:
     display_name: str
     status: str
     description: str
+    default_policy_profile: str
     source_path: str
     payload: Mapping[str, Any]
     default_report_spec: Mapping[str, Any]
@@ -33,6 +35,7 @@ class ReportPack:
             display_name=str(payload.get("display_name", "")),
             status=str(payload.get("status", "")),
             description=str(payload.get("description", "")),
+            default_policy_profile=str(payload.get("default_policy_profile", "")),
             source_path=str(source_path),
             payload=payload,
             default_report_spec=spec,
@@ -45,10 +48,15 @@ class ReportPack:
             "display_name": self.display_name,
             "status": self.status,
             "description": self.description,
+            "default_policy_profile": self.default_policy_profile,
         }
 
 
-def validate_report_pack_payload(payload: Mapping[str, Any]) -> list[FieldViolation]:
+def validate_report_pack_payload(
+    payload: Mapping[str, Any],
+    *,
+    known_policy_profiles: set[str] | None = None,
+) -> list[FieldViolation]:
     if not isinstance(payload, dict):
         return [FieldViolation(field="<root>", error="must be an object")]
 
@@ -67,10 +75,34 @@ def validate_report_pack_payload(payload: Mapping[str, Any]) -> list[FieldViolat
     if payload.get("status") != "experimental":
         violations.append(FieldViolation(field="status", error="must be experimental"))
 
+    default_policy_profile = payload.get("default_policy_profile")
+    if not isinstance(default_policy_profile, str) or not default_policy_profile.strip():
+        violations.append(FieldViolation(field="default_policy_profile", error="required field is missing or blank"))
+    elif not POLICY_PROFILE_ID_RE.match(default_policy_profile.strip()):
+        violations.append(FieldViolation(field="default_policy_profile", error="must match ^[a-z][a-z0-9_]*$"))
+    elif known_policy_profiles is not None and default_policy_profile.strip() not in known_policy_profiles:
+        violations.append(
+            FieldViolation(
+                field="default_policy_profile",
+                error=f"unknown policy_profile:{default_policy_profile.strip()}",
+            )
+        )
+
     default_report_spec = payload.get("default_report_spec")
     if not isinstance(default_report_spec, dict):
         violations.append(FieldViolation(field="default_report_spec", error="must be an object"))
         return violations
+
+    if isinstance(default_policy_profile, str) and default_policy_profile.strip():
+        spec_policy_profile = default_report_spec.get("policy_profile")
+        if isinstance(spec_policy_profile, str) and spec_policy_profile.strip():
+            if spec_policy_profile.strip() != default_policy_profile.strip():
+                violations.append(
+                    FieldViolation(
+                        field="default_report_spec.policy_profile",
+                        error=f"must match default_policy_profile:{default_policy_profile.strip()}",
+                    )
+                )
 
     pack_id = str(payload.get("pack_id", "")).strip()
     report_type = str(payload.get("report_type", "")).strip()
@@ -78,6 +110,12 @@ def validate_report_pack_payload(payload: Mapping[str, Any]) -> list[FieldViolat
         default_report_spec,
         known_report_packs={pack_id} if pack_id else set(),
         report_type_by_pack={pack_id: report_type} if pack_id and report_type else {},
+        known_policy_profiles=known_policy_profiles,
+        default_policy_profile_by_pack=(
+            {pack_id: str(default_policy_profile).strip()}
+            if pack_id and isinstance(default_policy_profile, str) and default_policy_profile.strip()
+            else {}
+        ),
     )
     for violation in result.errors:
         violations.append(

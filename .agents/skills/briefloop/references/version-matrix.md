@@ -39,8 +39,11 @@ Historical implementation name: MABW
     for conservative local-first workspace skeletons
   - packaged ReportPacks: `market_weekly`, `management_monthly`
   - packaged ReportTemplates: `market_weekly`, `management_monthly`
+  - packaged PolicyProfiles: `manufacturing_default`
+  - ReportPack default policy profile binding and optional ReportSpec
+    `policy_profile` override validation
   - no stage execution, template rendering, delivery, publication approval, or
-    gate bypass
+    gate adaptation/bypass
 - MABW-080 experiment operations:
   - `validate-case`
   - `scaffold-condition`

@@ -14,6 +14,7 @@ from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
     write_report_bundle_manifest,
 )
+from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import (
     ReportSpecLoadError,
@@ -180,6 +181,7 @@ def handle_packs(args: argparse.Namespace) -> int:
 
 def handle_validate_report_spec(args: argparse.Namespace) -> int:
     registry = ReportPackRegistry.from_package()
+    policy_registry = PolicyProfileRegistry.from_package()
     path = Path(args.report_spec)
     try:
         payload = load_report_spec(path)
@@ -202,6 +204,8 @@ def handle_validate_report_spec(args: argparse.Namespace) -> int:
         payload,
         known_report_packs=registry.pack_ids(),
         report_type_by_pack=registry.report_type_by_pack(),
+        known_policy_profiles=policy_registry.profile_ids(),
+        default_policy_profile_by_pack=registry.default_policy_profile_by_pack(),
     )
     result = validation.to_dict()
     result["path"] = str(path)
@@ -265,6 +269,7 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(payload.get("error"))
     else:
         print(f"report_pack: {payload.get('report_pack')}")
+        print(f"resolved_policy_profile: {payload.get('resolved_policy_profile')}")
         print(f"report_type: {payload.get('report_type')}")
         for error in payload.get("errors", []):
             print(f"[error] {error.get('field')}: {error.get('error')}")
@@ -280,6 +285,8 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
     from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
 
     spec = deepcopy(dict(pack.default_report_spec))
+    if pack.default_policy_profile and not spec.get("policy_profile"):
+        spec["policy_profile"] = pack.default_policy_profile
     audience = spec.get("audience") if isinstance(spec.get("audience"), dict) else {}
     title = args.title or str(spec.get("title") or pack.display_name or "BriefLoop Report")
     language = args.language or str(audience.get("language") or "en-US")

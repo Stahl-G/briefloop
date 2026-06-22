@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import FieldViolation
+from multi_agent_brief.contracts.schemas.policy_profile import POLICY_PROFILE_ID_RE
 
 REPORT_SPEC_SCHEMA_VERSION = "briefloop.report_spec.v1"
 REPORT_PACK_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -53,6 +54,7 @@ class ReportSpecContract(Contract):
             "properties": {
                 "schema_version": {"type": "string", "enum": [REPORT_SPEC_SCHEMA_VERSION]},
                 "report_pack": {"type": "string", "pattern": REPORT_PACK_ID_RE.pattern},
+                "policy_profile": {"type": "string", "pattern": POLICY_PROFILE_ID_RE.pattern},
                 "report_type": {"type": "string", "pattern": REPORT_PACK_ID_RE.pattern},
                 "title": {"type": "string"},
                 "audience": {
@@ -109,6 +111,13 @@ class ReportSpecContract(Contract):
                 violations.append(FieldViolation(field=field, error="required field is missing or blank"))
             elif field in {"report_pack", "report_type"} and not REPORT_PACK_ID_RE.match(str(value).strip()):
                 violations.append(FieldViolation(field=field, error="must match ^[a-z][a-z0-9_]*$"))
+
+        policy_profile = data.get("policy_profile")
+        if policy_profile is not None:
+            if not _non_empty_string(policy_profile):
+                violations.append(FieldViolation(field="policy_profile", error="must be a non-empty string"))
+            elif not POLICY_PROFILE_ID_RE.match(str(policy_profile).strip()):
+                violations.append(FieldViolation(field="policy_profile", error="must match ^[a-z][a-z0-9_]*$"))
 
         audience = data.get("audience")
         if not isinstance(audience, dict):

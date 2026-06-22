@@ -1,0 +1,196 @@
+"""Tests for experimental product-layer PolicyProfile contracts."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import yaml
+
+from multi_agent_brief.cli.main import main
+from multi_agent_brief.contracts.registry import ContractRegistry
+from multi_agent_brief.contracts.schemas.policy_profile import PolicyProfileContract
+from multi_agent_brief.product.policy_profile import validate_policy_profile_payload
+from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
+from multi_agent_brief.product.report_pack import validate_report_pack_payload
+from multi_agent_brief.product.report_registry import ReportPackRegistry
+from multi_agent_brief.product.report_spec import validate_report_spec_payload
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _manufacturing_profile() -> dict:
+    return yaml.safe_load(
+        (ROOT / "configs" / "policy_profiles" / "manufacturing_default.yaml").read_text(encoding="utf-8")
+    )
+
+
+def _market_pack() -> dict:
+    return yaml.safe_load((ROOT / "configs" / "report_packs" / "market_weekly.yaml").read_text(encoding="utf-8"))
+
+
+def _market_spec() -> dict:
+    return dict(_market_pack()["default_report_spec"])
+
+
+def test_policy_profile_contract_accepts_manufacturing_default() -> None:
+    payload = _manufacturing_profile()
+
+    assert PolicyProfileContract.validate(payload) == []
+    assert validate_policy_profile_payload(payload) == []
+
+
+def test_policy_profile_contract_rejects_scoring_like_tier_weights() -> None:
+    payload = _manufacturing_profile()
+    payload["source_policy"] = dict(payload["source_policy"])
+    payload["source_policy"]["tier_weights"] = {"official": 1.0}
+
+    violations = PolicyProfileContract.validate(payload)
+
+    assert any(item.field == "source_policy.tier_weights" for item in violations)
+
+
+def test_policy_profile_contract_rejects_invalid_gate_policy() -> None:
+    payload = _manufacturing_profile()
+    payload["gate_policy"] = dict(payload["gate_policy"])
+    payload["gate_policy"]["freshness"] = "release_ready"
+
+    violations = PolicyProfileContract.validate(payload)
+
+    assert any(item.field == "gate_policy.freshness" for item in violations)
+
+
+def test_policy_profile_contract_rejects_boolean_freshness_days() -> None:
+    payload = _manufacturing_profile()
+    payload["source_policy"] = dict(payload["source_policy"])
+    payload["source_policy"]["freshness_days_by_tier"] = dict(
+        payload["source_policy"]["freshness_days_by_tier"]
+    )
+    payload["source_policy"]["freshness_days_by_tier"]["official"] = True
+
+    violations = PolicyProfileContract.validate(payload)
+
+    assert any(
+        item.field == "source_policy.freshness_days_by_tier.official"
+        and "positive integer" in item.error
+        for item in violations
+    )
+
+
+def test_policy_profile_registry_discovers_root_and_packaged_profiles() -> None:
+    root_registry = PolicyProfileRegistry.from_config_dir(ROOT / "configs" / "policy_profiles")
+    package_registry = PolicyProfileRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        assert not registry.validation_errors
+        assert registry.profile_ids() == {"manufacturing_default"}
+        assert registry.get("manufacturing_default") is not None
+
+
+def test_policy_profile_config_parity_between_root_and_package_copy() -> None:
+    root_dir = ROOT / "configs" / "policy_profiles"
+    package_dir = ROOT / "src" / "multi_agent_brief" / "configs" / "policy_profiles"
+
+    for path in sorted(root_dir.glob("*.yaml")):
+        package_path = package_dir / path.name
+        assert package_path.exists()
+        assert yaml.safe_load(path.read_text(encoding="utf-8")) == yaml.safe_load(
+            package_path.read_text(encoding="utf-8")
+        )
+
+
+def test_report_pack_default_policy_profile_reference_is_validated() -> None:
+    policy_registry = PolicyProfileRegistry.from_config_dir(ROOT / "configs" / "policy_profiles")
+    report_registry = ReportPackRegistry.from_config_dir(
+        ROOT / "configs" / "report_packs",
+        known_policy_profiles=policy_registry.profile_ids(),
+    )
+
+    assert not report_registry.validation_errors
+    assert report_registry.default_policy_profile_by_pack() == {
+        "management_monthly": "manufacturing_default",
+        "market_weekly": "manufacturing_default",
+    }
+    assert report_registry.get("market_weekly").default_policy_profile == "manufacturing_default"
+
+
+def test_report_pack_payload_rejects_unknown_default_policy_profile() -> None:
+    payload = _market_pack()
+    payload["default_policy_profile"] = "missing_profile"
+
+    violations = validate_report_pack_payload(payload, known_policy_profiles={"manufacturing_default"})
+
+    assert any(item.field == "default_policy_profile" for item in violations)
+
+
+def test_report_pack_payload_rejects_default_spec_policy_profile_mismatch() -> None:
+    payload = _market_pack()
+    payload["default_report_spec"] = dict(payload["default_report_spec"])
+    payload["default_report_spec"]["policy_profile"] = "finance_default"
+
+    violations = validate_report_pack_payload(
+        payload,
+        known_policy_profiles={"manufacturing_default", "finance_default"},
+    )
+
+    assert any(item.field == "default_report_spec.policy_profile" for item in violations)
+
+
+def test_report_spec_validation_resolves_pack_default_policy_profile() -> None:
+    spec = _market_spec()
+    spec.pop("policy_profile", None)
+    report_registry = ReportPackRegistry.from_package()
+    policy_registry = PolicyProfileRegistry.from_package()
+
+    result = validate_report_spec_payload(
+        spec,
+        known_report_packs=report_registry.pack_ids(),
+        report_type_by_pack=report_registry.report_type_by_pack(),
+        known_policy_profiles=policy_registry.profile_ids(),
+        default_policy_profile_by_pack=report_registry.default_policy_profile_by_pack(),
+    )
+
+    assert result.ok
+    assert result.policy_profile is None
+    assert result.resolved_policy_profile == "manufacturing_default"
+
+
+def test_report_spec_validation_rejects_unknown_policy_profile() -> None:
+    spec = _market_spec()
+    spec["policy_profile"] = "missing_profile"
+    report_registry = ReportPackRegistry.from_package()
+    policy_registry = PolicyProfileRegistry.from_package()
+
+    result = validate_report_spec_payload(
+        spec,
+        known_report_packs=report_registry.pack_ids(),
+        report_type_by_pack=report_registry.report_type_by_pack(),
+        known_policy_profiles=policy_registry.profile_ids(),
+        default_policy_profile_by_pack=report_registry.default_policy_profile_by_pack(),
+    )
+
+    assert not result.ok
+    assert any(item.field == "policy_profile" for item in result.errors)
+
+
+def test_validate_report_spec_cli_reports_resolved_policy_profile(tmp_path: Path, capsys) -> None:
+    spec = _market_spec()
+    spec.pop("policy_profile", None)
+    spec_path = tmp_path / "report_spec.yaml"
+    spec_path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    assert main(["validate-report-spec", str(spec_path), "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["policy_profile"] is None
+    assert payload["resolved_policy_profile"] == "manufacturing_default"
+
+
+def test_policy_profiles_do_not_change_runtime_stage_contracts() -> None:
+    registry = ContractRegistry.from_config_dir(ROOT / "configs")
+
+    assert registry.artifact("policy_profile") is None
+    for stage in registry.stages:
+        assert "policy_profile" not in stage.produces
+        assert "policy_profile" not in stage.expected_artifacts
