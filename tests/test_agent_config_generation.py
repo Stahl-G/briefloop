@@ -191,6 +191,10 @@ def test_generated_scout_and_screener_are_topology_aware(manifest):
     assert "not completion order" in scout_rendered
     assert "Do not append to candidate_claims.json from chunk workers" in scout_rendered
     assert "read the already-joined candidate_claims.json" in scout_rendered
+    assert "source_url for HTTP(S) web sources or source_path for local/package sources" in scout_rendered
+    assert "Never place a title, search query" in scout_rendered
+    assert "Treat source_type as provider/storage type" in scout_rendered
+    assert "Treat source_category as the reader-facing evidence category" in scout_rendered
     assert "Use only when role_topology is strict" in screener_rendered
     assert "Default topology uses Scout to perform screening" in screener_rendered
     assert "Do not rediscover source material" in screener_rendered
@@ -294,6 +298,20 @@ def test_generated_assets_scope_claim_freeze_to_claim_ledger_runtime_protocol(ma
     ])
     assert "Do not read claim_drafts.json" in analyst_auditor
     assert "freeze-claim-ledger" not in analyst_auditor
+
+
+def test_generated_claim_ledger_preserves_source_metadata_contract(manifest):
+    role = manifest["roles"]["claim-ledger"]
+    rendered = "\n".join([
+        render_codex_agent("claim-ledger", role, manifest),
+        render_claude_agent("claim-ledger", role, manifest),
+        render_opencode_agent("claim-ledger", role, manifest),
+    ])
+
+    assert "source_url is only for HTTP(S) URLs" in rendered
+    assert "Do not put titles, source names, search" in rendered
+    assert "source_path plus source_title/source_name and source_category" in rendered
+    assert "Do not write output/intermediate/claim_ledger.json directly" in rendered
 
 
 def test_generated_analyst_and_auditor_use_frozen_ledger_contract(manifest):

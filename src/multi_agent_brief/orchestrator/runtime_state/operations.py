@@ -3729,6 +3729,13 @@ def _delegate_repair_transaction_required_error(*, workspace: Path, stage_id: st
             "required_commands": [
                 f"multi-agent-brief repair route --workspace {workspace}",
                 f"multi-agent-brief repair start --workspace {workspace}",
+                f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\"",
+            ],
+            "repair_steps": [
+                "Run repair start to open an owner-stage repair transaction.",
+                "Delegate only the reported repair_owner role.",
+                "Allow edits only to repair_route.allowed_artifacts.",
+                "Run repair complete after the owner edits.",
             ],
             "fallback_decisions": ["request_human_review", "block_run"],
             "repair_route": repair_route,

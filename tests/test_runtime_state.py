@@ -2266,6 +2266,9 @@ def test_state_decide_delegate_repair_requires_repair_transaction_without_mutati
     details = excinfo.value.details
     assert "multi-agent-brief repair route" in "\n".join(details["required_commands"])
     assert "multi-agent-brief repair start" in "\n".join(details["required_commands"])
+    assert "multi-agent-brief repair complete" in "\n".join(details["required_commands"])
+    assert "Delegate only the reported repair_owner role." in details["repair_steps"]
+    assert "Allow edits only to repair_route.allowed_artifacts." in details["repair_steps"]
     assert details["repair_route"]["repair_owner"] == "editor"
     assert details["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert details["repair_route"]["must_rerun_from"] == "auditor"
@@ -2302,6 +2305,9 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
     out = capsys.readouterr().out
     assert "multi-agent-brief repair route" in out
     assert "multi-agent-brief repair start" in out
+    assert "multi-agent-brief repair complete" in out
+    assert "[state] repair_steps:" in out
+    assert "Delegate only the reported repair_owner role." in out
     assert "[state] repair_owner: editor" in out
     assert "[state] must_rerun_from: auditor" in out
     assert "output/intermediate/audited_brief.md" in out
@@ -4750,6 +4756,7 @@ def test_state_check_blocks_modified_frozen_claim_ledger(tmp_path):
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "Frozen artifact" in str(excinfo.value)
     assert "owner stage 'claim-ledger'" in str(excinfo.value)
+    assert "Do not manually update artifact_registry.json" in str(excinfo.value)
     assert "Do not hand-edit metadata or synchronize hashes manually" in str(excinfo.value)
     assert "deterministic metadata enrichment transaction" in str(excinfo.value)
     assert _state_file(ws, "artifact_registry").read_bytes() == registry_before
@@ -4948,6 +4955,7 @@ def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
 
     assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
     assert "owner stage 'editor'" in str(excinfo.value)
+    assert "Do not manually update artifact_registry.json" in str(excinfo.value)
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert workflow["run_integrity"]["status"] == "contaminated"
     assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"

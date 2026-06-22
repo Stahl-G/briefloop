@@ -44,7 +44,8 @@ Context should include:
 - Approved evidence inputs, cached source packages, local source files, and source config
 - Write path: `output/intermediate/candidate_claims.json`
 - Default topology write path: `output/intermediate/screened_candidates.json`
-- Required fields: source path or URL, source date, evidence text, topic, claim type, confidence
+- Required fields: statement, evidence text, source identity, source date, topic, claim type, confidence
+- Source metadata: use `source_url` only for HTTP(S) URLs, `source_path` for local/package sources, and preserve source title/name, publisher when known, `source_category`, and provider `source_type`
 - Default topology screening fields: selected candidates, excluded candidates with reasons, and screening policy snapshot
 
 Optional Scout chunk parallelism is runtime-internal only. If the Hermes parent
@@ -76,7 +77,7 @@ Goal: Build MABW claim drafts for deterministic Python freezing.
 Input: `output/intermediate/screened_candidates.json`
 Write: `output/intermediate/claim_drafts.json`
 
-Write source-grounded claim drafts without `claim_id` fields. Preserve evidence text, source URL/path, publication date, retrieved date, topic, claim type, and confidence. Do not write `output/intermediate/claim_ledger.json`; after the child returns, run:
+Write source-grounded claim drafts without `claim_id` fields. Preserve evidence text, source URL/path, source title/name, publisher, `source_category`, provider `source_type`, publication date, retrieved date, topic, claim type, and confidence. `source_url` is only for HTTP(S) URLs; never put titles, source names, source IDs, search queries, or local paths in `source_url`. Do not write `output/intermediate/claim_ledger.json`; after the child returns, run:
 
 ```bash
 multi-agent-brief state freeze-claim-ledger --workspace <workspace>

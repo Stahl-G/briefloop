@@ -75,6 +75,21 @@ def test_skills_do_not_restore_old_generic_contracts():
             assert phrase not in text, f"{skill} contains old generic phrase: {phrase}"
 
 
+def test_source_writer_skills_lock_source_metadata_fields():
+    scout = _read(SKILL_ROOT / "scout" / "SKILL.md")
+    claim_ledger = _read(SKILL_ROOT / "claim-ledger" / "SKILL.md")
+
+    assert "source_url` for HTTP(S) web sources" in scout
+    assert "source_path` for local/package sources" in scout
+    assert "Never put a title, search query" in scout
+    assert "`source_type` is provider/storage type" in scout
+    assert "`source_category` is reader-facing evidence category" in scout
+
+    assert "`source_url` is only for HTTP(S) URLs" in claim_ledger
+    assert "Do not put titles, source names, source IDs, search queries, or local paths" in claim_ledger
+    assert "`source_path` plus `source_title` or `source_name` and `source_category`" in claim_ledger
+
+
 def test_hermes_skill_uses_progressive_disclosure():
     skill = HERMES_SKILL / "SKILL.md"
     text = _read(skill)

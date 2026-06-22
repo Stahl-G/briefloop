@@ -539,9 +539,17 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
         f"multi-agent-brief repair start --workspace {ws.resolve()} --json",
         f"multi-agent-brief repair complete --workspace {ws.resolve()} --reason \"<reason>\" --json",
     ]
+    assert payload["repair_steps"] == [
+        "Run repair start to open an owner-stage repair transaction.",
+        "Delegate only the reported repair_owner role.",
+        "Allow edits only to repair_route.allowed_artifacts.",
+        "Run repair complete after the owner edits.",
+        "Rerun downstream stages from repair_route.must_rerun_from.",
+    ]
     assert payload["repair_warnings"] == [
         "Do not edit frozen artifacts directly.",
         "Direct edits will mark the run contaminated and non-reference-eligible.",
+        "Never manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields.",
     ]
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -564,6 +572,10 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert "[gates show] repair_warnings:" in output
     assert "Do not edit frozen artifacts directly." in output
     assert "Direct edits will mark the run contaminated and non-reference-eligible." in output
+    assert "Never manually update artifact_registry.json" in output
+    assert "[gates show] repair_steps:" in output
+    assert "Delegate only the reported repair_owner role." in output
+    assert "Allow edits only to repair_route.allowed_artifacts." in output
     assert "[gates show] repair_owner: editor" in output
     assert "[gates show] must_rerun_from: auditor" in output
     assert "output/intermediate/audited_brief.md" in output

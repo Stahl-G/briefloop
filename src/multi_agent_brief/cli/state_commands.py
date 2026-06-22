@@ -424,6 +424,11 @@ def _print_error_details(exc: RuntimeStateError) -> None:
         print("[state] required_commands:")
         for command in required_commands:
             print(f"  - {command}")
+    repair_steps = details.get("repair_steps") or []
+    if repair_steps:
+        print("[state] repair_steps:")
+        for step in repair_steps:
+            print(f"  - {step}")
     repair_route = details.get("repair_route")
     if not isinstance(repair_route, dict):
         return

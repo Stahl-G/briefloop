@@ -20,7 +20,7 @@ Use when implementing or reviewing claim draft wording, source evidence storage,
 Responsibilities:
 - Write output/intermediate/claim_drafts.json without claim_id fields.
 - Ensure every claim links to a registered source entry.
-- Preserve source IDs and evidence text.
+- Preserve source IDs, source URL/path, source title/name, publisher, source_type, source_category, published_at, retrieved_at, and evidence text from screened candidates into claim_drafts.json metadata.
 - Carry useful Screener metadata forward.
 - Detect duplicate or unsupported claim drafts for Python freeze warnings and downstream repair.
 
@@ -29,6 +29,8 @@ Guardrails:
 - Write claim drafts only to output/intermediate/claim_drafts.json.
 - Do not write output/intermediate/claim_ledger.json directly.
 - Every claim must be traceable to registered source material.
+- source_url is only for HTTP(S) URLs. Do not put titles, source names, search queries, source IDs, or local paths in source_url.
+- Local-file or packaged sources may omit source_url only when source_path plus source_title/source_name and source_category are preserved.
 - Merge drafts only when traceability is preserved; otherwise keep separate drafts and let Python emit lexical duplicate warnings.
 - Keep language strength aligned with evidence strength.
 

@@ -252,9 +252,17 @@ roles:
     - Step 1 discovery always extracts structured candidate claims from source content
       and writes output/intermediate/candidate_claims.json once as the complete
       found universe.
-    - 'Each claim must include: statement, evidence_text, source_url, published_at
-      or retrieved_at, topic, claim_type, confidence.'
-    - Preserve source path, source ID, source date, and evidence text.
+    - 'Each claim must include: statement, evidence_text, source identity, published_at
+      or retrieved_at, topic, claim_type, and confidence. Source identity is either
+      source_url for HTTP(S) web sources or source_path for local/package sources.'
+    - Preserve source ID, source path or URL, source title/name, publisher when
+      known, source_category, provider source_type, source date, and evidence text.
+    - Treat source_url as a URL field only. Never place a title, search query,
+      generic source label, or local path in source_url; use source_title/source_name
+      and source_path instead.
+    - Treat source_type as provider/storage type, such as local_file or web_search.
+      Treat source_category as the reader-facing evidence category, such as regulator,
+      peer_reviewed_paper, company_press_release, market_report, news_media, or other.
     - Duplicates and near-duplicates must be represented or excluded with reasons;
       do not silently drop chunk-level outputs during the join.
     - Mark vague, stale-looking, duplicate-looking, or low-confidence items.
@@ -333,7 +341,9 @@ roles:
     responsibilities:
     - Write output/intermediate/claim_drafts.json without claim_id fields.
     - Ensure every claim links to a registered source entry.
-    - Preserve source IDs and evidence text.
+    - Preserve source IDs, source URL/path, source title/name, publisher, source_type,
+      source_category, published_at, retrieved_at, and evidence text from screened
+      candidates into claim_drafts.json metadata.
     - Carry useful Screener metadata forward.
     - Detect duplicate or unsupported claim drafts for Python freeze warnings and
       downstream repair.
@@ -343,6 +353,10 @@ roles:
     - Write claim drafts only to output/intermediate/claim_drafts.json.
     - Do not write output/intermediate/claim_ledger.json directly.
     - Every claim must be traceable to registered source material.
+    - source_url is only for HTTP(S) URLs. Do not put titles, source names, search
+      queries, source IDs, or local paths in source_url.
+    - Local-file or packaged sources may omit source_url only when source_path plus
+      source_title/source_name and source_category are preserved.
     - Merge drafts only when traceability is preserved; otherwise keep separate
       drafts and let Python emit lexical duplicate warnings.
     - Keep language strength aligned with evidence strength.

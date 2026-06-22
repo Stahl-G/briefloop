@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URLs. Invalid URLs stay unlinked and incomplete source metadata is surfaced as
   appendix notes; this is rendering hardening only, not source-policy gating or
   semantic support proof.
+- **Agent contract and repair guard hardening**: Scout and Claim Ledger runtime
+  contracts now explicitly separate HTTP(S) `source_url`, local/package
+  `source_path`, provider `source_type`, and reader-facing `source_category`.
+  Gate/state repair guidance now spells out the owner-stage repair transaction
+  path and warns against manually updating control files or SHA fields.
 
 ### Fixed
 

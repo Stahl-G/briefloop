@@ -108,6 +108,8 @@ your editorial judgment.
    - With `role_topology=strict`, Scout writes only `candidate_claims.json`; strict topology delegates Screener separately after Scout completion.
    - Optional chunk parallelism is parent-side only: chunk outputs are scratch/intermediate runtime material, not workflow artifacts.
    - If Scout work is split across chunks or child agents, the parent must join chunks deterministically before writing `candidate_claims.json`, using source identity, source path or URL, source date, topic, and evidence text rather than completion order.
+   - Source identity must preserve `source_url` only for HTTP(S) URLs or `source_path` for local/package sources, plus source title/name, publisher when known, source_category, provider source_type, source dates, and evidence text.
+   - Never put titles, source names, source IDs, search queries, or local paths in `source_url`.
    - Do not append to `candidate_claims.json` from chunk workers, and do not silently drop duplicate or near-duplicate chunk outputs.
    - Write `$ARGUMENTS/output/intermediate/candidate_claims.json`.
    - In default topology, also screen candidates and write `$ARGUMENTS/output/intermediate/screened_candidates.json` before recording `stage-complete --stage scout`.
@@ -127,6 +129,8 @@ your editorial judgment.
 
 8. Invoke the **claim-ledger** subagent:
    - Convert screened candidates into source-grounded claim drafts without `claim_id` fields.
+   - Preserve source URL/path, source title/name, publisher, source_category, provider source_type, published/retrieved dates, topic, claim type, confidence, and evidence text.
+   - Never put titles, source names, source IDs, search queries, or local paths in `source_url`.
    - Write `$ARGUMENTS/output/intermediate/claim_drafts.json`.
    - Check the expected freeze input artifact.
    - Run `multi-agent-brief state freeze-claim-ledger --workspace $ARGUMENTS`.
