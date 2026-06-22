@@ -102,6 +102,11 @@ def run_doctor(
             for error in validation_errors:
                 results.append(CheckResult("ERROR", error))
             if any("requires env var" in error for error in validation_errors):
+                results.append(CheckResult(
+                    "ERROR",
+                    "  Prefer importing private keys with `multi-agent-brief secrets import "
+                    "--workspace <workspace> --from ~/.env --keys <KEY>`.",
+                ))
                 results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))
                 results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
             if validation_errors:
@@ -128,6 +133,12 @@ def run_doctor(
                 else:
                     key_hint = api_key_env or "the configured API key env var"
                     results.append(CheckResult("ERROR", f"Web search backend '{backend_label}' is enabled, but {key_hint} is missing."))
+                    if api_key_env:
+                        results.append(CheckResult(
+                            "ERROR",
+                            "  Import it with: multi-agent-brief secrets import "
+                            f"--workspace {p.parent} --from ~/.env --keys {api_key_env}",
+                        ))
                     results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))
                     results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
 

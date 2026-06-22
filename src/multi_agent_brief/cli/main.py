@@ -38,6 +38,7 @@ from multi_agent_brief.cli import (
     improve_commands,
     experiments_commands,
     product_commands,
+    secrets_commands,
 )
 
 
@@ -60,6 +61,7 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     # Source health and discovery
     sources_commands.register_doctor(subparsers)
     sources_commands.register_sources(subparsers)
+    secrets_commands.register(subparsers)
 
     # Competitor universe
     competitors_commands.register(subparsers)
@@ -160,6 +162,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "sources":
         return sources_commands.handle_sources(args)
+
+    if cmd == "secrets":
+        return secrets_commands.handle(args)
 
     if cmd == "competitors":
         return competitors_commands.handle(args)

@@ -10,6 +10,124 @@ import pytest
 from multi_agent_brief.cli.main import main
 
 
+class TestSecretsImport:
+    """Deterministic workspace .env import without secret disclosure."""
+
+    def test_secrets_import_writes_env_but_redacts_output(self, tmp_path, capsys):
+        source = tmp_path / "private.env"
+        workspace = tmp_path / "workspace"
+        tavily_secret = "tvly-super-secret-123"
+        exa_secret = "sk-exa-super-secret-456"
+        source.write_text(
+            f"TAVILY_API_KEY={tavily_secret}\n"
+            f"EXA_API_KEY='{exa_secret}'\n",
+            encoding="utf-8",
+        )
+
+        exit_code = main([
+            "secrets",
+            "import",
+            "--workspace",
+            str(workspace),
+            "--from",
+            str(source),
+            "--keys",
+            "TAVILY_API_KEY",
+            "EXA_API_KEY",
+        ])
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        combined_output = captured.out + captured.err
+        assert "TAVILY_API_KEY=present sha256_prefix=" in captured.out
+        assert "EXA_API_KEY=present sha256_prefix=" in captured.out
+        assert tavily_secret not in combined_output
+        assert exa_secret not in combined_output
+        assert "tvly-" not in combined_output
+        assert "sk-" not in combined_output
+
+        env_text = (workspace / ".env").read_text(encoding="utf-8")
+        assert f"TAVILY_API_KEY={tavily_secret}" in env_text
+        assert f"EXA_API_KEY={exa_secret}" in env_text
+
+    def test_secrets_import_json_output_is_redacted(self, tmp_path, capsys):
+        source = tmp_path / "private.env"
+        workspace = tmp_path / "workspace"
+        secret = "tvly-json-secret-123"
+        source.write_text(f"TAVILY_API_KEY={secret}\n", encoding="utf-8")
+
+        exit_code = main([
+            "secrets",
+            "import",
+            "--workspace",
+            str(workspace),
+            "--from",
+            str(source),
+            "--keys",
+            "TAVILY_API_KEY",
+            "--json",
+        ])
+        captured = capsys.readouterr()
+
+        assert exit_code == 0
+        assert "TAVILY_API_KEY" in captured.out
+        assert "present" in captured.out
+        assert "sha256_prefix" in captured.out
+        assert secret not in captured.out
+        assert "tvly-" not in captured.out
+
+    def test_secrets_import_rejects_unknown_key_without_leaking_values(self, tmp_path, capsys):
+        source = tmp_path / "private.env"
+        workspace = tmp_path / "workspace"
+        source.write_text(
+            "TAVILY_API_KEY=tvly-super-secret-123\n"
+            "PRIVATE_VENDOR_TOKEN=not-for-briefloop\n",
+            encoding="utf-8",
+        )
+
+        exit_code = main([
+            "secrets",
+            "import",
+            "--workspace",
+            str(workspace),
+            "--from",
+            str(source),
+            "--keys",
+            "PRIVATE_VENDOR_TOKEN",
+        ])
+        captured = capsys.readouterr()
+
+        assert exit_code == 1
+        combined_output = captured.out + captured.err
+        assert "unsupported secret key" in combined_output
+        assert "not-for-briefloop" not in combined_output
+        assert "tvly-" not in combined_output
+        assert not (workspace / ".env").exists()
+
+    def test_writer_surfaces_do_not_instruct_copying_api_key_values(self):
+        surfaces = [
+            Path(".claude/commands/mabw.md"),
+            Path(".claude/commands/briefloop.md"),
+            Path(".claude/commands/init-brief.md"),
+            Path(".agents/skills/briefloop/SKILL.md"),
+            Path(".agents/skills/source-provider/SKILL.md"),
+            Path("src/multi_agent_brief/runtime_assets.py"),
+            Path("src/multi_agent_brief/hermes/adapter.py"),
+        ]
+        forbidden = [
+            "cat ~/.env",
+            "cat $HOME/.env",
+            "cat .env",
+            "Write(.env)",
+            "read and copy API key",
+            "paste API key value",
+        ]
+        for path in surfaces:
+            text = path.read_text(encoding="utf-8")
+            for phrase in forbidden:
+                assert phrase not in text, f"{path} suggests unsafe secret handling: {phrase}"
+
+
 class TestInitTavilyGuidance:
     """Init wizard Tavily opt-in and setup guidance."""
 

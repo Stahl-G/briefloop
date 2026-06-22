@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet.
+### Added
+
+- **Secret hygiene import command**: added `multi-agent-brief secrets import`
+  to copy allowlisted API keys into a workspace `.env` while redacting
+  stdout/stderr to `present` plus a SHA-256 prefix. Doctor guidance now points
+  operators to this command for private key setup; it does not print or log
+  secret values.
 
 ## [0.10.1] — 2026-06-22
 
