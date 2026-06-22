@@ -11,6 +11,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.outputs.finalize import (
+    interpret_finalize_audit_binding,
+    require_finalize_audit_binding_pass,
+)
 from multi_agent_brief.product.report_spec import ReportSpecLoadError, load_report_spec
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
@@ -96,6 +100,17 @@ def _load_finalize_report(workspace: Path) -> dict[str, Any]:
         raise ReportBundleProjectionError("finalize_report.json must contain an object.")
     if payload.get("status") != "pass":
         raise ReportBundleProjectionError("finalize_report.json status must be pass.")
+    audit_binding_reasons = require_finalize_audit_binding_pass(
+        interpret_finalize_audit_binding(
+            workspace=workspace,
+            finalize_report=payload,
+        )
+    )
+    if audit_binding_reasons:
+        raise ReportBundleProjectionError(
+            "finalize_report.json audit_binding must pass before building report bundles: "
+            + "; ".join(audit_binding_reasons)
+        )
     return payload
 
 
@@ -139,6 +154,7 @@ def _audit_records(workspace: Path, finalize_report: dict[str, Any]) -> list[dic
     candidates = [
         ("finalize_report", workspace / "output" / "intermediate" / "finalize_report.json"),
         ("claim_ledger", workspace / "output" / "intermediate" / "claim_ledger.json"),
+        ("audited_brief", workspace / "output" / "intermediate" / "audited_brief.md"),
         ("audit_report", workspace / "output" / "intermediate" / "audit_report.json"),
         ("artifact_registry", workspace / "output" / "intermediate" / "artifact_registry.json"),
         ("runtime_manifest", workspace / "output" / "intermediate" / "runtime_manifest.json"),

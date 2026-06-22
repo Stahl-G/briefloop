@@ -73,6 +73,7 @@ def _finalized_workspace(tmp_path: Path) -> Path:
     appendix.write_text("# Source Appendix\n", encoding="utf-8")
     control_files = {
         "claim_ledger.json": {"claims": []},
+        "audited_brief.md": "# Audited Brief\n\nClean audited text.\n",
         "audit_report.json": {"audit_status": "pass"},
         "artifact_registry.json": {"artifacts": {}},
         "runtime_manifest.json": {"run_id": "mabw-test-run"},
@@ -81,10 +82,12 @@ def _finalized_workspace(tmp_path: Path) -> Path:
         "claim_support_matrix.json": {"schema_version": "mabw.claim_support_matrix.v1"},
     }
     for filename, payload in control_files.items():
-        (intermediate / filename).write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
+        text = (
+            payload
+            if isinstance(payload, str)
+            else json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
         )
+        (intermediate / filename).write_text(text, encoding="utf-8")
     (intermediate / "event_log.jsonl").write_text(
         json.dumps({"event_type": "finalize_completed"}) + "\n",
         encoding="utf-8",
@@ -102,6 +105,13 @@ def _finalized_workspace(tmp_path: Path) -> Path:
         "reader_clean": {"status": "pass", "sample_findings": []},
         "delivery_artifacts": ["output/delivery/brief.md"],
         "delivery_artifact_sha256": {"output/delivery/brief.md": _sha256_file(brief)},
+        "audit_binding": {
+            "status": "pass",
+            "claim_ledger_sha256": _sha256_file(intermediate / "claim_ledger.json"),
+            "audited_brief_sha256": _sha256_file(intermediate / "audited_brief.md"),
+            "audit_report_sha256": _sha256_file(intermediate / "audit_report.json"),
+            "findings": [],
+        },
         "source_appendix": "output/source_appendix.md",
         "source_appendix_trace": "output/source_appendix_trace.md",
         "source_appendix_trace_generation": "generated",
@@ -152,6 +162,7 @@ def test_report_bundle_manifest_splits_delivery_and_audit_artifacts(tmp_path: Pa
     assert "output/source_appendix.md" in audit_paths
     assert "output/intermediate/finalize_report.json" in audit_paths
     assert "output/intermediate/claim_ledger.json" in audit_paths
+    assert "output/intermediate/audited_brief.md" in audit_paths
     assert not any(path.startswith("output/delivery/") for path in audit_paths)
     assert manifest["delivery_bundle"]["semantics"] == "reader_facing_artifacts_only"
     assert manifest["audit_bundle"]["semantics"] == "audit_control_artifacts_only_not_reader_delivery"
@@ -167,6 +178,38 @@ def test_report_bundle_manifest_rejects_stale_delivery_hash(tmp_path: Path) -> N
         assert "delivery artifact hash mismatch" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("Expected stale delivery hash rejection")
+
+
+def test_report_bundle_manifest_requires_passing_finalize_audit_binding(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    (ws / "output" / "intermediate" / "audited_brief.md").write_text(
+        "# Tampered\n\nChanged after finalize.\n",
+        encoding="utf-8",
+    )
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "audit_binding must pass" in str(exc)
+        assert (
+            "audit_binding.audited_brief_sha256 does not match current artifact bytes"
+            in str(exc)
+        )
+    else:  # pragma: no cover
+        raise AssertionError("Expected stale audit binding rejection")
+
+
+def test_report_bundle_manifest_requires_audited_brief_binding_target(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    (ws / "output" / "intermediate" / "audited_brief.md").unlink()
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "audit_binding must pass" in str(exc)
+        assert "audit_binding.audited_brief_sha256 target is missing" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected missing audited brief binding rejection")
 
 
 def test_report_bundle_manifest_rejects_missing_delivery_hash_map(tmp_path: Path) -> None:
