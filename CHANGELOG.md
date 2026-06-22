@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unless the target already looks like a BriefLoop workspace, preventing typo
   paths from creating stray `.env` files, and source metadata URL validation now
   requires an HTTP(S) scheme with a network location.
+- **Source Appendix rendering hardening**: reader-facing source appendices now
+  prefer source title, category, publisher/institution, dates, URL, and provider
+  type from Claim Ledger metadata, including usable local-file sources without
+  URLs. Invalid URLs stay unlinked and incomplete source metadata is surfaced as
+  appendix notes; this is rendering hardening only, not source-policy gating or
+  semantic support proof.
 
 ### Fixed
 
@@ -39,9 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `source_type` and `source_url` are now validated the same way Claim Ledger
   freeze materializes them, as local-file sources that must carry reader-facing
   source title/name and `source_category`.
-
-### Fixed
-
 - **Enriched source type rendering**: claim metadata enrichment now mirrors
   imported `source_url` and non-default `source_type` into the Claim Ledger
   fields read by Source Appendix rendering, so non-local imported sources are

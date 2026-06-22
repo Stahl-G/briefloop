@@ -29,6 +29,7 @@ def _write_public_safe_ledger(path: Path) -> None:
                 "source_title": "ExampleCo Opens Demo Facility",
                 "publisher": "Example News",
                 "published_at": "2026-06-01",
+                "source_category": "news_media",
             },
         }
     ]

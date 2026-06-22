@@ -39,6 +39,7 @@ def _claim(
             "source_title": "Example Source",
             "publisher": "Example News",
             "published_at": "2026-06-01",
+            "source_category": "news_media",
         },
     }
 
@@ -64,7 +65,7 @@ def test_source_appendix_uses_only_cited_claims_and_dedupes_sources(tmp_path: Pa
                 source_url="https://example.com/shared",
                 statement="First cited statement.",
                 evidence_text="Evidence for first cited statement must not render.",
-                metadata={"source_title": "Shared Source", "publisher": "Example News"},
+                metadata={"source_title": "Shared Source", "publisher": "Example News", "source_category": "news_media"},
             ),
             _claim(
                 "SYN_CLAIM_002",
@@ -72,7 +73,7 @@ def test_source_appendix_uses_only_cited_claims_and_dedupes_sources(tmp_path: Pa
                 source_url="https://example.com/shared",
                 statement="Second cited statement.",
                 evidence_text="Evidence for second cited statement must not render.",
-                metadata={"source_title": "Shared Source", "publisher": "Example News"},
+                metadata={"source_title": "Shared Source", "publisher": "Example News", "source_category": "news_media"},
             ),
             _claim(
                 "SYN_CLAIM_UNUSED",
@@ -80,7 +81,7 @@ def test_source_appendix_uses_only_cited_claims_and_dedupes_sources(tmp_path: Pa
                 source_url="https://example.com/unused",
                 statement="Unused statement.",
                 evidence_text="Unused evidence must not render.",
-                metadata={"source_title": "Unused Source", "publisher": "Example News"},
+                metadata={"source_title": "Unused Source", "publisher": "Example News", "source_category": "news_media"},
             ),
         ],
     )
@@ -135,7 +136,7 @@ def test_source_appendix_missing_cited_claim_warns_without_reader_leak(tmp_path:
             _claim(
                 "SYN_CLAIM_001",
                 source_id="SYN_SRC_001",
-                metadata={"source_title": "Visible Source", "publisher": "Example News"},
+                metadata={"source_title": "Visible Source", "publisher": "Example News", "source_category": "news_media"},
             ),
         ],
     )
@@ -145,7 +146,7 @@ def test_source_appendix_missing_cited_claim_warns_without_reader_leak(tmp_path:
 
     assert result.status == "generated_with_warnings"
     assert result.source_count == 1
-    assert any("not found" in warning for warning in result.warnings)
+    assert any("could not be resolved" in warning for warning in result.warnings)
     assert "Visible Source" in result.markdown
     assert "SYN_CLAIM_MISSING" not in result.markdown
 
@@ -163,6 +164,7 @@ def test_source_appendix_filters_local_paths_and_file_urls(tmp_path: Path):
                     "source_title": "/Users/example/private/source.md",
                     "publisher": "C:\\Users\\example\\Private",
                     "retrieved_at": "2026-06-01",
+                    "source_category": "peer_reviewed_paper",
                 },
             ),
         ],
@@ -174,11 +176,76 @@ def test_source_appendix_filters_local_paths_and_file_urls(tmp_path: Path):
     )
 
     assert result.source_count == 1
-    assert "Local workspace source" in result.markdown
+    assert "Source record" in result.markdown
     assert "/Users/" not in result.markdown
     assert "C:\\Users" not in result.markdown
     assert "file://" not in result.markdown
     assert result.warnings
+
+
+def test_source_appendix_renders_local_file_source_identity_without_url(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            {
+                "claim_id": "CL-001",
+                "statement": "Example journal reported the result.",
+                "source_id": "SRC-001",
+                "evidence_text": "Evidence text must not render.",
+                "source_type": "local_file",
+                "metadata": {
+                    "source_title": "Example Journal Article",
+                    "publisher": "Example Journal",
+                    "published_at": "2026-06-01",
+                    "source_category": "peer_reviewed_paper",
+                },
+            }
+        ],
+    )
+
+    result = build_source_appendix(
+        audited_markdown="Example journal reported the result. [src:CL-001]\n",
+        ledger_path=ledger,
+    )
+
+    assert result.status == "generated"
+    assert "### [S1] Example Journal Article" in result.markdown
+    assert "- Source category: Peer-reviewed paper" in result.markdown
+    assert "- Publisher/Institution: Example Journal" in result.markdown
+    assert "- Provider type: local_file" in result.markdown
+    assert "- URL:" not in result.markdown
+    assert "Local workspace source" not in result.markdown
+
+
+def test_source_appendix_omits_invalid_url_and_reports_note(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            _claim(
+                "CL-001",
+                source_id="SRC-001",
+                source_url="GEN Top 10 source title",
+                metadata={
+                    "source_title": "Example Source",
+                    "publisher": "Example Publisher",
+                    "source_category": "market_report",
+                },
+            ),
+        ],
+    )
+
+    result = build_source_appendix(
+        audited_markdown="Example source reported the result. [src:CL-001]\n",
+        ledger_path=ledger,
+    )
+
+    assert result.status == "generated_with_warnings"
+    assert "GEN Top 10" not in result.markdown
+    assert "- URL:" not in result.markdown
+    assert "## Appendix Notes" in result.markdown
+    assert "Omitted source URL because it was not an HTTP(S) URL." in result.markdown
 
 
 def test_source_appendix_filters_internal_id_shaped_metadata(tmp_path: Path):
@@ -193,6 +260,7 @@ def test_source_appendix_filters_internal_id_shaped_metadata(tmp_path: Path):
                     "source_title": "SYN_SRC_001",
                     "publisher": "CLAIM_INTERNAL_001",
                     "published_at": "2026-06-01",
+                    "source_category": "news_media",
                 },
             ),
         ],
@@ -207,6 +275,8 @@ def test_source_appendix_filters_internal_id_shaped_metadata(tmp_path: Path):
     assert "CLAIM_INTERNAL_001" not in result.markdown
     assert "Source record" in result.markdown
     assert result.warnings
+    assert "Source metadata missing source title/name." in result.markdown
+    assert "Source metadata missing publisher/institution." in result.markdown
 
 
 def test_source_appendix_adds_reader_safe_span_summary_and_audit_trace(tmp_path: Path):
@@ -234,6 +304,7 @@ def test_source_appendix_adds_reader_safe_span_summary_and_audit_trace(tmp_path:
                     "source_title": "ExampleCo Source",
                     "publisher": "Example News",
                     "published_at": "2026-06-01",
+                    "source_category": "news_media",
                 },
             ),
         ],
@@ -310,7 +381,7 @@ def test_source_appendix_aggregates_trace_spans_for_deduped_source_ids(tmp_path:
                 source_url="https://example.com/shared",
                 statement="ExampleCo shipments reached 12 MW.",
                 evidence_text=excerpt_1,
-                metadata={"source_title": "Shared Source", "publisher": "Example News"},
+                metadata={"source_title": "Shared Source", "publisher": "Example News", "source_category": "news_media"},
             ),
             _claim(
                 "CL-002",
@@ -318,7 +389,7 @@ def test_source_appendix_aggregates_trace_spans_for_deduped_source_ids(tmp_path:
                 source_url="https://example.com/shared",
                 statement="ExampleCo shipments reached 18 MW.",
                 evidence_text=excerpt_2,
-                metadata={"source_title": "Shared Source", "publisher": "Example News"},
+                metadata={"source_title": "Shared Source", "publisher": "Example News", "source_category": "news_media"},
             ),
         ],
     )
@@ -401,7 +472,7 @@ def test_source_appendix_skips_trace_non_blockingly_when_source_pack_mismatches(
                 source_url="https://example.com/source-001",
                 statement="ExampleCo shipments reached 12 MW.",
                 evidence_text=raw_excerpt,
-                metadata={"source_title": "ExampleCo Source", "publisher": "Example News"},
+                metadata={"source_title": "ExampleCo Source", "publisher": "Example News", "source_category": "news_media"},
             ),
         ],
     )

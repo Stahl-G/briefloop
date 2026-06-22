@@ -7,6 +7,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import urlparse
 
+from multi_agent_brief.contracts.source_metadata import VALID_SOURCE_CATEGORIES
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
@@ -19,6 +20,17 @@ _INTERNAL_ID_RE = re.compile(
     r"\b(?:SYN_)?(?:CLAIM|SRC|SOURCE|CLM)_[A-Z0-9][A-Z0-9_-]*\b"
 )
 _TRACE_EXCERPT_LIMIT = 500
+_SOURCE_CATEGORY_LABELS = {
+    "clin" + "ical_registry": "Clinical registry",
+    "company_press_release": "Company press release",
+    "industry_database": "Industry database",
+    "market_report": "Market report",
+    "news_media": "News media",
+    "other": "Other",
+    "peer_reviewed_paper": "Peer-reviewed paper",
+    "preprint": "Preprint",
+    "regulator": "Regulator",
+}
 
 
 @dataclass
@@ -32,6 +44,7 @@ class SourceAppendixRecord:
     retrieved_at: str = ""
     url: str = ""
     source_type: str = ""
+    source_category: str = ""
     claim_count: int = 0
     span_count: int = 0
     span_roles: list[str] = field(default_factory=list)
@@ -114,7 +127,7 @@ def build_source_appendix(
     for claim_id in claim_ids:
         claim = ledger.get_claim(claim_id)
         if claim is None:
-            warnings.append("A cited claim was not found in the Claim Ledger.")
+            warnings.append("A cited source reference could not be resolved.")
             continue
         resolved_claim_count += 1
         source_record, source_warnings = _record_from_claim(claim)
@@ -207,19 +220,21 @@ def render_source_appendix(
     if not records:
         lines.extend(["No reader-facing sources could be resolved from cited claims.", ""])
     for record in records:
-        title = record.title or "Local workspace source"
+        title = record.title or "Source record"
         lines.append(f"### [{record.label}] {title}")
         lines.append("")
+        if record.source_category:
+            lines.append(f"- Source category: {_source_category_label(record.source_category)}")
         if record.publisher:
-            lines.append(f"- Publisher: {record.publisher}")
+            lines.append(f"- Publisher/Institution: {record.publisher}")
         if record.published_at:
             lines.append(f"- Published: {record.published_at}")
         if record.retrieved_at:
             lines.append(f"- Retrieved: {record.retrieved_at}")
         if record.url:
             lines.append(f"- URL: {record.url}")
-        if record.source_type and record.source_type != "local_file":
-            lines.append(f"- Source type: {record.source_type}")
+        if record.source_type:
+            lines.append(f"- Provider type: {record.source_type}")
         lines.append(f"- Used in: {record.claim_count} claim-backed statement{'s' if record.claim_count != 1 else ''}")
         if record.span_count:
             role_summary = ", ".join(_reader_role_label(role) for role in record.span_roles)
@@ -235,6 +250,9 @@ def render_source_appendix(
             "Some cited source metadata was incomplete or omitted from reader-facing output.",
             "",
         ])
+        for warning in sorted(dict.fromkeys(warnings)):
+            lines.append(f"- {warning}")
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -245,6 +263,7 @@ def _record_from_claim(claim: Claim) -> tuple[SourceAppendixRecord, list[str]]:
         metadata.get("source_title"),
         metadata.get("title"),
         metadata.get("source_name"),
+        claim.source_id,
     )
     raw_publisher = _first_text(metadata.get("publisher"), metadata.get("source_name"))
     title, title_warning = _safe_display_text(raw_title, field_name="source title")
@@ -268,8 +287,20 @@ def _record_from_claim(claim: Claim) -> tuple[SourceAppendixRecord, list[str]]:
     if type_warning:
         warnings.append(type_warning)
 
+    source_category, category_warning = _safe_source_category(
+        _first_text(metadata.get("source_category"), metadata.get("evidence_category"))
+    )
+    if category_warning:
+        warnings.append(category_warning)
+    if not source_category:
+        warnings.append("Source metadata missing source category.")
     if not title:
-        title = "Local workspace source" if not url else "Source record"
+        warnings.append("Source metadata missing source title/name.")
+    if not publisher:
+        warnings.append("Source metadata missing publisher/institution.")
+
+    if not title:
+        title = "Source record"
 
     return (
         SourceAppendixRecord(
@@ -281,6 +312,7 @@ def _record_from_claim(claim: Claim) -> tuple[SourceAppendixRecord, list[str]]:
             retrieved_at=retrieved_at,
             url=url,
             source_type=source_type,
+            source_category=source_category,
         ),
         warnings,
     )
@@ -295,6 +327,7 @@ def _claim_source_map_record(record: SourceAppendixRecord) -> dict[str, str]:
         "source_published_at": record.published_at,
         "retrieved_at": record.retrieved_at,
         "source_type": record.source_type,
+        "source_category": record.source_category,
     }
 
 
@@ -462,6 +495,10 @@ def _reader_role_label(role: str) -> str:
     return role.replace("_", " ").strip()
 
 
+def _source_category_label(category: str) -> str:
+    return _SOURCE_CATEGORY_LABELS.get(category, category.replace("_", " ").strip().title())
+
+
 def _cap_excerpt(text: str) -> str:
     if len(text) <= _TRACE_EXCERPT_LIMIT:
         return text
@@ -511,6 +548,15 @@ def _safe_url(value: str) -> tuple[str, str]:
     parsed = urlparse(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return "", "Omitted source URL because it was not an HTTP(S) URL."
+    return raw, ""
+
+
+def _safe_source_category(value: str) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return "", ""
+    if raw not in VALID_SOURCE_CATEGORIES:
+        return "", "Omitted source category because it was not recognized."
     return raw, ""
 
 

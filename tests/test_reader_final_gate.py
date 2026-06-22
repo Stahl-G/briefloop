@@ -138,9 +138,11 @@ This appendix lists source records used by the brief; it is not a semantic proof
 
 ### [S1] ExampleCo Opens Demo Facility
 
-- Publisher: Example News
+- Source category: News media
+- Publisher/Institution: Example News
 - Published: 2026-06-01
 - URL: https://example.com/exampleco-demo
+- Provider type: web_search
 - Used in: 1 claim-backed statement
 """
 

@@ -57,6 +57,7 @@ def _write_claim_ledger(path: Path) -> None:
                 "source_title": "ExampleCo Opens Demo Facility",
                 "publisher": "Example News",
                 "published_at": "2026-06-01",
+                "source_category": "news_media",
             },
         },
         {
@@ -70,6 +71,7 @@ def _write_claim_ledger(path: Path) -> None:
                 "source_title": "Q1 Results",
                 "publisher": "ExampleCo",
                 "published_at": "2026-05-15",
+                "source_category": "company_press_release",
             },
         },
         {
@@ -81,6 +83,7 @@ def _write_claim_ledger(path: Path) -> None:
             "metadata": {
                 "source_title": "Unused Source",
                 "publisher": "Example News",
+                "source_category": "news_media",
             },
         },
     ]
@@ -100,6 +103,7 @@ def _write_single_claim_ledger(path: Path, *, claim_id: str = "CL-001") -> None:
                 "source_title": "ExampleCo Opens Demo Facility",
                 "publisher": "Example News",
                 "published_at": "2026-06-01",
+                "source_category": "news_media",
             },
         }
     ]
@@ -831,6 +835,7 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
         "source_published_at": "2026-06-01",
         "retrieved_at": "",
         "source_type": "web_search",
+        "source_category": "news_media",
     }
     assert "ExampleCo Opens Demo Facility" in appendix
     assert "Unused Source" not in appendix
