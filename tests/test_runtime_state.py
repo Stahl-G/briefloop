@@ -36,6 +36,7 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decis
 from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
+from multi_agent_brief.outputs.source_appendix import build_source_appendix
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -2871,6 +2872,8 @@ def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):
     assert claim["metadata"]["source_title"] == "ExampleCo Demo Facility"
     assert claim["metadata"]["source_name"] == "Example Wire"
     assert claim["metadata"]["publisher"] == "Example Publisher"
+    assert claim["metadata"]["source_url"] == "https://example.com/news"
+    assert claim["metadata"]["source_type"] == "public_web"
     assert claim["metadata"]["source_category"] == "news_media"
     assert claim["metadata"]["topic"] == "demo market"
 
@@ -2887,6 +2890,9 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
             "title": "ExampleCo Demo Facility",
             "name": "Example Wire",
             "publisher": "Example Publisher",
+            "source_url": "https://example.com/news",
+            "source_type": "local_file",
+            "source_category": "news_media",
             "topic": "demo market",
         },
     )
@@ -2904,7 +2910,17 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
     assert claim["metadata"]["source_title"] == "ExampleCo Demo Facility"
     assert claim["metadata"]["source_name"] == "Example Wire"
     assert claim["metadata"]["publisher"] == "Example Publisher"
+    assert claim["metadata"]["source_url"] == "https://example.com/news"
+    assert claim["metadata"]["source_type"] == "local_file"
+    assert claim["metadata"]["source_category"] == "news_media"
     assert claim["metadata"]["topic"] == "demo market"
+    appendix = build_source_appendix(
+        audited_markdown="ExampleCo opened a demo facility. [src:CL-0001]",
+        ledger_path=ledger_path,
+    )
+    assert "[S1] ExampleCo Demo Facility" in appendix.markdown
+    assert "- Publisher: Example Publisher" in appendix.markdown
+    assert "- URL: https://example.com/news" in appendix.markdown
     assert claim["metadata"]["source_path"] == "input/sources/source-001.json"
     manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
     registry = json.loads(_state_file(ws, "artifact_registry").read_text(encoding="utf-8"))

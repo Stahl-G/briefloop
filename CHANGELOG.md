@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metadata. This is contract validation only; source appendix rendering,
   metadata enrichment, and source-policy gates remain separate follow-up
   surfaces.
+- **Claim metadata freeze/enrichment hardening**: Claim Ledger freeze and the
+  deterministic `state enrich-claim-metadata --from-source-evidence`
+  transaction now preserve `source_url`, `source_type`, and `source_category`
+  in claim metadata so source appendix rendering has stable source identity
+  inputs. The transaction still only enriches metadata, updates hashes,
+  registry, workflow, and events atomically, and remains fail-closed after
+  finalize or downstream completion.
 
 ## [0.10.1] — 2026-06-22
 
