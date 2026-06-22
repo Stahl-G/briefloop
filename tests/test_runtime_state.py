@@ -2895,7 +2895,7 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
             "name": "Example Wire",
             "publisher": "Example Publisher",
             "source_url": "https://example.com/news",
-            "source_type": "local_file",
+            "source_type": "web_search",
             "source_category": "news_media",
             "topic": "demo market",
         },
@@ -2915,9 +2915,11 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
     assert claim["metadata"]["source_name"] == "Example Wire"
     assert claim["metadata"]["publisher"] == "Example Publisher"
     assert claim["metadata"]["source_url"] == "https://example.com/news"
-    assert claim["metadata"]["source_type"] == "local_file"
+    assert claim["metadata"]["source_type"] == "web_search"
     assert claim["metadata"]["source_category"] == "news_media"
     assert claim["metadata"]["topic"] == "demo market"
+    assert claim["source_url"] == "https://example.com/news"
+    assert claim["source_type"] == "web_search"
     appendix = build_source_appendix(
         audited_markdown="ExampleCo opened a demo facility. [src:CL-0001]",
         ledger_path=ledger_path,
@@ -2925,6 +2927,8 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
     assert "[S1] ExampleCo Demo Facility" in appendix.markdown
     assert "- Publisher: Example Publisher" in appendix.markdown
     assert "- URL: https://example.com/news" in appendix.markdown
+    assert "- Source type: web_search" in appendix.markdown
+    assert appendix.claim_source_map["CL-0001"]["source_type"] == "web_search"
     assert claim["metadata"]["source_path"] == "input/sources/source-001.json"
     manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
     registry = json.loads(_state_file(ws, "artifact_registry").read_text(encoding="utf-8"))

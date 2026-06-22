@@ -2365,6 +2365,7 @@ def _claims_with_enriched_metadata(
             enriched_claims.append(next_claim)
             continue
         authority_metadata = authority["metadata"]
+        original_metadata = dict(current_metadata)
         changed_fields: list[str] = []
         for field in CLAIM_METADATA_ENRICHMENT_ALLOWED_FIELDS:
             new_value = authority_metadata.get(field)
@@ -2397,12 +2398,19 @@ def _claims_with_enriched_metadata(
             if not (isinstance(existing, str) and existing.strip()):
                 current_metadata[field] = new_value.strip()
                 changed_fields.append(field)
+        changed_fields.extend(
+            _sync_enriched_claim_source_fields(
+                next_claim=next_claim,
+                original_metadata=original_metadata,
+                authority_metadata=authority_metadata,
+            )
+        )
         if changed_fields:
             next_claim["metadata"] = current_metadata
             enrichment_records.append({
                 "claim_id": str(next_claim.get("claim_id") or ""),
                 "source_id": source_id,
-                "fields": sorted(changed_fields),
+                "fields": sorted(set(changed_fields)),
                 "source_workspace_path": authority["workspace_path"],
                 "source_sha256": authority["sha256"],
             })
@@ -2421,6 +2429,40 @@ def _claims_with_enriched_metadata(
             error_code=E_TRANSACTION_INTEGRITY,
         )
     return enriched_claims, enrichment_records
+
+
+def _sync_enriched_claim_source_fields(
+    *,
+    next_claim: dict[str, Any],
+    original_metadata: dict[str, Any],
+    authority_metadata: dict[str, Any],
+) -> list[str]:
+    """Mirror enriched source identity into Claim top-level fields used by readers."""
+
+    changed_fields: list[str] = []
+
+    source_url = authority_metadata.get("source_url")
+    if isinstance(source_url, str) and source_url.strip():
+        existing_url = next_claim.get("source_url")
+        if not (isinstance(existing_url, str) and existing_url.strip()):
+            next_claim["source_url"] = source_url.strip()
+            changed_fields.append("source_url")
+
+    source_type = authority_metadata.get("source_type")
+    if isinstance(source_type, str) and source_type.strip():
+        existing_type = next_claim.get("source_type")
+        existing_metadata_type = original_metadata.get("source_type")
+        has_explicit_metadata_type = isinstance(existing_metadata_type, str) and bool(
+            existing_metadata_type.strip()
+        )
+        if not (isinstance(existing_type, str) and existing_type.strip()):
+            next_claim["source_type"] = source_type.strip()
+            changed_fields.append("source_type")
+        elif existing_type.strip() == "local_file" and not has_explicit_metadata_type:
+            next_claim["source_type"] = source_type.strip()
+            changed_fields.append("source_type")
+
+    return changed_fields
 
 
 def _workflow_allows_claim_metadata_enrichment(workflow: dict[str, Any], stages: list[dict[str, Any]]) -> None:
