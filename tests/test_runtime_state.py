@@ -444,6 +444,8 @@ def _valid_claim_drafts_payload(*, duplicate: bool = False) -> str:
             "statement": "ExampleCo opened a demo facility.",
             "source_id": "SRC-001",
             "evidence_text": "Example evidence.",
+            "source_title": "ExampleCo Demo Facility",
+            "source_category": "news_media",
             "claim_type": "fact",
             "confidence": "medium",
         },
@@ -451,6 +453,8 @@ def _valid_claim_drafts_payload(*, duplicate: bool = False) -> str:
             "statement": "BetaCo expanded module output.",
             "source_id": "SRC-002",
             "evidence_text": "Second example evidence.",
+            "source_title": "BetaCo source",
+            "source_category": "news_media",
             "claim_type": "fact",
             "confidence": "medium",
         },
@@ -3403,6 +3407,8 @@ def test_state_freeze_claim_ledger_cli_json_explains_invalid_claim_type(tmp_path
                         "statement": "ExampleCo opened a demo facility.",
                         "source_id": "SRC-001",
                         "evidence_text": "Example evidence.",
+                        "source_title": "ExampleCo Demo Facility",
+                        "source_category": "news_media",
                         "claim_type": "unsupported",
                     }
                 ],
@@ -3545,6 +3551,34 @@ def test_state_check_marks_claim_drafts_with_claim_id_invalid(tmp_path):
     record = state["artifact_registry"]["artifacts"]["claim_drafts"]
     assert record["status"] == "invalid"
     assert record["validation_result"] == "claim_drafts_schema_error:drafts[0].claim_id"
+
+
+def test_state_check_marks_claim_drafts_omitted_source_type_without_url_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    record = state["artifact_registry"]["artifacts"]["claim_drafts"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "claim_drafts_schema_error:drafts[0].source_category"
 
 
 def test_state_check_marks_claim_drafts_with_nested_claim_id_invalid(tmp_path):

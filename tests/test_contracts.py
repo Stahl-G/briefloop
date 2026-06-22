@@ -875,6 +875,27 @@ class TestClaimDraftContract:
         assert ClaimDraftContract.validate(data) == []
         assert ClaimDraftContract.is_valid(data)
 
+    def test_claim_drafts_treat_omitted_source_type_without_url_as_local_file(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                }
+            ],
+        }
+
+        violations = ClaimDraftContract.validate(data)
+
+        assert any(
+            violation.field == "drafts[0].source_category"
+            and violation.severity == "error"
+            for violation in violations
+        )
+        assert not ClaimDraftContract.is_valid(data)
+
     def test_claim_drafts_warn_when_source_category_missing(self):
         data = {
             "schema_version": "mabw.claim_drafts.v1",
@@ -1040,6 +1061,7 @@ class TestClaimDraftContract:
             "statement": "ExampleCo opened a demo facility.",
             "source_id": "SRC-001",
             "evidence_text": "Example evidence.",
+            "source_title": "Example source",
             "source_category": "news_media",
         }
         data = {

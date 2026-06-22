@@ -263,7 +263,10 @@ def _validate_draft_entry(data: Any, idx: int) -> list[FieldViolation]:
                 severity="warning",
             )
         )
-    missing_local_identity = local_file_without_url_missing_identity(data)
+    missing_local_identity = local_file_without_url_missing_identity(
+        data,
+        default_source_type="local_file",
+    )
     if missing_local_identity:
         violations.append(
             FieldViolation(

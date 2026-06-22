@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   paths from creating stray `.env` files, and source metadata URL validation now
   requires an HTTP(S) scheme with a network location.
 
+### Fixed
+
+- **Source metadata local-file default validation**: claim drafts that omit
+  `source_type` and `source_url` are now validated the same way Claim Ledger
+  freeze materializes them, as local-file sources that must carry reader-facing
+  source title/name and `source_category`.
+
 ## [0.10.1] — 2026-06-22
 
 ### Added
