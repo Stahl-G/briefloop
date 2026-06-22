@@ -6,6 +6,13 @@ from typing import Any, ClassVar
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import FieldViolation
+from multi_agent_brief.contracts.source_metadata import (
+    SOURCE_CATEGORY_FIELD,
+    local_file_without_url_missing_identity,
+    source_category_error,
+    source_category_missing,
+    source_url_error,
+)
 
 REQUIRED_FIELDS = {"claim_id", "statement", "source_id", "evidence_text"}
 KNOWN_FIELDS = REQUIRED_FIELDS | {
@@ -101,6 +108,46 @@ class ClaimContract(Contract):
                 field="evidence_relation",
                 error=f"invalid evidence_relation '{evidence_rel}', must be one of {sorted(VALID_EVIDENCE_RELATION)}",
             ))
+
+        url_error = source_url_error(data.get("source_url"))
+        if url_error:
+            violations.append(FieldViolation(field="source_url", error=url_error))
+
+        metadata = data.get("metadata")
+        if metadata is not None and not isinstance(metadata, dict):
+            violations.append(FieldViolation(field="metadata", error="must be an object"))
+            metadata = {}
+        metadata = metadata or {}
+        metadata_url_error = source_url_error(metadata.get("source_url"))
+        if metadata_url_error:
+            violations.append(FieldViolation(field="metadata.source_url", error=metadata_url_error))
+        metadata_category_error = source_category_error(metadata.get(SOURCE_CATEGORY_FIELD))
+        if metadata_category_error:
+            violations.append(
+                FieldViolation(field=f"metadata.{SOURCE_CATEGORY_FIELD}", error=metadata_category_error)
+            )
+        elif source_category_missing(metadata):
+            violations.append(
+                FieldViolation(
+                    field=f"metadata.{SOURCE_CATEGORY_FIELD}",
+                    error="recommended reader-facing source category is missing",
+                    severity="warning",
+                )
+            )
+        metadata_record = {
+            **metadata,
+            "source_type": data.get("source_type") or metadata.get("source_type"),
+            "source_url": data.get("source_url") or metadata.get("source_url"),
+        }
+        missing_local_identity = local_file_without_url_missing_identity(metadata_record)
+        if missing_local_identity:
+            violations.append(
+                FieldViolation(
+                    field=f"metadata.{missing_local_identity}",
+                    error="local_file sources without a URL should carry source title/name and source_category",
+                    severity="warning",
+                )
+            )
 
         # Unknown fields as warnings
         unknown = set(data.keys()) - KNOWN_FIELDS

@@ -1773,6 +1773,69 @@ def test_state_check_accepts_contract_candidate_with_source_path_only(tmp_path):
     assert record["validation_result"] == "valid_candidate_claims_schema"
 
 
+def test_state_check_accepts_local_file_candidate_with_source_category(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "evidence_text": "ExampleCo opened a demo facility in June.",
+                    "source_type": "local_file",
+                    "source_path": "input/sources/source-001.md",
+                    "source_title": "Example clinical paper",
+                    "source_category": "peer_reviewed_paper",
+                    "published_at": "2026-06-01",
+                    "topic": "demo market",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_candidate_claims_schema"
+
+
+def test_state_check_rejects_contract_candidate_plain_text_source_url(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "evidence_text": "ExampleCo opened a demo facility in June.",
+                    "source_url": "GEN Top 10 organoid companies",
+                    "published_at": "2026-06-01",
+                    "topic": "demo market",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "candidate_claims_schema_error:candidate[0].source_url"
+
+
 def test_state_check_rejects_contract_candidate_without_source_identity(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -1946,6 +2009,85 @@ def test_state_check_accepts_object_screened_candidates_with_source_url_identity
 
     assert record["status"] == "valid"
     assert record["validation_result"] == "valid_screened_candidates_schema"
+
+
+def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_type": "local_file",
+                        "source_path": "input/sources/source-001.md",
+                        "source_title": "Example clinical paper",
+                        "source_category": "peer_reviewed_paper",
+                        "published_at": "2026-06-01",
+                        "topic": "market",
+                        "claim_type": "fact",
+                        "confidence": "high",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "statement": "An older duplicate item.",
+                        "reason": "duplicate",
+                    }
+                ],
+                "screening_policy": {"max_items": 8, "freshness_window_days": 90},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_screened_candidates_schema"
+
+
+def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_url": "GEN Top 10 organoid companies",
+                        "published_at": "2026-06-01",
+                        "topic": "market",
+                        "claim_type": "fact",
+                        "confidence": "high",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "statement": "An older duplicate item.",
+                        "reason": "duplicate",
+                    }
+                ],
+                "screening_policy": {"max_items": 8, "freshness_window_days": 90},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:selected[0].source_url"
 
 
 def test_state_check_rejects_object_screened_candidates_without_selected_evidence(tmp_path):
@@ -2708,6 +2850,7 @@ def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):
                         "source_title": "ExampleCo Demo Facility",
                         "source_name": "Example Wire",
                         "publisher": "Example Publisher",
+                        "source_category": "news_media",
                         "topic": "demo market",
                     }
                 ],
@@ -2728,6 +2871,7 @@ def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):
     assert claim["metadata"]["source_title"] == "ExampleCo Demo Facility"
     assert claim["metadata"]["source_name"] == "Example Wire"
     assert claim["metadata"]["publisher"] == "Example Publisher"
+    assert claim["metadata"]["source_category"] == "news_media"
     assert claim["metadata"]["topic"] == "demo market"
 
 

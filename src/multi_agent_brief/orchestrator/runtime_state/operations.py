@@ -208,6 +208,7 @@ CLAIM_DRAFT_PROVENANCE_METADATA_FIELDS = (
     "source_title",
     "source_name",
     "publisher",
+    "source_category",
     "topic",
 )
 CLAIM_METADATA_ENRICHMENT_ALLOWED_FIELDS = CLAIM_DRAFT_PROVENANCE_METADATA_FIELDS
@@ -2279,6 +2280,7 @@ def _source_evidence_metadata_from_file(path: Path, *, workspace_path: str) -> d
         "source_title": ("source_title", "title"),
         "source_name": ("source_name", "name"),
         "publisher": ("publisher", "source_publisher"),
+        "source_category": ("source_category", "evidence_category"),
         "topic": ("topic", "category"),
         "source_id": ("source_id", "id"),
     }
@@ -2299,6 +2301,7 @@ def _source_evidence_metadata_from_markdown(path: Path, *, workspace_path: str) 
         "source_title": ("title", "source_title"),
         "source_name": ("source_name", "name"),
         "publisher": ("publisher", "source_publisher"),
+        "source_category": ("source_category", "evidence_category"),
         "topic": ("topic", "category"),
         "source_id": ("source_id", "source id", "id"),
     }

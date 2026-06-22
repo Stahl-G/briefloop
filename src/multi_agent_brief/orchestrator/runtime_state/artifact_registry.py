@@ -17,6 +17,11 @@ from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
+from multi_agent_brief.contracts.source_metadata import (
+    local_file_without_url_missing_identity,
+    source_category_error,
+    source_url_error,
+)
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
@@ -200,6 +205,17 @@ def _validate_contract_candidate_claim(
         value = candidate.get(field)
         if not isinstance(value, str) or not value.strip():
             return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
+    url_error = source_url_error(candidate.get("source_url"))
+    if url_error:
+        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].source_url"
+    category_error = source_category_error(candidate.get("source_category"))
+    if category_error:
+        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].source_category"
+    local_identity_error = local_file_without_url_missing_identity(candidate)
+    if local_identity_error:
+        return ARTIFACT_INVALID, (
+            f"candidate_claims_schema_error:candidate[{idx}].{local_identity_error}"
+        )
     if not _candidate_claim_has_source_identity(candidate):
         return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].source_url_or_source_path"
     if not _candidate_claim_has_source_date(candidate):
@@ -308,6 +324,13 @@ def _selected_screened_candidate_error(candidate: Any) -> str | None:
     for field in ("statement", "evidence_text"):
         if not _non_empty_string(candidate.get(field)):
             return field
+    if source_url_error(candidate.get("source_url")):
+        return "source_url"
+    if source_category_error(candidate.get("source_category")):
+        return "source_category"
+    local_identity_error = local_file_without_url_missing_identity(candidate)
+    if local_identity_error:
+        return local_identity_error
     if not _screened_candidate_has_source_identity(candidate):
         return "source_id_or_source_url_or_source_path"
     if not _candidate_claim_has_source_date(candidate):
