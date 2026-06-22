@@ -70,6 +70,7 @@ def handle(args: argparse.Namespace) -> int:
             output_filename_tokens=settings.get("output_filename_tokens", {}),
             docx_template=output_config.get("docx_template", "default"),
             source_appendix_config=output_config.get("source_appendix", {}),
+            workspace_dir=workspace,
         )
     except (FileNotFoundError, ValueError, RuntimeError, RuntimeStateError) as exc:
         print(f"[finalize] Error: {exc}", file=sys.stderr)
