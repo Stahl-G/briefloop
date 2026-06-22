@@ -38,6 +38,7 @@ from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
+from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 
 
 RUNTIME_AUTO = "auto"
@@ -170,6 +171,7 @@ class AgentHandoff:
     contract_references: dict[str, str] = field(default_factory=lambda: dict(CONTRACT_REFERENCES))
     stage_completion_protocol: dict[str, Any] = field(default_factory=dict)
     assessment_target_manifest: dict[str, Any] = field(default_factory=dict)
+    policy_profile_projection: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -558,6 +560,7 @@ def build_handoff(
     protocol_text = _render_stage_completion_protocol_prompt(handoff.stage_completion_protocol)
     handoff.prompt = f"{handoff.prompt}\n\n{protocol_text}"
     _apply_experiment_080_assessment_target(handoff, ws)
+    _apply_policy_profile_projection(handoff, ws)
 
     if run_doctor:
         rc, status = _run_doctor(ws)
@@ -586,6 +589,27 @@ def build_handoff(
     )
 
     return handoff
+
+
+def _apply_policy_profile_projection(handoff: AgentHandoff, workspace: Path) -> None:
+    projection = project_workspace_policy_profile(workspace)
+    handoff.policy_profile_projection = projection
+    if projection.get("status") == "not_available":
+        return
+    resolved = projection.get("resolved_policy_profile") or projection.get("policy_profile") or "unknown"
+    source = projection.get("source") or "unknown"
+    text = (
+        "PolicyProfile projection: "
+        f"status={projection.get('status')}; "
+        f"resolved_policy_profile={resolved}; "
+        f"source={source}; "
+        "boundary=product_policy_profile_projection_only; runtime_effect=none. "
+        "Use this as product metadata only. Do not adapt gates, treat it as "
+        "source evidence, infer compliance/truth/release authority, or bypass "
+        "the Claim Ledger / quality gates / human delivery approval spine."
+    )
+    handoff.prompt = f"{handoff.prompt}\n\n{text}"
+    handoff.notes.append(text)
 
 
 def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
@@ -1042,6 +1066,24 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             for item in forbidden:
                 md_content.append(f"  - `{item}`")
         md_content.append("")
+    if handoff.policy_profile_projection and handoff.policy_profile_projection.get("status") != "not_available":
+        projection = handoff.policy_profile_projection
+        profile = projection.get("profile") if isinstance(projection.get("profile"), dict) else {}
+        md_content.extend([
+            "## Policy Profile Projection",
+            "",
+            f"- Status: `{projection.get('status')}`",
+            f"- Resolved policy profile: `{projection.get('resolved_policy_profile') or projection.get('policy_profile') or 'unknown'}`",
+            f"- Source: `{projection.get('source') or 'unknown'}`",
+            f"- Boundary: `{projection.get('boundary')}`",
+            f"- Runtime effect: `{projection.get('runtime_effect')}`",
+            f"- Industry: `{profile.get('industry') or 'unknown'}`",
+            "",
+            "This projection is product metadata only. It does not adapt gates,",
+            "act as source evidence, judge compliance/truth, authorize release,",
+            "or bypass the Claim Ledger / quality gates / human delivery approval spine.",
+            "",
+        ])
     md_content.extend([
         "## Contract References",
         "",

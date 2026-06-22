@@ -43,6 +43,8 @@ Historical implementation name: MABW
     `internet_default`
   - ReportPack default policy profile binding and optional ReportSpec
     `policy_profile` override validation
+  - resolved PolicyProfile projection in `validate-report-spec`, read-only
+    status, and generated handoff artifacts
   - no stage execution, template rendering, delivery, publication approval, or
     gate adaptation/bypass
 - MABW-080 experiment operations:

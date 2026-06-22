@@ -152,11 +152,12 @@ defaults such as `manufacturing_default`, `finance_default`, and
 delivery/audit bundle manifest projection over existing finalized artifacts.
 The CLI can list packaged packs/templates, validate a `report_spec.yaml`
 including its resolved policy profile, create a workspace skeleton with
-`new <pack> <workspace>`, or write a bundle manifest with `packs bundle`. These
-surfaces do not run subagents, run gates, adapt gates, render templates, deliver
-reports, authorize publication, judge industry compliance, verify internet
-rumors, provide investment-advice detection, or provide a lite/force-deliver
-path.
+`new <pack> <workspace>`, show the resolved profile in read-only status and
+generated handoff artifacts, or write a bundle manifest with `packs bundle`.
+These surfaces do not run subagents, run gates, adapt gates, render templates,
+deliver reports, authorize publication, judge industry compliance, verify
+internet rumors, provide investment-advice detection, or provide a
+lite/force-deliver path.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 

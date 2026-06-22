@@ -4,6 +4,8 @@ import json
 import hashlib
 from pathlib import Path
 
+import yaml
+
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
 
 
@@ -115,6 +117,55 @@ def _semantic_assessment_report_payload(*, atom_id: str = "AC-0001-01") -> dict:
             }
         ],
     }
+
+
+def _market_report_spec(*, policy_profile: str | None = "finance_default") -> dict:
+    spec = {
+        "schema_version": "briefloop.report_spec.v1",
+        "report_pack": "market_weekly",
+        "report_type": "market_weekly",
+        "title": "Market Weekly Brief",
+        "cadence": "weekly",
+        "audience": {"label": "business reader", "language": "en-US"},
+        "source_policy": {"mode": "local_first", "hidden_autonomous_crawling": False},
+        "control_spine": {
+            "claim_ledger": True,
+            "artifact_registry": True,
+            "quality_gates": True,
+            "event_log": True,
+            "archive": True,
+            "source_appendix": True,
+            "support_records": True,
+            "human_delivery_approval": True,
+            "frozen_artifact_integrity": True,
+        },
+        "outputs": ["markdown", "docx"],
+    }
+    if policy_profile is not None:
+        spec["policy_profile"] = policy_profile
+    return spec
+
+
+def test_status_projects_resolved_policy_profile_without_writes(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_market_report_spec(policy_profile="finance_default"), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    formatted = format_workspace_status(status)
+
+    projection = status["policy_profile"]
+    assert projection["status"] == "resolved"
+    assert projection["resolved_policy_profile"] == "finance_default"
+    assert projection["source"] == "report_spec.policy_profile"
+    assert projection["runtime_effect"] == "none"
+    assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
+    assert "[status] policy_profile: resolved" in formatted
+    assert "id=finance_default" in formatted
+    assert "runtime_effect=none" in formatted
 
 
 def test_status_derives_atomic_reader_projection_without_writes(tmp_path: Path) -> None:

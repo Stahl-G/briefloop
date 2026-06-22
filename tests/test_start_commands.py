@@ -70,6 +70,37 @@ manual:
     return ws
 
 
+def _write_market_report_spec(ws: Path, *, policy_profile: str = "internet_default") -> None:
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "briefloop.report_spec.v1",
+                "report_pack": "market_weekly",
+                "policy_profile": policy_profile,
+                "report_type": "market_weekly",
+                "title": "Market Weekly Brief",
+                "cadence": "weekly",
+                "audience": {"label": "business reader", "language": "en-US"},
+                "source_policy": {"mode": "local_first", "hidden_autonomous_crawling": False},
+                "control_spine": {
+                    "claim_ledger": True,
+                    "artifact_registry": True,
+                    "quality_gates": True,
+                    "event_log": True,
+                    "archive": True,
+                    "source_appendix": True,
+                    "support_records": True,
+                    "human_delivery_approval": True,
+                    "frozen_artifact_integrity": True,
+                },
+                "outputs": ["markdown", "docx"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _mark_fact_layer_imported(ws: Path) -> None:
     paths = runtime_state_paths(ws)
     source_dir = ws / "input" / "sources"
@@ -527,6 +558,33 @@ def test_start_with_workspace_generates_handoff(tmp_path):
     assert "Pre-completion transactions" in claim_ledger_section
     assert "freeze-claim-ledger" in claim_ledger_section
     assert "state stage-complete --stage claim-ledger" in claim_ledger_section
+
+
+def test_start_handoff_projects_policy_profile_without_runtime_effect(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_market_report_spec(ws, policy_profile="internet_default")
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+
+    md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    projection = data["policy_profile_projection"]
+    assert projection["status"] == "resolved"
+    assert projection["resolved_policy_profile"] == "internet_default"
+    assert projection["source"] == "report_spec.policy_profile"
+    assert projection["runtime_effect"] == "none"
+    assert "Policy Profile Projection" in md
+    assert "internet_default" in md
+    assert "Runtime effect: `none`" in md
+    assert "does not adapt gates" in md
+    assert "PolicyProfile projection" in data["prompt"]
+    assert "runtime_effect=none" in data["prompt"]
 
 
 def test_start_handoff_projects_auditable_assessment_target(tmp_path):

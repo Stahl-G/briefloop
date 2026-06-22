@@ -63,6 +63,8 @@ breaking rename.
   workspace skeletons with `briefloop new <pack> <workspace>` /
   `multi-agent-brief new <pack> <workspace>`, and project finalized workspace
   artifacts into explicit delivery/audit bundle manifests.
+  Workspaces with `report_spec.yaml` expose the resolved PolicyProfile in
+  read-only status and generated handoff artifacts so defaults are traceable.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These

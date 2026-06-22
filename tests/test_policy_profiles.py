@@ -11,6 +11,7 @@ from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts.registry import ContractRegistry
 from multi_agent_brief.contracts.schemas.policy_profile import PolicyProfileContract
 from multi_agent_brief.product.policy_profile import validate_policy_profile_payload
+from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
 from multi_agent_brief.product.report_pack import validate_report_pack_payload
 from multi_agent_brief.product.report_registry import ReportPackRegistry
@@ -194,6 +195,63 @@ def test_report_spec_validation_rejects_unknown_policy_profile() -> None:
 
     assert not result.ok
     assert any(item.field == "policy_profile" for item in result.errors)
+
+
+def test_workspace_policy_projection_resolves_pack_default(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    spec = _market_spec()
+    spec.pop("policy_profile", None)
+    (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    projection = project_workspace_policy_profile(ws)
+
+    assert projection["status"] == "resolved"
+    assert projection["policy_profile"] is None
+    assert projection["resolved_policy_profile"] == "manufacturing_default"
+    assert projection["source"] == "report_pack.default_policy_profile"
+    assert projection["runtime_effect"] == "none"
+    assert projection["profile"]["industry"] == "manufacturing"
+    assert projection["policy_profile_sha256"]
+
+
+def test_workspace_policy_projection_uses_report_spec_override(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    spec = _market_spec()
+    spec["policy_profile"] = "finance_default"
+    (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    projection = project_workspace_policy_profile(ws)
+
+    assert projection["status"] == "resolved"
+    assert projection["policy_profile"] == "finance_default"
+    assert projection["resolved_policy_profile"] == "finance_default"
+    assert projection["source"] == "report_spec.policy_profile"
+    assert "no_finance_compliance_judgment" in projection["profile"]["metadata"]["non_claims"]
+
+
+def test_workspace_policy_projection_rejects_unknown_override(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    spec = _market_spec()
+    spec["policy_profile"] = "missing_profile"
+    (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    projection = project_workspace_policy_profile(ws)
+
+    assert projection["status"] == "invalid_report_spec"
+    assert any(item["field"] == "policy_profile" for item in projection["errors"])
+
+
+def test_workspace_policy_projection_absent_report_spec_is_non_blocking(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    projection = project_workspace_policy_profile(ws)
+
+    assert projection["status"] == "not_available"
+    assert projection["runtime_effect"] == "none"
 
 
 def test_validate_report_spec_cli_reports_resolved_policy_profile(tmp_path: Path, capsys) -> None:

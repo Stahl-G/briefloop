@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `manufacturing_default`. These are public-safe product defaults only; they do
   not provide finance compliance judgment, investment-advice detection, internet
   rumor verification, source authority, gate adaptation, or release authority.
+- **PolicyProfile projection visibility**: `status --json` / human-readable
+  status and generated runtime handoff artifacts now surface the resolved
+  PolicyProfile id, source, hash, and compact product-policy summary when a
+  workspace has `report_spec.yaml`. This is traceability for product metadata
+  only; it does not adapt gates, change runtime behavior, judge compliance or
+  truth, bypass the control spine, or authorize release.
 
 ## [0.9.4] — 2026-06-22
 
