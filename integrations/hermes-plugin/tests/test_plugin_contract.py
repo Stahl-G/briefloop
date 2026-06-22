@@ -7,9 +7,15 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parents[1]
+CANONICAL_BRIEFLOOP_SKILL = REPO_ROOT / ".agents" / "skills" / "briefloop"
+PLUGIN_BRIEFLOOP_SKILL = ROOT / "mabw" / "skills" / "briefloop"
 sys.path.insert(0, str(ROOT))
 
 from mabw import schemas, tools  # noqa: E402
+
+
+def _relative_files(root: Path) -> list[Path]:
+    return sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
 
 
 def _normalize_stage_label(label: str) -> str:
@@ -102,7 +108,23 @@ def test_plugin_registers_tools_command_and_skill():
         "mabw_run_handoff",
     }
     assert "mabw" in ctx.commands
-    assert ctx.skills and ctx.skills[0][0] == "mabw-workflow"
+    assert {name for name, _ in ctx.skills} == {"mabw-workflow", "briefloop"}
+    assert dict(ctx.skills)["mabw-workflow"].endswith("mabw/skills/mabw-workflow/SKILL.md")
+    assert dict(ctx.skills)["briefloop"].endswith("mabw/skills/briefloop/SKILL.md")
+
+
+def test_plugin_briefloop_skill_matches_canonical_projection():
+    assert (PLUGIN_BRIEFLOOP_SKILL / "SKILL.md").exists()
+    assert (PLUGIN_BRIEFLOOP_SKILL / "CHANGELOG.md").exists()
+
+    canonical_files = _relative_files(CANONICAL_BRIEFLOOP_SKILL)
+    plugin_files = _relative_files(PLUGIN_BRIEFLOOP_SKILL)
+    assert plugin_files == canonical_files
+
+    for rel_path in canonical_files:
+        canonical = (CANONICAL_BRIEFLOOP_SKILL / rel_path).read_bytes()
+        projected = (PLUGIN_BRIEFLOOP_SKILL / rel_path).read_bytes()
+        assert projected == canonical, f"briefloop Hermes plugin projection differs: {rel_path}"
 
 
 def test_plugin_skill_uses_orchestrator_contract():

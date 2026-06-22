@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
 SKILL = CANONICAL / "SKILL.md"
 CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
+HERMES_PLUGIN_PROJECTION = ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
 VERSION_MATRIX = CANONICAL / "references" / "version-matrix.md"
 PUBLIC_CLAIMS = CANONICAL / "references" / "public-claims.md"
 EXPERIMENT_REF = CANONICAL / "references" / "experiment-080-090.md"
@@ -25,6 +26,28 @@ def _error(message: str) -> str:
     return f"[skill-contract] {message}"
 
 
+def _relative_files(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+    return sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
+
+
+def _check_projection(source: Path, target: Path, *, label: str) -> list[str]:
+    if not target.exists():
+        return [_error(f"{label} projection is missing: {target.relative_to(ROOT)}")]
+    errors: list[str] = []
+    source_files = set(_relative_files(source))
+    target_files = set(_relative_files(target))
+    for rel_path in sorted(source_files - target_files):
+        errors.append(_error(f"{label} projection missing file: {target.relative_to(ROOT) / rel_path}"))
+    for rel_path in sorted(target_files - source_files):
+        errors.append(_error(f"{label} projection has extra file: {target.relative_to(ROOT) / rel_path}"))
+    for rel_path in sorted(source_files & target_files):
+        if (source / rel_path).read_bytes() != (target / rel_path).read_bytes():
+            errors.append(_error(f"{label} projection differs from canonical: {target.relative_to(ROOT) / rel_path}"))
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -32,6 +55,8 @@ def main() -> int:
         errors.append(_error("canonical .agents/skills/briefloop/SKILL.md is missing"))
     if not CLAUDE_WRAPPER.exists():
         errors.append(_error("Claude briefloop skill wrapper is missing"))
+    if not HERMES_PLUGIN_PROJECTION.exists():
+        errors.append(_error("Hermes plugin briefloop skill projection is missing"))
     if not VERSION_MATRIX.exists():
         errors.append(_error("version-matrix.md is missing"))
 
@@ -53,6 +78,7 @@ def main() -> int:
 
     if ".agents/skills/briefloop/SKILL.md" not in wrapper_text:
         errors.append(_error("Claude wrapper does not point to canonical skill"))
+    errors.extend(_check_projection(CANONICAL, HERMES_PLUGIN_PROJECTION, label="Hermes plugin briefloop skill"))
 
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     expected_version = f"v{version}"
