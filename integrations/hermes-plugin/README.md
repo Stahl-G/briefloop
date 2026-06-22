@@ -40,7 +40,7 @@ HERMES_PLUGINS_DEBUG=1 hermes plugins list
 One-liner:
 
 ```bash
-rm -rf ~/.hermes/plugins/mabw && cp -R mabw ~/.hermes/plugins/mabw && hermes plugins enable mabw
+rm -rf ~/.hermes/plugins/mabw && cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw && hermes plugins enable mabw
 ```
 
 ## Requirements
