@@ -15,7 +15,7 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
   <a href="docs/roadmap.md">🗺️ Roadmap</a>
 </p>
 
-Current version: **v0.9.4**
+Current version: **v0.10.1**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief` (`briefloop` shell alias also works)
 Current Claude command: `/briefloop` (`/mabw` compatibility alias also works)
@@ -24,25 +24,25 @@ Current Claude command: `/briefloop` (`/mabw` compatibility alias also works)
 
 BriefLoop turns AI-assisted business briefing into a governed loop: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records. It is not a prompt that makes AI write faster; it is a process-accountability harness for recurring business briefings.
 
-The v0.9.4 release adds the experimental Semantic Assessment Report proposal
-surface on top of the Atomic Claim Graph, Evidence Span Registry, and
-Claim-Support Matrix control surfaces while keeping MABW as the implementation
-lineage and compatibility surface. The runtime commands, Python package,
-workspace format, artifact names, and MABW-080 experiment IDs are unchanged.
+The v0.10.1 release adds the experimental Product OS PolicyProfile layer while
+keeping MABW as the implementation lineage and compatibility surface. Runtime
+commands, the Python package, workspace format, artifact names, and MABW-080
+experiment IDs remain unchanged.
 
-These experimental surfaces add optional atomic-claim structure, span schema
-validation, source-pack byte binding, archive hash projection, Source Appendix
-trace audit copies, explicit atom-to-evidence support records, cross-artifact
-validation, gate/status projection from those explicit records, and
-proposal-only Semantic Assessment Report visibility. They are traceability,
-support-record, and proposal controls, not semantic support proof, accepted
-support truth, adjudication queues, delivery gates, release eligibility, or
-support-sufficiency gates.
+This Product OS layer adds experimental ReportSpec, ReportPack, ReportTemplate,
+PolicyProfile defaults, resolved policy projection, conservative workspace
+skeletons, delivery/audit bundle manifests, a limited deterministic gate
+adapter, and public-safe dogfood fixtures. These are product metadata,
+deterministic-default, and projection controls only; they do not judge industry
+compliance, detect investment advice, verify internet rumors, claim
+IR/disclosure readiness, prove semantic truth, publish reports, or authorize
+release.
 
-Unreleased Product OS surfaces add experimental ReportSpec, ReportPack,
-ReportTemplate, and delivery/audit bundle manifest contracts. They are
-metadata and projection controls only; they do not render templates, move
-artifacts, bypass gates, deliver reports, or authorize publication.
+The v0.9.x experimental support surfaces remain traceability, support-record,
+and proposal controls: Atomic Claim Graph, Evidence Span Registry,
+Claim-Support Matrix, and Semantic Assessment Report. They are not semantic
+support proof, accepted support truth, adjudication queues, delivery gates,
+release eligibility, or support-sufficiency gates.
 
 The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
 
@@ -176,6 +176,7 @@ The writer-facing mental model is not "28 control surfaces." Each run keeps four
 - **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
 - **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
 - **[BriefLoop-090 A-controlled auditable-brief pilot](docs/reference-runs/briefloop-090-a-controlled-pilot.md)**: one public-safe synthetic case with condition-blind, hash-bound `auditable_brief` assessment. In this case, memory showed the approved guidance without obvious harm, while prompt-only over-applied the same guidance. It is not a general output-quality claim.
+- **[v0.10.1 release notes](docs/releases/v0.10.1.md)**: experimental Product OS PolicyProfile layer: ReportSpec/ReportPack registry, workspace skeletons, bundle projection, resolved policy projection, limited deterministic gate adapter, and public-safe dogfood fixtures. It does not provide industry compliance judgment, investment-advice detection, IR readiness, semantic truth, automatic publication, or release authority.
 - **[v0.9.4 release notes](docs/releases/v0.9.4.md)**: experimental Semantic Assessment Report proposal surface: schema, reference validation, proposal projection, status visibility, and public-safe dogfood fixtures. It does not create support truth, adjudication queues, delivery gates, or release authority. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 - **[Claim-Support Matrix](docs/claim-support-matrix.md)**: mainline experimental support-record schema, cross-artifact validation, and gate/status projection from explicit atom-to-evidence rows. It is not automatic support assessment, truth proof, or release eligibility.
 

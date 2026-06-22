@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet.
+
+## [0.10.1] — 2026-06-22
+
 ### Added
 
 - **Experimental ReportSpec / ReportPack registry**: added product-layer

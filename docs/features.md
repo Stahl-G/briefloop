@@ -11,7 +11,7 @@ Status labels:
 - **Experimental**: implemented but not yet a stable v1.0 contract.
 - **Roadmap**: planned or scoped, not an implemented capability.
 
-Current baseline: **v0.9.4**.
+Current baseline: **v0.10.1**.
 
 ## Start And Operate A Brief
 

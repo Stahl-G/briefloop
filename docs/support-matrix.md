@@ -145,7 +145,8 @@ create adjudication queue items, gate delivery, decide release eligibility, or
 prove truth.
 
 ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry support is
-experimental. Product-layer report contracts can describe report type metadata,
+experimental since the v0.10.1 release. Product-layer report contracts can
+describe report type metadata,
 required control-spine preservation, stable section order, deterministic policy
 defaults such as `manufacturing_default`, `finance_default`, and
 `internet_default`, conservative local-first workspace skeletons, and a

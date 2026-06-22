@@ -1,7 +1,7 @@
 # BriefLoop Skill Version Matrix
 
 Skill contract version: `briefloop-operator-skill-v0.1`
-Last verified against BriefLoop runtime: `v0.9.4`
+Last verified against BriefLoop runtime: `v0.10.1`
 Public project name: BriefLoop
 Historical implementation name: MABW
 

@@ -42,7 +42,7 @@ def test_claude_projection_is_thin_wrapper() -> None:
 
 def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> None:
     text = _read(CANONICAL / "references" / "version-matrix.md")
-    assert "v0.9.4" in text
+    assert "v0.10.1" in text
     assert "multi-agent-brief" in text
     assert "Shell CLI alias: `briefloop`" in text
     assert "Claude writer command: `/briefloop`" in text
