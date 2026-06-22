@@ -53,9 +53,22 @@ class TestSourceItemContract:
         data = {
             "source_id": "S1", "source_name": "Test",
             "source_type": "local_file", "title": "T", "content": "C",
+            "source_category": "peer_reviewed_paper",
         }
         assert SourceItemContract.is_valid(data)
         assert SourceItemContract.validate(data) == []
+
+    def test_invalid_source_category_fails(self):
+        data = {
+            "source_id": "S1",
+            "source_name": "Test",
+            "source_type": "local_file",
+            "title": "T",
+            "content": "C",
+            "source_category": "blog_post",
+        }
+        violations = SourceItemContract.validate(data)
+        assert any(v.field == "source_category" for v in violations)
 
     def test_missing_required_field_fails(self):
         data = {"source_id": "S1"}  # missing source_name, source_type, title, content
@@ -124,6 +137,17 @@ class TestClaimContract:
         }
         violations = ClaimContract.validate(data)
         assert any(v.field == "confidence" for v in violations)
+
+    def test_invalid_source_url_fails(self):
+        data = {
+            "claim_id": "X",
+            "statement": "s",
+            "source_id": "S",
+            "evidence_text": "e",
+            "source_url": "GEN Top 10 organoid companies",
+        }
+        violations = ClaimContract.validate(data)
+        assert any(v.field == "source_url" for v in violations)
 
 
 # ── AtomicClaimGraphContract ──
@@ -798,6 +822,7 @@ class TestClaimDraftContract:
                     "source_title": "Example Source",
                     "source_name": "Example Wire",
                     "publisher": "Example Publisher",
+                    "source_category": "news_media",
                     "topic": "demo market",
                 }
             ],
@@ -806,6 +831,65 @@ class TestClaimDraftContract:
 
         assert ClaimDraftContract.is_valid(data)
         assert ClaimDraftContract.validate(data) == []
+
+    def test_claim_drafts_reject_plain_text_source_url(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "source_url": "GEN Top 10 organoid companies",
+                    "source_category": "market_report",
+                }
+            ],
+        }
+
+        violations = ClaimDraftContract.validate(data)
+
+        assert any(v.field == "drafts[0].source_url" for v in violations)
+        assert not ClaimDraftContract.is_valid(data)
+
+    def test_claim_drafts_accept_local_file_source_category_without_url(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "source_type": "local_file",
+                    "source_path": "input/sources/source-001.md",
+                    "source_title": "Example clinical study",
+                    "source_category": "peer_reviewed_paper",
+                }
+            ],
+        }
+
+        assert ClaimDraftContract.validate(data) == []
+        assert ClaimDraftContract.is_valid(data)
+
+    def test_claim_drafts_warn_when_source_category_missing(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "source_url": "https://example.com/source",
+                }
+            ],
+        }
+
+        violations = ClaimDraftContract.validate(data)
+
+        assert any(
+            v.field == "drafts[0].source_category" and v.severity == "warning"
+            for v in violations
+        )
+        assert ClaimDraftContract.is_valid(data)
 
     def test_claim_drafts_reject_claim_id(self):
         data = {
@@ -951,6 +1035,7 @@ class TestClaimDraftContract:
             "statement": "ExampleCo opened a demo facility.",
             "source_id": "SRC-001",
             "evidence_text": "Example evidence.",
+            "source_category": "news_media",
         }
         data = {
             "schema_version": "mabw.claim_drafts.v1",

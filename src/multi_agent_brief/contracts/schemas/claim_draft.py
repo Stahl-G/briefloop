@@ -6,6 +6,14 @@ from typing import Any, ClassVar
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import FieldViolation
+from multi_agent_brief.contracts.source_metadata import (
+    SOURCE_CATEGORY_FIELD,
+    VALID_SOURCE_CATEGORIES,
+    local_file_without_url_missing_identity,
+    source_category_error,
+    source_category_missing,
+    source_url_error,
+)
 from multi_agent_brief.contracts.schemas.claim import (
     VALID_CLAIM_TYPES,
     VALID_CONFIDENCE,
@@ -27,6 +35,7 @@ DRAFT_KNOWN_FIELDS = DRAFT_REQUIRED_FIELDS | {
     "source_title",
     "source_name",
     "publisher",
+    "source_category",
     "topic",
     "source_url",
     "source_type",
@@ -50,6 +59,7 @@ DRAFT_OPTIONAL_STRING_FIELDS = {
     "source_title",
     "source_name",
     "publisher",
+    "source_category",
     "topic",
     "source_url",
     "source_type",
@@ -67,6 +77,7 @@ CLAIM_DRAFT_ALLOWED_VALUES = {
     "confidence": sorted(VALID_CONFIDENCE),
     "epistemic_type": sorted(VALID_EPISTEMIC),
     "evidence_relation": sorted(VALID_EVIDENCE_RELATION),
+    SOURCE_CATEGORY_FIELD: sorted(VALID_SOURCE_CATEGORIES),
 }
 CLAIM_DRAFT_FORBIDDEN_FIELDS = sorted(RESERVED_ID_KEYS)
 
@@ -128,6 +139,10 @@ class ClaimDraftContract(Contract):
                             "source_title": {"type": "string"},
                             "source_name": {"type": "string"},
                             "publisher": {"type": "string"},
+                            "source_category": {
+                                "type": "string",
+                                "enum": sorted(VALID_SOURCE_CATEGORIES),
+                            },
                             "topic": {"type": "string"},
                             "source_url": {"type": "string"},
                             "source_type": {"type": "string"},
@@ -233,6 +248,29 @@ def _validate_draft_entry(data: Any, idx: int) -> list[FieldViolation]:
         value = data.get(field)
         if value is not None and not isinstance(value, str):
             violations.append(FieldViolation(field=f"{prefix}.{field}", error="must be a string"))
+
+    url_error = source_url_error(data.get("source_url"))
+    if url_error:
+        violations.append(FieldViolation(field=f"{prefix}.source_url", error=url_error))
+    category_error = source_category_error(data.get(SOURCE_CATEGORY_FIELD))
+    if category_error:
+        violations.append(FieldViolation(field=f"{prefix}.{SOURCE_CATEGORY_FIELD}", error=category_error))
+    elif source_category_missing(data):
+        violations.append(
+            FieldViolation(
+                field=f"{prefix}.{SOURCE_CATEGORY_FIELD}",
+                error="recommended reader-facing source category is missing",
+                severity="warning",
+            )
+        )
+    missing_local_identity = local_file_without_url_missing_identity(data)
+    if missing_local_identity:
+        violations.append(
+            FieldViolation(
+                field=f"{prefix}.{missing_local_identity}",
+                error="local_file sources without a URL must carry source title/name and source_category",
+            )
+        )
 
     for field in sorted(DRAFT_OPTIONAL_STRING_LIST_FIELDS):
         value = data.get(field)

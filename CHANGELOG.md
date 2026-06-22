@@ -14,6 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stdout/stderr to `present` plus a SHA-256 prefix. Doctor guidance now points
   operators to this command for private key setup; it does not print or log
   secret values.
+- **Source metadata contract hardening**: candidate claims, screened
+  candidates, claim drafts, and Claim Ledger validation now separate provider
+  `source_type` from reader-facing `source_category`, reject non-URL text in
+  `source_url`, and preserve `source_category` into frozen Claim Ledger
+  metadata. This is contract validation only; source appendix rendering,
+  metadata enrichment, and source-policy gates remain separate follow-up
+  surfaces.
 
 ## [0.10.1] — 2026-06-22
 
