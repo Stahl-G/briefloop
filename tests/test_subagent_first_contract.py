@@ -475,7 +475,9 @@ def test_claude_briefloop_command_is_five_verb_writer_surface():
     text = _read(".claude/commands/briefloop.md")
     assert "BriefLoop writer command" in text
     assert "`/briefloop` and `/mabw` are compatibility aliases" in text
-    assert "follow `.claude/commands/mabw.md` exactly" in text
+    assert "self-contained after `multi-agent-brief claude" in text
+    assert "Do not mirror this five-verb command into Hermes, OpenCode, Codex" in text
+    assert ".claude/commands/mabw.md" not in text
 
     first_screen = text.split("## First-Screen Writer Help", 1)[1].split(
         "Do not put", 1
@@ -492,6 +494,14 @@ def test_claude_briefloop_command_is_five_verb_writer_surface():
     assert "/briefloop doctor" not in first_screen
     assert "eval-cases" not in first_screen
     assert "runtime install" not in first_screen
+    assert "## `new`" in text
+    assert "## `run <workspace>`" in text
+    assert "## `status <workspace>`" in text
+    assert "## `feedback <workspace> [text-or-file]`" in text
+    assert "## `deliver <workspace>`" in text
+    assert "status is strictly read-only" in text
+    assert "multi-agent-brief deliver --workspace <workspace> --target local" in text
+    assert "do not send audit/control records" in text
 
 
 def test_briefloop_skill_is_not_slash_command_implementation():
