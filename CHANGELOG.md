@@ -56,6 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surface without a concrete task now directs agents to show public five-verb
   writer help in the user's language instead of exposing the internal operator
   mode classifier as the first screen.
+- **BriefLoop writer new path**: `/briefloop new` and `/mabw new` now route
+  ordinary writer workspace creation through the Product OS
+  `briefloop new <report-pack> <workspace>` path, validate `report_spec.yaml`,
+  and report resolved PolicyProfile state instead of falling back to legacy
+  onboarding or confusing PolicyProfile with source discovery.
 - **Source metadata local-file default validation**: claim drafts that omit
   `source_type` and `source_url` are now validated the same way Claim Ledger
   freeze materializes them, as local-file sources that must carry reader-facing

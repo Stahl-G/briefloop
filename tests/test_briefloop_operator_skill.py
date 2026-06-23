@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
 CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
 CLAUDE_BRIEFLOOP_COMMAND = ROOT / ".claude" / "commands" / "briefloop.md"
+CLAUDE_MABW_COMMAND = ROOT / ".claude" / "commands" / "mabw.md"
 
 
 def _read(path: Path) -> str:
@@ -54,6 +55,25 @@ def test_briefloop_skill_direct_invocation_shows_writer_help_first() -> None:
     assert "Only use the `runtime-workspace`, `experiment-080-090`, `repo-development`, and" in text
 
 
+def test_briefloop_skill_routes_new_through_product_os_policy_profile() -> None:
+    text = _read(CANONICAL / "SKILL.md")
+    runtime = _read(CANONICAL / "references" / "runtime-workspace.md")
+
+    for payload in [text, runtime]:
+        assert "briefloop new <report-pack> <workspace>" in payload
+        assert "--industry" in payload
+        assert "--policy-profile" in payload or "PolicyProfile resolver uses `--industry`" in payload
+        assert "report_spec.yaml" in payload
+        assert "policy_profile_resolution" in payload or "PolicyProfile resolver" in payload
+        assert "PolicyProfile" in payload
+        assert "source discovery" in payload.lower()
+
+    assert "Source discovery chooses sources" in text
+    assert "choose or\n  review sources" in runtime
+    assert "Do not route normal writer `new` through `onboarding.json`" in text
+    assert "does not create the Product OS" in runtime
+
+
 def test_briefloop_command_first_screen_is_writer_facing() -> None:
     text = _read(CLAUDE_BRIEFLOOP_COMMAND)
     first_screen = text.split("## First-Screen Writer Help", 1)[1].split("## Routing", 1)[0]
@@ -80,6 +100,29 @@ def test_briefloop_command_first_screen_is_writer_facing() -> None:
     assert "Mirror the user's language" in first_screen
     assert "Do not mention skill loading" in first_screen
     assert "internal mode classification" in first_screen
+
+
+def test_claude_writer_new_uses_product_os_policy_profile_path() -> None:
+    for path in [CLAUDE_BRIEFLOOP_COMMAND, CLAUDE_MABW_COMMAND]:
+        text = _read(path)
+        new_section = text.split("## `new`", 1)[1].split("## `run <workspace>`", 1)[0]
+
+        assert "briefloop new <report-pack> <workspace>" in new_section
+        assert "multi-agent-brief new <report-pack> <workspace>" in new_section
+        assert "--company" in new_section
+        assert "--industry" in new_section
+        assert "--title" in new_section
+        assert "--audience" in new_section
+        assert "--language" in new_section
+        assert "--policy-profile" in new_section
+        assert "validate-report-spec <workspace>/report_spec.yaml --json" in new_section
+        assert "policy_profile_resolution" in new_section
+        assert "source_discovery" in new_section
+        assert "source_candidates.yaml" in new_section
+        assert "do not use `sources.yaml`, `source_discovery`, `sources decide`" in new_section
+        assert "multi-agent-brief init --from-onboarding` for the normal writer `new`" in new_section
+        assert "- create `onboarding.json`;" not in new_section
+        assert "run `multi-agent-brief init <workspace> --from-onboarding" not in new_section
 
 
 def test_claude_projection_is_thin_wrapper() -> None:

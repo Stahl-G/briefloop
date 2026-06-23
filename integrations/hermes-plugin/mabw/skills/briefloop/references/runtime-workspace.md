@@ -10,6 +10,16 @@ Read this when operating a real BriefLoop/MABW workspace.
 
 ## Allowed Actions
 
+- Create ordinary writer workspaces with
+  `briefloop new <report-pack> <workspace>` / `multi-agent-brief new <report-pack> <workspace>`.
+  For normal weekly market/business briefs, default to `market-weekly` unless
+  the user names another ReportPack.
+- Use explicit user-provided `--company`, `--industry`, `--title`,
+  `--audience`, and `--language` values when creating Product OS workspaces.
+  The deterministic PolicyProfile resolver uses `--industry` and records the
+  result in `report_spec.yaml`.
+- Validate the product policy surface with
+  `multi-agent-brief validate-report-spec <workspace>/report_spec.yaml --json`.
 - Inspect state with `multi-agent-brief status --workspace <workspace>`,
   `state show`, or `state check`.
 - Launch handoff with `multi-agent-brief run --workspace <workspace>`.
@@ -20,6 +30,12 @@ Read this when operating a real BriefLoop/MABW workspace.
 ## Forbidden Actions
 
 - Do not edit control files directly.
+- Do not use legacy `multi-agent-brief init --from-onboarding` as the default
+  path for `/briefloop new` or `/mabw new`; it does not create the Product OS
+  `report_spec.yaml` PolicyProfile surface.
+- Do not confuse PolicyProfile with source discovery. `sources.yaml`,
+  `source_discovery`, `sources decide`, and `source_candidates.yaml` choose or
+  review sources; they do not resolve the product PolicyProfile.
 - Do not patch frozen artifacts after stage completion.
 - Do not use `state decide` to bypass `stage-complete`, `repair complete`, gate
   checks, or `finalize-complete`.

@@ -69,21 +69,36 @@ Purpose: create a new brief workspace.
 Allowed:
 
 - check whether `multi-agent-brief` is available;
-- collect onboarding fields in plain language;
-- create `onboarding.json`;
-- run `multi-agent-brief init <workspace> --from-onboarding <onboarding.json>`;
+- collect Product OS workspace fields in plain language;
+- select a ReportPack, defaulting to `market-weekly` for ordinary weekly
+  market/business briefs unless the user explicitly asks for another pack;
+- run `briefloop new <report-pack> <workspace>` or
+  `multi-agent-brief new <report-pack> <workspace>` with explicit
+  `--company`, `--industry`, `--title`, `--audience`, and `--language` values;
+- let the deterministic PolicyProfile resolver choose the profile from
+  `--industry`, or pass `--policy-profile` only when the user/operator
+  explicitly overrides it;
+- run `multi-agent-brief validate-report-spec <workspace>/report_spec.yaml --json`;
 - run `multi-agent-brief run --workspace <workspace> --runtime claude --skip-doctor`;
-- report the workspace path and handoff path.
+- report the workspace path, `report_spec.yaml`, resolved PolicyProfile,
+  PolicyProfile resolution source, and handoff path.
 
 Rules:
 
 - ask at most four grouped business questions if required fields are missing;
-- the required onboarding fields are explicit user-provided values, not inferred values;
+- the required Product OS fields are explicit user-provided values, not inferred values;
 - never ask the user to edit YAML, JSON, schema, or CLI flags;
 - never ask the user to paste API keys into chat;
 - do not generate the brief;
 - do not invoke specialist subagents;
 - do not approve or materialize Improvement Ledger entries.
+- do not create `onboarding.json` or call
+  `multi-agent-brief init --from-onboarding` for the normal writer `new`
+  path; that is the legacy onboarding path, not the Product OS workspace path.
+- do not use `sources.yaml`, `source_discovery`, `sources decide`, or
+  `source_candidates.yaml` to create or explain PolicyProfile selection.
+  PolicyProfile selection is written to `report_spec.yaml` by
+  `briefloop new` / `multi-agent-brief new`.
 
 Private Context Safety:
 
@@ -100,15 +115,42 @@ Private Context Safety:
 - For third-party sector research where the company is intentionally generic, use a neutral explicit value only after user confirmation, such as `Generic target organization`.
 - Never silently fill a real company name.
 
-Before writing onboarding.json, show a short "values I will write" summary:
+Before running `briefloop new`, show a short "values I will write" summary:
 
-- company_or_org;
-- industry_or_theme;
-- task_objective;
+- report_pack;
+- workspace path;
+- company;
+- industry;
+- title;
 - audience;
-- workspace path.
+- language;
+- explicit policy_profile override, or `none; use deterministic industry resolver`.
 
 If any value was inferred rather than explicitly provided, stop and ask.
+
+For example, if the user says "XX基金，投研实习生，私募股权投资，中国科技产投周报",
+the normal command shape is:
+
+```bash
+briefloop new market-weekly <workspace> \
+  --company "XX基金" \
+  --industry "私募股权投资" \
+  --title "中国科技产投周报" \
+  --audience "投研实习生" \
+  --language zh-CN
+```
+
+Then validate and report the policy surface:
+
+```bash
+multi-agent-brief validate-report-spec <workspace>/report_spec.yaml --json
+```
+
+Expected behavior: the deterministic resolver writes `policy_profile` and
+`policy_profile_resolution` to `report_spec.yaml`. If the industry maps to a
+known profile, report the resolved profile and matched source. If it falls back
+to the ReportPack default, say so plainly and offer an explicit
+`--policy-profile` override.
 
 After successful setup, tell the writer that the workspace handoff has already
 been created. The next writer command to produce the brief is:

@@ -550,7 +550,9 @@ def test_claude_mabw_new_forbids_private_company_inference():
     assert "previous workspaces" in new_section
     assert "chat memory" in new_section
     assert "Never silently fill a real company name" in new_section
-    assert "Before writing onboarding.json" in new_section
+    assert "Before running `briefloop new`" in new_section
+    assert "explicit policy_profile override" in new_section
+    assert "use deterministic industry resolver" in new_section
 
 
 def test_claude_mabw_new_points_to_generation_after_handoff_setup():

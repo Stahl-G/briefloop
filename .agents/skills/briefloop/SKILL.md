@@ -65,6 +65,26 @@ Only use the `runtime-workspace`, `experiment-080-090`, `repo-development`, and
 `public-claims` classifier after the user gives a concrete task, workspace
 path, PR/repo request, or public wording request.
 
+For ordinary writer workspace creation, route `new` through the Product OS
+workspace command:
+
+```text
+briefloop new <report-pack> <workspace> --company ... --industry ... --title ... --audience ... --language ...
+```
+
+Use `market-weekly` as the default ReportPack for ordinary weekly market or
+business briefs unless the user names a different ReportPack. The deterministic
+PolicyProfile resolver consumes the explicit `--industry` value and writes
+`policy_profile` plus `policy_profile_resolution` to `report_spec.yaml`. An
+explicit `--policy-profile` is an operator override, not something to infer
+silently.
+
+Do not route normal writer `new` through `onboarding.json` or
+`multi-agent-brief init --from-onboarding`; that is the legacy onboarding path.
+Do not explain PolicyProfile through `sources.yaml`, `source_discovery`,
+`sources decide`, or `source_candidates.yaml`. Source discovery chooses sources;
+PolicyProfile is the product policy surface in `report_spec.yaml`.
+
 ## Inputs
 
 First classify the mode before acting:
