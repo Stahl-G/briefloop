@@ -45,6 +45,26 @@ Use this skill when the user asks about any of these surfaces:
 Do not use this skill for unrelated business drafting or source analysis unless
 the user explicitly wants that work operated through a BriefLoop workspace.
 
+Direct invocation / empty request fallback:
+
+If the user invokes `/briefloop`, says `briefloop`, or otherwise opens the
+BriefLoop surface without a concrete task, do not expose the internal mode
+classifier. Show the public writer help first, in the user's language.
+
+The first-screen writer help should describe BriefLoop as the way to create,
+run, inspect, collect feedback on, and deliver traceable business briefs. Show
+only the five writer verbs first:
+
+- `/briefloop new`
+- `/briefloop run <workspace>`
+- `/briefloop status <workspace>`
+- `/briefloop feedback <workspace> [text-or-file]`
+- `/briefloop deliver <workspace>`
+
+Only use the `runtime-workspace`, `experiment-080-090`, `repo-development`, and
+`public-claims` classifier after the user gives a concrete task, workspace
+path, PR/repo request, or public wording request.
+
 ## Inputs
 
 First classify the mode before acting:

@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
 CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
+CLAUDE_BRIEFLOOP_COMMAND = ROOT / ".claude" / "commands" / "briefloop.md"
 
 
 def _read(path: Path) -> str:
@@ -31,6 +32,54 @@ def test_briefloop_skill_classifies_core_modes() -> None:
     text = _read(CANONICAL / "SKILL.md")
     for mode in ["runtime-workspace", "experiment-080-090", "repo-development", "public-claims"]:
         assert mode in text
+
+
+def test_briefloop_skill_direct_invocation_shows_writer_help_first() -> None:
+    text = _read(CANONICAL / "SKILL.md")
+
+    assert "Direct invocation / empty request fallback" in text
+    assert "do not expose the internal mode" in text
+    assert "Show the public writer help first" in text
+    assert "in the user's language" in text
+    for verb in [
+        "/briefloop new",
+        "/briefloop run <workspace>",
+        "/briefloop status <workspace>",
+        "/briefloop feedback <workspace> [text-or-file]",
+        "/briefloop deliver <workspace>",
+    ]:
+        assert verb in text
+    for mode in ["runtime-workspace", "experiment-080-090", "repo-development", "public-claims"]:
+        assert mode in text
+    assert "Only use the `runtime-workspace`, `experiment-080-090`, `repo-development`, and" in text
+
+
+def test_briefloop_command_first_screen_is_writer_facing() -> None:
+    text = _read(CLAUDE_BRIEFLOOP_COMMAND)
+    first_screen = text.split("## First-Screen Writer Help", 1)[1].split("## Routing", 1)[0]
+    help_block = first_screen.split("```text", 1)[1].split("```", 1)[0]
+
+    for verb in [
+        "/briefloop new",
+        "/briefloop run <workspace>",
+        "/briefloop status <workspace>",
+        "/briefloop feedback <workspace> [text-or-file]",
+        "/briefloop deliver <workspace>",
+    ]:
+        assert verb in help_block
+    for internal_phrase in [
+        "repo-development",
+        "public claims",
+        "public-claims",
+        "classify mode",
+        "mode classification",
+        "skill loaded",
+        "operator protocol",
+    ]:
+        assert internal_phrase not in help_block
+    assert "Mirror the user's language" in first_screen
+    assert "Do not mention skill loading" in first_screen
+    assert "internal mode classification" in first_screen
 
 
 def test_claude_projection_is_thin_wrapper() -> None:

@@ -51,6 +51,9 @@ verbs first:
 Do not put `doctor`, `runtime install`, `eval-cases`, release checks, generated
 asset checks, or low-level state commands in first-screen writer help.
 `doctor` remains a diagnostic/maintainer command, not a sixth writer verb.
+Mirror the user's language. Do not mention skill loading, operator protocol,
+protocol routing, internal mode classification, internal development labels, or
+agent protocol skills in first-screen writer help.
 
 ## Routing
 
