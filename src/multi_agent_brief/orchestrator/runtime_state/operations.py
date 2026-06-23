@@ -1756,16 +1756,20 @@ def _canonical_claims_from_drafts(drafts: list[dict[str, Any]]) -> list[dict[str
             metadata["draft_id"] = str(draft["draft_id"])
         if draft.get("candidate_id"):
             metadata["candidate_id"] = str(draft["candidate_id"])
+        source_type = _claim_draft_source_type(draft)
         for field in CLAIM_DRAFT_PROVENANCE_METADATA_FIELDS:
             if draft.get(field) is not None:
-                metadata.setdefault(field, str(draft[field]).strip())
+                if field == "source_type":
+                    metadata.setdefault(field, source_type)
+                else:
+                    metadata.setdefault(field, str(draft[field]).strip())
         claim = {
             "claim_id": f"CL-{seq:04d}",
             "statement": str(draft["statement"]).strip(),
             "source_id": str(draft["source_id"]).strip(),
             "evidence_text": str(draft["evidence_text"]).strip(),
             "source_url": str(draft.get("source_url") or ""),
-            "source_type": str(draft.get("source_type") or "local_file"),
+            "source_type": source_type,
             "claim_type": str(draft.get("claim_type") or "fact"),
             "confidence": str(draft.get("confidence") or "medium"),
             "requires_audit": bool(draft.get("requires_audit", True)),
@@ -1780,6 +1784,15 @@ def _canonical_claims_from_drafts(drafts: list[dict[str, Any]]) -> list[dict[str
         }
         claims.append(claim)
     return claims
+
+
+def _claim_draft_source_type(draft: dict[str, Any]) -> str:
+    source_type = draft.get("source_type")
+    if isinstance(source_type, str):
+        return source_type.strip() or "local_file"
+    if source_type is None:
+        return "local_file"
+    return str(source_type).strip() or "local_file"
 
 
 def _claim_ledger_bytes(claims: list[dict[str, Any]]) -> bytes:

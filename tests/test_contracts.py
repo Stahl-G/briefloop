@@ -875,6 +875,25 @@ class TestClaimDraftContract:
         assert ClaimDraftContract.validate(data) == []
         assert ClaimDraftContract.is_valid(data)
 
+    def test_claim_drafts_treat_blank_source_type_without_url_as_local_file(self):
+        data = {
+            "schema_version": "mabw.claim_drafts.v1",
+            "drafts": [
+                {
+                    "statement": "ExampleCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "Example evidence.",
+                    "source_type": "   ",
+                    "source_path": "input/sources/source-001.md",
+                    "source_title": "Example clinical study",
+                    "source_category": "peer_reviewed_paper",
+                }
+            ],
+        }
+
+        assert ClaimDraftContract.validate(data) == []
+        assert ClaimDraftContract.is_valid(data)
+
     def test_claim_drafts_treat_omitted_source_type_without_url_as_local_file(self):
         data = {
             "schema_version": "mabw.claim_drafts.v1",

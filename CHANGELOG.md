@@ -65,6 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top-level `source_type: local_file` when existing claim metadata already
   matches the imported source authority, so Source Appendix rendering receives
   the corrected provider type.
+- **Claim Ledger freeze source type defaults**: claim drafts that provide a
+  whitespace-only `source_type` are now materialized as `local_file` during
+  Claim Ledger freeze, matching the claim-draft validator's default local-file
+  semantics.
 - **Source metadata local-file default validation**: claim drafts that omit
   `source_type` and `source_url` are now validated the same way Claim Ledger
   freeze materializes them, as local-file sources that must carry reader-facing
