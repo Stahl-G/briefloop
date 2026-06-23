@@ -29,6 +29,23 @@ class PolicyProfileResolution:
 
 _PROFILE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
+        "solar_manufacturing_default",
+        "solar_manufacturing_keywords",
+        (
+            "solar",
+            "pv",
+            "photovoltaic",
+            "module",
+            "wafer",
+            "polysilicon",
+            "光伏",
+            "太阳能",
+            "组件",
+            "硅片",
+            "多晶硅",
+        ),
+    ),
+    (
         "manufacturing_default",
         "manufacturing_keywords",
         (
@@ -37,15 +54,11 @@ _PROFILE_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
             "factory",
             "industrial",
             "supply chain",
-            "solar",
-            "pv",
-            "photovoltaic",
             "制造",
             "制造业",
             "工厂",
             "工业",
             "供应链",
-            "光伏",
         ),
     ),
     (
@@ -163,7 +176,14 @@ def _matching_profiles(
             continue
         if any(_keyword_matches(input_text, keyword) for keyword in keywords):
             matches.append((profile_id, rule_id))
-    return sorted(matches, key=lambda item: item[0])
+    return _prefer_specific_profiles(sorted(matches, key=lambda item: item[0]))
+
+
+def _prefer_specific_profiles(matches: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    profile_ids = {profile_id for profile_id, _ in matches}
+    if "solar_manufacturing_default" in profile_ids and "manufacturing_default" in profile_ids:
+        return [item for item in matches if item[0] != "manufacturing_default"]
+    return matches
 
 
 def _keyword_matches(text: str, keyword: str) -> bool:

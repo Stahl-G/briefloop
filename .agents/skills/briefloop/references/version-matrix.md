@@ -37,10 +37,12 @@ Historical implementation name: MABW
   - `multi-agent-brief validate-report-spec <report_spec.yaml>`
   - `multi-agent-brief new <pack> <workspace>` / `briefloop new <pack> <workspace>`
     for conservative local-first workspace skeletons
-  - packaged ReportPacks: `market_weekly`, `management_monthly`
-  - packaged ReportTemplates: `market_weekly`, `management_monthly`
-  - packaged PolicyProfiles: `manufacturing_default`, `finance_default`,
-    `internet_default`
+  - packaged ReportPacks: `market_weekly`, `management_monthly`,
+    `solar_industry_periodic`
+  - packaged ReportTemplates: `market_weekly`, `management_monthly`,
+    `solar_industry_periodic`
+  - packaged PolicyProfiles: `manufacturing_default`,
+    `solar_manufacturing_default`, `finance_default`, `internet_default`
   - ReportPack default policy profile binding and optional ReportSpec
     `policy_profile` override validation
   - `briefloop new` / `multi-agent-brief new` deterministic `--industry`

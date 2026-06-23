@@ -17,6 +17,7 @@ from multi_agent_brief.product.bundle_projection import (
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
 ROOT = Path(__file__).resolve().parent.parent
+EXPECTED_TEMPLATE_IDS = {"market_weekly", "management_monthly", "solar_industry_periodic"}
 
 
 def _sha256_file(path: Path) -> str:
@@ -129,11 +130,23 @@ def test_report_template_registry_discovers_root_and_packaged_templates() -> Non
 
     for registry in (root, package):
         assert not registry.validation_errors
-        assert registry.template_ids() == {"market_weekly", "management_monthly"}
+        assert registry.template_ids() == EXPECTED_TEMPLATE_IDS
         market = registry.get_by_report_type("market_weekly")
         assert market is not None
         assert market.section_order[0] == "executive_summary"
         assert market.section_order[-1] == "source_appendix"
+        solar = registry.get_by_report_type("solar_industry_periodic")
+        assert solar is not None
+        assert solar.section_order == (
+            "cover",
+            "executive_summary",
+            "supply_chain_price_tracker",
+            "demand_installation_outlook",
+            "policy_tax_financing",
+            "fx_rates_tracker",
+            "company_implications",
+            "source_appendix",
+        )
 
 
 def test_report_template_config_parity_between_root_and_package_copy() -> None:
@@ -281,7 +294,4 @@ def test_packs_templates_cli_lists_packaged_templates(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["ok"] is True
-    assert {item["template_id"] for item in payload["templates"]} == {
-        "market_weekly",
-        "management_monthly",
-    }
+    assert {item["template_id"] for item in payload["templates"]} == EXPECTED_TEMPLATE_IDS

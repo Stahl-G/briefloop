@@ -15,7 +15,7 @@ from multi_agent_brief.product.bundle_projection import (
     write_report_bundle_manifest,
 )
 from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
-from multi_agent_brief.product.policy_resolver import resolve_policy_profile
+from multi_agent_brief.product.policy_resolver import PolicyProfileResolution, resolve_policy_profile
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import (
     ReportSpecLoadError,
@@ -23,6 +23,10 @@ from multi_agent_brief.product.report_spec import (
     validate_report_spec_payload,
 )
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
+
+SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
+    "solar_industry_periodic": "solar_manufacturing_default",
+}
 
 
 def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
@@ -300,16 +304,48 @@ def _normalize_pack_id(value: str) -> str:
     return value.strip().replace("-", "_")
 
 
+def _resolve_report_pack_policy_profile(
+    *,
+    pack: Any,
+    args: argparse.Namespace,
+    known_policy_profiles: set[str],
+) -> PolicyProfileResolution:
+    explicit_profile = getattr(args, "policy_profile", None)
+    resolution = resolve_policy_profile(
+        default_policy_profile=pack.default_policy_profile,
+        explicit_policy_profile=explicit_profile,
+        industry=getattr(args, "industry", None),
+        company=getattr(args, "company", None),
+        known_policy_profiles=known_policy_profiles,
+    )
+    if explicit_profile:
+        return resolution
+
+    specialized_default = SPECIALIZED_REPORT_PACK_POLICY_PROFILES.get(pack.pack_id)
+    if (
+        specialized_default
+        and pack.default_policy_profile == specialized_default
+        and resolution.policy_profile != specialized_default
+    ):
+        return PolicyProfileResolution(
+            policy_profile=specialized_default,
+            source="report_pack.default_policy_profile",
+            input=resolution.input,
+            matched_rule="specialized_report_pack_default",
+            confidence="default_specialized_pack",
+            alternatives=(resolution.policy_profile,),
+        )
+    return resolution
+
+
 def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Namespace) -> dict[str, Any]:
     from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
 
     policy_registry = PolicyProfileRegistry.from_package()
     spec = deepcopy(dict(pack.default_report_spec))
-    policy_resolution = resolve_policy_profile(
-        default_policy_profile=pack.default_policy_profile,
-        explicit_policy_profile=getattr(args, "policy_profile", None),
-        industry=getattr(args, "industry", None),
-        company=getattr(args, "company", None),
+    policy_resolution = _resolve_report_pack_policy_profile(
+        pack=pack,
+        args=args,
         known_policy_profiles=policy_registry.profile_ids(),
     )
     spec["policy_profile"] = policy_resolution.policy_profile

@@ -40,7 +40,7 @@ validation unless that is stated separately.
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
-| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly` and `management_monthly` pack/template registry, packaged `manufacturing_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, and `packs bundle` delivery/audit manifest projection) | Experimental |
+| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, and `solar_industry_periodic` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, and `packs bundle` delivery/audit manifest projection) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -149,7 +149,8 @@ experimental since the v0.10.1 release. Product-layer report contracts can
 describe report type metadata,
 required control-spine preservation, stable section order, deterministic policy
 defaults such as `manufacturing_default`, `finance_default`, and
-`internet_default`, conservative local-first workspace skeletons, and a
+`internet_default`, dogfood defaults such as `solar_manufacturing_default`,
+conservative local-first workspace skeletons, and a
 delivery/audit bundle manifest projection over existing finalized artifacts.
 The CLI can list packaged packs/templates, validate a `report_spec.yaml`
 including its resolved policy profile, create a workspace skeleton with
@@ -162,7 +163,7 @@ is written into `report_spec.yaml` with its resolution source and is not
 silently re-inferred at gate time. These surfaces do not run
 subagents, create a second gate engine, render templates, deliver reports,
 authorize publication, judge industry compliance, verify internet rumors,
-provide investment-advice detection, or provide a lite/force-deliver path.
+provide tax or investment advice, or provide a lite/force-deliver path.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 

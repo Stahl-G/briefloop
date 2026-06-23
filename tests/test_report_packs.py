@@ -16,10 +16,17 @@ from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import validate_report_spec_payload
 
 ROOT = Path(__file__).resolve().parent.parent
+EXPECTED_PACK_IDS = {"market_weekly", "management_monthly", "solar_industry_periodic"}
 
 
 def _market_pack() -> dict:
     return yaml.safe_load((ROOT / "configs" / "report_packs" / "market_weekly.yaml").read_text(encoding="utf-8"))
+
+
+def _solar_pack() -> dict:
+    return yaml.safe_load(
+        (ROOT / "configs" / "report_packs" / "solar_industry_periodic.yaml").read_text(encoding="utf-8")
+    )
 
 
 def _market_spec() -> dict:
@@ -30,6 +37,16 @@ def test_report_spec_contract_accepts_valid_market_weekly_spec() -> None:
     spec = _market_spec()
 
     assert ReportSpecContract.validate(spec) == []
+
+
+def test_report_spec_contract_accepts_solar_industry_periodic_spec() -> None:
+    spec = dict(_solar_pack()["default_report_spec"])
+
+    assert ReportSpecContract.validate(spec) == []
+    assert spec["report_pack"] == "solar_industry_periodic"
+    assert spec["policy_profile"] == "solar_manufacturing_default"
+    assert spec["audience"]["language"] == "zh-CN"
+    assert spec["metadata"]["dogfood_use_case"] == "solar_industry_periodic_report"
 
 
 def test_report_spec_contract_rejects_control_spine_bypass() -> None:
@@ -66,9 +83,10 @@ def test_report_pack_registry_discovers_root_and_packaged_packs() -> None:
 
     for registry in (root_registry, package_registry):
         assert not registry.validation_errors
-        assert registry.pack_ids() == {"market_weekly", "management_monthly"}
+        assert registry.pack_ids() == EXPECTED_PACK_IDS
         assert registry.get("market_weekly") is not None
         assert registry.get("management_monthly") is not None
+        assert registry.get("solar_industry_periodic") is not None
 
 
 def test_report_pack_config_parity_between_root_and_package_copy() -> None:
@@ -109,13 +127,19 @@ def test_packs_cli_list_and_show_pack(capsys) -> None:
     assert main(["packs", "list", "--json"]) == 0
     listed = json.loads(capsys.readouterr().out)
     assert listed["ok"] is True
-    assert {item["pack_id"] for item in listed["packs"]} == {"market_weekly", "management_monthly"}
+    assert {item["pack_id"] for item in listed["packs"]} == EXPECTED_PACK_IDS
 
     assert main(["packs", "show", "market_weekly", "--json"]) == 0
     shown = json.loads(capsys.readouterr().out)
     assert shown["ok"] is True
     assert shown["pack"]["pack_id"] == "market_weekly"
     assert shown["pack"]["status"] == "experimental"
+
+    assert main(["packs", "show", "solar_industry_periodic", "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["ok"] is True
+    assert shown["pack"]["pack_id"] == "solar_industry_periodic"
+    assert shown["pack"]["default_policy_profile"] == "solar_manufacturing_default"
 
 
 def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> None:
@@ -225,6 +249,100 @@ def test_new_report_pack_workspace_overrides_are_written_to_report_spec(
     assert spec["audience"]["language"] == "zh-CN"
 
 
+def test_new_solar_industry_periodic_workspace_uses_solar_defaults(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-weekly"
+
+    assert main(["new", "solar-industry-periodic", str(workspace)]) == 0
+
+    output = capsys.readouterr().out
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert "report_pack: solar_industry_periodic" in output
+    assert "policy_profile: solar_manufacturing_default" in output
+    assert spec["report_pack"] == "solar_industry_periodic"
+    assert spec["report_type"] == "solar_industry_periodic"
+    assert spec["policy_profile"] == "solar_manufacturing_default"
+    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
+    assert spec["title"] == "Solar Industry Periodic Report"
+    assert spec["audience"] == {
+        "label": "management reader",
+        "language": "zh-CN",
+    }
+    assert spec["metadata"]["required_section_intents"] == [
+        "executive_summary",
+        "supply_chain_price_tracker",
+        "demand_installation_outlook",
+        "policy_tax_financing",
+        "fx_rates_tracker",
+        "company_implications",
+    ]
+
+
+def test_new_solar_industry_periodic_workspace_keeps_solar_default_for_non_solar_industry(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-private-equity"
+
+    assert (
+        main(
+            [
+                "new",
+                "solar-industry-periodic",
+                str(workspace),
+                "--industry",
+                "私募股权投资",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert "policy_profile: solar_manufacturing_default" in output
+    assert spec["policy_profile"] == "solar_manufacturing_default"
+    assert spec["policy_profile_resolution"] == {
+        "policy_profile": "solar_manufacturing_default",
+        "source": "report_pack.default_policy_profile",
+        "input": "私募股权投资",
+        "matched_rule": "specialized_report_pack_default",
+        "confidence": "default_specialized_pack",
+        "alternatives": ["finance_default"],
+    }
+
+
+def test_new_solar_industry_periodic_workspace_allows_explicit_policy_override(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-explicit-finance"
+
+    assert (
+        main(
+            [
+                "new",
+                "solar-industry-periodic",
+                str(workspace),
+                "--industry",
+                "私募股权投资",
+                "--policy-profile",
+                "finance_default",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert spec["policy_profile"] == "finance_default"
+    assert spec["policy_profile_resolution"]["source"] == "explicit_override"
+
+
 def test_new_report_pack_workspace_resolves_policy_profile_from_industry(
     tmp_path: Path,
     capsys,
@@ -249,6 +367,29 @@ def test_new_report_pack_workspace_resolves_policy_profile_from_industry(
     }
 
 
+def test_new_report_pack_workspace_resolves_solar_industry_hint_to_solar_profile(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-market-weekly"
+
+    assert main(["new", "market-weekly", str(workspace), "--industry", "solar manufacturing"]) == 0
+
+    output = capsys.readouterr().out
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert "policy_profile: solar_manufacturing_default" in output
+    assert spec["policy_profile"] == "solar_manufacturing_default"
+    assert spec["policy_profile_resolution"] == {
+        "policy_profile": "solar_manufacturing_default",
+        "source": "industry_resolver",
+        "input": "solar manufacturing",
+        "matched_rule": "solar_manufacturing_keywords",
+        "confidence": "deterministic_exact_or_keyword",
+        "alternatives": [],
+    }
+
+
 def test_new_report_pack_workspace_uses_pack_default_for_ambiguous_industry(
     tmp_path: Path,
     capsys,
@@ -265,7 +406,7 @@ def test_new_report_pack_workspace_uses_pack_default_for_ambiguous_industry(
     assert resolution["source"] == "report_pack.default_policy_profile"
     assert resolution["matched_rule"] == "ambiguous_industry_keywords"
     assert resolution["confidence"] == "default_ambiguous"
-    assert resolution["alternatives"] == ["finance_default", "manufacturing_default"]
+    assert resolution["alternatives"] == ["finance_default", "solar_manufacturing_default"]
 
 
 def test_new_report_pack_workspace_industry_takes_precedence_over_company_for_policy_profile(

@@ -1,0 +1,18 @@
+schema_version: briefloop.report_template.v1
+template_id: solar_industry_periodic
+report_type: solar_industry_periodic
+display_name: Solar Industry Periodic Template
+status: experimental
+section_order:
+  - cover
+  - executive_summary
+  - supply_chain_price_tracker
+  - demand_installation_outlook
+  - policy_tax_financing
+  - fx_rates_tracker
+  - company_implications
+  - source_appendix
+metadata:
+  product_layer: report_template_registry
+  boundary: section_order_contract_only
+  dogfood_use_case: solar_industry_periodic_report

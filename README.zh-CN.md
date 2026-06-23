@@ -224,6 +224,9 @@ briefloop new market-weekly ./weekly-brief
 `briefloop new` 可以接收显式 `--policy-profile` 或 deterministic
 `--industry` hint；选中的 profile 和解析来源会写入 `report_spec.yaml`，
 不会在 gate 运行时从行业文本静默推断。
+如果要 dogfood 太阳能制造业定期报告，也可以使用实验性
+`solar-industry-periodic` pack；它只是报告合同和 policy default surface，
+不是税务、合规、投资、交付或发布授权。
 
 详细流程见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。中文写作者可直接看 [BriefLoop 黄金路径](docs/golden-path.zh-CN.md) 和 [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)。
 

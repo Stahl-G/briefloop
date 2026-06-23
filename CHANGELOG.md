@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `report_spec.yaml`, and shows the source in validation/status projections.
   Ambiguous or low-confidence matches use the ReportPack default. This is not
   gate-time industry inference, compliance judgment, or release authority.
+- **Solar industry periodic ReportPack dogfood contract**: added packaged
+  experimental `solar_industry_periodic` ReportPack / ReportTemplate contracts
+  and a `solar_manufacturing_default` PolicyProfile for local-first solar
+  manufacturing periodic-report work. This fixes report type, section-order,
+  and deterministic product-default metadata only; it does not automatically
+  generate solar reports, provide tax/compliance/investment advice, judge
+  semantic truth, deliver reports, or authorize publication.
 
 ### Fixed
 

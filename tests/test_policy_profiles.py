@@ -23,6 +23,12 @@ from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import validate_report_spec_payload
 
 ROOT = Path(__file__).resolve().parent.parent
+EXPECTED_PROFILE_IDS = {
+    "finance_default",
+    "internet_default",
+    "manufacturing_default",
+    "solar_manufacturing_default",
+}
 
 
 def _manufacturing_profile() -> dict:
@@ -95,10 +101,11 @@ def test_policy_profile_registry_discovers_root_and_packaged_profiles() -> None:
 
     for registry in (root_registry, package_registry):
         assert not registry.validation_errors
-        assert registry.profile_ids() == {"finance_default", "internet_default", "manufacturing_default"}
+        assert registry.profile_ids() == EXPECTED_PROFILE_IDS
         assert registry.get("finance_default") is not None
         assert registry.get("internet_default") is not None
         assert registry.get("manufacturing_default") is not None
+        assert registry.get("solar_manufacturing_default") is not None
 
 
 def test_finance_and_internet_profiles_are_conservative_skeletons() -> None:
@@ -114,6 +121,28 @@ def test_finance_and_internet_profiles_are_conservative_skeletons() -> None:
         assert payload["metadata"]["maturity"] == "conservative_skeleton"
         assert required_boundary in payload["metadata"]["non_claims"]
         assert "no_release_authority" in payload["metadata"]["non_claims"]
+
+
+def test_solar_manufacturing_profile_is_dogfood_contract_only() -> None:
+    payload = _policy_profile("solar_manufacturing_default")
+
+    assert PolicyProfileContract.validate(payload) == []
+    assert payload["industry"] == "solar_manufacturing"
+    assert payload["metadata"]["boundary"] == "experimental_policy_profile_only"
+    assert payload["metadata"]["maturity"] == "solar_dogfood_profile"
+    assert "no_industry_compliance_judgment" in payload["metadata"]["non_claims"]
+    assert "no_tax_advice" in payload["metadata"]["non_claims"]
+    assert "no_investment_advice" in payload["metadata"]["non_claims"]
+    assert "no_release_authority" in payload["metadata"]["non_claims"]
+    assert "tier_weights" not in payload["source_policy"]
+    assert payload["gate_policy"] == {
+        "freshness": "strict",
+        "material_fact": "strict",
+        "target_relevance": "standard",
+    }
+    assert "Section 232" in payload["claim_policy"]["materiality_terms"]
+    assert "FEOC" in payload["claim_policy"]["materiality_terms"]
+    assert "无风险" in payload["wording_policy"]["forbidden_phrases"]
 
 
 def test_policy_profile_config_parity_between_root_and_package_copy() -> None:
@@ -139,8 +168,10 @@ def test_report_pack_default_policy_profile_reference_is_validated() -> None:
     assert report_registry.default_policy_profile_by_pack() == {
         "management_monthly": "manufacturing_default",
         "market_weekly": "manufacturing_default",
+        "solar_industry_periodic": "solar_manufacturing_default",
     }
     assert report_registry.get("market_weekly").default_policy_profile == "manufacturing_default"
+    assert report_registry.get("solar_industry_periodic").default_policy_profile == "solar_manufacturing_default"
 
 
 def test_report_pack_payload_rejects_unknown_default_policy_profile() -> None:

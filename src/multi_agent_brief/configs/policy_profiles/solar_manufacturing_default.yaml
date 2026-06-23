@@ -1,0 +1,64 @@
+schema_version: briefloop.policy_profile.v1
+policy_profile_id: solar_manufacturing_default
+industry: solar_manufacturing
+source_policy:
+  freshness_days_by_tier:
+    official_regulator: 30
+    company_release: 30
+    market_data: 7
+    primary_dataset: 14
+    reputable_research: 30
+    trade_press: 14
+  preferred_source_tiers:
+    - official_regulator
+    - company_release
+    - market_data
+    - primary_dataset
+    - reputable_research
+  discouraged_source_tiers:
+    - social
+    - unverified_forum
+    - unsourced_search_summary
+claim_policy:
+  materiality_terms:
+    - tariff
+    - Section 232
+    - FEOC
+    - 45X
+    - capacity
+    - shipment
+    - ASP
+    - polysilicon
+    - wafer
+    - module
+    - capex
+    - IRR
+    - exchange rate
+    - interest rate
+    - utilization
+    - inventory
+    - tax credit
+    - production cost
+wording_policy:
+  forbidden_phrases:
+    - 投资建议
+    - 买入
+    - 卖出
+    - 保证
+    - 必然
+    - 无风险
+    - guaranteed return
+    - risk-free
+gate_policy:
+  freshness: strict
+  material_fact: strict
+  target_relevance: standard
+metadata:
+  boundary: experimental_policy_profile_only
+  maturity: solar_dogfood_profile
+  non_claims:
+    - no_industry_compliance_judgment
+    - no_tax_advice
+    - no_investment_advice
+    - no_release_authority
+    - no_truth_proof

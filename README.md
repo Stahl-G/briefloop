@@ -225,6 +225,10 @@ This creates editable workspace files and `report_spec.yaml`; it does not run ag
 `briefloop new` can accept an explicit `--policy-profile` or deterministic
 `--industry` hint; the selected profile and resolution source are written into
 `report_spec.yaml` rather than inferred silently at gate time.
+For solar manufacturing periodic-report dogfood, an experimental
+`solar-industry-periodic` pack is also available; it is a report contract and
+policy-default surface only, not tax, compliance, investment, delivery, or
+publication authority.
 
 | Path | Time | What you do |
 |---|---:|---|
