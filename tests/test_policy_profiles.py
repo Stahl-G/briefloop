@@ -236,6 +236,29 @@ def test_workspace_policy_projection_uses_report_spec_override(tmp_path: Path) -
     assert "no_finance_compliance_judgment" in projection["profile"]["metadata"]["non_claims"]
 
 
+def test_workspace_policy_projection_surfaces_industry_resolution_source(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    spec = _market_spec()
+    spec["policy_profile"] = "finance_default"
+    spec["policy_profile_resolution"] = {
+        "policy_profile": "finance_default",
+        "source": "industry_resolver",
+        "input": "listed company IR",
+        "matched_rule": "finance_keywords",
+        "confidence": "deterministic_exact_or_keyword",
+        "alternatives": [],
+    }
+    (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    projection = project_workspace_policy_profile(ws)
+
+    assert projection["status"] == "resolved"
+    assert projection["resolved_policy_profile"] == "finance_default"
+    assert projection["source"] == "industry_resolver"
+    assert projection["policy_profile_resolution"]["matched_rule"] == "finance_keywords"
+
+
 def test_workspace_policy_projection_rejects_unknown_override(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -300,6 +323,61 @@ def test_validate_report_spec_cli_reports_resolved_policy_profile(tmp_path: Path
     assert payload["ok"] is True
     assert payload["policy_profile"] is None
     assert payload["resolved_policy_profile"] == "manufacturing_default"
+    assert payload["policy_profile_source"] == "report_pack.default_policy_profile"
+
+
+def test_report_spec_validation_reports_policy_profile_resolution_source() -> None:
+    spec = _market_spec()
+    spec["policy_profile"] = "finance_default"
+    spec["policy_profile_resolution"] = {
+        "policy_profile": "finance_default",
+        "source": "industry_resolver",
+        "input": "listed company IR",
+        "matched_rule": "finance_keywords",
+        "confidence": "deterministic_exact_or_keyword",
+        "alternatives": [],
+    }
+    report_registry = ReportPackRegistry.from_package()
+    policy_registry = PolicyProfileRegistry.from_package()
+
+    result = validate_report_spec_payload(
+        spec,
+        known_report_packs=report_registry.pack_ids(),
+        report_type_by_pack=report_registry.report_type_by_pack(),
+        known_policy_profiles=policy_registry.profile_ids(),
+        default_policy_profile_by_pack=report_registry.default_policy_profile_by_pack(),
+    )
+
+    assert result.ok
+    assert result.resolved_policy_profile == "finance_default"
+    assert result.policy_profile_source == "industry_resolver"
+    assert result.policy_profile_resolution["matched_rule"] == "finance_keywords"
+
+
+def test_report_spec_validation_rejects_policy_resolution_profile_mismatch() -> None:
+    spec = _market_spec()
+    spec["policy_profile"] = "finance_default"
+    spec["policy_profile_resolution"] = {
+        "policy_profile": "manufacturing_default",
+        "source": "industry_resolver",
+        "input": "listed company IR",
+        "matched_rule": "finance_keywords",
+        "confidence": "deterministic_exact_or_keyword",
+        "alternatives": [],
+    }
+    report_registry = ReportPackRegistry.from_package()
+    policy_registry = PolicyProfileRegistry.from_package()
+
+    result = validate_report_spec_payload(
+        spec,
+        known_report_packs=report_registry.pack_ids(),
+        report_type_by_pack=report_registry.report_type_by_pack(),
+        known_policy_profiles=policy_registry.profile_ids(),
+        default_policy_profile_by_pack=report_registry.default_policy_profile_by_pack(),
+    )
+
+    assert not result.ok
+    assert any(item.field == "policy_profile_resolution.policy_profile" for item in result.errors)
 
 
 def test_policy_profiles_do_not_change_runtime_stage_contracts() -> None:

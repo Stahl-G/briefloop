@@ -18,6 +18,8 @@ class ReportSpecValidationResult:
     report_pack: str | None
     policy_profile: str | None
     resolved_policy_profile: str | None
+    policy_profile_source: str | None
+    policy_profile_resolution: dict[str, Any] | None
     report_type: str | None
     errors: tuple[FieldViolation, ...]
     warnings: tuple[FieldViolation, ...]
@@ -28,6 +30,8 @@ class ReportSpecValidationResult:
             "report_pack": self.report_pack,
             "policy_profile": self.policy_profile,
             "resolved_policy_profile": self.resolved_policy_profile,
+            "policy_profile_source": self.policy_profile_source,
+            "policy_profile_resolution": self.policy_profile_resolution,
             "report_type": self.report_type,
             "errors": [_violation_to_dict(item) for item in self.errors],
             "warnings": [_violation_to_dict(item) for item in self.warnings],
@@ -68,6 +72,8 @@ def validate_report_spec_payload(
     policy_profile = _text(payload.get("policy_profile"))
     report_type = _text(payload.get("report_type"))
     resolved_policy_profile = policy_profile
+    policy_profile_resolution = _resolution_payload(payload.get("policy_profile_resolution"))
+    policy_profile_source = _text(policy_profile_resolution.get("source")) if policy_profile_resolution else ""
 
     if known_report_packs is not None:
         if not report_pack or report_pack not in known_report_packs:
@@ -82,6 +88,8 @@ def validate_report_spec_payload(
 
     if not resolved_policy_profile and default_policy_profile_by_pack is not None and report_pack:
         resolved_policy_profile = _text(default_policy_profile_by_pack.get(report_pack))
+        if not policy_profile_source and resolved_policy_profile:
+            policy_profile_source = "report_pack.default_policy_profile"
         if known_report_packs is None or report_pack in known_report_packs:
             if not resolved_policy_profile:
                 violations.append(
@@ -100,6 +108,19 @@ def validate_report_spec_payload(
                 )
             )
 
+    if policy_profile and not policy_profile_source:
+        policy_profile_source = "report_spec.policy_profile"
+
+    if policy_profile_resolution:
+        resolution_profile = _text(policy_profile_resolution.get("policy_profile"))
+        if resolution_profile and resolved_policy_profile and resolution_profile != resolved_policy_profile:
+            violations.append(
+                FieldViolation(
+                    field="policy_profile_resolution.policy_profile",
+                    error=f"must match resolved policy_profile:{resolved_policy_profile}",
+                )
+            )
+
     errors = tuple(item for item in violations if item.severity == "error")
     warnings = tuple(item for item in violations if item.severity != "error")
     return ReportSpecValidationResult(
@@ -107,6 +128,8 @@ def validate_report_spec_payload(
         report_pack=report_pack or None,
         policy_profile=policy_profile or None,
         resolved_policy_profile=resolved_policy_profile or None,
+        policy_profile_source=policy_profile_source or None,
+        policy_profile_resolution=policy_profile_resolution or None,
         report_type=report_type or None,
         errors=errors,
         warnings=warnings,
@@ -115,6 +138,12 @@ def validate_report_spec_payload(
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _resolution_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return dict(value)
 
 
 def _violation_to_dict(violation: FieldViolation) -> dict[str, str]:

@@ -128,6 +128,7 @@ def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> 
     assert payload["report_pack"] == "market_weekly"
     assert payload["policy_profile"] == "manufacturing_default"
     assert payload["resolved_policy_profile"] == "manufacturing_default"
+    assert payload["policy_profile_source"] == "report_spec.policy_profile"
 
 
 def test_validate_report_spec_cli_rejects_disabled_spine(tmp_path: Path, capsys) -> None:
@@ -180,6 +181,8 @@ def test_new_report_pack_workspace_creates_local_first_skeleton(tmp_path: Path, 
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
     assert spec["report_pack"] == "market_weekly"
     assert spec["policy_profile"] == "manufacturing_default"
+    assert spec["policy_profile_resolution"]["policy_profile"] == "manufacturing_default"
+    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
     assert spec["source_policy"]["mode"] == "local_first"
     assert spec["source_policy"]["hidden_autonomous_crawling"] is False
 
@@ -220,6 +223,88 @@ def test_new_report_pack_workspace_overrides_are_written_to_report_spec(
     assert spec["title"] == "Custom Weekly"
     assert spec["audience"]["label"] == "投资委员会"
     assert spec["audience"]["language"] == "zh-CN"
+
+
+def test_new_report_pack_workspace_resolves_policy_profile_from_industry(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "finance-weekly"
+
+    assert main(["new", "market-weekly", str(workspace), "--industry", "listed company IR"]) == 0
+
+    output = capsys.readouterr().out
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert "policy_profile: finance_default" in output
+    assert "policy_profile_source: industry_resolver" in output
+    assert spec["policy_profile"] == "finance_default"
+    assert spec["policy_profile_resolution"] == {
+        "policy_profile": "finance_default",
+        "source": "industry_resolver",
+        "input": "listed company IR Your Organization",
+        "matched_rule": "finance_keywords",
+        "confidence": "deterministic_exact_or_keyword",
+        "alternatives": [],
+    }
+
+
+def test_new_report_pack_workspace_uses_pack_default_for_ambiguous_industry(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "ambiguous-weekly"
+
+    assert main(["new", "market-weekly", str(workspace), "--industry", "solar finance"]) == 0
+    capsys.readouterr()
+
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert spec["policy_profile"] == "manufacturing_default"
+    resolution = spec["policy_profile_resolution"]
+    assert resolution["source"] == "report_pack.default_policy_profile"
+    assert resolution["matched_rule"] == "ambiguous_industry_keywords"
+    assert resolution["confidence"] == "default_ambiguous"
+    assert resolution["alternatives"] == ["finance_default", "manufacturing_default"]
+
+
+def test_new_report_pack_workspace_explicit_policy_profile_override_wins(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "override-weekly"
+
+    assert main(
+        [
+            "new",
+            "market-weekly",
+            str(workspace),
+            "--industry",
+            "solar manufacturing",
+            "--policy-profile",
+            "internet_default",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert spec["policy_profile"] == "internet_default"
+    assert spec["policy_profile_resolution"]["source"] == "explicit_override"
+    assert spec["policy_profile_resolution"]["matched_rule"] == "explicit_policy_profile"
+
+
+def test_new_report_pack_workspace_rejects_unknown_policy_profile(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "bad-profile"
+
+    assert main(["new", "market-weekly", str(workspace), "--policy-profile", "missing_profile"]) == 1
+
+    output = capsys.readouterr().out
+    assert "unknown policy_profile:missing_profile" in output
+    assert not workspace.exists()
 
 
 def test_new_report_pack_workspace_rejects_unknown_pack(tmp_path: Path, capsys) -> None:

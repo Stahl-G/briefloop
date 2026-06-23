@@ -25,6 +25,11 @@ REQUIRED_CONTROL_SPINE_KEYS = (
 )
 
 VALID_SOURCE_POLICY_MODES = {"local_first", "explicit_sources", "runtime_handoff"}
+VALID_POLICY_PROFILE_RESOLUTION_SOURCES = {
+    "explicit_override",
+    "industry_resolver",
+    "report_pack.default_policy_profile",
+}
 
 
 @SchemaRegistry.register
@@ -55,6 +60,22 @@ class ReportSpecContract(Contract):
                 "schema_version": {"type": "string", "enum": [REPORT_SPEC_SCHEMA_VERSION]},
                 "report_pack": {"type": "string", "pattern": REPORT_PACK_ID_RE.pattern},
                 "policy_profile": {"type": "string", "pattern": POLICY_PROFILE_ID_RE.pattern},
+                "policy_profile_resolution": {
+                    "type": "object",
+                    "required": ["policy_profile", "source", "confidence"],
+                    "properties": {
+                        "policy_profile": {"type": "string", "pattern": POLICY_PROFILE_ID_RE.pattern},
+                        "source": {
+                            "type": "string",
+                            "enum": sorted(VALID_POLICY_PROFILE_RESOLUTION_SOURCES),
+                        },
+                        "input": {"type": "string"},
+                        "matched_rule": {"type": "string"},
+                        "confidence": {"type": "string"},
+                        "alternatives": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "additionalProperties": True,
+                },
                 "report_type": {"type": "string", "pattern": REPORT_PACK_ID_RE.pattern},
                 "title": {"type": "string"},
                 "audience": {
@@ -118,6 +139,63 @@ class ReportSpecContract(Contract):
                 violations.append(FieldViolation(field="policy_profile", error="must be a non-empty string"))
             elif not POLICY_PROFILE_ID_RE.match(str(policy_profile).strip()):
                 violations.append(FieldViolation(field="policy_profile", error="must match ^[a-z][a-z0-9_]*$"))
+
+        resolution = data.get("policy_profile_resolution")
+        if resolution is not None:
+            if not isinstance(resolution, dict):
+                violations.append(FieldViolation(field="policy_profile_resolution", error="must be an object"))
+            else:
+                resolution_profile = resolution.get("policy_profile")
+                if not _non_empty_string(resolution_profile):
+                    violations.append(
+                        FieldViolation(
+                            field="policy_profile_resolution.policy_profile",
+                            error="must be a non-empty string",
+                        )
+                    )
+                elif not POLICY_PROFILE_ID_RE.match(str(resolution_profile).strip()):
+                    violations.append(
+                        FieldViolation(
+                            field="policy_profile_resolution.policy_profile",
+                            error="must match ^[a-z][a-z0-9_]*$",
+                        )
+                    )
+                source = resolution.get("source")
+                if source not in VALID_POLICY_PROFILE_RESOLUTION_SOURCES:
+                    violations.append(
+                        FieldViolation(
+                            field="policy_profile_resolution.source",
+                            error=(
+                                "must be one of "
+                                + ", ".join(sorted(VALID_POLICY_PROFILE_RESOLUTION_SOURCES))
+                            ),
+                        )
+                    )
+                if not _non_empty_string(resolution.get("confidence")):
+                    violations.append(
+                        FieldViolation(
+                            field="policy_profile_resolution.confidence",
+                            error="must be a non-empty string",
+                        )
+                    )
+                alternatives = resolution.get("alternatives")
+                if alternatives is not None:
+                    if not isinstance(alternatives, list):
+                        violations.append(
+                            FieldViolation(
+                                field="policy_profile_resolution.alternatives",
+                                error="must be a list",
+                            )
+                        )
+                    else:
+                        for idx, item in enumerate(alternatives):
+                            if not _non_empty_string(item):
+                                violations.append(
+                                    FieldViolation(
+                                        field=f"policy_profile_resolution.alternatives[{idx}]",
+                                        error="must be a non-empty string",
+                                    )
+                                )
 
         audience = data.get("audience")
         if not isinstance(audience, dict):

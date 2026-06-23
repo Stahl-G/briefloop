@@ -65,6 +65,10 @@ breaking rename.
   artifacts into explicit delivery/audit bundle manifests.
   Workspaces with `report_spec.yaml` expose the resolved PolicyProfile in
   read-only status and generated handoff artifacts so defaults are traceable.
+  `briefloop new` can use an explicit `--policy-profile` or deterministic
+  `--industry` hint to write the selected profile and resolution source into
+  `report_spec.yaml`; gates do not silently infer policy from natural-language
+  industry strings.
   Resolved PolicyProfiles may tighten existing deterministic quality-gate
   strictness and reader-final forbidden-phrase checks through a limited adapter.
   These contracts describe report type metadata over the existing Claim Ledger,
