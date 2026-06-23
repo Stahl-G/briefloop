@@ -354,6 +354,34 @@ def test_report_spec_validation_reports_policy_profile_resolution_source() -> No
     assert result.policy_profile_resolution["matched_rule"] == "finance_keywords"
 
 
+def test_report_spec_validation_rejects_resolver_source_without_explicit_policy_profile() -> None:
+    spec = _market_spec()
+    spec.pop("policy_profile", None)
+    spec["policy_profile_resolution"] = {
+        "policy_profile": "manufacturing_default",
+        "source": "industry_resolver",
+        "input": "listed company IR",
+        "matched_rule": "finance_keywords",
+        "confidence": "deterministic_exact_or_keyword",
+        "alternatives": [],
+    }
+    report_registry = ReportPackRegistry.from_package()
+    policy_registry = PolicyProfileRegistry.from_package()
+
+    result = validate_report_spec_payload(
+        spec,
+        known_report_packs=report_registry.pack_ids(),
+        report_type_by_pack=report_registry.report_type_by_pack(),
+        known_policy_profiles=policy_registry.profile_ids(),
+        default_policy_profile_by_pack=report_registry.default_policy_profile_by_pack(),
+    )
+
+    assert not result.ok
+    assert result.resolved_policy_profile == "manufacturing_default"
+    assert result.policy_profile_source == "report_pack.default_policy_profile"
+    assert any(item.field == "policy_profile_resolution.source" for item in result.errors)
+
+
 def test_report_spec_validation_rejects_policy_resolution_profile_mismatch() -> None:
     spec = _market_spec()
     spec["policy_profile"] = "finance_default"

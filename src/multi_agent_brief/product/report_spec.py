@@ -73,7 +73,8 @@ def validate_report_spec_payload(
     report_type = _text(payload.get("report_type"))
     resolved_policy_profile = policy_profile
     policy_profile_resolution = _resolution_payload(payload.get("policy_profile_resolution"))
-    policy_profile_source = _text(policy_profile_resolution.get("source")) if policy_profile_resolution else ""
+    resolution_source = _text(policy_profile_resolution.get("source")) if policy_profile_resolution else ""
+    policy_profile_source = ""
 
     if known_report_packs is not None:
         if not report_pack or report_pack not in known_report_packs:
@@ -108,9 +109,6 @@ def validate_report_spec_payload(
                 )
             )
 
-    if policy_profile and not policy_profile_source:
-        policy_profile_source = "report_spec.policy_profile"
-
     if policy_profile_resolution:
         resolution_profile = _text(policy_profile_resolution.get("policy_profile"))
         if resolution_profile and resolved_policy_profile and resolution_profile != resolved_policy_profile:
@@ -120,6 +118,18 @@ def validate_report_spec_payload(
                     error=f"must match resolved policy_profile:{resolved_policy_profile}",
                 )
             )
+        if not policy_profile and resolution_source and resolution_source != "report_pack.default_policy_profile":
+            violations.append(
+                FieldViolation(
+                    field="policy_profile_resolution.source",
+                    error="requires explicit policy_profile unless source is report_pack.default_policy_profile",
+                )
+            )
+
+    if policy_profile:
+        policy_profile_source = resolution_source or "report_spec.policy_profile"
+    elif resolved_policy_profile:
+        policy_profile_source = "report_pack.default_policy_profile"
 
     errors = tuple(item for item in violations if item.severity == "error")
     warnings = tuple(item for item in violations if item.severity != "error")
