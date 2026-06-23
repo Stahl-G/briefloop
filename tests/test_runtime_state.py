@@ -2945,6 +2945,66 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
     assert _event_records(ws)[-1]["event_type"] == "claim_ledger_metadata_enriched"
 
 
+def test_enrich_claim_metadata_rerun_mirrors_source_type_from_existing_metadata(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _add_imported_source_authority(
+        ws,
+        metadata={
+            "published_at": "2026-06-01",
+            "retrieved_at": "2026-06-16T00:00:00Z",
+            "title": "ExampleCo Demo Facility",
+            "name": "Example Wire",
+            "publisher": "Example Publisher",
+            "source_url": "https://example.com/news",
+            "source_type": "web_search",
+            "source_category": "news_media",
+            "topic": "demo market",
+        },
+    )
+    _add_imported_source_authority(ws, source_id="SRC-002", filename="source-002.json")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    ledger_path = _intermediate(ws) / "claim_ledger.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    claim = ledger[0]
+    claim["source_type"] = "local_file"
+    claim["source_url"] = "https://example.com/news"
+    claim["metadata"].update({
+        "published_at": "2026-06-01",
+        "retrieved_at": "2026-06-16T00:00:00Z",
+        "source_title": "ExampleCo Demo Facility",
+        "source_name": "Example Wire",
+        "publisher": "Example Publisher",
+        "source_url": "https://example.com/news",
+        "source_type": "web_search",
+        "source_category": "news_media",
+        "topic": "demo market",
+        "source_path": "input/sources/source-001.json",
+    })
+    ledger_path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["claim_ledger_freeze"]["claim_ledger_sha256"] = _sha256_file(ledger_path)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    state = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
+
+    enriched = json.loads(ledger_path.read_text(encoding="utf-8"))[0]
+    assert enriched["metadata"]["source_type"] == "web_search"
+    assert enriched["source_type"] == "web_search"
+    enriched_records = state["claim_ledger_metadata_enrichment"]["enriched_claims"]
+    claim_record = next(record for record in enriched_records if record["claim_id"] == "CL-0001")
+    assert claim_record["fields"] == ["source_type"]
+    appendix = build_source_appendix(
+        audited_markdown="ExampleCo opened a demo facility. [src:CL-0001]",
+        ledger_path=ledger_path,
+    )
+    assert "- Provider type: web_search" in appendix.markdown
+    assert appendix.claim_source_map["CL-0001"]["source_type"] == "web_search"
+
+
 def test_enrich_claim_metadata_updates_completed_claim_ledger_stage_hash(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

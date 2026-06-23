@@ -60,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer use raw ledger `source_id` values such as `SRC-001` as display
   titles when source title/name metadata is missing; they keep the generic
   source record title and surface the missing-title note instead.
+- **Claim metadata enrichment rerun source type repair**: rerunning
+  `state enrich-claim-metadata --from-source-evidence` now also repairs stale
+  top-level `source_type: local_file` when existing claim metadata already
+  matches the imported source authority, so Source Appendix rendering receives
+  the corrected provider type.
 - **Source metadata local-file default validation**: claim drafts that omit
   `source_type` and `source_url` are now validated the same way Claim Ledger
   freeze materializes them, as local-file sources that must carry reader-facing

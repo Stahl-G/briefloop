@@ -2455,10 +2455,16 @@ def _sync_enriched_claim_source_fields(
         has_explicit_metadata_type = isinstance(existing_metadata_type, str) and bool(
             existing_metadata_type.strip()
         )
+        metadata_type_matches_authority = (
+            has_explicit_metadata_type
+            and existing_metadata_type.strip() == source_type.strip()
+        )
         if not (isinstance(existing_type, str) and existing_type.strip()):
             next_claim["source_type"] = source_type.strip()
             changed_fields.append("source_type")
-        elif existing_type.strip() == "local_file" and not has_explicit_metadata_type:
+        elif existing_type.strip() == "local_file" and (
+            not has_explicit_metadata_type or metadata_type_matches_authority
+        ):
             next_claim["source_type"] = source_type.strip()
             changed_fields.append("source_type")
 
