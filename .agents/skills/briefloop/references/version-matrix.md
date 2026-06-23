@@ -50,6 +50,8 @@ Historical implementation name: MABW
     `report_spec.yaml`, with explicit `--policy-profile` override
   - resolved PolicyProfile projection in `validate-report-spec`, read-only
     status, and generated handoff artifacts
+  - resolved ReportTemplate section-order projection in read-only status and
+    generated handoff artifacts
   - limited PolicyProfile deterministic gate adapter for existing gate
     strictness and reader-final forbidden-phrase checks
   - no stage execution, template rendering, delivery, publication approval, or

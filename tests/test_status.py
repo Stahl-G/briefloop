@@ -146,6 +146,31 @@ def _market_report_spec(*, policy_profile: str | None = "finance_default") -> di
     return spec
 
 
+def _solar_report_spec() -> dict:
+    return {
+        "schema_version": "briefloop.report_spec.v1",
+        "report_pack": "solar_industry_periodic",
+        "policy_profile": "solar_manufacturing_default",
+        "report_type": "solar_industry_periodic",
+        "title": "Solar Industry Periodic Report",
+        "cadence": "weekly",
+        "audience": {"label": "management reader", "language": "zh-CN"},
+        "source_policy": {"mode": "local_first", "hidden_autonomous_crawling": False},
+        "control_spine": {
+            "claim_ledger": True,
+            "artifact_registry": True,
+            "quality_gates": True,
+            "event_log": True,
+            "archive": True,
+            "source_appendix": True,
+            "support_records": True,
+            "human_delivery_approval": True,
+            "frozen_artifact_integrity": True,
+        },
+        "outputs": ["markdown", "docx"],
+    }
+
+
 def test_status_projects_resolved_policy_profile_without_writes(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -165,6 +190,31 @@ def test_status_projects_resolved_policy_profile_without_writes(tmp_path: Path) 
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
     assert "[status] policy_profile: resolved" in formatted
     assert "id=finance_default" in formatted
+    assert "runtime_effect=none" in formatted
+
+
+def test_status_projects_report_template_section_order_without_writes(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_solar_report_spec(), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    formatted = format_workspace_status(status)
+
+    projection = status["report_template"]
+    assert projection["status"] == "resolved"
+    assert projection["template_id"] == "solar_industry_periodic"
+    assert projection["section_count"] == 8
+    assert projection["section_order"][0] == "cover"
+    assert "supply_chain_price_tracker" in projection["section_order"]
+    assert projection["runtime_effect"] == "none"
+    assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
+    assert "[status] report_template: resolved" in formatted
+    assert "id=solar_industry_periodic" in formatted
+    assert "sections=8" in formatted
     assert "runtime_effect=none" in formatted
 
 

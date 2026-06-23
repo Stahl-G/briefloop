@@ -101,6 +101,37 @@ def _write_market_report_spec(ws: Path, *, policy_profile: str = "internet_defau
     )
 
 
+def _write_solar_report_spec(ws: Path) -> None:
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "briefloop.report_spec.v1",
+                "report_pack": "solar_industry_periodic",
+                "policy_profile": "solar_manufacturing_default",
+                "report_type": "solar_industry_periodic",
+                "title": "Solar Industry Periodic Report",
+                "cadence": "weekly",
+                "audience": {"label": "management reader", "language": "zh-CN"},
+                "source_policy": {"mode": "local_first", "hidden_autonomous_crawling": False},
+                "control_spine": {
+                    "claim_ledger": True,
+                    "artifact_registry": True,
+                    "quality_gates": True,
+                    "event_log": True,
+                    "archive": True,
+                    "source_appendix": True,
+                    "support_records": True,
+                    "human_delivery_approval": True,
+                    "frozen_artifact_integrity": True,
+                },
+                "outputs": ["markdown", "docx"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _mark_fact_layer_imported(ws: Path) -> None:
     paths = runtime_state_paths(ws)
     source_dir = ws / "input" / "sources"
@@ -585,6 +616,69 @@ def test_start_handoff_projects_policy_profile_without_runtime_effect(tmp_path):
     assert "does not adapt gates" in md
     assert "PolicyProfile projection" in data["prompt"]
     assert "runtime_effect=none" in data["prompt"]
+
+
+def test_start_handoff_projects_report_template_section_order(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_solar_report_spec(ws)
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+
+    md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    projection = data["report_template_projection"]
+
+    assert projection["status"] == "resolved"
+    assert projection["template_id"] == "solar_industry_periodic"
+    assert projection["runtime_effect"] == "none"
+    assert projection["section_order"] == [
+        "cover",
+        "executive_summary",
+        "supply_chain_price_tracker",
+        "demand_installation_outlook",
+        "policy_tax_financing",
+        "fx_rates_tracker",
+        "company_implications",
+        "source_appendix",
+    ]
+    assert "Report Template Projection" in md
+    assert "`supply_chain_price_tracker`" in md
+    assert "This projection is product section-order metadata only" in md
+    assert "ReportTemplate projection" in data["prompt"]
+    assert "section_order=cover, executive_summary, supply_chain_price_tracker" in data["prompt"]
+    assert "runtime_effect=none" in data["prompt"]
+
+
+def test_start_handoff_does_not_treat_invalid_report_template_as_contract(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_solar_report_spec(ws)
+    spec = yaml.safe_load((ws / "report_spec.yaml").read_text(encoding="utf-8"))
+    spec["report_type"] = "unknown_report_type"
+    (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    projection = data["report_template_projection"]
+
+    assert projection["status"] == "invalid_report_spec"
+    assert "ReportTemplate projection" in data["prompt"]
+    assert "status=invalid_report_spec" in data["prompt"]
+    assert "Do not use this as a section-order contract" in data["prompt"]
+    assert "validate and fix report_spec.yaml first" in data["prompt"]
+    assert "Use this as a stable product section-order contract" not in data["prompt"]
 
 
 def test_start_handoff_projects_auditable_assessment_target(tmp_path):

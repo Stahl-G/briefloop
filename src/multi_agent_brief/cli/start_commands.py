@@ -39,6 +39,7 @@ from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
+from multi_agent_brief.product.template_projection import project_workspace_report_template
 
 
 RUNTIME_AUTO = "auto"
@@ -172,6 +173,7 @@ class AgentHandoff:
     stage_completion_protocol: dict[str, Any] = field(default_factory=dict)
     assessment_target_manifest: dict[str, Any] = field(default_factory=dict)
     policy_profile_projection: dict[str, Any] = field(default_factory=dict)
+    report_template_projection: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -561,6 +563,7 @@ def build_handoff(
     handoff.prompt = f"{handoff.prompt}\n\n{protocol_text}"
     _apply_experiment_080_assessment_target(handoff, ws)
     _apply_policy_profile_projection(handoff, ws)
+    _apply_report_template_projection(handoff, ws)
 
     if run_doctor:
         rc, status = _run_doctor(ws)
@@ -607,6 +610,34 @@ def _apply_policy_profile_projection(handoff: AgentHandoff, workspace: Path) -> 
         "Use this as product metadata only. Do not adapt gates, treat it as "
         "source evidence, infer compliance/truth/release authority, or bypass "
         "the Claim Ledger / quality gates / human delivery approval spine."
+    )
+    handoff.prompt = f"{handoff.prompt}\n\n{text}"
+    handoff.notes.append(text)
+
+
+def _apply_report_template_projection(handoff: AgentHandoff, workspace: Path) -> None:
+    projection = project_workspace_report_template(workspace)
+    handoff.report_template_projection = projection
+    if projection.get("status") == "not_available":
+        return
+    status = projection.get("status")
+    section_order = projection.get("section_order") if isinstance(projection.get("section_order"), list) else []
+    section_text = ", ".join(str(item) for item in section_order) or "none"
+    usage_text = (
+        "Use this as a stable product section-order contract when drafting."
+        if status == "resolved"
+        else "Do not use this as a section-order contract; validate and fix report_spec.yaml first."
+    )
+    text = (
+        "ReportTemplate projection: "
+        f"status={status}; "
+        f"template_id={projection.get('template_id') or 'unknown'}; "
+        f"report_type={projection.get('report_type') or 'unknown'}; "
+        f"section_order={section_text}; "
+        "boundary=product_report_template_projection_only; runtime_effect=none. "
+        f"{usage_text} "
+        "It does not render templates, rewrite content, bypass gates, deliver "
+        "reports, or authorize publication."
     )
     handoff.prompt = f"{handoff.prompt}\n\n{text}"
     handoff.notes.append(text)
@@ -1082,6 +1113,30 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             "This projection is product metadata only. It does not adapt gates,",
             "act as source evidence, judge compliance/truth, authorize release,",
             "or bypass the Claim Ledger / quality gates / human delivery approval spine.",
+            "",
+        ])
+    if handoff.report_template_projection and handoff.report_template_projection.get("status") != "not_available":
+        projection = handoff.report_template_projection
+        section_order = projection.get("section_order") if isinstance(projection.get("section_order"), list) else []
+        md_content.extend([
+            "## Report Template Projection",
+            "",
+            f"- Status: `{projection.get('status')}`",
+            f"- Template: `{projection.get('template_id') or 'unknown'}`",
+            f"- Report type: `{projection.get('report_type') or 'unknown'}`",
+            f"- Boundary: `{projection.get('boundary')}`",
+            f"- Runtime effect: `{projection.get('runtime_effect')}`",
+            "- Section order:",
+        ])
+        if section_order:
+            for section in section_order:
+                md_content.append(f"  - `{section}`")
+        else:
+            md_content.append("  - none")
+        md_content.extend([
+            "",
+            "This projection is product section-order metadata only. It does not render",
+            "templates, rewrite content, bypass gates, deliver reports, or authorize publication.",
             "",
         ])
     md_content.extend([

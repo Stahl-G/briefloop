@@ -26,6 +26,7 @@ from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report imp
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_reader_text_from_workspace
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
+from multi_agent_brief.product.template_projection import project_workspace_report_template
 
 
 INTERMEDIATE_DIR = Path("output/intermediate")
@@ -58,6 +59,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "claim_support_matrix": {},
         "semantic_assessment_report": {},
         "policy_profile": {},
+        "report_template": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -122,6 +124,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["claim_support_matrix"] = project_claim_support_matrix_from_workspace(ws)
     payload["semantic_assessment_report"] = project_semantic_assessment_report_from_workspace(ws)
     payload["policy_profile"] = project_workspace_policy_profile(ws)
+    payload["report_template"] = project_workspace_report_template(ws)
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -178,6 +181,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     claim_support_matrix = status.get("claim_support_matrix") or {}
     semantic_assessment_report = status.get("semantic_assessment_report") or {}
     policy_profile = status.get("policy_profile") or {}
+    report_template = status.get("report_template") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -267,6 +271,18 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"{policy_profile.get('status')} "
             f"id={policy_profile.get('resolved_policy_profile') or policy_profile.get('policy_profile') or 'unknown'} "
             f"source={policy_profile.get('source') or 'unknown'} "
+            "boundary=projection_only "
+            "runtime_effect=none "
+            f"errors={len(errors)}"
+        )
+    if report_template.get("status") not in {None, "not_available"}:
+        errors = report_template.get("errors") if isinstance(report_template.get("errors"), list) else []
+        lines.append(
+            "[status] report_template: "
+            f"{report_template.get('status')} "
+            f"id={report_template.get('template_id') or 'unknown'} "
+            f"report_type={report_template.get('report_type') or 'unknown'} "
+            f"sections={report_template.get('section_count') or 0} "
             "boundary=projection_only "
             "runtime_effect=none "
             f"errors={len(errors)}"

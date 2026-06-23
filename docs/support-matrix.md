@@ -157,13 +157,16 @@ including its resolved policy profile, create a workspace skeleton with
 `new <pack> <workspace>`, show the resolved profile in read-only status and
 generated handoff artifacts, tighten existing deterministic quality-gate
 strictness and reader-final forbidden-phrase checks through a limited adapter,
-or write a bundle manifest with `packs bundle`. Workspace creation may use an
+show the resolved ReportTemplate section order in read-only status and
+generated handoff artifacts, or write a bundle manifest with `packs bundle`.
+Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not
 silently re-inferred at gate time. These surfaces do not run
-subagents, create a second gate engine, render templates, deliver reports,
-authorize publication, judge industry compliance, verify internet rumors,
-provide tax or investment advice, or provide a lite/force-deliver path.
+subagents, create a second gate engine, render templates, rewrite content,
+deliver reports, authorize publication, judge industry compliance, verify
+internet rumors, provide tax or investment advice, or provide a
+lite/force-deliver path.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 

@@ -56,6 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and deterministic product-default metadata only; it does not automatically
   generate solar reports, provide tax/compliance/investment advice, judge
   semantic truth, deliver reports, or authorize publication.
+- **ReportTemplate section-order projection**: workspaces with
+  `report_spec.yaml` now expose the resolved packaged ReportTemplate and
+  section order in read-only `status` and generated runtime handoff artifacts.
+  This is product section-order metadata only; it does not render templates,
+  rewrite content, bypass gates, deliver reports, or authorize publication.
 
 ### Fixed
 
