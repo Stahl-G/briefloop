@@ -223,6 +223,9 @@ briefloop new market-weekly ./weekly-brief
 ```
 
 This creates editable workspace files and `report_spec.yaml`; it does not run agents, render templates, deliver, or approve publication.
+`briefloop new` can accept an explicit `--policy-profile` or deterministic
+`--industry` hint; the selected profile and resolution source are written into
+`report_spec.yaml` rather than inferred silently at gate time.
 
 See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the full Claude Code path. Writer-facing operator notes are available in [docs/golden-path.md](docs/golden-path.md) and [docs/weekly-use.md](docs/weekly-use.md); Chinese versions are [docs/golden-path.zh-CN.md](docs/golden-path.zh-CN.md) and [docs/weekly-use.zh-CN.md](docs/weekly-use.zh-CN.md).
 

@@ -43,6 +43,9 @@ Historical implementation name: MABW
     `internet_default`
   - ReportPack default policy profile binding and optional ReportSpec
     `policy_profile` override validation
+  - `briefloop new` / `multi-agent-brief new` deterministic `--industry`
+    resolver that writes the selected profile and resolution source into
+    `report_spec.yaml`, with explicit `--policy-profile` override
   - resolved PolicyProfile projection in `validate-report-spec`, read-only
     status, and generated handoff artifacts
   - limited PolicyProfile deterministic gate adapter for existing gate

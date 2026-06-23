@@ -15,6 +15,7 @@ from multi_agent_brief.product.bundle_projection import (
     write_report_bundle_manifest,
 )
 from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
+from multi_agent_brief.product.policy_resolver import resolve_policy_profile
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import (
     ReportSpecLoadError,
@@ -36,6 +37,17 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
         "--company",
         default="Your Organization",
         help="Organization name placeholder.",
+    )
+    parser.add_argument(
+        "--industry",
+        help=(
+            "Industry or theme hint for deterministic PolicyProfile resolution. "
+            "Low-confidence or ambiguous matches use the ReportPack default."
+        ),
+    )
+    parser.add_argument(
+        "--policy-profile",
+        help="Explicit PolicyProfile override, for example finance_default.",
     )
     parser.add_argument("--title", help="Brief title. Defaults to the pack title.")
     parser.add_argument(
@@ -105,8 +117,8 @@ def handle_new_workspace(args: argparse.Namespace) -> int:
 
     target = Path(args.workspace)
     try:
-        _create_report_pack_workspace(target=target, pack=pack, args=args)
-    except (FileExistsError, OSError) as exc:
+        creation = _create_report_pack_workspace(target=target, pack=pack, args=args)
+    except (FileExistsError, OSError, ValueError) as exc:
         payload = {
             "ok": False,
             "error": str(exc),
@@ -121,6 +133,8 @@ def handle_new_workspace(args: argparse.Namespace) -> int:
         "workspace": str(target),
         "report_pack": pack.pack_id,
         "report_spec": str(target / "report_spec.yaml"),
+        "policy_profile": creation.get("policy_profile"),
+        "policy_profile_resolution": creation.get("policy_profile_resolution"),
         "boundary": "zero_config_workspace_skeleton_only",
     }
     _print_payload("new", payload, as_json=False)
@@ -244,6 +258,10 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"Created BriefLoop workspace: {workspace}")
             print(f"report_pack: {payload.get('report_pack')}")
             print(f"report_spec: {payload.get('report_spec')}")
+            resolution = payload.get("policy_profile_resolution")
+            resolution = resolution if isinstance(resolution, dict) else {}
+            print(f"policy_profile: {payload.get('policy_profile') or 'unknown'}")
+            print(f"policy_profile_source: {resolution.get('source') or 'unknown'}")
             print(
                 "boundary: product workspace skeleton only; no stages, gates,"
                 " rendering, or delivery were run"
@@ -270,6 +288,7 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
     else:
         print(f"report_pack: {payload.get('report_pack')}")
         print(f"resolved_policy_profile: {payload.get('resolved_policy_profile')}")
+        print(f"policy_profile_source: {payload.get('policy_profile_source')}")
         print(f"report_type: {payload.get('report_type')}")
         for error in payload.get("errors", []):
             print(f"[error] {error.get('field')}: {error.get('error')}")
@@ -281,16 +300,26 @@ def _normalize_pack_id(value: str) -> str:
     return value.strip().replace("-", "_")
 
 
-def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Namespace) -> None:
+def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Namespace) -> dict[str, Any]:
     from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
 
+    policy_registry = PolicyProfileRegistry.from_package()
     spec = deepcopy(dict(pack.default_report_spec))
-    if pack.default_policy_profile and not spec.get("policy_profile"):
-        spec["policy_profile"] = pack.default_policy_profile
+    policy_resolution = resolve_policy_profile(
+        default_policy_profile=pack.default_policy_profile,
+        explicit_policy_profile=getattr(args, "policy_profile", None),
+        industry=getattr(args, "industry", None),
+        company=getattr(args, "company", None),
+        known_policy_profiles=policy_registry.profile_ids(),
+    )
+    spec["policy_profile"] = policy_resolution.policy_profile
+    spec["policy_profile_resolution"] = policy_resolution.to_dict()
     audience = spec.get("audience") if isinstance(spec.get("audience"), dict) else {}
     title = args.title or str(spec.get("title") or pack.display_name or "BriefLoop Report")
     language = args.language or str(audience.get("language") or "en-US")
     reader_label = args.audience or str(audience.get("label") or "business reader")
+    industry_hint = getattr(args, "industry", None)
+    industry_text = industry_hint if isinstance(industry_hint, str) and industry_hint.strip() else pack.display_name
     spec["title"] = title
     spec["audience"] = dict(audience)
     spec["audience"]["label"] = reader_label
@@ -307,8 +336,8 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
         output_language=language,
         company=args.company,
         role="report_owner",
-        industry=pack.report_type,
-        industry_text=pack.display_name,
+        industry=industry_text,
+        industry_text=industry_text,
         brief_title=title,
         audience=reader_label,
         audience_profile="management",
@@ -340,3 +369,7 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
         yaml.safe_dump(spec, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
+    return {
+        "policy_profile": policy_resolution.policy_profile,
+        "policy_profile_resolution": policy_resolution.to_dict(),
+    }
