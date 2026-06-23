@@ -163,8 +163,15 @@ def test_hermes_skill_uses_delegate_task_runtime():
     assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in skill
     assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in skill
     assert "multi-agent-brief state check --workspace <workspace> --strict" in skill
+    assert "multi-agent-brief state freeze-claim-ledger --workspace <workspace>" in skill
+    assert "multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger" in skill
     assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in skill
     assert "multi-agent-brief state finalize-complete --workspace <workspace>" in skill
+    assert (
+        skill.index("multi-agent-brief state freeze-claim-ledger --workspace <workspace>")
+        < skill.index("multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger")
+        < skill.index("#### 4. Analyst child")
+    )
     assert "Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input" in skill
     assert "route repair to Editor" in skill
     assert "Did 0 searches" in skill
@@ -276,6 +283,12 @@ def test_hermes_prompt_contains_atomic_graph_boundary():
     assert f"multi-agent-brief gates check --workspace {resolved_ws} --stage auditor" in prompt
     assert f"multi-agent-brief gates check --workspace {resolved_ws} --stage finalize" in prompt
     assert f"multi-agent-brief state check --workspace {resolved_ws} --strict" in prompt
+    claim_ledger_freeze = f"multi-agent-brief state freeze-claim-ledger --workspace {resolved_ws}"
+    claim_ledger_complete = f"multi-agent-brief state stage-complete --workspace {resolved_ws} --stage claim-ledger"
+    assert claim_ledger_freeze in prompt
+    assert claim_ledger_complete in prompt
+    assert prompt.index(claim_ledger_freeze) < prompt.index(claim_ledger_complete)
+    assert prompt.index(claim_ledger_complete) < prompt.index('Goal: "Draft the audited MABW brief"')
     assert f"multi-agent-brief state stage-complete --workspace {resolved_ws} --stage auditor" in prompt
     assert f"multi-agent-brief state finalize-complete --workspace {resolved_ws}" in prompt
     assert f"multi-agent-brief repair route --workspace {resolved_ws}" in prompt
@@ -346,6 +359,8 @@ def test_hermes_skill_and_prompt_lock_source_metadata_contract():
     assert "never put titles" in combined.lower()
     assert "Write: output/intermediate/claim_drafts.json" in combined
     assert "state freeze-claim-ledger" in combined
+    assert "state stage-complete" in combined
+    assert "--stage claim-ledger" in combined
 
 
 def test_hermes_prompt_contains_doctor_and_sources():

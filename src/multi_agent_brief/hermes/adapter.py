@@ -684,6 +684,14 @@ Return claim count and schema issues found.
 )
 ```
 
+After `claim_drafts.json` exists, freeze the Claim Ledger and record the
+Claim Ledger stage completion before delegating Analyst:
+
+```bash
+multi-agent-brief state freeze-claim-ledger --workspace <workspace>
+multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
+```
+
 #### 4. Analyst child
 
 ```python
@@ -981,50 +989,54 @@ As the Hermes Orchestrator main agent, execute:
    Preserve source_url/source_path, source_title/source_name, publisher, source_category, source_type, published_at/retrieved_at, and evidence text. Never put titles, source names, source IDs, search queries, or local paths in source_url.
    toolsets: ["file", "terminal"]
 
-15. After claim_drafts.json exists, run `multi-agent-brief state freeze-claim-ledger --workspace {workspace}` and confirm claim_ledger.json exists. Then delegate analyst child:
+15. After claim_drafts.json exists, freeze the Claim Ledger, confirm claim_ledger.json exists, and record claim-ledger completion before delegating Analyst:
+   multi-agent-brief state freeze-claim-ledger --workspace {workspace}
+   multi-agent-brief state stage-complete --workspace {workspace} --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
+
+16. Then delegate analyst child:
    Goal: "Draft the audited MABW brief"
    Inputs: user.md and output/intermediate/claim_ledger.json
    Write: output/intermediate/audited_brief.md as the Analyst working draft
    Optional atomic graph boundary: if output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid for frozen Claim Ledger claims; it is not source evidence or proof of support. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph.
    toolsets: ["file", "terminal"]
 
-16. After analyst stage-complete freezes analyst_draft_snapshot.md, delegate editor / Delivery Editor child:
+17. After analyst stage-complete freezes analyst_draft_snapshot.md, delegate editor / Delivery Editor child:
    Goal: "Polish the audited MABW brief without adding facts"
    Inputs: output/intermediate/analyst_draft_snapshot.md and output/intermediate/audited_brief.md
    Write: output/intermediate/audited_brief.md as the Editor-owned final auditable brief
    Optional atomic graph boundary: if output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; if it is absent or invalid, do not repair it. Do not create/edit/repair/extend the graph, cite atom IDs, or introduce material atoms absent from the frozen Claim Ledger and valid graph.
    toolsets: ["file", "terminal"]
 
-17. After editor completes, delegate auditor child:
+18. After editor completes, delegate auditor child:
     Goal: "Audit the MABW brief against the Claim Ledger"
     Inputs: output/intermediate/audited_brief.md and output/intermediate/claim_ledger.json
     Write: output/intermediate/audit_report.json
     toolsets: ["file", "terminal"]
 
-18. After audit_report.json exists, select and run deterministic quality gates, then refresh runtime state:
+19. After audit_report.json exists, select and run deterministic quality gates, then refresh runtime state:
     multi-agent-brief controls select --workspace {workspace} --control quality_gates --selection enable --reason "Use quality gates before finalize."
     multi-agent-brief gates check --workspace {workspace} --stage auditor
     multi-agent-brief state check --workspace {workspace} --strict
 
-19. If state is not blocked, record the auditor completion:
+20. If state is not blocked, record the auditor completion:
     multi-agent-brief state stage-complete --workspace {workspace} --stage auditor --reason "Audit and quality gates passed."
 
-20. If state is blocked by owner-stage artifact repair, run `multi-agent-brief repair route --workspace {workspace}` and `multi-agent-brief repair start --workspace {workspace}`. Delegate only the repair_owner role and allow edits only to allowed_artifacts, then run `multi-agent-brief repair complete --workspace {workspace} --reason "<reason>"` and rerun downstream stages from must_rerun_from. Otherwise choose request_human_review or block_run. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
+21. If state is blocked by owner-stage artifact repair, run `multi-agent-brief repair route --workspace {workspace}` and `multi-agent-brief repair start --workspace {workspace}`. Delegate only the repair_owner role and allow edits only to allowed_artifacts, then run `multi-agent-brief repair complete --workspace {workspace} --reason "<reason>"` and rerun downstream stages from must_rerun_from. Otherwise choose request_human_review or block_run. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
 
-21. Run finalize only after the gates/state completion path passes. finalize is not a quality-gate executor:
+22. Run finalize only after the gates/state completion path passes. finalize is not a quality-gate executor:
     multi-agent-brief finalize --config {workspace}/config.yaml
 
-22. After finalize writes delivery artifacts under output/delivery/, verify completion:
+23. After finalize writes delivery artifacts under output/delivery/, verify completion:
     multi-agent-brief gates check --workspace {workspace} --stage finalize --brief {workspace}/output/brief.md
     multi-agent-brief state finalize-complete --workspace {workspace} --reason "Reader-facing artifacts passed finalize checks."
 
-23. Optional audit/debug projection after runtime state exists:
+24. Optional audit/debug projection after runtime state exists:
     multi-agent-brief provenance build --workspace {workspace}
     multi-agent-brief provenance show --workspace {workspace} --json
     multi-agent-brief provenance validate --workspace {workspace}
     Provenance projection is not semantic proof and is not required to finalize.
 
-23. Report artifact paths, audit status, quality gate status, switchboard selections, and optional provenance_graph.json when created.
+25. Report artifact paths, audit status, quality gate status, switchboard selections, and optional provenance_graph.json when created.
 
 For each delegate_task call, write complete goal and context with the workspace path, input paths, and output paths fully specified. After each child returns, verify the expected artifact exists and is non-empty before selecting continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.
 
