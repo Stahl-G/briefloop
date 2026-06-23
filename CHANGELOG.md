@@ -80,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imported `source_url` and non-default `source_type` into the Claim Ledger
   fields read by Source Appendix rendering, so non-local imported sources are
   not displayed as default local-file sources.
+- **PolicyProfile resolver provenance hardening**: `briefloop new` now treats
+  `--industry` as the authoritative deterministic resolver hint before falling
+  back to company text, and ReportSpec validation rejects
+  `report_pack.default_policy_profile` provenance when the resolved profile
+  does not match the pack default.
 
 ## [0.10.1] — 2026-06-22
 

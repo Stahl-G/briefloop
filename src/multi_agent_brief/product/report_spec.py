@@ -75,6 +75,7 @@ def validate_report_spec_payload(
     policy_profile_resolution = _resolution_payload(payload.get("policy_profile_resolution"))
     resolution_source = _text(policy_profile_resolution.get("source")) if policy_profile_resolution else ""
     policy_profile_source = ""
+    pack_default_policy_profile = ""
 
     if known_report_packs is not None:
         if not report_pack or report_pack not in known_report_packs:
@@ -88,7 +89,8 @@ def validate_report_spec_payload(
             )
 
     if not resolved_policy_profile and default_policy_profile_by_pack is not None and report_pack:
-        resolved_policy_profile = _text(default_policy_profile_by_pack.get(report_pack))
+        pack_default_policy_profile = _text(default_policy_profile_by_pack.get(report_pack))
+        resolved_policy_profile = pack_default_policy_profile
         if not policy_profile_source and resolved_policy_profile:
             policy_profile_source = "report_pack.default_policy_profile"
         if known_report_packs is None or report_pack in known_report_packs:
@@ -109,6 +111,9 @@ def validate_report_spec_payload(
                 )
             )
 
+    if not pack_default_policy_profile and default_policy_profile_by_pack is not None and report_pack:
+        pack_default_policy_profile = _text(default_policy_profile_by_pack.get(report_pack))
+
     if policy_profile_resolution:
         resolution_profile = _text(policy_profile_resolution.get("policy_profile"))
         if resolution_profile and resolved_policy_profile and resolution_profile != resolved_policy_profile:
@@ -123,6 +128,18 @@ def validate_report_spec_payload(
                 FieldViolation(
                     field="policy_profile_resolution.source",
                     error="requires explicit policy_profile unless source is report_pack.default_policy_profile",
+                )
+            )
+        if (
+            resolution_source == "report_pack.default_policy_profile"
+            and pack_default_policy_profile
+            and resolved_policy_profile
+            and resolved_policy_profile != pack_default_policy_profile
+        ):
+            violations.append(
+                FieldViolation(
+                    field="policy_profile_resolution.source",
+                    error=f"report_pack.default_policy_profile must resolve to pack default:{pack_default_policy_profile}",
                 )
             )
 

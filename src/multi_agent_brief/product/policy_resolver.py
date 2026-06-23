@@ -104,7 +104,7 @@ def resolve_policy_profile(
     known = {item for item in (known_policy_profiles or ()) if item}
     default_profile = _normalize_profile_id(default_policy_profile)
     explicit = _normalize_profile_id(explicit_policy_profile)
-    input_text = _joined_text([industry, company])
+    input_text = _resolver_input(industry=industry, company=company)
 
     if explicit:
         if known and explicit not in known:
@@ -179,6 +179,16 @@ def _keyword_matches(text: str, keyword: str) -> bool:
 
 def _joined_text(values: Sequence[str | None]) -> str:
     return " ".join(str(value).strip() for value in values if isinstance(value, str) and value.strip())
+
+
+def _resolver_input(*, industry: str | None, company: str | None) -> str:
+    # Industry is the policy hint. Company names are only a fallback when the
+    # user gave no industry/theme, so an organization name cannot contaminate a
+    # clear profile selection.
+    industry_text = _joined_text([industry])
+    if industry_text:
+        return industry_text
+    return _joined_text([company])
 
 
 def _normalize_profile_id(value: str | None) -> str:
