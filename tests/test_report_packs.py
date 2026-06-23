@@ -242,7 +242,7 @@ def test_new_report_pack_workspace_resolves_policy_profile_from_industry(
     assert spec["policy_profile_resolution"] == {
         "policy_profile": "finance_default",
         "source": "industry_resolver",
-        "input": "listed company IR Your Organization",
+        "input": "listed company IR",
         "matched_rule": "finance_keywords",
         "confidence": "deterministic_exact_or_keyword",
         "alternatives": [],
@@ -266,6 +266,36 @@ def test_new_report_pack_workspace_uses_pack_default_for_ambiguous_industry(
     assert resolution["matched_rule"] == "ambiguous_industry_keywords"
     assert resolution["confidence"] == "default_ambiguous"
     assert resolution["alternatives"] == ["finance_default", "manufacturing_default"]
+
+
+def test_new_report_pack_workspace_industry_takes_precedence_over_company_for_policy_profile(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "finance-weekly"
+
+    assert (
+        main(
+            [
+                "new",
+                "market-weekly",
+                str(workspace),
+                "--industry",
+                "finance",
+                "--company",
+                "Industrial Bank",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert spec["policy_profile"] == "finance_default"
+    assert spec["policy_profile_resolution"]["source"] == "industry_resolver"
+    assert spec["policy_profile_resolution"]["input"] == "finance"
+    assert spec["policy_profile_resolution"]["matched_rule"] == "finance_keywords"
 
 
 def test_new_report_pack_workspace_explicit_policy_profile_override_wins(

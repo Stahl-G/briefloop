@@ -408,6 +408,37 @@ def test_report_spec_validation_rejects_policy_resolution_profile_mismatch() -> 
     assert any(item.field == "policy_profile_resolution.policy_profile" for item in result.errors)
 
 
+def test_report_spec_validation_rejects_false_pack_default_policy_profile_source() -> None:
+    spec = _market_spec()
+    spec["policy_profile"] = "finance_default"
+    spec["policy_profile_resolution"] = {
+        "policy_profile": "finance_default",
+        "source": "report_pack.default_policy_profile",
+        "input": "finance",
+        "matched_rule": "manual_edit",
+        "confidence": "default_no_match",
+        "alternatives": [],
+    }
+    report_registry = ReportPackRegistry.from_package()
+    policy_registry = PolicyProfileRegistry.from_package()
+
+    result = validate_report_spec_payload(
+        spec,
+        known_report_packs=report_registry.pack_ids(),
+        report_type_by_pack=report_registry.report_type_by_pack(),
+        known_policy_profiles=policy_registry.profile_ids(),
+        default_policy_profile_by_pack=report_registry.default_policy_profile_by_pack(),
+    )
+
+    assert not result.ok
+    assert result.resolved_policy_profile == "finance_default"
+    assert any(
+        item.field == "policy_profile_resolution.source"
+        and "pack default:manufacturing_default" in item.error
+        for item in result.errors
+    )
+
+
 def test_policy_profiles_do_not_change_runtime_stage_contracts() -> None:
     registry = ContractRegistry.from_config_dir(ROOT / "configs")
 
