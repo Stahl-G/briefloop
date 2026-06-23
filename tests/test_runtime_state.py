@@ -2919,7 +2919,51 @@ def test_freeze_claim_ledger_normalizes_blank_draft_source_type_to_default(tmp_p
     ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
     claim = ledger[0]
     assert claim["source_type"] == "local_file"
-    assert claim["metadata"]["source_type"] == "local_file"
+    assert "source_type" not in claim["metadata"]
+
+
+def test_enrich_claim_metadata_fills_source_type_after_blank_draft_default(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _add_imported_source_authority(
+        ws,
+        metadata={
+            "source_url": "https://example.com/news",
+            "source_type": "web_search",
+        },
+    )
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.claim_drafts.v1",
+                "drafts": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "source_id": "SRC-001",
+                        "evidence_text": "Example evidence.",
+                        "source_type": "   ",
+                        "source_path": "input/sources/source-001.json",
+                        "source_title": "Example clinical study",
+                        "source_category": "peer_reviewed_paper",
+                    }
+                ],
+            }
+        )
+        + "\n",
+    )
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    state = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
+
+    ledger = json.loads((_intermediate(ws) / "claim_ledger.json").read_text(encoding="utf-8"))
+    claim = ledger[0]
+    assert claim["source_type"] == "web_search"
+    assert claim["metadata"]["source_type"] == "web_search"
+    record = state["claim_ledger_metadata_enrichment"]["enriched_claims"][0]
+    assert "source_type" in record["fields"]
 
 
 def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):

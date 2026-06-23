@@ -1760,7 +1760,9 @@ def _canonical_claims_from_drafts(drafts: list[dict[str, Any]]) -> list[dict[str
         for field in CLAIM_DRAFT_PROVENANCE_METADATA_FIELDS:
             if draft.get(field) is not None:
                 if field == "source_type":
-                    metadata.setdefault(field, source_type)
+                    raw_source_type = draft.get("source_type")
+                    if isinstance(raw_source_type, str) and raw_source_type.strip():
+                        metadata.setdefault(field, source_type)
                 else:
                     metadata.setdefault(field, str(draft[field]).strip())
         claim = {
