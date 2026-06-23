@@ -655,6 +655,32 @@ def test_start_handoff_projects_report_template_section_order(tmp_path):
     assert "runtime_effect=none" in data["prompt"]
 
 
+def test_start_handoff_does_not_treat_invalid_report_template_as_contract(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_solar_report_spec(ws)
+    spec = yaml.safe_load((ws / "report_spec.yaml").read_text(encoding="utf-8"))
+    spec["report_type"] = "unknown_report_type"
+    (ws / "report_spec.yaml").write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    projection = data["report_template_projection"]
+
+    assert projection["status"] == "invalid_report_spec"
+    assert "ReportTemplate projection" in data["prompt"]
+    assert "status=invalid_report_spec" in data["prompt"]
+    assert "Do not use this as a section-order contract" in data["prompt"]
+    assert "validate and fix report_spec.yaml first" in data["prompt"]
+    assert "Use this as a stable product section-order contract" not in data["prompt"]
+
+
 def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_auditable_condition_metadata(ws)

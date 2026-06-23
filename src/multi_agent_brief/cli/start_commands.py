@@ -620,16 +620,22 @@ def _apply_report_template_projection(handoff: AgentHandoff, workspace: Path) ->
     handoff.report_template_projection = projection
     if projection.get("status") == "not_available":
         return
+    status = projection.get("status")
     section_order = projection.get("section_order") if isinstance(projection.get("section_order"), list) else []
     section_text = ", ".join(str(item) for item in section_order) or "none"
+    usage_text = (
+        "Use this as a stable product section-order contract when drafting."
+        if status == "resolved"
+        else "Do not use this as a section-order contract; validate and fix report_spec.yaml first."
+    )
     text = (
         "ReportTemplate projection: "
-        f"status={projection.get('status')}; "
+        f"status={status}; "
         f"template_id={projection.get('template_id') or 'unknown'}; "
         f"report_type={projection.get('report_type') or 'unknown'}; "
         f"section_order={section_text}; "
         "boundary=product_report_template_projection_only; runtime_effect=none. "
-        "Use this as a stable product section-order contract when drafting. "
+        f"{usage_text} "
         "It does not render templates, rewrite content, bypass gates, deliver "
         "reports, or authorize publication."
     )
