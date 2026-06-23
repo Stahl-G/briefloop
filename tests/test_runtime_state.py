@@ -3118,6 +3118,104 @@ def test_enrich_claim_metadata_accepts_imported_fast_rerun_claim_ledger(tmp_path
     ]
 
 
+def test_enrich_claim_metadata_preserves_fast_rerun_import_after_chained_enrichment(tmp_path):
+    ws = _write_workspace(tmp_path)
+    archive = (
+        ROOT
+        / "tests"
+        / "fixtures"
+        / "fast_rerun_clean_archive"
+        / "output"
+        / "runs"
+        / "mabw-20260614T000000Z-public0001"
+        / "manifest.json"
+    )
+    imported = import_fact_layer_transaction(
+        workspace=ws,
+        archive=archive,
+        runtime="codex",
+        repo_workdir=ROOT,
+    )
+    imported_claim_record = next(
+        record
+        for record in imported["manifest"]["fact_layer_import"]["imported_files"]
+        if record["artifact_id"] == "claim_ledger"
+    )
+
+    source_path = ws / "input" / "sources" / "source-001.md"
+    source_text = source_path.read_text(encoding="utf-8")
+    source_path.write_text(
+        source_text.replace(
+            "Retrieved: 2026-06-14T00:00:00Z\n",
+            "Retrieved: 2026-06-14T00:00:00Z\nsource_type: web_search\n",
+        ),
+        encoding="utf-8",
+    )
+
+    manifest_path = _state_file(ws, "runtime_manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source_record = next(
+        record
+        for record in manifest["fact_layer_import"]["imported_files"]
+        if record["workspace_path"] == "input/sources/source-001.md"
+    )
+    source_record["sha256"] = _sha256_file(source_path)
+    source_record["size_bytes"] = source_path.stat().st_size
+
+    ledger_path = _intermediate(ws) / "claim_ledger.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger[0]["source_type"] = "local_file"
+    ledger[0]["metadata"]["source_type"] = "web_search"
+    ledger_path.write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    first_derived_sha = _sha256_file(ledger_path)
+    enrichment_record = {
+        "schema_version": "mabw.claim_ledger_metadata_enrichment.v1",
+        "status": "applied",
+        "enriched_at": "2026-06-18T00:00:00+00:00",
+        "transaction_id": "previous-enrichment",
+        "source": "fact_layer_imported_source_evidence",
+        "claim_ledger_authority": "fact_layer_import",
+        "source_claim_ledger_sha256": imported_claim_record["sha256"],
+        "claim_ledger_path": "output/intermediate/claim_ledger.json",
+        "previous_claim_ledger_sha256": imported_claim_record["sha256"],
+        "claim_ledger_sha256": first_derived_sha,
+        "allowed_fields": [],
+        "forbidden_fields": [],
+        "enriched_claim_count": 1,
+        "enriched_claims": [],
+    }
+    manifest["claim_ledger_metadata_enrichment"] = enrichment_record
+    manifest["claim_ledger_metadata_enrichments"] = [enrichment_record]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    state = enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    latest = manifest["claim_ledger_metadata_enrichment"]
+    assert latest["claim_ledger_authority"] == "fact_layer_import_derived"
+    assert latest["previous_claim_ledger_sha256"] == first_derived_sha
+    assert latest["source_claim_ledger_sha256"] == imported_claim_record["sha256"]
+    assert latest["claim_ledger_sha256"] == _sha256_file(ledger_path)
+    assert state["fact_layer_import"]["status"] == "valid"
+    shown = show_runtime_state(workspace=ws)
+    assert shown["fact_layer_import"]["status"] == "valid"
+    assert shown["fact_layer_import"]["derived_imported_files"] == [
+        {
+            "artifact_id": "claim_ledger",
+            "workspace_path": "output/intermediate/claim_ledger.json",
+            "original_sha256": imported_claim_record["sha256"],
+            "current_sha256": _sha256_file(ledger_path),
+            "derivation": "claim_ledger_metadata_enrichment",
+        }
+    ]
+
+
 def test_state_enrich_claim_metadata_cli_json(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

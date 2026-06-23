@@ -1913,11 +1913,16 @@ def _valid_imported_claim_ledger_derivation(
     enrichment = manifest.get("claim_ledger_metadata_enrichment")
     if not isinstance(enrichment, dict):
         return False
+    imported_sha256 = import_record.get("sha256")
+    derives_from_imported_sha = (
+        enrichment.get("source_claim_ledger_sha256") == imported_sha256
+        or enrichment.get("previous_claim_ledger_sha256") == imported_sha256
+    )
     return (
         enrichment.get("schema_version") == CLAIM_LEDGER_METADATA_ENRICHMENT_SCHEMA
         and enrichment.get("status") == "applied"
         and enrichment.get("claim_ledger_path") == CLAIM_LEDGER_PATH.as_posix()
-        and enrichment.get("previous_claim_ledger_sha256") == import_record.get("sha256")
+        and derives_from_imported_sha
         and enrichment.get("claim_ledger_sha256") == current_sha256
     )
 

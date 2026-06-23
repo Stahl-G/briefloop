@@ -295,11 +295,16 @@ def _valid_derived_imported_file(
     enrichment = manifest.get("claim_ledger_metadata_enrichment")
     if not isinstance(enrichment, dict):
         return False
+    imported_sha256 = record.get("sha256")
+    derives_from_imported_sha = (
+        enrichment.get("source_claim_ledger_sha256") == imported_sha256
+        or enrichment.get("previous_claim_ledger_sha256") == imported_sha256
+    )
     return (
         enrichment.get("schema_version") == "mabw.claim_ledger_metadata_enrichment.v1"
         and enrichment.get("status") == "applied"
         and enrichment.get("claim_ledger_path") == "output/intermediate/claim_ledger.json"
-        and enrichment.get("previous_claim_ledger_sha256") == record.get("sha256")
+        and derives_from_imported_sha
         and enrichment.get("claim_ledger_sha256") == actual_sha256
     )
 

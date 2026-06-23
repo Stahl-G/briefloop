@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Fast-rerun Claim Ledger enrichment chain validation**: fast-rerun import
+  validation now accepts a Claim Ledger derived through a chained metadata
+  enrichment record when the latest record still points back to the original
+  imported Claim Ledger hash.
 - **Hermes Claim Ledger completion handoff**: Hermes-generated skill and prompt
   guidance now run `state stage-complete --stage claim-ledger` after
   `state freeze-claim-ledger` and before Analyst delegation, so the runtime
