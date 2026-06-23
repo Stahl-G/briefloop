@@ -43,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `source_path`, provider `source_type`, and reader-facing `source_category`.
   Gate/state repair guidance now spells out the owner-stage repair transaction
   path and warns against manually updating control files or SHA fields.
+- **PolicyProfile resolver for zero-config workspaces**: `briefloop new` now
+  accepts explicit `--policy-profile` overrides and deterministic
+  `--industry` hints, writes the selected profile and resolution source into
+  `report_spec.yaml`, and shows the source in validation/status projections.
+  Ambiguous or low-confidence matches use the ReportPack default. This is not
+  gate-time industry inference, compliance judgment, or release authority.
 
 ### Fixed
 

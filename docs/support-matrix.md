@@ -156,7 +156,10 @@ including its resolved policy profile, create a workspace skeleton with
 `new <pack> <workspace>`, show the resolved profile in read-only status and
 generated handoff artifacts, tighten existing deterministic quality-gate
 strictness and reader-final forbidden-phrase checks through a limited adapter,
-or write a bundle manifest with `packs bundle`. These surfaces do not run
+or write a bundle manifest with `packs bundle`. Workspace creation may use an
+explicit `--policy-profile` or deterministic `--industry` hint, but the result
+is written into `report_spec.yaml` with its resolution source and is not
+silently re-inferred at gate time. These surfaces do not run
 subagents, create a second gate engine, render templates, deliver reports,
 authorize publication, judge industry compliance, verify internet rumors,
 provide investment-advice detection, or provide a lite/force-deliver path.

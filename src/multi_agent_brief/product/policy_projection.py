@@ -68,6 +68,8 @@ def project_workspace_policy_profile(workspace: str | Path) -> dict[str, Any]:
             "report_pack": validation.report_pack,
             "policy_profile": validation.policy_profile,
             "resolved_policy_profile": validation.resolved_policy_profile,
+            "source": validation.policy_profile_source,
+            "policy_profile_resolution": validation.policy_profile_resolution,
             "errors": [_violation_to_dict(item) for item in validation.errors],
         }
 
@@ -80,6 +82,8 @@ def project_workspace_policy_profile(workspace: str | Path) -> dict[str, Any]:
             "report_spec_path": "report_spec.yaml",
             "report_pack": validation.report_pack,
             "policy_profile": validation.policy_profile,
+            "source": validation.policy_profile_source,
+            "policy_profile_resolution": validation.policy_profile_resolution,
         }
 
     profile = policy_registry.get(resolved)
@@ -102,7 +106,11 @@ def project_workspace_policy_profile(workspace: str | Path) -> dict[str, Any]:
         "report_pack": validation.report_pack,
         "policy_profile": validation.policy_profile,
         "resolved_policy_profile": resolved,
-        "source": "report_spec.policy_profile" if validation.policy_profile else "report_pack.default_policy_profile",
+        "source": (
+            validation.policy_profile_source
+            or ("report_spec.policy_profile" if validation.policy_profile else "report_pack.default_policy_profile")
+        ),
+        "policy_profile_resolution": validation.policy_profile_resolution,
         "policy_profile_sha256": _sha256_file(Path(profile.source_path)),
         "profile": _profile_summary(dict(profile.payload)),
     }
