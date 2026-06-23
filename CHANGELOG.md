@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whitespace-only `source_type` are now materialized as `local_file` during
   Claim Ledger freeze, matching the claim-draft validator's default local-file
   semantics.
+- **Source URL malformed-host validation**: source metadata URL validation now
+  treats parser errors such as malformed bracketed hosts as normal validation
+  failures instead of letting `urlparse()` exceptions escape contract checks.
 - **Source metadata local-file default validation**: claim drafts that omit
   `source_type` and `source_url` are now validated the same way Claim Ledger
   freeze materializes them, as local-file sources that must carry reader-facing

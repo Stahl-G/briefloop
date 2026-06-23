@@ -31,7 +31,10 @@ def source_url_error(value: Any) -> str | None:
     stripped = value.strip()
     if not stripped:
         return None
-    parsed = urlparse(stripped)
+    try:
+        parsed = urlparse(stripped)
+    except ValueError:
+        return "must be an http(s) URL"
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return "must be an http(s) URL"
     return None

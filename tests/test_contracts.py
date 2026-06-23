@@ -150,7 +150,20 @@ class TestClaimContract:
         violations = ClaimContract.validate(data)
         assert any(v.field == "source_url" for v in violations)
 
-    @pytest.mark.parametrize("source_url", ["https://", "http://", "https:///source"])
+    def test_malformed_source_url_returns_violation(self):
+        data = {
+            "claim_id": "X",
+            "statement": "s",
+            "source_id": "S",
+            "evidence_text": "e",
+            "source_url": "https://[::1",
+        }
+
+        violations = ClaimContract.validate(data)
+
+        assert any(v.field == "source_url" for v in violations)
+
+    @pytest.mark.parametrize("source_url", ["https://", "http://", "https:///source", "https://[::1"])
     def test_source_url_requires_network_location(self, source_url):
         assert source_url_error(source_url) == "must be an http(s) URL"
 
