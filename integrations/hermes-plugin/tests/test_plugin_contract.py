@@ -18,6 +18,10 @@ def _relative_files(root: Path) -> list[Path]:
     return sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
 
 
+def _as_posix_path(value: str) -> str:
+    return value.replace("\\", "/")
+
+
 def _normalize_stage_label(label: str) -> str:
     normalized = label.strip().removeprefix("→").strip()
     aliases = {
@@ -109,8 +113,9 @@ def test_plugin_registers_tools_command_and_skill():
     }
     assert "mabw" in ctx.commands
     assert {name for name, _ in ctx.skills} == {"mabw-workflow", "briefloop"}
-    assert dict(ctx.skills)["mabw-workflow"].endswith("mabw/skills/mabw-workflow/SKILL.md")
-    assert dict(ctx.skills)["briefloop"].endswith("mabw/skills/briefloop/SKILL.md")
+    skill_paths = {name: _as_posix_path(path) for name, path in ctx.skills}
+    assert skill_paths["mabw-workflow"].endswith("mabw/skills/mabw-workflow/SKILL.md")
+    assert skill_paths["briefloop"].endswith("mabw/skills/briefloop/SKILL.md")
 
 
 def test_plugin_briefloop_skill_matches_canonical_projection():
