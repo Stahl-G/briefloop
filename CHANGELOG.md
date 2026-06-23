@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guidance now run `state stage-complete --stage claim-ledger` after
   `state freeze-claim-ledger` and before Analyst delegation, so the runtime
   state machine advances with the frozen Claim Ledger.
+- **Source Appendix source ID title fallback**: reader-facing source appendices
+  no longer use raw ledger `source_id` values such as `SRC-001` as display
+  titles when source title/name metadata is missing; they keep the generic
+  source record title and surface the missing-title note instead.
 - **Source metadata local-file default validation**: claim drafts that omit
   `source_type` and `source_url` are now validated the same way Claim Ledger
   freeze materializes them, as local-file sources that must carry reader-facing

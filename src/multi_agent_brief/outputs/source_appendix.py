@@ -263,7 +263,6 @@ def _record_from_claim(claim: Claim) -> tuple[SourceAppendixRecord, list[str]]:
         metadata.get("source_title"),
         metadata.get("title"),
         metadata.get("source_name"),
-        claim.source_id,
     )
     raw_publisher = _first_text(metadata.get("publisher"), metadata.get("source_name"))
     title, title_warning = _safe_display_text(raw_title, field_name="source title")

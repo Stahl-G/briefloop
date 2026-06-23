@@ -218,6 +218,36 @@ def test_source_appendix_renders_local_file_source_identity_without_url(tmp_path
     assert "Local workspace source" not in result.markdown
 
 
+def test_source_appendix_does_not_use_source_id_as_reader_title(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            {
+                "claim_id": "CL-001",
+                "statement": "Example source reported the result.",
+                "source_id": "SRC-001",
+                "evidence_text": "Evidence text must not render.",
+                "source_type": "local_file",
+                "metadata": {
+                    "publisher": "Example Institution",
+                    "source_category": "market_report",
+                },
+            }
+        ],
+    )
+
+    result = build_source_appendix(
+        audited_markdown="Example source reported the result. [src:CL-001]\n",
+        ledger_path=ledger,
+    )
+
+    assert result.status == "generated_with_warnings"
+    assert "### [S1] Source record" in result.markdown
+    assert "SRC-001" not in result.markdown
+    assert "Source metadata missing source title/name." in result.markdown
+
+
 def test_source_appendix_omits_invalid_url_and_reports_note(tmp_path: Path):
     ledger = tmp_path / "claim_ledger.json"
     _write_ledger(
