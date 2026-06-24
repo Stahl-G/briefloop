@@ -93,10 +93,15 @@ def project_workspace_report_template(workspace: str | Path) -> dict[str, Any]:
         "report_spec_path": "report_spec.yaml",
         "report_pack": validation.report_pack,
         "report_type": validation.report_type,
+        "report_title": str(spec_payload.get("title") or ""),
         "template_id": template.template_id,
         "display_name": template.display_name,
         "source": "packaged_report_template",
         "section_order": list(template.section_order),
+        "section_aliases": {
+            key: list(value)
+            for key, value in template.section_aliases.items()
+        },
         "section_count": len(template.section_order),
         "template_sha256": _sha256_file(Path(template.source_path)),
     }

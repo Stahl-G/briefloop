@@ -26,6 +26,7 @@ from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report imp
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_reader_text_from_workspace
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
+from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
 
 
@@ -60,6 +61,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "semantic_assessment_report": {},
         "policy_profile": {},
         "report_template": {},
+        "report_template_conformance": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -125,6 +127,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["semantic_assessment_report"] = project_semantic_assessment_report_from_workspace(ws)
     payload["policy_profile"] = project_workspace_policy_profile(ws)
     payload["report_template"] = project_workspace_report_template(ws)
+    payload["report_template_conformance"] = project_workspace_report_template_conformance(ws)
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -182,6 +185,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     semantic_assessment_report = status.get("semantic_assessment_report") or {}
     policy_profile = status.get("policy_profile") or {}
     report_template = status.get("report_template") or {}
+    report_template_conformance = status.get("report_template_conformance") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -286,6 +290,20 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             "boundary=projection_only "
             "runtime_effect=none "
             f"errors={len(errors)}"
+        )
+    if report_template_conformance.get("status") not in {None, "not_available"}:
+        counts = report_template_conformance.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        lines.append(
+            "[status] report_template_conformance: "
+            f"{report_template_conformance.get('status')} "
+            f"present_targets={counts.get('present_target_count', 0)} "
+            f"warnings={counts.get('warning_target_count', 0)} "
+            f"missing_sections={counts.get('missing_section_count', 0)} "
+            f"out_of_order={counts.get('out_of_order_section_count', 0)} "
+            f"extra_headings={counts.get('extra_heading_count', 0)} "
+            "boundary=projection_only "
+            "runtime_effect=none"
         )
     for marker in status.get("stale_or_unknown") or []:
         lines.append(f"[status] stale_or_unknown: {marker}")

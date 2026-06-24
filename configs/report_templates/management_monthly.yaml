@@ -11,6 +11,23 @@ section_order:
   - risks_and_dependencies
   - next_month_watchlist
   - source_appendix
+section_aliases:
+  executive_summary:
+    - Executive Summary
+  operating_context:
+    - Operating Context
+  key_decisions:
+    - Key Decisions
+  financial_and_market_indicators:
+    - Financial and Market Indicators
+    - Financial & Market Indicators
+  risks_and_dependencies:
+    - Risks and Dependencies
+    - Risks & Dependencies
+  next_month_watchlist:
+    - Next Month Watchlist
+  source_appendix:
+    - Source Appendix
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

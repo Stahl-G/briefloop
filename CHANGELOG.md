@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   section order in read-only `status` and generated runtime handoff artifacts.
   This is product section-order metadata only; it does not render templates,
   rewrite content, bypass gates, deliver reports, or authorize publication.
+- **ReportTemplate section-conformance projection**: read-only `status` now
+  reports whether existing audited/final reader Markdown headings cover the
+  resolved ReportTemplate sections in order. This is diagnostic only; it does
+  not render templates, rewrite content, block gates, deliver reports, or
+  authorize publication.
 
 ### Fixed
 

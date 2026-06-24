@@ -130,11 +130,11 @@ def test_onboarding_mapper_task_objective_preserved():
 def test_onboarding_mapper_task_objective_is_not_used_as_brief_title():
     """Task objective must not become project.name or delivery filename title."""
     result = OnboardingResult(
-        company_or_org="Toyo Solar",
+        company_or_org="Example Solar",
         industry_or_theme="美国光储市场",
         language_plain="中文",
         task_objective=(
-            "制作 Toyo Solar 美国光储市场周报，聚焦 AI 数据中心清洁能源需求和"
+            "制作 Example Solar 美国光储市场周报，聚焦 AI 数据中心清洁能源需求和"
             "美国 HJT 异质结技术动态，输出专业严谨的中文简报供管理层决策参考"
         ),
     )
@@ -148,12 +148,12 @@ def test_onboarding_mapper_task_objective_is_not_used_as_brief_title():
 def test_onboarding_mapper_brief_title_controls_brief_title():
     result = OnboardingResult(
         brief_title="美国光储市场周报",
-        task_objective="制作 Toyo Solar 美国光储市场周报并供管理层决策参考",
+        task_objective="制作 Example Solar 美国光储市场周报并供管理层决策参考",
     )
     profile = map_onboarding_to_profile(result)
 
     assert profile.brief_title == "美国光储市场周报"
-    assert profile.task_objective == "制作 Toyo Solar 美国光储市场周报并供管理层决策参考"
+    assert profile.task_objective == "制作 Example Solar 美国光储市场周报并供管理层决策参考"
 
 
 def test_onboarding_mapper_forbidden_sources_preserved():
