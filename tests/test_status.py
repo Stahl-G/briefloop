@@ -273,6 +273,10 @@ def test_status_matches_chinese_report_template_section_aliases(tmp_path: Path) 
     ws = tmp_path / "ws"
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True)
+    (ws / "config.yaml").write_text(
+        yaml.safe_dump({"project": {"company": "Example Solar"}}, sort_keys=False),
+        encoding="utf-8",
+    )
     (ws / "report_spec.yaml").write_text(
         yaml.safe_dump(_solar_report_spec(), sort_keys=False),
         encoding="utf-8",
@@ -293,7 +297,7 @@ def test_status_matches_chinese_report_template_section_aliases(tmp_path: Path) 
             "政策。",
             "## 汇率与利率追踪",
             "汇率。",
-            "## 对 TOYO Solar 的启示",
+            "## 对 Example Solar 的启示",
             "启示。",
             "## 来源附录",
             "来源。",

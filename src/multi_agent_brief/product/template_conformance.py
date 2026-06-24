@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from multi_agent_brief.product.template_projection import project_workspace_report_template
 
 REPORT_TEMPLATE_CONFORMANCE_BOUNDARY = "product_report_template_conformance_projection_only"
@@ -46,6 +48,7 @@ def project_workspace_report_template_conformance(workspace: str | Path) -> dict
         if isinstance(item, str) and item.strip()
     ]
     section_aliases = _section_aliases(template.get("section_aliases"), expected_sections)
+    _add_workspace_company_aliases(section_aliases, _workspace_company(ws))
     targets = [
         _project_target(ws, "output/intermediate/audited_brief.md", expected_sections, section_aliases),
         _project_target(ws, "output/brief.md", expected_sections, section_aliases),
@@ -187,6 +190,40 @@ def _section_aliases(value: Any, expected_sections: list[str]) -> dict[str, list
             if isinstance(label, str) and label.strip()
         ]
     return aliases
+
+
+def _add_workspace_company_aliases(section_aliases: dict[str, list[str]], company: str) -> None:
+    if not company:
+        return
+    labels = section_aliases.setdefault("company_implications", [])
+    for label in (
+        f"Company Implications for {company}",
+        f"{company} Implications",
+        f"对{company}的启示",
+        f"对 {company} 的启示",
+    ):
+        if label not in labels:
+            labels.append(label)
+
+
+def _workspace_company(workspace: Path) -> str:
+    config_path = workspace / "config.yaml"
+    if not config_path.exists():
+        return ""
+    try:
+        payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    project = payload.get("project")
+    if not isinstance(project, dict):
+        return ""
+    for key in ("company", "organization"):
+        value = project.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _out_of_order_sections(sections: list[str], indices: list[int]) -> list[str]:
