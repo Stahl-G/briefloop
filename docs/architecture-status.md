@@ -73,8 +73,8 @@ breaking rename.
   Workspaces with `report_spec.yaml` also expose the resolved packaged
   ReportTemplate section order in read-only status and generated handoff
   artifacts so product section contracts are visible before drafting. Read-only
-  status can also project whether existing audited/final reader Markdown
-  headings cover those sections in order.
+  status and generated handoff artifacts can also project whether existing
+  audited/final reader Markdown headings cover those sections in order.
   Resolved PolicyProfiles may tighten existing deterministic quality-gate
   strictness and reader-final forbidden-phrase checks through a limited adapter.
   These contracts describe report type metadata over the existing Claim Ledger,

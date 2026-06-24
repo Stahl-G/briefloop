@@ -269,6 +269,53 @@ def test_status_projects_report_template_conformance_for_audited_brief(tmp_path:
     assert "runtime_effect=none" in formatted
 
 
+def test_status_template_conformance_ignores_source_appendix_child_headings(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    output = ws / "output"
+    output.mkdir(parents=True)
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_solar_report_spec(), sort_keys=False),
+        encoding="utf-8",
+    )
+    (output / "brief.md").write_text(
+        "\n".join([
+            "# Solar Industry Periodic Report",
+            "Title.",
+            "## Executive Summary",
+            "Summary.",
+            "## Supply Chain Price Tracker",
+            "Prices.",
+            "## Demand Installation Outlook",
+            "Demand.",
+            "## Policy Tax Financing",
+            "Policy.",
+            "## FX Rates Tracker",
+            "Rates.",
+            "## Company Implications",
+            "Implications.",
+            "# Source Appendix",
+            "Generated appendix.",
+            "## Sources",
+            "Generated source list.",
+        ]),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    projection = status["report_template_conformance"]
+    target = next(
+        item for item in projection["targets"]
+        if item["target_artifact"] == "output/brief.md"
+    )
+
+    assert projection["status"] == "pass"
+    assert target["status"] == "pass"
+    assert target["missing_sections"] == []
+    assert target["out_of_order_sections"] == []
+    assert target["extra_headings"] == []
+    assert target["nested_heading_count"] == 1
+
+
 def test_status_matches_chinese_report_template_section_aliases(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     intermediate = ws / "output" / "intermediate"
@@ -415,6 +462,52 @@ def test_status_reports_report_template_conformance_warnings(tmp_path: Path) -> 
     assert "[status] report_template_conformance: warning" in formatted
     assert "missing_sections=" in formatted
     assert "boundary=projection_only" in formatted
+
+
+def test_status_reports_extra_top_level_h1_as_conformance_warning(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_market_report_spec(policy_profile="manufacturing_default"), sort_keys=False),
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "# Market Weekly Brief",
+            "Title.",
+            "# Unplanned Commentary",
+            "Unexpected top-level section.",
+            "## Executive Summary",
+            "Summary.",
+            "## Market Signals",
+            "Signals.",
+            "## Demand and Supply",
+            "Demand.",
+            "## Competitor Moves",
+            "Competitors.",
+            "## Policy and Regulatory",
+            "Policy.",
+            "## Risks and Watchlist",
+            "Risks.",
+            "## Source Appendix",
+            "Sources.",
+        ]),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    projection = status["report_template_conformance"]
+    target = next(
+        item for item in projection["targets"]
+        if item["target_artifact"] == "output/intermediate/audited_brief.md"
+    )
+
+    assert projection["status"] == "warning"
+    assert target["status"] == "warning"
+    assert target["missing_sections"] == []
+    assert target["out_of_order_sections"] == []
+    assert target["extra_headings"] == ["Unplanned Commentary"]
 
 
 def test_status_does_not_match_nested_headings_as_template_sections(tmp_path: Path) -> None:

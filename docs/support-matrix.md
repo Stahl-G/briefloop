@@ -159,8 +159,8 @@ generated handoff artifacts, tighten existing deterministic quality-gate
 strictness and reader-final forbidden-phrase checks through a limited adapter,
 show the resolved ReportTemplate section order in read-only status and
 generated handoff artifacts, report read-only section-conformance diagnostics
-for existing audited/final reader Markdown, or write a bundle manifest with
-`packs bundle`.
+for existing audited/final reader Markdown in status and generated handoff
+artifacts, or write a bundle manifest with `packs bundle`.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not
