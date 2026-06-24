@@ -97,6 +97,10 @@ def project_workspace_report_template(workspace: str | Path) -> dict[str, Any]:
         "display_name": template.display_name,
         "source": "packaged_report_template",
         "section_order": list(template.section_order),
+        "section_aliases": {
+            key: list(value)
+            for key, value in template.section_aliases.items()
+        },
         "section_count": len(template.section_order),
         "template_sha256": _sha256_file(Path(template.source_path)),
     }

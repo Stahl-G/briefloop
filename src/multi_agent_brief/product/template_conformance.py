@@ -12,7 +12,7 @@ REPORT_TEMPLATE_CONFORMANCE_BOUNDARY = "product_report_template_conformance_proj
 
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _LEADING_NUMBERING_RE = re.compile(r"^\s*(?:\d+(?:\.\d+)*[.)、：:]?|\([0-9]+\)|[IVXLC]+[.)、：:]?)\s+", re.IGNORECASE)
-_NON_WORD_RE = re.compile(r"[^a-z0-9]+")
+_NON_LABEL_RE = re.compile(r"[^a-z0-9\u4e00-\u9fff]+")
 
 
 def project_workspace_report_template_conformance(workspace: str | Path) -> dict[str, Any]:
@@ -45,10 +45,11 @@ def project_workspace_report_template_conformance(workspace: str | Path) -> dict
         for item in template.get("section_order", [])
         if isinstance(item, str) and item.strip()
     ]
+    section_aliases = _section_aliases(template.get("section_aliases"), expected_sections)
     targets = [
-        _project_target(ws, "output/intermediate/audited_brief.md", expected_sections),
-        _project_target(ws, "output/brief.md", expected_sections),
-        _project_target(ws, "output/delivery/brief.md", expected_sections),
+        _project_target(ws, "output/intermediate/audited_brief.md", expected_sections, section_aliases),
+        _project_target(ws, "output/brief.md", expected_sections, section_aliases),
+        _project_target(ws, "output/delivery/brief.md", expected_sections, section_aliases),
     ]
     present_targets = [item for item in targets if item.get("status") != "missing"]
     if not present_targets:
@@ -69,7 +70,12 @@ def project_workspace_report_template_conformance(workspace: str | Path) -> dict
     }
 
 
-def _project_target(workspace: Path, rel_path: str, expected_sections: list[str]) -> dict[str, Any]:
+def _project_target(
+    workspace: Path,
+    rel_path: str,
+    expected_sections: list[str],
+    section_aliases: dict[str, list[str]],
+) -> dict[str, Any]:
     path = workspace / rel_path
     if not path.exists():
         return {
@@ -99,10 +105,14 @@ def _project_target(workspace: Path, rel_path: str, expected_sections: list[str]
     matched_sections: list[str] = []
     matched_indices: list[int] = []
     extra_headings: list[str] = []
+    nested_headings: list[str] = []
     for heading in headings:
-        section = _match_heading_to_section(heading["text"], expected_sections)
+        section = _match_heading_to_section(heading["text"], expected_sections, section_aliases)
         if section is None:
-            extra_headings.append(heading["text"])
+            if heading["level"] == 2:
+                extra_headings.append(heading["text"])
+            elif heading["level"] > 2:
+                nested_headings.append(heading["text"])
             continue
         if section not in matched_sections:
             matched_sections.append(section)
@@ -124,6 +134,7 @@ def _project_target(workspace: Path, rel_path: str, expected_sections: list[str]
         "out_of_order_sections": out_of_order_sections,
         "extra_headings": extra_headings[:20],
         "extra_heading_count": len(extra_headings),
+        "nested_heading_count": len(nested_headings),
     }
 
 
@@ -141,19 +152,41 @@ def _markdown_headings(text: str) -> list[dict[str, Any]]:
     return headings
 
 
-def _match_heading_to_section(heading: str, expected_sections: list[str]) -> str | None:
+def _match_heading_to_section(
+    heading: str,
+    expected_sections: list[str],
+    section_aliases: dict[str, list[str]],
+) -> str | None:
     normalized = _normalize_label(heading)
     for section in expected_sections:
-        expected = _normalize_label(section.replace("_", " "))
-        if normalized == expected or normalized.endswith(f" {expected}"):
-            return section
+        labels = [section.replace("_", " "), *section_aliases.get(section, [])]
+        for label in labels:
+            expected = _normalize_label(label)
+            if expected and (normalized == expected or normalized.endswith(f" {expected}")):
+                return section
     return None
 
 
 def _normalize_label(value: str) -> str:
     stripped = _LEADING_NUMBERING_RE.sub("", value.strip().lower())
-    normalized = _NON_WORD_RE.sub(" ", stripped).strip()
+    normalized = _NON_LABEL_RE.sub(" ", stripped).strip()
     return " ".join(normalized.split())
+
+
+def _section_aliases(value: Any, expected_sections: list[str]) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    expected = set(expected_sections)
+    aliases: dict[str, list[str]] = {}
+    for section_id, labels in value.items():
+        if not isinstance(section_id, str) or section_id not in expected or not isinstance(labels, list):
+            continue
+        aliases[section_id] = [
+            str(label).strip()
+            for label in labels
+            if isinstance(label, str) and label.strip()
+        ]
+    return aliases
 
 
 def _out_of_order_sections(sections: list[str], indices: list[int]) -> list[str]:

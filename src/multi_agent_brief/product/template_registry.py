@@ -23,6 +23,7 @@ class ReportTemplate:
     display_name: str
     status: str
     section_order: tuple[str, ...]
+    section_aliases: Mapping[str, tuple[str, ...]]
     source_path: str
     payload: Mapping[str, Any]
 
@@ -34,12 +35,18 @@ class ReportTemplate:
         source_path: str | Path,
     ) -> "ReportTemplate":
         section_order = payload.get("section_order") if isinstance(payload.get("section_order"), list) else []
+        section_aliases = payload.get("section_aliases") if isinstance(payload.get("section_aliases"), dict) else {}
         return cls(
             template_id=str(payload.get("template_id", "")),
             report_type=str(payload.get("report_type", "")),
             display_name=str(payload.get("display_name", "")),
             status=str(payload.get("status", "")),
             section_order=tuple(str(item) for item in section_order),
+            section_aliases={
+                str(key): tuple(str(item) for item in value)
+                for key, value in section_aliases.items()
+                if isinstance(value, list)
+            },
             source_path=str(source_path),
             payload=payload,
         )
@@ -51,6 +58,10 @@ class ReportTemplate:
             "display_name": self.display_name,
             "status": self.status,
             "section_order": list(self.section_order),
+            "section_aliases": {
+                key: list(value)
+                for key, value in self.section_aliases.items()
+            },
         }
 
 
@@ -122,4 +133,24 @@ def _template_errors(payload: Mapping[str, Any], *, path_name: str) -> list[dict
         errors.append({"field": f"{path_name}.section_order", "error": "must be a non-empty list"})
     elif any(not isinstance(item, str) or not item.strip() for item in section_order):
         errors.append({"field": f"{path_name}.section_order", "error": "entries must be non-empty strings"})
+    aliases = payload.get("section_aliases")
+    if aliases is not None:
+        if not isinstance(aliases, dict):
+            errors.append({"field": f"{path_name}.section_aliases", "error": "must be an object when present"})
+        else:
+            known_sections = {str(item) for item in section_order} if isinstance(section_order, list) else set()
+            for section_id, values in aliases.items():
+                if not isinstance(section_id, str) or not section_id.strip():
+                    errors.append({"field": f"{path_name}.section_aliases", "error": "keys must be non-empty strings"})
+                    continue
+                if known_sections and section_id not in known_sections:
+                    errors.append({
+                        "field": f"{path_name}.section_aliases.{section_id}",
+                        "error": "must reference a section_order entry",
+                    })
+                if not isinstance(values, list) or any(not isinstance(item, str) or not item.strip() for item in values):
+                    errors.append({
+                        "field": f"{path_name}.section_aliases.{section_id}",
+                        "error": "must be a list of non-empty strings",
+                    })
     return errors

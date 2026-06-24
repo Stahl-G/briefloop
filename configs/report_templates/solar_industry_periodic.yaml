@@ -12,6 +12,41 @@ section_order:
   - fx_rates_tracker
   - company_implications
   - source_appendix
+section_aliases:
+  cover:
+    - Cover
+    - 封面
+  executive_summary:
+    - Executive Summary
+    - 执行摘要
+    - 核心摘要
+  supply_chain_price_tracker:
+    - Supply Chain Price Tracker
+    - 供应链价格跟踪
+    - 供应链价格追踪
+  demand_installation_outlook:
+    - Demand Installation Outlook
+    - Demand and Installation Outlook
+    - 需求与装机展望
+    - 中美欧需求与装机展望
+  policy_tax_financing:
+    - Policy Tax Financing
+    - Policy, Tax, and Financing
+    - 政策、税收与融资环境
+    - 政策税收融资
+  fx_rates_tracker:
+    - FX Rates Tracker
+    - Exchange Rate and Interest Rate Tracker
+    - 汇率与利率追踪
+    - 汇率利率追踪
+  company_implications:
+    - Company Implications
+    - 对公司的启示
+    - 对 TOYO Solar 的启示
+    - 对TOYO Solar的启示
+  source_appendix:
+    - Source Appendix
+    - 来源附录
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

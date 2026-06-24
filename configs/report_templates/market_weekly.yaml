@@ -11,6 +11,24 @@ section_order:
   - policy_and_regulatory
   - risks_and_watchlist
   - source_appendix
+section_aliases:
+  executive_summary:
+    - Executive Summary
+  market_signals:
+    - Market Signals
+  demand_and_supply:
+    - Demand and Supply
+    - Demand & Supply
+  competitor_moves:
+    - Competitor Moves
+  policy_and_regulatory:
+    - Policy and Regulatory
+    - Policy & Regulatory
+  risks_and_watchlist:
+    - Risks and Watchlist
+    - Risks & Watchlist
+  source_appendix:
+    - Source Appendix
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only
