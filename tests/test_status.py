@@ -330,6 +330,55 @@ def test_status_matches_chinese_report_template_section_aliases(tmp_path: Path) 
     assert "[status] report_template_conformance: pass" in formatted
 
 
+def test_status_report_template_treats_report_title_h1_as_cover_section(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    spec = _solar_report_spec()
+    spec["title"] = "Example Solar 太阳能行业定期报告"
+    (ws / "config.yaml").write_text(
+        yaml.safe_dump({"project": {"company": "Example Solar"}}, sort_keys=False),
+        encoding="utf-8",
+    )
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(spec, sort_keys=False),
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "# Example Solar 太阳能行业定期报告",
+            "标题页。",
+            "## 核心摘要",
+            "摘要。",
+            "## 供应链价格追踪",
+            "价格。",
+            "## 需求与装机展望",
+            "需求。",
+            "## 政策、税务与融资",
+            "政策。",
+            "## 汇率追踪",
+            "汇率。",
+            "## 对 Example Solar 的启示",
+            "启示。",
+            "## 来源附录",
+            "来源。",
+        ]),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    projection = status["report_template_conformance"]
+    target = next(
+        item for item in projection["targets"]
+        if item["target_artifact"] == "output/intermediate/audited_brief.md"
+    )
+
+    assert projection["status"] == "pass"
+    assert target["matched_sections"][0] == "cover"
+    assert target["missing_sections"] == []
+    assert target["extra_headings"] == []
+
+
 def test_status_reports_report_template_conformance_warnings(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     intermediate = ws / "output" / "intermediate"

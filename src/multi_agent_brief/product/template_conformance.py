@@ -48,6 +48,7 @@ def project_workspace_report_template_conformance(workspace: str | Path) -> dict
         if isinstance(item, str) and item.strip()
     ]
     section_aliases = _section_aliases(template.get("section_aliases"), expected_sections)
+    _add_report_title_alias(section_aliases, template.get("report_title"))
     _add_workspace_company_aliases(section_aliases, _workspace_company(ws))
     targets = [
         _project_target(ws, "output/intermediate/audited_brief.md", expected_sections, section_aliases),
@@ -109,15 +110,23 @@ def _project_target(
     matched_indices: list[int] = []
     extra_headings: list[str] = []
     nested_headings: list[str] = []
+    first_h1_seen = False
     for heading in headings:
         if heading["level"] > 2:
             nested_headings.append(heading["text"])
             continue
+        is_first_h1 = False
+        if heading["level"] == 1 and not first_h1_seen:
+            first_h1_seen = True
+            is_first_h1 = True
         section = _match_heading_to_section(heading["text"], expected_sections, section_aliases)
         if section is None:
-            if heading["level"] == 2:
-                extra_headings.append(heading["text"])
-            continue
+            if is_first_h1 and "cover" in expected_sections:
+                section = "cover"
+            else:
+                if heading["level"] == 2:
+                    extra_headings.append(heading["text"])
+                continue
         if section not in matched_sections:
             matched_sections.append(section)
             matched_indices.append(expected_sections.index(section))
@@ -191,6 +200,15 @@ def _section_aliases(value: Any, expected_sections: list[str]) -> dict[str, list
             if isinstance(label, str) and label.strip()
         ]
     return aliases
+
+
+def _add_report_title_alias(section_aliases: dict[str, list[str]], title: Any) -> None:
+    if not isinstance(title, str) or not title.strip():
+        return
+    labels = section_aliases.setdefault("cover", [])
+    title_text = title.strip()
+    if title_text not in labels:
+        labels.append(title_text)
 
 
 def _add_workspace_company_aliases(section_aliases: dict[str, list[str]], company: str) -> None:
