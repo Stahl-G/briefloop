@@ -368,6 +368,50 @@ def test_status_reports_report_template_conformance_warnings(tmp_path: Path) -> 
     assert "boundary=projection_only" in formatted
 
 
+def test_status_does_not_match_nested_headings_as_template_sections(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_market_report_spec(policy_profile="manufacturing_default"), sort_keys=False),
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "## Executive Summary",
+            "Summary.",
+            "### Market Signals",
+            "Nested.",
+            "### Demand And Supply",
+            "Nested.",
+            "### Competitor Moves",
+            "Nested.",
+            "### Policy And Regulatory",
+            "Nested.",
+            "### Risks And Watchlist",
+            "Nested.",
+            "### Source Appendix",
+            "Nested.",
+        ]),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    projection = status["report_template_conformance"]
+    target = next(
+        item for item in projection["targets"]
+        if item["target_artifact"] == "output/intermediate/audited_brief.md"
+    )
+
+    assert projection["status"] == "warning"
+    assert target["status"] == "warning"
+    assert target["matched_sections"] == ["executive_summary"]
+    assert "market_signals" in target["missing_sections"]
+    assert "source_appendix" in target["missing_sections"]
+    assert target["extra_headings"] == []
+    assert target["nested_heading_count"] == 6
+
+
 def test_status_derives_atomic_reader_projection_without_writes(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     intermediate = ws / "output" / "intermediate"

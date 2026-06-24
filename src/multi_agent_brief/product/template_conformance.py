@@ -110,12 +110,13 @@ def _project_target(
     extra_headings: list[str] = []
     nested_headings: list[str] = []
     for heading in headings:
+        if heading["level"] > 2:
+            nested_headings.append(heading["text"])
+            continue
         section = _match_heading_to_section(heading["text"], expected_sections, section_aliases)
         if section is None:
             if heading["level"] == 2:
                 extra_headings.append(heading["text"])
-            elif heading["level"] > 2:
-                nested_headings.append(heading["text"])
             continue
         if section not in matched_sections:
             matched_sections.append(section)
