@@ -1,54 +1,164 @@
-# 🧾 BriefLoop
+# BriefLoop
 
-**Open-source loop engineering for auditable business briefings.**
+**AI-assisted business briefings you can question later.**
+
 Formerly **MABW — Multi-Agent Brief Workflow**.
+The public project name is now **BriefLoop**; MABW remains as the implementation lineage and compatibility surface.
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh-CN.md">简体中文</a>
-</p>
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-<p align="center">
-  <a href="docs/features.md">🧭 Function Map</a> ·
-  <a href="docs/golden-path.md">🚀 Golden Path</a> ·
-  <a href="docs/architecture-status.md">🧱 Architecture Status</a> ·
-  <a href="docs/roadmap.md">🗺️ Roadmap</a>
-</p>
+[Function Map](docs/features.md) · [Golden Path](docs/golden-path.md) · [Architecture Status](docs/architecture-status.md) · [Roadmap](docs/roadmap.md)
 
-Current version: **v0.10.1**
-Public framing: **BriefLoop / MABW compatibility period**
-Current CLI: `multi-agent-brief` (`briefloop` shell alias also works)
-Current Claude command: `/briefloop` (`/mabw` compatibility alias also works)
+---
+
+## In one sentence
+
+BriefLoop is an open-source workflow for recurring business briefings.
+
+It does not try to be “a better prompt.” It keeps track of the process behind a brief:
+
+- Which source did this number come from?
+- Which claims were registered?
+- Which checks passed or failed?
+- Which reader preferences were approved by a human?
+- What should be reused next time, and what should not?
 
 > When someone asks where a number came from, BriefLoop does not ask the model to improvise an explanation. It opens the ledger.
 
-BriefLoop turns AI-assisted business briefing into a governed loop: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records. It is not a prompt that makes AI write faster; it is a process-accountability harness for recurring business briefings.
+---
 
-The v0.10.1 release adds the experimental Product OS PolicyProfile layer while
-keeping MABW as the implementation lineage and compatibility surface. Runtime
-commands, the Python package, workspace format, artifact names, and MABW-080
-experiment IDs remain unchanged.
+## The problem
 
-This Product OS layer adds experimental ReportSpec, ReportPack, ReportTemplate,
-PolicyProfile defaults, resolved policy projection, conservative workspace
-skeletons, delivery/audit bundle manifests, a limited deterministic gate
-adapter, and public-safe dogfood fixtures. These are product metadata,
-deterministic-default, and projection controls only; they do not judge industry
-compliance, detect investment advice, verify internet rumors, claim
-IR/disclosure readiness, prove semantic truth, publish reports, or authorize
-release.
+Many teams write the same kind of material every week:
 
-The v0.9.x experimental support surfaces remain traceability, support-record,
-and proposal controls: Atomic Claim Graph, Evidence Span Registry,
-Claim-Support Matrix, and Semantic Assessment Report. They are not semantic
-support proof, accepted support truth, adjudication queues, delivery gates,
-release eligibility, or support-sufficiency gates.
+- market updates
+- industry briefings
+- competitor tracking
+- policy monitoring
+- equity research notes
+- investor-relations materials
+- executive briefings
+- project status reports
 
-The core claim is deliberately narrow: **traceability, not semantic proof yet.** Important claims link to registered source entries with source, date, and gate metadata. That tells you where a claim entered the workflow; it does not yet prove the source semantically supports each sub-claim. We published [a failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) where exactly that boundary was exposed by an external reviewer, because accountability applies to this project too.
+LLMs can draft these documents quickly. The hard part is not drafting. The hard part is trust.
 
-## 🚀 Get Started
+Common problems:
 
-**Install From Source — macOS / Linux**
+1. **Sources disappear.**
+   A number enters the final brief, and two weeks later nobody knows where it came from.
+
+2. **Small errors become confident conclusions.**
+   A weak source, stale data point, or misread paragraph can survive several editing passes and look authoritative.
+
+3. **Feedback evaporates.**
+   “Lead with the business impact,” “do not use generic wording,” or “verify this category against the original filing” often stays in someone’s head instead of the workflow.
+
+4. **Handoffs are painful.**
+   The real rules for writing the brief live with one experienced person, not in a visible process.
+
+BriefLoop turns those hidden rules into a workflow that can be inspected, repeated, and improved.
+
+---
+
+## Who is this for?
+
+BriefLoop is useful for:
+
+- analysts, associates, management trainees, IR teams, strategy teams, and market-intelligence teams who write recurring briefings;
+- teams that want AI-assisted writing to be traceable instead of merely fluent;
+- researchers studying agent workflows, human-in-the-loop systems, and auditable AI processes.
+
+It is not the right tool if you only want:
+
+- a one-click pretty report generator;
+- an autonomous agent that publishes without review;
+- a system that proves every claim is true;
+- a way to make an externally generated AI report “safe” after the fact.
+
+---
+
+## What BriefLoop actually does
+
+Think of BriefLoop as a briefing pipeline with ledgers.
+
+| Step | What happens | Why it matters |
+|---|---|---|
+| 1. Prepare materials | Collect local files, source packs, or search results | The model should not start from nothing |
+| 2. Register claims | Important numbers, dates, entities, and claims are written into a Claim Ledger | Later you can ask where a claim came from |
+| 3. Draft by roles | Scout, Analyst, Editor, Auditor, and related roles work within boundaries | Writing becomes staged work, not one giant prompt |
+| 4. Run gates | Quality gates check source age, new facts, missing support, and delivery state | Deterministic checks do not rely on prompt memory |
+| 5. Deliver by human action | Final delivery is explicitly triggered by a human | The system does not publish or bypass review |
+| 6. Keep approved feedback | Only human-approved reader preferences are reused | “Do this next time” becomes visible and reversible |
+
+The design rule is simple:
+
+> Smart parts may write and propose. Authoritative parts must be checkable. Nothing takes effect without a human decision.
+
+---
+
+## The four questions it keeps answerable
+
+| Question | What BriefLoop records | Where to look |
+|---|---|---|
+| Where is this run? | Current stage, missing artifacts, blockers, next safe action | `/briefloop status`, `workflow_state.json`, `agent_handoff.md` |
+| Where did each number come from? | Claim Ledger entries, source dates, source appendix, gate findings | `claim_ledger.json`, `source_appendix.md`, `quality_gate_report.json` |
+| What has it learned? | Human-approved reader preferences only | `improvement/ledger.jsonl`, `improvement_memory_snapshot.md` |
+| What guards delivery? | Stage-completion records, reader-final gate, delivery checks | `finalize_report.json`, `state finalize-complete` |
+
+It can observe and propose. Only what you approve is remembered, and it is remembered in a ledger you can open, audit, and undo.
+
+---
+
+## What you get from a run
+
+A normal delivered brief is usually:
+
+- `output/delivery/brief.md`
+- `output/delivery/<report-name>.docx`
+
+The workflow also keeps audit artifacts, such as:
+
+- `output/intermediate/claim_ledger.json`
+- `output/source_appendix.md`
+- `output/intermediate/quality_gate_report.json`
+- `event_log.jsonl`
+- `improvement/ledger.jsonl`
+
+Those audit files are not meant to be read by every end user. They exist so a team can answer questions, debug failures, review decisions, and hand the process to someone else.
+
+---
+
+## A tiny example
+
+A delivered brief might say:
+
+```markdown
+This week, the sample PV module spot price fell 1.8% week over week,
+the third consecutive weekly decline.
+```
+
+BriefLoop expects that claim to have a registered entry:
+
+```json
+{
+  "claim_id": "CL-0012",
+  "statement": "The sample PV module spot price fell 1.8% week over week.",
+  "source_id": "SRC-003",
+  "evidence_text": "Example source excerpt showing the week-over-week price change.",
+  "metadata": {
+    "published_at": "2026-06-05",
+    "source_title": "Example PV price sheet"
+  }
+}
+```
+
+If a source is stale, a number is unregistered, or an editor adds a new material fact late in the process, gates should surface the issue instead of letting it silently enter the final document.
+
+---
+
+## Quick start
+
+### macOS / Linux
 
 ```bash
 git clone https://github.com/Stahl-G/briefloop.git
@@ -56,9 +166,17 @@ cd briefloop
 bash scripts/setup.sh
 ```
 
-**Install From Source — Windows PowerShell**
+Create your first briefing workspace:
 
-Windows does not require WSL or Git Bash. PowerShell is the recommended Windows path.
+```bash
+multi-agent-brief onboard
+multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ~/mabw-workspace
+```
+
+### Windows PowerShell
+
+Windows does not require WSL or Git Bash. PowerShell is the recommended path.
 
 ```powershell
 winget install Python.Python.3.12
@@ -78,189 +196,155 @@ If PowerShell blocks script execution:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
-**Create Your First Brief**
+---
 
-```bash
-multi-agent-brief onboard
-multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace ~/mabw-workspace
-```
+## Claude Code path
 
-**Optional: Inspect The Demo**
-
-```bash
-bash scripts/demo.sh
-bash scripts/demo-deep-dive.sh
-```
-
-The demo is for reviewers and visitors who want to inspect the evidence chain on synthetic materials. Real use starts with onboarding and a workspace created for your own brief.
-
-Advanced Windows installer: `irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex` exists, but is currently an Experimental CLI-only installer asset. The default path is source clone plus `scripts/setup.ps1`.
-
-1,000+ deterministic tests run in CI with zero LLM calls.
-
-## 🧯 What Broke, And What Didn't
-
-I'm a management trainee at a manufacturer. Two months into the job, I was writing real weekly briefings for executives and doing what everyone does: orchestrating a carefully prompted role chain for finding, screening, analysis, editing, and audit.
-
-The deterministic parts never broke. Everything entrusted to prompts eventually did. Facts mutated in handoffs. Weak sources became confident conclusions. The system needed so much human re-verification that it was no better than one long prompt.
-
-The lesson MABW is built on: **if a rule actually matters, it cannot live in a prompt.** It has to become a schema, a validator, a gate, a transaction, an event log, or a test.
-
-## 🧱 The Design Rule
-
-> The smart parts have no authority.
-> The authoritative parts are deterministic.
-> Nothing takes effect without a human.
-> Nothing passes a human without a record.
-
-Concretely: Python owns state and ledgers and never calls an LLM. The LLM runtime owns drafts and executes content work through a contract handoff. Humans own approval. **One writer per field**: no module gets to "helpfully" update state it does not own, because shared writers are how audit trails and rollbacks die.
-
-## 📚 What A Run Leaves Behind
-
-A delivered brief is just two files: `output/delivery/brief.md` and a `.docx`. Everything else a run produces exists so the brief can be questioned later. Synthetic excerpts below use fictional entities and show structure only.
-
-`output/delivery/brief.md`
-
-```markdown
-## 2. Market Updates
-This week, the sample PV module spot price fell 1.8% week over week,
-the third consecutive weekly decline. Company N announced Phase I of
-its sample-state factory started production, with planned capacity of 2 GW...
-```
-
-`output/intermediate/claim_ledger.json`: the registered entry behind that number:
-
-```json
-{
-  "claim_id": "CL-0012",
-  "statement": "The sample module spot price fell 1.8% week over week.",
-  "source_id": "SRC-003",
-  "source_date": "2026-06-05",
-  "support": "supported"
-}
-```
-
-`output/intermediate/gates/auditor_quality_gate_report.json` and `output/intermediate/gates/finalize_quality_gate_report.json`: deterministic checks that can block audit completion or delivery. `output/intermediate/quality_gate_report.json` is a latest/legacy projection. There is no force flag.
-
-When optional `output/intermediate/evidence_span_registry.json` is present and
-valid, finalize can add reader-safe span counts to the Source Appendix and
-write raw span details only to `output/source_appendix_trace.md` as an audit
-copy. That trace file is not copied into `output/delivery/`.
-
-```json
-{
-  "gate_id": "freshness",
-  "status": "pass",
-  "findings": []
-}
-```
-
-In a contract-following run, important numbers in the delivered brief link back to registered source entries. Stale sources and unsupported numbers are surfaced by gates and audit instead of silently entering the final document. The full execution trace lives in `event_log.jsonl`.
-
-## 🧩 The Four Things It Tracks Every Week
-
-The writer-facing mental model is not "28 control surfaces." Each run keeps four practical questions answerable:
-
-| Question | What it records | Where you look |
-|---|---|---|
-| Where is this run? | Current stage, missing artifacts, blockers, next safe action | `/briefloop status`, `workflow_state.json` |
-| Where did each number come from? | Claim Ledger entries, source dates, stage-scoped gate findings | `claim_ledger.json`, `gates/*_quality_gate_report.json`, `source_appendix.md` |
-| What has it learned? | Human-approved reader preferences only; unapproved suggestions never take effect | `improvement/ledger.jsonl` (append-only, hash-chained, revertible) |
-| What is guarding delivery? | Stage-completion transactions, reader-final gate, delivery checks | `finalize_report.json`, `state finalize-complete` |
-
-> It observes and it proposes. But only what you approve is remembered: in a ledger you can open, audit, and undo.
-
-## 🔬 Evidence, Including The Failures
-
-- **[Public solar integration run (v0.7.2)](docs/reference-runs/v0.7.2-public-solar-integration.md)**: Improvement Memory materialization, gate execution, and control-plane closure on public materials. It is an integration reference, not a causal claim about output quality.
-- **[Organoid-industry failure study (v0.7.4)](docs/reference-runs/v0.7.4-organoid-failure-study.md)**: a real external research task where an external reviewer caught semantic mismatches the gates passed *by design*. Includes a five-error taxonomy of how each mistake entered the pipeline. This is the honest current boundary of the system.
-- **[BriefLoop-090 A-controlled auditable-brief pilot](docs/reference-runs/briefloop-090-a-controlled-pilot.md)**: one public-safe synthetic case with condition-blind, hash-bound `auditable_brief` assessment. In this case, memory showed the approved guidance without obvious harm, while prompt-only over-applied the same guidance. It is not a general output-quality claim.
-- **[v0.10.1 release notes](docs/releases/v0.10.1.md)**: experimental Product OS PolicyProfile layer: ReportSpec/ReportPack registry, workspace skeletons, bundle projection, resolved policy projection, limited deterministic gate adapter, and public-safe dogfood fixtures. It does not provide industry compliance judgment, investment-advice detection, IR readiness, semantic truth, automatic publication, or release authority.
-- **[v0.9.4 release notes](docs/releases/v0.9.4.md)**: experimental Semantic Assessment Report proposal surface: schema, reference validation, proposal projection, status visibility, and public-safe dogfood fixtures. It does not create support truth, adjudication queues, delivery gates, or release authority. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
-- **[Claim-Support Matrix](docs/claim-support-matrix.md)**: mainline experimental support-record schema, cross-artifact validation, and gate/status projection from explicit atom-to-evidence rows. It is not automatic support assessment, truth proof, or release eligibility.
-
-We can say precisely which ledger line each error entered through. That is what the system is for, and it is also why we publish the failure analysis.
-
-## 🚫 What It Is Not
-
-BriefLoop is not an autonomous agent. It does not auto-edit brief content, does not auto-learn, has no long-term memory system, and is not an investment-advice tool or a replacement for human review.
-
-The current first-class writer path is Claude Code. Hermes is supported as a delegated / scheduled runtime. OpenCode, Codex, and manual entrypoints exist, but they are not yet end-to-end validated as the primary writer path.
-
-## 🛠️ Why This Exists
-
-Coding agents improved fast because their loop has infrastructure: tests, CI, git history, code review. Business briefings have none of that. A junior analyst gets corrected verbally and the correction evaporates; the next hire repeats the mistake. A stale number slips into a brief and nobody can say at which step. The work is important, repetitive, and structurally unable to get better.
-
-BriefLoop moves that same machinery: auditability, structured feedback, human gating, execution traces, into a domain with no clean reward signal, where the human *is* the reward channel and deterministic gates build the reward surface.
-
-## 🧑‍💻 Using It For Real Work
-
-Install the writer entrypoint and use five verbs inside Claude Code:
+If you use Claude Code, install the writer entrypoint:
 
 ```bash
 source .venv/bin/activate
 multi-agent-brief claude install --repo-workdir .
 ```
 
+Then use the five main writer commands:
+
 ```text
 /briefloop new
 /briefloop run <workspace>
-/briefloop status <workspace>      # strictly read-only
-/briefloop feedback <workspace>    # recorded immediately; takes effect only after approval
-/briefloop deliver <workspace>     # always human-triggered, gated, no force flag
+/briefloop status <workspace>
+/briefloop feedback <workspace> [text-or-file]
+/briefloop deliver <workspace>
 ```
 
-`/mabw` remains a compatibility alias for the same five writer verbs.
+`/mabw` remains available as a compatibility alias.
 
-Three on-ramps, one spine. There is no lite mode: entry cost drops, the accountability spine does not. Claim Ledger, gates, human delivery, event trace, and frozen snapshots stay present.
+Good next reads:
 
-For a local-first product skeleton from a packaged experimental report pack:
+- [Golden Path](docs/golden-path.md)
+- [Weekly Use](docs/weekly-use.md)
+- [Claude Code quickstart](docs/claude-code-quickstart.md)
+
+---
+
+## Three ways to try it
+
+| Path | Best for | What to do |
+|---|---|---|
+| Look once | You want to understand the project quickly | Run the demos and read the reference runs |
+| Run once | You want to test it on a few local files | Create a workspace, add materials, run one brief |
+| Use weekly | You want a recurring workflow | Configure sources, sections, reader preferences, and feedback |
+
+Optional demo commands:
 
 ```bash
-briefloop new market-weekly ./weekly-brief
+bash scripts/demo.sh
+bash scripts/demo-deep-dive.sh
 ```
 
-This creates editable workspace files and `report_spec.yaml`; it does not run agents, render templates, deliver, or approve publication.
-`briefloop new` can accept an explicit `--policy-profile` or deterministic
-`--industry` hint; the selected profile and resolution source are written into
-`report_spec.yaml` rather than inferred silently at gate time.
-For solar manufacturing periodic-report dogfood, an experimental
-`solar-industry-periodic` pack is also available; it is a report contract and
-policy-default surface only, not tax, compliance, investment, delivery, or
-publication authority.
+The demos use synthetic materials. They show the evidence chain and gate behavior. Real use starts with your own workspace and sources.
 
-| Path | Time | What you do |
-|---|---:|---|
-| Look once | ~5 min | Read the reference runs, run the demos |
-| Run once | ~30 min | A few local text files, no search backend, `new -> run -> status -> deliver` |
-| Live with it | weekly | Configured sources, feedback loop, approved preferences |
+---
 
-Full paths: [function map](docs/features.md) · [Claude Code quickstart](docs/claude-code-quickstart.md) · [golden path](docs/golden-path.md) · [weekly use](docs/weekly-use.md) · [onboarding](docs/onboarding.md) · [search backends](docs/search-backends.md) · [Evidence Span Registry](docs/evidence-span-registry.md) · [Claim-Support Matrix](docs/claim-support-matrix.md) · [MABW-080 experiment guide](docs/experiments-080.md) · [docs index](docs/README.md) · [roadmap](docs/roadmap.md) · [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+## Current status
 
-## 🧭 A Note On Provenance
+Current version: **v0.10.1**
 
-I build and use BriefLoop as part of my actual weekly briefing work at a listed manufacturer, in a role that touches strategy and investor relations. Nothing from my employer enters this repository: no data, no documents, no non-public information. What crosses over is discipline, not data: patterns rewritten from memory in vocabulary that holds for any company. And where this project makes guarantees, they are written as mechanisms: schemas, gates, transactions, tests, not as promises.
+Current main entrypoints:
 
-## 🎼 Why The Orchestrator Is Called 司乐师
+- CLI: `multi-agent-brief`
+- shell alias: `briefloop`
+- Claude command: `/briefloop`
+- compatibility alias: `/mabw`
 
-The runtime orchestrator is named after the office in the Chinese ritual-music tradition responsible for keeping ensembles in time and in order. It does not write; it dispatches the specialist roles and holds them to their contracts. In the default topology, Scout also performs screening while keeping screened candidates as a separate artifact; strict topology keeps Screener independent. Not a strict historical reconstruction: a project term for the thing that maintains tempo, boundaries, and delivery discipline.
+v0.10.1 adds an experimental Product OS / ReportPack direction, including:
 
-## 🗺️ Roadmap
+- `ReportSpec`
+- `ReportPack`
+- `ReportTemplate`
+- `PolicyProfile`
+- workspace skeletons
+- delivery / audit bundle manifests
 
-**v0.8**: measurement, fast-rerun, role topology, and evaluation — timing projection, same-evidence reruns, default/strict topology choices, and controlled experiment tooling without weakening accountable artifacts.
+These features are meant to make report types, default policies, and delivery bundles more product-like.
 
-**v0.9**: support-sufficiency core. Current path: Atomic Claim Graph -> Evidence Span Registry -> Claim-Support Matrix -> Semantic Assessment Report proposal surface. Human adjudication, coverage/omission gates, semantic regression, release eligibility, quality packs, and finding-to-repair workflows are deferred semantic-governance surfaces, not the next default implementation track.
+They are still metadata, defaults, and projection controls. They do not judge industry compliance, detect investment advice, verify internet rumors, claim IR/disclosure readiness, prove semantic truth, publish reports, or authorize release.
 
-**v0.10**: Product OS and report packs — ReportSpec, ReportPack registry, zero-config workspaces, template rendering, delivery/audit bundle projection, `evidence_extract`, SourceHub Lite, release modes, and human approval records without weakening the accountability spine.
+---
 
-**v1.0**: stable weekly/monthly/evidence-extract CLI product, frozen report contracts, compatibility policy, and threat model.
+## What it is not
 
-## 🤝 Collaboration
+BriefLoop currently does not:
 
-This project needs real scenarios more than it needs features. If you write recurring briefings in strategy, equity research, IR, policy tracking, or similar work and want to run your real workflow through it, open an issue or discussion. If you research agent evaluation and want a dogfooded process-accountability system with run data, that is also welcome.
+- publish reports automatically;
+- bypass human review;
+- prove that a source semantically supports every sub-claim;
+- replace legal, compliance, investment, or disclosure judgment;
+- claim that generated content is ready for IR, SEC, or regulatory disclosure;
+- turn unapproved feedback into long-term memory;
+- promise one-click perfect reports.
 
-Start with a [good first issue](https://github.com/Stahl-G/briefloop/issues). Read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md) first.
+The current core claim is deliberately narrow:
+
+> **Traceability, not semantic proof yet.**
+> BriefLoop aims to make a briefing process traceable, reviewable, and accountable. Semantic proof and automatic judgment are future work, not current guarantees.
+
+---
+
+## Why this exists
+
+Coding agents improved quickly because software work has infrastructure: tests, CI, git history, code review, and rollbacks.
+
+Business briefings usually do not. A junior analyst is corrected verbally, and the correction disappears. A stale number enters a weekly report, and nobody can tell which step allowed it. A team learns what “good” looks like, but the learning stays informal.
+
+BriefLoop brings software-engineering discipline into recurring briefing work: auditability, structured feedback, human gates, execution traces, and tests.
+
+The goal is not to remove human judgment. The goal is to let humans spend more time judging, questioning, and advising, and less time re-checking the same preventable mistakes.
+
+---
+
+## Glossary
+
+| Term | Plain meaning |
+|---|---|
+| Claim Ledger | A record of important claims, numbers, sources, and dates |
+| Source Pack | The set of materials available to a run |
+| Quality Gate | A check that must pass before a stage or delivery can proceed |
+| Reader Preference | Human-approved guidance such as “lead with business impact” |
+| Improvement Ledger | The record of approved feedback |
+| Orchestrator / 司乐师 | The runtime role that coordinates stages and boundaries |
+| Delivery Bundle | The Markdown / Word files meant for readers |
+| Audit Artifacts | Intermediate records used for review, debugging, and accountability |
+
+---
+
+## Useful docs
+
+- [Function Map](docs/features.md)
+- [Golden Path](docs/golden-path.md)
+- [Weekly Use](docs/weekly-use.md)
+- [Architecture Status](docs/architecture-status.md)
+- [Roadmap](docs/roadmap.md)
+- [Red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+- [Public solar integration run](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)
+- [Organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)
+
+---
+
+## Collaboration
+
+This project needs real scenarios more than it needs more concepts.
+
+You are welcome to participate if you:
+
+- write recurring market, strategy, policy, IR, or executive briefings;
+- want to pilot BriefLoop on a real workflow;
+- research agent evaluation, human-in-the-loop systems, or auditable AI workflows;
+- want to contribute through issues, docs, tests, or example scenarios.
+
+Start with a [good first issue](https://github.com/Stahl-G/briefloop/issues). Please read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md) before contributing.
+
+---
 
 ## License
 

@@ -1,152 +1,158 @@
 # BriefLoop
 
-**面向可审计企业简报的开源 Loop Engineering 参考实现。**
-原 **MABW — Multi-Agent Brief Workflow**。
+**把 AI 写的周报、行业简报和管理层材料，变成可以追问、可以复盘、可以交接的工作流。**
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh-CN.md">简体中文</a>
-</p>
+原名：**MABW — Multi-Agent Brief Workflow**。
+现在的项目名是 **BriefLoop**；MABW 保留为历史名称、实现血统和兼容入口。
 
-<p align="center">
-  <a href="docs/features.zh-CN.md">🧭 功能地图</a> ·
-  <a href="docs/golden-path.zh-CN.md">🚀 黄金路径</a> ·
-  <a href="docs/architecture-status.zh-CN.md">🧱 架构状态</a> ·
-  <a href="docs/roadmap.zh-CN.md">🗺️ 路线图</a>
-</p>
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## 让 AI 简报经得起追问
+[功能地图](docs/features.zh-CN.md) · [黄金路径](docs/golden-path.zh-CN.md) · [架构状态](docs/architecture-status.zh-CN.md) · [路线图](docs/roadmap.zh-CN.md)
 
-当前版本：**v0.10.1**
-公开定位：**BriefLoop / MABW 兼容期**
-当前 CLI：`multi-agent-brief`（`briefloop` shell alias 也可用）
-当前 Claude 命令：`/briefloop`（`/mabw` 兼容 alias 也可用）
+---
 
-> 当有人问“这个数字哪来的？”BriefLoop 不让模型临场解释，它让系统打开账本。
+## 一句话说明
 
-BriefLoop 是一个面向商业、研究、市场、政策、公司跟踪和管理层汇报的 **open-source brief-loop engineering harness**。它不是“让 AI 写得更快”的 prompt，而是把周期性简报变成受治理的闭环：来源包、Claim Ledger、质量门禁、人类决策、结构化 finding、有边界 repair、回归用例和发布记录。
+BriefLoop 是一个开源的简报工作流工具。
 
-v0.10.1 release 新增实验性 Product OS PolicyProfile layer，同时保留 MABW 作为
-实现血统和兼容面。runtime 命令、Python 包、workspace 格式、artifact 名称和
-MABW-080 实验 ID 均不变。
+它不是“让 AI 多写一点”的 prompt，而是帮你把一份周期性简报背后的过程记清楚：
 
-这一 Product OS layer 提供实验性的 ReportSpec、ReportPack、ReportTemplate、
-PolicyProfile defaults、resolved policy projection、保守 workspace skeleton、
-delivery/audit bundle manifest、有限 deterministic gate adapter 和 public-safe
-dogfood fixtures。这些只是产品 metadata、deterministic default 和 projection 控制；
-不判断行业合规、不检测投资建议、不验证互联网传闻、不声称 IR/disclosure ready、
-不证明语义真实性、不自动发布，也不授权 release。
+- 这段话用了哪些来源？
+- 这个数字是哪来的？
+- 哪些检查通过了，哪些没通过？
+- 谁批准了哪些读者偏好？
+- 下次怎么少犯同样的错？
 
-v0.9.x 实验性 support surfaces 仍然是 traceability、support-record 和 proposal
-控制：Atomic Claim Graph、Evidence Span Registry、Claim-Support Matrix 和
-Semantic Assessment Report。它们不是 semantic support proof、accepted support
-truth、adjudication queue、delivery gate、release eligibility 或 support-sufficiency
-gate。
+> 当有人问“这个数字哪来的？”BriefLoop 不让模型临场编理由，而是打开账本。
 
-它适合这些人：
+---
 
-* 每周要写行业周报、竞品跟踪、政策简报、IR/管理层材料的人；
-* 想把 AI 简报从“看起来像真的”推进到“能回答追问”的团队；
-* 关心 agent workflow 如何在无奖励信号领域做到过程问责的研究者和投资人。
+## 它解决什么问题？
 
-<p align="center">
-  <a href="#快速开始">🚀 快速开始</a> ·
-  <a href="docs/features.zh-CN.md">🧭 功能地图</a> ·
-  <a href="docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md">🔬 公开运行摘要</a> ·
-  <a href="docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md">🧯 失败研究</a> ·
-  <a href="docs/releases/v0.10.1.md">📦 v0.10.1</a>
-</p>
+很多人每周都要写类似的材料：
 
-## 为什么值得看 👀
+- 行业周报
+- 市场动态
+- 竞品跟踪
+- 政策简报
+- 投研材料
+- IR / 管理层汇报
+- 项目进展简报
 
-**给写作者**：你不再只拿到一篇 AI 草稿，而是拿到一份能追问来源、日期、门禁和修改记录的交付包。
+AI 可以很快写出一篇“看起来像真的”的报告，但问题也很明显：
 
-**给团队负责人**：简报工作不再只靠“某个人记得怎么写”，而是沉淀成可复用的来源、格式、读者偏好和质量边界。
+1. **来源容易丢。**
+   数字、日期、公司名称进入终稿后，过几天很难说清楚它来自哪里。
 
-**给研究者和投资人**：BriefLoop 是一个真实 dogfood 出来的 process-accountability agent workflow，不只展示成功样例，也公开失败边界。
+2. **错误容易扩散。**
+   一个弱来源、一句误读、一个过期数据，可能在多轮改写后变成非常自信的结论。
 
-BriefLoop 的核心承诺很窄，也很硬：**traceability, not semantic proof yet**。重要主张会链接到登记过的来源条目，并保留来源、日期和门禁记录；这说明“它从哪里进入流水线”，不自动证明来源语义上支持每个子主张。
+3. **反馈留不下来。**
+   领导说“下次先讲结论”“不要泛泛而谈”“这个行业必须核原始公告”，如果只靠人脑记，下一次很容易重犯。
 
-## 它怎么工作 🧭
+4. **新人很难接手。**
+   简报怎么写、什么不能写、什么必须查，通常藏在某个人的经验里，而不是在流程里。
 
-| 环节 | 做什么 | 为什么重要 |
+BriefLoop 的目标就是把这些东西变成可记录、可检查、可复用的流程。
+
+---
+
+## 谁适合看这个项目？
+
+BriefLoop 适合：
+
+- 每周要写行业周报、市场简报、竞品跟踪或管理层材料的人；
+- 战略、市场、投研、IR、总裁办、研究助理等需要长期跟踪信息的团队；
+- 想把 AI 简报从“能写”推进到“能被追问”的团队；
+- 研究 agent workflow、human-in-the-loop、可审计 AI 流程的人。
+
+它暂时不适合：
+
+- 只想要一个“一键生成漂亮报告”的工具；
+- 希望 AI 自动判断真伪、自动发布、自动替你承担责任的人；
+- 想把外部 AI 已经写好的报告丢进来，然后让系统证明它完全正确的人。
+
+---
+
+## BriefLoop 实际做了什么？
+
+你可以把它理解成一条“有账本的简报流水线”。
+
+| 步骤 | 它做什么 | 为什么有用 |
 |---|---|---|
-| 🔎 找来源 | 从本地材料、缓存源包或搜索后端整理候选信息 | 避免一上来就让模型凭空写 |
-| 🧾 建事实账本 | 把关键事实登记成 Claim Ledger | 让数字、日期、公司、来源有账可查 |
-| ✍️ Agent 协作写作 | 默认 topology 下 Scout 同时发现和筛选；strict topology 保留独立 Screener；Analyst、Delivery Editor、Auditor 分工执行 | 把“写作”拆成有边界的 stage |
-| 🚦 门禁把关 | freshness、material fact、target relevance、editor-new-fact、reader-final gate | 能确定性检查的东西不交给 prompt 记忆 |
-| 📦 交付与复盘 | 输出 Markdown / Word，并保留事件轨迹和改进账本 | 人类定稿，系统留痕，后续可改进 |
+| 1. 准备材料 | 整理本地材料、搜索结果或来源包 | 避免模型一开始就凭空写 |
+| 2. 登记事实 | 把关键数字、日期、实体、主张写入 Claim Ledger | 以后可以查“这句话从哪来” |
+| 3. 分工写作 | Scout / Analyst / Editor / Auditor 等角色按边界协作 | 写作不是一坨 prompt，而是分阶段处理 |
+| 4. 质量检查 | 用质量门禁检查新事实、过期来源、缺失来源、交付状态 | 能用规则检查的东西，不交给模型记忆 |
+| 5. 人工交付 | 最终交付必须由人触发 | 系统不自动发布、不绕过人 |
+| 6. 反馈沉淀 | 只有人工批准的读者偏好才会进入后续运行 | “下次要这样写”变成可撤销、可追踪的记录 |
 
-一句话：**聪明的无权，有权的确定，生效的过人，过人的留痕。**
+一句话：**聪明的部分负责写和提议；有权的部分必须可检查；最终生效必须经过人。**
 
-## 每周它替你记住四件事 🧩
+---
 
-BriefLoop 的用户心智模型不是“有多少个控制面”，而是每次简报运行时它替你守住四件事：
+## 每周它替你记住四件事
 
-| 问题 | 它记录什么 | 你在哪里看 |
+| 问题 | BriefLoop 记录什么 | 常见位置 |
 |---|---|---|
-| 本期写到哪了 | 当前 stage、缺失产物、阻塞原因和下一步安全动作 | `/briefloop status`、`workflow_state.json`、`agent_handoff.md` |
-| 每个数字哪来的 | Claim Ledger、来源日期、审计和质量门禁结果 | `claim_ledger.json`、`quality_gate_report.json`、`source_appendix.md` |
-| 它学到了什么 | 只有人工批准的读者偏好；未批准建议不会生效 | `improvement/ledger.jsonl`、`improvement_memory_snapshot.md` |
-| 什么在替你把关 | 阶段完成事务、reader-final gate、来源附录和交付检查 | `finalize_report.json`、`reader_clean`、`state finalize-complete` |
+| 这次简报做到哪了？ | 当前阶段、缺失文件、阻塞原因、下一步动作 | `/briefloop status`、`workflow_state.json`、`agent_handoff.md` |
+| 每个数字哪来的？ | Claim Ledger、来源日期、来源附录、质量门禁结果 | `claim_ledger.json`、`source_appendix.md`、`quality_gate_report.json` |
+| 它学到了什么？ | 只有人工批准的读者偏好；未批准建议不会生效 | `improvement/ledger.jsonl`、`improvement_memory_snapshot.md` |
+| 什么在替你把关？ | 阶段完成记录、reader-final gate、交付检查 | `finalize_report.json`、`state finalize-complete` |
 
-> 它会观察、会提议；但只有你点头的，才会被记住，而且记在一本你随时能翻、能撤销的账上。
+它会观察、会提议，但只有你批准的东西才会被记住，而且会记在你能打开、能审计、能撤销的账上。
 
-面向业务用户的解释见 [docs/what-mabw-keeps-track-of.zh-CN.md](docs/what-mabw-keeps-track-of.zh-CN.md)。
+---
 
-## 看一眼证据 🔬
+## 你最终会拿到什么？
 
-* [v0.7.2 公开光伏集成运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)：展示 Improvement Memory materialization、门禁执行、控制面闭环。它是 integration reference，不是输出质量提升或严格因果效果证明。
-* [v0.7.4 类器官行业研究失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)：一次真实外部课题如何暴露 source-to-claim 语义支撑边界。BriefLoop 当前能追溯错误传播链，但还不能证明每个来源语义支持每个子主张。
-* [BriefLoop-090 A-controlled auditable-brief pilot](docs/reference-runs/briefloop-090-a-controlled-pilot.md)：一个 public-safe synthetic case，使用 condition-blind、hash-bound 的 `auditable_brief` assessment。这个 case 中 memory 条件体现了 approved guidance 且未见明显伤害，prompt-only 条件过度应用了同一 guidance。它不是通用输出质量提升结论。
-* [v0.10.1 release notes](docs/releases/v0.10.1.md)：实验性 Product OS PolicyProfile layer，包括 ReportSpec/ReportPack registry、workspace skeleton、bundle projection、resolved policy projection、有限 deterministic gate adapter 和 public-safe dogfood fixtures。它不提供行业合规判断、投资建议检测、IR readiness、语义真实性、自动发布或 release authority。
-* [v0.9.4 release notes](docs/releases/v0.9.4.md)：实验性 Semantic Assessment Report proposal surface，包括 schema、reference validation、proposal projection、status visibility 和 public-safe dogfood fixtures。它不创建 support truth、adjudication queue、delivery gate 或 release authority。MABW-080 operator sequence 仍见 [MABW-080 experiment guide](docs/experiments-080.md)。
-* [Evidence Span Registry](docs/evidence-span-registry.md)：mainline 实验性 span schema、source-pack byte binding、archive projection 和 Source Appendix trace view。它不是 semantic support proof，也不是 support-sufficiency gate。
-* [Claim-Support Matrix](docs/claim-support-matrix.md)：mainline 实验性 support-record schema、cross-artifact validation，以及从显式 atom-to-evidence rows 投影出的 gate/status 信号。它不是 automatic support assessment、truth proof 或 release eligibility。
+一次正常运行后，真正给读者看的交付稿通常是：
 
-我们公开失败分析，因为问责也适用于这个项目自己。
+- `output/delivery/brief.md`
+- `output/delivery/<report-name>.docx`
 
-## 你会拿到什么 📦
+同时，系统会保留一套审计材料，例如：
 
-最终交付包只放 `output/delivery/brief.md` 和 `output/delivery/<命名>.docx`。配置来源附录时，来源列表会追加在这两份交付稿底部；独立的 `output/source_appendix.md`、Claim Ledger、audit report 和 audited brief 继续保留为审计追溯文件，不作为额外交付文件。
+- `output/intermediate/claim_ledger.json`：关键事实和来源登记；
+- `output/source_appendix.md`：来源附录；
+- `output/intermediate/quality_gate_report.json`：质量门禁结果；
+- `event_log.jsonl`：运行过程记录；
+- `improvement/ledger.jsonl`：人工批准的反馈和读者偏好。
 
-下面是一个**合成示例**（虚构主体，仅展示结构）：
+这些审计材料不是为了让普通读者阅读，而是为了在被追问、复盘、交接、排错时有据可查。
 
-`output/delivery/brief.md`（节选）：
+---
+
+## 一个很小的例子
+
+终稿里可能出现一句话：
 
 ```markdown
-## 二、市场动态
 本周示例光伏组件现货均价环比下降 1.8%，为连续第三周回落。
-N 公司宣布其示例州工厂一期产线于本周投产，规划年产能 2GW……
 ```
 
-`output/intermediate/claim_ledger.json`（对应条目，节选）：
+BriefLoop 不希望这句话孤零零地躺在报告里。它应该能在事实账本里找到对应记录：
 
 ```json
 {
   "claim_id": "CL-0012",
   "statement": "示例组件现货均价环比下降 1.8%",
   "source_id": "SRC-003",
-  "source_date": "2026-06-05",
-  "support": "supported"
+  "evidence_text": "示例来源摘录，显示组件价格环比变化。",
+  "metadata": {
+    "published_at": "2026-06-05",
+    "source_title": "示例光伏价格表"
+  }
 }
 ```
 
-`output/intermediate/quality_gate_report.json`（节选）：
+如果来源过期、数字没有登记、编辑阶段新增了未经登记的事实，质量门禁应该把问题暴露出来，而不是让它悄悄进入终稿。
 
-```json
-{
-  "gate_id": "freshness",
-  "status": "pass",
-  "findings": []
-}
-```
-
-按契约运行时，成稿里的关键数字应能在事实账本里找到登记的来源和日期；过期来源、无出处数字应被审计和质量门禁暴露出来，而不是无记录地混进终稿。审计轨迹保存在 `event_log.jsonl`。
+---
 
 ## 快速开始
 
-**从源码安装 — macOS / Linux**
+### macOS / Linux
 
 ```bash
 git clone https://github.com/Stahl-G/briefloop.git
@@ -154,9 +160,17 @@ cd briefloop
 bash scripts/setup.sh
 ```
 
-**从源码安装 — Windows PowerShell**
+创建第一份简报工作区：
 
-Windows 不需要 WSL 或 Git Bash；PowerShell 是推荐路径。
+```bash
+multi-agent-brief onboard
+multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
+multi-agent-brief run --workspace ~/mabw-workspace
+```
+
+### Windows PowerShell
+
+Windows 不需要 WSL 或 Git Bash。推荐直接用 PowerShell。
 
 ```powershell
 winget install Python.Python.3.12
@@ -170,245 +184,161 @@ cd briefloop
 multi-agent-brief version
 ```
 
-如果 PowerShell 执行策略拦截脚本：
+如果 PowerShell 拦截脚本执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
-**创建你的第一份简报工作区**
+---
+
+## Claude Code 路径
+
+如果你使用 Claude Code，可以安装 writer 入口：
 
 ```bash
-multi-agent-brief onboard
-multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace ~/mabw-workspace
+source .venv/bin/activate
+multi-agent-brief claude install --repo-workdir .
 ```
 
-**可选：查看 demo**
+然后使用五个主要命令：
+
+```text
+/briefloop new
+/briefloop run <workspace>
+/briefloop status <workspace>
+/briefloop feedback <workspace> [text-or-file]
+/briefloop deliver <workspace>
+```
+
+`/mabw` 仍然保留为兼容 alias。
+
+建议新用户先看：
+
+- [黄金路径](docs/golden-path.zh-CN.md)
+- [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)
+- [Claude Code quickstart](docs/claude-code-quickstart.md)
+
+---
+
+## 三条上手路径
+
+| 路径 | 适合谁 | 怎么做 |
+|---|---|---|
+| 看一眼 | 想判断这个项目是不是有意义 | 跑 demo，读公开运行摘要 |
+| 跑一次 | 想用少量本地材料试一次 | 建 workspace，放材料，跑一份简报 |
+| 每周使用 | 想把它变成固定工作流 | 配置来源、栏目、读者偏好和反馈流程 |
+
+可选 demo：
 
 ```bash
 bash scripts/demo.sh
 bash scripts/demo-deep-dive.sh
 ```
 
-demo 是给 reviewer 和 GitHub 访客检查合成材料上的证据链，不是使用产品前的必经步骤。
+demo 用的是合成材料，主要用来展示证据链和门禁行为。真实使用应该从你自己的材料和 workspace 开始。
 
-高级 Windows 安装器：`irm https://raw.githubusercontent.com/Stahl-G/briefloop/main/scripts/install.ps1 | iex` 已存在，但当前在 support matrix 中仍是 Experimental CLI-only installer asset。默认主路径是 source clone + `scripts/setup.ps1`。
+---
 
-如果你使用 Claude Code writer 路径，再安装 writer 入口：
+## 当前状态
 
-```bash
-source .venv/bin/activate
-multi-agent-brief claude install --repo-workdir .
-```
+当前版本：**v0.10.1**
 
-然后在 Claude Code CLI 或 Claude Desktop Code tab 中使用五个 writer 动词：
+当前主要入口：
 
-```text
-/briefloop new
-/briefloop run <workspace>
-/briefloop status <workspace>
-/briefloop feedback <workspace> [text-or-file]
-/briefloop deliver <workspace>
-```
+- CLI：`multi-agent-brief`
+- shell alias：`briefloop`
+- Claude command：`/briefloop`
+- 兼容 alias：`/mabw`
 
-`/mabw` 保留为同一组五个 writer 动词的兼容 alias。
+v0.10.1 加入了实验性的 Product OS / ReportPack 方向，例如：
 
-如果你想从 packaged experimental report pack 创建一个 local-first 产品骨架：
+- `ReportSpec`
+- `ReportPack`
+- `ReportTemplate`
+- `PolicyProfile`
+- workspace skeleton
+- delivery / audit bundle manifest
 
-```bash
-briefloop new market-weekly ./weekly-brief
-```
+这些功能的定位是：**让报告类型、默认策略和交付包更产品化**。
 
-这只会创建可编辑的 workspace 文件和 `report_spec.yaml`；不会运行 agents、渲染模板、交付报告或批准发布。
-`briefloop new` 可以接收显式 `--policy-profile` 或 deterministic
-`--industry` hint；选中的 profile 和解析来源会写入 `report_spec.yaml`，
-不会在 gate 运行时从行业文本静默推断。
-如果要 dogfood 太阳能制造业定期报告，也可以使用实验性
-`solar-industry-periodic` pack；它只是报告合同和 policy default surface，
-不是税务、合规、投资、交付或发布授权。
+但它们仍然只是元数据、默认配置和投影控制，不代表系统已经能自动判断行业合规、投资建议、披露可用性或语义真实性。
 
-详细流程见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。中文写作者可直接看 [BriefLoop 黄金路径](docs/golden-path.zh-CN.md) 和 [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)。
+---
 
-## 产品承诺与边界 🧱
+## 它不是什么？
 
-当前 release baseline：v0.10.1
+BriefLoop 现在明确不做这些事：
 
-v0.10.1 release 新增实验性 Product OS PolicyProfile layer：ReportSpec / ReportPack / ReportTemplate contracts、保守 workspace skeleton、delivery/audit bundle projection、resolved policy projection、有限 deterministic gate adaptation 和 public-safe dogfood fixtures。它不重命名 CLI、Python 包、workspace artifacts 或实验 ID，不判断行业合规、不检测投资建议、不验证互联网传闻、不声称 IR/disclosure readiness、不证明语义真实性、不自动发布，也不创建 release authority。
+- 不自动发布报告；
+- 不绕过人工审核；
+- 不保证来源语义上支持每个子主张；
+- 不替代法律、合规、投资或披露判断；
+- 不声称生成内容可以直接用于 IR / SEC / 监管披露；
+- 不把未批准反馈变成长期记忆；
+- 不承诺“一键生成最终正确报告”。
 
-它仍然不是自治 agent，不会自动修改简报内容，不会自动学习，没有长期记忆系统，也不是投资建议工具、交易信号生成器或人工审核替代品。详见 [当前架构状态](docs/architecture-status.zh-CN.md)、[路线图](docs/roadmap.zh-CN.md) 和 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
+更准确地说，BriefLoop 当前的核心承诺是：
 
-## 为什么做这个项目
+> **Traceability, not semantic proof yet.**
+> 先做到可追踪、可复盘、可问责；语义级证明和自动判断仍是后续方向。
 
-在企业战略部、券商研究所、基金投研、投资者关系、总裁办等场景中，很多人花大量时间制作日报、周报、晨会材料和领导层简报。这些工作重要，但流程高度重复：找来源、判断取舍、去重去旧、整理成文、核对数字出处、检查 AI 有没有编造、改措辞、排版输出。
+---
 
-更深一层的问题是：**这类工作无法系统性地变好。** 新人犯的错被口头纠正然后被遗忘，下一个新人重犯；"这段感觉不对"的反馈在会后蒸发；一个过期数字混进简报，没人能追溯它是在哪一步漏掉的。
+## 为什么做这个项目？
 
-写代码的世界靠测试、Git 历史、CI 和 code review 形成了改进闭环，所以 coding agent 进步飞快。本项目把同一套基础设施——可审计、可追溯、结构化反馈、人类把关——搬进真实的简报工作流。让人把时间花在判断、提问和决策支持上，而不是重复搬运和排版。
+写代码的世界有测试、CI、Git history 和 code review，所以 coding agent 的进步很快。
 
-### 为什么叫「司乐师」？
+但商业简报、行业周报、投研材料、管理层汇报通常没有这种基础设施。很多错误靠人肉复核，很多反馈靠口头传达，很多经验靠某个熟手记住。
 
-英文 orchestrator 来自管弦乐编配与协调的语境，在软件工程中常译为“编排器”。BriefLoop 选择译作「司乐师」：它不直接替各个角色写作，而是调度专业角色按契约合奏。默认 topology 下 Scout 同时承担发现和筛选，但 `screened_candidates.json` 仍是独立 artifact；strict topology 仍可保留独立筛选师。
+BriefLoop 想把软件工程里的那套“可追踪、可回滚、可审计、可测试”的思想搬到简报工作里。
 
-「司乐」也借用了中国礼乐传统中掌管乐政、乐教的意象。这里不是对古代官职的严格复原，而是一个项目术语：负责维持节奏、边界、秩序和交付。
+它的目标不是让人不思考，而是让人把时间花在判断、追问和决策支持上，而不是反复搬运、排版和修同样的错。
 
-## 三条上手路径
+---
 
-BriefLoop 没有“轻量版”。降低的是进入成本，不降低的是信任标准：事实账本、门禁、人工交付、运行轨迹和冻结快照仍然在场。
+## 术语表
 
-| 路径 | 适合谁 | 怎么做 | 不降低什么 |
-|---|---|---|---|
-| 看一眼 | 想先判断这个项目是不是有意义 | 读 [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)，跑 `bash scripts/demo.sh` 和 `bash scripts/demo-deep-dive.sh` | demo 展示的是控制行为和可追问性，不声称输出质量提升 |
-| 跑一遍 | 想用几份本地材料试一次 | 不配搜索后端，只放少量本地文本材料，按 [黄金路径](docs/golden-path.zh-CN.md) 走 `new → run → status → deliver` | Claim Ledger、gates、reader-final gate 和人工 deliver 仍然执行 |
-| 过日子 | 想每周稳定使用 | 配置搜索后端、来源节奏、feedback 和已批准偏好，按 [每周使用脚本](docs/weekly-use.zh-CN.md) 运行 | 未批准偏好不会生效，已批准偏好只在后续 run 冻结 |
-
-不要把外部 AI 报告直接丢进来“审计”当作轻量入口。没有 Claim Ledger 的外来稿只能做浅层检查，不能提供 BriefLoop 的核心问责能力。
-
-## 开荒一个新行业
-
-BriefLoop 适合把一个行业从“一次性调研”转成“长期、可追踪、可反馈修正的监控流程”。如果你要跟踪一个新赛道，例如类器官、AI 电力需求、储能供应链或新政策主题，建议这样开始：
-
-1. **先做一次开荒研究**：用 Deep Research、人工研究或行业专家访谈建立初始地图，包括核心问题、监管机构、公司宇宙、产品类型、关键词、数据库、常用媒体和需要持续跟踪的事件类型。
-2. **不要把开荒报告当作事实来源**：它只能作为 source universe、watchlist 和分类框架的草稿。后续简报里的关键事实仍必须回到原始公告、监管文件、公司新闻、投融资披露、论文或可信媒体。
-3. **把行业地图转成 workspace 配置**：把政策、公司/产品、投融资、商业化信号等栏目写入 `user.md` / onboarding 配置，把常用来源、关键词和公司名单整理成可复用 watchlist。
-4. **先按周跑，不急着日报化**：第一阶段用 BriefLoop 每周处理新增信息，去重、筛旧、建立 Claim Ledger、生成来源附录，并记录哪些信息真正影响判断。
-5. **用反馈修正口径**：当你发现“先讲影响再讲背景”“不要替管理层下决策”“某类数据必须核原始来源”这类稳定要求，先记录为反馈，再由人工批准进入 Improvement Ledger 或后续模板/门禁。
-6. **稳定后再提高频率**：只有当来源池、栏目结构、读者偏好和门禁规则稳定后，再把周报拆成日报、预警或专题跟踪。
-
-一句话：Deep Research 适合开荒，BriefLoop 适合长期监控。行业研究不是一次性“多搜一点”，而是一个持续的信息治理流程。
-
-## 跑自己的材料
-
-### Claude Code（五动词主路径）
-
-从源码安装完成后，激活虚拟环境并安装 writer 入口：
-
-```bash
-source .venv/bin/activate
-
-multi-agent-brief claude install --repo-workdir .
-```
-
-然后在 Claude Code CLI 或 Claude Desktop Code tab 中使用五个 writer 动词：
-
-```text
-/briefloop new
-/briefloop run <workspace>
-/briefloop status <workspace>
-/briefloop feedback <workspace> [text-or-file]
-/briefloop deliver <workspace>
-```
-
-`/briefloop` 是 BriefLoop writer command；`/mabw` 在 BriefLoop 过渡期保留为兼容 alias。`status` 调用只读的 `multi-agent-brief status`，`feedback` 只记录和分诊，`deliver` 必须经过 gates、reader-final gate 和 `state finalize-complete`。`/generate-brief <workspace>` 仍是高级/legacy 的完整 delegated workflow 命令，用于调试或直接执行子代理流程；它不是新用户第一路径。
-
-详细流程见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md)。中文写作者可直接看 [BriefLoop 黄金路径](docs/golden-path.zh-CN.md) 和 [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)。
-
-### 其他 runtime
-
-```bash
-multi-agent-brief onboard
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace ../mabw-workspace --runtime claude
-```
-
-Claude Code 是 first-class writer / five-verb path。Hermes 仍是 supported delegated / scheduled runtime path。OpenCode、Codex 和 manual fallback 保留各自现有入口。
-
-Hermes 插件仍可用于 `delegate_task` 原生路径：
-
-```bash
-multi-agent-brief hermes install-plugin
-hermes plugins enable mabw
-```
-
-运行时安装细节、workspace-local kit、常见问题见 [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) 和 [docs/runtime-recipes.md](docs/runtime-recipes.md)。
-
-### 使用自己的材料 / 启用可选能力
-
-* 导入本地资料与输入分类：见 [docs/onboarding.md](docs/onboarding.md)
-* Web 搜索选项（runtime 自带搜索，或 Tavily/Exa/Brave 等 API 增强）：见 [docs/search-backends.md](docs/search-backends.md)
-* 源发现候选合并（包括 `llm_decide` source profile）：`multi-agent-brief sources decide --config <workspace>/config.yaml --merge`
-* 飞书集成（采集 + 推送）：见 [docs/feishu-integration.md](docs/feishu-integration.md)
-* SEC Filing 解析：见 [docs/opencli-source-provider.md](docs/opencli-source-provider.md)
-* Windows PowerShell：见 [docs/windows-powershell.zh-CN.md](docs/windows-powershell.zh-CN.md)
-
-常用命令片段：
-
-```bash
-multi-agent-brief init --from-onboarding onboarding.json
-multi-agent-brief sources decide --config <workspace>/config.yaml
-```
-
-## 记录一个已批准的读者偏好
-
-v0.7.0 增加了受控的 Improvement Ledger / Improvement Memory。它用于保存人工撰写、人工批准的读者偏好，例如"证据支持时，先给出决策相关数字"。它不是自动学习系统，也不会自动改稿。
-
-```bash
-multi-agent-brief improve propose --workspace <workspace> \
-  --guidance "Lead with the decision-relevant number when evidence supports it." \
-  --category audience_mismatch \
-  --scope brief \
-  --source-summary "Operator-created audience guidance proposal."
-
-multi-agent-brief improve approve --workspace <workspace> --entry-id AG-0001 --by <operator>
-multi-agent-brief improve rebuild --workspace <workspace>
-multi-agent-brief run --workspace <workspace> --skip-doctor
-```
-
-`approve` 不会改变已经创建的当前 run snapshot；下一次 `run` / `start` / `handoff` 才会把已批准偏好冻结为 runtime 可读 snapshot。MABW 可以证明该 snapshot 是否被生成、记录并交给 runtime；最终文本是否体现这些偏好仍需要单独评估。运行时只读取 `output/intermediate/improvement_memory_snapshot.md`，不把 `improvement/memory.md` 当作实时输入。详细说明见 [docs/modules/improvement.md](docs/modules/improvement.md)。
-
-## 寻找合作 🤝
-
-这个项目由一名制造业从业者在真实简报工作中开发和使用。它现在最需要的不是更多功能，而是更多真实场景。如果你符合以下任何一类，欢迎联系（GitHub Issue / Discussion 均可）：
-
-* **试点用户**：你在战略、投研、IR、总裁办、研究所等岗位，每周真实地写行业周报、竞品跟踪或管理层简报，愿意用它跑自己的真实流程并反馈摩擦点。我们会优先支持试点场景的问题。
-* **评估合作者**：你在高校或研究机构做 LLM agent / 多智能体系统方向，对"契约治理的工作流 vs 单模型基线"的对照实验、消融实验感兴趣。系统、真实场景和运行数据由项目方提供。
-* **贡献者**：从一个 [good first issue](https://github.com/Stahl-G/briefloop/issues) 开始即可；提交前请读 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
-
-## 术语表（Glossary）
-
-| 中文术语 | English | 说明 |
+| 术语 | 英文 | 人话解释 |
 |---|---|---|
-| 司乐师 | Orchestrator | 运行时主智能体，负责调度、检查、决策和交付门禁 |
-| 事实账本 | Claim Ledger | 登记关键事实主张及其证据来源 |
-| 运行交接单 | Runtime Handoff | 向不同 agent runtime 交付执行上下文和契约引用 |
-| 产物契约 | Artifact Contract | 定义每个阶段应产生、消费和验证的文件 |
-| 质量门禁 | Quality Gate | 在进入下一阶段或定稿前执行的质量检查 |
-| 溯源图 | Provenance Graph | 从运行状态、产物、事实、反馈和门禁派生的审计图 |
-| 控制台 | Control Switchboard | 记录可用控制项、建议和司乐师选择 |
-| 信息侦察员 / 筛选师 / 分析师 / 编辑师 / 审计师 | Scout / Screener / Analyst / Editor / Auditor | 各阶段专职子代理 |
+| 事实账本 | Claim Ledger | 记录关键事实、数字、来源和日期 |
+| 来源包 | Source Pack | 本次运行可用的材料集合 |
+| 质量门禁 | Quality Gate | 进入下一阶段或交付前必须通过的检查 |
+| 读者偏好 | Reader Preference | 人工批准的写作要求，例如“先讲影响再讲背景” |
+| 改进账本 | Improvement Ledger | 保存已批准反馈的记录 |
+| 司乐师 | Orchestrator | 调度各角色、维持流程边界的运行时角色 |
+| 交付包 | Delivery Bundle | 给读者看的 Markdown / Word 文件 |
+| 审计材料 | Audit Artifacts | 给复盘、排错、追问用的中间记录 |
 
-## 路线图（摘要）
+---
 
-* **v0.7**：改进账本（Improvement Ledger）——把人工撰写、人工批准的读者偏好按运行冻结为 Improvement Memory snapshot；不做自动学习、FrictionStore 自动检测或输出质量承诺。
-* **v0.8**：measurement、fast-rerun、role topology 与 evaluation——计时投影、同证据 rerun、default / strict topology 选择，以及不削弱问责 artifacts 的受控实验工具。
-* **v0.9**：support-sufficiency core。当前路径：Atomic Claim Graph -> Evidence Span Registry -> Claim-Support Matrix -> Semantic Assessment Report proposal surface。human adjudication、coverage/omission gates、semantic regression、release eligibility、quality packs 和 finding-to-repair workflows 均延后为 semantic-governance surfaces，不再是默认下一阶段实现主线。
-* **v0.10**：Product OS 和 report packs——ReportSpec、ReportPack registry、zero-config workspaces、template rendering、delivery/audit bundle projection、`evidence_extract`、SourceHub Lite、release modes 和 human approval records，但不削弱问责主链。
-* **v1.0**：稳定 weekly/monthly/evidence-extract CLI product——report contracts 冻结、兼容策略和安全威胁模型。
+## 文档入口
 
-完整版见 [docs/roadmap.zh-CN.md](docs/roadmap.zh-CN.md)；已实现 vs 目标的区分见 [docs/architecture-status.zh-CN.md](docs/architecture-status.zh-CN.md)。
+- [功能地图](docs/features.zh-CN.md)
+- [黄金路径](docs/golden-path.zh-CN.md)
+- [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)
+- [架构状态](docs/architecture-status.zh-CN.md)
+- [路线图](docs/roadmap.zh-CN.md)
+- [红线与反模式](docs/red-lines-and-anti-patterns.md)
+- [公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)
+- [失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)
 
-## 文档索引
+---
 
-[功能地图](docs/features.zh-CN.md) ·
-[架构](docs/architecture.zh-CN.md) ·
-[文档语言索引](docs/README.md) ·
-[技术报告 v0.1.2](docs/mabw-architecture-reference-v0.1.2.md) ·
-[司乐契约模型](docs/orchestrator-contracts.zh-CN.md) ·
-[质量门禁](docs/harness.md) ·
-[评估用例](docs/evaluation-cases.md) ·
-[改进账本](docs/modules/improvement.md) ·
-[Claim-Support Matrix](docs/claim-support-matrix.md) ·
-[黄金路径](docs/golden-path.zh-CN.md) ·
-[每周使用脚本](docs/weekly-use.zh-CN.md) ·
-[公开运行摘要](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md) ·
-[失败研究](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md) ·
-[v0.10.1](docs/releases/v0.10.1.md) ·
-[v0.9.4](docs/releases/v0.9.4.md) ·
-[MABW-080 experiment guide](docs/experiments-080.md) ·
-[发布验证清单](docs/launch-validation.zh-CN.md) ·
-[支持矩阵](docs/support-matrix.md) ·
-[安全](docs/security.md) ·
-[迁移说明](docs/MIGRATION.zh-CN.md)
+## 合作
+
+这个项目最需要的不是更多概念，而是真实场景。
+
+欢迎这些人参与：
+
+- 每周真实写行业周报、市场简报、IR 材料、管理层材料的人；
+- 想用真实工作流试点 BriefLoop 的团队；
+- 研究 agent evaluation、human-in-the-loop、可审计 AI 工作流的人；
+- 愿意从 issue、文档、测试、示例场景开始贡献的人。
+
+可以从 [good first issue](https://github.com/Stahl-G/briefloop/issues) 开始。提交前建议先读 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
+
+---
 
 ## License
 
