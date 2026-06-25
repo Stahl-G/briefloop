@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,7 @@ def build_report_bundle_manifest(
         "semantics": "delivery_and_audit_bundle_projection_only",
         "template": template,
         "packaging_hygiene": hygiene,
+        "bundle_archives": {"status": "not_requested"},
         "delivery_bundle": {
             "status": "available",
             "semantics": "reader_facing_artifacts_only",
@@ -77,20 +79,115 @@ def write_report_bundle_manifest(
     workspace: str | Path,
     output_path: str | Path | None = None,
     template_registry: ReportTemplateRegistry | None = None,
+    write_archives: bool = False,
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
+    target = _manifest_output_path(ws, output_path)
     manifest = build_report_bundle_manifest(workspace=ws, template_registry=template_registry)
-    target = Path(output_path).expanduser() if output_path else ws / "output" / "report_bundle_manifest.json"
-    if not target.is_absolute():
-        target = ws / target
-    target = target.resolve()
-    try:
-        manifest["manifest_path"] = _workspace_relative(ws, target)
-    except ValueError as exc:
-        raise ReportBundleProjectionError("bundle manifest output must stay inside the workspace.") from exc
+    if write_archives:
+        _raise_if_reserved_archive_output(ws, target)
+        manifest["bundle_archives"] = _write_bundle_archives(ws, manifest)
+    manifest["manifest_path"] = _workspace_relative(ws, target)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
+
+
+def _manifest_output_path(workspace: Path, output_path: str | Path | None) -> Path:
+    target = Path(output_path).expanduser() if output_path else workspace / "output" / "report_bundle_manifest.json"
+    if not target.is_absolute():
+        target = workspace / target
+    target = target.resolve()
+    try:
+        _workspace_relative(workspace, target)
+    except ValueError as exc:
+        raise ReportBundleProjectionError("bundle manifest output must stay inside the workspace.") from exc
+    return target
+
+
+def _raise_if_reserved_archive_output(workspace: Path, target: Path) -> None:
+    reserved = {
+        (workspace / "output" / "delivery_bundle.zip").resolve(),
+        (workspace / "output" / "audit_bundle.zip").resolve(),
+    }
+    if target in reserved:
+        rel = _workspace_relative(workspace, target)
+        raise ReportBundleProjectionError(
+            f"bundle manifest output path is reserved for clean bundle archives: {rel}"
+        )
+
+
+def _write_bundle_archives(workspace: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    output_dir = workspace / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    delivery_path = output_dir / "delivery_bundle.zip"
+    audit_path = output_dir / "audit_bundle.zip"
+    delivery_records = _records_from_bundle(manifest, "delivery_bundle")
+    audit_records = _records_from_bundle(manifest, "audit_bundle")
+    _write_zip_from_records(
+        workspace=workspace,
+        archive_path=delivery_path,
+        records=delivery_records,
+        surface="delivery",
+    )
+    _write_zip_from_records(
+        workspace=workspace,
+        archive_path=audit_path,
+        records=audit_records,
+        surface="audit",
+    )
+    return {
+        "status": "generated",
+        "semantics": "clean_archives_from_report_bundle_manifest",
+        "delivery": _archive_record(workspace, delivery_path, artifact_count=len(delivery_records)),
+        "audit": _archive_record(workspace, audit_path, artifact_count=len(audit_records)),
+    }
+
+
+def _records_from_bundle(manifest: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    bundle = manifest.get(key)
+    artifacts = bundle.get("artifacts") if isinstance(bundle, dict) else None
+    if not isinstance(artifacts, list):
+        return []
+    return [item for item in artifacts if isinstance(item, dict)]
+
+
+def _write_zip_from_records(
+    *,
+    workspace: Path,
+    archive_path: Path,
+    records: list[dict[str, Any]],
+    surface: str,
+) -> None:
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for record in sorted(records, key=lambda item: str(item.get("path") or "")):
+            rel = str(record.get("path") or "").strip()
+            if not rel:
+                continue
+            source = _resolve_workspace_path(workspace, rel)
+            arcname = _archive_member_name(rel, surface=surface)
+            info = zipfile.ZipInfo(arcname)
+            info.date_time = (1980, 1, 1, 0, 0, 0)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, source.read_bytes())
+
+
+def _archive_member_name(rel_path: str, *, surface: str) -> str:
+    rel = Path(rel_path).as_posix()
+    if surface == "delivery" and rel.startswith("output/delivery/"):
+        rel = rel.removeprefix("output/delivery/")
+    return f"{surface}/{rel}".replace("//", "/")
+
+
+def _archive_record(workspace: Path, path: Path, *, artifact_count: int) -> dict[str, Any]:
+    return {
+        "path": _workspace_relative(workspace, path),
+        "sha256": _sha256_file(path),
+        "size_bytes": path.stat().st_size,
+        "artifact_count": artifact_count,
+    }
 
 
 def _load_finalize_report(workspace: Path) -> dict[str, Any]:

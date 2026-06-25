@@ -73,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and renders Source Appendix URLs as DOCX hyperlinks where supported. This is
   packaging hygiene only; it is not template rendering, evidence sufficiency,
   delivery approval, or publication authorization.
+- **Clean delivery/audit bundle archives**: `packs bundle --write-archives`
+  now writes official clean `delivery_bundle.zip` and `audit_bundle.zip` files
+  from the bundle manifest artifact sets, excluding stray legacy ZIP contents
+  and package-root junk. These archives are deterministic export surfaces only;
+  they do not render templates, bypass gates, approve delivery, or authorize
+  publication.
 
 ### Fixed
 

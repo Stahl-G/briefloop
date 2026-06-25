@@ -94,6 +94,11 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
         "--output",
         help="Manifest output path. Defaults to <workspace>/output/report_bundle_manifest.json.",
     )
+    bundle_parser.add_argument(
+        "--write-archives",
+        action="store_true",
+        help="Write clean delivery_bundle.zip and audit_bundle.zip from the manifest artifacts.",
+    )
     bundle_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
@@ -181,6 +186,7 @@ def handle_packs(args: argparse.Namespace) -> int:
             payload = write_report_bundle_manifest(
                 workspace=getattr(args, "workspace"),
                 output_path=getattr(args, "output", None),
+                write_archives=getattr(args, "write_archives", False),
             )
         except ReportBundleProjectionError as exc:
             payload = {
@@ -286,7 +292,13 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"manifest: {payload.get('manifest_path')}")
             print(f"delivery_artifacts: {payload.get('delivery_bundle', {}).get('artifact_count')}")
             print(f"audit_artifacts: {payload.get('audit_bundle', {}).get('artifact_count')}")
-            print("boundary: projection only; no render, delivery, approval, or gate bypass")
+            archives = payload.get("bundle_archives") if isinstance(payload.get("bundle_archives"), dict) else {}
+            if archives.get("status") == "generated":
+                delivery_archive = archives.get("delivery") if isinstance(archives.get("delivery"), dict) else {}
+                audit_archive = archives.get("audit") if isinstance(archives.get("audit"), dict) else {}
+                print(f"delivery_archive: {delivery_archive.get('path')}")
+                print(f"audit_archive: {audit_archive.get('path')}")
+            print("boundary: bundle projection/export only; no render, delivery approval, or gate bypass")
         else:
             print(payload.get("error"))
     else:

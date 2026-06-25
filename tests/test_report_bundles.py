@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import zipfile
 from pathlib import Path
 
 import yaml
@@ -351,12 +352,110 @@ def test_packs_bundle_cli_writes_manifest_without_copying_trace_to_delivery(
     assert manifest["delivery_bundle"]["artifact_count"] == 1
     assert manifest["audit_bundle"]["artifact_count"] >= 6
     assert not (ws / "output" / "delivery" / "source_appendix_trace.md").exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
     assert manifest["non_goals"] == [
         "template_rendering",
         "delivery_approval",
         "gate_bypass",
         "publication_authorization",
     ]
+
+
+def test_packs_bundle_cli_writes_clean_archives_from_manifest(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    (ws / "output" / "delivery" / ".DS_Store").write_text("macOS junk\n", encoding="utf-8")
+    legacy_zip = ws / "output" / "output.zip"
+    with zipfile.ZipFile(legacy_zip, "w") as zf:
+        zf.writestr("__MACOSX/._brief.md", "junk")
+        zf.writestr("output/delivery/.DS_Store", "junk")
+
+    assert main(["packs", "bundle", "--workspace", str(ws), "--write-archives", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    manifest_path = ws / payload["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    archives = manifest["bundle_archives"]
+    assert archives["status"] == "generated"
+    delivery_zip = ws / archives["delivery"]["path"]
+    audit_zip = ws / archives["audit"]["path"]
+    assert delivery_zip.exists()
+    assert audit_zip.exists()
+    assert archives["delivery"]["sha256"] == _sha256_file(delivery_zip)
+    assert archives["audit"]["sha256"] == _sha256_file(audit_zip)
+    first_delivery_sha = archives["delivery"]["sha256"]
+    first_audit_sha = archives["audit"]["sha256"]
+
+    with zipfile.ZipFile(delivery_zip) as zf:
+        delivery_names = set(zf.namelist())
+    with zipfile.ZipFile(audit_zip) as zf:
+        audit_names = set(zf.namelist())
+
+    assert "delivery/brief.md" in delivery_names
+    assert "audit/output/intermediate/finalize_report.json" in audit_names
+    assert "audit/output/intermediate/audited_brief.md" in audit_names
+    all_names = delivery_names | audit_names
+    assert not any("__MACOSX" in name for name in all_names)
+    assert not any(name.endswith(".DS_Store") for name in all_names)
+    assert not any(name.endswith("output.zip") for name in all_names)
+
+    assert main(["packs", "bundle", "--workspace", str(ws), "--write-archives", "--json"]) == 0
+    rerun_payload = json.loads(capsys.readouterr().out)
+    rerun_manifest = json.loads((ws / rerun_payload["manifest_path"]).read_text(encoding="utf-8"))
+    assert rerun_manifest["bundle_archives"]["delivery"]["sha256"] == first_delivery_sha
+    assert rerun_manifest["bundle_archives"]["audit"]["sha256"] == first_audit_sha
+
+
+def test_packs_bundle_rejects_manifest_output_reserved_for_archives(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+
+    for rel in ("output/delivery_bundle.zip", "output/audit_bundle.zip"):
+        assert main([
+            "packs",
+            "bundle",
+            "--workspace",
+            str(ws),
+            "--write-archives",
+            "--output",
+            rel,
+            "--json",
+        ]) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert "reserved for clean bundle archives" in payload["error"]
+        assert not (ws / rel).exists()
+
+
+def test_packs_bundle_rejects_outside_output_before_writing_archives(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    outside = tmp_path / "outside.json"
+
+    assert main([
+        "packs",
+        "bundle",
+        "--workspace",
+        str(ws),
+        "--write-archives",
+        "--output",
+        str(outside),
+        "--json",
+    ]) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is False
+    assert "must stay inside the workspace" in payload["error"]
+    assert not outside.exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
 
 
 def test_report_bundle_manifest_output_must_stay_in_workspace(tmp_path: Path) -> None:

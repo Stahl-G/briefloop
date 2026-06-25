@@ -185,3 +185,29 @@ def test_ib_docx_renders_markdown_links_as_docx_hyperlinks(tmp_path):
         if rel.reltype.endswith("/hyperlink")
     }
     assert "https://example.com/source" in hyperlink_targets
+
+
+def test_ib_docx_keeps_parenthesized_markdown_link_targets(tmp_path):
+    """Angle-bracketed Markdown targets should not truncate at a URL parenthesis."""
+    from docx import Document
+
+    from multi_agent_brief.outputs.ib_docx import convert
+
+    url = "https://example.com/Foo_(bar)]"
+    md_path = tmp_path / "links.md"
+    md_path.write_text(
+        f"# Link Brief\n\nSource URL: <{url}>\n\nNamed source: [Example Source](<{url}>)\n",
+        encoding="utf-8",
+    )
+    docx_path = tmp_path / "links.docx"
+
+    convert(md_path, docx_path)
+
+    document = Document(docx_path)
+    hyperlink_targets = [
+        rel.target_ref
+        for rel in document.part.rels.values()
+        if rel.reltype.endswith("/hyperlink")
+    ]
+    assert url in hyperlink_targets
+    assert "https://example.com/Foo_(bar" not in hyperlink_targets

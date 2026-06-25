@@ -412,7 +412,8 @@ _INLINE_PATTERN = re.compile(
     r"|__[^_\n]+?__"            # __bold__
     r"|~~[^~\n]+?~~"            # ~~strike~~
     r"|`[^`\n]+?`"              # `code`
-    r"|\[[^\]]+\]\([^)]+\)"    # [text](url)
+    r"|\[[^\]]+\]\((?:<[^>\n]+>|[^)\n]+)\)"  # [text](url) or [text](<url>)
+    r"|<https?://[^>\s]+>"      # <https://example.com>
     r"|\*[^*\n]+?\*"            # *italic*
     r"|(?<!\w)_[^_\n]+?_(?!\w))"  # _italic_
 )
@@ -431,8 +432,10 @@ def _unwrap_inline_token(part: str) -> tuple[str, str]:
         return "strike", part[2:-2]
     if part.startswith("`") and part.endswith("`") and len(part) > 2:
         return "code", part[1:-1]
+    if part.startswith("<") and part.endswith(">") and part[1:].startswith(("http://", "https://")):
+        return "link", part[1:-1]
     if part.startswith("[") and part.endswith(")") and "](" in part:
-        m_link = re.match(r"\[([^\]]+)\]\(([^)]+)\)", part)
+        m_link = re.match(r"\[([^\]]+)\]\((?:<([^>\n]+)>|([^)]+))\)", part)
         if m_link:
             return "link", m_link.group(1)
     if part.startswith("*") and part.endswith("*") and len(part) > 2:
@@ -488,8 +491,7 @@ def _add_inline(paragraph, text: str, font_name: str, base_color: str | None = N
             run.font.size = Pt(9.5)
             run.font.color.rgb = _hex_to_rgb(COLORS["negative"])
         elif kind == "link":
-            m_link = re.match(r"\[([^\]]+)\]\(([^)]+)\)", part)
-            url = m_link.group(2).strip() if m_link else ""
+            url = _inline_link_target(part)
             if url.startswith(("http://", "https://")):
                 _append_hyperlink(paragraph, plain, url, font_name)
                 continue
@@ -505,6 +507,15 @@ def _add_inline(paragraph, text: str, font_name: str, base_color: str | None = N
                 run.font.color.rgb = _hex_to_rgb(base_color)
 
         _set_run_eastasia_font(run, font_name)
+
+
+def _inline_link_target(part: str) -> str:
+    if part.startswith("<") and part.endswith(">"):
+        return part[1:-1].strip()
+    m_link = re.match(r"\[([^\]]+)\]\((?:<([^>\n]+)>|([^)]+))\)", part)
+    if not m_link:
+        return ""
+    return (m_link.group(2) or m_link.group(3) or "").strip()
 
 
 # ── Block renderers ─────────────────────────────────────────────
