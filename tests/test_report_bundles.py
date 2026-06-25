@@ -416,20 +416,28 @@ def test_packs_bundle_rejects_manifest_output_reserved_for_archives(
     ws = _finalized_workspace(tmp_path)
 
     for rel in ("output/delivery_bundle.zip", "output/audit_bundle.zip"):
-        assert main([
-            "packs",
-            "bundle",
-            "--workspace",
-            str(ws),
-            "--write-archives",
-            "--output",
-            rel,
-            "--json",
-        ]) == 1
-        payload = json.loads(capsys.readouterr().out)
-        assert payload["ok"] is False
-        assert "reserved for clean bundle archives" in payload["error"]
-        assert not (ws / rel).exists()
+        for maybe_write_archives in (False, True):
+            archive_path = ws / rel
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            archive_path.write_bytes(b"existing zip bytes")
+            args = [
+                "packs",
+                "bundle",
+                "--workspace",
+                str(ws),
+                "--output",
+                rel,
+                "--json",
+            ]
+            if maybe_write_archives:
+                args.insert(4, "--write-archives")
+
+            assert main(args) == 1
+            payload = json.loads(capsys.readouterr().out)
+            assert payload["ok"] is False
+            assert "reserved for clean bundle archives" in payload["error"]
+            assert archive_path.read_bytes() == b"existing zip bytes"
+            archive_path.unlink()
 
 
 def test_packs_bundle_rejects_outside_output_before_writing_archives(

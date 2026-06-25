@@ -83,9 +83,9 @@ def write_report_bundle_manifest(
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
     target = _manifest_output_path(ws, output_path)
+    _raise_if_reserved_archive_output(ws, target)
     manifest = build_report_bundle_manifest(workspace=ws, template_registry=template_registry)
     if write_archives:
-        _raise_if_reserved_archive_output(ws, target)
         manifest["bundle_archives"] = _write_bundle_archives(ws, manifest)
     manifest["manifest_path"] = _workspace_relative(ws, target)
     target.parent.mkdir(parents=True, exist_ok=True)
