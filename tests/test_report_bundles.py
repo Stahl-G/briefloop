@@ -409,6 +409,29 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     assert rerun_manifest["bundle_archives"]["audit"]["sha256"] == first_audit_sha
 
 
+def test_packs_bundle_rejects_manifest_output_reserved_for_archives(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+
+    for rel in ("output/delivery_bundle.zip", "output/audit_bundle.zip"):
+        assert main([
+            "packs",
+            "bundle",
+            "--workspace",
+            str(ws),
+            "--write-archives",
+            "--output",
+            rel,
+            "--json",
+        ]) == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is False
+        assert "reserved for clean bundle archives" in payload["error"]
+        assert not (ws / rel).exists()
+
+
 def test_report_bundle_manifest_output_must_stay_in_workspace(tmp_path: Path) -> None:
     ws = _finalized_workspace(tmp_path)
 

@@ -82,20 +82,39 @@ def write_report_bundle_manifest(
     write_archives: bool = False,
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
+    target = _manifest_output_path(ws, output_path)
     manifest = build_report_bundle_manifest(workspace=ws, template_registry=template_registry)
     if write_archives:
+        _raise_if_reserved_archive_output(ws, target)
         manifest["bundle_archives"] = _write_bundle_archives(ws, manifest)
-    target = Path(output_path).expanduser() if output_path else ws / "output" / "report_bundle_manifest.json"
-    if not target.is_absolute():
-        target = ws / target
-    target = target.resolve()
-    try:
-        manifest["manifest_path"] = _workspace_relative(ws, target)
-    except ValueError as exc:
-        raise ReportBundleProjectionError("bundle manifest output must stay inside the workspace.") from exc
+    manifest["manifest_path"] = _workspace_relative(ws, target)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
+
+
+def _manifest_output_path(workspace: Path, output_path: str | Path | None) -> Path:
+    target = Path(output_path).expanduser() if output_path else workspace / "output" / "report_bundle_manifest.json"
+    if not target.is_absolute():
+        target = workspace / target
+    target = target.resolve()
+    try:
+        _workspace_relative(workspace, target)
+    except ValueError as exc:
+        raise ReportBundleProjectionError("bundle manifest output must stay inside the workspace.") from exc
+    return target
+
+
+def _raise_if_reserved_archive_output(workspace: Path, target: Path) -> None:
+    reserved = {
+        (workspace / "output" / "delivery_bundle.zip").resolve(),
+        (workspace / "output" / "audit_bundle.zip").resolve(),
+    }
+    if target in reserved:
+        rel = _workspace_relative(workspace, target)
+        raise ReportBundleProjectionError(
+            f"bundle manifest output path is reserved for clean bundle archives: {rel}"
+        )
 
 
 def _write_bundle_archives(workspace: Path, manifest: dict[str, Any]) -> dict[str, Any]:
