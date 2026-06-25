@@ -1,4 +1,4 @@
-# BriefLoop
+# 🧾 BriefLoop
 
 **AI-assisted business briefings you can question later.**
 
@@ -11,7 +11,7 @@ The public project name is now **BriefLoop**; MABW remains as the implementation
 
 ---
 
-## In one sentence
+## ✨ In one sentence
 
 BriefLoop is an open-source workflow for recurring business briefings.
 
@@ -27,7 +27,7 @@ It does not try to be “a better prompt.” It keeps track of the process behin
 
 ---
 
-## The problem
+## 🧯 The problem
 
 Many teams write the same kind of material every week:
 
@@ -60,7 +60,7 @@ BriefLoop turns those hidden rules into a workflow that can be inspected, repeat
 
 ---
 
-## Who is this for?
+## 👥 Who is this for?
 
 BriefLoop is useful for:
 
@@ -77,7 +77,7 @@ It is not the right tool if you only want:
 
 ---
 
-## What BriefLoop actually does
+## 🧱 What BriefLoop actually does
 
 Think of BriefLoop as a briefing pipeline with ledgers.
 
@@ -96,7 +96,7 @@ The design rule is simple:
 
 ---
 
-## The four questions it keeps answerable
+## 📚 The four questions it keeps answerable
 
 | Question | What BriefLoop records | Where to look |
 |---|---|---|
@@ -109,7 +109,7 @@ It can observe and propose. Only what you approve is remembered, and it is remem
 
 ---
 
-## What you get from a run
+## 📦 What you get from a run
 
 A normal delivered brief is usually:
 
@@ -128,7 +128,7 @@ Those audit files are not meant to be read by every end user. They exist so a te
 
 ---
 
-## A tiny example
+## 🔎 A tiny example
 
 A delivered brief might say:
 
@@ -156,7 +156,7 @@ If a source is stale, a number is unregistered, or an editor adds a new material
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
 ### macOS / Linux
 
@@ -198,7 +198,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ---
 
-## Claude Code path
+## 🤖 Claude Code path
 
 If you use Claude Code, install the writer entrypoint:
 
@@ -227,7 +227,7 @@ Good next reads:
 
 ---
 
-## Three ways to try it
+## 🧪 Three ways to try it
 
 | Path | Best for | What to do |
 |---|---|---|
@@ -246,7 +246,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ---
 
-## Current status
+## 🧭 Current status
 
 Current version: **v0.10.1**
 
@@ -272,7 +272,7 @@ They are still metadata, defaults, and projection controls. They do not judge in
 
 ---
 
-## What it is not
+## 🚧 What it is not
 
 BriefLoop currently does not:
 
@@ -291,7 +291,7 @@ The current core claim is deliberately narrow:
 
 ---
 
-## Why this exists
+## 💡 Why this exists
 
 Coding agents improved quickly because software work has infrastructure: tests, CI, git history, code review, and rollbacks.
 
@@ -303,7 +303,7 @@ The goal is not to remove human judgment. The goal is to let humans spend more t
 
 ---
 
-## Glossary
+## 📖 Glossary
 
 | Term | Plain meaning |
 |---|---|
@@ -318,7 +318,7 @@ The goal is not to remove human judgment. The goal is to let humans spend more t
 
 ---
 
-## Useful docs
+## 🗂️ Useful docs
 
 - [Function Map](docs/features.md)
 - [Golden Path](docs/golden-path.md)
@@ -331,7 +331,7 @@ The goal is not to remove human judgment. The goal is to let humans spend more t
 
 ---
 
-## Collaboration
+## 🤝 Collaboration
 
 This project needs real scenarios more than it needs more concepts.
 
@@ -346,6 +346,6 @@ Start with a [good first issue](https://github.com/Stahl-G/briefloop/issues). Pl
 
 ---
 
-## License
+## 📄 License
 
 MIT
