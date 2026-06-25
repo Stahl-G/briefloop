@@ -312,7 +312,34 @@ def test_source_appendix_renders_http_url_as_markdown_link(tmp_path: Path):
         ledger_path=ledger,
     )
 
-    assert "- URL: [https://example.com/source](https://example.com/source)" in result.markdown
+    assert "- URL: <https://example.com/source>" in result.markdown
+
+
+def test_source_appendix_renders_markdown_safe_url_with_metacharacters(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    url = "https://example.com/Foo_(bar)]"
+    _write_ledger(
+        ledger,
+        [
+            _claim(
+                "CL-001",
+                source_id="SRC-001",
+                source_url=url,
+                metadata={
+                    "source_title": "Example Source",
+                    "publisher": "Example Publisher",
+                    "source_category": "market_report",
+                },
+            ),
+        ],
+    )
+
+    result = build_source_appendix(
+        audited_markdown="Example source reported the result. [src:CL-001]\n",
+        ledger_path=ledger,
+    )
+
+    assert f"- URL: <{url}>" in result.markdown
 
 
 def test_source_appendix_filters_internal_id_shaped_metadata(tmp_path: Path):

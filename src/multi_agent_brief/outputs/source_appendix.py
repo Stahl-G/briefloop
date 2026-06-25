@@ -233,7 +233,7 @@ def render_source_appendix(
         if record.retrieved_at:
             lines.append(f"- Retrieved: {record.retrieved_at}")
         if record.url:
-            lines.append(f"- URL: [{record.url}]({record.url})")
+            lines.append(f"- URL: <{_markdown_autolink_url(record.url)}>")
         if record.source_type:
             lines.append(f"- Provider type: {record.source_type}")
         lines.append(f"- Used in: {record.claim_count} claim-backed statement{'s' if record.claim_count != 1 else ''}")
@@ -549,6 +549,10 @@ def _safe_url(value: str) -> tuple[str, str]:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return "", "Omitted source URL because it was not an HTTP(S) URL."
     return raw, ""
+
+
+def _markdown_autolink_url(value: str) -> str:
+    return str(value).replace("<", "%3C").replace(">", "%3E").replace(" ", "%20")
 
 
 def _safe_source_category(value: str) -> tuple[str, str]:
