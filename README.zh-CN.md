@@ -9,6 +9,8 @@
 
 [功能地图](docs/features.zh-CN.md) · [黄金路径](docs/golden-path.zh-CN.md) · [架构状态](docs/architecture-status.zh-CN.md) · [路线图](docs/roadmap.zh-CN.md)
 
+写作入口：Claude Code 里用 `/briefloop`（`/mabw` 仍是兼容别名）；命令行里用 `briefloop` 或 `multi-agent-brief`。
+
 ---
 
 ## ✨ 一句话说明

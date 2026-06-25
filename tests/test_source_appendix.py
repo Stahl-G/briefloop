@@ -128,6 +128,17 @@ def test_replace_claim_citations_with_reader_source_labels():
     assert "claim-missing" not in reader
 
 
+def test_replace_claim_citations_dedupes_adjacent_reader_source_labels():
+    markdown = "Shared source appears twice. [src:claim-001] [src:claim-002]\n"
+
+    reader = replace_claim_citations_with_labels(
+        markdown,
+        {"claim-001": "S1", "claim-002": "S1"},
+    )
+
+    assert reader == "Shared source appears twice. [S1]"
+
+
 def test_source_appendix_missing_cited_claim_warns_without_reader_leak(tmp_path: Path):
     ledger = tmp_path / "claim_ledger.json"
     _write_ledger(
@@ -276,6 +287,32 @@ def test_source_appendix_omits_invalid_url_and_reports_note(tmp_path: Path):
     assert "- URL:" not in result.markdown
     assert "## Appendix Notes" in result.markdown
     assert "Omitted source URL because it was not an HTTP(S) URL." in result.markdown
+
+
+def test_source_appendix_renders_http_url_as_markdown_link(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            _claim(
+                "CL-001",
+                source_id="SRC-001",
+                source_url="https://example.com/source",
+                metadata={
+                    "source_title": "Example Source",
+                    "publisher": "Example Publisher",
+                    "source_category": "market_report",
+                },
+            ),
+        ],
+    )
+
+    result = build_source_appendix(
+        audited_markdown="Example source reported the result. [src:CL-001]\n",
+        ledger_path=ledger,
+    )
+
+    assert "- URL: [https://example.com/source](https://example.com/source)" in result.markdown
 
 
 def test_source_appendix_filters_internal_id_shaped_metadata(tmp_path: Path):

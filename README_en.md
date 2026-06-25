@@ -19,6 +19,7 @@ Current version: **v0.10.1**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief` (`briefloop` shell alias also works)
 Current Claude command: `/briefloop` (`/mabw` compatibility alias also works)
+Writer entry: use `/briefloop` in Claude Code (`/mabw` remains a compatibility alias), or `briefloop` / `multi-agent-brief` in a shell.
 
 ## AI briefs that can answer "where did this number come from?"
 

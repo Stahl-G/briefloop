@@ -111,6 +111,36 @@ def _set_style_eastasia_font(style, font_name: str):
     rFonts.set(qn("w:eastAsia"), font_name)
 
 
+def _append_hyperlink(paragraph, text: str, url: str, font_name: str):
+    part = paragraph.part
+    r_id = part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+
+    run = OxmlElement("w:r")
+    r_pr = OxmlElement("w:rPr")
+    r_fonts = OxmlElement("w:rFonts")
+    r_fonts.set(qn("w:ascii"), LATIN_FONT)
+    r_fonts.set(qn("w:hAnsi"), LATIN_FONT)
+    r_fonts.set(qn("w:eastAsia"), font_name)
+    color = OxmlElement("w:color")
+    color.set(qn("w:val"), COLORS["primary"])
+    underline = OxmlElement("w:u")
+    underline.set(qn("w:val"), "single")
+    r_pr.extend([r_fonts, color, underline])
+    run.append(r_pr)
+
+    text_node = OxmlElement("w:t")
+    text_node.text = text
+    run.append(text_node)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+
+
 # ── Document styles ─────────────────────────────────────────────
 
 def _setup_document_styles(doc, font_name: str):
@@ -458,6 +488,11 @@ def _add_inline(paragraph, text: str, font_name: str, base_color: str | None = N
             run.font.size = Pt(9.5)
             run.font.color.rgb = _hex_to_rgb(COLORS["negative"])
         elif kind == "link":
+            m_link = re.match(r"\[([^\]]+)\]\(([^)]+)\)", part)
+            url = m_link.group(2).strip() if m_link else ""
+            if url.startswith(("http://", "https://")):
+                _append_hyperlink(paragraph, plain, url, font_name)
+                continue
             run = paragraph.add_run(plain)
             run.font.color.rgb = _hex_to_rgb(COLORS["primary"])
             run.font.underline = True
