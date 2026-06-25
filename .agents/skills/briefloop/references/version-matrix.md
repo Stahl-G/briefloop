@@ -52,8 +52,8 @@ Historical implementation name: MABW
     status, and generated handoff artifacts
   - resolved ReportTemplate section-order projection in read-only status and
     generated handoff artifacts
-  - read-only ReportTemplate section-conformance diagnostics for existing
-    audited/final reader Markdown
+  - read-only ReportTemplate section-conformance diagnostics in status and
+    generated handoff artifacts for existing audited/final reader Markdown
   - limited PolicyProfile deterministic gate adapter for existing gate
     strictness and reader-final forbidden-phrase checks
   - no stage execution, template rendering, delivery, publication approval,

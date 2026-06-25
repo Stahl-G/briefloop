@@ -50,10 +50,17 @@ def project_workspace_report_template_conformance(workspace: str | Path) -> dict
     section_aliases = _section_aliases(template.get("section_aliases"), expected_sections)
     _add_report_title_alias(section_aliases, template.get("report_title"))
     _add_workspace_company_aliases(section_aliases, _workspace_company(ws))
+    report_title = template.get("report_title") if isinstance(template.get("report_title"), str) else ""
     targets = [
-        _project_target(ws, "output/intermediate/audited_brief.md", expected_sections, section_aliases),
-        _project_target(ws, "output/brief.md", expected_sections, section_aliases),
-        _project_target(ws, "output/delivery/brief.md", expected_sections, section_aliases),
+        _project_target(
+            ws,
+            "output/intermediate/audited_brief.md",
+            expected_sections,
+            section_aliases,
+            report_title,
+        ),
+        _project_target(ws, "output/brief.md", expected_sections, section_aliases, report_title),
+        _project_target(ws, "output/delivery/brief.md", expected_sections, section_aliases, report_title),
     ]
     present_targets = [item for item in targets if item.get("status") != "missing"]
     if not present_targets:
@@ -79,6 +86,7 @@ def _project_target(
     rel_path: str,
     expected_sections: list[str],
     section_aliases: dict[str, list[str]],
+    report_title: str = "",
 ) -> dict[str, Any]:
     path = workspace / rel_path
     if not path.exists():
@@ -111,25 +119,35 @@ def _project_target(
     extra_headings: list[str] = []
     nested_headings: list[str] = []
     first_h1_seen = False
+    active_h1_section: str | None = None
     for heading in headings:
         if heading["level"] > 2:
+            nested_headings.append(heading["text"])
+            continue
+        if heading["level"] == 2 and active_h1_section and active_h1_section != "cover":
             nested_headings.append(heading["text"])
             continue
         is_first_h1 = False
         if heading["level"] == 1 and not first_h1_seen:
             first_h1_seen = True
             is_first_h1 = True
+        if heading["level"] == 1:
+            active_h1_section = None
         section = _match_heading_to_section(heading["text"], expected_sections, section_aliases)
         if section is None:
             if is_first_h1 and "cover" in expected_sections:
                 section = "cover"
+            elif is_first_h1 and _label_matches(heading["text"], report_title):
+                continue
             else:
-                if heading["level"] == 2:
+                if heading["level"] in {1, 2}:
                     extra_headings.append(heading["text"])
                 continue
         if section not in matched_sections:
             matched_sections.append(section)
             matched_indices.append(expected_sections.index(section))
+        if heading["level"] == 1:
+            active_h1_section = section
 
     missing_sections = [section for section in expected_sections if section not in matched_sections]
     out_of_order_sections = _out_of_order_sections(matched_sections, matched_indices)
@@ -178,6 +196,12 @@ def _match_heading_to_section(
             if expected and (normalized == expected or normalized.endswith(f" {expected}")):
                 return section
     return None
+
+
+def _label_matches(value: str, expected: str) -> bool:
+    normalized = _normalize_label(value)
+    normalized_expected = _normalize_label(expected)
+    return bool(normalized_expected and normalized == normalized_expected)
 
 
 def _normalize_label(value: str) -> str:

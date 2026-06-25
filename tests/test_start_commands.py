@@ -653,6 +653,100 @@ def test_start_handoff_projects_report_template_section_order(tmp_path):
     assert "ReportTemplate projection" in data["prompt"]
     assert "section_order=cover, executive_summary, supply_chain_price_tracker" in data["prompt"]
     assert "runtime_effect=none" in data["prompt"]
+    assert data["report_template_conformance_projection"]["status"] == "no_targets"
+    assert "ReportTemplate conformance projection" not in data["prompt"]
+    assert "Report Template Conformance Projection" not in md
+
+
+def test_start_handoff_projects_report_template_conformance_pass(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_solar_report_spec(ws)
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True, exist_ok=True)
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "# Solar Industry Periodic Report",
+            "Title.",
+            "## Executive Summary",
+            "Summary.",
+            "## Supply Chain Price Tracker",
+            "Prices.",
+            "## Demand Installation Outlook",
+            "Demand.",
+            "## Policy Tax Financing",
+            "Policy.",
+            "## FX Rates Tracker",
+            "Rates.",
+            "## Company Implications",
+            "Implications.",
+            "## Source Appendix",
+            "Sources.",
+        ]),
+        encoding="utf-8",
+    )
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+
+    md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    projection = data["report_template_conformance_projection"]
+
+    assert projection["status"] == "pass"
+    assert projection["runtime_effect"] == "none"
+    assert projection["summary_counts"]["warning_target_count"] == 0
+    assert "ReportTemplate conformance projection" in data["prompt"]
+    assert "status=pass" in data["prompt"]
+    assert "diagnostics=none" in data["prompt"]
+    assert "runtime_effect=none" in data["prompt"]
+    assert "Report Template Conformance Projection" in md
+    assert "This projection is structure guidance only" in md
+
+
+def test_start_handoff_projects_report_template_conformance_warning(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_solar_report_spec(ws)
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True, exist_ok=True)
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "## Executive Summary",
+            "Summary.",
+            "## Cover",
+            "Cover.",
+            "## Unplanned Commentary",
+            "Extra.",
+        ]),
+        encoding="utf-8",
+    )
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+
+    md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    projection = data["report_template_conformance_projection"]
+
+    assert projection["status"] == "warning"
+    assert projection["runtime_effect"] == "none"
+    assert projection["summary_counts"]["missing_section_count"] > 0
+    assert "ReportTemplate conformance projection" in data["prompt"]
+    assert "status=warning" in data["prompt"]
+    assert "missing=" in data["prompt"]
+    assert "Use these diagnostics as structure guidance only" in data["prompt"]
+    assert "does not render templates" in data["prompt"]
+    assert "Report Template Conformance Projection" in md
+    assert "Missing sections:" in md
 
 
 def test_start_handoff_does_not_treat_invalid_report_template_as_contract(tmp_path):

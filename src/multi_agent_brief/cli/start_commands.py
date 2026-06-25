@@ -39,6 +39,7 @@ from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
+from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
 
 
@@ -174,6 +175,7 @@ class AgentHandoff:
     assessment_target_manifest: dict[str, Any] = field(default_factory=dict)
     policy_profile_projection: dict[str, Any] = field(default_factory=dict)
     report_template_projection: dict[str, Any] = field(default_factory=dict)
+    report_template_conformance_projection: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -564,6 +566,7 @@ def build_handoff(
     _apply_experiment_080_assessment_target(handoff, ws)
     _apply_policy_profile_projection(handoff, ws)
     _apply_report_template_projection(handoff, ws)
+    _apply_report_template_conformance_projection(handoff, ws)
 
     if run_doctor:
         rc, status = _run_doctor(ws)
@@ -641,6 +644,60 @@ def _apply_report_template_projection(handoff: AgentHandoff, workspace: Path) ->
     )
     handoff.prompt = f"{handoff.prompt}\n\n{text}"
     handoff.notes.append(text)
+
+
+def _apply_report_template_conformance_projection(handoff: AgentHandoff, workspace: Path) -> None:
+    projection = project_workspace_report_template_conformance(workspace)
+    handoff.report_template_conformance_projection = projection
+    if projection.get("status") in {"not_available", "no_targets"}:
+        return
+    counts = projection.get("summary_counts") if isinstance(projection.get("summary_counts"), dict) else {}
+    targets = projection.get("targets") if isinstance(projection.get("targets"), list) else []
+    diagnostics = _report_template_conformance_diagnostics(targets)
+    guidance = (
+        "Keep existing section structure aligned with the resolved ReportTemplate order."
+        if projection.get("status") == "pass"
+        else "Use these diagnostics as structure guidance only; revise through the owner role if section headings need changes."
+    )
+    text = (
+        "ReportTemplate conformance projection: "
+        f"status={projection.get('status')}; "
+        f"present_targets={counts.get('present_target_count', 0)}; "
+        f"warnings={counts.get('warning_target_count', 0)}; "
+        f"missing_sections={counts.get('missing_section_count', 0)}; "
+        f"out_of_order={counts.get('out_of_order_section_count', 0)}; "
+        f"extra_headings={counts.get('extra_heading_count', 0)}; "
+        f"diagnostics={diagnostics or 'none'}; "
+        "boundary=product_report_template_conformance_projection_only; runtime_effect=none. "
+        f"{guidance} "
+        "This does not render templates, rewrite content, bypass gates, deliver reports, "
+        "or authorize publication."
+    )
+    handoff.prompt = f"{handoff.prompt}\n\n{text}"
+    handoff.notes.append(text)
+
+
+def _report_template_conformance_diagnostics(targets: list[Any]) -> str:
+    parts: list[str] = []
+    for target in targets:
+        if not isinstance(target, dict) or target.get("status") not in {"warning", "unreadable"}:
+            continue
+        artifact = str(target.get("target_artifact") or "unknown")
+        missing = [str(item) for item in (target.get("missing_sections") or [])[:5]]
+        out_of_order = [str(item) for item in (target.get("out_of_order_sections") or [])[:5]]
+        extra = [str(item) for item in (target.get("extra_headings") or [])[:5]]
+        bits: list[str] = []
+        if missing:
+            bits.append("missing=" + ",".join(missing))
+        if out_of_order:
+            bits.append("out_of_order=" + ",".join(out_of_order))
+        if extra:
+            bits.append("extra=" + ",".join(extra))
+        if target.get("error"):
+            bits.append("error=" + str(target.get("error")))
+        if bits:
+            parts.append(f"{artifact}[" + ";".join(bits) + "]")
+    return " | ".join(parts[:3])
 
 
 def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
@@ -1137,6 +1194,42 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             "",
             "This projection is product section-order metadata only. It does not render",
             "templates, rewrite content, bypass gates, deliver reports, or authorize publication.",
+            "",
+        ])
+    if (
+        handoff.report_template_conformance_projection
+        and handoff.report_template_conformance_projection.get("status") not in {"not_available", "no_targets"}
+    ):
+        projection = handoff.report_template_conformance_projection
+        counts = projection.get("summary_counts") if isinstance(projection.get("summary_counts"), dict) else {}
+        targets = projection.get("targets") if isinstance(projection.get("targets"), list) else []
+        md_content.extend([
+            "## Report Template Conformance Projection",
+            "",
+            f"- Status: `{projection.get('status')}`",
+            f"- Boundary: `{projection.get('boundary')}`",
+            f"- Runtime effect: `{projection.get('runtime_effect')}`",
+            f"- Present targets: `{counts.get('present_target_count', 0)}`",
+            f"- Warning targets: `{counts.get('warning_target_count', 0)}`",
+            f"- Missing sections: `{counts.get('missing_section_count', 0)}`",
+            f"- Out-of-order sections: `{counts.get('out_of_order_section_count', 0)}`",
+            f"- Extra section headings: `{counts.get('extra_heading_count', 0)}`",
+            "",
+            "Target diagnostics:",
+        ])
+        for target in targets:
+            if not isinstance(target, dict) or target.get("status") == "missing":
+                continue
+            md_content.append(
+                f"- `{target.get('target_artifact')}`: status=`{target.get('status')}`, "
+                f"missing=`{', '.join(str(item) for item in (target.get('missing_sections') or [])) or 'none'}`, "
+                f"out_of_order=`{', '.join(str(item) for item in (target.get('out_of_order_sections') or [])) or 'none'}`, "
+                f"extra=`{', '.join(str(item) for item in (target.get('extra_headings') or [])) or 'none'}`"
+            )
+        md_content.extend([
+            "",
+            "This projection is structure guidance only. It does not render templates,",
+            "rewrite content, bypass gates, deliver reports, or authorize publication.",
             "",
         ])
     md_content.extend([
