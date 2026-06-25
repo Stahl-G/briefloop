@@ -200,6 +200,7 @@ def replace_claim_citations_with_labels(
 
     text = _SRC_REF_RE.sub(_replace, markdown)
     text = re.compile(r"\[src:[^\]]*\]").sub("", text)
+    text = re.sub(r"(\[S\d+\])(?:\s+\1)+", r"\1", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
@@ -232,7 +233,7 @@ def render_source_appendix(
         if record.retrieved_at:
             lines.append(f"- Retrieved: {record.retrieved_at}")
         if record.url:
-            lines.append(f"- URL: {record.url}")
+            lines.append(f"- URL: [{record.url}]({record.url})")
         if record.source_type:
             lines.append(f"- Provider type: {record.source_type}")
         lines.append(f"- Used in: {record.claim_count} claim-backed statement{'s' if record.claim_count != 1 else ''}")

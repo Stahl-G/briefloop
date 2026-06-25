@@ -66,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reader Markdown headings cover the resolved ReportTemplate sections in order.
   This is diagnostic structure guidance only; it does not render templates,
   rewrite content, block gates, deliver reports, or authorize publication.
+- **Report bundle packaging hygiene**: delivery/audit bundle projection now
+  excludes common macOS, Office, and editor temporary files, records excluded
+  packaging junk in the manifest, preserves UTF-8 artifact paths with
+  deterministic ASCII fallback names, dedupes adjacent reader source labels,
+  and renders Source Appendix URLs as DOCX hyperlinks where supported. This is
+  packaging hygiene only; it is not template rendering, evidence sufficiency,
+  delivery approval, or publication authorization.
 
 ### Fixed
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,8 @@ from multi_agent_brief.product.report_spec import ReportSpecLoadError, load_repo
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
 REPORT_BUNDLE_MANIFEST_SCHEMA_VERSION = "briefloop.report_bundle_manifest.v1"
+_ASCII_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_JUNK_SUFFIXES = {".tmp", ".temp", ".swp", ".swo"}
 
 
 class ReportBundleProjectionError(Exception):
@@ -32,8 +35,11 @@ def build_report_bundle_manifest(
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
     finalize_report = _load_finalize_report(ws)
-    delivery_records = _delivery_records(ws, finalize_report)
-    audit_records = _audit_records(ws, finalize_report)
+    hygiene: dict[str, Any] = {"status": "clean", "excluded_artifacts": []}
+    delivery_records = _delivery_records(ws, finalize_report, hygiene=hygiene)
+    audit_records = _audit_records(ws, finalize_report, hygiene=hygiene)
+    if hygiene["excluded_artifacts"]:
+        hygiene["status"] = "excluded_packaging_junk"
     template = _template_projection(
         ws,
         template_registry=template_registry or ReportTemplateRegistry.from_package(),
@@ -44,6 +50,7 @@ def build_report_bundle_manifest(
         "source": "finalize_report_projection",
         "semantics": "delivery_and_audit_bundle_projection_only",
         "template": template,
+        "packaging_hygiene": hygiene,
         "delivery_bundle": {
             "status": "available",
             "semantics": "reader_facing_artifacts_only",
@@ -114,7 +121,12 @@ def _load_finalize_report(workspace: Path) -> dict[str, Any]:
     return payload
 
 
-def _delivery_records(workspace: Path, finalize_report: dict[str, Any]) -> list[dict[str, Any]]:
+def _delivery_records(
+    workspace: Path,
+    finalize_report: dict[str, Any],
+    *,
+    hygiene: dict[str, Any],
+) -> list[dict[str, Any]]:
     raw_artifacts = finalize_report.get("delivery_artifacts")
     if not isinstance(raw_artifacts, list) or not raw_artifacts:
         raise ReportBundleProjectionError("finalize_report.json delivery_artifacts must be non-empty.")
@@ -136,6 +148,9 @@ def _delivery_records(workspace: Path, finalize_report: dict[str, Any]) -> list[
             raise ReportBundleProjectionError(
                 "delivery artifacts must be under output/delivery/."
             ) from exc
+        if _is_packaging_junk(path):
+            _record_hygiene_exclusion(workspace, path, hygiene=hygiene, surface="delivery")
+            continue
         expected_sha = _hash_for_path(hashes, raw=raw, workspace=workspace, path=path)
         if not expected_sha:
             raise ReportBundleProjectionError(
@@ -147,10 +162,19 @@ def _delivery_records(workspace: Path, finalize_report: dict[str, Any]) -> list[
                 f"delivery artifact hash mismatch: {_workspace_relative(workspace, path)}"
             )
         records.append(_artifact_record(workspace, path, role="reader_delivery"))
+    if not records:
+        raise ReportBundleProjectionError(
+            "finalize_report.json delivery_artifacts did not include packageable reader artifacts."
+        )
     return records
 
 
-def _audit_records(workspace: Path, finalize_report: dict[str, Any]) -> list[dict[str, Any]]:
+def _audit_records(
+    workspace: Path,
+    finalize_report: dict[str, Any],
+    *,
+    hygiene: dict[str, Any],
+) -> list[dict[str, Any]]:
     candidates = [
         ("finalize_report", workspace / "output" / "intermediate" / "finalize_report.json"),
         ("claim_ledger", workspace / "output" / "intermediate" / "claim_ledger.json"),
@@ -186,6 +210,9 @@ def _audit_records(workspace: Path, finalize_report: dict[str, Any]) -> list[dic
             pass
         rel = _workspace_relative(workspace, resolved)
         if rel in seen:
+            continue
+        if _is_packaging_junk(resolved):
+            _record_hygiene_exclusion(workspace, resolved, hygiene=hygiene, surface="audit")
             continue
         seen.add(rel)
         records.append(_artifact_record(workspace, resolved, role=role))
@@ -252,12 +279,60 @@ def _hash_for_path(
 
 
 def _artifact_record(workspace: Path, path: Path, *, role: str) -> dict[str, Any]:
-    return {
+    record = {
         "path": _workspace_relative(workspace, path),
         "role": role,
         "sha256": _sha256_file(path),
         "size_bytes": path.stat().st_size,
     }
+    fallback = _ascii_fallback_name(path.name)
+    if fallback != path.name:
+        record["ascii_fallback_name"] = fallback
+    return record
+
+
+def _is_packaging_junk(path: Path) -> bool:
+    parts = set(path.parts)
+    name = path.name
+    lower = name.lower()
+    return (
+        "__MACOSX" in parts
+        or name == ".DS_Store"
+        or name.startswith("~$")
+        or name.startswith(".~lock.")
+        or name.endswith("~")
+        or name.endswith("#")
+        or lower in {"thumbs.db", "desktop.ini"}
+        or lower.endswith(tuple(_JUNK_SUFFIXES))
+    )
+
+
+def _record_hygiene_exclusion(
+    workspace: Path,
+    path: Path,
+    *,
+    hygiene: dict[str, Any],
+    surface: str,
+) -> None:
+    exclusions = hygiene.setdefault("excluded_artifacts", [])
+    exclusions.append({
+        "path": _workspace_relative(workspace, path),
+        "surface": surface,
+        "reason": "packaging_junk",
+    })
+
+
+def _ascii_fallback_name(filename: str) -> str:
+    path = Path(filename)
+    suffix = path.suffix
+    raw_stem = path.stem or filename
+    encoded_stem = raw_stem.encode("ascii", "ignore").decode("ascii")
+    fallback_stem = _ASCII_SAFE_RE.sub("-", encoded_stem).strip(".-")
+    safe_suffix = suffix if suffix and suffix.encode("ascii", "ignore").decode("ascii") == suffix else ""
+    digest = hashlib.sha256(filename.encode("utf-8")).hexdigest()[:12]
+    if fallback_stem:
+        return f"{fallback_stem}-{digest}{safe_suffix}"
+    return f"artifact-{digest}{safe_suffix}"
 
 
 def _workspace_relative(workspace: Path, path: Path) -> str:

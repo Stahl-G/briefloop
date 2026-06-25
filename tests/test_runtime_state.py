@@ -3011,7 +3011,7 @@ def test_enrich_claim_metadata_uses_imported_source_evidence(tmp_path):
     assert "[S1] ExampleCo Demo Facility" in appendix.markdown
     assert "- Source category: News media" in appendix.markdown
     assert "- Publisher/Institution: Example Publisher" in appendix.markdown
-    assert "- URL: https://example.com/news" in appendix.markdown
+    assert "- URL: [https://example.com/news](https://example.com/news)" in appendix.markdown
     assert "- Provider type: web_search" in appendix.markdown
     assert appendix.claim_source_map["CL-0001"]["source_type"] == "web_search"
     assert claim["metadata"]["source_path"] == "input/sources/source-001.json"

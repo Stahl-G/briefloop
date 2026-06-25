@@ -179,6 +179,87 @@ def test_report_bundle_manifest_splits_delivery_and_audit_artifacts(tmp_path: Pa
     assert not any(path.startswith("output/delivery/") for path in audit_paths)
     assert manifest["delivery_bundle"]["semantics"] == "reader_facing_artifacts_only"
     assert manifest["audit_bundle"]["semantics"] == "audit_control_artifacts_only_not_reader_delivery"
+    assert manifest["packaging_hygiene"]["status"] == "clean"
+    assert manifest["packaging_hygiene"]["excluded_artifacts"] == []
+
+
+def test_report_bundle_manifest_excludes_packaging_junk(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    delivery_junk = ws / "output" / "delivery" / ".DS_Store"
+    delivery_junk.write_text("macOS metadata\n", encoding="utf-8")
+    trace_junk = ws / "output" / ".~lock.source_appendix_trace.md#"
+    trace_junk.write_text("editor lock\n", encoding="utf-8")
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifacts"].append("output/delivery/.DS_Store")
+    report["delivery_artifact_sha256"]["output/delivery/.DS_Store"] = _sha256_file(delivery_junk)
+    report["source_appendix_trace"] = "output/.~lock.source_appendix_trace.md#"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    manifest = build_report_bundle_manifest(workspace=ws)
+
+    delivery_paths = {item["path"] for item in manifest["delivery_bundle"]["artifacts"]}
+    audit_paths = {item["path"] for item in manifest["audit_bundle"]["artifacts"]}
+    excluded_paths = {
+        item["path"]
+        for item in manifest["packaging_hygiene"]["excluded_artifacts"]
+    }
+    assert "output/delivery/.DS_Store" not in delivery_paths
+    assert "output/.~lock.source_appendix_trace.md#" not in audit_paths
+    assert manifest["packaging_hygiene"]["status"] == "excluded_packaging_junk"
+    assert excluded_paths == {
+        "output/delivery/.DS_Store",
+        "output/.~lock.source_appendix_trace.md#",
+    }
+
+
+def test_report_bundle_manifest_preserves_utf8_paths_with_ascii_fallback(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    localized = ws / "output" / "delivery" / "行业周报.md"
+    localized.write_text("# 行业周报\n", encoding="utf-8")
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifacts"].append("output/delivery/行业周报.md")
+    report["delivery_artifact_sha256"]["output/delivery/行业周报.md"] = _sha256_file(localized)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    manifest = build_report_bundle_manifest(workspace=ws)
+
+    record = next(
+        item
+        for item in manifest["delivery_bundle"]["artifacts"]
+        if item["path"] == "output/delivery/行业周报.md"
+    )
+    assert record["path"] == "output/delivery/行业周报.md"
+    assert record["ascii_fallback_name"].startswith("artifact-")
+    assert record["ascii_fallback_name"].endswith(".md")
+
+
+def test_report_bundle_ascii_fallback_names_do_not_collide(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    paths = [
+        "output/delivery/行业周报-v1.md",
+        "output/delivery/市场周报-v1.md",
+    ]
+    for rel in paths:
+        path = ws / rel
+        path.write_text(f"# {path.stem}\n", encoding="utf-8")
+        report["delivery_artifacts"].append(rel)
+        report["delivery_artifact_sha256"][rel] = _sha256_file(path)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    manifest = build_report_bundle_manifest(workspace=ws)
+
+    fallback_names = [
+        item["ascii_fallback_name"]
+        for item in manifest["delivery_bundle"]["artifacts"]
+        if item["path"] in paths
+    ]
+    assert len(fallback_names) == 2
+    assert len(set(fallback_names)) == 2
+    assert all(name.startswith("v1-") and name.endswith(".md") for name in fallback_names)
 
 
 def test_report_bundle_manifest_rejects_stale_delivery_hash(tmp_path: Path) -> None:

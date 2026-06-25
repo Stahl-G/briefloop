@@ -161,3 +161,27 @@ class TestRenderedOutputReportJson:
         assert "metadata" in report_dict
         assert report_dict["metadata"].get("gate") == "rendered_output"
         assert report_dict["metadata"].get("rendered_docx_path") == str(docx_path)
+
+
+def test_ib_docx_renders_markdown_links_as_docx_hyperlinks(tmp_path):
+    """Markdown links should become Word hyperlink relationships, not just styled text."""
+    from docx import Document
+
+    from multi_agent_brief.outputs.ib_docx import convert
+
+    md_path = tmp_path / "links.md"
+    md_path.write_text(
+        "# Link Brief\n\nSource URL: [https://example.com/source](https://example.com/source)\n",
+        encoding="utf-8",
+    )
+    docx_path = tmp_path / "links.docx"
+
+    convert(md_path, docx_path)
+
+    document = Document(docx_path)
+    hyperlink_targets = {
+        rel.target_ref
+        for rel in document.part.rels.values()
+        if rel.reltype.endswith("/hyperlink")
+    }
+    assert "https://example.com/source" in hyperlink_targets
