@@ -432,6 +432,32 @@ def test_packs_bundle_rejects_manifest_output_reserved_for_archives(
         assert not (ws / rel).exists()
 
 
+def test_packs_bundle_rejects_outside_output_before_writing_archives(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _finalized_workspace(tmp_path)
+    outside = tmp_path / "outside.json"
+
+    assert main([
+        "packs",
+        "bundle",
+        "--workspace",
+        str(ws),
+        "--write-archives",
+        "--output",
+        str(outside),
+        "--json",
+    ]) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is False
+    assert "must stay inside the workspace" in payload["error"]
+    assert not outside.exists()
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
 def test_report_bundle_manifest_output_must_stay_in_workspace(tmp_path: Path) -> None:
     ws = _finalized_workspace(tmp_path)
 
