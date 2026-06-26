@@ -20,8 +20,8 @@ Responsibilities:
         - Detect previous-report overlap.
         - Exclude stale or low-confidence candidates according to config.
         - Preserve source identity and evidence for included candidates.
-        - Record exclusion reasons for dropped or deprioritized candidates.
-        - Write screened_candidates.json with selected candidates, excluded candidates with reasons, and screening_policy.
+        - Record exclusion reasons for dropped or deprioritized candidates with stable reason_code values and short explanations.
+        - Write screened_candidates.json with selected candidates, excluded candidates with reason_code/explanation records, and screening_policy.
 
 Guardrails:
         - Screen existing Scout candidates only.

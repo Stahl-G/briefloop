@@ -1962,9 +1962,46 @@ def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
                     {
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
+                        "reason_code": "duplicate_source",
+                        "explanation": "Dropped because it duplicated a fresher selected candidate.",
                     }
                 ],
                 "deprioritized": [],
+                "screening_policy": {"max_items": 8, "freshness_window_days": 90},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_screened_candidates_schema"
+
+
+def test_state_check_accepts_legacy_object_screened_candidates_reason_only(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "statement": "An older duplicate item.",
+                        "reason": "duplicate",
+                    }
+                ],
                 "screening_policy": {"max_items": 8, "freshness_window_days": 90},
             }
         )
@@ -2001,6 +2038,8 @@ def test_state_check_accepts_object_screened_candidates_with_source_url_identity
                     {
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
+                        "reason_code": "duplicate_source",
+                        "explanation": "Dropped because it duplicated a fresher selected candidate.",
                     }
                 ],
                 "screening_policy": {"max_items": 8, "freshness_window_days": 90},
@@ -2042,6 +2081,8 @@ def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_
                     {
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
+                        "reason_code": "duplicate_source",
+                        "explanation": "Dropped because it duplicated a fresher selected candidate.",
                     }
                 ],
                 "screening_policy": {"max_items": 8, "freshness_window_days": 90},
@@ -2080,6 +2121,8 @@ def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tm
                     {
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
+                        "reason_code": "duplicate_source",
+                        "explanation": "Dropped because it duplicated a fresher selected candidate.",
                     }
                 ],
                 "screening_policy": {"max_items": 8, "freshness_window_days": 90},
@@ -2146,6 +2189,233 @@ def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path)
 
     assert record["status"] == "invalid"
     assert record["validation_result"] == "screened_candidates_schema_error:excluded[0].reason"
+
+
+def test_state_check_rejects_screened_candidates_missing_discard_audit(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:discard_audit_missing"
+
+
+def test_state_check_accepts_screened_candidates_reason_code_without_legacy_reason(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "reason_code": "duplicate_source",
+                        "explanation": "Dropped because it duplicates a stronger selected candidate.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_screened_candidates_schema"
+
+
+def test_state_check_rejects_screened_candidates_discard_count_mismatch(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "reason": "stale",
+                        "reason_code": "stale_source",
+                        "explanation": "Dropped because the source is outside the configured window.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 3, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:discard_audit_count"
+
+
+def test_state_check_rejects_screened_candidates_unknown_discard_reason_code(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "reason": "unclear",
+                        "reason_code": "vibes",
+                        "explanation": "Dropped without a stable machine-readable reason.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:excluded[0].reason_code"
+
+
+def test_state_check_rejects_screened_candidates_missing_discard_explanation(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "reason": "stale_source",
+                        "reason_code": "stale_source",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:excluded[0].explanation"
+
+
+def test_state_check_accepts_screened_candidates_complete_discard_audit(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "reason": "capacity_capped",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Dropped because the section capacity was already filled.",
+                    },
+                    {
+                        "candidate_id": "CAND-003",
+                        "reason": "unsafe_evidence_boundary",
+                        "reason_code": "unsafe_evidence_boundary",
+                        "explanation": "Dropped because the source summary was discovery material, not evidence.",
+                    },
+                ],
+                "deprioritized": [
+                    {
+                        "candidate_id": "CAND-004",
+                        "reason": "weak_relevance",
+                        "reason_code": "weak_relevance",
+                        "explanation": "Kept out because it was weakly connected to the brief objective.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 4, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_screened_candidates_schema"
 
 
 def test_state_check_marks_invalid_screening_status_invalid(tmp_path):
