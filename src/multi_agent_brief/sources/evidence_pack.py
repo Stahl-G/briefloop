@@ -249,10 +249,10 @@ def _source_item_payload(item: SourceItem) -> dict[str, Any]:
         "storage_type",
     )
     provider_source_type = _provider_source_type(item.source_type)
-    retrieval_source_type = normalize_retrieval_source_type(
-        raw_retrieval_source_type,
-        provider_source_type,
-        raw_underlying_evidence_type,
+    retrieval_source_type = _normalize_pack_retrieval_source_type(
+        raw_retrieval_source_type=raw_retrieval_source_type,
+        provider_source_type=provider_source_type,
+        raw_underlying_evidence_type=raw_underlying_evidence_type,
     )
     underlying_evidence_type = normalize_underlying_evidence_type(raw_underlying_evidence_type)
     source_category = normalize_source_category(underlying_evidence_type, raw_underlying_evidence_type)
@@ -318,6 +318,25 @@ def _provider_source_type(value: str) -> str:
     if normalized == "cached":
         return "cached_package"
     return normalized or "local_file"
+
+
+def _normalize_pack_retrieval_source_type(
+    *,
+    raw_retrieval_source_type: str,
+    provider_source_type: str,
+    raw_underlying_evidence_type: str,
+) -> str:
+    if provider_source_type == "cached_package":
+        return normalize_retrieval_source_type(
+            raw_retrieval_source_type,
+            raw_underlying_evidence_type,
+            provider_source_type,
+        )
+    return normalize_retrieval_source_type(
+        raw_retrieval_source_type,
+        provider_source_type,
+        raw_underlying_evidence_type,
+    )
 
 
 def _workspace_relative(workspace: Path, path: Path) -> str:
