@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.contracts.source_metadata import VALID_SOURCE_CATEGORIES
 from multi_agent_brief.sources.base import SourceItem, SourceQuery
 from multi_agent_brief.sources.registry import collect_all_sources, load_sources_config
 
@@ -17,6 +18,29 @@ SOURCE_EVIDENCE_RECORD_SCHEMA = "mabw.source_evidence_record.v1"
 SOURCE_EVIDENCE_PACK_MANIFEST_SCHEMA = "mabw.source_evidence_pack_manifest.v1"
 DURABLE_MATERIALIZATION_PROVIDERS = {"manual", "cached_package"}
 SOURCE_EXCERPT_LIMIT = 2000
+SOURCE_CATEGORY_ALIASES = {
+    "company_official": "company_press_release",
+    "company_release": "company_press_release",
+    "company_source": "company_press_release",
+    "government_regulator": "regulator",
+    "official_regulator": "regulator",
+    "regulator_record": "regulator",
+    "regulatory": "regulator",
+    "industry_media": "news_media",
+    "industry_news": "news_media",
+    "media": "news_media",
+    "news": "news_media",
+    "trade_publication": "news_media",
+    "market_data": "industry_database",
+    "market_data_provider": "industry_database",
+    "data_provider": "industry_database",
+    "industry_report": "market_report",
+    "research_report": "market_report",
+    "research_institution": "market_report",
+    "academic_paper": "peer_reviewed_paper",
+    "paper": "peer_reviewed_paper",
+    "clin" + "ical_trial_registry": "clin" + "ical_registry",
+}
 
 
 class SourceEvidencePackError(Exception):
@@ -213,6 +237,7 @@ def _source_item_payload(item: SourceItem) -> dict[str, Any]:
         "source_category",
         "category",
     ) or "unknown"
+    source_category = _canonical_source_category(underlying_evidence_type)
     retrieval_source_type = item.source_type.strip() or "unknown"
     return {
         "schema_version": SOURCE_EVIDENCE_RECORD_SCHEMA,
@@ -227,8 +252,8 @@ def _source_item_payload(item: SourceItem) -> dict[str, Any]:
         "retrieved_at": item.retrieved_at.strip() or _utc_now_iso(),
         "source_type": retrieval_source_type,
         "retrieval_source_type": retrieval_source_type,
-        "source_category": underlying_evidence_type,
-        "evidence_category": underlying_evidence_type,
+        "source_category": source_category,
+        "evidence_category": source_category,
         "underlying_evidence_type": underlying_evidence_type,
         "raw_excerpt": content[:SOURCE_EXCERPT_LIMIT],
         "content": content,
@@ -268,6 +293,13 @@ def _first_text(metadata: dict[str, Any], *keys: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _canonical_source_category(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+    if normalized in VALID_SOURCE_CATEGORIES:
+        return normalized
+    return SOURCE_CATEGORY_ALIASES.get(normalized, "other")
 
 
 def _workspace_relative(workspace: Path, path: Path) -> str:

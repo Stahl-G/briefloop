@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import FieldViolation
+from multi_agent_brief.contracts.source_metadata import source_category_error
 
 SOURCE_EVIDENCE_PACK_MANIFEST_SCHEMA_VERSION = "mabw.source_evidence_pack_manifest.v1"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -189,13 +190,15 @@ def _validate_record(
         "source_title",
         "publisher",
         "source_type",
-        "source_category",
         "retrieval_source_type",
         "underlying_evidence_type",
     ):
         value = record.get(field)
         if value is not None and not _non_empty_string(value):
             violations.append(FieldViolation(field=f"{prefix}.{field}", error="must be a non-empty string"))
+    category_error = source_category_error(record.get("source_category"))
+    if category_error:
+        violations.append(FieldViolation(field=f"{prefix}.source_category", error=category_error))
 
     return violations
 

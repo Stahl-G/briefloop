@@ -79,8 +79,8 @@ def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
     assert record_payload["publisher_or_institution"] == "Regulator Bulletin"
     assert record_payload["source_type"] == "local_file"
     assert record_payload["retrieval_source_type"] == "local_file"
-    assert record_payload["source_category"] == "regulator_record"
-    assert record_payload["evidence_category"] == "regulator_record"
+    assert record_payload["source_category"] == "regulator"
+    assert record_payload["evidence_category"] == "regulator"
     assert record_payload["underlying_evidence_type"] == "regulator_record"
     assert "Durable evidence text." in record_payload["content"]
     extracted_metadata = _source_evidence_metadata_from_file(
@@ -89,7 +89,7 @@ def test_sources_materialize_pack_writes_durable_source_records_and_manifest(
     )
     assert extracted_metadata["publisher"] == "Regulator Bulletin"
     assert extracted_metadata["source_type"] == "local_file"
-    assert extracted_metadata["source_category"] == "regulator_record"
+    assert extracted_metadata["source_category"] == "regulator"
     assert "semantic_support_assessment" in json.loads(
         manifest_path.read_text(encoding="utf-8")
     )["non_goals"]
@@ -368,6 +368,46 @@ def test_source_evidence_pack_manifest_rejects_inconsistent_summary_counts(
     registry_record = state["artifact_registry"]["artifacts"]["source_evidence_pack_manifest"]
     assert registry_record["status"] == "invalid"
     assert registry_record["validation_result"] == "source_evidence_pack_manifest_schema_error:error_count"
+
+
+def test_source_evidence_pack_manifest_rejects_noncanonical_source_category(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True)
+    source = source_dir / "source-001.json"
+    source.write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.source_evidence_record.v1",
+                "source": "sources.materialize-pack",
+                "source_id": "SOURCE_001",
+                "content": "Durable evidence text.",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    record = {
+        "source_id": "SOURCE_001",
+        "path": "input/sources/source-001.json",
+        "sha256": _sha256_file(source),
+        "size_bytes": source.stat().st_size,
+        "source_category": "regulator_record",
+    }
+    _write_manifest(ws, records=[record])
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    registry_record = state["artifact_registry"]["artifacts"]["source_evidence_pack_manifest"]
+    assert registry_record["status"] == "invalid"
+    assert (
+        registry_record["validation_result"]
+        == "source_evidence_pack_manifest_schema_error:records[0].source_category"
+    )
 
 
 def _write_manifest(ws: Path, *, records: list[dict]) -> Path:
