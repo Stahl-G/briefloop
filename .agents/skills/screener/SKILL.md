@@ -36,8 +36,12 @@ Use after Scout has written `candidate_claims.json` only when the selected topol
 - Deduplicate exact and near-duplicate candidates.
 - Apply topic capacity and reporting-window rules from config.
 - Preserve source identity and evidence text.
-- Record exclusion reasons for every dropped or deprioritized candidate.
-- Write `screened_candidates.json` with selected candidates, excluded candidates, and the screening policy snapshot.
+- Record exclusion reasons for every dropped or deprioritized candidate with a stable
+  `reason_code` and short `explanation`. Use reason codes such as
+  `duplicate_source`, `stale_source`, `capacity_capped`, `weak_relevance`,
+  `off_focus`, `low_confidence`, `low_tier`, or `unsafe_evidence_boundary`.
+- Write `screened_candidates.json` with selected candidates, excluded candidates,
+  stable discard records, and the screening policy snapshot.
 
 ## Freshness Policy
 

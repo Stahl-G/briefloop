@@ -75,7 +75,10 @@ Use after source discovery, doctor, and input governance have identified evidenc
 - Apply topic capacity caps and reporting-window rules from config.
 - Write `screened_candidates.json` with:
   - `selected`: reportable candidates with source identity and evidence preserved.
-  - `excluded`: every dropped or deprioritized candidate with a reason such as `duplicate`, `stale`, `capacity_capped`, `off_focus`, or `low_tier`.
+  - `excluded`: every dropped or deprioritized candidate with a stable `reason_code`
+    and short `explanation`. Use reason codes such as `duplicate_source`,
+    `stale_source`, `capacity_capped`, `weak_relevance`, `off_focus`,
+    `low_confidence`, `low_tier`, or `unsafe_evidence_boundary`.
   - `screening_policy`: the applied policy snapshot, including capacity cap, freshness window, authority preference, dedupe strategy, and pack parameters when available.
 - In strict topology, stop after `candidate_claims.json` and hand off to Screener.
 

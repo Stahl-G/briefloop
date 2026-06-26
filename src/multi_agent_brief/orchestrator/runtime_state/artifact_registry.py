@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -93,6 +94,38 @@ _SCREENING_STATUSES_REQUIRING_REASON = {
     "deprioritized",
     "exclude",
     "excluded",
+}
+_SCREENING_DISCARD_REASON_CODES = {
+    "capacity_capped",
+    "duplicate_source",
+    "low_confidence",
+    "low_tier",
+    "off_focus",
+    "other",
+    "outside_scope",
+    "stale_source",
+    "unsafe_evidence_boundary",
+    "weak_relevance",
+}
+_SCREENING_DISCARD_REASON_ALIASES = {
+    "capacity_cut": "capacity_capped",
+    "capacity_cap": "capacity_capped",
+    "capacity_capped": "capacity_capped",
+    "duplicate": "duplicate_source",
+    "duplicate_source": "duplicate_source",
+    "duplicate_sources": "duplicate_source",
+    "low_confidence": "low_confidence",
+    "low_tier": "low_tier",
+    "off_focus": "off_focus",
+    "off_topic": "off_focus",
+    "other": "other",
+    "outside_scope": "outside_scope",
+    "stale": "stale_source",
+    "stale_source": "stale_source",
+    "stale_sources": "stale_source",
+    "unsafe_evidence": "unsafe_evidence_boundary",
+    "unsafe_evidence_boundary": "unsafe_evidence_boundary",
+    "weak_relevance": "weak_relevance",
 }
 _INPUT_CLASSIFICATION_BUCKETS = {"evidence", "context", "feedback", "instruction", "skipped"}
 _INPUT_CLASSIFICATION_PATH_KEYS = {
@@ -306,6 +339,15 @@ def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str
         if validation_error:
             return ARTIFACT_INVALID, f"screened_candidates_schema_error:selected[{idx}].{validation_error}"
 
+    screening_policy = payload.get("screening_policy")
+    if not isinstance(screening_policy, dict) or not screening_policy:
+        return ARTIFACT_INVALID, "screened_candidates_schema_error:screening_policy"
+
+    total_candidates, total_error = _screened_candidates_total(payload, screening_policy)
+    if total_error:
+        return ARTIFACT_INVALID, f"screened_candidates_schema_error:{total_error}"
+    requires_discard_audit = total_candidates is not None
+
     has_discard_bucket = False
     for bucket in ("excluded", "deprioritized"):
         entries = payload.get(bucket)
@@ -317,14 +359,25 @@ def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str
         for idx, candidate in enumerate(entries):
             if not _valid_screened_candidate_entry(candidate):
                 return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}]"
-            if not _screened_candidate_has_reason(candidate):
+            if requires_discard_audit or _screened_candidate_declares_discard_audit(candidate):
+                if not _screened_candidate_reason_code(candidate):
+                    return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].reason_code"
+                if not _screened_candidate_has_short_explanation(candidate):
+                    return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].explanation"
+            elif not _screened_candidate_has_reason(candidate):
                 return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].reason"
     if not has_discard_bucket:
         return ARTIFACT_INVALID, "screened_candidates_schema_error:excluded_or_deprioritized"
 
-    screening_policy = payload.get("screening_policy")
-    if not isinstance(screening_policy, dict) or not screening_policy:
-        return ARTIFACT_INVALID, "screened_candidates_schema_error:screening_policy"
+    if total_candidates is not None:
+        discard_count = _screened_candidates_discard_count(payload)
+        expected_discards = total_candidates - len(selected)
+        if expected_discards < 0:
+            return ARTIFACT_INVALID, "screened_candidates_schema_error:total_candidates"
+        if expected_discards > 0 and discard_count == 0:
+            return ARTIFACT_INVALID, "screened_candidates_schema_error:discard_audit_missing"
+        if len(selected) + discard_count != total_candidates:
+            return ARTIFACT_INVALID, "screened_candidates_schema_error:discard_audit_count"
 
     return ARTIFACT_VALID, "valid_screened_candidates_schema"
 
@@ -367,6 +420,106 @@ def _screened_candidate_has_reason(candidate: dict[str, Any]) -> bool:
         _non_empty_string(candidate.get(field))
         for field in ("reason", "screening_reason", "excluded_reason", "deprioritized_reason")
     )
+
+
+def _screened_candidate_declares_discard_audit(candidate: dict[str, Any]) -> bool:
+    return any(
+        _non_empty_string(candidate.get(field))
+        for field in (
+            "reason_code",
+            "screening_reason_code",
+            "excluded_reason_code",
+            "deprioritized_reason_code",
+            "explanation",
+            "short_explanation",
+            "screening_explanation",
+            "reason_explanation",
+        )
+    )
+
+
+def _screened_candidate_reason_code(candidate: dict[str, Any]) -> str:
+    for field in (
+        "reason_code",
+        "screening_reason_code",
+        "excluded_reason_code",
+        "deprioritized_reason_code",
+        "reason",
+    ):
+        code = _normalize_screening_reason_code(candidate.get(field))
+        if code:
+            return code
+    return ""
+
+
+def _normalize_screening_reason_code(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    raw = value.strip().lower()
+    if not raw:
+        return ""
+    normalized = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    if normalized in _SCREENING_DISCARD_REASON_CODES:
+        return normalized
+    return _SCREENING_DISCARD_REASON_ALIASES.get(normalized, "")
+
+
+def _screened_candidate_has_short_explanation(candidate: dict[str, Any]) -> bool:
+    code = _screened_candidate_reason_code(candidate)
+    for field in (
+        "explanation",
+        "short_explanation",
+        "screening_explanation",
+        "reason_explanation",
+        "screening_reason",
+        "excluded_reason",
+        "deprioritized_reason",
+    ):
+        value = candidate.get(field)
+        if not _non_empty_string(value):
+            continue
+        if _normalize_screening_reason_code(value) == code:
+            continue
+        return True
+    return False
+
+
+def _screened_candidates_total(
+    payload: dict[str, Any],
+    screening_policy: dict[str, Any],
+) -> tuple[int | None, str | None]:
+    total_values: list[int] = []
+    for container, prefix in (
+        (payload, ""),
+        (screening_policy, "screening_policy."),
+    ):
+        for key in (
+            "total_candidates",
+            "candidate_count",
+            "input_candidate_count",
+            "found_candidate_count",
+        ):
+            value = container.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                return None, f"{prefix}{key}"
+            total_values.append(value)
+    if not total_values:
+        return None, None
+    first = total_values[0]
+    if any(value != first for value in total_values[1:]):
+        return None, "total_candidates_mismatch"
+    return first, None
+
+
+def _screened_candidates_discard_count(payload: dict[str, Any]) -> int:
+    count = 0
+    for bucket in ("excluded", "deprioritized"):
+        entries = payload.get(bucket)
+        if isinstance(entries, list):
+            count += len(entries)
+    return count
 
 
 def _validate_input_classification_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:

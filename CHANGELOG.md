@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mappings, source byte hashes, sizes, span IDs, and metadata completeness
   warnings. This is traceability and appendix hardening only; it does not prove
   source support, alter delivery gates, or authorize publication.
+- **Screener discard audit trail**: object-shaped `screened_candidates.json`
+  now supports deterministic discard audit validation when candidate totals or
+  discard audit fields are present. Excluded/deprioritized entries must carry a
+  stable reason code and short explanation under that audit surface, and totals
+  must reconcile with selected plus discarded candidates. Legacy reason-only
+  screened candidate artifacts remain accepted.
 
 ### Fixed
 

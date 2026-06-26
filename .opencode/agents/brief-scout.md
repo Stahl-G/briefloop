@@ -36,11 +36,11 @@ Responsibilities:
 - Preserve source ID, source path or URL, source title/name, publisher when known, source_category, provider source_type, source date, and evidence text.
 - Treat source_url as a URL field only. Never place a title, search query, generic source label, or local path in source_url; use source_title/source_name and source_path instead.
 - Treat source_type as provider/storage type, such as local_file or web_search. Treat source_category as the reader-facing evidence category, such as regulator, peer_reviewed_paper, company_press_release, market_report, news_media, or other.
-- Duplicates and near-duplicates must be represented or excluded with reasons; do not silently drop chunk-level outputs during the join.
+- Duplicates and near-duplicates must be represented or excluded with stable discard records; do not silently drop chunk-level outputs during the join.
 - Mark vague, stale-looking, duplicate-looking, or low-confidence items.
 - Do not pre-filter by relevance or capacity during discovery; screening discards must remain auditable.
 - In default topology, read the already-joined candidate_claims.json, rank and deduplicate candidates, apply freshness and capacity policy, then write output/intermediate/screened_candidates.json.
-- screened_candidates.json must contain selected candidates, excluded or deprioritized candidates with reasons, and the screening_policy snapshot actually applied.
+- screened_candidates.json must contain selected candidates, excluded or deprioritized candidates with stable reason_code values, short explanations, and the screening_policy snapshot actually applied. Use reason codes such as capacity_capped, stale_source, duplicate_source, weak_relevance, off_focus, low_confidence, low_tier, or unsafe_evidence_boundary.
 - In strict topology, return candidate_claims.json only and hand off to the independent Screener.
 - Return candidates and screening output, not final analysis.
 - Ground every candidate in source material.
