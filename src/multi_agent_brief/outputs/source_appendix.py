@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field
@@ -7,7 +8,11 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 from urllib.parse import urlparse
 
-from multi_agent_brief.contracts.source_metadata import VALID_SOURCE_CATEGORIES
+from multi_agent_brief.contracts.source_metadata import (
+    VALID_RETRIEVAL_SOURCE_TYPES,
+    VALID_SOURCE_CATEGORIES,
+    VALID_UNDERLYING_EVIDENCE_TYPES,
+)
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
@@ -31,6 +36,30 @@ _SOURCE_CATEGORY_LABELS = {
     "preprint": "Preprint",
     "regulator": "Regulator",
 }
+_RETRIEVAL_SOURCE_TYPE_LABELS = {
+    "blog": "Blog",
+    "company_pr": "Company PR",
+    "dataset": "Dataset",
+    "filing": "Filing",
+    "local_file": "Local file",
+    "news_media": "News media",
+    "other": "Other",
+    "paper_page": "Paper page",
+    "podcast": "Podcast",
+    "social": "Social",
+    "video": "Video",
+}
+_UNDERLYING_EVIDENCE_TYPE_LABELS = {
+    "company_claim": "Company claim",
+    "conference_demo": "Conference demo",
+    "filing": "Filing",
+    "interview": "Interview",
+    "market_data": "Market data",
+    "media_report": "Media report",
+    "peer_reviewed_paper": "Peer-reviewed paper",
+    "regulator_record": "Regulator record",
+    "unknown": "Unknown",
+}
 
 
 @dataclass
@@ -45,7 +74,12 @@ class SourceAppendixRecord:
     url: str = ""
     source_type: str = ""
     source_category: str = ""
+    retrieval_source_type: str = ""
+    underlying_evidence_type: str = ""
     claim_count: int = 0
+    claim_ids: list[str] = field(default_factory=list)
+    claim_ids_by_source_id: dict[str, list[str]] = field(default_factory=dict)
+    metadata_warnings: list[str] = field(default_factory=list)
     span_count: int = 0
     span_roles: list[str] = field(default_factory=list)
 
@@ -136,7 +170,10 @@ def build_source_appendix(
         if key not in records_by_key:
             order.append(key)
             records_by_key[key] = source_record
-        records_by_key[key].claim_count += 1
+        record = records_by_key[key]
+        record.claim_count += 1
+        if claim_id not in record.claim_ids:
+            record.claim_ids.append(claim_id)
         claim_source_keys[claim_id] = key
         if claim.source_id:
             source_id = claim.source_id.strip()
@@ -144,6 +181,9 @@ def build_source_appendix(
                 source_ids = source_ids_by_key.setdefault(key, [])
                 if source_id not in source_ids:
                     source_ids.append(source_id)
+                source_claim_ids = record.claim_ids_by_source_id.setdefault(source_id, [])
+                if claim_id not in source_claim_ids:
+                    source_claim_ids.append(claim_id)
 
     records = [records_by_key[key] for key in order]
     for idx, record in enumerate(records, start=1):
@@ -226,6 +266,15 @@ def render_source_appendix(
         lines.append("")
         if record.source_category:
             lines.append(f"- Source category: {_source_category_label(record.source_category)}")
+        if record.retrieval_source_type:
+            lines.append(
+                f"- Retrieval source type: {_retrieval_source_type_label(record.retrieval_source_type)}"
+            )
+        if record.underlying_evidence_type and record.underlying_evidence_type != "unknown":
+            lines.append(
+                "- Underlying evidence type: "
+                f"{_underlying_evidence_type_label(record.underlying_evidence_type)}"
+            )
         if record.publisher:
             lines.append(f"- Publisher/Institution: {record.publisher}")
         if record.published_at:
@@ -294,6 +343,21 @@ def _record_from_claim(claim: Claim) -> tuple[SourceAppendixRecord, list[str]]:
         warnings.append(category_warning)
     if not source_category:
         warnings.append("Source metadata missing source category.")
+
+    raw_retrieval = _first_text(metadata.get("retrieval_source_type"))
+    if not raw_retrieval:
+        provider_or_storage_type = _first_text(metadata.get("source_type"), claim.source_type)
+        if provider_or_storage_type in VALID_RETRIEVAL_SOURCE_TYPES:
+            raw_retrieval = provider_or_storage_type
+    retrieval_source_type, retrieval_warning = _safe_retrieval_source_type(raw_retrieval)
+    if retrieval_warning:
+        warnings.append(retrieval_warning)
+
+    underlying_raw = _first_text(metadata.get("underlying_evidence_type"))
+    underlying_evidence_type, underlying_warning = _safe_underlying_evidence_type(underlying_raw)
+    if underlying_warning:
+        warnings.append(underlying_warning)
+
     if not title:
         warnings.append("Source metadata missing source title/name.")
     if not publisher:
@@ -313,13 +377,23 @@ def _record_from_claim(claim: Claim) -> tuple[SourceAppendixRecord, list[str]]:
             url=url,
             source_type=source_type,
             source_category=source_category,
+            retrieval_source_type=retrieval_source_type,
+            underlying_evidence_type=underlying_evidence_type,
+            metadata_warnings=_metadata_completeness_warnings(
+                title=title,
+                publisher=publisher,
+                source_category=source_category,
+                retrieval_source_type=retrieval_source_type,
+                underlying_evidence_type=underlying_evidence_type,
+                underlying_raw=underlying_raw,
+            ),
         ),
         warnings,
     )
 
 
 def _claim_source_map_record(record: SourceAppendixRecord) -> dict[str, str]:
-    return {
+    payload = {
         "source_label": record.label,
         "source_url": record.url,
         "evidence_title": record.title,
@@ -329,6 +403,11 @@ def _claim_source_map_record(record: SourceAppendixRecord) -> dict[str, str]:
         "source_type": record.source_type,
         "source_category": record.source_category,
     }
+    if record.retrieval_source_type:
+        payload["retrieval_source_type"] = record.retrieval_source_type
+    if record.underlying_evidence_type:
+        payload["underlying_evidence_type"] = record.underlying_evidence_type
+    return payload
 
 
 def _build_source_appendix_trace(
@@ -406,6 +485,11 @@ def _build_source_appendix_trace(
         ]
         if not spans:
             continue
+        source_path = str(source.get("source_path") or "")
+        snapshot, snapshot_warning = _source_snapshot(ws=ws, source_path=source_path)
+        metadata_warnings = list(record.metadata_warnings)
+        if snapshot_warning:
+            metadata_warnings.append(snapshot_warning)
         roles = sorted({
             str(span.get("span_role") or "").strip()
             for span in spans
@@ -417,7 +501,11 @@ def _build_source_appendix_trace(
             "label": record.label,
             "title": record.title,
             "source_id": source_id,
-            "source_path": str(source.get("source_path") or ""),
+            "source_path": source_path,
+            "claim_ids": list(record.claim_ids_by_source_id.get(source_id) or record.claim_ids),
+            "source_sha256": snapshot.get("sha256", ""),
+            "source_size_bytes": snapshot.get("size_bytes", 0),
+            "metadata_warnings": metadata_warnings,
             "spans": sorted(spans, key=lambda item: str(item.get("span_id") or "")),
         })
 
@@ -464,9 +552,18 @@ def render_source_appendix_trace(trace_sources: list[dict[str, Any]]) -> str:
             "",
             f"- Source ID: `{source.get('source_id')}`",
             f"- Source path: `{source.get('source_path')}`",
+            "- Claim IDs: " + _inline_code_list(source.get("claim_ids") or []),
+            f"- Source SHA-256: `{source.get('source_sha256') or ''}`",
+            f"- Source size bytes: {source.get('source_size_bytes') or 0}",
             f"- Span count: {len(source.get('spans') or [])}",
             "",
         ])
+        warnings = [str(item).strip() for item in source.get("metadata_warnings") or [] if str(item).strip()]
+        if warnings:
+            lines.extend(["Metadata warnings:", ""])
+            for warning in sorted(dict.fromkeys(warnings)):
+                lines.append(f"- {warning}")
+            lines.append("")
         for span in source.get("spans") or []:
             span_id = str(span.get("span_id") or "<unknown_span>").strip()
             lines.extend([
@@ -497,6 +594,78 @@ def _reader_role_label(role: str) -> str:
 
 def _source_category_label(category: str) -> str:
     return _SOURCE_CATEGORY_LABELS.get(category, category.replace("_", " ").strip().title())
+
+
+def _retrieval_source_type_label(value: str) -> str:
+    return _RETRIEVAL_SOURCE_TYPE_LABELS.get(value, value.replace("_", " ").strip().title())
+
+
+def _underlying_evidence_type_label(value: str) -> str:
+    return _UNDERLYING_EVIDENCE_TYPE_LABELS.get(value, value.replace("_", " ").strip().title())
+
+
+def _safe_retrieval_source_type(value: str) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return "", ""
+    if raw not in VALID_RETRIEVAL_SOURCE_TYPES:
+        return "", "Omitted retrieval source type because it was not recognized."
+    return raw, ""
+
+
+def _safe_underlying_evidence_type(value: str) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return "", ""
+    if raw not in VALID_UNDERLYING_EVIDENCE_TYPES:
+        return "", "Omitted underlying evidence type because it was not recognized."
+    return raw, ""
+
+
+def _metadata_completeness_warnings(
+    *,
+    title: str,
+    publisher: str,
+    source_category: str,
+    retrieval_source_type: str,
+    underlying_evidence_type: str,
+    underlying_raw: str,
+) -> list[str]:
+    warnings: list[str] = []
+    if not title:
+        warnings.append("Source metadata missing source title/name.")
+    if not publisher:
+        warnings.append("Source metadata missing publisher/institution.")
+    if not source_category:
+        warnings.append("Source metadata missing source category.")
+    if not retrieval_source_type:
+        warnings.append("Source metadata missing retrieval source type.")
+    if not underlying_raw:
+        warnings.append("Source metadata missing underlying evidence type.")
+    elif underlying_evidence_type == "unknown":
+        warnings.append("Source metadata underlying evidence type is unknown.")
+    return warnings
+
+
+def _source_snapshot(*, ws: Path, source_path: str) -> tuple[dict[str, Any], str]:
+    if not source_path:
+        return {}, "Source snapshot unavailable because source path is missing."
+    try:
+        path = (ws / source_path).resolve()
+        root = (ws / "input" / "sources").resolve()
+        path.relative_to(root)
+        data = path.read_bytes()
+    except (OSError, ValueError):
+        return {}, "Source snapshot unavailable because source bytes could not be read."
+    return {
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "size_bytes": len(data),
+    }, ""
+
+
+def _inline_code_list(values: list[Any]) -> str:
+    items = [f"`{str(value).strip()}`" for value in values if str(value).strip()]
+    return ", ".join(items) if items else "`<none>`"
 
 
 def _cap_excerpt(text: str) -> str:

@@ -399,6 +399,8 @@ def test_source_appendix_adds_reader_safe_span_summary_and_audit_trace(tmp_path:
                     "publisher": "Example News",
                     "published_at": "2026-06-01",
                     "source_category": "news_media",
+                    "retrieval_source_type": "news_media",
+                    "underlying_evidence_type": "media_report",
                 },
             ),
         ],
@@ -440,6 +442,8 @@ def test_source_appendix_adds_reader_safe_span_summary_and_audit_trace(tmp_path:
     assert result.trace_status == "generated"
     assert result.trace_source_count == 1
     assert result.trace_span_count == 1
+    assert "- Retrieval source type: News media" in result.markdown
+    assert "- Underlying evidence type: Media report" in result.markdown
     assert "Evidence trace: 1 span; roles: numeric observation" in result.markdown
     assert "ESP-001-01" not in result.markdown
     assert "SRC-001" not in result.markdown
@@ -449,10 +453,81 @@ def test_source_appendix_adds_reader_safe_span_summary_and_audit_trace(tmp_path:
     assert "ESP-001-01" in result.trace_markdown
     assert "SRC-001" in result.trace_markdown
     assert "input/sources/source-001.md" in result.trace_markdown
+    assert "Claim IDs: `CL-001`" in result.trace_markdown
+    assert f"Source SHA-256: `{hashlib.sha256(source_text.encode('utf-8')).hexdigest()}`" in result.trace_markdown
+    assert f"Source size bytes: {len(source_text.encode('utf-8'))}" in result.trace_markdown
     assert f"Raw excerpt hash: `{_span_hash(raw_excerpt)}`" in result.trace_markdown
     assert f"Offsets: {start}..{start + len(raw_excerpt)}" in result.trace_markdown
     assert raw_excerpt in result.trace_markdown
     assert "traceability surface only" in result.trace_markdown
+
+
+def test_source_appendix_trace_includes_metadata_completeness_warnings(tmp_path: Path):
+    ws = tmp_path / "workspace"
+    intermediate = ws / "output" / "intermediate"
+    source_dir = ws / "input" / "sources"
+    intermediate.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    raw_excerpt = "ExampleCo said module shipments reached 12 MW in Q2."
+    source_path = source_dir / "source-001.md"
+    source_path.write_text(raw_excerpt + "\n", encoding="utf-8")
+    ledger = intermediate / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            _claim(
+                "CL-001",
+                source_id="SRC-001",
+                source_url="https://example.com/source-001",
+                statement="ExampleCo shipments reached 12 MW.",
+                evidence_text=raw_excerpt,
+                metadata={
+                    "source_title": "ExampleCo Source",
+                    "source_category": "news_media",
+                },
+            ),
+        ],
+    )
+    registry = intermediate / "evidence_span_registry.json"
+    registry.write_text(
+        json.dumps({
+            "schema_version": "mabw.evidence_span_registry.v1",
+            "sources": [
+                {
+                    "source_id": "SRC-001",
+                    "source_type": "local_file",
+                    "source_tier": "primary",
+                    "source_path": "input/sources/source-001.md",
+                    "retrieved_at": "2026-06-02",
+                    "spans": [
+                        {
+                            "span_id": "ESP-001-01",
+                            "raw_excerpt": raw_excerpt,
+                            "hash": _span_hash(raw_excerpt),
+                            "span_role": "numeric_observation",
+                        }
+                    ],
+                }
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+    result = build_source_appendix(
+        audited_markdown="ExampleCo shipments reached 12 MW. [src:CL-001]\n",
+        ledger_path=ledger,
+        evidence_span_registry_path=registry,
+        workspace=ws,
+    )
+
+    assert result.trace_status == "generated"
+    assert "Metadata warnings:" in result.trace_markdown
+    assert "Source metadata missing publisher/institution." in result.trace_markdown
+    assert "Source metadata missing retrieval source type." in result.trace_markdown
+    assert "Source metadata missing underlying evidence type." in result.trace_markdown
+    assert "Claim IDs:" not in result.markdown
+    assert "SRC-001" not in result.markdown
+    assert "ESP-001-01" not in result.markdown
 
 
 def test_source_appendix_aggregates_trace_spans_for_deduped_source_ids(tmp_path: Path):

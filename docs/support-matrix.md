@@ -171,7 +171,7 @@ turn section-conformance diagnostics into gates, deliver reports, authorize
 publication, judge industry compliance, verify internet rumors, provide tax or
 investment advice, or provide a lite/force-deliver path.
 
-Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
+Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They can display safe source identity and taxonomy labels, while the separate source appendix trace audit copy can include internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for review. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
 Durable Source Evidence Pack materialization is experimental. The
 `sources materialize-pack` command can turn explicit manual or cached-package

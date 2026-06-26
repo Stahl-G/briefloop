@@ -93,6 +93,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `source_category`, and `underlying_evidence_type` fields. This clarifies
   cases such as a news article about a paper versus the paper itself; it is not
   source trust scoring, semantic support assessment, or a source-policy gate.
+- **Source Appendix audit trace upgrade**: reader-facing Source Appendices now
+  can display safe retrieval and underlying-evidence taxonomy labels, while the
+  separate `output/source_appendix_trace.md` audit copy records claim/source
+  mappings, source byte hashes, sizes, span IDs, and metadata completeness
+  warnings. This is traceability and appendix hardening only; it does not prove
+  source support, alter delivery gates, or authorize publication.
 
 ### Fixed
 
