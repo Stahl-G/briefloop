@@ -160,6 +160,58 @@ def test_sources_materialize_pack_separates_retrieval_and_underlying_evidence_ty
     assert record_payload["raw_underlying_evidence_type"] == "industry_media"
 
 
+def test_sources_materialize_pack_infers_cached_retrieval_from_legacy_category(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    cache_dir = ws / "input" / "raw" / "cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "legacy-news.json").write_text(
+        json.dumps(
+            {
+                "source_id": "NEWS_002",
+                "source_name": "Example Trade Press",
+                "title": "Cached article with legacy category",
+                "content": "A cached media article reports durable evidence.",
+                "metadata": {
+                    "category": "industry_media",
+                    "publisher": "Example Trade Press",
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - cached_package\n"
+        "cached_package:\n"
+        "  enabled: true\n"
+        "  paths:\n"
+        "    - input/raw/cache\n",
+        encoding="utf-8",
+    )
+
+    assert main([
+        "sources",
+        "materialize-pack",
+        "--config",
+        str(ws / "config.yaml"),
+        "--json",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    record_payload = json.loads((ws / payload["records"][0]["path"]).read_text(encoding="utf-8"))
+    assert record_payload["source_type"] == "cached_package"
+    assert record_payload["retrieval_source_type"] == "news_media"
+    assert record_payload["underlying_evidence_type"] == "media_report"
+    assert record_payload["source_category"] == "news_media"
+    assert record_payload["raw_underlying_evidence_type"] == "industry_media"
+
+
 def test_sources_materialize_pack_unknown_category_stays_explicit_unknown(
     tmp_path: Path,
     capsys,
