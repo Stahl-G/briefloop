@@ -454,8 +454,9 @@ def test_source_appendix_adds_reader_safe_span_summary_and_audit_trace(tmp_path:
     assert "SRC-001" in result.trace_markdown
     assert "input/sources/source-001.md" in result.trace_markdown
     assert "Claim IDs: `CL-001`" in result.trace_markdown
-    assert f"Source SHA-256: `{hashlib.sha256(source_text.encode('utf-8')).hexdigest()}`" in result.trace_markdown
-    assert f"Source size bytes: {len(source_text.encode('utf-8'))}" in result.trace_markdown
+    source_bytes = source_path.read_bytes()
+    assert f"Source SHA-256: `{hashlib.sha256(source_bytes).hexdigest()}`" in result.trace_markdown
+    assert f"Source size bytes: {len(source_bytes)}" in result.trace_markdown
     assert f"Raw excerpt hash: `{_span_hash(raw_excerpt)}`" in result.trace_markdown
     assert f"Offsets: {start}..{start + len(raw_excerpt)}" in result.trace_markdown
     assert raw_excerpt in result.trace_markdown
