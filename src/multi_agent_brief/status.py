@@ -28,6 +28,7 @@ from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_re
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
+from multi_agent_brief.product.template_render_plan import project_workspace_report_template_render_plan
 
 
 INTERMEDIATE_DIR = Path("output/intermediate")
@@ -62,6 +63,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "policy_profile": {},
         "report_template": {},
         "report_template_conformance": {},
+        "report_template_render_plan": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -128,6 +130,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["policy_profile"] = project_workspace_policy_profile(ws)
     payload["report_template"] = project_workspace_report_template(ws)
     payload["report_template_conformance"] = project_workspace_report_template_conformance(ws)
+    payload["report_template_render_plan"] = project_workspace_report_template_render_plan(ws)
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -186,6 +189,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     policy_profile = status.get("policy_profile") or {}
     report_template = status.get("report_template") or {}
     report_template_conformance = status.get("report_template_conformance") or {}
+    report_template_render_plan = status.get("report_template_render_plan") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -302,6 +306,20 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"missing_sections={counts.get('missing_section_count', 0)} "
             f"out_of_order={counts.get('out_of_order_section_count', 0)} "
             f"extra_headings={counts.get('extra_heading_count', 0)} "
+            "boundary=projection_only "
+            "runtime_effect=none"
+        )
+    if report_template_render_plan.get("status") not in {None, "not_available"}:
+        counts = report_template_render_plan.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        selected_source = report_template_render_plan.get("selected_source_artifact") or "none"
+        lines.append(
+            "[status] report_template_render_plan: "
+            f"{report_template_render_plan.get('status')} "
+            f"source={selected_source} "
+            f"sections={counts.get('section_count', 0)} "
+            f"unresolved={counts.get('unresolved_section_count', 0)} "
+            f"targets={counts.get('planned_delivery_target_count', 0)} "
             "boundary=projection_only "
             "runtime_effect=none"
         )

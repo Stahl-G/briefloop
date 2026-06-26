@@ -105,6 +105,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stable reason code and short explanation under that audit surface, and totals
   must reconcile with selected plus discarded candidates. Legacy reason-only
   screened candidate artifacts remain accepted.
+- **ReportTemplate render-plan projection**: read-only status and generated
+  handoff artifacts now project the future render source artifact, section
+  heading mapping, unresolved section diagnostics, and planned delivery targets
+  for workspaces with a resolved ReportTemplate. This is render planning
+  metadata only; it does not render templates, rewrite content, call finalize,
+  bypass gates, deliver reports, or authorize publication.
 
 ### Fixed
 

@@ -41,6 +41,7 @@ from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
+from multi_agent_brief.product.template_render_plan import project_workspace_report_template_render_plan
 
 
 RUNTIME_AUTO = "auto"
@@ -176,6 +177,7 @@ class AgentHandoff:
     policy_profile_projection: dict[str, Any] = field(default_factory=dict)
     report_template_projection: dict[str, Any] = field(default_factory=dict)
     report_template_conformance_projection: dict[str, Any] = field(default_factory=dict)
+    report_template_render_plan_projection: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -567,6 +569,7 @@ def build_handoff(
     _apply_policy_profile_projection(handoff, ws)
     _apply_report_template_projection(handoff, ws)
     _apply_report_template_conformance_projection(handoff, ws)
+    _apply_report_template_render_plan_projection(handoff, ws)
 
     if run_doctor:
         rc, status = _run_doctor(ws)
@@ -672,6 +675,36 @@ def _apply_report_template_conformance_projection(handoff: AgentHandoff, workspa
         f"{guidance} "
         "This does not render templates, rewrite content, bypass gates, deliver reports, "
         "or authorize publication."
+    )
+    handoff.prompt = f"{handoff.prompt}\n\n{text}"
+    handoff.notes.append(text)
+
+
+def _apply_report_template_render_plan_projection(handoff: AgentHandoff, workspace: Path) -> None:
+    projection = project_workspace_report_template_render_plan(workspace)
+    handoff.report_template_render_plan_projection = projection
+    if projection.get("status") == "not_available":
+        return
+    counts = projection.get("summary_counts") if isinstance(projection.get("summary_counts"), dict) else {}
+    selected_source = projection.get("selected_source_artifact") or "none"
+    unresolved = [
+        str(item.get("section"))
+        for item in (projection.get("unresolved_sections") or [])[:5]
+        if isinstance(item, dict) and item.get("section")
+    ]
+    unresolved_text = ",".join(unresolved) if unresolved else "none"
+    text = (
+        "ReportTemplate render plan projection: "
+        f"status={projection.get('status')}; "
+        f"template_id={projection.get('template_id') or 'unknown'}; "
+        f"source={selected_source}; "
+        f"sections={counts.get('section_count', 0)}; "
+        f"unresolved={counts.get('unresolved_section_count', 0)}; "
+        f"planned_targets={counts.get('planned_delivery_target_count', 0)}; "
+        f"unresolved_sections={unresolved_text}; "
+        "boundary=product_report_template_render_plan_projection_only; runtime_effect=none. "
+        "Use this as render planning diagnostics only. It does not render templates, "
+        "rewrite content, call finalize, bypass gates, deliver reports, or authorize publication."
     )
     handoff.prompt = f"{handoff.prompt}\n\n{text}"
     handoff.notes.append(text)
@@ -1230,6 +1263,71 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             "",
             "This projection is structure guidance only. It does not render templates,",
             "rewrite content, bypass gates, deliver reports, or authorize publication.",
+            "",
+        ])
+    if (
+        handoff.report_template_render_plan_projection
+        and handoff.report_template_render_plan_projection.get("status") != "not_available"
+    ):
+        projection = handoff.report_template_render_plan_projection
+        counts = projection.get("summary_counts") if isinstance(projection.get("summary_counts"), dict) else {}
+        source_candidates = (
+            projection.get("source_artifact_candidates")
+            if isinstance(projection.get("source_artifact_candidates"), list)
+            else []
+        )
+        unresolved_sections = (
+            projection.get("unresolved_sections")
+            if isinstance(projection.get("unresolved_sections"), list)
+            else []
+        )
+        planned_targets = (
+            projection.get("planned_delivery_targets")
+            if isinstance(projection.get("planned_delivery_targets"), list)
+            else []
+        )
+        md_content.extend([
+            "## Report Template Render Plan Projection",
+            "",
+            f"- Status: `{projection.get('status')}`",
+            f"- Template: `{projection.get('template_id') or 'unknown'}`",
+            f"- Selected source artifact: `{projection.get('selected_source_artifact') or 'none'}`",
+            f"- Boundary: `{projection.get('boundary')}`",
+            f"- Runtime effect: `{projection.get('runtime_effect')}`",
+            f"- Sections: `{counts.get('section_count', 0)}`",
+            f"- Unresolved sections: `{counts.get('unresolved_section_count', 0)}`",
+            f"- Planned delivery targets: `{counts.get('planned_delivery_target_count', 0)}`",
+            "",
+            "Source artifact candidates:",
+        ])
+        for item in source_candidates:
+            if not isinstance(item, dict):
+                continue
+            md_content.append(
+                f"- `{item.get('artifact')}`: role=`{item.get('role')}`, "
+                f"status=`{item.get('status')}`, selected=`{item.get('selected')}`"
+            )
+        md_content.append("")
+        md_content.append("Unresolved section diagnostics:")
+        if unresolved_sections:
+            for item in unresolved_sections[:12]:
+                if isinstance(item, dict):
+                    md_content.append(f"- `{item.get('section')}`: status=`{item.get('status')}`")
+        else:
+            md_content.append("- none")
+        md_content.append("")
+        md_content.append("Planned targets:")
+        if planned_targets:
+            for item in planned_targets:
+                if isinstance(item, dict):
+                    md_content.append(f"- `{item.get('artifact')}` ({item.get('kind')})")
+        else:
+            md_content.append("- none")
+        md_content.extend([
+            "",
+            "This projection is render planning diagnostics only. It does not render",
+            "templates, rewrite content, call finalize, bypass gates, deliver reports,",
+            "or authorize publication.",
             "",
         ])
     md_content.extend([

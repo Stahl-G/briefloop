@@ -708,6 +708,71 @@ def test_start_handoff_projects_report_template_conformance_pass(tmp_path):
     assert "This projection is structure guidance only" in md
 
 
+def test_start_handoff_projects_report_template_render_plan(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_solar_report_spec(ws)
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True, exist_ok=True)
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "# Solar Industry Periodic Report",
+            "Title.",
+            "## Executive Summary",
+            "Summary.",
+            "## Supply Chain Price Tracker",
+            "Prices.",
+            "## Demand Installation Outlook",
+            "Demand.",
+            "## Policy Tax Financing",
+            "Policy.",
+            "## FX Rates Tracker",
+            "Rates.",
+            "## Company Implications",
+            "Implications.",
+            "## Source Appendix",
+            "Sources.",
+        ]),
+        encoding="utf-8",
+    )
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+
+    md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    projection = data["report_template_render_plan_projection"]
+
+    assert projection["status"] == "planned"
+    assert projection["runtime_effect"] == "none"
+    assert projection["selected_source_artifact"] == "output/intermediate/audited_brief.md"
+    assert projection["section_plan"][1]["matched_heading"] == "Executive Summary"
+    assert projection["planned_delivery_targets"][0] == {
+        "artifact": "output/brief.md",
+        "kind": "reader_markdown",
+        "concrete": "true",
+    }
+    assert projection["planned_delivery_targets"][3] == {
+        "artifact": "output/delivery/Test_Brief.docx",
+        "kind": "delivery_docx",
+        "concrete": "true",
+        "filename_source": "named_output",
+    }
+    assert projection["planned_delivery_targets"][3]["artifact"] != "output/delivery/brief.docx"
+    assert "ReportTemplate render plan projection" in data["prompt"]
+    assert "status=planned" in data["prompt"]
+    assert "source=output/intermediate/audited_brief.md" in data["prompt"]
+    assert "runtime_effect=none" in data["prompt"]
+    assert "does not render templates" in data["prompt"]
+    assert "Report Template Render Plan Projection" in md
+    assert "Selected source artifact: `output/intermediate/audited_brief.md`" in md
+    assert "This projection is render planning diagnostics only" in md
+
+
 def test_start_handoff_projects_report_template_conformance_warning(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_solar_report_spec(ws)
