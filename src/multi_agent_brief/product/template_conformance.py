@@ -116,6 +116,7 @@ def _project_target(
     headings = _markdown_headings(text)
     matched_sections: list[str] = []
     matched_indices: list[int] = []
+    section_heading_map: dict[str, dict[str, Any]] = {}
     extra_headings: list[str] = []
     nested_headings: list[str] = []
     first_h1_seen = False
@@ -146,6 +147,11 @@ def _project_target(
         if section not in matched_sections:
             matched_sections.append(section)
             matched_indices.append(expected_sections.index(section))
+            section_heading_map[section] = {
+                "heading": heading["text"],
+                "level": heading["level"],
+                "line": heading["line"],
+            }
         if heading["level"] == 1:
             active_h1_section = section
 
@@ -161,6 +167,7 @@ def _project_target(
         "status": status,
         "heading_count": len(headings),
         "matched_sections": matched_sections,
+        "section_heading_map": section_heading_map,
         "missing_sections": missing_sections,
         "out_of_order_sections": out_of_order_sections,
         "extra_headings": extra_headings[:20],

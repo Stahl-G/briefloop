@@ -269,6 +269,115 @@ def test_status_projects_report_template_conformance_for_audited_brief(tmp_path:
     assert "runtime_effect=none" in formatted
 
 
+def test_status_projects_report_template_render_plan_for_audited_brief(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_solar_report_spec(), sort_keys=False),
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "# Solar Industry Periodic Report",
+            "Title.",
+            "## Executive Summary",
+            "Summary.",
+            "## Supply Chain Price Tracker",
+            "Prices.",
+            "## Demand Installation Outlook",
+            "Demand.",
+            "## Policy Tax Financing",
+            "Policy.",
+            "## FX Rates Tracker",
+            "Rates.",
+            "## Company Implications",
+            "Implications.",
+            "## Source Appendix",
+            "Sources.",
+        ]),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    formatted = format_workspace_status(status)
+
+    projection = status["report_template_render_plan"]
+    assert projection["status"] == "planned"
+    assert projection["runtime_effect"] == "none"
+    assert projection["selected_source_artifact"] == "output/intermediate/audited_brief.md"
+    assert projection["source_artifact_candidates"][0]["selected"] is True
+    assert projection["section_plan"][1] == {
+        "section": "executive_summary",
+        "order": 2,
+        "status": "matched",
+        "matched_heading": "Executive Summary",
+        "line": 3,
+        "level": 2,
+    }
+    assert projection["unresolved_sections"] == []
+    assert projection["planned_delivery_targets"] == [
+        {"artifact": "output/brief.md", "kind": "reader_markdown", "concrete": "true"},
+        {"artifact": "output/delivery/brief.md", "kind": "delivery_markdown", "concrete": "true"},
+        {"artifact": "output/brief.docx", "kind": "reader_docx", "concrete": "true"},
+        {
+            "artifact": "output/delivery/<named-output>.docx",
+            "artifact_pattern": "output/delivery/<named-output>.docx",
+            "kind": "delivery_docx",
+            "concrete": "false",
+            "filename_source": "unknown_without_config",
+        },
+    ]
+    assert "[status] report_template_render_plan: planned" in formatted
+    assert "source=output/intermediate/audited_brief.md" in formatted
+    assert "runtime_effect=none" in formatted
+    assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
+
+
+def test_status_render_plan_degrades_on_malformed_config(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    (ws / "config.yaml").write_text("project: [\n", encoding="utf-8")
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_solar_report_spec(), sort_keys=False),
+        encoding="utf-8",
+    )
+    (intermediate / "audited_brief.md").write_text(
+        "\n".join([
+            "# Solar Industry Periodic Report",
+            "Title.",
+            "## Executive Summary",
+            "Summary.",
+            "## Supply Chain Price Tracker",
+            "Prices.",
+            "## Demand Installation Outlook",
+            "Demand.",
+            "## Policy Tax Financing",
+            "Policy.",
+            "## FX Rates Tracker",
+            "Rates.",
+            "## Company Implications",
+            "Implications.",
+            "## Source Appendix",
+            "Sources.",
+        ]),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+
+    projection = status["report_template_render_plan"]
+    assert projection["status"] == "planned"
+    assert projection["planned_delivery_targets"][3] == {
+        "artifact": "output/delivery/<named-output>.docx",
+        "artifact_pattern": "output/delivery/<named-output>.docx",
+        "kind": "delivery_docx",
+        "concrete": "false",
+        "filename_source": "unknown_without_config",
+    }
+
+
 def test_status_template_conformance_ignores_source_appendix_child_headings(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     output = ws / "output"

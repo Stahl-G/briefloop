@@ -74,7 +74,10 @@ breaking rename.
   ReportTemplate section order in read-only status and generated handoff
   artifacts so product section contracts are visible before drafting. Read-only
   status and generated handoff artifacts can also project whether existing
-  audited/final reader Markdown headings cover those sections in order.
+  audited/final reader Markdown headings cover those sections in order, plus a
+  render-plan projection that names the future render source artifact, section
+  heading mapping, unresolved sections, and planned delivery targets before any
+  renderer is introduced.
   `sources materialize-pack` can materialize explicit manual or cached-package
   source records into `input/sources/` plus an optional hash-validated
   `source_evidence_pack_manifest.json`, giving recurring reports a durable
@@ -88,11 +91,12 @@ breaking rename.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These
-  product-layer surfaces do not run stages, render templates, rewrite content,
-  block gates from section conformance diagnostics, turn source plans/search
-  summaries into evidence, create a second gate engine, judge industry
-  compliance, verify internet rumors, bypass gates, deliver reports, provide
-  tax or investment advice, or authorize publication.
+  product-layer surfaces do not run stages, render templates, call finalize,
+  rewrite content, block gates from section conformance or render-plan
+  diagnostics, turn source plans/search summaries into evidence, create a
+  second gate engine, judge industry compliance, verify internet rumors, bypass
+  gates, deliver reports, provide tax or investment advice, or authorize
+  publication.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
 - Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.

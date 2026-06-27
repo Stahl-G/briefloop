@@ -161,15 +161,18 @@ strictness and reader-final forbidden-phrase checks through a limited adapter,
 show the resolved ReportTemplate section order in read-only status and
 generated handoff artifacts, report read-only section-conformance diagnostics
 for existing audited/final reader Markdown in status and generated handoff
-artifacts, or write a bundle manifest with `packs bundle`.
+artifacts, project read-only render-plan diagnostics that name the future render
+source artifact, section heading mapping, unresolved sections, and planned
+delivery targets, or write a bundle manifest with `packs bundle`.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not
 silently re-inferred at gate time. These surfaces do not run
 subagents, create a second gate engine, render templates, rewrite content,
-turn section-conformance diagnostics into gates, deliver reports, authorize
-publication, judge industry compliance, verify internet rumors, provide tax or
-investment advice, or provide a lite/force-deliver path.
+turn section-conformance or render-plan diagnostics into gates, call finalize,
+deliver reports, authorize publication, judge industry compliance, verify
+internet rumors, provide tax or investment advice, or provide a
+lite/force-deliver path.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They can display safe source identity and taxonomy labels, while the separate source appendix trace audit copy can include internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for review. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
