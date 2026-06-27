@@ -385,6 +385,57 @@ def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     ]
 
 
+def test_finalize_applies_report_template_order_before_delivery(tmp_path: Path):
+    workspace = tmp_path / "workspace"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_report_spec(workspace)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "\n".join([
+            "# Market Weekly Brief",
+            "Opening note.",
+            "## Demand and Supply",
+            "Demand should move after market signals.",
+            "## Executive Summary",
+            "Summary should render first.",
+            "## Market Signals",
+            "Signals should render second.",
+            "## Competitor Moves",
+            "Competitors.",
+            "## Policy and Regulatory",
+            "Policy.",
+            "## Risks and Watchlist",
+            "Risks.",
+            "## Source Appendix",
+            "Sources.",
+        ]),
+        encoding="utf-8",
+    )
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="Market Weekly Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+        workspace_dir=workspace,
+    )
+
+    reader = (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8")
+    assert reader.index("## Executive Summary") < reader.index("## Market Signals")
+    assert reader.index("## Market Signals") < reader.index("## Demand and Supply")
+    assert result.template_rendering["status"] == "rendered"
+    assert result.template_rendering["template_id"] == "market_weekly"
+    assert result.template_rendering["out_of_order_sections"] == [
+        "executive_summary",
+        "market_signals",
+    ]
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["template_rendering"]["status"] == "rendered"
+    assert report["template_rendering"]["blocking"] is False
+
+
 def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, capsys):
     """CLI finalization prevents audited [src:...] markers from leaking to final files."""
     workspace = tmp_path / "workspace"

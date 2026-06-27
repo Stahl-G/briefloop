@@ -111,6 +111,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for workspaces with a resolved ReportTemplate. This is render planning
   metadata only; it does not render templates, rewrite content, call finalize,
   bypass gates, deliver reports, or authorize publication.
+- **ReportTemplate renderer MVP**: finalize now records an experimental
+  `template_rendering` report and can apply the resolved ReportTemplate section
+  order to reader Markdown before DOCX generation and reader-final checks. This
+  renderer only reorders already-present sections; unresolved or extra
+  top-level sections remain diagnostic/no-op. It does not create a second gate
+  engine, assess semantic support, approve delivery, or authorize publication.
 
 ### Fixed
 

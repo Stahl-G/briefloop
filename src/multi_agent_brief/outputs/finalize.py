@@ -27,6 +27,7 @@ from multi_agent_brief.product.policy_gate_adapter import (
     policy_forbidden_phrases,
     resolve_workspace_policy_gate_adapter,
 )
+from multi_agent_brief.product.template_renderer import render_reader_markdown_with_template
 
 _SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
 _AUDIT_CLAIM_ID_RE = re.compile(
@@ -74,6 +75,7 @@ class FinalizeResult:
     delivery_snapshot_artifact_sha256: dict[str, str] = field(default_factory=dict)
     delivery_snapshot_semantics: str = "convenience_copy_not_immutable_archive"
     delivery_snapshot_error: str = ""
+    template_rendering: dict[str, Any] = field(default_factory=dict)
     reader_clean: dict[str, Any] | None = None
     audit_binding: dict[str, Any] | None = None
     policy_gate_adapter: dict[str, Any] = field(default_factory=dict)
@@ -251,6 +253,11 @@ def finalize_reader_outputs(
     reader_markdown = base_reader_markdown
     if appendix_result.markdown and appendix_result.source_count:
         reader_markdown = base_reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
+    template_render = render_reader_markdown_with_template(
+        workspace=workspace,
+        markdown=reader_markdown,
+    )
+    reader_markdown = template_render.markdown
 
     brief_path = out / "brief.md"
     brief_path.write_text(reader_markdown, encoding="utf-8")
@@ -325,6 +332,7 @@ def finalize_reader_outputs(
         source_appendix_trace_source_count=appendix_result.trace_source_count,
         source_appendix_trace_span_count=appendix_result.trace_span_count,
         source_appendix_trace_warnings=appendix_result.trace_warnings,
+        template_rendering=template_render.to_report(),
         audit_binding=_audit_binding_report(
             intermediate_dir=intermediate_dir,
             audited_markdown=audited_markdown,

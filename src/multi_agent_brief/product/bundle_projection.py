@@ -66,10 +66,10 @@ def build_report_bundle_manifest(
             "artifacts": audit_records,
         },
         "non_goals": [
-            "template_rendering",
             "delivery_approval",
             "gate_bypass",
             "publication_authorization",
+            "semantic_support_assessment",
         ],
     }
 

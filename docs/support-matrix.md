@@ -41,7 +41,7 @@ validation unless that is stated separately.
 | Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
-| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, and `solar_industry_periodic` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, and `packs bundle` delivery/audit manifest projection) | Experimental |
+| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, template renderer MVP, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, and `solar_industry_periodic` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, finalize-time section-order rendering, and `packs bundle` delivery/audit manifest projection) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -163,13 +163,15 @@ generated handoff artifacts, report read-only section-conformance diagnostics
 for existing audited/final reader Markdown in status and generated handoff
 artifacts, project read-only render-plan diagnostics that name the future render
 source artifact, section heading mapping, unresolved sections, and planned
-delivery targets, or write a bundle manifest with `packs bundle`.
+delivery targets, apply the resolved ReportTemplate section order during
+finalize for already-present reader Markdown sections, or write a bundle
+manifest with `packs bundle`.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not
 silently re-inferred at gate time. These surfaces do not run
-subagents, create a second gate engine, render templates, rewrite content,
-turn section-conformance or render-plan diagnostics into gates, call finalize,
+subagents, create a second gate engine,
+turn section-conformance or render-plan diagnostics into gates,
 deliver reports, authorize publication, judge industry compliance, verify
 internet rumors, provide tax or investment advice, or provide a
 lite/force-deliver path.

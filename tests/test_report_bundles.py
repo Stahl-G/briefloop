@@ -355,10 +355,10 @@ def test_packs_bundle_cli_writes_manifest_without_copying_trace_to_delivery(
     assert not (ws / "output" / "delivery_bundle.zip").exists()
     assert not (ws / "output" / "audit_bundle.zip").exists()
     assert manifest["non_goals"] == [
-        "template_rendering",
         "delivery_approval",
         "gate_bypass",
         "publication_authorization",
+        "semantic_support_assessment",
     ]
 
 
