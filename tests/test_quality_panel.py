@@ -112,6 +112,63 @@ def _write_source_evidence_pack(ws: Path) -> None:
     )
 
 
+def _write_invalid_source_evidence_pack(ws: Path) -> None:
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_path = source_dir / "source-001.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.source_evidence_record.v1",
+                "source": "sources.materialize-pack",
+                "source_id": "SRC-001",
+                "source_title": "Invalid Source",
+                "publisher": "Invalid Publisher",
+                "retrieval_source_type": "local_file",
+                "underlying_evidence_type": "market_data",
+                "content": "Example source content",
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest = {
+        "schema_version": "mabw.source_evidence_pack_manifest.v1",
+        "source": "sources.materialize-pack",
+        "source_config_path": "sources.yaml",
+        "durable_provider_names": ["manual"],
+        "record_count": 999,
+        "error_count": 0,
+        "records": [
+            {
+                "source_id": "SRC-001",
+                "path": "input/sources/source-001.json",
+                "sha256": "not-a-valid-source-hash",
+                "size_bytes": 1,
+                "source_title": "Invalid Source",
+                "publisher": "Invalid Publisher",
+                "retrieval_source_type": "local_file",
+                "underlying_evidence_type": "market_data",
+            }
+        ],
+        "provider_errors": [],
+        "pack_sha256": "not-a-valid-pack-hash",
+        "non_goals": [
+            "semantic_support_assessment",
+            "claim_support_matrix_generation",
+            "source_candidates_as_evidence",
+            "automatic_delivery_approval",
+        ],
+    }
+    (ws / "output" / "intermediate" / "source_evidence_pack_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_claim_ledger(ws: Path) -> None:
     ledger = [
         {
@@ -165,6 +222,34 @@ def _write_finalize_report(ws: Path) -> None:
     }
     (ws / "output" / "intermediate" / "finalize_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _set_workflow_blocked(ws: Path) -> None:
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = _json(workflow_path)
+    workflow["blocked"] = True
+    workflow["blocking_reason"] = "adversarial workflow blocker"
+    workflow_path.write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _set_workflow_unblocked(ws: Path) -> None:
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = _json(workflow_path)
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    stages = workflow.get("stage_statuses")
+    if isinstance(stages, dict):
+        for entry in stages.values():
+            if isinstance(entry, dict) and entry.get("status") == "blocked":
+                entry["status"] = "pending"
+                entry["reason"] = ""
+    workflow_path.write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
@@ -234,6 +319,7 @@ def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_p
     _write_claim_ledger(ws)
     _write_gate_report(ws)
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
 
@@ -277,6 +363,7 @@ def test_quality_panel_does_not_interpret_invalid_claim_support_matrix_rows(tmp_
         encoding="utf-8",
     )
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    _set_workflow_unblocked(ws)
 
     payload = build_quality_panel(ws)
 
@@ -284,6 +371,41 @@ def test_quality_panel_does_not_interpret_invalid_claim_support_matrix_rows(tmp_
     assert payload["claims"]["unsupported_count"] == 0
     assert payload["claims"]["weak_support_count"] == 0
     assert payload["overall_status"] == "warning"
+
+
+def test_quality_panel_honors_workflow_blocker_in_overall_status(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    _write_gate_report(ws)
+    _write_gate_report(ws, stage="finalize")
+    _write_finalize_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    _set_workflow_blocked(ws)
+
+    payload = build_quality_panel(ws)
+
+    assert payload["overall_status"] == "block"
+    assert {
+        "action": "inspect_workflow_blocker",
+        "reason": "adversarial workflow blocker",
+    } in payload["recommended_actions"]
+
+
+def test_quality_panel_does_not_interpret_invalid_source_evidence_pack_counts(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_invalid_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    payload = build_quality_panel(ws)
+
+    assert payload["source_evidence"]["source_pack_status"] == "invalid"
+    assert payload["source_evidence"]["source_count"] == 0
+    assert payload["source_evidence"]["missing_title_count"] == 0
+    assert payload["source_evidence"]["missing_publisher_count"] == 0
+    assert payload["source_evidence"]["retrieval_source_mix"] == {}
+    assert payload["source_evidence"]["underlying_evidence_mix"] == {}
 
 
 def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:

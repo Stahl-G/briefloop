@@ -62,6 +62,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
     )
     overall_status = _overall_status(
         workspace_status=workspace_status,
+        workflow=workflow,
         control_integrity=control_integrity,
         source_evidence=source_evidence,
         gates=gates,
@@ -145,7 +146,10 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
 def _source_evidence_summary(workspace: Path, artifacts: Mapping[str, Any]) -> dict[str, Any]:
     record = _artifact_record(artifacts, "source_evidence_pack_manifest")
     source_pack_status = _source_pack_status(record)
-    manifest = _read_json_mapping(workspace / _INTERMEDIATE / "source_evidence_pack_manifest.json") or {}
+    if source_pack_status == "present":
+        manifest = _read_json_mapping(workspace / _INTERMEDIATE / "source_evidence_pack_manifest.json") or {}
+    else:
+        manifest = {}
     records = manifest.get("records") if isinstance(manifest, dict) else []
     records = records if isinstance(records, list) else []
     retrieval_mix: Counter[str] = Counter()
@@ -255,6 +259,7 @@ def _delivery_summary(workspace: Path, workspace_status: Mapping[str, Any]) -> d
 def _overall_status(
     *,
     workspace_status: Mapping[str, Any],
+    workflow: Mapping[str, Any],
     control_integrity: Mapping[str, Any],
     source_evidence: Mapping[str, Any],
     gates: Mapping[str, Any],
@@ -264,6 +269,7 @@ def _overall_status(
     if not workspace_status.get("ok"):
         return "incomplete"
     if (
+        workflow.get("blocked") or
         control_integrity.get("run_integrity") not in {"clean", "unknown"}
         or gates.get("blocking_count", 0) > 0
         or delivery.get("reader_clean_status") == "fail"
