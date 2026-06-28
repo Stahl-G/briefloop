@@ -39,6 +39,8 @@ from multi_agent_brief.cli import (
     experiments_commands,
     product_commands,
     secrets_commands,
+    approval_commands,
+    release_commands,
 )
 
 
@@ -121,6 +123,10 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     product_commands.register_validate_report_spec(subparsers)
     product_commands.register_extract(subparsers)
 
+    # Internal review release modes and human approval ledger
+    approval_commands.register(subparsers)
+    release_commands.register(subparsers)
+
     # Claude Code install helpers
     claude_commands.register(subparsers)
 
@@ -166,6 +172,12 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "secrets":
         return secrets_commands.handle(args)
+
+    if cmd == "approval":
+        return approval_commands.handle(args)
+
+    if cmd == "release":
+        return release_commands.handle(args)
 
     if cmd == "competitors":
         return competitors_commands.handle(args)

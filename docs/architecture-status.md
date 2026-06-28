@@ -103,6 +103,12 @@ breaking rename.
   entries, run stages, approve delivery, or bypass gates.
   Resolved PolicyProfiles may tighten existing deterministic quality-gate
   strictness and reader-final forbidden-phrase checks through a limited adapter.
+  Internal release-mode approval commands can initialize
+  `human_approval_ledger.json`, append human approval decisions, and write
+  `release_readiness_report.json` with event-log records for internal review
+  workflows. These checks separate internal readiness from authorization: they
+  do not publish externally, authorize public release, replace legal/compliance
+  or IR owners, or bypass existing gates and human delivery approval.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These

@@ -199,6 +199,36 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
+  - artifact_id: human_approval_ledger
+    path: output/intermediate/human_approval_ledger.json
+    format: json
+    required: false
+    producer_kind: control_tool
+    producer_stage: finalize
+    producer_role: python_tool
+    consumer_stages: []
+    validation_result: experimental_human_approval_ledger
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
+  - artifact_id: release_readiness_report
+    path: output/intermediate/release_readiness_report.json
+    format: json
+    required: false
+    producer_kind: control_tool
+    producer_stage: finalize
+    producer_role: python_tool
+    consumer_stages: []
+    validation_result: experimental_release_readiness_report
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
   - artifact_id: audited_brief
     path: output/intermediate/audited_brief.md
     format: markdown
