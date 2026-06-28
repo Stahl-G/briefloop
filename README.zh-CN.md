@@ -261,10 +261,11 @@ v0.10.1 加入了实验性的 Product OS / ReportPack 方向，例如：
 - `PolicyProfile`
 - workspace skeleton
 - delivery / audit bundle manifest
+- 实验性的 `evidence_extract` source/scope 注册入口
 
 这些功能的定位是：**让报告类型、默认策略和交付包更产品化**。
 
-但它们仍然只是元数据、默认配置和投影控制，不代表系统已经能自动判断行业合规、投资建议、披露可用性或语义真实性。
+但它们仍然只是元数据、默认配置、设置入口和投影控制，不代表系统已经能自动解析 PDF、判断行业合规、投资建议、披露可用性或语义真实性。
 
 ---
 

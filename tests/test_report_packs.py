@@ -16,7 +16,12 @@ from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import validate_report_spec_payload
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED_PACK_IDS = {"market_weekly", "management_monthly", "solar_industry_periodic"}
+EXPECTED_PACK_IDS = {
+    "evidence_extract",
+    "market_weekly",
+    "management_monthly",
+    "solar_industry_periodic",
+}
 
 
 def _market_pack() -> dict:
@@ -27,6 +32,10 @@ def _solar_pack() -> dict:
     return yaml.safe_load(
         (ROOT / "configs" / "report_packs" / "solar_industry_periodic.yaml").read_text(encoding="utf-8")
     )
+
+
+def _evidence_extract_pack() -> dict:
+    return yaml.safe_load((ROOT / "configs" / "report_packs" / "evidence_extract.yaml").read_text(encoding="utf-8"))
 
 
 def _market_spec() -> dict:
@@ -47,6 +56,17 @@ def test_report_spec_contract_accepts_solar_industry_periodic_spec() -> None:
     assert spec["policy_profile"] == "solar_manufacturing_default"
     assert spec["audience"]["language"] == "zh-CN"
     assert spec["metadata"]["dogfood_use_case"] == "solar_industry_periodic_report"
+
+
+def test_report_spec_contract_accepts_evidence_extract_spec() -> None:
+    spec = dict(_evidence_extract_pack()["default_report_spec"])
+
+    assert ReportSpecContract.validate(spec) == []
+    assert spec["report_pack"] == "evidence_extract"
+    assert spec["policy_profile"] == "evidence_extract_default"
+    assert spec["source_policy"]["mode"] == "explicit_sources"
+    assert "no_legal_conclusion" in spec["metadata"]["non_claims"]
+    assert "no_automatic_span_extraction" in spec["metadata"]["non_claims"]
 
 
 def test_report_spec_contract_rejects_control_spine_bypass() -> None:
@@ -84,6 +104,7 @@ def test_report_pack_registry_discovers_root_and_packaged_packs() -> None:
     for registry in (root_registry, package_registry):
         assert not registry.validation_errors
         assert registry.pack_ids() == EXPECTED_PACK_IDS
+        assert registry.get("evidence_extract") is not None
         assert registry.get("market_weekly") is not None
         assert registry.get("management_monthly") is not None
         assert registry.get("solar_industry_periodic") is not None
@@ -140,6 +161,12 @@ def test_packs_cli_list_and_show_pack(capsys) -> None:
     assert shown["ok"] is True
     assert shown["pack"]["pack_id"] == "solar_industry_periodic"
     assert shown["pack"]["default_policy_profile"] == "solar_manufacturing_default"
+
+    assert main(["packs", "show", "evidence_extract", "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["ok"] is True
+    assert shown["pack"]["pack_id"] == "evidence_extract"
+    assert shown["pack"]["default_policy_profile"] == "evidence_extract_default"
 
 
 def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> None:
@@ -279,6 +306,46 @@ def test_new_solar_industry_periodic_workspace_uses_solar_defaults(
         "fx_rates_tracker",
         "company_implications",
     ]
+
+
+def test_new_evidence_extract_workspace_uses_extract_defaults(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "evidence-extract"
+
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+
+    output = capsys.readouterr().out
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert "report_pack: evidence_extract" in output
+    assert "policy_profile: evidence_extract_default" in output
+    assert spec["report_pack"] == "evidence_extract"
+    assert spec["report_type"] == "evidence_extract"
+    assert spec["policy_profile"] == "evidence_extract_default"
+    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
+    assert spec["source_policy"]["mode"] == "explicit_sources"
+    assert spec["title"] == "Evidence Extract Brief"
+    assert "no_disclosure_readiness" in spec["metadata"]["non_claims"]
+
+
+def test_new_evidence_extract_workspace_keeps_extract_default_for_other_industry(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "evidence-finance"
+
+    assert main(["new", "evidence-extract", str(workspace), "--industry", "finance"]) == 0
+
+    output = capsys.readouterr().out
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+
+    assert "policy_profile: evidence_extract_default" in output
+    assert spec["policy_profile"] == "evidence_extract_default"
+    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
+    assert spec["policy_profile_resolution"]["matched_rule"] == "specialized_report_pack_default"
+    assert spec["policy_profile_resolution"]["alternatives"] == ["finance_default"]
 
 
 def test_new_solar_industry_periodic_workspace_keeps_solar_default_for_non_solar_industry(

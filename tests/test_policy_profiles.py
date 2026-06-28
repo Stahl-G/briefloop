@@ -24,6 +24,7 @@ from multi_agent_brief.product.report_spec import validate_report_spec_payload
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_PROFILE_IDS = {
+    "evidence_extract_default",
     "finance_default",
     "internet_default",
     "manufacturing_default",
@@ -104,6 +105,7 @@ def test_policy_profile_registry_discovers_root_and_packaged_profiles() -> None:
         assert registry.profile_ids() == EXPECTED_PROFILE_IDS
         assert registry.get("finance_default") is not None
         assert registry.get("internet_default") is not None
+        assert registry.get("evidence_extract_default") is not None
         assert registry.get("manufacturing_default") is not None
         assert registry.get("solar_manufacturing_default") is not None
 
@@ -145,6 +147,20 @@ def test_solar_manufacturing_profile_is_dogfood_contract_only() -> None:
     assert "无风险" in payload["wording_policy"]["forbidden_phrases"]
 
 
+def test_evidence_extract_profile_is_registration_contract_only() -> None:
+    payload = _policy_profile("evidence_extract_default")
+
+    assert PolicyProfileContract.validate(payload) == []
+    assert payload["industry"] == "evidence_extract"
+    assert payload["metadata"]["boundary"] == "experimental_policy_profile_only"
+    assert payload["metadata"]["maturity"] == "conservative_skeleton"
+    assert "no_legal_conclusion" in payload["metadata"]["non_claims"]
+    assert "no_disclosure_readiness" in payload["metadata"]["non_claims"]
+    assert "no_automatic_span_extraction" in payload["metadata"]["non_claims"]
+    assert "no_release_authority" in payload["metadata"]["non_claims"]
+    assert "tier_weights" not in payload["source_policy"]
+
+
 def test_policy_profile_config_parity_between_root_and_package_copy() -> None:
     root_dir = ROOT / "configs" / "policy_profiles"
     package_dir = ROOT / "src" / "multi_agent_brief" / "configs" / "policy_profiles"
@@ -166,10 +182,12 @@ def test_report_pack_default_policy_profile_reference_is_validated() -> None:
 
     assert not report_registry.validation_errors
     assert report_registry.default_policy_profile_by_pack() == {
+        "evidence_extract": "evidence_extract_default",
         "management_monthly": "manufacturing_default",
         "market_weekly": "manufacturing_default",
         "solar_industry_periodic": "solar_manufacturing_default",
     }
+    assert report_registry.get("evidence_extract").default_policy_profile == "evidence_extract_default"
     assert report_registry.get("market_weekly").default_policy_profile == "manufacturing_default"
     assert report_registry.get("solar_industry_periodic").default_policy_profile == "solar_manufacturing_default"
 

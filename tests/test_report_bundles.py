@@ -18,7 +18,12 @@ from multi_agent_brief.product.bundle_projection import (
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED_TEMPLATE_IDS = {"market_weekly", "management_monthly", "solar_industry_periodic"}
+EXPECTED_TEMPLATE_IDS = {
+    "evidence_extract",
+    "market_weekly",
+    "management_monthly",
+    "solar_industry_periodic",
+}
 
 
 def _sha256_file(path: Path) -> str:
@@ -146,6 +151,15 @@ def test_report_template_registry_discovers_root_and_packaged_templates() -> Non
             "policy_tax_financing",
             "fx_rates_tracker",
             "company_implications",
+            "source_appendix",
+        )
+        extract = registry.get_by_report_type("evidence_extract")
+        assert extract is not None
+        assert extract.section_order == (
+            "scope",
+            "extracted_points",
+            "source_trace",
+            "gaps_and_flags",
             "source_appendix",
         )
 

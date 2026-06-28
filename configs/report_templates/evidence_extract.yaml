@@ -1,0 +1,43 @@
+schema_version: briefloop.report_template.v1
+template_id: evidence_extract
+report_type: evidence_extract
+display_name: Evidence Extract Template
+status: experimental
+section_order:
+  - scope
+  - extracted_points
+  - source_trace
+  - gaps_and_flags
+  - source_appendix
+section_aliases:
+  scope:
+    - Scope
+    - Extraction Scope
+    - 范围
+    - 抽取范围
+  extracted_points:
+    - Extracted Points
+    - Evidence Points
+    - 抽取要点
+    - 证据要点
+  source_trace:
+    - Source Trace
+    - Citation Trace
+    - Span Trace
+    - 来源追踪
+    - 引用追踪
+  gaps_and_flags:
+    - Gaps and Flags
+    - Unsupported or Missing Evidence
+    - 缺口与标记
+    - 证据缺口
+  source_appendix:
+    - Source Appendix
+    - 来源附录
+metadata:
+  product_layer: report_template_registry
+  boundary: section_order_contract_only
+  non_claims:
+    - no_legal_conclusion
+    - no_disclosure_readiness
+    - no_semantic_proof

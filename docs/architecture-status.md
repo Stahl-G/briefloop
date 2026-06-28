@@ -59,8 +59,9 @@ breaking rename.
   controls can validate a product-layer `report_spec.yaml`, inspect packaged
   report pack, section order template, and policy default contracts such as
   `market_weekly`, `management_monthly`, `solar_industry_periodic`,
-  `manufacturing_default`, `solar_manufacturing_default`, `finance_default`,
-  and `internet_default`, create conservative local-first
+  `evidence_extract`, `manufacturing_default`, `solar_manufacturing_default`,
+  `evidence_extract_default`, `finance_default`, and `internet_default`,
+  create conservative local-first
   workspace skeletons with `briefloop new <pack> <workspace>` /
   `multi-agent-brief new <pack> <workspace>`, and project finalized workspace
   artifacts into explicit delivery/audit bundle manifests.
@@ -89,6 +90,11 @@ breaking rename.
   `retrieval_source_type`, reader-facing `source_category`, and
   `underlying_evidence_type` metadata; this is taxonomy normalization, not
   trust scoring, source-policy gating, or semantic support judgment.
+  `briefloop extract` / `multi-agent-brief extract` can register an explicit
+  extraction scope and copy local source files into an `evidence_extract`
+  workspace's `input/sources/evidence_extract/` directory, but this is setup
+  only: it does not parse PDFs, generate evidence spans, create legal or
+  disclosure conclusions, run stages, approve delivery, or bypass gates.
   Resolved PolicyProfiles may tighten existing deterministic quality-gate
   strictness and reader-final forbidden-phrase checks through a limited adapter.
   These contracts describe report type metadata over the existing Claim Ledger,

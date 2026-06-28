@@ -267,10 +267,11 @@ v0.10.1 adds an experimental Product OS / ReportPack direction, including:
 - `PolicyProfile`
 - workspace skeletons
 - delivery / audit bundle manifests
+- experimental `evidence_extract` source/scope registration
 
 These features are meant to make report types, default policies, and delivery bundles more product-like.
 
-They are still metadata, defaults, and projection controls. They do not judge industry compliance, detect investment advice, verify internet rumors, claim IR/disclosure readiness, prove semantic truth, publish reports, or authorize release.
+They are still metadata, defaults, setup paths, and projection controls. They do not parse PDFs automatically, judge industry compliance, detect investment advice, verify internet rumors, claim IR/disclosure readiness, prove semantic truth, publish reports, or authorize release.
 
 ---
 

@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import glob
+import hashlib
 import json
+import shutil
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from multi_agent_brief.contracts.source_metadata import normalize_source_category
 from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
     write_report_bundle_manifest,
@@ -25,8 +30,11 @@ from multi_agent_brief.product.report_spec import (
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
 SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
+    "evidence_extract": "evidence_extract_default",
     "solar_industry_periodic": "solar_manufacturing_default",
 }
+EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"}
+EVIDENCE_EXTRACT_TEXT_EXTENSIONS = {".md", ".txt", ".json"}
 
 
 def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
@@ -108,6 +116,39 @@ def register_validate_report_spec(subparsers: argparse._SubParsersAction) -> Non
         help="Validate an experimental ReportSpec YAML file.",
     )
     parser.add_argument("report_spec", help="Path to report_spec.yaml.")
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+
+def register_extract(subparsers: argparse._SubParsersAction) -> None:
+    parser = subparsers.add_parser(
+        "extract",
+        help="Register an explicit evidence-extract scope and local source files.",
+    )
+    parser.add_argument("--workspace", required=True, help="Path to an evidence_extract workspace.")
+    parser.add_argument("--scope", required=True, help="Explicit extraction scope.")
+    parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="Local source file path. May be repeated.",
+    )
+    parser.add_argument(
+        "--sources",
+        nargs="+",
+        default=[],
+        help="One or more local source file paths or shell-style globs.",
+    )
+    parser.add_argument(
+        "--source-category",
+        default="other",
+        help="Reader-facing source_category to write into manual source entries. Defaults to other.",
+    )
+    parser.add_argument("--language", default="en", help="Source language hint for manual source entries.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace previously registered evidence-extract source copies.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
@@ -237,6 +278,24 @@ def handle_validate_report_spec(args: argparse.Namespace) -> int:
     return 0 if validation.ok else 1
 
 
+def handle_extract(args: argparse.Namespace) -> int:
+    workspace = Path(args.workspace).expanduser().resolve()
+    try:
+        payload = _register_evidence_extract_scope(workspace=workspace, args=args)
+    except (OSError, ReportSpecLoadError, ValueError, yaml.YAMLError) as exc:
+        payload = {
+            "ok": False,
+            "error": str(exc),
+            "workspace": str(workspace),
+            "boundary": "evidence_extract_scope_and_source_registration_only",
+        }
+        _print_payload("extract", payload, as_json=getattr(args, "json", False))
+        return 1
+
+    _print_payload("extract", payload, as_json=getattr(args, "json", False))
+    return 0
+
+
 def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
@@ -299,6 +358,21 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 print(f"delivery_archive: {delivery_archive.get('path')}")
                 print(f"audit_archive: {audit_archive.get('path')}")
             print("boundary: bundle projection/export only; no render, delivery approval, or gate bypass")
+        else:
+            print(payload.get("error"))
+    elif label == "extract":
+        if payload.get("ok"):
+            print(f"workspace: {payload.get('workspace')}")
+            print(f"scope: {payload.get('scope')}")
+            print(f"registered_sources: {payload.get('source_count')}")
+            print(f"extraction_scope: {payload.get('extraction_scope')}")
+            print(f"audit_extraction_scope: {payload.get('audit_extraction_scope')}")
+            for warning in payload.get("warnings", []):
+                print(f"[warning] {warning.get('code')}: {warning.get('message')}")
+            print(
+                "boundary: source/scope registration only; no parsing, span extraction,"
+                " legal conclusion, delivery, or gate bypass"
+            )
         else:
             print(payload.get("error"))
     else:
@@ -421,3 +495,252 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
         "policy_profile": policy_resolution.policy_profile,
         "policy_profile_resolution": policy_resolution.to_dict(),
     }
+
+
+def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespace) -> dict[str, Any]:
+    if not workspace.exists() or not workspace.is_dir():
+        raise ValueError(f"workspace does not exist: {workspace}")
+    spec_path = workspace / "report_spec.yaml"
+    if not spec_path.exists():
+        raise ValueError("report_spec.yaml not found. Run `briefloop new evidence-extract <workspace>` first.")
+    spec = load_report_spec(spec_path)
+    if spec.get("report_pack") != "evidence_extract":
+        raise ValueError(
+            "extract is only supported for evidence_extract workspaces in this release."
+        )
+    scope = str(getattr(args, "scope", "") or "").strip()
+    if not scope:
+        raise ValueError("--scope must be non-empty")
+
+    source_paths = _resolve_extract_source_paths(
+        [*getattr(args, "source", []), *getattr(args, "sources", [])]
+    )
+    if not source_paths:
+        raise ValueError("at least one --source or --sources path is required")
+    resolved_sources: list[Path] = []
+    seen_resolved: set[Path] = set()
+    for source_path in source_paths:
+        resolved = source_path.expanduser().resolve()
+        if resolved in seen_resolved:
+            continue
+        seen_resolved.add(resolved)
+        if not resolved.exists() or not resolved.is_file():
+            raise ValueError(f"source file not found: {source_path}")
+        resolved_sources.append(resolved)
+
+    sources_dir = workspace / "input" / "sources" / "evidence_extract"
+    warnings: list[dict[str, str]] = []
+    registered: list[dict[str, Any]] = []
+    for idx, resolved in enumerate(resolved_sources, start=1):
+        target = sources_dir / f"{idx:03d}-{_safe_filename(resolved.name)}"
+        rel_target = _workspace_relative(workspace, target)
+        extension = target.suffix.lower()
+        manual_enabled = extension in EVIDENCE_EXTRACT_TEXT_EXTENSIONS
+        if extension in EVIDENCE_EXTRACT_BINARY_EXTENSIONS:
+            warnings.append(
+                {
+                    "code": "binary_source_registered_only",
+                    "message": (
+                        f"{rel_target} was registered as durable source bytes; "
+                        "BriefLoop does not parse binary/PDF spans in this command."
+                    ),
+                }
+            )
+        elif extension and extension not in EVIDENCE_EXTRACT_TEXT_EXTENSIONS:
+            warnings.append(
+                {
+                    "code": "unknown_text_support",
+                    "message": f"{rel_target} was registered, but automatic text ingestion may not support it.",
+                }
+            )
+        elif not extension:
+            warnings.append(
+                {
+                    "code": "unknown_text_support",
+                    "message": f"{rel_target} was registered, but automatic text ingestion may not support it.",
+                }
+            )
+        registered.append(
+            {
+                "source_id": f"EVID-{idx:03d}",
+                "name": resolved.stem,
+                "path": rel_target,
+                "filename": target.name,
+                "extension": extension,
+                "source_sha256": _sha256_file(resolved),
+                "source_size_bytes": resolved.stat().st_size,
+                "manual_enabled": manual_enabled,
+            }
+        )
+
+    sources_yaml_text = _build_sources_yaml_text(
+        workspace=workspace,
+        sources=registered,
+        source_category=normalize_source_category(getattr(args, "source_category", None), default="other"),
+        language=str(getattr(args, "language", "") or "en").strip() or "en",
+    )
+    extraction_scope_text = _extraction_scope_text(scope=scope, sources=registered, warnings=warnings)
+
+    if sources_dir.exists() and any(sources_dir.iterdir()) and not getattr(args, "force", False):
+        raise FileExistsError(
+            f"Refusing to overwrite existing evidence-extract sources: {sources_dir}. Use --force."
+        )
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    if getattr(args, "force", False):
+        for path in sources_dir.iterdir():
+            if path.is_file():
+                path.unlink()
+
+    for resolved, record in zip(resolved_sources, registered):
+        shutil.copy2(resolved, workspace / record["path"])
+
+    _write_extraction_scope(workspace=workspace, text=extraction_scope_text)
+    (workspace / "sources.yaml").write_text(sources_yaml_text, encoding="utf-8")
+    payload = {
+        "ok": True,
+        "workspace": str(workspace),
+        "scope": scope,
+        "source_count": len(registered),
+        "sources": registered,
+        "extraction_scope": "extraction_scope.yaml",
+        "audit_extraction_scope": "output/audit/extraction_scope.yaml",
+        "warnings": warnings,
+        "boundary": "evidence_extract_scope_and_source_registration_only",
+        "non_claims": [
+            "no_automatic_span_extraction",
+            "no_legal_conclusion",
+            "no_disclosure_readiness",
+            "no_delivery_or_publication_authority",
+        ],
+    }
+    return payload
+
+
+def _resolve_extract_source_paths(values: list[str]) -> list[Path]:
+    paths: list[Path] = []
+    for value in values:
+        raw = str(value).strip()
+        if not raw:
+            continue
+        expanded = str(Path(raw).expanduser())
+        if any(token in raw for token in "*?[]"):
+            matches = sorted(glob.glob(expanded))
+            paths.extend(Path(item) for item in matches)
+        else:
+            paths.append(Path(expanded))
+    return paths
+
+
+def _write_extraction_scope(
+    *,
+    workspace: Path,
+    text: str,
+) -> None:
+    (workspace / "extraction_scope.yaml").write_text(text, encoding="utf-8")
+    audit_dir = workspace / "output" / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "extraction_scope.yaml").write_text(text, encoding="utf-8")
+
+
+def _extraction_scope_text(
+    *,
+    scope: str,
+    sources: list[dict[str, Any]],
+    warnings: list[dict[str, str]],
+) -> str:
+    payload = {
+        "schema_version": "briefloop.extraction_scope.v1",
+        "report_pack": "evidence_extract",
+        "scope": scope,
+        "source_count": len(sources),
+        "sources": sources,
+        "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        "warnings": warnings,
+        "boundary": "scope_and_source_registration_only",
+        "non_claims": [
+            "no_automatic_span_extraction",
+            "no_legal_conclusion",
+            "no_disclosure_readiness",
+            "no_semantic_proof",
+            "no_claim_support_matrix_generation",
+            "no_delivery_or_publication_authority",
+        ],
+    }
+    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+
+
+def _build_sources_yaml_text(
+    *,
+    workspace: Path,
+    sources: list[dict[str, Any]],
+    source_category: str,
+    language: str,
+) -> str:
+    path = workspace / "sources.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+    data = data if isinstance(data, dict) else {}
+    strategy = data.get("source_strategy") if isinstance(data.get("source_strategy"), dict) else {}
+    enabled = strategy.get("enabled_providers")
+    if isinstance(enabled, str):
+        enabled = [enabled]
+    elif not isinstance(enabled, list):
+        enabled = []
+    if "manual" not in enabled:
+        enabled.append("manual")
+    strategy["enabled_providers"] = enabled
+    strategy.setdefault("profile", "conservative")
+    data["source_strategy"] = strategy
+
+    manual = data.get("manual") if isinstance(data.get("manual"), dict) else {}
+    existing = [
+        item
+        for item in manual.get("sources", [])
+        if isinstance(item, dict) and not item.get("evidence_extract_registered")
+    ]
+    for record in sources:
+        existing.append(
+            {
+                "name": record["name"],
+                "path": record["path"],
+                "category": source_category,
+                "language": language,
+                "enabled": bool(record.get("manual_enabled")),
+                "evidence_extract_registered": True,
+                "registered_only": not bool(record.get("manual_enabled")),
+                "metadata": {
+                    "source_id": record["source_id"],
+                    "extraction_scope": "extraction_scope.yaml",
+                    "source_sha256": record["source_sha256"],
+                    "source_size_bytes": record["source_size_bytes"],
+                },
+            }
+        )
+    manual["enabled"] = True
+    manual["sources"] = existing
+    data["manual"] = manual
+    web_search = data.get("web_search") if isinstance(data.get("web_search"), dict) else {}
+    web_search.setdefault("enabled", False)
+    web_search.setdefault("mode", "disabled")
+    data["web_search"] = web_search
+    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+
+
+def _safe_filename(name: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in name.strip())
+    safe = safe.strip(".-")
+    return safe or "source"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _workspace_relative(workspace: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(workspace.resolve()).as_posix()
+    except ValueError:
+        return str(path)

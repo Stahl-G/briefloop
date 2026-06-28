@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes for archive reproducibility only; it does not treat source candidates,
   search summaries, or model summaries as evidence, and it does not assess
   semantic support or generate Claim-Support Matrix rows.
+- **Evidence Extract product pack**: added an experimental `evidence_extract`
+  ReportPack / ReportTemplate / PolicyProfile plus `briefloop extract` /
+  `multi-agent-brief extract` source/scope registration. The command copies
+  explicit local source files into the workspace and writes
+  `extraction_scope.yaml` plus source registrations only; it does not parse
+  PDFs, generate evidence spans, draw legal or disclosure conclusions, bypass
+  gates, or authorize delivery.
 - **Source taxonomy normalization**: durable source evidence records and Claim
   Ledger source metadata now preserve separate provider/storage
   `source_type`, retrieval/page `retrieval_source_type`, reader-facing

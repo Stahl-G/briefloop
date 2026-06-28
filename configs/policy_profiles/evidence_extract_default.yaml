@@ -1,0 +1,57 @@
+schema_version: briefloop.policy_profile.v1
+policy_profile_id: evidence_extract_default
+industry: evidence_extract
+source_policy:
+  freshness_days_by_tier:
+    official: 365
+    filing: 365
+    primary_document: 365
+    regulator_record: 365
+    market_data: 30
+    news_media: 14
+  preferred_source_tiers:
+    - official
+    - filing
+    - primary_document
+    - regulator_record
+    - market_data
+  discouraged_source_tiers:
+    - social
+    - unattributed_commentary
+    - model_summary
+claim_policy:
+  materiality_terms:
+    - permit
+    - license
+    - obligation
+    - covenant
+    - capacity
+    - deadline
+    - effective date
+    - termination
+    - environmental constraint
+    - utility
+    - production capacity
+wording_policy:
+  forbidden_phrases:
+    - legal conclusion
+    - legally sufficient
+    - disclosure ready
+    - investment advice
+    - definitive compliance
+    - 无法律风险
+    - 合规无风险
+    - 可直接披露
+gate_policy:
+  freshness: standard
+  material_fact: strict
+  target_relevance: strict
+metadata:
+  boundary: experimental_policy_profile_only
+  maturity: conservative_skeleton
+  non_claims:
+    - no_legal_conclusion
+    - no_disclosure_readiness
+    - no_semantic_proof
+    - no_automatic_span_extraction
+    - no_release_authority

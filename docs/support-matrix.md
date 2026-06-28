@@ -41,7 +41,7 @@ validation unless that is stated separately.
 | Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
-| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, template renderer MVP, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, and `solar_industry_periodic` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, finalize-time section-order rendering, and `packs bundle` delivery/audit manifest projection) | Experimental |
+| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, template renderer MVP, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, `solar_industry_periodic`, and `evidence_extract` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `evidence_extract_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, `extract` source/scope registration for evidence_extract workspaces, finalize-time section-order rendering, and `packs bundle` delivery/audit manifest projection) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -70,6 +70,7 @@ validation unless that is stated separately.
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
+| `multi-agent-brief extract --workspace <path> --scope <text> --source <file>` | Experimental |
 | `multi-agent-brief inputs extract` | Experimental |
 | `multi-agent-brief inputs classify` | Supported |
 | `multi-agent-brief finalize` | Supported |
@@ -151,7 +152,9 @@ describe report type metadata,
 required control-spine preservation, stable section order, deterministic policy
 defaults such as `manufacturing_default`, `finance_default`, and
 `internet_default`, dogfood defaults such as `solar_manufacturing_default`,
-conservative local-first workspace skeletons, and a
+specialized extraction defaults such as `evidence_extract_default`,
+conservative local-first workspace skeletons, explicit evidence-extract
+source/scope registration, and a
 delivery/audit bundle manifest projection over existing finalized artifacts.
 The CLI can list packaged packs/templates, validate a `report_spec.yaml`
 including its resolved policy profile, create a workspace skeleton with
@@ -166,6 +169,12 @@ source artifact, section heading mapping, unresolved sections, and planned
 delivery targets, apply the resolved ReportTemplate section order during
 finalize for already-present reader Markdown sections, or write a bundle
 manifest with `packs bundle`.
+For `evidence_extract` workspaces, `extract` can copy explicit local source
+files into `input/sources/evidence_extract/`, write `extraction_scope.yaml`,
+and update `sources.yaml` manual source entries. This is source/scope setup
+only: it does not parse PDFs or binary documents, generate Evidence Span
+Registry entries, draw legal or disclosure conclusions, run stages, or
+authorize delivery.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not

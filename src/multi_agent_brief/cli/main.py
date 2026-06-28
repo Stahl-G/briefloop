@@ -119,6 +119,7 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     product_commands.register_new_workspace(subparsers)
     product_commands.register_packs(subparsers)
     product_commands.register_validate_report_spec(subparsers)
+    product_commands.register_extract(subparsers)
 
     # Claude Code install helpers
     claude_commands.register(subparsers)
@@ -237,6 +238,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "validate-report-spec":
         return product_commands.handle_validate_report_spec(args)
+
+    if cmd == "extract":
+        return product_commands.handle_extract(args)
 
     if cmd == "claude":
         return claude_commands.handle(args)

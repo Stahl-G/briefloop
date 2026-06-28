@@ -53,8 +53,9 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
 - 实验性 ReportSpec / ReportPack / ReportTemplate 控制可以校验
   product-layer `report_spec.yaml`，查看 packaged report pack、section-order
   template contract、section conformance diagnostics 和 render-plan
-  projection，例如 `market_weekly`、`management_monthly` 和
-  `solar_industry_periodic`，通过 `briefloop new <pack> <workspace>` /
+  projection，例如 `market_weekly`、`management_monthly`、
+  `solar_industry_periodic` 和 `evidence_extract`，通过
+  `briefloop new <pack> <workspace>` /
   `multi-agent-brief new <pack> <workspace>` 创建保守的 local-first workspace
   skeleton，并把已 finalize 的 workspace artifacts 投影为显式 delivery/audit
   bundle manifest。render-plan projection 只读显示 render source artifact、
@@ -62,6 +63,11 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   finalize 期间的 experimental renderer 可以把已存在的 reader Markdown
   sections 按 resolved ReportTemplate 顺序重排，再进入 DOCX generation 和
   reader-final checks；缺失或额外的 top-level sections 只记录 diagnostic/no-op。
+  `briefloop extract` / `multi-agent-brief extract` 可以在
+  `evidence_extract` workspace 中登记显式 extraction scope，并把本地 source
+  files 复制到 `input/sources/evidence_extract/`；这只是 setup surface，不解析
+  PDF、不生成 evidence spans、不形成法律或披露结论、不运行 stages、不批准
+  delivery，也不绕过 gates。
   这些契约只在现有 Claim Ledger、artifact registry、gates、event log、
   archive、source appendix、support records、frozen-artifact integrity 和 human
   delivery approval 主链之上描述 report type metadata。这些 product-layer

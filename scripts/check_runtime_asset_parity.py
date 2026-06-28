@@ -38,6 +38,8 @@ REQUIRED_PACKAGE_DATA_PATTERNS = [
     '"configs/*.yaml"',
     '"configs/policy_packs/*.yaml"',
     '"configs/policy_profiles/*.yaml"',
+    '"configs/report_packs/*.yaml"',
+    '"configs/report_templates/*.yaml"',
     '"evaluation_cases/fixtures/*.yaml"',
     '"evaluation_cases/fixtures/cases/*/workspace/*.yaml"',
     '"evaluation_cases/fixtures/cases/*/workspace/*.md"',

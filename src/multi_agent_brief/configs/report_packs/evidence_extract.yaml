@@ -1,0 +1,47 @@
+schema_version: briefloop.report_pack.v1
+pack_id: evidence_extract
+report_type: evidence_extract
+display_name: Evidence Extract
+status: experimental
+description: Local-first evidence extraction pack contract over explicit scope and registered source files.
+default_policy_profile: evidence_extract_default
+default_report_spec:
+  schema_version: briefloop.report_spec.v1
+  report_pack: evidence_extract
+  policy_profile: evidence_extract_default
+  report_type: evidence_extract
+  title: Evidence Extract Brief
+  cadence: ad_hoc
+  audience:
+    label: review reader
+    language: en-US
+  source_policy:
+    mode: explicit_sources
+    hidden_autonomous_crawling: false
+  control_spine:
+    claim_ledger: true
+    artifact_registry: true
+    quality_gates: true
+    event_log: true
+    archive: true
+    source_appendix: true
+    support_records: true
+    human_delivery_approval: true
+    frozen_artifact_integrity: true
+  outputs:
+    - markdown
+    - docx
+    - source_appendix
+  metadata:
+    product_layer: report_pack_registry
+    boundary: experimental_contract_only
+    required_inputs:
+      - extraction_scope
+      - local_source_files
+    non_claims:
+      - no_legal_conclusion
+      - no_disclosure_readiness
+      - no_automatic_publication
+      - no_semantic_proof
+      - no_hidden_web_crawling
+      - no_automatic_span_extraction
