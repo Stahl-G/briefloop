@@ -30,13 +30,21 @@ def _json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _event_types(ws: Path) -> list[str]:
+def _write_json(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _event_records(ws: Path) -> list[dict]:
     event_log = ws / "output" / "intermediate" / "event_log.jsonl"
     return [
-        json.loads(line)["event_type"]
+        json.loads(line)
         for line in event_log.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _event_types(ws: Path) -> list[str]:
+    return [record["event_type"] for record in _event_records(ws)]
 
 
 def test_approval_ledger_records_human_decision_and_event(tmp_path: Path, capsys) -> None:
@@ -253,6 +261,124 @@ def test_release_check_ignores_prior_run_approvals(tmp_path: Path) -> None:
     assert report["approved_roles"] == []
     assert report["missing_roles"] == ["content_owner", "evidence_reviewer"]
     assert report["records_considered"] == []
+
+
+def test_release_check_rejects_forged_approval_event_id(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0
+    for role in ("content_owner", "evidence_reviewer"):
+        assert main([
+            "approval",
+            "record",
+            "--workspace",
+            str(ws),
+            "--role",
+            role,
+            "--decision",
+            "approve",
+            "--reason",
+            f"{role} approved for internal review.",
+        ]) == 0
+
+    ledger_path = ws / "output" / "intermediate" / "human_approval_ledger.json"
+    ledger = _json(ledger_path)
+    for record in ledger["records"]:
+        record["event_id"] = "evt-forged-does-not-exist"
+    _write_json(ledger_path, ledger)
+
+    assert main(["release", "check", "--workspace", str(ws), "--mode", "research_review", "--json"]) == 1
+
+    captured = capsys.readouterr()
+    assert "human_approval_ledger_event_link_error:records[0].event_missing" in captured.out
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    ledger_record = registry["artifacts"]["human_approval_ledger"]
+    assert ledger_record["status"] == "invalid"
+    assert ledger_record["validation_result"] == (
+        "human_approval_ledger_event_link_error:records[0].event_missing"
+    )
+
+
+def test_release_check_rejects_approval_event_metadata_mismatch(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "internal_management_review"]) == 0
+    assert main([
+        "approval",
+        "record",
+        "--workspace",
+        str(ws),
+        "--role",
+        "content_owner",
+        "--decision",
+        "request_changes",
+        "--reason",
+        "Needs another review.",
+    ]) == 0
+
+    ledger_path = ws / "output" / "intermediate" / "human_approval_ledger.json"
+    ledger = _json(ledger_path)
+    ledger["records"][0]["decision"] = "approve"
+    _write_json(ledger_path, ledger)
+
+    assert main([
+        "release",
+        "check",
+        "--workspace",
+        str(ws),
+        "--mode",
+        "internal_management_review",
+        "--json",
+    ]) == 1
+
+    captured = capsys.readouterr()
+    assert "human_approval_ledger_event_link_error:records[0].event_metadata_mismatch" in captured.out
+
+
+def test_approval_record_rejects_forged_initialized_mode_event_id(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0
+
+    ledger_path = ws / "output" / "intermediate" / "human_approval_ledger.json"
+    ledger = _json(ledger_path)
+    ledger["initialized_modes"]["research_review"]["event_id"] = "evt-forged-init"
+    _write_json(ledger_path, ledger)
+
+    assert main([
+        "approval",
+        "record",
+        "--workspace",
+        str(ws),
+        "--mode",
+        "research_review",
+        "--role",
+        "content_owner",
+        "--decision",
+        "approve",
+        "--reason",
+        "Should not record with forged init event.",
+    ]) == 1
+
+    captured = capsys.readouterr()
+    assert "initialized_modes.research_review.event_missing" in captured.out
+    after = _json(ledger_path)
+    assert after["records"] == []
+
+
+def test_release_readiness_report_forged_event_id_is_invalid_in_state_check(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "internal_draft"]) == 0
+    assert main(["release", "check", "--workspace", str(ws), "--mode", "internal_draft"]) == 0
+
+    report_path = ws / "output" / "intermediate" / "release_readiness_report.json"
+    report = _json(report_path)
+    report["event_id"] = "evt-forged-report"
+    _write_json(report_path, report)
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    report_record = registry["artifacts"]["release_readiness_report"]
+    assert report_record["status"] == "invalid"
+    assert report_record["validation_result"] == "release_readiness_report_event_link_error:event_missing"
 
 
 def test_approval_ledger_missing_event_id_is_invalid(tmp_path: Path) -> None:
