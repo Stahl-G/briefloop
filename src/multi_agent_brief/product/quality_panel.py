@@ -267,6 +267,8 @@ def _overall_status(
         control_integrity.get("fact_layer_status") in {"missing", "incomplete"}
         or source_evidence.get("source_pack_status") in {"missing", "not_available"}
         or gates.get("auditor_status") == "missing"
+        or gates.get("finalize_status") == "missing"
+        or delivery.get("reader_clean_status") == "missing"
     ):
         return "incomplete"
     if (
@@ -307,6 +309,11 @@ def _recommended_actions(
         })
     if gates.get("blocking_count", 0) > 0:
         actions.append({"action": "resolve_quality_gate_blockers", "reason": "blocking_gate_findings"})
+    if gates.get("finalize_status") == "missing" or delivery.get("reader_clean_status") == "missing":
+        actions.append({
+            "action": "complete_finalize_delivery_hygiene",
+            "reason": "finalize_or_reader_clean_missing",
+        })
     if claims.get("unsupported_count", 0) > 0:
         actions.append({"action": "review_claim_support_records", "reason": "unsupported_claim_support_rows"})
     if delivery.get("reader_clean_status") == "fail":

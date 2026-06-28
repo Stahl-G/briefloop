@@ -183,6 +183,27 @@ def test_quality_panel_writes_source_gate_claim_summary(tmp_path: Path) -> None:
     assert payload["claims"]["claim_count"] == 1
 
 
+def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    _write_gate_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    payload = build_quality_panel(ws)
+
+    assert payload["source_evidence"]["source_pack_status"] == "present"
+    assert payload["control_integrity"]["fact_layer_status"] == "complete"
+    assert payload["gates"]["auditor_status"] == "pass"
+    assert payload["gates"]["finalize_status"] == "missing"
+    assert payload["delivery"]["reader_clean_status"] == "missing"
+    assert payload["overall_status"] == "incomplete"
+    assert {
+        "action": "complete_finalize_delivery_hygiene",
+        "reason": "finalize_or_reader_clean_missing",
+    } in payload["recommended_actions"]
+
+
 def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     write_quality_panel(workspace=ws)
