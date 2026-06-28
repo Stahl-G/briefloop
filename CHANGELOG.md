@@ -132,6 +132,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   renderer only reorders already-present sections; unresolved or extra
   top-level sections remain diagnostic/no-op. It does not create a second gate
   engine, assess semantic support, approve delivery, or authorize publication.
+- **Internal release modes and human approval ledger**: added experimental
+  `approval init`, `approval record`, and `release check` commands for internal
+  review workflows. The commands write
+  `output/intermediate/human_approval_ledger.json`,
+  `output/intermediate/release_readiness_report.json`, and event-log records
+  through deterministic CLI transactions. Release checks can report readiness
+  for internal review modes only; they do not authorize public release, publish
+  externally, bypass gates, or replace legal/compliance/IR owner judgment.
 
 ### Fixed
 

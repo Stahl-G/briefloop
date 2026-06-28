@@ -1,0 +1,575 @@
+"""Release-mode approval ledger and readiness checks.
+
+This product-layer surface records human approvals for internal review modes.
+It does not authorize public release, publish externally, or bypass existing
+delivery gates.
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping
+
+from multi_agent_brief.orchestrator.runtime_state._io import (
+    _read_json_if_exists,
+    _read_state_bytes,
+    _restore_state_bytes,
+    _write_json_atomic,
+)
+from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
+from multi_agent_brief.orchestrator.runtime_state.event_log import (
+    append_event,
+    read_event_log_records_strict,
+)
+from multi_agent_brief.orchestrator.runtime_state.identity import _validate_runtime_run_id, utc_now
+from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state.paths import _require_workspace, runtime_state_paths
+
+HUMAN_APPROVAL_LEDGER_SCHEMA = "briefloop.human_approval_ledger.v1"
+RELEASE_READINESS_REPORT_SCHEMA = "briefloop.release_readiness_report.v1"
+APPROVAL_BOUNDARY = "internal_review_approval_records_only_not_public_release_authorization"
+RELEASE_CHECK_BOUNDARY = "release_readiness_check_not_public_release_authorization"
+
+VALID_APPROVAL_DECISIONS = {"approve", "reject", "request_changes"}
+VALID_APPROVAL_ROLES = {
+    "content_owner",
+    "evidence_reviewer",
+    "ir_owner",
+    "legal_or_compliance_reviewer",
+}
+
+
+RELEASE_MODES: dict[str, dict[str, Any]] = {
+    "internal_draft": {
+        "approval_required": False,
+        "required_roles": [],
+        "description": "Internal draft readiness. No human approval is required.",
+    },
+    "internal_management_review": {
+        "approval_required": True,
+        "required_roles": ["content_owner"],
+        "description": "Ready for internal management review when content owner approval is present.",
+    },
+    "research_review": {
+        "approval_required": True,
+        "required_roles": ["content_owner", "evidence_reviewer"],
+        "description": "Ready for research review when content and evidence approvals are present.",
+    },
+    "ir_draft": {
+        "approval_required": True,
+        "required_roles": ["ir_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
+        "description": "Ready for IR draft review when owner, evidence, and legal/compliance approvals are present.",
+    },
+    "formal_release_candidate": {
+        "approval_required": True,
+        "required_roles": ["content_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
+        "description": "Ready for formal release-candidate review when required internal approvals are present.",
+    },
+}
+
+
+class ReleaseApprovalError(RuntimeError):
+    """Raised when release approval state cannot be recorded or checked."""
+
+
+@dataclass(frozen=True)
+class ApprovalRecordResult:
+    payload: dict[str, Any]
+    event: dict[str, Any] | None = None
+
+
+def approval_ledger_path(workspace: str | Path) -> Path:
+    return Path(workspace).expanduser().resolve() / "output" / "intermediate" / "human_approval_ledger.json"
+
+
+def release_readiness_report_path(workspace: str | Path) -> Path:
+    return Path(workspace).expanduser().resolve() / "output" / "intermediate" / "release_readiness_report.json"
+
+
+def release_modes_payload() -> dict[str, Any]:
+    return {
+        "schema_version": "briefloop.release_modes.v1",
+        "boundary": RELEASE_CHECK_BOUNDARY,
+        "modes": {
+            mode: {
+                "approval_required": bool(config["approval_required"]),
+                "required_roles": list(config["required_roles"]),
+                "description": str(config["description"]),
+            }
+            for mode, config in sorted(RELEASE_MODES.items())
+        },
+    }
+
+
+def initialize_approval_ledger(
+    *,
+    workspace: str | Path,
+    mode: str,
+    actor: str = "human",
+) -> ApprovalRecordResult:
+    ws, run_id = _workspace_and_run_id(workspace)
+    normalized_mode = _require_release_mode(mode)
+    ledger_path = approval_ledger_path(ws)
+    paths = runtime_state_paths(ws)
+    snapshots = _snapshot_files([ledger_path, paths["event_log"]])
+    try:
+        ledger = _load_or_new_ledger(ws)
+        now = utc_now()
+        event = append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="human_approval_ledger_initialized",
+            actor="cli",
+            reason=f"Initialized human approval ledger for {normalized_mode}.",
+            metadata={
+                "mode": normalized_mode,
+                "approval_required": RELEASE_MODES[normalized_mode]["approval_required"],
+                "required_roles": list(RELEASE_MODES[normalized_mode]["required_roles"]),
+                "actor_id_present": bool(str(actor or "").strip()),
+                "boundary": APPROVAL_BOUNDARY,
+            },
+        )
+        modes = ledger.setdefault("initialized_modes", {})
+        modes[normalized_mode] = {
+            "mode": normalized_mode,
+            "run_id": run_id,
+            "initialized_at": now,
+            "event_id": event["event_id"],
+            "approval_required": RELEASE_MODES[normalized_mode]["approval_required"],
+            "required_roles": list(RELEASE_MODES[normalized_mode]["required_roles"]),
+        }
+        ledger["updated_at"] = now
+        _write_json_atomic(ledger_path, ledger)
+        return ApprovalRecordResult(payload=ledger, event=event)
+    except Exception:
+        _restore_files(snapshots)
+        raise
+
+
+def record_human_approval(
+    *,
+    workspace: str | Path,
+    role: str,
+    decision: str,
+    reason: str,
+    mode: str | None = None,
+    actor_id: str = "human",
+) -> ApprovalRecordResult:
+    ws, run_id = _workspace_and_run_id(workspace)
+    ledger = _load_or_new_ledger(ws)
+    normalized_mode = _resolve_mode_for_record(ledger, mode)
+    normalized_role = _require_role_for_mode(normalized_mode, role)
+    normalized_decision = _require_decision(decision)
+    clean_reason = _require_reason(reason)
+    clean_actor = _clean_text(actor_id) or "human"
+    now = utc_now()
+    initialized_mode = _initialized_mode_entry(ledger, normalized_mode)
+    if initialized_mode is None:
+        raise ReleaseApprovalError(
+            f"approval mode {normalized_mode} must be initialized with approval init before recording decisions."
+        )
+    if _clean_text(initialized_mode.get("run_id")) != run_id:
+        raise ReleaseApprovalError(
+            f"approval mode {normalized_mode} was initialized for a different run; initialize it for the current run."
+        )
+    record = {
+        "approval_id": f"APR-{uuid.uuid4().hex[:12]}",
+        "run_id": run_id,
+        "mode": normalized_mode,
+        "role": normalized_role,
+        "decision": normalized_decision,
+        "reason": clean_reason,
+        "actor_id": clean_actor,
+        "recorded_at": now,
+        "boundary": APPROVAL_BOUNDARY,
+    }
+    ledger_path = approval_ledger_path(ws)
+    paths = runtime_state_paths(ws)
+    snapshots = _snapshot_files([ledger_path, paths["event_log"]])
+    try:
+        event = append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="human_approval_recorded",
+            actor="cli",
+            reason=f"Recorded {normalized_decision} approval decision for {normalized_role}.",
+            metadata={
+                "mode": normalized_mode,
+                "role": normalized_role,
+                "decision": normalized_decision,
+                "approval_id": record["approval_id"],
+                "actor_id_present": bool(clean_actor),
+                "reason_present": bool(clean_reason),
+                "boundary": APPROVAL_BOUNDARY,
+            },
+        )
+        record["event_id"] = event["event_id"]
+        ledger.setdefault("records", []).append(record)
+        ledger["updated_at"] = now
+        _write_json_atomic(ledger_path, ledger)
+        return ApprovalRecordResult(payload=ledger, event=event)
+    except Exception:
+        _restore_files(snapshots)
+        raise
+
+
+def check_release_readiness(
+    *,
+    workspace: str | Path,
+    mode: str,
+) -> ApprovalRecordResult:
+    ws, run_id = _workspace_and_run_id(workspace)
+    normalized_mode = _require_release_mode(mode)
+    ledger = _read_json_if_exists(approval_ledger_path(ws))
+    ledger_records = _ledger_records(ledger)
+    latest = _latest_records_for_mode(ledger_records, normalized_mode, run_id)
+    required_roles = list(RELEASE_MODES[normalized_mode]["required_roles"])
+    approval_required = bool(RELEASE_MODES[normalized_mode]["approval_required"])
+    approved_roles = [
+        role for role in required_roles
+        if latest.get(role, {}).get("decision") == "approve"
+    ]
+    rejected_roles = [
+        role for role in required_roles
+        if latest.get(role, {}).get("decision") in {"reject", "request_changes"}
+    ]
+    missing_roles = [
+        role for role in required_roles
+        if role not in latest
+    ]
+    blockers: list[str] = []
+    if approval_required:
+        blockers.extend(f"missing_required_approval:{role}" for role in missing_roles)
+        blockers.extend(f"approval_not_approved:{role}" for role in rejected_roles)
+    status = "pass" if not blockers else "blocked"
+    now = utc_now()
+    report = {
+        "schema_version": RELEASE_READINESS_REPORT_SCHEMA,
+        "run_id": run_id,
+        "mode": normalized_mode,
+        "status": status,
+        "approval_required": approval_required,
+        "required_roles": required_roles,
+        "approved_roles": approved_roles,
+        "missing_roles": missing_roles,
+        "rejected_or_changes_requested_roles": rejected_roles,
+        "blockers": blockers,
+        "records_considered": [
+            _public_record(latest[role])
+            for role in sorted(latest)
+            if role in required_roles
+        ],
+        "ledger_path": "output/intermediate/human_approval_ledger.json"
+        if approval_ledger_path(ws).exists()
+        else "",
+        "generated_at": now,
+        "boundary": RELEASE_CHECK_BOUNDARY,
+        "authorization": "not_authorized_for_public_release",
+        "next_step": _next_step(status=status, mode=normalized_mode, blockers=blockers),
+    }
+    report_path = release_readiness_report_path(ws)
+    paths = runtime_state_paths(ws)
+    snapshots = _snapshot_files([report_path, paths["event_log"]])
+    try:
+        event = append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="release_readiness_checked",
+            actor="cli",
+            reason=f"Checked release readiness for {normalized_mode}: {status}.",
+            metadata={
+                "mode": normalized_mode,
+                "status": status,
+                "approval_required": approval_required,
+                "missing_roles": missing_roles,
+                "blocked": bool(blockers),
+                "boundary": RELEASE_CHECK_BOUNDARY,
+            },
+        )
+        report["event_id"] = event["event_id"]
+        _write_json_atomic(report_path, report)
+        return ApprovalRecordResult(payload=report, event=event)
+    except Exception:
+        _restore_files(snapshots)
+        raise
+
+
+def validate_human_approval_ledger_payload(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return "human_approval_ledger_schema_error:not_object"
+    if payload.get("schema_version") != HUMAN_APPROVAL_LEDGER_SCHEMA:
+        return "human_approval_ledger_schema_error:schema_version"
+    if payload.get("boundary") != APPROVAL_BOUNDARY:
+        return "human_approval_ledger_schema_error:boundary"
+    records = payload.get("records")
+    if not isinstance(records, list):
+        return "human_approval_ledger_schema_error:records"
+    initialized_modes = payload.get("initialized_modes")
+    if not isinstance(initialized_modes, dict):
+        return "human_approval_ledger_schema_error:initialized_modes"
+    for mode_key, entry in sorted(initialized_modes.items()):
+        if mode_key not in RELEASE_MODES:
+            return f"human_approval_ledger_schema_error:initialized_modes.{mode_key}"
+        if not isinstance(entry, dict):
+            return f"human_approval_ledger_schema_error:initialized_modes.{mode_key}"
+        if _clean_text(entry.get("mode")) != mode_key:
+            return f"human_approval_ledger_schema_error:initialized_modes.{mode_key}.mode"
+        if not _clean_text(entry.get("run_id")):
+            return f"human_approval_ledger_schema_error:initialized_modes.{mode_key}.run_id"
+        if not _clean_text(entry.get("event_id")):
+            return f"human_approval_ledger_schema_error:initialized_modes.{mode_key}.event_id"
+        if not _clean_text(entry.get("initialized_at")):
+            return f"human_approval_ledger_schema_error:initialized_modes.{mode_key}.initialized_at"
+        if entry.get("required_roles") != list(RELEASE_MODES[mode_key]["required_roles"]):
+            return f"human_approval_ledger_schema_error:initialized_modes.{mode_key}.required_roles"
+    seen_ids: set[str] = set()
+    for idx, record in enumerate(records):
+        if not isinstance(record, dict):
+            return f"human_approval_ledger_schema_error:records[{idx}]"
+        approval_id = _clean_text(record.get("approval_id"))
+        if not approval_id:
+            return f"human_approval_ledger_schema_error:records[{idx}].approval_id"
+        if approval_id in seen_ids:
+            return f"human_approval_ledger_schema_error:duplicate_approval_id:{approval_id}"
+        seen_ids.add(approval_id)
+        if not _clean_text(record.get("run_id")):
+            return f"human_approval_ledger_schema_error:records[{idx}].run_id"
+        if not _clean_text(record.get("event_id")):
+            return f"human_approval_ledger_schema_error:records[{idx}].event_id"
+        mode = _clean_text(record.get("mode"))
+        if mode not in RELEASE_MODES:
+            return f"human_approval_ledger_schema_error:records[{idx}].mode"
+        role = _clean_text(record.get("role"))
+        if role not in RELEASE_MODES[mode]["required_roles"]:
+            return f"human_approval_ledger_schema_error:records[{idx}].role"
+        if _clean_text(record.get("decision")) not in VALID_APPROVAL_DECISIONS:
+            return f"human_approval_ledger_schema_error:records[{idx}].decision"
+        if not _clean_text(record.get("reason")):
+            return f"human_approval_ledger_schema_error:records[{idx}].reason"
+        if not _clean_text(record.get("recorded_at")):
+            return f"human_approval_ledger_schema_error:records[{idx}].recorded_at"
+    return None
+
+
+def validate_release_readiness_report_payload(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return "release_readiness_report_schema_error:not_object"
+    if payload.get("schema_version") != RELEASE_READINESS_REPORT_SCHEMA:
+        return "release_readiness_report_schema_error:schema_version"
+    if not _clean_text(payload.get("run_id")):
+        return "release_readiness_report_schema_error:run_id"
+    if not _clean_text(payload.get("event_id")):
+        return "release_readiness_report_schema_error:event_id"
+    mode = _clean_text(payload.get("mode"))
+    if mode not in RELEASE_MODES:
+        return "release_readiness_report_schema_error:mode"
+    if payload.get("boundary") != RELEASE_CHECK_BOUNDARY:
+        return "release_readiness_report_schema_error:boundary"
+    if payload.get("authorization") != "not_authorized_for_public_release":
+        return "release_readiness_report_schema_error:authorization"
+    if payload.get("status") not in {"pass", "blocked"}:
+        return "release_readiness_report_schema_error:status"
+    for field in ("required_roles", "approved_roles", "missing_roles", "blockers"):
+        if not isinstance(payload.get(field), list):
+            return f"release_readiness_report_schema_error:{field}"
+    required_roles = list(RELEASE_MODES[mode]["required_roles"])
+    if payload.get("required_roles") != required_roles:
+        return "release_readiness_report_schema_error:required_roles"
+    blockers = payload.get("blockers")
+    if payload.get("status") == "blocked" and not blockers:
+        return "release_readiness_report_schema_error:blockers"
+    if payload.get("status") == "pass" and blockers:
+        return "release_readiness_report_schema_error:blockers"
+    return None
+
+
+def _workspace_and_run_id(workspace: str | Path) -> tuple[Path, str]:
+    ws = _require_workspace(workspace)
+    paths = runtime_state_paths(ws)
+    manifest = _read_json_if_exists(paths["runtime_manifest"])
+    if not isinstance(manifest, dict):
+        raise ReleaseApprovalError(
+            "runtime_manifest.json is required before recording release approvals."
+        )
+    if manifest.get("schema_version") != RUNTIME_MANIFEST_SCHEMA:
+        raise ReleaseApprovalError("runtime_manifest.json has an unsupported schema.")
+    try:
+        run_id = _validate_runtime_run_id(manifest.get("run_id"), path=paths["runtime_manifest"])
+    except RuntimeStateError as exc:
+        raise ReleaseApprovalError(str(exc)) from exc
+    _require_current_run_event_chain(paths["event_log"], run_id)
+    return ws, run_id
+
+
+def _require_current_run_event_chain(event_log_path: Path, run_id: str) -> None:
+    if not event_log_path.exists():
+        raise ReleaseApprovalError(
+            "event_log.jsonl is required before recording release approvals."
+        )
+    try:
+        records = read_event_log_records_strict(event_log_path)
+    except RuntimeStateError as exc:
+        raise ReleaseApprovalError(str(exc)) from exc
+    has_current_run_start = any(
+        _clean_text(record.get("run_id")) == run_id
+        and record.get("event_type") in {"run_initialized", "run_reset"}
+        for record in records
+    )
+    if not has_current_run_start:
+        raise ReleaseApprovalError(
+            "event_log.jsonl is missing a current-run initialization event."
+        )
+
+
+def _snapshot_files(paths: list[Path]) -> dict[Path, bytes | None]:
+    return {path: _read_state_bytes(path) for path in paths}
+
+
+def _restore_files(snapshots: Mapping[Path, bytes | None]) -> None:
+    rollback_errors: list[str] = []
+    for path, data in snapshots.items():
+        try:
+            _restore_state_bytes(path, data)
+        except RuntimeStateError as exc:
+            rollback_errors.append(str(exc))
+    if rollback_errors:
+        raise ReleaseApprovalError(
+            "Release approval transaction rollback failed: " + "; ".join(rollback_errors)
+        )
+
+
+def _load_or_new_ledger(workspace: Path) -> dict[str, Any]:
+    path = approval_ledger_path(workspace)
+    try:
+        payload = _read_json_if_exists(path)
+    except RuntimeStateError as exc:
+        raise ReleaseApprovalError(str(exc)) from exc
+    if payload is None:
+        now = utc_now()
+        return {
+            "schema_version": HUMAN_APPROVAL_LEDGER_SCHEMA,
+            "boundary": APPROVAL_BOUNDARY,
+            "created_at": now,
+            "updated_at": now,
+            "initialized_modes": {},
+            "records": [],
+        }
+    reason = validate_human_approval_ledger_payload(payload)
+    if reason:
+        raise ReleaseApprovalError(f"human_approval_ledger invalid: {reason}")
+    return payload
+
+
+def _initialized_mode_entry(ledger: Mapping[str, Any], mode: str) -> dict[str, Any] | None:
+    initialized = ledger.get("initialized_modes")
+    if not isinstance(initialized, dict):
+        return None
+    entry = initialized.get(mode)
+    return entry if isinstance(entry, dict) else None
+
+
+def _require_release_mode(value: str | None) -> str:
+    mode = _clean_text(value)
+    if mode not in RELEASE_MODES:
+        available = ", ".join(sorted(RELEASE_MODES))
+        raise ReleaseApprovalError(f"unknown release mode: {value}. Available modes: {available}")
+    return mode
+
+
+def _resolve_mode_for_record(ledger: Mapping[str, Any], mode: str | None) -> str:
+    if mode:
+        return _require_release_mode(mode)
+    initialized = ledger.get("initialized_modes")
+    modes = sorted(initialized) if isinstance(initialized, dict) else []
+    if len(modes) == 1:
+        return _require_release_mode(modes[0])
+    if not modes:
+        raise ReleaseApprovalError("approval record requires --mode before any ledger mode is initialized.")
+    raise ReleaseApprovalError("approval record requires --mode when multiple modes are initialized.")
+
+
+def _require_role_for_mode(mode: str, role: str | None) -> str:
+    text = _clean_text(role)
+    required = RELEASE_MODES[mode]["required_roles"]
+    if text not in required:
+        raise ReleaseApprovalError(
+            f"role {role!r} is not required for release mode {mode}."
+        )
+    return text
+
+
+def _require_decision(value: str | None) -> str:
+    text = _clean_text(value)
+    if text not in VALID_APPROVAL_DECISIONS:
+        raise ReleaseApprovalError(
+            "approval decision must be one of: approve, reject, request_changes."
+        )
+    return text
+
+
+def _require_reason(value: str | None) -> str:
+    text = _clean_text(value)
+    if not text:
+        raise ReleaseApprovalError("approval reason is required.")
+    if len(text) > 1000:
+        raise ReleaseApprovalError("approval reason is too long.")
+    return text
+
+
+def _ledger_records(ledger: Any) -> list[dict[str, Any]]:
+    if not isinstance(ledger, dict):
+        return []
+    reason = validate_human_approval_ledger_payload(ledger)
+    if reason:
+        raise ReleaseApprovalError(f"human_approval_ledger invalid: {reason}")
+    return [record for record in ledger.get("records", []) if isinstance(record, dict)]
+
+
+def _latest_records_for_mode(
+    records: list[dict[str, Any]],
+    mode: str,
+    run_id: str,
+) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if record.get("mode") != mode:
+            continue
+        if _clean_text(record.get("run_id")) != run_id:
+            continue
+        if not _clean_text(record.get("event_id")):
+            continue
+        role = _clean_text(record.get("role"))
+        if role:
+            latest[role] = record
+    return latest
+
+
+def _public_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "approval_id": _clean_text(record.get("approval_id")),
+        "run_id": _clean_text(record.get("run_id")),
+        "mode": _clean_text(record.get("mode")),
+        "role": _clean_text(record.get("role")),
+        "decision": _clean_text(record.get("decision")),
+        "recorded_at": _clean_text(record.get("recorded_at")),
+        "event_id": _clean_text(record.get("event_id")),
+        "reason_present": bool(_clean_text(record.get("reason"))),
+        "actor_id_present": bool(_clean_text(record.get("actor_id"))),
+    }
+
+
+def _next_step(*, status: str, mode: str, blockers: list[str]) -> str:
+    if status == "pass":
+        return f"Ready for {mode} internal review; not authorized for public release."
+    return "Record missing approvals or resolve rejected/requested-change decisions; do not publish externally."
+
+
+def _clean_text(value: Any) -> str:
+    return str(value).strip() if isinstance(value, str) else ""
+
+
+def payload_to_json(payload: Mapping[str, Any]) -> str:
+    return json.dumps(dict(payload), ensure_ascii=False, indent=2, sort_keys=True)

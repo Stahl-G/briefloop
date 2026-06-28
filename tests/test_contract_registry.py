@@ -194,6 +194,31 @@ def test_source_evidence_pack_manifest_contract_is_optional_source_discovery_con
         assert "source_evidence_pack_manifest" not in scout_stage.expected_artifacts
 
 
+def test_release_approval_contracts_are_optional_internal_review_controls():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        finalize_stage = registry.stage("finalize")
+        ledger = registry.artifact("human_approval_ledger")
+        report = registry.artifact("release_readiness_report")
+        assert finalize_stage is not None
+        assert ledger is not None
+        assert report is not None
+        assert ledger.required is False
+        assert ledger.producer_kind == "control_tool"
+        assert ledger.path == "output/intermediate/human_approval_ledger.json"
+        assert ledger.validation_result == "experimental_human_approval_ledger"
+        assert report.required is False
+        assert report.producer_kind == "control_tool"
+        assert report.path == "output/intermediate/release_readiness_report.json"
+        assert report.validation_result == "experimental_release_readiness_report"
+        assert "human_approval_ledger" not in finalize_stage.produces
+        assert "human_approval_ledger" not in finalize_stage.expected_artifacts
+        assert "release_readiness_report" not in finalize_stage.produces
+        assert "release_readiness_report" not in finalize_stage.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"

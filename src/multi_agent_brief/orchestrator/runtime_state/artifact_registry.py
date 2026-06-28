@@ -57,6 +57,10 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     interpret_stage_completion,
     _stage_is_complete_or_skipped,
 )
+from multi_agent_brief.product.release_approval import (
+    validate_human_approval_ledger_payload,
+    validate_release_readiness_report_payload,
+)
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
 from multi_agent_brief.quality_gates.contract import quality_gate_artifact_activated
 
@@ -188,6 +192,10 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_input_classification_payload(payload, artifact_path=path)
             if artifact_id == "source_evidence_pack_manifest":
                 return _validate_source_evidence_pack_manifest_payload(payload, artifact_path=path)
+            if artifact_id == "human_approval_ledger":
+                return _validate_human_approval_ledger_payload(payload)
+            if artifact_id == "release_readiness_report":
+                return _validate_release_readiness_report_payload(payload)
         elif fmt in {"yaml", "yml"}:
             yaml.safe_load(text)
         elif fmt == "markdown":
@@ -562,6 +570,20 @@ def _validate_source_evidence_pack_manifest_payload(payload: Any, *, artifact_pa
     if reason:
         return ARTIFACT_INVALID, f"{SOURCE_EVIDENCE_PACK_VALIDATION_PREFIX}:{reason}"
     return ARTIFACT_VALID, "experimental_source_evidence_pack_manifest"
+
+
+def _validate_human_approval_ledger_payload(payload: Any) -> tuple[str, str]:
+    reason = validate_human_approval_ledger_payload(payload)
+    if reason:
+        return ARTIFACT_INVALID, reason
+    return ARTIFACT_VALID, "experimental_human_approval_ledger"
+
+
+def _validate_release_readiness_report_payload(payload: Any) -> tuple[str, str]:
+    reason = validate_release_readiness_report_payload(payload)
+    if reason:
+        return ARTIFACT_INVALID, reason
+    return ARTIFACT_VALID, "experimental_release_readiness_report"
 
 
 def _workspace_root_for_input_classification(artifact_path: Path) -> Path | None:
