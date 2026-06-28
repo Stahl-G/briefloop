@@ -109,6 +109,12 @@ breaking rename.
   workflows. These checks separate internal readiness from authorization: they
   do not publish externally, authorize public release, replace legal/compliance
   or IR owners, or bypass existing gates and human delivery approval.
+  Experimental Quality Panel projection can write
+  `output/intermediate/quality_panel.json` as a machine-readable summary of
+  existing control integrity, source evidence, gate, claim/support, and
+  delivery hygiene surfaces. This is a product-quality audit/control
+  projection only: it does not run gates, create a quality score, decide release
+  eligibility, approve delivery, prove semantic truth, or execute repair.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These

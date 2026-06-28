@@ -151,8 +151,7 @@ def test_artifact_contracts_match_stage_specs():
             )
 
     for artifact in artifacts:
-        if artifact["artifact_id"] == "provenance_graph":
-            assert artifact["producer_stage"] == "provenance"
+        if artifact["producer_stage"] not in stage_ids:
             assert artifact["producer_kind"] == "control_tool"
             assert artifact["required"] is False
         else:

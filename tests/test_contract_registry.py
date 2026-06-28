@@ -219,6 +219,25 @@ def test_release_approval_contracts_are_optional_internal_review_controls():
         assert "release_readiness_report" not in finalize_stage.expected_artifacts
 
 
+def test_quality_panel_contract_is_optional_product_projection():
+    root_registry = ContractRegistry.from_config_dir(ROOT / "configs")
+    package_registry = ContractRegistry.from_package()
+
+    for registry in (root_registry, package_registry):
+        panel = registry.artifact("quality_panel")
+        finalize_stage = registry.stage("finalize")
+        assert panel is not None
+        assert finalize_stage is not None
+        assert panel.required is False
+        assert panel.producer_kind == "control_tool"
+        assert panel.producer_stage == "quality-panel"
+        assert panel.path == "output/intermediate/quality_panel.json"
+        assert panel.validation_result == "experimental_quality_panel"
+        assert panel.consumer_stages == ()
+        assert "quality_panel" not in finalize_stage.produces
+        assert "quality_panel" not in finalize_stage.expected_artifacts
+
+
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
     config_dir = _copy_configs(tmp_path)
     stage_specs_path = config_dir / "stage_specs.yaml"

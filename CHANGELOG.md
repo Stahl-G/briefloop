@@ -140,6 +140,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through deterministic CLI transactions. Release checks can report readiness
   for internal review modes only; they do not authorize public release, publish
   externally, bypass gates, or replace legal/compliance/IR owner judgment.
+- **Quality Panel JSON projection foundation**: added an experimental
+  `quality_panel.json` product-quality projection that summarizes existing
+  control integrity, source evidence, gate, claim/support, and delivery hygiene
+  surfaces. This is a machine-readable audit/control summary only; it does not
+  run gates, create a quality score, decide release eligibility, approve
+  delivery, prove semantic truth, or execute repair.
 
 ### Fixed
 
