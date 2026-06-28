@@ -8,14 +8,14 @@ delivery, or decide release eligibility.
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from multi_agent_brief.core.claim_ledger import ClaimLedger
-from multi_agent_brief.orchestrator.runtime_state._io import _write_json_atomic
-from multi_agent_brief.orchestrator.runtime_state.identity import utc_now
-from multi_agent_brief.status import build_workspace_status
 
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
 QUALITY_PANEL_BOUNDARY = "product_quality_panel_projection_only_not_gate_or_release_authority"
@@ -31,6 +31,8 @@ def quality_panel_path(workspace: str | Path) -> Path:
 
 def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
     """Build a read-only machine-readable quality projection."""
+
+    from multi_agent_brief.status import build_workspace_status
 
     ws = Path(workspace).expanduser().resolve()
     workspace_status = build_workspace_status(ws)
@@ -71,7 +73,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         "schema_version": QUALITY_PANEL_SCHEMA_VERSION,
         "workspace": ".",
         "run_id": _text(runtime.get("run_id")) or "unknown",
-        "generated_at": utc_now(),
+        "generated_at": _utc_now(),
         "read_only": True,
         "runtime_effect": QUALITY_PANEL_RUNTIME_EFFECT,
         "boundary": QUALITY_PANEL_BOUNDARY,
@@ -211,14 +213,19 @@ def _claim_summary(
 ) -> dict[str, Any]:
     matrix = workspace_status.get("claim_support_matrix")
     matrix = matrix if isinstance(matrix, dict) else {}
-    counts = matrix.get("summary_counts") if isinstance(matrix.get("summary_counts"), dict) else {}
-    rows = _matrix_rows(workspace)
+    matrix_status = _optional_artifact_status(
+        _artifact_record(artifacts, "claim_support_matrix"),
+        not_available="not_available",
+    )
+    counts = (
+        matrix.get("summary_counts")
+        if matrix_status == "valid" and isinstance(matrix.get("summary_counts"), dict)
+        else {}
+    )
+    rows = _matrix_rows(workspace) if matrix_status == "valid" else []
     return {
         "claim_count": _claim_count(workspace / _INTERMEDIATE / "claim_ledger.json"),
-        "claim_support_matrix_status": _optional_artifact_status(
-            _artifact_record(artifacts, "claim_support_matrix"),
-            not_available="not_available",
-        ),
+        "claim_support_matrix_status": matrix_status,
         "weak_support_count": int(counts.get("weak_atom_count") or 0),
         "unsupported_count": sum(
             1
@@ -374,6 +381,25 @@ def _matrix_rows(workspace: Path) -> list[dict[str, Any]]:
     payload = _read_json_mapping(workspace / _INTERMEDIATE / "claim_support_matrix.json")
     rows = payload.get("rows") if isinstance(payload, dict) else None
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _read_json_mapping(path: Path) -> dict[str, Any] | None:

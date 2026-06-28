@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
@@ -131,19 +134,61 @@ def _write_claim_ledger(ws: Path) -> None:
     )
 
 
-def _write_gate_report(ws: Path, *, status: str = "pass", findings: list[dict] | None = None) -> None:
+def _write_gate_report(
+    ws: Path,
+    *,
+    status: str = "pass",
+    findings: list[dict] | None = None,
+    stage: str = "auditor",
+) -> None:
     gates = ws / "output" / "intermediate" / "gates"
     gates.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": "mabw.quality_gate_report.v1",
         "status": status,
         "findings": findings or [],
-        "metadata": {"gate_stage_id": "auditor"},
+        "metadata": {"gate_stage_id": stage},
     }
-    (gates / "auditor_quality_gate_report.json").write_text(
+    (gates / f"{stage}_quality_gate_report.json").write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_finalize_report(ws: Path) -> None:
+    report = {
+        "status": "pass",
+        "reader_clean": {"status": "pass", "sample_findings": []},
+        "duplicate_citation_count": 0,
+        "source_appendix_warnings": [],
+        "source_appendix_trace_warnings": [],
+    }
+    (ws / "output" / "intermediate" / "finalize_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
+    env = dict(os.environ)
+    src_path = str(Path.cwd() / "src")
+    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else src_path
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from multi_agent_brief.product.quality_panel import build_quality_panel; print(build_quality_panel)",
+        ],
+        check=False,
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "build_quality_panel" in result.stdout
 
 
 def test_quality_panel_builds_incomplete_projection_without_writing(tmp_path: Path) -> None:
@@ -202,6 +247,43 @@ def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_p
         "action": "complete_finalize_delivery_hygiene",
         "reason": "finalize_or_reader_clean_missing",
     } in payload["recommended_actions"]
+
+
+def test_quality_panel_does_not_interpret_invalid_claim_support_matrix_rows(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    _write_gate_report(ws)
+    _write_gate_report(ws, stage="finalize")
+    _write_finalize_report(ws)
+    invalid_matrix = {
+        "schema_version": "mabw.claim_support_matrix.v1",
+        "rows": [
+            {
+                "row_id": "CSM-0001",
+                "claim_id": "CL-0001",
+                "atom_id": "AC-0001-01",
+                "evidence_span_id": None,
+                "support_label": "unsupported",
+                "support_strength": "none",
+                "required_action": "block_release",
+                "repair_owner": "analyst",
+                "decision_source": "human",
+            }
+        ],
+    }
+    (ws / "output" / "intermediate" / "claim_support_matrix.json").write_text(
+        json.dumps(invalid_matrix, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    payload = build_quality_panel(ws)
+
+    assert payload["claims"]["claim_support_matrix_status"] == "invalid"
+    assert payload["claims"]["unsupported_count"] == 0
+    assert payload["claims"]["weak_support_count"] == 0
+    assert payload["overall_status"] == "warning"
 
 
 def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:
