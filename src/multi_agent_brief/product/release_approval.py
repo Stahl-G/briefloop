@@ -446,6 +446,13 @@ def validate_human_approval_ledger_event_links(
         for idx, record in enumerate(records):
             if not isinstance(record, dict):
                 continue
+            reason = _approval_record_initialized_mode_error(
+                record,
+                initialized_modes=initialized_modes if isinstance(initialized_modes, dict) else {},
+                index=idx,
+            )
+            if reason:
+                return f"human_approval_ledger_event_link_error:{reason}"
             reason = _approval_record_event_error(
                 record,
                 event_index=event_index,
@@ -594,6 +601,24 @@ def _approval_record_event_error(
     for key in ("approval_id", "mode", "role", "decision"):
         if _clean_text(metadata.get(key)) != _clean_text(record.get(key)):
             return f"{field}.event_metadata_mismatch"
+    return None
+
+
+def _approval_record_initialized_mode_error(
+    record: Mapping[str, Any],
+    *,
+    initialized_modes: Mapping[str, Any],
+    index: int,
+) -> str | None:
+    field = f"records[{index}]"
+    mode = _clean_text(record.get("mode"))
+    entry = initialized_modes.get(mode)
+    if not isinstance(entry, Mapping):
+        return f"{field}.mode_not_initialized"
+    if _clean_text(entry.get("run_id")) != _clean_text(record.get("run_id")):
+        return f"{field}.initialized_mode_run_id"
+    if _clean_text(entry.get("mode")) != mode:
+        return f"{field}.initialized_mode_mismatch"
     return None
 
 

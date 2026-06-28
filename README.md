@@ -270,11 +270,17 @@ v0.10.1 adds an experimental Product OS / ReportPack direction, including:
 - experimental `evidence_extract` source/scope registration
 - experimental SourceHub Lite setup for local text files, RSS feeds, and
   runtime web-search handoff tasks
-- experimental internal release-mode approval records
 
 These features are meant to make report types, default policies, and delivery bundles more product-like.
 
-They are still metadata, defaults, setup paths, approval records, and projection controls. They do not parse PDFs automatically, execute hidden web search or crawling, judge industry compliance, detect investment advice, verify internet rumors, claim IR/disclosure readiness, prove semantic truth, publish reports, or authorize public release.
+The current development line also includes experimental internal release-mode
+approval records under `[Unreleased]`.
+
+These features are still metadata, defaults, setup paths, approval records, and
+projection controls. They do not parse PDFs automatically, execute hidden web
+search or crawling, judge industry compliance, detect investment advice, verify
+internet rumors, claim IR/disclosure readiness, prove semantic truth, publish
+reports, or authorize public release.
 
 ---
 

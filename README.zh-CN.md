@@ -264,11 +264,13 @@ v0.10.1 加入了实验性的 Product OS / ReportPack 方向，例如：
 - 实验性的 `evidence_extract` source/scope 注册入口
 - 实验性的 SourceHub Lite 来源设置入口，用于本地文本文件、RSS feed 和
   runtime web-search handoff task
-- 实验性的内部 review release-mode approval record
 
 这些功能的定位是：**让报告类型、默认策略和交付包更产品化**。
 
-但它们仍然只是元数据、默认配置、设置入口、审批记录和投影控制，不代表系统已经能自动解析 PDF、执行隐藏搜索或爬取、判断行业合规、投资建议、披露可用性、语义真实性，或授权公开发布。
+当前 development line 还在 `[Unreleased]` 下包含实验性的内部 review
+release-mode approval record。
+
+但这些功能仍然只是元数据、默认配置、设置入口、审批记录和投影控制，不代表系统已经能自动解析 PDF、执行隐藏搜索或爬取、判断行业合规、投资建议、披露可用性、语义真实性，或授权公开发布。
 
 ---
 

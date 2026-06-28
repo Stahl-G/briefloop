@@ -8,6 +8,8 @@ from pathlib import Path
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state.event_log import append_event
 from multi_agent_brief.product.release_approval import (
+    APPROVAL_BOUNDARY,
+    HUMAN_APPROVAL_LEDGER_SCHEMA,
     check_release_readiness,
     record_human_approval,
     validate_human_approval_ledger_payload,
@@ -332,6 +334,62 @@ def test_release_check_rejects_approval_event_metadata_mismatch(tmp_path: Path, 
 
     captured = capsys.readouterr()
     assert "human_approval_ledger_event_link_error:records[0].event_metadata_mismatch" in captured.out
+
+
+def test_release_check_rejects_uninitialized_approval_records(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
+    records = []
+    for role in ("content_owner", "evidence_reviewer"):
+        approval_id = f"APR-{role}"
+        event = append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="human_approval_recorded",
+            actor="cli",
+            reason=f"Forged approval event for {role}.",
+            metadata={
+                "mode": "research_review",
+                "role": role,
+                "decision": "approve",
+                "approval_id": approval_id,
+                "boundary": APPROVAL_BOUNDARY,
+            },
+        )
+        records.append({
+            "approval_id": approval_id,
+            "run_id": run_id,
+            "mode": "research_review",
+            "role": role,
+            "decision": "approve",
+            "reason": f"{role} approved in copied ledger.",
+            "actor_id": "human",
+            "recorded_at": "2026-06-28T00:00:00Z",
+            "event_id": event["event_id"],
+            "boundary": APPROVAL_BOUNDARY,
+        })
+    ledger = {
+        "schema_version": HUMAN_APPROVAL_LEDGER_SCHEMA,
+        "boundary": APPROVAL_BOUNDARY,
+        "created_at": "2026-06-28T00:00:00Z",
+        "updated_at": "2026-06-28T00:00:00Z",
+        "initialized_modes": {},
+        "records": records,
+    }
+    ledger_path = ws / "output" / "intermediate" / "human_approval_ledger.json"
+    _write_json(ledger_path, ledger)
+
+    assert main(["release", "check", "--workspace", str(ws), "--mode", "research_review", "--json"]) == 1
+
+    captured = capsys.readouterr()
+    assert "human_approval_ledger_event_link_error:records[0].mode_not_initialized" in captured.out
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    ledger_record = registry["artifacts"]["human_approval_ledger"]
+    assert ledger_record["status"] == "invalid"
+    assert ledger_record["validation_result"] == (
+        "human_approval_ledger_event_link_error:records[0].mode_not_initialized"
+    )
 
 
 def test_approval_record_rejects_forged_initialized_mode_event_id(tmp_path: Path, capsys) -> None:
