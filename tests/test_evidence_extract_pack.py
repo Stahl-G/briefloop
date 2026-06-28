@@ -128,6 +128,60 @@ def test_extract_does_not_persist_external_absolute_source_paths(tmp_path: Path,
     assert record["source_size_bytes"] == source.stat().st_size
 
 
+def test_extract_force_preserves_managed_source_used_as_input(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("# Source\n\nInitial durable bytes.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "initial scope",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    first_payload = json.loads(capsys.readouterr().out)
+    managed_source = workspace / first_payload["sources"][0]["path"]
+    assert managed_source.exists()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "updated scope",
+                "--source",
+                str(managed_source),
+                "--force",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["source_count"] == 1
+    next_managed_source = workspace / payload["sources"][0]["path"]
+    assert next_managed_source.exists()
+    assert next_managed_source.read_text(encoding="utf-8") == "# Source\n\nInitial durable bytes.\n"
+    scope = yaml.safe_load((workspace / "extraction_scope.yaml").read_text(encoding="utf-8"))
+    assert scope["scope"] == "updated scope"
+    assert scope["sources"][0]["path"] == payload["sources"][0]["path"]
+
+
 def test_extract_expands_home_globs(tmp_path: Path, monkeypatch, capsys) -> None:
     workspace = tmp_path / "evidence-ws"
     home = tmp_path / "home"

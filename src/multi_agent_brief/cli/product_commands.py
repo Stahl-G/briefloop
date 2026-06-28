@@ -7,6 +7,7 @@ import glob
 import hashlib
 import json
 import shutil
+import tempfile
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -585,14 +586,20 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         raise FileExistsError(
             f"Refusing to overwrite existing evidence-extract sources: {sources_dir}. Use --force."
         )
-    sources_dir.mkdir(parents=True, exist_ok=True)
-    if getattr(args, "force", False):
-        for path in sources_dir.iterdir():
-            if path.is_file():
-                path.unlink()
+    with tempfile.TemporaryDirectory(prefix="briefloop-evidence-extract-") as staging_dir_text:
+        staged_sources = _stage_extract_source_files(
+            resolved_sources,
+            staging_dir=Path(staging_dir_text),
+        )
 
-    for resolved, record in zip(resolved_sources, registered):
-        shutil.copy2(resolved, workspace / record["path"])
+        sources_dir.mkdir(parents=True, exist_ok=True)
+        if getattr(args, "force", False):
+            for path in sources_dir.iterdir():
+                if path.is_file():
+                    path.unlink()
+
+        for staged, record in zip(staged_sources, registered):
+            shutil.copy2(staged, workspace / record["path"])
 
     _write_extraction_scope(workspace=workspace, text=extraction_scope_text)
     (workspace / "sources.yaml").write_text(sources_yaml_text, encoding="utf-8")
@@ -614,6 +621,23 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         ],
     }
     return payload
+
+
+def _stage_extract_source_files(sources: list[Path], *, staging_dir: Path) -> list[Path]:
+    """Copy inputs before managed-source cleanup.
+
+    `extract --force` may be rerun with source paths that already live under
+    `input/sources/evidence_extract/`. Staging first prevents the cleanup step
+    from deleting the file before the final copy reads it.
+    """
+
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    staged: list[Path] = []
+    for idx, source in enumerate(sources, start=1):
+        target = staging_dir / f"{idx:03d}-{_safe_filename(source.name)}"
+        shutil.copy2(source, target)
+        staged.append(target)
+    return staged
 
 
 def _resolve_extract_source_paths(values: list[str]) -> list[Path]:

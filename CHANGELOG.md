@@ -135,6 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Evidence Extract force rerun source preservation**: `extract --force` now
+  stages source bytes before clearing managed
+  `input/sources/evidence_extract/` files, so rerunning extract with a
+  previously copied managed source path can update scope without deleting the
+  source before it is recopied.
 - **Fast-rerun Claim Ledger enrichment chain validation**: fast-rerun import
   validation now accepts a Claim Ledger derived through a chained metadata
   enrichment record when the latest record still points back to the original
