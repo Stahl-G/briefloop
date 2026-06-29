@@ -462,6 +462,24 @@ def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:
     assert record["validation_result"] == "experimental_quality_panel"
 
 
+def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    old_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
+    write_quality_panel(workspace=ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
+
+    intermediate = ws / "output" / "intermediate"
+    assert (intermediate / f"quality_panel.{old_run_id}.json").exists()
+    assert not quality_panel_path(ws).exists()
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(intermediate / "artifact_registry.json")
+    record = registry["artifacts"]["quality_panel"]
+    assert record["status"] == "expected"
+    assert record["sha256"] is None
+
+
 def test_quality_panel_surfaces_blocking_gate_and_reader_failure(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_gate_report(
