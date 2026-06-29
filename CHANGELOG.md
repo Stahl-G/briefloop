@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **v0.11 product-baseline readiness check**: added
+  `scripts/check_product_baseline.py` to verify the stable CLI product baseline
+  entrypoints, canonical ReportPack mappings, local-first workspace skeletons,
+  control-spine defaults, no force-deliver CLI surface, reference-run docs, and
+  public boundary wording before a v0.11 release. This is a readiness guard
+  only; it does not bump the version, promote support status, run stages,
+  approve delivery, prove truth, or create release authority.
+
 ### Fixed
 
 - **Quality Panel legacy gate-report compatibility**: Quality Panel now surfaces
