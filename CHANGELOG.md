@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Quality Panel legacy gate-report compatibility**: Quality Panel now surfaces
+  legacy `output/intermediate/quality_gate_report.json` status separately from
+  v0.10 scoped auditor/finalize gate reports. Legacy reports are not treated as
+  scoped reports, and workspaces with reader-clean `pass` now receive a scoped
+  gate-report regeneration action instead of a generic finalize-hygiene action.
+
 ## [0.10.7] — 2026-06-29
 
 ### Added
