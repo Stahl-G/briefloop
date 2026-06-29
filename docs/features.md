@@ -8,7 +8,7 @@ Status labels:
 
 - **Always on**: part of the supported accountability spine.
 - **Optional**: enabled by configuration, source setup, or runtime support.
-- **Experimental**: implemented but not yet a stable v1.0 contract.
+- **Experimental**: implemented but not yet a stable v0.11.0 contract.
 - **Roadmap**: planned or scoped, not an implemented capability.
 
 Current baseline: **v0.10 Product OS development line**.

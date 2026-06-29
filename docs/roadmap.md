@@ -14,15 +14,15 @@ subagent-first runtime
 → workspace memory and control switchboard
 → provenance-aware artifacts
 → policy packs and runtime parity
-→ stable v1.0 baseline
+→ stable v0.11.0 product baseline
 ```
 
-The project is not trying to rebuild a full distributed multi-agent runtime before v1.0. Python remains a toolkit for setup, source handling, validation, audit, and rendering. The workflow runtime is coordinated by an external main agent and delegated subagents.
+The project is not trying to rebuild a full distributed multi-agent runtime before the v0.11.0 product baseline. Python remains a toolkit for setup, source handling, validation, audit, and rendering. The workflow runtime is coordinated by an external main agent and delegated subagents.
 
 Two design principles guide the next phases:
 
 - Stage boundaries are contract boundaries. Some gates are machine-only, some require human semantic approval, and some combine machine findings with Orchestrator judgment.
-- Memory is workspace-local and human-governed. The project may add agent-proposed memory updates and frozen per-run snapshots, but it will not become a full long-term-memory or RAG platform before v1.0.
+- Memory is workspace-local and human-governed. The project may add agent-proposed memory updates and frozen per-run snapshots, but it will not become a full long-term-memory or RAG platform before the v0.11.0 product baseline.
 
 ## Completed Baseline
 
@@ -297,12 +297,12 @@ Non-goals:
   operator protocol surface
 - no automatic public release or external publication command
 
-### v1.0 — Stable Weekly/Monthly Brief Product
+### v0.11.0 — Stable Weekly/Monthly Brief Product
 
 Goal: freeze a modest, local-first, file-state-driven, contract-governed CLI
 product for recurring business reports.
 
-v1.0 should provide:
+v0.11.0 should provide:
 
 - product-facing zero-config entries such as `briefloop new industry-weekly`
   and `briefloop new management-monthly`, while keeping canonical internal
@@ -322,11 +322,11 @@ v1.0 should provide:
 
 ## Research Track
 
-v1.1+ may add a local Studio preview after the CLI product path works. Studio
+v0.12.0 may add a local Studio preview after the CLI product path works. Studio
 must call existing CLI/service transactions, must not mutate frozen artifacts
 directly, and must not provide a force-deliver path.
 
-v1.2+ may add IR/disclosure support packs as review-support surfaces, not
+v0.13.0+ may add IR/disclosure support packs as review-support surfaces, not
 publication automation. Those packs may flag forward-looking statements,
 materiality review items, KPI consistency issues, and evidence-annex gaps, but
 they must not claim automatic materiality decisions, SEC-ready filing
@@ -338,7 +338,7 @@ product baseline is stable, the project may explore a more formal multi-agent
 runtime, including shared state, task boards, replay, and richer coordination
 protocols.
 
-Before v1.0, the project will not prioritize:
+Before the v0.11.0 product baseline, the project will not prioritize:
 
 - distributed multi-server orchestration
 - enterprise multi-tenancy

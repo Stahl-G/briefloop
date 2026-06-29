@@ -10,7 +10,7 @@ Each capability has one of the following statuses:
 
 | Status | Meaning |
 |---|---|
-| **Supported** | Actively tested, documented, and considered stable for v1.0. |
+| **Supported** | Actively tested, documented, and considered stable for the v0.11.0 product baseline. |
 | **Experimental** | Functional but may change without notice. Not guaranteed for production. |
 | **Interface Only** | Abstract interface exists; no concrete implementation shipped. |
 | **CLI-only** | Installs and exposes deterministic CLI commands, but does not include source-clone runtime asset trees. |

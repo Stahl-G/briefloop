@@ -404,7 +404,8 @@ This project is developed from real manufacturing and briefing work. It needs mo
 - **v0.8**: measurement, fast-rerun, role topology, and evaluation — timing projection, same-evidence reruns, default/strict topology choices, and controlled experiment tooling without weakening accountable artifacts.
 - **v0.9**: support-sufficiency core. Current path: Atomic Claim Graph -> Evidence Span Registry -> Claim-Support Matrix -> Semantic Assessment Report proposal surface. Human adjudication, coverage/omission gates, semantic regression, release eligibility, quality packs, and finding-to-repair workflows are deferred semantic-governance surfaces, not the next default implementation track.
 - **v0.10**: Product OS and report packs — ReportSpec, ReportPack registry, zero-config workspaces, template rendering, delivery/audit bundle projection, `evidence_extract`, SourceHub Lite, release modes, and human approval records without weakening the accountability spine.
-- **v1.0**: stable weekly/monthly/evidence-extract CLI product, frozen report contracts, compatibility policy, and threat model.
+- **v0.11.0**: stable weekly/monthly/evidence-extract CLI product, frozen report contracts, compatibility policy, and threat model.
+- **v0.12.0**: local Studio preview after the CLI product path is stable; Studio must wrap existing CLI/service transactions rather than becoming a second engine.
 
 See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, see [architecture status](docs/architecture-status.md).
 

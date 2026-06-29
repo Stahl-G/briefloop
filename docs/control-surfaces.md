@@ -119,12 +119,12 @@ These surfaces belong to the repository and change through versioned development
 | `docs/architecture-status.md` | Current implementation state versus roadmap goals. | Maintainers | Implemented |
 | `docs/red-lines-and-anti-patterns.md` | Public red lines and misuse patterns. | Maintainers | Implemented |
 
-## v1.0 Freeze List
+## v0.11.0 Freeze List
 
 Freeze means the schema or command family receives a backwards-compatibility
 promise and CI guards. Surfaces can remain implemented without being frozen.
 
-| Surface | v1.0 freeze prerequisite |
+| Surface | v0.11.0 freeze prerequisite |
 |---|---|
 | `event_log.jsonl` schema and event types | v0.7.2 completion transaction events must be stable; any v0.8 trajectory events must be added before freeze. |
 | `workflow_state.json` and decision vocabulary | `stage-complete` / `finalize-complete` semantics must be included; role convergence must settle the final stage set. |
@@ -138,7 +138,7 @@ promise and CI guards. Surfaces can remain implemented without being frozen.
 | `feedback_issues.json` / `repair_plan.json` | Current schema is eligible for freeze once repair-path regression coverage is stable. |
 | Improvement Ledger schema | v0.7.2 schema hygiene is implemented: `supersedes_id`, duplicate warning, approved supersession fork rejection, and revert re-expose warning. Generic ledger provenance fields are deferred with `intake.jsonl` / `candidates.jsonl` to v0.7.3+. |
 | `origin_runtime` | Implemented as audit/rendering metadata only. It is not filtering, routing, or materialization logic. |
-| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | Deferred to v0.7.3+ and too young for v1.0 freeze. |
+| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | Deferred to v0.7.3+ and too young for v0.11.0 freeze. |
 | `improvement/memory.md` / improvement snapshot rendering | Can freeze only after the ledger schema is stable. |
 | Runtime handoff format | Must include final usage rules and any v0.8 precedence table before freeze. |
 | Five-verb writer entrypoint and core CLI families | Five writer verbs, completion transactions, gates, finalize, feedback, and improve command families must be reflected in support matrix and help before freeze. |
@@ -146,7 +146,7 @@ promise and CI guards. Surfaces can remain implemented without being frozen.
 | `audience_profile.md` format | Format may freeze, but profile content remains human-editable and never freezes. |
 | Reference sample manifest | Planned v0.8; experimental until at least one real usage cycle. |
 | Manifestation report | Planned v0.8 evaluation-only. It must never become a runtime blocker. |
-| Mode registry / role topology | Planned v0.8+; not eligible for v1.0 freeze until role convergence has been tested. |
+| Mode registry / role topology | Planned v0.8+; not eligible for v0.11.0 freeze until role convergence has been tested. |
 | Support matrix | It defines the freeze promise and must be updated with every frozen surface. |
 
 ## Allocation Principles

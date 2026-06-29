@@ -104,11 +104,11 @@ MABW 的控制面可以按不同粒度统计：
 | `docs/architecture-status.md` | 当前实现状态与 roadmap goals 的区分。 | Maintainers | 已实现 |
 | `docs/red-lines-and-anti-patterns.md` | Public red lines 和 misuse patterns。 | Maintainers | 已实现 |
 
-## v1.0 冻结清单
+## v0.11.0 冻结清单
 
 冻结意味着 schema 或命令族获得向后兼容承诺，并由 CI 看守。一个 surface 可以已经实现，但尚未冻结。
 
-| Surface | v1.0 冻结前提 |
+| Surface | v0.11.0 冻结前提 |
 |---|---|
 | `event_log.jsonl` schema 和 event types | v0.7.2 completion transaction events 必须稳定；若 v0.8 增加 trajectory events，需先加后冻。 |
 | `workflow_state.json` 和 decision vocabulary | `stage-complete` / `finalize-complete` 语义必须并入；角色收敛后才能定稿 stage 集合。 |
@@ -122,7 +122,7 @@ MABW 的控制面可以按不同粒度统计：
 | `feedback_issues.json` / `repair_plan.json` | repair path 回归覆盖稳定后可进入冻结候选。 |
 | Improvement Ledger schema | v0.7.2 已实现 schema hygiene：`supersedes_id`、duplicate warning、approved supersession fork rejection、revert re-expose warning。Generic ledger provenance field 与 `intake.jsonl` / `candidates.jsonl` 一起延后至 v0.7.3+。 |
 | `origin_runtime` | 已实现为 audit/rendering metadata；不参与 filtering、routing 或 materialization。 |
-| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | 延后至 v0.7.3+，太年轻，不进入 v1.0 冻结。 |
+| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | 延后至 v0.7.3+，太年轻，不进入 v0.11.0 冻结。 |
 | `improvement/memory.md` / improvement snapshot 渲染 | 需等 ledger schema 稳定后冻结。 |
 | Runtime handoff 格式 | 最终 usage rules 和 v0.8 precedence table 定稿后再冻结。 |
 | 五动词 writer entrypoint 与核心 CLI families | 五个 writer verbs、completion transactions、gates、finalize、feedback、improve 命令族必须在 support matrix 和 help 中一致。 |

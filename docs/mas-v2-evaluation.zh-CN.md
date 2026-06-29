@@ -4,7 +4,7 @@
 
 ## 结论
 
-v2.0 方向成立，但启动条件必须后移到 v1.0 Stable Baseline 之后。
+v2.0 方向成立，但启动条件必须后移到 v0.11.0 Stable Product Baseline 之后。
 
 这份计划最正确的地方是：它没有把“真正 MAS”理解为更多 agent 名称、更多 Prompt、更多并发或套用某个现成框架，而是把系统控制方式从中央 Pipeline 改为：
 
@@ -26,7 +26,7 @@ Deterministic Systems 负责 Claim、Audit、Rendering 等治理底线
 - Agent 之间主要通过共享内存和顺序读写协作，而不是通过消息、事件和协议协作。
 - `ClaimLedger`、Formatter、Renderer、审计规则等更适合作为环境资源或确定性系统，不应被包装成自治 Agent。
 
-这不是缺陷，而是 v1.0 前应保持的优势：顺序 Pipeline 更容易测试、审计、回归和作为未来对照组。
+这不是缺陷，而是 v0.11.0 前应保持的优势：顺序 Pipeline 更容易测试、审计、回归和作为未来对照组。
 
 ## 论文对 v2.0 的有效支撑
 
@@ -75,7 +75,7 @@ Deterministic Systems 负责 Claim、Audit、Rendering 等治理底线
 推荐顺序：
 
 ```text
-v1.0 baseline
+v0.11.0 baseline
 → Event Store + Shared World
 → ClaimProposal / ClaimReducer
 → Planner + TaskBoard + Scout bidding
@@ -88,7 +88,7 @@ v1.0 baseline
 ## 主要风险
 
 1. **过早重构风险**
-   如果 v1.0 的 schema、audit、manifest、golden dataset 没冻结，v2 输出好坏无法判断。
+   如果 v0.11.0 的 schema、audit、manifest、golden dataset 没冻结，v2 输出好坏无法判断。
 
 2. **伪 MAS 风险**
    只增加 agent 类、并发 worker 或 LLM 对话，不等于 MAS。必须出现持久化状态、局部视图、typed message、task ownership、coordination protocol 和 replay。
@@ -121,7 +121,7 @@ v2.0 MAS Runtime 第一阶段只有在满足以下条件时才算通过：
 
 将 v2.0 计划保留为 `experimental architecture track`，不要写成短期产品承诺。公开 roadmap 中只应写：
 
-- v1.0 前不启动 MAS 主路径。
+- v0.11.0 前不启动 MAS 主路径。
 - v2.0 第一阶段是 runtime foundation。
 - v2.0 必须复用 v1 golden datasets 和 artifact 契约。
 - v2.0 的目标是增加自治、通信、协调和可重放性，而不是替代确定性治理系统。

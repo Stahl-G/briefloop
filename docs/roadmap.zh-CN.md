@@ -14,15 +14,15 @@ subagent-first runtime
 → workspace memory and control switchboard
 → provenance-aware artifacts
 → policy packs and runtime parity
-→ stable v1.0 baseline
+→ stable v0.11.0 product baseline
 ```
 
-v1.0 前不优先重建完整分布式 multi-agent runtime。Python 继续作为 setup、source handling、validation、audit、rendering 工具箱；workflow runtime 由外部 main agent 和 delegated subagents 执行。
+v0.11.0 产品基线前不优先重建完整分布式 multi-agent runtime。Python 继续作为 setup、source handling、validation、audit、rendering 工具箱；workflow runtime 由外部 main agent 和 delegated subagents 执行。
 
 后续阶段遵循两个设计原则：
 
 - Stage boundary 就是契约 boundary。部分 gate 只需要机器检查，部分 gate 需要人类语义确认，部分 gate 由机器 findings 加司乐师判断共同决定。
-- Memory 是 workspace-local 且 human-governed。项目可以加入 agent-proposed memory updates 和 frozen per-run snapshots，但 v1.0 前不做完整 long-term-memory 或 RAG platform。
+- Memory 是 workspace-local 且 human-governed。项目可以加入 agent-proposed memory updates 和 frozen per-run snapshots，但 v0.11.0 产品基线前不做完整 long-term-memory 或 RAG platform。
 
 ## 已完成基线
 
@@ -280,11 +280,11 @@ Non-goals：
 - 不混淆 `/briefloop` writer command 和 BriefLoop skill operator protocol surface。
 - 不做自动 external publication 或 public release command。
 
-### v1.0 — Stable Weekly/Monthly Brief Product
+### v0.11.0 — Stable Weekly/Monthly Brief Product
 
 目标：冻结一个 modest、local-first、file-state-driven、契约治理 的 recurring business reports CLI product。
 
-v1.0 应包含：
+v0.11.0 应包含：
 
 - 面向产品语言的 zero-config entries，例如 `briefloop new industry-weekly`
   和 `briefloop new management-monthly`，同时内部继续使用
@@ -303,13 +303,13 @@ v1.0 应包含：
 
 ## 研究轨道
 
-v1.1+ 可以在 CLI product path 跑通后增加 local Studio preview。Studio 必须调用现有 CLI/service transactions，不得直接修改 frozen artifacts，也不得提供 force-deliver path。
+v0.12.0 可以在 CLI product path 跑通后增加 local Studio preview。Studio 必须调用现有 CLI/service transactions，不得直接修改 frozen artifacts，也不得提供 force-deliver path。
 
-v1.2+ 可以增加 IR/disclosure support packs，但它们是 review-support surfaces，不是 publication automation。这些 pack 可以标记 forward-looking statements、materiality review items、KPI consistency issues 和 evidence-annex gaps，但不能声称自动判断 materiality、自动生成 SEC-ready filing，或替代律师、审计师、IR 负责人和 disclosure committee。
+v0.13.0+ 可以增加 IR/disclosure support packs，但它们是 review-support surfaces，不是 publication automation。这些 pack 可以标记 forward-looking statements、materiality review items、KPI consistency issues 和 evidence-annex gaps，但不能声称自动判断 materiality、自动生成 SEC-ready filing，或替代律师、审计师、IR 负责人和 disclosure committee。
 
 v2.0 是未来研究轨道，不是短期产品承诺。product baseline 稳定后，项目可以探索更正式的 multi-agent runtime，包括 shared state、task boards、replay 和更丰富的 coordination protocols。
 
-v1.0 前不优先做：
+v0.11.0 产品基线前不优先做：
 
 - distributed multi-server orchestration。
 - enterprise multi-tenancy。
