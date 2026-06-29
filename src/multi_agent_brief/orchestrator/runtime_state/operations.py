@@ -989,6 +989,7 @@ def _reset_run_scoped_control_artifact_paths(workspace: Path) -> list[Path]:
         intermediate / "release_readiness_report.json",
         intermediate / "quality_panel.json",
         intermediate / "quality_summary.md",
+        intermediate / "quality_panel.html",
     ]
 
 
