@@ -117,7 +117,9 @@ breaking rename.
   projection from that panel and optional
   `output/intermediate/quality_panel.html` as a static no-JavaScript audit
   attachment. The experimental `quality summarize` command can
-  write these artifacts together. These product-quality audit/control
+  write these artifacts together, and report bundle projection can include
+  them in audit bundles while keeping them out of reader-facing delivery
+  bundles. These product-quality audit/control
   projections do not run gates, create a quality score, replace gate reports,
   decide release eligibility, approve delivery, prove semantic truth, or execute
   repair.

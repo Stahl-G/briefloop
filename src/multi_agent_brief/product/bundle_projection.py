@@ -292,6 +292,9 @@ def _audit_records(
         ("evidence_span_registry", workspace / "output" / "intermediate" / "evidence_span_registry.json"),
         ("claim_support_matrix", workspace / "output" / "intermediate" / "claim_support_matrix.json"),
         ("semantic_assessment_report", workspace / "output" / "intermediate" / "semantic_assessment_report.json"),
+        ("quality_panel", workspace / "output" / "intermediate" / "quality_panel.json"),
+        ("quality_summary", workspace / "output" / "intermediate" / "quality_summary.md"),
+        ("quality_panel_html", workspace / "output" / "intermediate" / "quality_panel.html"),
     ]
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
