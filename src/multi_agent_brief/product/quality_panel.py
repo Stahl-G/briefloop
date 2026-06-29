@@ -34,6 +34,7 @@ _QUALITY_SUMMARY_FORBIDDEN_PHRASES = (
     "approved for release",
     "release authorized",
 )
+_QUALITY_PANEL_SHA_PREFIX = "Quality-Panel-SHA256: sha256:"
 
 
 class QualityPanelError(ValueError):
@@ -134,12 +135,19 @@ def write_quality_panel(
     return payload
 
 
-def render_quality_summary(panel_payload: Mapping[str, Any]) -> str:
+def render_quality_summary(
+    panel_payload: Mapping[str, Any],
+    *,
+    quality_panel_sha256: str,
+) -> str:
     """Render a compact human-readable summary from a valid Quality Panel payload."""
 
     reason = validate_quality_panel_payload(panel_payload)
     if reason:
         raise QualityPanelError(f"quality_panel invalid: {reason}")
+    panel_sha256 = _normalize_sha256(quality_panel_sha256)
+    if not panel_sha256:
+        raise QualityPanelError("quality_panel_sha256 must be a SHA-256 hex digest.")
 
     source = panel_payload.get("source_evidence")
     source = source if isinstance(source, Mapping) else {}
@@ -158,6 +166,7 @@ def render_quality_summary(panel_payload: Mapping[str, Any]) -> str:
         "# Quality Summary",
         "",
         f"Boundary: {QUALITY_SUMMARY_BOUNDARY}.",
+        f"{_QUALITY_PANEL_SHA_PREFIX}{panel_sha256}",
         "",
         "This summary is a read-only operator view of existing BriefLoop control artifacts.",
         "Use the source gate reports, artifact registry, event log, and human review records as authority.",
@@ -221,11 +230,15 @@ def write_quality_summary(
     panel_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
+    panel_path = quality_panel_path(ws)
+    source_panel_payload = _read_json_mapping(panel_path)
+    if source_panel_payload is None:
+        raise QualityPanelError("quality_panel.json is required before writing quality_summary.md.")
     if panel_payload is None:
-        panel_payload = _read_json_mapping(quality_panel_path(ws))
-        if panel_payload is None:
-            raise QualityPanelError("quality_panel.json is required before writing quality_summary.md.")
-    text = render_quality_summary(panel_payload)
+        panel_payload = source_panel_payload
+    elif dict(panel_payload) != source_panel_payload:
+        raise QualityPanelError("panel_payload must match quality_panel.json before writing quality_summary.md.")
+    text = render_quality_summary(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
     target = Path(output_path).expanduser() if output_path else quality_summary_path(ws)
     if not target.is_absolute():
         target = ws / target
@@ -278,6 +291,9 @@ def validate_quality_summary_markdown(text: Any) -> str | None:
         return "quality_summary_schema_error:title"
     if f"Boundary: {QUALITY_SUMMARY_BOUNDARY}." not in text:
         return "quality_summary_schema_error:boundary"
+    panel_sha = quality_summary_panel_sha256(text)
+    if not panel_sha:
+        return "quality_summary_schema_error:quality_panel_sha256"
     lower = text.lower()
     for phrase in _QUALITY_SUMMARY_FORBIDDEN_PHRASES:
         if phrase in lower:
@@ -295,6 +311,13 @@ def validate_quality_summary_markdown(text: Any) -> str | None:
     for section in required_sections:
         if section not in text:
             return f"quality_summary_schema_error:missing_section:{section[3:].lower().replace(' ', '_')}"
+    return None
+
+
+def quality_summary_panel_sha256(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith(_QUALITY_PANEL_SHA_PREFIX):
+            return _normalize_sha256(line.removeprefix(_QUALITY_PANEL_SHA_PREFIX).strip())
     return None
 
 
@@ -721,6 +744,30 @@ def _sha256_text(text: str) -> str:
     import hashlib
 
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _normalize_sha256(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    if stripped.startswith("sha256:"):
+        stripped = stripped.removeprefix("sha256:")
+    if len(stripped) != 64:
+        return None
+    lowered = stripped.lower()
+    if any(ch not in "0123456789abcdef" for ch in lowered):
+        return None
+    return lowered
 
 
 def _workspace_relative(workspace: Path, path: Path) -> str:

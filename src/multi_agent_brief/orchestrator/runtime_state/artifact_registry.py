@@ -58,6 +58,8 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     _stage_is_complete_or_skipped,
 )
 from multi_agent_brief.product.quality_panel import (
+    QualityPanelError,
+    render_quality_summary,
     validate_quality_panel_payload,
     validate_quality_summary_markdown,
 )
@@ -202,7 +204,7 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             yaml.safe_load(text)
         elif fmt == "markdown":
             if artifact_id == "quality_summary":
-                return _validate_quality_summary_markdown(text)
+                return _validate_quality_summary_markdown(text, artifact_path=path)
     except json.JSONDecodeError:
         return ARTIFACT_INVALID, "parse_error"
     except yaml.YAMLError:
@@ -614,10 +616,30 @@ def _validate_quality_panel_payload(payload: Any) -> tuple[str, str]:
     return ARTIFACT_VALID, "experimental_quality_panel"
 
 
-def _validate_quality_summary_markdown(text: str) -> tuple[str, str]:
+def _validate_quality_summary_markdown(text: str, *, artifact_path: Path) -> tuple[str, str]:
     reason = validate_quality_summary_markdown(text)
     if reason:
         return ARTIFACT_INVALID, reason
+    panel_path = artifact_path.with_name("quality_panel.json")
+    if not panel_path.exists():
+        return ARTIFACT_INVALID, "quality_summary_validation_error:quality_panel_missing"
+    try:
+        panel_payload = json.loads(panel_path.read_text(encoding="utf-8"))
+    except OSError:
+        return ARTIFACT_INVALID, "quality_summary_validation_error:quality_panel_unreadable"
+    except json.JSONDecodeError:
+        return ARTIFACT_INVALID, "quality_summary_validation_error:quality_panel_parse_error"
+    if not isinstance(panel_payload, dict):
+        return ARTIFACT_INVALID, "quality_summary_validation_error:quality_panel_invalid:not_object"
+    panel_reason = validate_quality_panel_payload(panel_payload)
+    if panel_reason:
+        return ARTIFACT_INVALID, f"quality_summary_validation_error:quality_panel_invalid:{panel_reason}"
+    try:
+        expected = render_quality_summary(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
+    except QualityPanelError as exc:
+        return ARTIFACT_INVALID, f"quality_summary_validation_error:render:{exc}"
+    if text != expected:
+        return ARTIFACT_INVALID, "quality_summary_validation_error:stale_or_hand_edited"
     return ARTIFACT_VALID, "experimental_quality_summary_markdown"
 
 

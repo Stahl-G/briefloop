@@ -334,10 +334,12 @@ def test_quality_summary_renders_human_markdown_without_authority_claims(tmp_pat
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
 
     panel = write_quality_panel(workspace=ws)
-    markdown = render_quality_summary(panel)
+    panel_sha = _sha256_file(quality_panel_path(ws))
+    markdown = render_quality_summary(panel, quality_panel_sha256=panel_sha)
 
     assert markdown.startswith("# Quality Summary\n")
     assert f"Boundary: {QUALITY_SUMMARY_BOUNDARY}." in markdown
+    assert f"Quality-Panel-SHA256: sha256:{panel_sha}" in markdown
     assert "## Overall" in markdown
     assert "## Source Evidence" in markdown
     assert "## Gates And Reader Clean" in markdown
@@ -357,7 +359,9 @@ def test_quality_summary_write_reads_existing_panel_and_registers_artifact(tmp_p
 
     assert result["path"] == "output/intermediate/quality_summary.md"
     assert quality_summary_path(ws).exists()
-    assert validate_quality_summary_markdown(quality_summary_path(ws).read_text(encoding="utf-8")) is None
+    summary = quality_summary_path(ws).read_text(encoding="utf-8")
+    assert f"Quality-Panel-SHA256: sha256:{_sha256_file(quality_panel_path(ws))}" in summary
+    assert validate_quality_summary_markdown(summary) is None
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
@@ -383,6 +387,7 @@ def test_quality_summary_validator_rejects_release_authority_shape() -> None:
     bad = (
         "# Quality Summary\n\n"
         f"Boundary: {QUALITY_SUMMARY_BOUNDARY}.\n\n"
+        f"Quality-Panel-SHA256: sha256:{'0' * 64}\n\n"
         "## Overall\n\n"
         "- This report is ready to publish.\n\n"
         "## Blocking Issues\n\n- None.\n\n"
@@ -397,6 +402,45 @@ def test_quality_summary_validator_rejects_release_authority_shape() -> None:
     assert validate_quality_summary_markdown(bad) == (
         "quality_summary_schema_error:forbidden_phrase:ready_to_publish"
     )
+
+
+def test_quality_summary_registry_requires_valid_quality_panel_source(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    summary = render_quality_summary(build_quality_panel(ws), quality_panel_sha256="0" * 64)
+    quality_summary_path(ws).write_text(summary, encoding="utf-8")
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_summary_validation_error:quality_panel_missing"
+
+    quality_panel_path(ws).write_text('{"schema_version": "bad"}\n', encoding="utf-8")
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"].startswith(
+        "quality_summary_validation_error:quality_panel_invalid:"
+    )
+
+
+def test_quality_summary_registry_rejects_stale_or_hand_edited_summary(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    write_quality_panel(workspace=ws)
+    write_quality_summary(workspace=ws)
+    panel = _json(quality_panel_path(ws))
+    panel["generated_at"] = "2099-01-01T00:00:00Z"
+    quality_panel_path(ws).write_text(
+        json.dumps(panel, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_summary_validation_error:stale_or_hand_edited"
 
 
 def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_path: Path) -> None:
