@@ -263,7 +263,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.10.1**
+Current version: **v0.10.7**
 
 Current main entrypoints:
 
@@ -272,22 +272,19 @@ Current main entrypoints:
 - Claude command: `/briefloop`
 - compatibility alias: `/mabw`
 
-v0.10.1 adds an experimental Product OS / ReportPack direction, including:
+v0.10.7 releases the accumulated experimental Product OS hardening line, including:
 
-- `ReportSpec`
-- `ReportPack`
-- `ReportTemplate`
-- `PolicyProfile`
-- workspace skeletons
-- delivery / audit bundle manifests
+- `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
+- workspace skeletons and deterministic PolicyProfile resolution
+- delivery / audit bundle manifests and clean bundle archives
 - experimental `evidence_extract` source/scope registration
-- experimental SourceHub Lite setup for local text files, RSS feeds, and
-  runtime web-search handoff tasks
+- experimental SourceHub Lite setup for local files, RSS feeds, and runtime web-search handoff tasks
+- durable source evidence pack materialization and source taxonomy normalization
+- internal release-mode approval records
+- Quality Panel JSON / Markdown / HTML projections and audit-bundle integration
 
-These features are meant to make report types, default policies, and delivery bundles more product-like.
-
-The current development line also includes experimental internal release-mode
-approval records under `[Unreleased]`.
+These features are meant to make report types, source evidence, default policies,
+delivery bundles, and operator quality visibility more product-like.
 
 These features are still metadata, defaults, setup paths, approval records, and
 projection controls. They do not parse PDFs automatically, execute hidden web

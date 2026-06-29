@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.7] — 2026-06-29
+
 ### Added
 
 - **Secret hygiene import command**: added `multi-agent-brief secrets import`

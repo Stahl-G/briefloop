@@ -15,7 +15,7 @@ Formerly **MABW — Multi-Agent Brief Workflow**.
   <a href="docs/roadmap.md">🗺️ Roadmap</a>
 </p>
 
-Current version: **v0.10.1**
+Current version: **v0.10.7**
 Public framing: **BriefLoop / MABW compatibility period**
 Current CLI: `multi-agent-brief` (`briefloop` shell alias also works)
 Current Claude command: `/briefloop` (`/mabw` compatibility alias also works)
@@ -27,23 +27,21 @@ Writer entry: use `/briefloop` in Claude Code (`/mabw` remains a compatibility a
 
 BriefLoop is an **open-source brief-loop engineering harness** for business, research, market, policy, company-tracking, investor-relations, and management-reporting briefs. It is not a prompt that makes AI write faster. It turns recurring briefings into governed loops: source packs, claim ledgers, quality gates, human decisions, structured findings, scoped repairs, regression cases, and release records.
 
-The v0.10.1 release adds the experimental Product OS PolicyProfile layer while
-keeping MABW as the implementation lineage and compatibility surface. Runtime
-commands, the Python package, workspace formats, artifact names, and MABW-080
-experiment IDs remain unchanged.
+The v0.10.7 release ships the accumulated experimental Product OS hardening
+line while keeping MABW as the implementation lineage and compatibility surface.
+Runtime commands, the Python package, workspace formats, artifact names, and
+MABW-080 experiment IDs remain unchanged.
 
-This Product OS layer adds experimental ReportSpec, ReportPack, ReportTemplate,
-PolicyProfile defaults, resolved policy projection, conservative workspace
-skeletons, delivery/audit bundle manifests, a limited deterministic gate
-adapter, and public-safe dogfood fixtures. These are product metadata,
-deterministic-default, and projection controls only; they do not judge industry
-compliance, detect investment advice, verify internet rumors, claim
-IR/disclosure readiness, prove semantic truth, publish reports, or authorize
-release.
-The current development line also includes experimental source setup commands
-for `evidence_extract` and SourceHub Lite; they register or copy explicit
-sources without hidden crawling, span extraction, support judgment, or delivery
-authority.
+This Product OS line adds experimental ReportSpec, ReportPack, ReportTemplate,
+PolicyProfile defaults, workspace skeletons, delivery/audit bundle manifests,
+clean bundle archives, explicit Evidence Extract source/scope registration,
+SourceHub Lite setup commands, durable source evidence pack materialization,
+source taxonomy normalization, internal release-mode approval records, and
+Quality Panel JSON / Markdown / HTML projections. These are product metadata,
+source-materialization, deterministic-default, and projection controls only;
+they do not judge industry compliance, detect investment advice, verify
+internet rumors, claim IR/disclosure readiness, prove semantic truth, publish
+reports, approve delivery, or authorize release.
 
 The v0.9.x experimental support surfaces remain traceability, support-record,
 and proposal controls: Atomic Claim Graph, Evidence Span Registry,
@@ -62,7 +60,7 @@ It is built for:
   <a href="docs/features.md">🧭 Function Map</a> ·
   <a href="docs/reference-runs/v0.7.2-public-solar-integration.md">🔬 Public Run</a> ·
   <a href="docs/reference-runs/v0.7.4-organoid-failure-study.md">🧯 Failure Study</a> ·
-  <a href="docs/releases/v0.10.1.md">📦 v0.10.1</a>
+  <a href="docs/releases/v0.10.7.md">📦 v0.10.7</a>
 </p>
 
 ## Why It Is Worth Looking At 👀
@@ -106,7 +104,7 @@ See [docs/what-mabw-keeps-track-of.md](docs/what-mabw-keeps-track-of.md) for the
 
 - [v0.7.2 public solar integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md): shows Improvement Memory materialization, gate execution, and control-plane closure. It is an integration reference, not proof of output-quality improvement or strict causal effect.
 - [v0.7.4 organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md): a real external research case that exposed the current source-to-claim semantic support boundary. BriefLoop traced how errors propagated; it did not prove semantic correctness.
-- [v0.10.1 release notes](docs/releases/v0.10.1.md): experimental Product OS PolicyProfile layer: ReportSpec/ReportPack registry, workspace skeletons, bundle projection, resolved policy projection, limited deterministic gate adapter, and public-safe dogfood fixtures. It does not provide industry compliance judgment, investment-advice detection, IR readiness, semantic truth, automatic publication, or release authority.
+- [v0.10.7 release notes](docs/releases/v0.10.7.md): experimental Product OS hardening line: ReportPack/Product OS contracts, source evidence materialization, SourceHub/Evidence Extract setup, clean delivery/audit bundles, internal approval records, and Quality Panel projections. It does not provide quality scoring, semantic truth, delivery approval, public release authority, industry compliance judgment, investment-advice detection, or IR readiness.
 - [v0.9.4 release notes](docs/releases/v0.9.4.md): experimental Semantic Assessment Report proposal surface: schema, reference validation, proposal projection, status visibility, and public-safe dogfood fixtures. It does not create support truth, adjudication queues, delivery gates, or release authority. The MABW-080 operator sequence remains documented in the [MABW-080 experiment guide](docs/experiments-080.md).
 - [Evidence Span Registry](docs/evidence-span-registry.md): mainline experimental span schema, source-pack byte binding, archive projection, and Source Appendix trace view. It is not semantic support proof or a support-sufficiency gate.
 - [Claim-Support Matrix](docs/claim-support-matrix.md): mainline experimental support-record schema, cross-artifact validation, and gate/status projection from explicit atom-to-evidence rows. It is not automatic support assessment, truth proof, or release eligibility.
@@ -250,9 +248,9 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 ## Product Boundary 🧱
 
-Current release baseline: v0.10.1
+Current release baseline: v0.10.7
 
-The v0.10.1 release adds the experimental Product OS PolicyProfile layer: ReportSpec / ReportPack / ReportTemplate contracts, conservative workspace skeletons, delivery/audit bundle projection, resolved policy projection, limited deterministic gate adaptation, and public-safe dogfood fixtures. The current development line also includes experimental `evidence_extract` source/scope registration, SourceHub Lite setup commands for local text files, RSS feeds, runtime web-search handoff tasks, and internal release-mode approval records. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. It does not parse PDFs automatically, execute hidden web search or crawling, judge industry compliance, detect investment advice, verify internet rumors, claim IR/disclosure readiness, prove semantic truth, publish reports automatically, or create public release authority.
+The v0.10.7 release adds the accumulated experimental Product OS hardening line: ReportSpec / ReportPack / ReportTemplate contracts, conservative workspace skeletons, delivery/audit bundle projection and clean archives, resolved PolicyProfile projection, limited deterministic gate adaptation, source evidence materialization, Evidence Extract and SourceHub Lite setup commands, internal release-mode approval records, and Quality Panel JSON / Markdown / HTML projections. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. It does not parse PDFs automatically, execute hidden web search or crawling, judge industry compliance, detect investment advice, verify internet rumors, claim IR/disclosure readiness, prove semantic truth, publish reports automatically, approve delivery, or create public release authority.
 
 It is still not an autonomous agent, does not automatically edit brief content, does not automatically learn, does not provide a long-term memory system, and is not an investment advice tool, trading signal generator, or replacement for human review. See [architecture status](docs/architecture-status.md), [roadmap](docs/roadmap.md), and [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md).
 
@@ -423,6 +421,7 @@ See the full [roadmap](docs/roadmap.md). For implemented vs planned capability, 
 [Claim-Support Matrix](docs/claim-support-matrix.md) ·
 [Public integration summary](docs/reference-runs/v0.7.2-public-solar-integration.md) ·
 [Failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md) ·
+[v0.10.7](docs/releases/v0.10.7.md) ·
 [v0.10.1](docs/releases/v0.10.1.md) ·
 [v0.9.4](docs/releases/v0.9.4.md) ·
 [MABW-080 experiment guide](docs/experiments-080.md) ·
