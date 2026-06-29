@@ -372,7 +372,9 @@ def handle_quality(args: argparse.Namespace) -> int:
 def _require_existing_briefloop_workspace(workspace: Path) -> None:
     if not workspace.exists() or not workspace.is_dir():
         raise ValueError(f"workspace does not exist: {workspace}")
-    if not (workspace / "config.yaml").exists() and not (workspace / "output" / "intermediate").exists():
+    if not (workspace / "config.yaml").exists() and not (
+        workspace / "output" / "intermediate" / "runtime_manifest.json"
+    ).exists():
         raise ValueError(f"not a BriefLoop workspace: {workspace}")
 
 

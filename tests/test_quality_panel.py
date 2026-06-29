@@ -419,6 +419,23 @@ def test_quality_summarize_cli_rejects_missing_workspace_without_writing(tmp_pat
     assert not missing.exists()
 
 
+def test_quality_summarize_cli_rejects_output_intermediate_shell_without_writing(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    shell = tmp_path / "not-a-workspace"
+    (shell / "output" / "intermediate").mkdir(parents=True)
+    capsys.readouterr()
+
+    assert main(["quality", "summarize", "--workspace", str(shell), "--json"]) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is False
+    assert "not a BriefLoop workspace" in payload["error"]
+    assert not (shell / "output" / "intermediate" / "quality_panel.json").exists()
+    assert not (shell / "output" / "intermediate" / "quality_summary.md").exists()
+
+
 def test_quality_summary_missing_or_invalid_panel_fails_without_writing(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
 
