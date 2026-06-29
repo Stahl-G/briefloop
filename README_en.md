@@ -248,7 +248,7 @@ See [docs/claude-code-quickstart.md](docs/claude-code-quickstart.md) for the ful
 
 ## Product Boundary 🧱
 
-Current release baseline: v0.10.7
+Current release baseline: v0.11.0
 
 The v0.10.7 release adds the accumulated experimental Product OS hardening line: ReportSpec / ReportPack / ReportTemplate contracts, conservative workspace skeletons, delivery/audit bundle projection and clean archives, resolved PolicyProfile projection, limited deterministic gate adaptation, source evidence materialization, Evidence Extract and SourceHub Lite setup commands, internal release-mode approval records, and Quality Panel JSON / Markdown / HTML projections. It does not rename the CLI, Python package, workspace artifacts, or experiment IDs. It does not parse PDFs automatically, execute hidden web search or crawling, judge industry compliance, detect investment advice, verify internet rumors, claim IR/disclosure readiness, prove semantic truth, publish reports automatically, approve delivery, or create public release authority.
 

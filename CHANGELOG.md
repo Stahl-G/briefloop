@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   closed if product-facing entries, ReportPack defaults, packaged parity, or
   public boundary wording drift. This is still a release-readiness check only;
   it does not promote support status or add runtime authority.
+- **Product-baseline `packs` CLI surface guard**: the v0.11 readiness check now
+  verifies real `packs list --json` and unknown-pack error output expose
+  product-facing entries while preserving canonical internal ReportPack ids.
+  This is a CLI contract check only; it does not rename ReportPack ids or
+  change workspace behavior.
 
 ### Fixed
 
