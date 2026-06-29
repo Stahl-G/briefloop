@@ -20,13 +20,33 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
 QUALITY_PANEL_BOUNDARY = "product_quality_panel_projection_only_not_gate_or_release_authority"
 QUALITY_PANEL_RUNTIME_EFFECT = "projection_only"
+QUALITY_SUMMARY_BOUNDARY = (
+    "deterministic projection of quality_panel.json only; not a quality score, "
+    "not a truth proof, not a gate report replacement, and not a release authorization"
+)
 
 _INTERMEDIATE = Path("output") / "intermediate"
 _BLOCKING_SUPPORT_LABELS = {"unsupported", "contradicted", "insufficient_evidence"}
+_QUALITY_SUMMARY_FORBIDDEN_PHRASES = (
+    "ready to publish",
+    "truth proven",
+    "approved for publication",
+    "approved for release",
+    "release authorized",
+)
+_QUALITY_PANEL_SHA_PREFIX = "Quality-Panel-SHA256: sha256:"
+
+
+class QualityPanelError(ValueError):
+    """Raised when a Quality Panel projection cannot be built or rendered."""
 
 
 def quality_panel_path(workspace: str | Path) -> Path:
     return Path(workspace).expanduser().resolve() / _INTERMEDIATE / "quality_panel.json"
+
+
+def quality_summary_path(workspace: str | Path) -> Path:
+    return Path(workspace).expanduser().resolve() / _INTERMEDIATE / "quality_summary.md"
 
 
 def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
@@ -115,6 +135,125 @@ def write_quality_panel(
     return payload
 
 
+def render_quality_summary(
+    panel_payload: Mapping[str, Any],
+    *,
+    quality_panel_sha256: str,
+) -> str:
+    """Render a compact human-readable summary from a valid Quality Panel payload."""
+
+    reason = validate_quality_panel_payload(panel_payload)
+    if reason:
+        raise QualityPanelError(f"quality_panel invalid: {reason}")
+    panel_sha256 = _normalize_sha256(quality_panel_sha256)
+    if not panel_sha256:
+        raise QualityPanelError("quality_panel_sha256 must be a SHA-256 hex digest.")
+
+    source = panel_payload.get("source_evidence")
+    source = source if isinstance(source, Mapping) else {}
+    gates = panel_payload.get("gates")
+    gates = gates if isinstance(gates, Mapping) else {}
+    claims = panel_payload.get("claims")
+    claims = claims if isinstance(claims, Mapping) else {}
+    delivery = panel_payload.get("delivery")
+    delivery = delivery if isinstance(delivery, Mapping) else {}
+    control = panel_payload.get("control_integrity")
+    control = control if isinstance(control, Mapping) else {}
+    actions = panel_payload.get("recommended_actions")
+    actions = actions if isinstance(actions, list) else []
+
+    lines = [
+        "# Quality Summary",
+        "",
+        f"Boundary: {QUALITY_SUMMARY_BOUNDARY}.",
+        f"{_QUALITY_PANEL_SHA_PREFIX}{panel_sha256}",
+        "",
+        "This summary is a read-only operator view of existing BriefLoop control artifacts.",
+        "Use the source gate reports, artifact registry, event log, and human review records as authority.",
+        "",
+        "## Overall",
+        "",
+        f"- Overall status: `{_text(panel_payload.get('overall_status')) or 'unknown'}`",
+        f"- Run ID: `{_text(panel_payload.get('run_id')) or 'unknown'}`",
+        f"- Runtime effect: `{_text(panel_payload.get('runtime_effect')) or 'unknown'}`",
+        f"- Quality Panel boundary: `{_text(panel_payload.get('boundary')) or 'unknown'}`",
+        "",
+        "## Blocking Issues",
+        "",
+    ]
+    _extend_bullets(lines, _quality_summary_blocking_items(control, gates, claims, delivery))
+    lines.extend(["", "## Warnings", ""])
+    _extend_bullets(lines, _quality_summary_warning_items(source, gates, claims, delivery))
+    lines.extend(["", "## Missing Or Incomplete Surfaces", ""])
+    _extend_bullets(lines, _quality_summary_missing_items(control, source, gates, delivery))
+    lines.extend(["", "## Source Evidence", ""])
+    lines.extend([
+        f"- Source pack status: `{_text(source.get('source_pack_status')) or 'unknown'}`",
+        f"- Durable source records: `{_intish(source.get('source_count'))}`",
+        f"- Missing source titles: `{_intish(source.get('missing_title_count'))}`",
+        f"- Missing publishers/institutions: `{_intish(source.get('missing_publisher_count'))}`",
+        f"- Retrieval source mix: {_inline_mapping(source.get('retrieval_source_mix'))}",
+        f"- Underlying evidence mix: {_inline_mapping(source.get('underlying_evidence_mix'))}",
+        "",
+        "## Gates And Reader Clean",
+        "",
+        f"- Auditor gate: `{_text(gates.get('auditor_status')) or 'unknown'}`",
+        f"- Finalize gate: `{_text(gates.get('finalize_status')) or 'unknown'}`",
+        f"- Gate blocking findings: `{_intish(gates.get('blocking_count'))}`",
+        f"- Gate warnings: `{_intish(gates.get('warning_count'))}`",
+        f"- Reader-clean status: `{_text(delivery.get('reader_clean_status')) or 'unknown'}`",
+        f"- Duplicate citation count: `{_intish(delivery.get('duplicate_citation_count'))}`",
+        f"- Source appendix warnings: `{_intish(delivery.get('source_appendix_warning_count'))}`",
+        "",
+        "## Claims And Support Records",
+        "",
+        f"- Claim count: `{_intish(claims.get('claim_count'))}`",
+        f"- Claim-Support Matrix status: `{_text(claims.get('claim_support_matrix_status')) or 'unknown'}`",
+        f"- Unsupported/contradicted/insufficient support rows: `{_intish(claims.get('unsupported_count'))}`",
+        f"- Weak-support atoms: `{_intish(claims.get('weak_support_count'))}`",
+        "",
+        "## Recommended Next Actions",
+        "",
+    ])
+    _extend_bullets(lines, _quality_summary_action_items(actions))
+    text = "\n".join(lines).rstrip() + "\n"
+    reason = validate_quality_summary_markdown(text)
+    if reason:
+        raise QualityPanelError(f"quality_summary invalid: {reason}")
+    return text
+
+
+def write_quality_summary(
+    *,
+    workspace: str | Path,
+    output_path: str | Path | None = None,
+    panel_payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    ws = Path(workspace).expanduser().resolve()
+    panel_path = quality_panel_path(ws)
+    source_panel_payload = _read_json_mapping(panel_path)
+    if source_panel_payload is None:
+        raise QualityPanelError("quality_panel.json is required before writing quality_summary.md.")
+    if panel_payload is None:
+        panel_payload = source_panel_payload
+    elif dict(panel_payload) != source_panel_payload:
+        raise QualityPanelError("panel_payload must match quality_panel.json before writing quality_summary.md.")
+    text = render_quality_summary(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
+    target = Path(output_path).expanduser() if output_path else quality_summary_path(ws)
+    if not target.is_absolute():
+        target = ws / target
+    target = target.resolve()
+    try:
+        target.relative_to(ws)
+    except ValueError as exc:
+        raise ValueError("quality_summary output must stay inside the workspace.") from exc
+    _write_text_atomic(target, text)
+    return {
+        "path": _workspace_relative(ws, target),
+        "sha256": _sha256_text(text),
+    }
+
+
 def validate_quality_panel_payload(payload: Any) -> str | None:
     if not isinstance(payload, dict):
         return "quality_panel_schema_error:not_object"
@@ -140,6 +279,45 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
     forbidden = {"semantic_truth_proof", "release_eligibility_decision", "delivery_approval"}
     if not forbidden.issubset(set(str(item) for item in payload.get("non_goals", []))):
         return "quality_panel_schema_error:non_goals"
+    return None
+
+
+def validate_quality_summary_markdown(text: Any) -> str | None:
+    if not isinstance(text, str):
+        return "quality_summary_schema_error:not_text"
+    if not text.strip():
+        return "quality_summary_schema_error:empty"
+    if not text.startswith("# Quality Summary\n"):
+        return "quality_summary_schema_error:title"
+    if f"Boundary: {QUALITY_SUMMARY_BOUNDARY}." not in text:
+        return "quality_summary_schema_error:boundary"
+    panel_sha = quality_summary_panel_sha256(text)
+    if not panel_sha:
+        return "quality_summary_schema_error:quality_panel_sha256"
+    lower = text.lower()
+    for phrase in _QUALITY_SUMMARY_FORBIDDEN_PHRASES:
+        if phrase in lower:
+            return f"quality_summary_schema_error:forbidden_phrase:{phrase.replace(' ', '_')}"
+    required_sections = (
+        "## Overall",
+        "## Blocking Issues",
+        "## Warnings",
+        "## Missing Or Incomplete Surfaces",
+        "## Source Evidence",
+        "## Gates And Reader Clean",
+        "## Claims And Support Records",
+        "## Recommended Next Actions",
+    )
+    for section in required_sections:
+        if section not in text:
+            return f"quality_summary_schema_error:missing_section:{section[3:].lower().replace(' ', '_')}"
+    return None
+
+
+def quality_summary_panel_sha256(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith(_QUALITY_PANEL_SHA_PREFIX):
+            return _normalize_sha256(line.removeprefix(_QUALITY_PANEL_SHA_PREFIX).strip())
     return None
 
 
@@ -422,6 +600,117 @@ def _matrix_rows(workspace: Path) -> list[dict[str, Any]]:
     return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
+def _quality_summary_blocking_items(
+    control: Mapping[str, Any],
+    gates: Mapping[str, Any],
+    claims: Mapping[str, Any],
+    delivery: Mapping[str, Any],
+) -> list[str]:
+    items: list[str] = []
+    if _text(control.get("run_integrity")) not in {"", "clean", "unknown"}:
+        items.append(f"Run integrity is `{_text(control.get('run_integrity'))}`.")
+    if _intish(gates.get("blocking_count")) > 0:
+        items.append(f"Quality gates report `{_intish(gates.get('blocking_count'))}` blocking finding(s).")
+    if _gate_status_level(gates.get("auditor_status")) == "block":
+        items.append(f"Auditor gate status is `{_text(gates.get('auditor_status'))}`.")
+    if _gate_status_level(gates.get("finalize_status")) == "block":
+        items.append(f"Finalize gate status is `{_text(gates.get('finalize_status'))}`.")
+    if _text(delivery.get("reader_clean_status")) == "fail":
+        items.append("Reader-clean status is `fail`.")
+    if _intish(claims.get("unsupported_count")) > 0:
+        items.append(
+            "Claim-Support Matrix projection includes "
+            f"`{_intish(claims.get('unsupported_count'))}` unsupported/contradicted/insufficient row(s)."
+        )
+    return items
+
+
+def _quality_summary_warning_items(
+    source: Mapping[str, Any],
+    gates: Mapping[str, Any],
+    claims: Mapping[str, Any],
+    delivery: Mapping[str, Any],
+) -> list[str]:
+    items: list[str] = []
+    if _text(source.get("source_pack_status")) == "invalid":
+        items.append("Durable source evidence pack manifest is invalid.")
+    if _intish(gates.get("warning_count")) > 0:
+        items.append(f"Quality gates report `{_intish(gates.get('warning_count'))}` warning finding(s).")
+    if _gate_status_level(gates.get("auditor_status")) == "warning":
+        items.append("Auditor gate status is `warning`.")
+    if _gate_status_level(gates.get("finalize_status")) == "warning":
+        items.append("Finalize gate status is `warning`.")
+    if _text(claims.get("claim_support_matrix_status")) == "invalid":
+        items.append("Claim-Support Matrix is invalid and is not interpreted as support authority.")
+    if _intish(claims.get("weak_support_count")) > 0:
+        items.append(f"`{_intish(claims.get('weak_support_count'))}` atom(s) have weak-support projection.")
+    if _intish(delivery.get("source_appendix_warning_count")) > 0:
+        items.append(
+            f"Source appendix surfaces `{_intish(delivery.get('source_appendix_warning_count'))}` warning(s)."
+        )
+    return items
+
+
+def _quality_summary_missing_items(
+    control: Mapping[str, Any],
+    source: Mapping[str, Any],
+    gates: Mapping[str, Any],
+    delivery: Mapping[str, Any],
+) -> list[str]:
+    items: list[str] = []
+    if _text(control.get("fact_layer_status")) in {"", "missing", "incomplete"}:
+        items.append(f"Fact layer status is `{_text(control.get('fact_layer_status')) or 'unknown'}`.")
+    if _text(source.get("source_pack_status")) in {"", "missing", "not_available"}:
+        items.append("Durable source evidence pack is missing or not available.")
+    if _gate_status_level(gates.get("auditor_status")) in {"missing", "incomplete"}:
+        items.append(f"Auditor gate status is `{_text(gates.get('auditor_status')) or 'unknown'}`.")
+    if _gate_status_level(gates.get("finalize_status")) in {"missing", "incomplete"}:
+        items.append(f"Finalize gate status is `{_text(gates.get('finalize_status')) or 'unknown'}`.")
+    if _text(delivery.get("reader_clean_status")) != "pass":
+        items.append(f"Reader-clean status is `{_text(delivery.get('reader_clean_status')) or 'unknown'}`.")
+    return items
+
+
+def _quality_summary_action_items(actions: list[Any]) -> list[str]:
+    items: list[str] = []
+    for action in actions:
+        if not isinstance(action, Mapping):
+            continue
+        action_name = _text(action.get("action")) or "unknown_action"
+        reason = _text(action.get("reason")) or "unspecified"
+        items.append(f"`{action_name}` - {reason}.")
+    return items
+
+
+def _extend_bullets(lines: list[str], items: list[str]) -> None:
+    if not items:
+        lines.append("- None reported by `quality_panel.json`.")
+        return
+    for item in items:
+        lines.append(f"- {item}")
+
+
+def _inline_mapping(value: Any) -> str:
+    if not isinstance(value, Mapping) or not value:
+        return "`none`"
+    parts = [
+        f"{_text(key) or str(key)}={_intish(count)}"
+        for key, count in sorted(value.items(), key=lambda item: str(item[0]))
+    ]
+    return "`" + ", ".join(parts) + "`"
+
+
+def _intish(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -435,6 +724,54 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         except OSError:
             pass
         raise
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _sha256_text(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _normalize_sha256(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    if stripped.startswith("sha256:"):
+        stripped = stripped.removeprefix("sha256:")
+    if len(stripped) != 64:
+        return None
+    lowered = stripped.lower()
+    if any(ch not in "0123456789abcdef" for ch in lowered):
+        return None
+    return lowered
+
+
+def _workspace_relative(workspace: Path, path: Path) -> str:
+    return path.resolve().relative_to(workspace.resolve()).as_posix()
 
 
 def _utc_now() -> str:

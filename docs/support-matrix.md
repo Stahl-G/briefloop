@@ -41,7 +41,7 @@ validation unless that is stated separately.
 | Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
-| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, template renderer MVP, SourceHub Lite setup, internal release-mode approval records, Quality Panel projection, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, `solar_industry_periodic`, and `evidence_extract` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `evidence_extract_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, `extract` source/scope registration for evidence_extract workspaces, `sources add-file` / `sources add-rss` / `sources add-web-search` source setup, finalize-time section-order rendering, `approval init/record`, `release check`, optional `quality_panel.json`, and `packs bundle` delivery/audit manifest projection) | Experimental |
+| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, template renderer MVP, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary projection, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, `solar_industry_periodic`, and `evidence_extract` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `evidence_extract_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, `extract` source/scope registration for evidence_extract workspaces, `sources add-file` / `sources add-rss` / `sources add-web-search` source setup, finalize-time section-order rendering, `approval init/record`, `release check`, optional `quality_panel.json` / `quality_summary.md`, and `packs bundle` delivery/audit manifest projection) | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -193,9 +193,11 @@ not publish externally, authorize public release, replace legal/compliance/IR
 owners, or weaken existing gates and human delivery approval requirements.
 Quality Panel projection can summarize existing control integrity, source
 evidence, gate, claim/support, and delivery hygiene surfaces into optional
-`output/intermediate/quality_panel.json`. This is a product-quality projection
-only: it does not run gates, create a quality score, decide release
-eligibility, approve delivery, prove semantic truth, or execute repair.
+`output/intermediate/quality_panel.json`, and Quality Summary can render a
+compact human-readable `output/intermediate/quality_summary.md` from a valid
+panel. These are product-quality projections only: they do not run gates,
+replace gate reports, create a quality score, decide release eligibility,
+approve delivery, prove semantic truth, or execute repair.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not

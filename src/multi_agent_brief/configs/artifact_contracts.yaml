@@ -244,6 +244,21 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
+  - artifact_id: quality_summary
+    path: output/intermediate/quality_summary.md
+    format: markdown
+    required: false
+    producer_kind: control_tool
+    producer_stage: quality-panel
+    producer_role: python_tool
+    consumer_stages: []
+    validation_result: experimental_quality_summary_markdown
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
   - artifact_id: audited_brief
     path: output/intermediate/audited_brief.md
     format: markdown

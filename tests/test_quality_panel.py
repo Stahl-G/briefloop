@@ -9,13 +9,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.product.quality_panel import (
     QUALITY_PANEL_BOUNDARY,
+    QUALITY_SUMMARY_BOUNDARY,
+    QualityPanelError,
     build_quality_panel,
     quality_panel_path,
+    quality_summary_path,
+    render_quality_summary,
     validate_quality_panel_payload,
+    validate_quality_summary_markdown,
     write_quality_panel,
+    write_quality_summary,
 )
 
 
@@ -263,7 +271,11 @@ def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
         [
             sys.executable,
             "-c",
-            "from multi_agent_brief.product.quality_panel import build_quality_panel; print(build_quality_panel)",
+            (
+                "from multi_agent_brief.product.quality_panel import "
+                "build_quality_panel, render_quality_summary; "
+                "print(build_quality_panel, render_quality_summary)"
+            ),
         ],
         check=False,
         cwd=Path.cwd(),
@@ -274,6 +286,7 @@ def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "build_quality_panel" in result.stdout
+    assert "render_quality_summary" in result.stdout
 
 
 def test_quality_panel_builds_incomplete_projection_without_writing(tmp_path: Path) -> None:
@@ -311,6 +324,123 @@ def test_quality_panel_writes_source_gate_claim_summary(tmp_path: Path) -> None:
     assert payload["control_integrity"]["fact_layer_status"] == "complete"
     assert payload["gates"]["auditor_status"] == "pass"
     assert payload["claims"]["claim_count"] == 1
+
+
+def test_quality_summary_renders_human_markdown_without_authority_claims(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    _write_gate_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    panel = write_quality_panel(workspace=ws)
+    panel_sha = _sha256_file(quality_panel_path(ws))
+    markdown = render_quality_summary(panel, quality_panel_sha256=panel_sha)
+
+    assert markdown.startswith("# Quality Summary\n")
+    assert f"Boundary: {QUALITY_SUMMARY_BOUNDARY}." in markdown
+    assert f"Quality-Panel-SHA256: sha256:{panel_sha}" in markdown
+    assert "## Overall" in markdown
+    assert "## Source Evidence" in markdown
+    assert "## Gates And Reader Clean" in markdown
+    assert "## Claims And Support Records" in markdown
+    assert "## Recommended Next Actions" in markdown
+    assert "ready to publish" not in markdown.lower()
+    assert "truth proven" not in markdown.lower()
+    assert "release authorized" not in markdown.lower()
+    assert validate_quality_summary_markdown(markdown) is None
+
+
+def test_quality_summary_write_reads_existing_panel_and_registers_artifact(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    write_quality_panel(workspace=ws)
+
+    result = write_quality_summary(workspace=ws)
+
+    assert result["path"] == "output/intermediate/quality_summary.md"
+    assert quality_summary_path(ws).exists()
+    summary = quality_summary_path(ws).read_text(encoding="utf-8")
+    assert f"Quality-Panel-SHA256: sha256:{_sha256_file(quality_panel_path(ws))}" in summary
+    assert validate_quality_summary_markdown(summary) is None
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "experimental_quality_summary_markdown"
+
+
+def test_quality_summary_missing_or_invalid_panel_fails_without_writing(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+
+    with pytest.raises(QualityPanelError, match="quality_panel.json is required"):
+        write_quality_summary(workspace=ws)
+    assert not quality_summary_path(ws).exists()
+
+    quality_panel_path(ws).write_text('{"schema_version": "bad"}\n', encoding="utf-8")
+    with pytest.raises(QualityPanelError, match="quality_panel invalid"):
+        write_quality_summary(workspace=ws)
+    assert not quality_summary_path(ws).exists()
+
+
+def test_quality_summary_validator_rejects_release_authority_shape() -> None:
+    bad = (
+        "# Quality Summary\n\n"
+        f"Boundary: {QUALITY_SUMMARY_BOUNDARY}.\n\n"
+        f"Quality-Panel-SHA256: sha256:{'0' * 64}\n\n"
+        "## Overall\n\n"
+        "- This report is ready to publish.\n\n"
+        "## Blocking Issues\n\n- None.\n\n"
+        "## Warnings\n\n- None.\n\n"
+        "## Missing Or Incomplete Surfaces\n\n- None.\n\n"
+        "## Source Evidence\n\n- None.\n\n"
+        "## Gates And Reader Clean\n\n- None.\n\n"
+        "## Claims And Support Records\n\n- None.\n\n"
+        "## Recommended Next Actions\n\n- None.\n"
+    )
+
+    assert validate_quality_summary_markdown(bad) == (
+        "quality_summary_schema_error:forbidden_phrase:ready_to_publish"
+    )
+
+
+def test_quality_summary_registry_requires_valid_quality_panel_source(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    summary = render_quality_summary(build_quality_panel(ws), quality_panel_sha256="0" * 64)
+    quality_summary_path(ws).write_text(summary, encoding="utf-8")
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_summary_validation_error:quality_panel_missing"
+
+    quality_panel_path(ws).write_text('{"schema_version": "bad"}\n', encoding="utf-8")
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"].startswith(
+        "quality_summary_validation_error:quality_panel_invalid:"
+    )
+
+
+def test_quality_summary_registry_rejects_stale_or_hand_edited_summary(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    write_quality_panel(workspace=ws)
+    write_quality_summary(workspace=ws)
+    panel = _json(quality_panel_path(ws))
+    panel["generated_at"] = "2099-01-01T00:00:00Z"
+    quality_panel_path(ws).write_text(
+        json.dumps(panel, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_summary_validation_error:stale_or_hand_edited"
 
 
 def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_path: Path) -> None:
@@ -466,18 +596,24 @@ def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     old_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
     write_quality_panel(workspace=ws)
+    write_quality_summary(workspace=ws)
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
 
     assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
 
     intermediate = ws / "output" / "intermediate"
     assert (intermediate / f"quality_panel.{old_run_id}.json").exists()
+    assert (intermediate / f"quality_summary.{old_run_id}.md").exists()
     assert not quality_panel_path(ws).exists()
+    assert not quality_summary_path(ws).exists()
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     registry = _json(intermediate / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel"]
     assert record["status"] == "expected"
     assert record["sha256"] is None
+    summary_record = registry["artifacts"]["quality_summary"]
+    assert summary_record["status"] == "expected"
+    assert summary_record["sha256"] is None
 
 
 def test_quality_panel_surfaces_blocking_gate_and_reader_failure(tmp_path: Path) -> None:

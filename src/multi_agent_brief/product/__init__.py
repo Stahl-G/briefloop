@@ -14,6 +14,12 @@ from multi_agent_brief.product.report_spec import (
     load_report_spec,
     validate_report_spec_payload,
 )
+from multi_agent_brief.product.quality_panel import (
+    quality_summary_path,
+    render_quality_summary,
+    validate_quality_summary_markdown,
+    write_quality_summary,
+)
 
 __all__ = [
     "PolicyProfile",
@@ -24,8 +30,12 @@ __all__ = [
     "aliases_for_report_pack",
     "load_report_spec",
     "recommended_entries_for_pack_ids",
+    "quality_summary_path",
+    "render_quality_summary",
     "resolve_report_pack_id",
+    "validate_quality_summary_markdown",
     "validate_policy_profile_payload",
     "validate_report_pack_payload",
     "validate_report_spec_payload",
+    "write_quality_summary",
 ]

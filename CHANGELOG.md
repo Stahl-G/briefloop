@@ -153,6 +153,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surfaces. This is a machine-readable audit/control summary only; it does not
   run gates, create a quality score, decide release eligibility, approve
   delivery, prove semantic truth, or execute repair.
+- **Quality Summary Markdown projection**: added optional
+  `output/intermediate/quality_summary.md` as a compact human-readable summary
+  rendered from valid `quality_panel.json`. This is an operator-readable
+  projection only; it is not a quality score, gate report replacement, release
+  authorization, delivery approval, truth proof, or repair action.
 
 ### Fixed
 

@@ -112,8 +112,10 @@ breaking rename.
   Experimental Quality Panel projection can write
   `output/intermediate/quality_panel.json` as a machine-readable summary of
   existing control integrity, source evidence, gate, claim/support, and
-  delivery hygiene surfaces. This is a product-quality audit/control
-  projection only: it does not run gates, create a quality score, decide release
+  delivery hygiene surfaces, with optional
+  `output/intermediate/quality_summary.md` as a compact human-readable
+  projection from that panel. These product-quality audit/control projections
+  do not run gates, create a quality score, replace gate reports, decide release
   eligibility, approve delivery, prove semantic truth, or execute repair.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support

@@ -225,8 +225,10 @@ def test_quality_panel_contract_is_optional_product_projection():
 
     for registry in (root_registry, package_registry):
         panel = registry.artifact("quality_panel")
+        summary = registry.artifact("quality_summary")
         finalize_stage = registry.stage("finalize")
         assert panel is not None
+        assert summary is not None
         assert finalize_stage is not None
         assert panel.required is False
         assert panel.producer_kind == "control_tool"
@@ -234,8 +236,16 @@ def test_quality_panel_contract_is_optional_product_projection():
         assert panel.path == "output/intermediate/quality_panel.json"
         assert panel.validation_result == "experimental_quality_panel"
         assert panel.consumer_stages == ()
+        assert summary.required is False
+        assert summary.producer_kind == "control_tool"
+        assert summary.producer_stage == "quality-panel"
+        assert summary.path == "output/intermediate/quality_summary.md"
+        assert summary.validation_result == "experimental_quality_summary_markdown"
+        assert summary.consumer_stages == ()
         assert "quality_panel" not in finalize_stage.produces
         assert "quality_panel" not in finalize_stage.expected_artifacts
+        assert "quality_summary" not in finalize_stage.produces
+        assert "quality_summary" not in finalize_stage.expected_artifacts
 
 
 def test_registry_reports_unknown_expected_artifact(tmp_path: Path):
