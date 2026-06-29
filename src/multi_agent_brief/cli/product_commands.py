@@ -365,7 +365,6 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"  briefloop doctor --config {workspace}/config.yaml")
             print(f"  briefloop run --workspace {workspace}")
         else:
-            print(f"[new] ok: {payload.get('ok')}")
             print(payload.get("error"))
             available = payload.get("available_packs") or []
             if available:
