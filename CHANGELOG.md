@@ -164,6 +164,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command is a deterministic projection writer only; it does not run gates,
   create blockers, start repair, approve delivery, prove truth, or authorize
   release.
+- **Quality Panel static HTML projection**: added optional
+  `output/intermediate/quality_panel.html` as a static, dependency-free audit
+  attachment rendered from valid `quality_panel.json`. The HTML uses inline CSS
+  and no external assets, scripts, frontend runtime, quality score, release
+  authority, delivery approval, truth proof, or gate reimplementation.
 
 ### Fixed
 

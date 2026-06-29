@@ -12,6 +12,7 @@ import os
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
+from html import escape as _html_escape
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -24,6 +25,11 @@ QUALITY_SUMMARY_BOUNDARY = (
     "deterministic projection of quality_panel.json only; not a quality score, "
     "not a truth proof, not a gate report replacement, and not a release authorization"
 )
+QUALITY_PANEL_HTML_BOUNDARY = (
+    "static deterministic projection of quality_panel.json only; not a quality score, "
+    "not a truth proof, not a gate report replacement, not a release authorization, "
+    "and not an interactive frontend"
+)
 
 _INTERMEDIATE = Path("output") / "intermediate"
 _BLOCKING_SUPPORT_LABELS = {"unsupported", "contradicted", "insufficient_evidence"}
@@ -35,6 +41,16 @@ _QUALITY_SUMMARY_FORBIDDEN_PHRASES = (
     "release authorized",
 )
 _QUALITY_PANEL_SHA_PREFIX = "Quality-Panel-SHA256: sha256:"
+_QUALITY_PANEL_HTML_FORBIDDEN_MARKERS = (
+    "<script",
+    "<link",
+    "<iframe",
+    " src=",
+    "src=",
+    "javascript:",
+    " onload=",
+    " onclick=",
+)
 
 
 class QualityPanelError(ValueError):
@@ -47,6 +63,10 @@ def quality_panel_path(workspace: str | Path) -> Path:
 
 def quality_summary_path(workspace: str | Path) -> Path:
     return Path(workspace).expanduser().resolve() / _INTERMEDIATE / "quality_summary.md"
+
+
+def quality_panel_html_path(workspace: str | Path) -> Path:
+    return Path(workspace).expanduser().resolve() / _INTERMEDIATE / "quality_panel.html"
 
 
 def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
@@ -254,6 +274,170 @@ def write_quality_summary(
     }
 
 
+def render_quality_panel_html(
+    panel_payload: Mapping[str, Any],
+    *,
+    quality_panel_sha256: str,
+) -> str:
+    """Render a static, dependency-free Quality Panel HTML audit attachment."""
+
+    reason = validate_quality_panel_payload(panel_payload)
+    if reason:
+        raise QualityPanelError(f"quality_panel invalid: {reason}")
+    panel_sha256 = _normalize_sha256(quality_panel_sha256)
+    if not panel_sha256:
+        raise QualityPanelError("quality_panel_sha256 must be a SHA-256 hex digest.")
+
+    source = panel_payload.get("source_evidence")
+    source = source if isinstance(source, Mapping) else {}
+    gates = panel_payload.get("gates")
+    gates = gates if isinstance(gates, Mapping) else {}
+    claims = panel_payload.get("claims")
+    claims = claims if isinstance(claims, Mapping) else {}
+    delivery = panel_payload.get("delivery")
+    delivery = delivery if isinstance(delivery, Mapping) else {}
+    control = panel_payload.get("control_integrity")
+    control = control if isinstance(control, Mapping) else {}
+    actions = panel_payload.get("recommended_actions")
+    actions = actions if isinstance(actions, list) else []
+    overall_status = _text(panel_payload.get("overall_status")) or "unknown"
+
+    body = "\n".join(
+        [
+            _html_header_card(panel_payload, overall_status=overall_status),
+            _html_metrics_grid(
+                [
+                    ("Gate blockers", _intish(gates.get("blocking_count")), "block"),
+                    ("Gate warnings", _intish(gates.get("warning_count")), "warning"),
+                    (
+                        "Missing/incomplete",
+                        _quality_panel_incomplete_count(control, source, gates, delivery),
+                        "incomplete",
+                    ),
+                    ("Recommended actions", len(actions), "action"),
+                ]
+            ),
+            _html_section(
+                "Control Integrity",
+                [
+                    ("Run integrity", _text(control.get("run_integrity")) or "unknown"),
+                    ("Reference eligible", str(bool(control.get("reference_eligible"))).lower()),
+                    ("Fact layer", _text(control.get("fact_layer_status")) or "unknown"),
+                    ("Runtime effect", _text(panel_payload.get("runtime_effect")) or "unknown"),
+                ],
+            ),
+            _html_section(
+                "Source Evidence",
+                [
+                    ("Source pack", _text(source.get("source_pack_status")) or "unknown"),
+                    ("Durable sources", str(_intish(source.get("source_count")))),
+                    ("Missing titles", str(_intish(source.get("missing_title_count")))),
+                    (
+                        "Missing publishers/institutions",
+                        str(_intish(source.get("missing_publisher_count"))),
+                    ),
+                    ("Retrieval source mix", _inline_mapping(source.get("retrieval_source_mix"))),
+                    ("Underlying evidence mix", _inline_mapping(source.get("underlying_evidence_mix"))),
+                ],
+            ),
+            _html_section(
+                "Gate Findings",
+                [
+                    ("Auditor gate", _text(gates.get("auditor_status")) or "unknown"),
+                    ("Finalize gate", _text(gates.get("finalize_status")) or "unknown"),
+                    ("Blocking findings", str(_intish(gates.get("blocking_count")))),
+                    ("Warning findings", str(_intish(gates.get("warning_count")))),
+                ],
+            ),
+            _html_section(
+                "Claim And Support Risk",
+                [
+                    ("Claim count", str(_intish(claims.get("claim_count")))),
+                    (
+                        "Claim-Support Matrix",
+                        _text(claims.get("claim_support_matrix_status")) or "unknown",
+                    ),
+                    (
+                        "Unsupported / contradicted / insufficient rows",
+                        str(_intish(claims.get("unsupported_count"))),
+                    ),
+                    ("Weak-support atoms", str(_intish(claims.get("weak_support_count")))),
+                ],
+            ),
+            _html_section(
+                "Reader Clean And Citation Hygiene",
+                [
+                    ("Reader-clean status", _text(delivery.get("reader_clean_status")) or "unknown"),
+                    (
+                        "Duplicate citation count",
+                        str(_intish(delivery.get("duplicate_citation_count"))),
+                    ),
+                    (
+                        "Source appendix warnings",
+                        str(_intish(delivery.get("source_appendix_warning_count"))),
+                    ),
+                ],
+            ),
+            _html_actions(actions),
+        ]
+    )
+
+    html = (
+        "<!doctype html>\n"
+        "<html lang=\"en\">\n"
+        "<head>\n"
+        "  <meta charset=\"utf-8\">\n"
+        "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+        f"  <meta name=\"briefloop-boundary\" content=\"{_html(QUALITY_PANEL_HTML_BOUNDARY)}\">\n"
+        "  <title>BriefLoop Quality Panel</title>\n"
+        "  <style>\n"
+        f"{_quality_panel_css()}\n"
+        "  </style>\n"
+        "</head>\n"
+        "<body>\n"
+        f"<!-- {_QUALITY_PANEL_SHA_PREFIX}{panel_sha256} -->\n"
+        f"<!-- Boundary: {_html(QUALITY_PANEL_HTML_BOUNDARY)} -->\n"
+        f"{body}\n"
+        "</body>\n"
+        "</html>\n"
+    )
+    reason = validate_quality_panel_html(html)
+    if reason:
+        raise QualityPanelError(f"quality_panel_html invalid: {reason}")
+    return html
+
+
+def write_quality_panel_html(
+    *,
+    workspace: str | Path,
+    output_path: str | Path | None = None,
+    panel_payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    ws = Path(workspace).expanduser().resolve()
+    panel_path = quality_panel_path(ws)
+    source_panel_payload = _read_json_mapping(panel_path)
+    if source_panel_payload is None:
+        raise QualityPanelError("quality_panel.json is required before writing quality_panel.html.")
+    if panel_payload is None:
+        panel_payload = source_panel_payload
+    elif dict(panel_payload) != source_panel_payload:
+        raise QualityPanelError("panel_payload must match quality_panel.json before writing quality_panel.html.")
+    text = render_quality_panel_html(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
+    target = Path(output_path).expanduser() if output_path else quality_panel_html_path(ws)
+    if not target.is_absolute():
+        target = ws / target
+    target = target.resolve()
+    try:
+        target.relative_to(ws)
+    except ValueError as exc:
+        raise ValueError("quality_panel_html output must stay inside the workspace.") from exc
+    _write_text_atomic(target, text)
+    return {
+        "path": _workspace_relative(ws, target),
+        "sha256": _sha256_text(text),
+    }
+
+
 def validate_quality_panel_payload(payload: Any) -> str | None:
     if not isinstance(payload, dict):
         return "quality_panel_schema_error:not_object"
@@ -314,10 +498,51 @@ def validate_quality_summary_markdown(text: Any) -> str | None:
     return None
 
 
+def validate_quality_panel_html(text: Any) -> str | None:
+    if not isinstance(text, str):
+        return "quality_panel_html_schema_error:not_text"
+    if not text.strip():
+        return "quality_panel_html_schema_error:empty"
+    if not text.startswith("<!doctype html>\n"):
+        return "quality_panel_html_schema_error:doctype"
+    if QUALITY_PANEL_HTML_BOUNDARY not in text:
+        return "quality_panel_html_schema_error:boundary"
+    panel_sha = quality_panel_html_panel_sha256(text)
+    if not panel_sha:
+        return "quality_panel_html_schema_error:quality_panel_sha256"
+    lower = text.lower()
+    for marker in _QUALITY_PANEL_HTML_FORBIDDEN_MARKERS:
+        if marker in lower:
+            return f"quality_panel_html_schema_error:external_or_active_content:{marker.strip('<>= ')}"
+    required_sections = (
+        "<h1>Quality Panel</h1>",
+        "<h2>Control Integrity</h2>",
+        "<h2>Source Evidence</h2>",
+        "<h2>Gate Findings</h2>",
+        "<h2>Claim And Support Risk</h2>",
+        "<h2>Reader Clean And Citation Hygiene</h2>",
+        "<h2>Recommended Next Actions</h2>",
+    )
+    for section in required_sections:
+        if section not in text:
+            return f"quality_panel_html_schema_error:missing_section:{section}"
+    return None
+
+
 def quality_summary_panel_sha256(text: str) -> str | None:
     for line in text.splitlines():
         if line.startswith(_QUALITY_PANEL_SHA_PREFIX):
             return _normalize_sha256(line.removeprefix(_QUALITY_PANEL_SHA_PREFIX).strip())
+    return None
+
+
+def quality_panel_html_panel_sha256(text: str) -> str | None:
+    for line in text.splitlines():
+        if _QUALITY_PANEL_SHA_PREFIX not in line:
+            continue
+        value = line.split(_QUALITY_PANEL_SHA_PREFIX, 1)[1]
+        value = value.split("-->", 1)[0].strip()
+        return _normalize_sha256(value)
     return None
 
 
@@ -680,6 +905,242 @@ def _quality_summary_action_items(actions: list[Any]) -> list[str]:
         reason = _text(action.get("reason")) or "unspecified"
         items.append(f"`{action_name}` - {reason}.")
     return items
+
+
+def _quality_panel_incomplete_count(
+    control: Mapping[str, Any],
+    source: Mapping[str, Any],
+    gates: Mapping[str, Any],
+    delivery: Mapping[str, Any],
+) -> int:
+    count = 0
+    if _text(control.get("fact_layer_status")) in {"", "missing", "incomplete"}:
+        count += 1
+    if _text(source.get("source_pack_status")) in {"", "missing", "not_available"}:
+        count += 1
+    if _gate_status_level(gates.get("auditor_status")) in {"missing", "incomplete"}:
+        count += 1
+    if _gate_status_level(gates.get("finalize_status")) in {"missing", "incomplete"}:
+        count += 1
+    if _text(delivery.get("reader_clean_status")) != "pass":
+        count += 1
+    return count
+
+
+def _html_header_card(panel_payload: Mapping[str, Any], *, overall_status: str) -> str:
+    status_class = _html_status_class(overall_status)
+    run_id = _text(panel_payload.get("run_id")) or "unknown"
+    generated_at = _text(panel_payload.get("generated_at")) or "unknown"
+    return (
+        "<header class=\"panel-hero\">\n"
+        "  <div>\n"
+        "    <p class=\"eyebrow\">BriefLoop audit attachment</p>\n"
+        "    <h1>Quality Panel</h1>\n"
+        "    <p class=\"boundary\">"
+        f"{_html(QUALITY_PANEL_HTML_BOUNDARY)}"
+        "</p>\n"
+        "  </div>\n"
+        f"  <div class=\"status-pill {status_class}\">{_html(overall_status)}</div>\n"
+        f"  <dl class=\"hero-meta\"><dt>Run ID</dt><dd>{_html(run_id)}</dd>"
+        f"<dt>Generated</dt><dd>{_html(generated_at)}</dd></dl>\n"
+        "</header>"
+    )
+
+
+def _html_metrics_grid(metrics: list[tuple[str, int, str]]) -> str:
+    cards = []
+    for label, value, kind in metrics:
+        cards.append(
+            "  <div class=\"metric-card\">"
+            f"<span>{_html(label)}</span>"
+            f"<strong class=\"metric-{_html_status_class(kind)}\">{value}</strong>"
+            "</div>"
+        )
+    return "<section class=\"metric-grid\" aria-label=\"Quality metrics\">\n" + "\n".join(cards) + "\n</section>"
+
+
+def _html_section(title: str, rows: list[tuple[str, str]]) -> str:
+    items = []
+    for label, value in rows:
+        items.append(
+            "      <tr>"
+            f"<th scope=\"row\">{_html(label)}</th>"
+            f"<td>{_html_inline_value(value)}</td>"
+            "</tr>"
+        )
+    return (
+        "<section class=\"panel-section\">\n"
+        f"  <h2>{_html(title)}</h2>\n"
+        "  <table>\n"
+        "    <tbody>\n"
+        + "\n".join(items)
+        + "\n"
+        "    </tbody>\n"
+        "  </table>\n"
+        "</section>"
+    )
+
+
+def _html_actions(actions: list[Any]) -> str:
+    items = []
+    for action in actions:
+        if not isinstance(action, Mapping):
+            continue
+        action_name = _text(action.get("action")) or "unknown_action"
+        reason = _text(action.get("reason")) or "unspecified"
+        items.append(
+            "<li>"
+            f"<strong>{_html(action_name)}</strong>"
+            f"<span>{_html(reason)}</span>"
+            "</li>"
+        )
+    if not items:
+        items.append("<li><strong>none</strong><span>No recommended action reported by quality_panel.json.</span></li>")
+    return (
+        "<section class=\"panel-section actions\">\n"
+        "  <h2>Recommended Next Actions</h2>\n"
+        "  <ul>\n"
+        + "\n".join(f"    {item}" for item in items)
+        + "\n"
+        "  </ul>\n"
+        "</section>"
+    )
+
+
+def _html_inline_value(value: str) -> str:
+    stripped = value.strip()
+    if stripped.startswith("`") and stripped.endswith("`"):
+        return f"<code>{_html(stripped.strip('`'))}</code>"
+    return _html(stripped)
+
+
+def _html(value: Any) -> str:
+    return _html_escape(str(value), quote=True)
+
+
+def _html_status_class(value: Any) -> str:
+    raw = _text(value).lower().replace("_", "-")
+    safe = "".join(ch for ch in raw if ch.isalnum() or ch == "-").strip("-")
+    return safe or "unknown"
+
+
+def _quality_panel_css() -> str:
+    return """    :root {
+      color-scheme: light;
+      --ink: #1f2937;
+      --muted: #667085;
+      --line: #d0d5dd;
+      --panel: #ffffff;
+      --bg: #f6f7f9;
+      --pass: #067647;
+      --warning: #b54708;
+      --block: #b42318;
+      --incomplete: #475467;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .panel-hero, .panel-section, .metric-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .panel-hero {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 20px;
+      padding: 24px;
+      margin: 0 0 16px;
+    }
+    .eyebrow {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    h1, h2 { margin: 0; line-height: 1.2; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 18px; margin-bottom: 14px; }
+    .boundary { max-width: 760px; color: var(--muted); margin: 10px 0 0; }
+    .status-pill {
+      align-self: start;
+      min-width: 112px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      text-align: center;
+      font-weight: 700;
+      color: #fff;
+      background: var(--incomplete);
+    }
+    .status-pill.pass, .metric-pass { background: var(--pass); color: #fff; }
+    .status-pill.warning, .metric-warning { background: var(--warning); color: #fff; }
+    .status-pill.block, .metric-block { background: var(--block); color: #fff; }
+    .status-pill.incomplete, .metric-incomplete { background: var(--incomplete); color: #fff; }
+    .hero-meta {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      column-gap: 10px;
+      row-gap: 2px;
+      margin: 0;
+      color: var(--muted);
+    }
+    .hero-meta dt { font-weight: 700; }
+    .hero-meta dd { margin: 0; overflow-wrap: anywhere; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .metric-card { padding: 16px; }
+    .metric-card span { display: block; color: var(--muted); margin-bottom: 8px; }
+    .metric-card strong {
+      display: inline-flex;
+      min-width: 44px;
+      min-height: 36px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      color: var(--ink);
+      background: #eef2f6;
+    }
+    .panel-section { padding: 20px; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 0; border-top: 1px solid #eaecf0; text-align: left; vertical-align: top; }
+    th { width: 36%; color: var(--muted); font-weight: 650; padding-right: 16px; }
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #eef2f6;
+      color: #344054;
+    }
+    .actions ul { list-style: none; padding: 0; margin: 0; }
+    .actions li {
+      display: grid;
+      grid-template-columns: minmax(160px, 260px) 1fr;
+      gap: 12px;
+      padding: 10px 0;
+      border-top: 1px solid #eaecf0;
+    }
+    .actions span { color: var(--muted); }
+    @media (max-width: 720px) {
+      body { padding: 16px; }
+      .panel-hero { grid-template-columns: 1fr; }
+      .actions li { grid-template-columns: 1fr; }
+      th, td { display: block; width: 100%; }
+      th { padding-bottom: 2px; }
+      td { padding-top: 0; }
+    }"""
 
 
 def _extend_bullets(lines: list[str], items: list[str]) -> None:

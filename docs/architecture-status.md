@@ -114,8 +114,10 @@ breaking rename.
   existing control integrity, source evidence, gate, claim/support, and
   delivery hygiene surfaces, with optional
   `output/intermediate/quality_summary.md` as a compact human-readable
-  projection from that panel. The experimental `quality summarize` command can
-  write both artifacts together. These product-quality audit/control
+  projection from that panel and optional
+  `output/intermediate/quality_panel.html` as a static no-JavaScript audit
+  attachment. The experimental `quality summarize` command can
+  write these artifacts together. These product-quality audit/control
   projections do not run gates, create a quality score, replace gate reports,
   decide release eligibility, approve delivery, prove semantic truth, or execute
   repair.

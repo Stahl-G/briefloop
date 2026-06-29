@@ -26,6 +26,7 @@ from multi_agent_brief.product.quality_panel import (
     QualityPanelError,
     quality_panel_path,
     write_quality_panel,
+    write_quality_panel_html,
     write_quality_summary,
 )
 from multi_agent_brief.product.report_pack_aliases import (
@@ -174,7 +175,7 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
 
     summarize_parser = actions.add_parser(
         "summarize",
-        help="Write quality_panel.json and quality_summary.md for operator review.",
+        help="Write Quality Panel JSON, Markdown, and static HTML projection artifacts.",
     )
     summarize_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
     summarize_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
@@ -337,6 +338,7 @@ def handle_quality(args: argparse.Namespace) -> int:
         _require_existing_briefloop_workspace(workspace)
         panel = write_quality_panel(workspace=workspace)
         summary = write_quality_summary(workspace=workspace, panel_payload=panel)
+        html = write_quality_panel_html(workspace=workspace, panel_payload=panel)
     except (QualityPanelError, OSError, ValueError, json.JSONDecodeError) as exc:
         payload = {
             "ok": False,
@@ -353,6 +355,8 @@ def handle_quality(args: argparse.Namespace) -> int:
         "quality_panel": _workspace_relative(workspace, quality_panel_path(workspace)),
         "quality_summary": summary["path"],
         "quality_summary_sha256": summary["sha256"],
+        "quality_panel_html": html["path"],
+        "quality_panel_html_sha256": html["sha256"],
         "overall_status": panel.get("overall_status"),
         "recommended_actions": panel.get("recommended_actions", []),
         "boundary": "quality_projection_only_not_gate_or_release_authority",
@@ -481,6 +485,7 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"workspace: {payload.get('workspace')}")
             print(f"quality_panel: {payload.get('quality_panel')}")
             print(f"quality_summary: {payload.get('quality_summary')}")
+            print(f"quality_panel_html: {payload.get('quality_panel_html')}")
             print(f"overall_status: {payload.get('overall_status')}")
             actions = payload.get("recommended_actions")
             action_count = len(actions) if isinstance(actions, list) else 0

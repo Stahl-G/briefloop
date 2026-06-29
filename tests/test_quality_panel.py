@@ -13,16 +13,21 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.product.quality_panel import (
+    QUALITY_PANEL_HTML_BOUNDARY,
     QUALITY_PANEL_BOUNDARY,
     QUALITY_SUMMARY_BOUNDARY,
     QualityPanelError,
     build_quality_panel,
+    quality_panel_html_path,
     quality_panel_path,
+    render_quality_panel_html,
     quality_summary_path,
+    validate_quality_panel_html,
     render_quality_summary,
     validate_quality_panel_payload,
     validate_quality_summary_markdown,
     write_quality_panel,
+    write_quality_panel_html,
     write_quality_summary,
 )
 
@@ -273,8 +278,8 @@ def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
             "-c",
             (
                 "from multi_agent_brief.product.quality_panel import "
-                "build_quality_panel, render_quality_summary; "
-                "print(build_quality_panel, render_quality_summary)"
+                "build_quality_panel, render_quality_panel_html, render_quality_summary; "
+                "print(build_quality_panel, render_quality_panel_html, render_quality_summary)"
             ),
         ],
         check=False,
@@ -286,6 +291,7 @@ def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "build_quality_panel" in result.stdout
+    assert "render_quality_panel_html" in result.stdout
     assert "render_quality_summary" in result.stdout
 
 
@@ -370,6 +376,57 @@ def test_quality_summary_write_reads_existing_panel_and_registers_artifact(tmp_p
     assert record["validation_result"] == "experimental_quality_summary_markdown"
 
 
+def test_quality_panel_html_renders_static_audit_attachment_without_external_assets(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    _write_gate_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    panel = write_quality_panel(workspace=ws)
+
+    html = render_quality_panel_html(panel, quality_panel_sha256=_sha256_file(quality_panel_path(ws)))
+
+    assert html.startswith("<!doctype html>\n")
+    assert QUALITY_PANEL_HTML_BOUNDARY in html
+    assert f"Quality-Panel-SHA256: sha256:{_sha256_file(quality_panel_path(ws))}" in html
+    assert "<h1>Quality Panel</h1>" in html
+    assert "<h2>Control Integrity</h2>" in html
+    assert "<h2>Source Evidence</h2>" in html
+    assert "<h2>Gate Findings</h2>" in html
+    assert "<h2>Claim And Support Risk</h2>" in html
+    assert "<h2>Reader Clean And Citation Hygiene</h2>" in html
+    assert "<h2>Recommended Next Actions</h2>" in html
+    lower = html.lower()
+    assert "<script" not in lower
+    assert "<link" not in lower
+    assert " src=" not in lower
+    assert "http://" not in lower
+    assert "https://" not in lower
+    assert "ready to publish" not in lower
+    assert "truth proven" not in lower
+    assert "release authorized" not in lower
+    assert validate_quality_panel_html(html) is None
+
+
+def test_quality_panel_html_write_reads_existing_panel_and_registers_artifact(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    write_quality_panel(workspace=ws)
+
+    result = write_quality_panel_html(workspace=ws)
+
+    assert result["path"] == "output/intermediate/quality_panel.html"
+    assert quality_panel_html_path(ws).exists()
+    html = quality_panel_html_path(ws).read_text(encoding="utf-8")
+    assert f"Quality-Panel-SHA256: sha256:{_sha256_file(quality_panel_path(ws))}" in html
+    assert validate_quality_panel_html(html) is None
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_panel_html"]
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "experimental_quality_panel_html"
+
+
 def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     capsys.readouterr()
@@ -380,15 +437,19 @@ def test_quality_summarize_cli_writes_panel_and_summary_json(tmp_path: Path, cap
     assert payload["ok"] is True
     assert payload["quality_panel"] == "output/intermediate/quality_panel.json"
     assert payload["quality_summary"] == "output/intermediate/quality_summary.md"
+    assert payload["quality_panel_html"] == "output/intermediate/quality_panel.html"
     assert payload["boundary"] == "quality_projection_only_not_gate_or_release_authority"
     assert "not_release_authorization" in payload["non_claims"]
     assert quality_panel_path(ws).exists()
     assert quality_summary_path(ws).exists()
+    assert quality_panel_html_path(ws).exists()
     assert validate_quality_summary_markdown(quality_summary_path(ws).read_text(encoding="utf-8")) is None
+    assert validate_quality_panel_html(quality_panel_html_path(ws).read_text(encoding="utf-8")) is None
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     assert registry["artifacts"]["quality_panel"]["status"] == "valid"
     assert registry["artifacts"]["quality_summary"]["status"] == "valid"
+    assert registry["artifacts"]["quality_panel_html"]["status"] == "valid"
 
 
 def test_quality_summarize_cli_human_output_keeps_projection_boundary(tmp_path: Path, capsys) -> None:
@@ -400,6 +461,7 @@ def test_quality_summarize_cli_human_output_keeps_projection_boundary(tmp_path: 
 
     assert "quality_panel: output/intermediate/quality_panel.json" in output
     assert "quality_summary: output/intermediate/quality_summary.md" in output
+    assert "quality_panel_html: output/intermediate/quality_panel.html" in output
     assert "quality projection only" in output
     assert "no gates were run" in output
     assert "no release was authorized" in output
@@ -434,6 +496,7 @@ def test_quality_summarize_cli_rejects_output_intermediate_shell_without_writing
     assert "not a BriefLoop workspace" in payload["error"]
     assert not (shell / "output" / "intermediate" / "quality_panel.json").exists()
     assert not (shell / "output" / "intermediate" / "quality_summary.md").exists()
+    assert not (shell / "output" / "intermediate" / "quality_panel.html").exists()
 
 
 def test_quality_summary_missing_or_invalid_panel_fails_without_writing(tmp_path: Path) -> None:
@@ -520,6 +583,67 @@ def test_quality_summary_registry_rejects_stale_or_hand_edited_summary(tmp_path:
     record = registry["artifacts"]["quality_summary"]
     assert record["status"] == "invalid"
     assert record["validation_result"] == "quality_summary_validation_error:stale_or_hand_edited"
+
+
+def test_quality_panel_html_missing_or_invalid_panel_fails_without_writing(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+
+    with pytest.raises(QualityPanelError, match="quality_panel.json is required"):
+        write_quality_panel_html(workspace=ws)
+    assert not quality_panel_html_path(ws).exists()
+
+    quality_panel_path(ws).write_text('{"schema_version": "bad"}\n', encoding="utf-8")
+    with pytest.raises(QualityPanelError, match="quality_panel invalid"):
+        write_quality_panel_html(workspace=ws)
+    assert not quality_panel_html_path(ws).exists()
+
+
+def test_quality_panel_html_registry_requires_valid_quality_panel_source(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    html = render_quality_panel_html(build_quality_panel(ws), quality_panel_sha256="0" * 64)
+    quality_panel_html_path(ws).write_text(html, encoding="utf-8")
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_panel_html"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_panel_html_validation_error:quality_panel_missing"
+
+    quality_panel_path(ws).write_text('{"schema_version": "bad"}\n', encoding="utf-8")
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_panel_html"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"].startswith(
+        "quality_panel_html_validation_error:quality_panel_invalid:"
+    )
+
+
+def test_quality_panel_html_registry_treats_invalid_utf8_panel_as_invalid(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    html = render_quality_panel_html(build_quality_panel(ws), quality_panel_sha256="0" * 64)
+    quality_panel_html_path(ws).write_text(html, encoding="utf-8")
+    quality_panel_path(ws).write_bytes(b"\xff\xfe\x00")
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_panel_html"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_panel_html_validation_error:quality_panel_unreadable"
+
+
+def test_quality_panel_html_registry_rejects_stale_or_hand_edited_html(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    write_quality_panel(workspace=ws)
+    write_quality_panel_html(workspace=ws)
+    html = quality_panel_html_path(ws).read_text(encoding="utf-8")
+    quality_panel_html_path(ws).write_text(html.replace("Quality Panel", "Quality Panel Edited", 1), encoding="utf-8")
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_panel_html"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_panel_html_validation_error:stale_or_hand_edited"
 
 
 def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_path: Path) -> None:
@@ -676,6 +800,7 @@ def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
     old_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
     write_quality_panel(workspace=ws)
     write_quality_summary(workspace=ws)
+    write_quality_panel_html(workspace=ws)
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
 
     assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
@@ -683,8 +808,10 @@ def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
     intermediate = ws / "output" / "intermediate"
     assert (intermediate / f"quality_panel.{old_run_id}.json").exists()
     assert (intermediate / f"quality_summary.{old_run_id}.md").exists()
+    assert (intermediate / f"quality_panel.{old_run_id}.html").exists()
     assert not quality_panel_path(ws).exists()
     assert not quality_summary_path(ws).exists()
+    assert not quality_panel_html_path(ws).exists()
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     registry = _json(intermediate / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel"]
@@ -693,6 +820,9 @@ def test_runtime_reset_archives_prior_run_quality_panel(tmp_path: Path) -> None:
     summary_record = registry["artifacts"]["quality_summary"]
     assert summary_record["status"] == "expected"
     assert summary_record["sha256"] is None
+    html_record = registry["artifacts"]["quality_panel_html"]
+    assert html_record["status"] == "expected"
+    assert html_record["sha256"] is None
 
 
 def test_quality_panel_surfaces_blocking_gate_and_reader_failure(tmp_path: Path) -> None:
