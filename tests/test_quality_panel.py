@@ -283,6 +283,25 @@ def _write_gate_report(
     )
 
 
+def _write_legacy_quality_gate_report(
+    ws: Path,
+    *,
+    status: str = "pass",
+    stage: str = "finalize",
+    findings: list[dict] | None = None,
+) -> None:
+    payload = {
+        "schema_version": "mabw.quality_gate_report.v1",
+        "status": status,
+        "findings": findings or [],
+        "metadata": {"gate_stage_id": stage},
+    }
+    (ws / "output" / "intermediate" / "quality_gate_report.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_finalize_report(
     ws: Path,
     *,
@@ -731,6 +750,36 @@ def test_quality_panel_stays_incomplete_before_finalize_and_reader_hygiene(tmp_p
         "action": "complete_finalize_delivery_hygiene",
         "reason": "finalize_or_reader_clean_missing",
     } in payload["recommended_actions"]
+
+
+def test_quality_panel_distinguishes_legacy_gate_report_from_missing_scoped_reports(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    _write_legacy_quality_gate_report(ws, status="pass", stage="finalize")
+    _write_finalize_report(ws, reader_status="pass")
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    _set_workflow_unblocked(ws)
+
+    payload = build_quality_panel(ws)
+
+    assert payload["gates"]["auditor_status"] == "missing"
+    assert payload["gates"]["finalize_status"] == "missing"
+    assert payload["gates"]["auditor_report_status"] == "missing_scoped_report"
+    assert payload["gates"]["finalize_report_status"] == "missing_scoped_report"
+    assert payload["gates"]["legacy_quality_gate_present"] is True
+    assert payload["gates"]["legacy_quality_gate_status"] == "pass"
+    assert payload["gates"]["legacy_quality_gate_stage"] == "finalize"
+    assert payload["delivery"]["reader_clean_status"] == "pass"
+    assert payload["overall_status"] == "incomplete"
+    assert {
+        "action": "regenerate_scoped_gate_reports",
+        "reason": "scoped_quality_gate_reports_missing",
+    } in payload["recommended_actions"]
+    assert {
+        "action": "complete_finalize_delivery_hygiene",
+        "reason": "finalize_or_reader_clean_missing",
+    } not in payload["recommended_actions"]
 
 
 def test_quality_panel_does_not_interpret_invalid_claim_support_matrix_rows(tmp_path: Path) -> None:

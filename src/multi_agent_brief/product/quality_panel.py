@@ -219,6 +219,7 @@ def render_quality_summary(
         "",
         f"- Auditor gate: `{_text(gates.get('auditor_status')) or 'unknown'}`",
         f"- Finalize gate: `{_text(gates.get('finalize_status')) or 'unknown'}`",
+        f"- Legacy/latest gate report: `{_text(gates.get('legacy_quality_gate_status')) or 'missing'}`",
         f"- Gate blocking findings: `{_intish(gates.get('blocking_count'))}`",
         f"- Gate warnings: `{_intish(gates.get('warning_count'))}`",
         f"- Reader-clean status: `{_text(delivery.get('reader_clean_status')) or 'unknown'}`",
@@ -345,6 +346,10 @@ def render_quality_panel_html(
                 [
                     ("Auditor gate", _text(gates.get("auditor_status")) or "unknown"),
                     ("Finalize gate", _text(gates.get("finalize_status")) or "unknown"),
+                    (
+                        "Legacy/latest gate",
+                        _text(gates.get("legacy_quality_gate_status")) or "missing",
+                    ),
                     ("Blocking findings", str(_intish(gates.get("blocking_count")))),
                     ("Warning findings", str(_intish(gates.get("warning_count")))),
                 ],
@@ -587,18 +592,30 @@ def _source_evidence_summary(workspace: Path, artifacts: Mapping[str, Any]) -> d
 def _gate_summary(workspace: Path) -> dict[str, Any]:
     auditor = _gate_file_summary(workspace / _INTERMEDIATE / "gates" / "auditor_quality_gate_report.json")
     finalize = _gate_file_summary(workspace / _INTERMEDIATE / "gates" / "finalize_quality_gate_report.json")
+    legacy = _gate_file_summary(workspace / _INTERMEDIATE / "quality_gate_report.json")
     return {
         "auditor_status": auditor["status"],
         "finalize_status": finalize["status"],
+        "auditor_report_status": _scoped_gate_report_status(auditor),
+        "finalize_report_status": _scoped_gate_report_status(finalize),
+        "legacy_quality_gate_present": legacy["present"],
+        "legacy_quality_gate_status": legacy["status"],
+        "legacy_quality_gate_stage": legacy["stage"],
         "blocking_count": auditor["blocking_count"] + finalize["blocking_count"],
         "warning_count": auditor["warning_count"] + finalize["warning_count"],
     }
 
 
-def _gate_file_summary(path: Path) -> dict[str, int | str]:
+def _gate_file_summary(path: Path) -> dict[str, bool | int | str]:
     payload = _read_json_mapping(path)
     if payload is None:
-        return {"status": "missing", "blocking_count": 0, "warning_count": 0}
+        return {
+            "present": False,
+            "status": "missing",
+            "stage": "",
+            "blocking_count": 0,
+            "warning_count": 0,
+        }
     findings = payload.get("findings") if isinstance(payload.get("findings"), list) else []
     blocking = 0
     warning = 0
@@ -609,8 +626,20 @@ def _gate_file_summary(path: Path) -> dict[str, int | str]:
             blocking += 1
         else:
             warning += 1
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
     status = _text(payload.get("status")) or "unknown"
-    return {"status": status, "blocking_count": blocking, "warning_count": warning}
+    stage = _text(metadata.get("gate_stage_id")) or _text(payload.get("stage")) or _text(payload.get("gate_stage"))
+    return {
+        "present": True,
+        "status": status,
+        "stage": stage,
+        "blocking_count": blocking,
+        "warning_count": warning,
+    }
+
+
+def _scoped_gate_report_status(summary: Mapping[str, Any]) -> str:
+    return "present" if summary.get("present") is True else "missing_scoped_report"
 
 
 def _claim_summary(
@@ -742,10 +771,14 @@ def _recommended_actions(
             "action": "resolve_quality_gate_blockers",
             "reason": "quality_gate_status_failed",
         })
-    if (
-        gate_levels["finalize"] in {"missing", "incomplete"}
-        or _text(delivery.get("reader_clean_status")) in {"", "missing", "unknown", "invalid"}
-    ):
+    scoped_reports_missing = any(level in {"missing", "incomplete"} for level in gate_levels.values())
+    reader_clean_missing = _text(delivery.get("reader_clean_status")) in {"", "missing", "unknown", "invalid"}
+    if scoped_reports_missing and not reader_clean_missing:
+        actions.append({
+            "action": "regenerate_scoped_gate_reports",
+            "reason": "scoped_quality_gate_reports_missing",
+        })
+    elif scoped_reports_missing or reader_clean_missing:
         actions.append({
             "action": "complete_finalize_delivery_hygiene",
             "reason": "finalize_or_reader_clean_missing",
@@ -891,6 +924,14 @@ def _quality_summary_missing_items(
         items.append(f"Auditor gate status is `{_text(gates.get('auditor_status')) or 'unknown'}`.")
     if _gate_status_level(gates.get("finalize_status")) in {"missing", "incomplete"}:
         items.append(f"Finalize gate status is `{_text(gates.get('finalize_status')) or 'unknown'}`.")
+    if gates.get("legacy_quality_gate_present") is True:
+        legacy_status = _text(gates.get("legacy_quality_gate_status")) or "unknown"
+        legacy_stage = _text(gates.get("legacy_quality_gate_stage")) or "unknown"
+        items.append(
+            "Legacy/latest quality gate report is present "
+            f"with status `{legacy_status}` and stage `{legacy_stage}`; "
+            "scoped gate reports are still tracked separately."
+        )
     if _text(delivery.get("reader_clean_status")) != "pass":
         items.append(f"Reader-clean status is `{_text(delivery.get('reader_clean_status')) or 'unknown'}`.")
     return items
