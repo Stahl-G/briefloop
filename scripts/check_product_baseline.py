@@ -60,11 +60,29 @@ REQUIRED_CONTROL_SPINE = {
     "frozen_artifact_integrity",
 }
 REQUIRED_DOC_BOUNDARY_PHRASES = {
+    "README.md": [
+        "Writer entry:",
+        "runtime",
+        "do not parse PDFs automatically",
+        "prove semantic truth",
+        "publish reports",
+        "authorize public release",
+        "The system does not publish or bypass review",
+    ],
     "README_en.md": [
         "does not parse PDFs automatically",
         "prove semantic truth",
         "approve delivery",
         "create public release authority",
+    ],
+    "README.zh-CN.md": [
+        "写作入口",
+        "不自动发布报告",
+        "不绕过人工审核",
+        "不保证来源语义上支持每个子主张",
+        "自动解析 PDF",
+        "授权公开发布",
+        "系统不自动发布、不绕过人",
     ],
     "docs/roadmap.md": [
         "v0.11.0 — Stable Weekly/Monthly Brief Product",

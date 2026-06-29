@@ -51,7 +51,10 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert payload["runtime_effect"] == "readiness_check_only"
     assert "support_status_promotion" in payload["non_goals"]
     assert "release_authority" in payload["non_goals"]
+    assert checks["docs.README.md"]["status"] == "pass"
     assert checks["docs.README_en.md.current_release_baseline"]["status"] == "pass"
+    assert checks["docs.README_en.md"]["status"] == "pass"
+    assert checks["docs.README.zh-CN.md"]["status"] == "pass"
     assert checks["new.industry-weekly"]["status"] == "pass"
     assert "report_pack=market_weekly" in checks["new.industry-weekly"]["detail"]
     assert checks["new.management-monthly"]["status"] == "pass"

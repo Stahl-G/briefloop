@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   product-facing entries while preserving canonical internal ReportPack ids.
   This is a CLI contract check only; it does not rename ReportPack ids or
   change workspace behavior.
+- **Product-baseline README boundary guard**: the v0.11 readiness check now
+  verifies the primary, English, and Simplified Chinese README files keep
+  runtime-dependence and non-goal language aligned before release prep. This is
+  a public-claim guard only; it does not change support status or product
+  behavior.
 
 ### Fixed
 
