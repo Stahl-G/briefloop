@@ -31,6 +31,7 @@ from multi_agent_brief.product.report_pack_aliases import (  # noqa: E402
     aliases_for_report_pack,
 )
 
+BASELINE_TARGET = "v0.11.0"
 EXPECTED_PRODUCT_ENTRIES = {
     "industry-weekly": "market_weekly",
     "management-monthly": "management_monthly",
@@ -60,8 +61,6 @@ REQUIRED_CONTROL_SPINE = {
 }
 REQUIRED_DOC_BOUNDARY_PHRASES = {
     "README_en.md": [
-        "Current release baseline:",
-        "v0.11.0",
         "does not parse PDFs automatically",
         "prove semantic truth",
         "approve delivery",
@@ -90,6 +89,7 @@ def main() -> int:
     checks: list[dict[str, str]] = []
     _check_report_pack_configs(checks)
     _check_product_entries(checks)
+    _check_packs_cli_surface(checks)
     _check_workspace_creation(checks)
     _check_cli_and_docs_boundaries(checks)
     _check_reference_run_surface(checks)
@@ -98,7 +98,7 @@ def main() -> int:
     payload = {
         "ok": ok,
         "schema_version": "briefloop.product_baseline_check.v1",
-        "baseline_target": "v0.11.0",
+        "baseline_target": BASELINE_TARGET,
         "runtime_effect": "readiness_check_only",
         "checks": checks,
         "non_goals": [
@@ -189,6 +189,78 @@ def _check_product_entries(checks: list[dict[str, str]]) -> None:
         )
 
 
+def _check_packs_cli_surface(checks: list[dict[str, str]]) -> None:
+    list_code, list_payload = _run_cli_json(["packs", "list", "--json"])
+    packs = list_payload.get("packs") if isinstance(list_payload.get("packs"), list) else []
+    packs_by_id = {
+        item.get("pack_id"): item
+        for item in packs
+        if isinstance(item, dict) and isinstance(item.get("pack_id"), str)
+    }
+    _append_check(
+        checks,
+        "packs_list_cli.ok",
+        list_code == 0 and list_payload.get("ok") is True,
+        f"exit={list_code} ok={list_payload.get('ok')}",
+    )
+    _append_check(
+        checks,
+        "packs_list_cli.internal_pack_ids",
+        set(packs_by_id) == set(RECOMMENDED_REPORT_PACK_ENTRIES),
+        f"pack_ids={sorted(packs_by_id)} expected={sorted(RECOMMENDED_REPORT_PACK_ENTRIES)}",
+    )
+    missing_entries = []
+    missing_aliases = []
+    for product_entry, pack_id in EXPECTED_PRODUCT_ENTRIES.items():
+        item = packs_by_id.get(pack_id) or {}
+        aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
+        if item.get("recommended_entry") != product_entry:
+            missing_entries.append(f"{pack_id}->{product_entry}")
+        if product_entry not in aliases:
+            missing_aliases.append(f"{pack_id}:{product_entry}")
+    for legacy_entry, pack_id in EXPECTED_LEGACY_ENTRIES.items():
+        item = packs_by_id.get(pack_id) or {}
+        aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
+        if legacy_entry not in aliases:
+            missing_aliases.append(f"{pack_id}:{legacy_entry}")
+    _append_check(
+        checks,
+        "packs_list_cli.product_entries",
+        not missing_entries,
+        f"recommended entry mismatches={missing_entries}",
+    )
+    _append_check(
+        checks,
+        "packs_list_cli.aliases",
+        not missing_aliases,
+        f"missing aliases={missing_aliases}",
+    )
+
+    unknown_code, unknown_payload = _run_cli_json(["packs", "show", "unknown-pack", "--json"])
+    recommended = unknown_payload.get("recommended_entries")
+    internal = unknown_payload.get("internal_pack_ids")
+    _append_check(
+        checks,
+        "packs_unknown_cli.error",
+        unknown_code == 1
+        and unknown_payload.get("ok") is False
+        and "unknown report pack" in str(unknown_payload.get("error") or ""),
+        f"exit={unknown_code} ok={unknown_payload.get('ok')} error={unknown_payload.get('error')}",
+    )
+    _append_check(
+        checks,
+        "packs_unknown_cli.product_entries",
+        recommended == sorted(EXPECTED_PRODUCT_ENTRIES),
+        f"recommended_entries={recommended} expected={sorted(EXPECTED_PRODUCT_ENTRIES)}",
+    )
+    _append_check(
+        checks,
+        "packs_unknown_cli.internal_pack_ids",
+        internal == sorted(RECOMMENDED_REPORT_PACK_ENTRIES),
+        f"internal_pack_ids={internal} expected={sorted(RECOMMENDED_REPORT_PACK_ENTRIES)}",
+    )
+
+
 def _check_workspace_creation(checks: list[dict[str, str]]) -> None:
     with tempfile.TemporaryDirectory(prefix="briefloop-product-baseline-") as tmp:
         base = Path(tmp)
@@ -221,6 +293,14 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
         "no_force_deliver_cli",
         "force-deliver" not in help_text and "force deliver" not in help_text.lower(),
         "top-level CLI help does not expose force-deliver",
+    )
+    readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
+    current_baseline = _extract_current_release_baseline(readme_en)
+    _append_check(
+        checks,
+        "docs.README_en.md.current_release_baseline",
+        current_baseline == BASELINE_TARGET,
+        f"current_release_baseline={current_baseline or '<missing>'} expected={BASELINE_TARGET}",
     )
 
     for rel_path, phrases in REQUIRED_DOC_BOUNDARY_PHRASES.items():
@@ -268,6 +348,30 @@ def _load_yaml_dir(path: Path) -> dict[str, dict[str, Any]]:
 def _load_yaml_file(path: Path) -> dict[str, Any]:
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     return payload if isinstance(payload, dict) else {}
+
+
+def _run_cli_json(argv: list[str]) -> tuple[int, dict[str, Any]]:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        code = cli_main(argv)
+    try:
+        payload = json.loads(stdout.getvalue())
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
+            "stdout": stdout.getvalue(),
+            "stderr": stderr.getvalue(),
+        }
+    return code, payload if isinstance(payload, dict) else {"ok": False, "payload": payload}
+
+
+def _extract_current_release_baseline(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("current release baseline:"):
+            return stripped.split(":", 1)[1].strip()
+    return ""
 
 
 def _append_check(checks: list[dict[str, str]], check_id: str, ok: bool, detail: str) -> None:
