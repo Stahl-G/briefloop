@@ -117,6 +117,9 @@ def initialize_approval_ledger(
     snapshots = _snapshot_files([ledger_path, paths["event_log"]])
     try:
         ledger = _load_or_new_ledger(ws)
+        link_reason = validate_human_approval_ledger_event_links(ledger, workspace=ws)
+        if link_reason:
+            raise ReleaseApprovalError(f"human_approval_ledger invalid: {link_reason}")
         now = utc_now()
         event = append_event(
             workspace=ws,
@@ -175,6 +178,17 @@ def record_human_approval(
         raise ReleaseApprovalError(
             f"approval mode {normalized_mode} was initialized for a different run; initialize it for the current run."
         )
+    event_index = _event_index_for_workspace(ws)
+    link_reason = validate_human_approval_ledger_event_links(ledger, workspace=ws)
+    if link_reason:
+        raise ReleaseApprovalError(f"human_approval_ledger invalid: {link_reason}")
+    init_reason = _initialized_mode_event_error(
+        initialized_mode,
+        mode=normalized_mode,
+        event_index=event_index,
+    )
+    if init_reason:
+        raise ReleaseApprovalError(f"human_approval_ledger invalid: {init_reason}")
     record = {
         "approval_id": f"APR-{uuid.uuid4().hex[:12]}",
         "run_id": run_id,
@@ -224,8 +238,18 @@ def check_release_readiness(
     ws, run_id = _workspace_and_run_id(workspace)
     normalized_mode = _require_release_mode(mode)
     ledger = _read_json_if_exists(approval_ledger_path(ws))
+    if isinstance(ledger, dict):
+        link_reason = validate_human_approval_ledger_event_links(ledger, workspace=ws)
+        if link_reason:
+            raise ReleaseApprovalError(f"human_approval_ledger invalid: {link_reason}")
+    event_index = _event_index_for_workspace(ws)
     ledger_records = _ledger_records(ledger)
-    latest = _latest_records_for_mode(ledger_records, normalized_mode, run_id)
+    latest = _latest_records_for_mode(
+        ledger_records,
+        normalized_mode,
+        run_id,
+        event_index=event_index,
+    )
     required_roles = list(RELEASE_MODES[normalized_mode]["required_roles"])
     approval_required = bool(RELEASE_MODES[normalized_mode]["approval_required"])
     approved_roles = [
@@ -386,6 +410,93 @@ def validate_release_readiness_report_payload(payload: Any) -> str | None:
     return None
 
 
+def validate_human_approval_ledger_event_links(
+    payload: Any,
+    *,
+    workspace: str | Path,
+) -> str | None:
+    """Validate approval ledger event IDs against the workspace event log."""
+
+    shape_reason = validate_human_approval_ledger_payload(payload)
+    if shape_reason:
+        return shape_reason
+    if not isinstance(payload, dict):
+        return "human_approval_ledger_event_link_error:not_object"
+    initialized_modes = payload.get("initialized_modes")
+    records = payload.get("records")
+    needs_event_log = bool(initialized_modes) or bool(records)
+    if not needs_event_log:
+        return None
+    event_index_or_reason = _event_index_or_reason(workspace)
+    if isinstance(event_index_or_reason, str):
+        return f"human_approval_ledger_event_link_error:{event_index_or_reason}"
+    event_index = event_index_or_reason
+    if isinstance(initialized_modes, dict):
+        for mode_key, entry in sorted(initialized_modes.items()):
+            if not isinstance(entry, dict):
+                continue
+            reason = _initialized_mode_event_error(
+                entry,
+                mode=mode_key,
+                event_index=event_index,
+            )
+            if reason:
+                return f"human_approval_ledger_event_link_error:{reason}"
+    if isinstance(records, list):
+        for idx, record in enumerate(records):
+            if not isinstance(record, dict):
+                continue
+            reason = _approval_record_initialized_mode_error(
+                record,
+                initialized_modes=initialized_modes if isinstance(initialized_modes, dict) else {},
+                index=idx,
+            )
+            if reason:
+                return f"human_approval_ledger_event_link_error:{reason}"
+            reason = _approval_record_event_error(
+                record,
+                event_index=event_index,
+                index=idx,
+            )
+            if reason:
+                return f"human_approval_ledger_event_link_error:{reason}"
+    return None
+
+
+def validate_release_readiness_report_event_link(
+    payload: Any,
+    *,
+    workspace: str | Path,
+) -> str | None:
+    """Validate release-readiness report event ID against the workspace event log."""
+
+    shape_reason = validate_release_readiness_report_payload(payload)
+    if shape_reason:
+        return shape_reason
+    if not isinstance(payload, dict):
+        return "release_readiness_report_event_link_error:not_object"
+    event_index_or_reason = _event_index_or_reason(workspace)
+    if isinstance(event_index_or_reason, str):
+        return f"release_readiness_report_event_link_error:{event_index_or_reason}"
+    event_index = event_index_or_reason
+    event_id = _clean_text(payload.get("event_id"))
+    event = event_index.get(event_id)
+    if event is None:
+        return "release_readiness_report_event_link_error:event_missing"
+    if event.get("event_type") != "release_readiness_checked":
+        return "release_readiness_report_event_link_error:event_type"
+    if _clean_text(event.get("run_id")) != _clean_text(payload.get("run_id")):
+        return "release_readiness_report_event_link_error:event_run_id"
+    metadata = _event_metadata(event)
+    if _clean_text(metadata.get("mode")) != _clean_text(payload.get("mode")):
+        return "release_readiness_report_event_link_error:event_metadata_mismatch"
+    if _clean_text(metadata.get("status")) != _clean_text(payload.get("status")):
+        return "release_readiness_report_event_link_error:event_metadata_mismatch"
+    if bool(metadata.get("approval_required")) != bool(payload.get("approval_required")):
+        return "release_readiness_report_event_link_error:event_metadata_mismatch"
+    return None
+
+
 def _workspace_and_run_id(workspace: str | Path) -> tuple[Path, str]:
     ws = _require_workspace(workspace)
     paths = runtime_state_paths(ws)
@@ -422,6 +533,98 @@ def _require_current_run_event_chain(event_log_path: Path, run_id: str) -> None:
         raise ReleaseApprovalError(
             "event_log.jsonl is missing a current-run initialization event."
         )
+
+
+def _event_index_for_workspace(workspace: str | Path) -> dict[str, dict[str, Any]]:
+    event_index_or_reason = _event_index_or_reason(workspace)
+    if isinstance(event_index_or_reason, str):
+        raise ReleaseApprovalError(f"event_log invalid: {event_index_or_reason}")
+    return event_index_or_reason
+
+
+def _event_index_or_reason(workspace: str | Path) -> dict[str, dict[str, Any]] | str:
+    ws = Path(workspace).expanduser().resolve()
+    event_log_path = runtime_state_paths(ws)["event_log"]
+    if not event_log_path.exists():
+        return "event_log_missing"
+    try:
+        records = read_event_log_records_strict(event_log_path)
+    except RuntimeStateError:
+        return "event_log_invalid"
+    event_index: dict[str, dict[str, Any]] = {}
+    for record in records:
+        event_id = _clean_text(record.get("event_id"))
+        if not event_id:
+            continue
+        if event_id in event_index:
+            return f"duplicate_event_id:{event_id}"
+        event_index[event_id] = record
+    return event_index
+
+
+def _initialized_mode_event_error(
+    entry: Mapping[str, Any],
+    *,
+    mode: str,
+    event_index: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    event_id = _clean_text(entry.get("event_id"))
+    event = event_index.get(event_id)
+    if event is None:
+        return f"initialized_modes.{mode}.event_missing"
+    if event.get("event_type") != "human_approval_ledger_initialized":
+        return f"initialized_modes.{mode}.event_type"
+    if _clean_text(event.get("run_id")) != _clean_text(entry.get("run_id")):
+        return f"initialized_modes.{mode}.event_run_id"
+    metadata = _event_metadata(event)
+    if _clean_text(metadata.get("mode")) != mode:
+        return f"initialized_modes.{mode}.event_metadata_mismatch"
+    return None
+
+
+def _approval_record_event_error(
+    record: Mapping[str, Any],
+    *,
+    event_index: Mapping[str, Mapping[str, Any]],
+    index: int | None = None,
+) -> str | None:
+    field = f"records[{index}]" if index is not None else "record"
+    event_id = _clean_text(record.get("event_id"))
+    event = event_index.get(event_id)
+    if event is None:
+        return f"{field}.event_missing"
+    if event.get("event_type") != "human_approval_recorded":
+        return f"{field}.event_type"
+    if _clean_text(event.get("run_id")) != _clean_text(record.get("run_id")):
+        return f"{field}.event_run_id"
+    metadata = _event_metadata(event)
+    for key in ("approval_id", "mode", "role", "decision"):
+        if _clean_text(metadata.get(key)) != _clean_text(record.get(key)):
+            return f"{field}.event_metadata_mismatch"
+    return None
+
+
+def _approval_record_initialized_mode_error(
+    record: Mapping[str, Any],
+    *,
+    initialized_modes: Mapping[str, Any],
+    index: int,
+) -> str | None:
+    field = f"records[{index}]"
+    mode = _clean_text(record.get("mode"))
+    entry = initialized_modes.get(mode)
+    if not isinstance(entry, Mapping):
+        return f"{field}.mode_not_initialized"
+    if _clean_text(entry.get("run_id")) != _clean_text(record.get("run_id")):
+        return f"{field}.initialized_mode_run_id"
+    if _clean_text(entry.get("mode")) != mode:
+        return f"{field}.initialized_mode_mismatch"
+    return None
+
+
+def _event_metadata(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    metadata = event.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
 
 
 def _snapshot_files(paths: list[Path]) -> dict[Path, bytes | None]:
@@ -532,6 +735,8 @@ def _latest_records_for_mode(
     records: list[dict[str, Any]],
     mode: str,
     run_id: str,
+    *,
+    event_index: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for record in records:
@@ -540,6 +745,8 @@ def _latest_records_for_mode(
         if _clean_text(record.get("run_id")) != run_id:
             continue
         if not _clean_text(record.get("event_id")):
+            continue
+        if _approval_record_event_error(record, event_index=event_index) is not None:
             continue
         role = _clean_text(record.get("role"))
         if role:

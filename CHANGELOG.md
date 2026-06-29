@@ -143,6 +143,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Release approval event-linkage hardening**: release readiness now rejects
+  human approval ledger records whose `event_id` does not resolve to a matching
+  current-run approval event, and artifact registry validation rejects forged or
+  mismatched approval/readiness event references.
 - **Evidence Extract force rerun source preservation**: `extract --force` now
   stages source bytes before clearing managed
   `input/sources/evidence_extract/` files, so rerunning extract with a
