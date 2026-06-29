@@ -63,6 +63,7 @@ from multi_agent_brief.product.release_approval import (
     validate_release_readiness_report_event_link,
     validate_release_readiness_report_payload,
 )
+from multi_agent_brief.product.quality_panel import validate_quality_panel_payload
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
 from multi_agent_brief.quality_gates.contract import quality_gate_artifact_activated
 
@@ -198,6 +199,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_human_approval_ledger_payload(payload, artifact_path=path)
             if artifact_id == "release_readiness_report":
                 return _validate_release_readiness_report_payload(payload, artifact_path=path)
+            if artifact_id == "quality_panel":
+                return _validate_quality_panel_payload(payload)
         elif fmt in {"yaml", "yml"}:
             yaml.safe_load(text)
         elif fmt == "markdown":
@@ -594,6 +597,13 @@ def _validate_release_readiness_report_payload(payload: Any, *, artifact_path: P
     if link_reason:
         return ARTIFACT_INVALID, link_reason
     return ARTIFACT_VALID, "experimental_release_readiness_report"
+
+
+def _validate_quality_panel_payload(payload: Any) -> tuple[str, str]:
+    reason = validate_quality_panel_payload(payload)
+    if reason:
+        return ARTIFACT_INVALID, reason
+    return ARTIFACT_VALID, "experimental_quality_panel"
 
 
 def _workspace_root_for_input_classification(artifact_path: Path) -> Path | None:
