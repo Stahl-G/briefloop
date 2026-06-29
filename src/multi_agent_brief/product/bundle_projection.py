@@ -17,6 +17,14 @@ from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
 )
+from multi_agent_brief.product.quality_panel import (
+    QualityPanelError,
+    render_quality_panel_html,
+    render_quality_summary,
+    validate_quality_panel_html,
+    validate_quality_panel_payload,
+    validate_quality_summary_markdown,
+)
 from multi_agent_brief.product.report_spec import ReportSpecLoadError, load_report_spec
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
@@ -272,6 +280,7 @@ def _audit_records(
     *,
     hygiene: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    _validate_present_quality_artifacts(workspace)
     candidates = [
         ("finalize_report", workspace / "output" / "intermediate" / "finalize_report.json"),
         ("claim_ledger", workspace / "output" / "intermediate" / "claim_ledger.json"),
@@ -317,6 +326,96 @@ def _audit_records(
         seen.add(rel)
         records.append(_artifact_record(workspace, resolved, role=role))
     return records
+
+
+def _validate_present_quality_artifacts(workspace: Path) -> None:
+    quality_paths = {
+        "quality_panel": workspace / "output" / "intermediate" / "quality_panel.json",
+        "quality_summary": workspace / "output" / "intermediate" / "quality_summary.md",
+        "quality_panel_html": workspace / "output" / "intermediate" / "quality_panel.html",
+    }
+    if not any(path.exists() for path in quality_paths.values()):
+        return
+
+    panel_path = quality_paths["quality_panel"]
+    panel_payload = _load_valid_quality_panel_payload(workspace, panel_path)
+    if quality_paths["quality_summary"].exists():
+        _validate_quality_summary_binding(workspace, quality_paths["quality_summary"], panel_path, panel_payload)
+    if quality_paths["quality_panel_html"].exists():
+        _validate_quality_panel_html_binding(workspace, quality_paths["quality_panel_html"], panel_path, panel_payload)
+
+
+def _load_valid_quality_panel_payload(workspace: Path, panel_path: Path) -> dict[str, Any]:
+    if not panel_path.exists():
+        _raise_quality_artifact_error(
+            workspace,
+            panel_path,
+            "quality_panel_missing",
+        )
+    try:
+        payload = json.loads(panel_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        _raise_quality_artifact_error(workspace, panel_path, "quality_panel_unreadable")
+    except json.JSONDecodeError:
+        _raise_quality_artifact_error(workspace, panel_path, "quality_panel_parse_error")
+    if not isinstance(payload, dict):
+        _raise_quality_artifact_error(workspace, panel_path, "quality_panel_invalid:not_object")
+    reason = validate_quality_panel_payload(payload)
+    if reason:
+        _raise_quality_artifact_error(workspace, panel_path, f"quality_panel_invalid:{reason}")
+    return payload
+
+
+def _validate_quality_summary_binding(
+    workspace: Path,
+    summary_path: Path,
+    panel_path: Path,
+    panel_payload: dict[str, Any],
+) -> None:
+    try:
+        text = summary_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        _raise_quality_artifact_error(workspace, summary_path, "quality_summary_unreadable")
+    reason = validate_quality_summary_markdown(text)
+    if reason:
+        _raise_quality_artifact_error(workspace, summary_path, reason)
+    try:
+        expected = render_quality_summary(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
+    except QualityPanelError as exc:
+        _raise_quality_artifact_error(workspace, summary_path, f"quality_summary_render:{exc}")
+    if text != expected:
+        _raise_quality_artifact_error(workspace, summary_path, "quality_summary_stale_or_hand_edited")
+
+
+def _validate_quality_panel_html_binding(
+    workspace: Path,
+    html_path: Path,
+    panel_path: Path,
+    panel_payload: dict[str, Any],
+) -> None:
+    try:
+        text = html_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        _raise_quality_artifact_error(workspace, html_path, "quality_panel_html_unreadable")
+    reason = validate_quality_panel_html(text)
+    if reason:
+        _raise_quality_artifact_error(workspace, html_path, reason)
+    try:
+        expected = render_quality_panel_html(panel_payload, quality_panel_sha256=_sha256_file(panel_path))
+    except QualityPanelError as exc:
+        _raise_quality_artifact_error(workspace, html_path, f"quality_panel_html_render:{exc}")
+    if text != expected:
+        _raise_quality_artifact_error(workspace, html_path, "quality_panel_html_stale_or_hand_edited")
+
+
+def _raise_quality_artifact_error(workspace: Path, path: Path, reason: str) -> None:
+    try:
+        rel = _workspace_relative(workspace, path)
+    except ValueError:
+        rel = path.as_posix()
+    raise ReportBundleProjectionError(
+        f"quality projection artifact invalid: {rel}: {reason}; rerun briefloop quality summarize"
+    )
 
 
 def _template_projection(

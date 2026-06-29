@@ -236,6 +236,63 @@ def test_report_bundle_manifest_includes_quality_artifacts_in_audit_only(tmp_pat
     }
 
 
+def test_report_bundle_manifest_rejects_hand_edited_quality_panel_html(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    html_path = ws / "output" / "intermediate" / "quality_panel.html"
+    html_path.write_text(
+        html_path.read_text(encoding="utf-8").replace("Quality Panel", "Quality Panel Edited", 1),
+        encoding="utf-8",
+    )
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "quality projection artifact invalid" in str(exc)
+        assert "output/intermediate/quality_panel.html" in str(exc)
+        assert "quality_panel_html_stale_or_hand_edited" in str(exc)
+        assert "rerun briefloop quality summarize" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected stale Quality Panel HTML rejection")
+
+
+def test_report_bundle_manifest_rejects_stale_quality_summary(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    summary_path = ws / "output" / "intermediate" / "quality_summary.md"
+    summary_path.write_text(
+        summary_path.read_text(encoding="utf-8").replace("read-only operator view", "edited operator view", 1),
+        encoding="utf-8",
+    )
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "quality projection artifact invalid" in str(exc)
+        assert "output/intermediate/quality_summary.md" in str(exc)
+        assert "quality_summary_stale_or_hand_edited" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected stale Quality Summary rejection")
+
+
+def test_report_bundle_manifest_rejects_modified_quality_panel_source(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    panel_path = ws / "output" / "intermediate" / "quality_panel.json"
+    panel = json.loads(panel_path.read_text(encoding="utf-8"))
+    panel["generated_at"] = "2099-01-01T00:00:00Z"
+    panel_path.write_text(json.dumps(panel, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "quality projection artifact invalid" in str(exc)
+        assert "output/intermediate/quality_summary.md" in str(exc)
+        assert "quality_summary_stale_or_hand_edited" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected modified Quality Panel source rejection")
+
+
 def test_report_bundle_manifest_excludes_packaging_junk(tmp_path: Path) -> None:
     ws = _finalized_workspace(tmp_path)
     delivery_junk = ws / "output" / "delivery" / ".DS_Store"
