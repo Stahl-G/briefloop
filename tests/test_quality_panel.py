@@ -454,6 +454,7 @@ def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:
     write_quality_panel(workspace=ws)
 
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
 
     registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
     record = registry["artifacts"]["quality_panel"]

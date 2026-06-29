@@ -265,6 +265,60 @@ def test_release_check_ignores_prior_run_approvals(tmp_path: Path) -> None:
     assert report["records_considered"] == []
 
 
+def test_runtime_reset_archives_prior_run_approval_artifacts(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    old_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0
+    assert main([
+        "approval",
+        "record",
+        "--workspace",
+        str(ws),
+        "--role",
+        "content_owner",
+        "--decision",
+        "approve",
+        "--reason",
+        "Content owner approved the old run.",
+    ]) == 0
+    assert main(["release", "check", "--workspace", str(ws), "--mode", "research_review"]) == 1
+
+    assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
+
+    intermediate = ws / "output" / "intermediate"
+    assert (intermediate / f"event_log.{old_run_id}.jsonl").exists()
+    assert (intermediate / f"human_approval_ledger.{old_run_id}.json").exists()
+    assert (intermediate / f"release_readiness_report.{old_run_id}.json").exists()
+    assert not (intermediate / "human_approval_ledger.json").exists()
+    assert not (intermediate / "release_readiness_report.json").exists()
+
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0
+    new_run_id = _json(intermediate / "runtime_manifest.json")["run_id"]
+    ledger = _json(intermediate / "human_approval_ledger.json")
+    assert new_run_id != old_run_id
+    assert ledger["initialized_modes"]["research_review"]["run_id"] == new_run_id
+    assert ledger["records"] == []
+
+
+def test_approval_init_rebuilds_stale_prior_run_ledger_after_reset(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    old_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0
+    stale_ledger = _json(ws / "output" / "intermediate" / "human_approval_ledger.json")
+    assert main(["state", "init", "--workspace", str(ws), "--reset-state"]) == 0
+    new_run_id = _json(ws / "output" / "intermediate" / "runtime_manifest.json")["run_id"]
+
+    ledger_path = ws / "output" / "intermediate" / "human_approval_ledger.json"
+    _write_json(ledger_path, stale_ledger)
+
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0
+
+    assert (ws / "output" / "intermediate" / f"human_approval_ledger.{old_run_id}.json").exists()
+    ledger = _json(ledger_path)
+    assert ledger["initialized_modes"]["research_review"]["run_id"] == new_run_id
+    assert ledger["records"] == []
+
+
 def test_release_check_rejects_forged_approval_event_id(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     assert main(["approval", "init", "--workspace", str(ws), "--mode", "research_review"]) == 0

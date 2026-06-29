@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -56,12 +56,6 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     project_stage_completion_for_read,
     interpret_stage_completion,
     _stage_is_complete_or_skipped,
-)
-from multi_agent_brief.product.release_approval import (
-    validate_human_approval_ledger_event_links,
-    validate_human_approval_ledger_payload,
-    validate_release_readiness_report_event_link,
-    validate_release_readiness_report_payload,
 )
 from multi_agent_brief.product.quality_panel import validate_quality_panel_payload
 from multi_agent_brief.provenance.contract import provenance_artifact_activated
@@ -578,6 +572,11 @@ def _validate_source_evidence_pack_manifest_payload(payload: Any, *, artifact_pa
 
 
 def _validate_human_approval_ledger_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+    from multi_agent_brief.product.release_approval import (
+        validate_human_approval_ledger_event_links,
+        validate_human_approval_ledger_payload,
+    )
+
     reason = validate_human_approval_ledger_payload(payload)
     if reason:
         return ARTIFACT_INVALID, reason
@@ -589,6 +588,11 @@ def _validate_human_approval_ledger_payload(payload: Any, *, artifact_path: Path
 
 
 def _validate_release_readiness_report_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+    from multi_agent_brief.product.release_approval import (
+        validate_release_readiness_report_event_link,
+        validate_release_readiness_report_payload,
+    )
+
     reason = validate_release_readiness_report_payload(payload)
     if reason:
         return ARTIFACT_INVALID, reason
@@ -1043,6 +1047,8 @@ def interpret_frozen_artifact_integrity(
         artifact_id = str(artifact.get("artifact_id") or "")
         if not artifact_id:
             continue
+        if _artifact_is_non_workflow_projection(artifact):
+            continue
         if artifact_id in mutating_stage_produces:
             continue
         producer_stage = str(artifact.get("producer_stage") or "")
@@ -1087,6 +1093,15 @@ def interpret_frozen_artifact_integrity(
         kind="canonical",
         value={"status": "matched", "matched": True, "contaminates_run": False, "reasons": []},
     )
+
+
+def _artifact_is_non_workflow_projection(artifact: Mapping[str, Any]) -> bool:
+    if str(artifact.get("producer_kind") or "workflow_stage") == "workflow_stage":
+        return False
+    if bool(artifact.get("required", False)):
+        return False
+    consumers = artifact.get("consumer_stages")
+    return not isinstance(consumers, list) or not consumers
 
 
 def project_frozen_artifact_integrity_for_read(verdict: FrozenArtifactIntegrityVerdict) -> dict[str, Any]:

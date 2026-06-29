@@ -5487,6 +5487,32 @@ def test_audited_brief_mutation_after_editor_complete_contaminates(tmp_path):
     assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
 
 
+def test_analyst_snapshot_mutation_after_analyst_complete_contaminates(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    snapshot = _intermediate(ws) / "analyst_draft_snapshot.md"
+    snapshot.write_text("# Brief\n\nIllegally changed analyst snapshot. [src:CL-001]\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "owner stage 'analyst'" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["run_integrity"]["status"] == "contaminated"
+    assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
+
+
 def test_repair_start_records_editor_owner_transaction(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

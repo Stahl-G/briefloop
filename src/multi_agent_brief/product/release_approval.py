@@ -8,6 +8,7 @@ delivery gates.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,13 +114,24 @@ def initialize_approval_ledger(
     ws, run_id = _workspace_and_run_id(workspace)
     normalized_mode = _require_release_mode(mode)
     ledger_path = approval_ledger_path(ws)
+    report_path = release_readiness_report_path(ws)
     paths = runtime_state_paths(ws)
-    snapshots = _snapshot_files([ledger_path, paths["event_log"]])
+    snapshots = _snapshot_files([ledger_path, report_path, paths["event_log"]])
+    archived_stale_paths: list[Path] = []
     try:
         ledger = _load_or_new_ledger(ws)
         link_reason = validate_human_approval_ledger_event_links(ledger, workspace=ws)
         if link_reason:
-            raise ReleaseApprovalError(f"human_approval_ledger invalid: {link_reason}")
+            if _ledger_has_current_run_entries(ledger, run_id):
+                raise ReleaseApprovalError(f"human_approval_ledger invalid: {link_reason}")
+            archived_stale_paths.extend(
+                _archive_stale_approval_artifacts(
+                    workspace=ws,
+                    ledger=ledger,
+                    current_run_id=run_id,
+                )
+            )
+            ledger = _new_ledger()
         now = utc_now()
         event = append_event(
             workspace=ws,
@@ -149,6 +161,7 @@ def initialize_approval_ledger(
         return ApprovalRecordResult(payload=ledger, event=event)
     except Exception:
         _restore_files(snapshots)
+        _remove_archived_stale_paths(archived_stale_paths)
         raise
 
 
@@ -651,19 +664,100 @@ def _load_or_new_ledger(workspace: Path) -> dict[str, Any]:
     except RuntimeStateError as exc:
         raise ReleaseApprovalError(str(exc)) from exc
     if payload is None:
-        now = utc_now()
-        return {
-            "schema_version": HUMAN_APPROVAL_LEDGER_SCHEMA,
-            "boundary": APPROVAL_BOUNDARY,
-            "created_at": now,
-            "updated_at": now,
-            "initialized_modes": {},
-            "records": [],
-        }
+        return _new_ledger()
     reason = validate_human_approval_ledger_payload(payload)
     if reason:
         raise ReleaseApprovalError(f"human_approval_ledger invalid: {reason}")
     return payload
+
+
+def _new_ledger() -> dict[str, Any]:
+    now = utc_now()
+    return {
+        "schema_version": HUMAN_APPROVAL_LEDGER_SCHEMA,
+        "boundary": APPROVAL_BOUNDARY,
+        "created_at": now,
+        "updated_at": now,
+        "initialized_modes": {},
+        "records": [],
+    }
+
+
+def _ledger_has_current_run_entries(ledger: Mapping[str, Any], run_id: str) -> bool:
+    initialized = ledger.get("initialized_modes")
+    if isinstance(initialized, Mapping):
+        for entry in initialized.values():
+            if isinstance(entry, Mapping) and _clean_text(entry.get("run_id")) == run_id:
+                return True
+    records = ledger.get("records")
+    if isinstance(records, list):
+        for record in records:
+            if isinstance(record, Mapping) and _clean_text(record.get("run_id")) == run_id:
+                return True
+    return False
+
+
+def _archive_stale_approval_artifacts(
+    *,
+    workspace: Path,
+    ledger: Mapping[str, Any],
+    current_run_id: str,
+) -> list[Path]:
+    run_token = _stale_ledger_archive_run_id(ledger, current_run_id)
+    archived_paths: list[Path] = []
+    for path in (approval_ledger_path(workspace), release_readiness_report_path(workspace)):
+        archived = _archive_stale_approval_artifact(path, run_token=run_token)
+        if archived is not None:
+            archived_paths.append(archived)
+    return archived_paths
+
+
+def _archive_stale_approval_artifact(path: Path, *, run_token: str) -> Path | None:
+    if not path.exists():
+        return None
+    archive = path.with_name(f"{path.stem}.{run_token}{path.suffix}")
+    if archive.exists():
+        archive = path.with_name(f"{path.stem}.{run_token}.{uuid.uuid4().hex[:8]}{path.suffix}")
+    try:
+        os.replace(path, archive)
+    except OSError as exc:
+        raise ReleaseApprovalError(
+            f"Failed to archive stale approval artifact {path}: {exc}"
+        ) from exc
+    return archive
+
+
+def _remove_archived_stale_paths(paths: list[Path]) -> None:
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise ReleaseApprovalError(
+                f"Failed to remove stale approval archive after rollback: {path}: {exc}"
+            ) from exc
+
+
+def _stale_ledger_archive_run_id(ledger: Mapping[str, Any], current_run_id: str) -> str:
+    candidates: list[str] = []
+    initialized = ledger.get("initialized_modes")
+    if isinstance(initialized, Mapping):
+        for entry in initialized.values():
+            if isinstance(entry, Mapping):
+                candidates.append(_clean_text(entry.get("run_id")))
+    records = ledger.get("records")
+    if isinstance(records, list):
+        for record in records:
+            if isinstance(record, Mapping):
+                candidates.append(_clean_text(record.get("run_id")))
+    for candidate in candidates:
+        if candidate and candidate != current_run_id:
+            return _safe_archive_token(candidate)
+    return "stale"
+
+
+def _safe_archive_token(value: str) -> str:
+    token = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value)
+    return token or "stale"
 
 
 def _initialized_mode_entry(ledger: Mapping[str, Any], mode: str) -> dict[str, Any] | None:

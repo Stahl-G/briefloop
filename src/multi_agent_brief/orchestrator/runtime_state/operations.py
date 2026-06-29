@@ -982,6 +982,54 @@ def _remove_reset_archive_copy(path: Path | None) -> None:
         ) from exc
 
 
+def _reset_run_scoped_control_artifact_paths(workspace: Path) -> list[Path]:
+    intermediate = workspace / "output" / "intermediate"
+    return [
+        intermediate / "human_approval_ledger.json",
+        intermediate / "release_readiness_report.json",
+    ]
+
+
+def _archive_reset_run_scoped_control_artifact(path: Path, *, old_run_id: str) -> Path | None:
+    if not path.exists():
+        return None
+    archive = path.with_name(f"{path.stem}.{old_run_id}{path.suffix}")
+    if archive.exists():
+        archive = path.with_name(f"{path.stem}.{old_run_id}.{uuid.uuid4().hex[:8]}{path.suffix}")
+    try:
+        os.replace(path, archive)
+    except OSError as exc:
+        raise RuntimeStateError(
+            "Failed to archive run-scoped control artifact during runtime reset.",
+            details={"path": str(path), "archive": str(archive), "reason": str(exc)},
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
+    return archive
+
+
+def _restore_reset_control_artifacts(
+    snapshots: dict[Path, bytes | None],
+    archived_paths: list[Path],
+) -> None:
+    rollback_errors: list[str] = []
+    for path, data in snapshots.items():
+        try:
+            _restore_state_bytes(path, data)
+        except RuntimeStateError as exc:
+            rollback_errors.append(str(exc))
+    for archived_path in archived_paths:
+        try:
+            archived_path.unlink(missing_ok=True)
+        except OSError as exc:
+            rollback_errors.append(f"Failed to remove reset control artifact archive {archived_path}: {exc}")
+    if rollback_errors:
+        raise RuntimeStateError(
+            "Runtime state reset failed to restore run-scoped control artifacts.",
+            details={"rollback_errors": rollback_errors},
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        )
+
+
 def _preflight_transaction_files(paths: dict[str, Path]) -> list[dict[str, Any]]:
     paths["runtime_manifest"].parent.mkdir(parents=True, exist_ok=True)
     for key in ("runtime_manifest", "workflow_state"):
@@ -1204,7 +1252,14 @@ def initialize_runtime_state(
         if reset_state
         else {}
     )
+    reset_control_artifact_paths = _reset_run_scoped_control_artifact_paths(ws) if reset_state else []
+    reset_control_artifact_snapshots = (
+        {path: _read_state_bytes(path) for path in reset_control_artifact_paths}
+        if reset_state
+        else {}
+    )
     reset_archived_event_log_path: Path | None = None
+    reset_archived_control_artifact_paths: list[Path] = []
 
     if reset_state:
         if old_manifest and _workflow_is_finalized(old_workflow):
@@ -1233,6 +1288,13 @@ def initialize_runtime_state(
                 },
             )
         old_run_id = previous_run_id or "unknown"
+        for control_artifact_path in reset_control_artifact_paths:
+            archived_control_artifact = _archive_reset_run_scoped_control_artifact(
+                control_artifact_path,
+                old_run_id=old_run_id,
+            )
+            if archived_control_artifact is not None:
+                reset_archived_control_artifact_paths.append(archived_control_artifact)
         if paths["event_log"].exists():
             archive = paths["event_log"].with_name(f"event_log.{old_run_id}.jsonl")
             if archive.exists():
@@ -1345,6 +1407,10 @@ def initialize_runtime_state(
         if reset_state:
             try:
                 _restore_state_files(paths, reset_snapshots)
+                _restore_reset_control_artifacts(
+                    reset_control_artifact_snapshots,
+                    reset_archived_control_artifact_paths,
+                )
                 _remove_reset_archive_copy(reset_archived_event_log_path)
             except RuntimeStateError as rollback_exc:
                 raise RuntimeStateError(
