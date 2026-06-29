@@ -491,6 +491,19 @@ def test_quality_summary_registry_requires_valid_quality_panel_source(tmp_path: 
     )
 
 
+def test_quality_summary_registry_treats_invalid_utf8_panel_as_invalid(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    summary = render_quality_summary(build_quality_panel(ws), quality_panel_sha256="0" * 64)
+    quality_summary_path(ws).write_text(summary, encoding="utf-8")
+    quality_panel_path(ws).write_bytes(b"\xff\xfe\x00")
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    record = registry["artifacts"]["quality_summary"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "quality_summary_validation_error:quality_panel_unreadable"
+
+
 def test_quality_summary_registry_rejects_stale_or_hand_edited_summary(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     write_quality_panel(workspace=ws)

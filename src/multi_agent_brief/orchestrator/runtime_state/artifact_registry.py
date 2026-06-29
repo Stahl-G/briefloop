@@ -625,7 +625,7 @@ def _validate_quality_summary_markdown(text: str, *, artifact_path: Path) -> tup
         return ARTIFACT_INVALID, "quality_summary_validation_error:quality_panel_missing"
     try:
         panel_payload = json.loads(panel_path.read_text(encoding="utf-8"))
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ARTIFACT_INVALID, "quality_summary_validation_error:quality_panel_unreadable"
     except json.JSONDecodeError:
         return ARTIFACT_INVALID, "quality_summary_validation_error:quality_panel_parse_error"
