@@ -231,6 +231,19 @@ Good next reads:
 
 ## 🧪 Three ways to try it
 
+Start from the product entry that matches your report:
+
+```bash
+briefloop new industry-weekly ./weekly-brief
+briefloop new management-monthly ./monthly-review
+briefloop new document-review ./document-review
+```
+
+These entries are user-facing aliases. Internal `report_spec.yaml` values stay
+canonical, for example `market_weekly`, `management_monthly`, and
+`evidence_extract`. `document-review` prepares a document evidence review
+workspace; it does not make legal, compliance, or disclosure judgments.
+
 | Path | Best for | What to do |
 |---|---|---|
 | Look once | You want to understand the project quickly | Run the demos and read the reference runs |

@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `report_spec.yaml`, and shows the source in validation/status projections.
   Ambiguous or low-confidence matches use the ReportPack default. This is not
   gate-time industry inference, compliance judgment, or release authority.
+- **Product-facing ReportPack entry aliases**: `briefloop new` and
+  `multi-agent-brief new` now accept user-facing entries such as
+  `industry-weekly`, `management-monthly`, `document-review`, and
+  `solar-periodic` while continuing to write canonical internal ReportPack ids
+  such as `market_weekly`, `management_monthly`, `evidence_extract`, and
+  `solar_industry_periodic` into `report_spec.yaml`. This is an entrypoint
+  naming layer only, not a ReportPack/schema rename.
 - **Solar industry periodic ReportPack dogfood contract**: added packaged
   experimental `solar_industry_periodic` ReportPack / ReportTemplate contracts
   and a `solar_manufacturing_default` PolicyProfile for local-first solar

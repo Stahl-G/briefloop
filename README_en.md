@@ -221,18 +221,28 @@ Then use the five writer verbs inside Claude Code CLI or the Claude Desktop Code
 
 `/mabw` remains a compatibility alias for the same five writer verbs.
 
-For a shell-level local-first product skeleton from a packaged experimental report pack:
+For a shell-level local-first product skeleton, use the product entry that
+matches the report you want:
 
 ```bash
-briefloop new market-weekly ./weekly-brief
+briefloop new industry-weekly ./weekly-brief
+briefloop new management-monthly ./monthly-review
+briefloop new document-review ./document-review
 ```
+
+These user-facing entries map to stable internal ReportPack ids such as
+`market_weekly`, `management_monthly`, and `evidence_extract`; `report_spec.yaml`
+continues to record the canonical internal id. `document-review` creates a
+document evidence review workspace. It does not make legal, compliance, or
+disclosure judgments.
 
 This creates editable workspace files and `report_spec.yaml`; it does not run agents, render templates, deliver, or approve publication.
 `briefloop new` can accept an explicit `--policy-profile` or deterministic
 `--industry` hint; the selected profile and resolution source are written into
 `report_spec.yaml` rather than inferred silently at gate time.
 For solar manufacturing periodic-report dogfood, an experimental
-`solar-industry-periodic` pack is also available; it is a report contract and
+`solar-periodic` entry is also available; it maps to the internal
+`solar_industry_periodic` report contract and
 policy-default surface only, not tax, compliance, investment, delivery, or
 publication authority.
 

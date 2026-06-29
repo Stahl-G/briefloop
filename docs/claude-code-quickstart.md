@@ -41,14 +41,18 @@ Chinese versions:
 ## 1. Create a workspace
 
 ```bash
-multi-agent-brief init ../mabw-workspace --demo
+briefloop new industry-weekly ../weekly-brief
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief init ..\mabw-workspace --demo
+briefloop new industry-weekly ..\weekly-brief
 ```
+
+Other product entries include `management-monthly` for recurring management
+reviews and `document-review` for document evidence review workspaces. These
+entries write canonical internal ReportPack ids into `report_spec.yaml`.
 
 ## 2. Use The Writer Entrypoint In Claude Code
 
@@ -57,8 +61,8 @@ tab with this repository selected as the project folder, so
 `.claude/commands/briefloop.md` and `.claude/commands/mabw.md` are loaded:
 
 ```text
-/briefloop run ../mabw-workspace
-/briefloop status ../mabw-workspace
+/briefloop run ../weekly-brief
+/briefloop status ../weekly-brief
 ```
 
 If Claude Code returns `Unknown command: /briefloop`, the current session

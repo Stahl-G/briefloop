@@ -36,7 +36,16 @@ multi-agent-brief claude install --repo-workdir .
 If you only want to try BriefLoop on a few local files, do not configure a search
 backend first. Use the smallest path:
 
-1. Use `/briefloop new` to create a workspace.
+1. Create a workspace with the product entry that matches the report:
+
+   ```bash
+   briefloop new industry-weekly ./weekly-brief
+   briefloop new management-monthly ./monthly-review
+   briefloop new document-review ./document-review
+   ```
+
+   These entries map to internal ReportPack ids such as `market_weekly`,
+   `management_monthly`, and `evidence_extract`.
 2. Put a few prepared local text files into `input/sources/`.
 3. Use `/briefloop run <workspace>` to create the handoff.
 4. Use `/generate-brief <workspace>` to execute the delegated workflow.
@@ -50,7 +59,9 @@ gates, or reader-final gate for speed.
 
 ## 1. `/briefloop new`
 
-Use this to create a new brief workspace.
+Use this inside Claude Code to create a new brief workspace through the writer
+command. For shell usage, prefer product entries such as
+`briefloop new industry-weekly ./weekly-brief`.
 
 You will answer questions about:
 

@@ -149,12 +149,18 @@ def test_packs_cli_list_and_show_pack(capsys) -> None:
     listed = json.loads(capsys.readouterr().out)
     assert listed["ok"] is True
     assert {item["pack_id"] for item in listed["packs"]} == EXPECTED_PACK_IDS
+    market = next(item for item in listed["packs"] if item["pack_id"] == "market_weekly")
+    assert market["recommended_entry"] == "industry-weekly"
+    assert "market-weekly" in market["aliases"]
+    assert "industry-weekly" in market["aliases"]
 
-    assert main(["packs", "show", "market_weekly", "--json"]) == 0
+    assert main(["packs", "show", "industry-weekly", "--json"]) == 0
     shown = json.loads(capsys.readouterr().out)
     assert shown["ok"] is True
     assert shown["pack"]["pack_id"] == "market_weekly"
     assert shown["pack"]["status"] == "experimental"
+    assert shown["recommended_entry"] == "industry-weekly"
+    assert "market_weekly" in shown["aliases"]
 
     assert main(["packs", "show", "solar_industry_periodic", "--json"]) == 0
     shown = json.loads(capsys.readouterr().out)
@@ -217,7 +223,7 @@ def test_validate_report_spec_cli_rejects_malformed_yaml_without_traceback(
 def test_new_report_pack_workspace_creates_local_first_skeleton(tmp_path: Path, capsys) -> None:
     workspace = tmp_path / "weekly"
 
-    assert main(["new", "market-weekly", str(workspace)]) == 0
+    assert main(["new", "industry-weekly", str(workspace)]) == 0
 
     output = capsys.readouterr().out
     assert "Created BriefLoop workspace" in output
@@ -242,6 +248,25 @@ def test_new_report_pack_workspace_creates_local_first_skeleton(tmp_path: Path, 
     assert sources["source_strategy"]["enabled_providers"] == ["manual"]
     assert sources["web_search"]["enabled"] is False
     assert sources["web_search"]["mode"] == "disabled"
+
+
+def test_new_report_pack_workspace_accepts_product_aliases(tmp_path: Path, capsys) -> None:
+    cases = [
+        ("management-monthly", "management_monthly"),
+        ("document-review", "evidence_extract"),
+        ("solar-periodic", "solar_industry_periodic"),
+        ("market-weekly", "market_weekly"),
+        ("evidence-extract", "evidence_extract"),
+        ("solar-industry-periodic", "solar_industry_periodic"),
+    ]
+    for entry, expected_pack in cases:
+        workspace = tmp_path / entry
+
+        assert main(["new", entry, str(workspace)]) == 0
+
+        capsys.readouterr()
+        spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+        assert spec["report_pack"] == expected_pack
 
 
 def test_new_report_pack_workspace_overrides_are_written_to_report_spec(
@@ -582,6 +607,9 @@ def test_new_report_pack_workspace_rejects_unknown_pack(tmp_path: Path, capsys) 
 
     output = capsys.readouterr().out
     assert "unknown report pack" in output
+    assert "industry-weekly" in output
+    assert "document-review" in output
+    assert "solar-periodic" in output
     assert "market_weekly" in output
     assert not workspace.exists()
 

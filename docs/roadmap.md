@@ -304,9 +304,11 @@ product for recurring business reports.
 
 v1.0 should provide:
 
-- `multi-agent-brief new market-weekly` or equivalent zero-config entrypoint
-- `multi-agent-brief new management-monthly` or equivalent zero-config entrypoint
-- an `evidence_extract` report pack for page/span-cited document work
+- product-facing zero-config entries such as `briefloop new industry-weekly`
+  and `briefloop new management-monthly`, while keeping canonical internal
+  ReportPack ids such as `market_weekly` and `management_monthly`
+- a `document-review` entry mapped to the internal `evidence_extract` report
+  pack for page/span-cited document work
 - local-file first runs through the report loop
 - stable Markdown and DOCX output
 - preserved Claim Ledger, source appendix, gates, event log, support records,

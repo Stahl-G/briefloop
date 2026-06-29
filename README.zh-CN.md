@@ -225,6 +225,18 @@ multi-agent-brief claude install --repo-workdir .
 
 ## 🧪 三条上手路径
 
+先按报告类型选择产品入口：
+
+```bash
+briefloop new industry-weekly ./weekly-brief
+briefloop new management-monthly ./monthly-review
+briefloop new document-review ./document-review
+```
+
+这些是给用户看的 alias。内部 `report_spec.yaml` 仍写稳定的 canonical id，
+例如 `market_weekly`、`management_monthly` 和 `evidence_extract`。
+`document-review` 是文档证据审阅工作区入口，不代表自动法律、合规或披露判断。
+
 | 路径 | 适合谁 | 怎么做 |
 |---|---|---|
 | 看一眼 | 想判断这个项目是不是有意义 | 跑 demo，读公开运行摘要 |

@@ -31,7 +31,16 @@ multi-agent-brief claude install --repo-workdir .
 
 如果你只是想用自己的几份材料跑一遍，不要先配置搜索后端。先走最小路径：
 
-1. 用 `/briefloop new` 创建 workspace。
+1. 按报告类型创建 workspace：
+
+   ```bash
+   briefloop new industry-weekly ./weekly-brief
+   briefloop new management-monthly ./monthly-review
+   briefloop new document-review ./document-review
+   ```
+
+   这些入口会映射到内部 ReportPack id，例如 `market_weekly`、
+   `management_monthly` 和 `evidence_extract`。
 2. 把少量已整理好的本地文本材料放进 `input/sources/`。
 3. 用 `/briefloop run <workspace>` 生成 handoff。
 4. 用 `/generate-brief <workspace>` 执行 delegated workflow。
@@ -42,7 +51,8 @@ multi-agent-brief claude install --repo-workdir .
 
 ## 1. `/briefloop new`
 
-用它创建一份新简报工作区。
+在 Claude Code 里用它创建新简报工作区。Shell 里建议优先使用产品入口，
+例如 `briefloop new industry-weekly ./weekly-brief`。
 
 你需要回答几类问题：
 

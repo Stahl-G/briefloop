@@ -286,9 +286,11 @@ Non-goals：
 
 v1.0 应包含：
 
-- `multi-agent-brief new market-weekly` 或等价 zero-config entrypoint。
-- `multi-agent-brief new management-monthly` 或等价 zero-config entrypoint。
-- 一个面向 page/span-cited document work 的 `evidence_extract` report pack。
+- 面向产品语言的 zero-config entries，例如 `briefloop new industry-weekly`
+  和 `briefloop new management-monthly`，同时内部继续使用
+  `market_weekly`、`management_monthly` 等 canonical ReportPack ids。
+- 一个映射到内部 `evidence_extract` report pack 的 `document-review`
+  入口，用于 page/span-cited document work。
 - 本地文件优先的 report loop。
 - 稳定 Markdown 和 DOCX 输出。
 - 保留 Claim Ledger、source appendix、gates、event log、support records 和 archive surfaces。

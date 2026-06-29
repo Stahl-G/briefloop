@@ -22,6 +22,12 @@ from multi_agent_brief.product.bundle_projection import (
 )
 from multi_agent_brief.product.policy_registry import PolicyProfileRegistry
 from multi_agent_brief.product.policy_resolver import PolicyProfileResolution, resolve_policy_profile
+from multi_agent_brief.product.report_pack_aliases import (
+    RECOMMENDED_REPORT_PACK_ENTRIES,
+    aliases_for_report_pack,
+    recommended_entries_for_pack_ids,
+    resolve_report_pack_id,
+)
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import (
     ReportSpecLoadError,
@@ -43,7 +49,7 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
         "new",
         help="Create a conservative zero-config workspace from an experimental ReportPack.",
     )
-    parser.add_argument("report_pack", help="ReportPack id, for example market-weekly.")
+    parser.add_argument("report_pack", help="Product entry or ReportPack id, for example industry-weekly.")
     parser.add_argument("workspace", help="Target workspace directory.")
     parser.add_argument("--force", action="store_true", help="Overwrite existing init files.")
     parser.add_argument(
@@ -85,7 +91,7 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
     list_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     show_parser = actions.add_parser("show", help="Show a packaged ReportPack.")
-    show_parser.add_argument("pack_id", help="ReportPack id, for example market_weekly.")
+    show_parser.add_argument("pack_id", help="Product entry or ReportPack id, for example industry-weekly.")
     show_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     templates_parser = actions.add_parser(
@@ -155,13 +161,13 @@ def register_extract(subparsers: argparse._SubParsersAction) -> None:
 
 def handle_new_workspace(args: argparse.Namespace) -> int:
     registry = ReportPackRegistry.from_package()
-    requested_pack_id = _normalize_pack_id(args.report_pack)
+    requested_pack_id = resolve_report_pack_id(args.report_pack)
     pack = registry.get(requested_pack_id)
     if pack is None:
         payload = {
             "ok": False,
             "error": f"unknown report pack: {args.report_pack}",
-            "available_packs": sorted(registry.pack_ids()),
+            **_report_pack_entrypoint_payload(registry),
         }
         _print_payload("new", payload, as_json=False)
         return 1
@@ -195,23 +201,26 @@ def handle_new_workspace(args: argparse.Namespace) -> int:
 def handle_packs(args: argparse.Namespace) -> int:
     registry = ReportPackRegistry.from_package()
     if args.packs_action == "list":
-        payload = registry.to_list_payload()
+        payload = _with_report_pack_aliases(registry.to_list_payload())
         _print_payload("packs list", payload, as_json=getattr(args, "json", False))
         return 0 if payload["ok"] else 1
 
     if args.packs_action == "show":
-        pack = registry.get(args.pack_id)
+        requested_pack_id = resolve_report_pack_id(args.pack_id)
+        pack = registry.get(requested_pack_id)
         if pack is None:
             payload = {
                 "ok": False,
                 "error": f"unknown report pack: {args.pack_id}",
-                "available_packs": sorted(registry.pack_ids()),
+                **_report_pack_entrypoint_payload(registry),
             }
             _print_payload("packs show", payload, as_json=getattr(args, "json", False))
             return 1
         payload = {
             "ok": True,
             "pack": dict(pack.payload),
+            "aliases": aliases_for_report_pack(pack.pack_id),
+            "recommended_entry": RECOMMENDED_REPORT_PACK_ENTRIES.get(pack.pack_id),
             "source": "packaged_report_pack",
         }
         _print_payload("packs show", payload, as_json=getattr(args, "json", False))
@@ -305,7 +314,11 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
     print(f"[{label}] ok: {payload.get('ok')}")
     if label == "packs list":
         for item in payload.get("packs", []):
-            print(f"- {item.get('pack_id')}: {item.get('display_name')} ({item.get('status')})")
+            entry = item.get("recommended_entry") or item.get("pack_id")
+            print(
+                f"- {entry}: {item.get('display_name')} ({item.get('status')}; "
+                f"internal: {item.get('pack_id')})"
+            )
         for error in payload.get("errors", []):
             print(f"[error] {error.get('field')}: {error.get('error')}")
     elif label == "packs templates":
@@ -317,11 +330,21 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
         if payload.get("ok"):
             pack = payload.get("pack", {})
             print(f"pack_id: {pack.get('pack_id')}")
+            if payload.get("recommended_entry"):
+                print(f"recommended_entry: {payload.get('recommended_entry')}")
+            if payload.get("aliases"):
+                print(f"aliases: {', '.join(payload.get('aliases') or [])}")
             print(f"report_type: {pack.get('report_type')}")
             print(f"status: {pack.get('status')}")
             print("boundary: experimental product-layer contract only")
         else:
             print(payload.get("error"))
+            recommended = payload.get("recommended_entries") or []
+            if recommended:
+                print(f"try: {', '.join(recommended)}")
+            internal = payload.get("internal_pack_ids") or []
+            if internal:
+                print(f"internal_pack_ids: {', '.join(internal)}")
     elif label == "new":
         if payload.get("ok"):
             workspace = payload.get("workspace")
@@ -347,6 +370,12 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             available = payload.get("available_packs") or []
             if available:
                 print(f"available_packs: {', '.join(available)}")
+            recommended = payload.get("recommended_entries") or []
+            if recommended:
+                print(f"try: {', '.join(recommended)}")
+            internal = payload.get("internal_pack_ids") or []
+            if internal:
+                print(f"internal_pack_ids: {', '.join(internal)}")
     elif label == "packs bundle":
         if payload.get("ok"):
             print(f"manifest: {payload.get('manifest_path')}")
@@ -387,8 +416,31 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"[warning] {warning.get('field')}: {warning.get('error')}")
 
 
-def _normalize_pack_id(value: str) -> str:
-    return value.strip().replace("-", "_")
+def _report_pack_entrypoint_payload(registry: ReportPackRegistry) -> dict[str, Any]:
+    pack_ids = sorted(registry.pack_ids())
+    return {
+        "available_packs": pack_ids,
+        "internal_pack_ids": pack_ids,
+        "recommended_entries": recommended_entries_for_pack_ids(pack_ids),
+    }
+
+
+def _with_report_pack_aliases(payload: dict[str, Any]) -> dict[str, Any]:
+    enriched = deepcopy(payload)
+    packs = []
+    for item in enriched.get("packs", []):
+        if not isinstance(item, dict):
+            packs.append(item)
+            continue
+        pack_id = str(item.get("pack_id") or "")
+        updated = dict(item)
+        updated["aliases"] = aliases_for_report_pack(pack_id)
+        recommended_entry = RECOMMENDED_REPORT_PACK_ENTRIES.get(pack_id)
+        if recommended_entry:
+            updated["recommended_entry"] = recommended_entry
+        packs.append(updated)
+    enriched["packs"] = packs
+    return enriched
 
 
 def _resolve_report_pack_policy_profile(
