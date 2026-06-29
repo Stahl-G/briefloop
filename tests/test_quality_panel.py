@@ -125,6 +125,64 @@ def _write_source_evidence_pack(ws: Path) -> None:
     )
 
 
+def _write_source_evidence_pack_with_metadata_gaps(ws: Path) -> None:
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    source_path = source_dir / "source-gaps.json"
+    source_record = {
+        "schema_version": "mabw.source_evidence_record.v1",
+        "source": "sources.materialize-pack",
+        "source_id": "SRC-001",
+        "source_type": "manual",
+        "source_category": "market_report",
+        "retrieval_source_type": "local_file",
+        "underlying_evidence_type": "market_data",
+        "content": "Example source content",
+    }
+    source_path.write_text(
+        json.dumps(source_record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    record = {
+        "source_id": "SRC-001",
+        "path": "input/sources/source-gaps.json",
+        "sha256": _sha256_file(source_path),
+        "size_bytes": source_path.stat().st_size,
+        "source_type": "manual",
+        "source_category": "market_report",
+        "retrieval_source_type": "local_file",
+        "underlying_evidence_type": "market_data",
+    }
+    manifest = {
+        "schema_version": "mabw.source_evidence_pack_manifest.v1",
+        "source": "sources.materialize-pack",
+        "source_config_path": "sources.yaml",
+        "durable_provider_names": ["manual"],
+        "record_count": 1,
+        "error_count": 0,
+        "records": [record],
+        "provider_errors": [],
+        "pack_sha256": _sha256_json([
+            {
+                "path": record["path"],
+                "sha256": record["sha256"],
+                "size_bytes": record["size_bytes"],
+                "source_id": record["source_id"],
+            }
+        ]),
+        "non_goals": [
+            "semantic_support_assessment",
+            "claim_support_matrix_generation",
+            "source_candidates_as_evidence",
+            "automatic_delivery_approval",
+        ],
+    }
+    (ws / "output" / "intermediate" / "source_evidence_pack_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_invalid_source_evidence_pack(ws: Path) -> None:
     source_dir = ws / "input" / "sources"
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -225,13 +283,20 @@ def _write_gate_report(
     )
 
 
-def _write_finalize_report(ws: Path, *, reader_status: str = "pass") -> None:
+def _write_finalize_report(
+    ws: Path,
+    *,
+    reader_status: str = "pass",
+    duplicate_citation_count: int = 0,
+    source_appendix_warnings: list[dict] | None = None,
+    source_appendix_trace_warnings: list[dict] | None = None,
+) -> None:
     report = {
         "status": "pass",
         "reader_clean": {"status": reader_status, "sample_findings": []},
-        "duplicate_citation_count": 0,
-        "source_appendix_warnings": [],
-        "source_appendix_trace_warnings": [],
+        "duplicate_citation_count": duplicate_citation_count,
+        "source_appendix_warnings": source_appendix_warnings or [],
+        "source_appendix_trace_warnings": source_appendix_trace_warnings or [],
     }
     (ws / "output" / "intermediate" / "finalize_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -780,6 +845,40 @@ def test_quality_panel_does_not_interpret_invalid_source_evidence_pack_counts(tm
     assert payload["source_evidence"]["missing_publisher_count"] == 0
     assert payload["source_evidence"]["retrieval_source_mix"] == {}
     assert payload["source_evidence"]["underlying_evidence_mix"] == {}
+
+
+def test_quality_panel_dogfood_surfaces_source_and_reader_hygiene_failures(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack_with_metadata_gaps(ws)
+    _write_claim_ledger(ws)
+    _write_gate_report(ws)
+    _write_gate_report(ws, stage="finalize")
+    _write_finalize_report(
+        ws,
+        reader_status="fail",
+        duplicate_citation_count=2,
+        source_appendix_warnings=[{"kind": "missing_source_title"}],
+        source_appendix_trace_warnings=[{"kind": "metadata_warning"}],
+    )
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    _set_workflow_unblocked(ws)
+
+    payload = build_quality_panel(ws)
+
+    assert payload["control_integrity"]["fact_layer_status"] == "complete"
+    assert payload["source_evidence"]["source_pack_status"] == "present"
+    assert payload["source_evidence"]["source_count"] == 1
+    assert payload["source_evidence"]["missing_title_count"] == 1
+    assert payload["source_evidence"]["missing_publisher_count"] == 1
+    assert payload["source_evidence"]["retrieval_source_mix"] == {"local_file": 1}
+    assert payload["source_evidence"]["underlying_evidence_mix"] == {"market_data": 1}
+    assert payload["delivery"]["reader_clean_status"] == "fail"
+    assert payload["delivery"]["duplicate_citation_count"] == 2
+    assert payload["delivery"]["source_appendix_warning_count"] == 2
+    assert payload["overall_status"] == "block"
+    assert {"action": "repair_reader_final_residue", "reason": "reader_clean_failed"} in payload[
+        "recommended_actions"
+    ]
 
 
 def test_quality_panel_artifact_registry_validation(tmp_path: Path) -> None:

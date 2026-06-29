@@ -198,9 +198,11 @@ compact human-readable `output/intermediate/quality_summary.md` from a valid
 panel. Static Quality Panel HTML can render
 `output/intermediate/quality_panel.html` from the same valid panel with inline
 CSS and no external assets or frontend runtime. `quality summarize` can write
-these artifacts together. These are product-quality projections only: they do
-not run gates, replace gate reports, create a quality score, decide release
-eligibility, approve delivery, prove semantic truth, or execute repair.
+these artifacts together, and bundle projection can include them in audit
+bundles while keeping them out of reader-facing delivery bundles. These are
+product-quality projections only: they do not run gates, replace gate reports,
+create a quality score, decide release eligibility, approve delivery, prove
+semantic truth, or execute repair.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not

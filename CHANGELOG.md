@@ -169,6 +169,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   attachment rendered from valid `quality_panel.json`. The HTML uses inline CSS
   and no external assets, scripts, frontend runtime, quality score, release
   authority, delivery approval, truth proof, or gate reimplementation.
+- **Quality Panel audit bundle integration**: report bundle projection now
+  includes `quality_panel.json`, `quality_summary.md`, and
+  `quality_panel.html` in audit bundles when present, while keeping them out of
+  reader-facing delivery bundles. This is audit packaging only; it does not
+  create a dashboard, quality score, release eligibility decision, delivery
+  approval, truth proof, or gate replacement.
 
 ### Fixed
 

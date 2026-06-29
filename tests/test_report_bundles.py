@@ -15,6 +15,11 @@ from multi_agent_brief.product.bundle_projection import (
     build_report_bundle_manifest,
     write_report_bundle_manifest,
 )
+from multi_agent_brief.product.quality_panel import (
+    write_quality_panel,
+    write_quality_panel_html,
+    write_quality_summary,
+)
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -130,6 +135,12 @@ def _finalized_workspace(tmp_path: Path) -> Path:
     return ws
 
 
+def _write_quality_projection_artifacts(ws: Path) -> None:
+    panel = write_quality_panel(workspace=ws)
+    write_quality_summary(workspace=ws, panel_payload=panel)
+    write_quality_panel_html(workspace=ws, panel_payload=panel)
+
+
 def test_report_template_registry_discovers_root_and_packaged_templates() -> None:
     root = ReportTemplateRegistry.from_config_dir(ROOT / "configs" / "report_templates")
     package = ReportTemplateRegistry.from_package()
@@ -196,6 +207,90 @@ def test_report_bundle_manifest_splits_delivery_and_audit_artifacts(tmp_path: Pa
     assert manifest["audit_bundle"]["semantics"] == "audit_control_artifacts_only_not_reader_delivery"
     assert manifest["packaging_hygiene"]["status"] == "clean"
     assert manifest["packaging_hygiene"]["excluded_artifacts"] == []
+
+
+def test_report_bundle_manifest_includes_quality_artifacts_in_audit_only(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+
+    manifest = build_report_bundle_manifest(workspace=ws)
+
+    delivery_paths = {item["path"] for item in manifest["delivery_bundle"]["artifacts"]}
+    audit_paths = {item["path"] for item in manifest["audit_bundle"]["artifacts"]}
+    quality_paths = {
+        "output/intermediate/quality_panel.json",
+        "output/intermediate/quality_summary.md",
+        "output/intermediate/quality_panel.html",
+    }
+    assert quality_paths <= audit_paths
+    assert delivery_paths.isdisjoint(quality_paths)
+    quality_roles = {
+        item["path"]: item["role"]
+        for item in manifest["audit_bundle"]["artifacts"]
+        if item["path"] in quality_paths
+    }
+    assert quality_roles == {
+        "output/intermediate/quality_panel.json": "quality_panel",
+        "output/intermediate/quality_summary.md": "quality_summary",
+        "output/intermediate/quality_panel.html": "quality_panel_html",
+    }
+
+
+def test_report_bundle_manifest_rejects_hand_edited_quality_panel_html(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    html_path = ws / "output" / "intermediate" / "quality_panel.html"
+    html_path.write_text(
+        html_path.read_text(encoding="utf-8").replace("Quality Panel", "Quality Panel Edited", 1),
+        encoding="utf-8",
+    )
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "quality projection artifact invalid" in str(exc)
+        assert "output/intermediate/quality_panel.html" in str(exc)
+        assert "quality_panel_html_stale_or_hand_edited" in str(exc)
+        assert "rerun briefloop quality summarize" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected stale Quality Panel HTML rejection")
+
+
+def test_report_bundle_manifest_rejects_stale_quality_summary(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    summary_path = ws / "output" / "intermediate" / "quality_summary.md"
+    summary_path.write_text(
+        summary_path.read_text(encoding="utf-8").replace("read-only operator view", "edited operator view", 1),
+        encoding="utf-8",
+    )
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "quality projection artifact invalid" in str(exc)
+        assert "output/intermediate/quality_summary.md" in str(exc)
+        assert "quality_summary_stale_or_hand_edited" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected stale Quality Summary rejection")
+
+
+def test_report_bundle_manifest_rejects_modified_quality_panel_source(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
+    panel_path = ws / "output" / "intermediate" / "quality_panel.json"
+    panel = json.loads(panel_path.read_text(encoding="utf-8"))
+    panel["generated_at"] = "2099-01-01T00:00:00Z"
+    panel_path.write_text(json.dumps(panel, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    try:
+        build_report_bundle_manifest(workspace=ws)
+    except ReportBundleProjectionError as exc:
+        assert "quality projection artifact invalid" in str(exc)
+        assert "output/intermediate/quality_summary.md" in str(exc)
+        assert "quality_summary_stale_or_hand_edited" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("Expected modified Quality Panel source rejection")
 
 
 def test_report_bundle_manifest_excludes_packaging_junk(tmp_path: Path) -> None:
@@ -381,6 +476,7 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     capsys,
 ) -> None:
     ws = _finalized_workspace(tmp_path)
+    _write_quality_projection_artifacts(ws)
     (ws / "output" / "delivery" / ".DS_Store").write_text("macOS junk\n", encoding="utf-8")
     legacy_zip = ws / "output" / "output.zip"
     with zipfile.ZipFile(legacy_zip, "w") as zf:
@@ -411,6 +507,10 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     assert "delivery/brief.md" in delivery_names
     assert "audit/output/intermediate/finalize_report.json" in audit_names
     assert "audit/output/intermediate/audited_brief.md" in audit_names
+    assert "audit/output/intermediate/quality_panel.json" in audit_names
+    assert "audit/output/intermediate/quality_summary.md" in audit_names
+    assert "audit/output/intermediate/quality_panel.html" in audit_names
+    assert not any("quality_panel" in name for name in delivery_names)
     all_names = delivery_names | audit_names
     assert not any("__MACOSX" in name for name in all_names)
     assert not any(name.endswith(".DS_Store") for name in all_names)
