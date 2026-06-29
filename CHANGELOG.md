@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public boundary wording before a v0.11 release. This is a readiness guard
   only; it does not bump the version, promote support status, run stages,
   approve delivery, prove truth, or create release authority.
+- **Release consistency product-baseline guard**: `check_release_consistency.py`
+  now runs the v0.11 product-baseline readiness check so release prep fails
+  closed if product-facing entries, ReportPack defaults, packaged parity, or
+  public boundary wording drift. This is still a release-readiness check only;
+  it does not promote support status or add runtime authority.
 
 ### Fixed
 

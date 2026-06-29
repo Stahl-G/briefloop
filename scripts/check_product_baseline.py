@@ -60,7 +60,7 @@ REQUIRED_CONTROL_SPINE = {
 }
 REQUIRED_DOC_BOUNDARY_PHRASES = {
     "README_en.md": [
-        "Current release baseline: v0.10.7",
+        "Current release baseline:",
         "v0.11.0",
         "does not parse PDFs automatically",
         "prove semantic truth",

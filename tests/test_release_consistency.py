@@ -44,6 +44,7 @@ class TestCheckReleaseConsistency:
             cwd=str(SCRIPT.parent.parent),
         )
         assert result.returncode == 0, f"Script failed:\n{result.stdout}\n{result.stderr}"
+        assert "Product baseline readiness passes" in result.stdout
         assert "ALL CHECKS PASSED" in result.stdout
 
     def test_strict_mode_runs(self):
@@ -84,6 +85,28 @@ class TestCheckReleaseConsistency:
         assert "missing dependency" in output
         assert "ModuleNotFoundError: No module named 'yaml'" in output
         assert "Agent configs out of sync" not in output
+
+    def test_product_baseline_failure_prints_diagnostics(self, monkeypatch, capsys):
+        spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=1,
+                stdout='{"ok": false, "checks": [{"id": "new.industry-weekly", "status": "fail"}]}\n',
+                stderr="baseline failed\n",
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        assert module.check_product_baseline() is False
+        output = capsys.readouterr().out
+        assert "Product baseline readiness failed" in output
+        assert '"ok": false' in output
+        assert "baseline failed" in output
 
 
 def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, monkeypatch):

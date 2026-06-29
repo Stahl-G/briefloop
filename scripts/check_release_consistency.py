@@ -10,6 +10,7 @@ Checks:
   6. Latest git tag matches current version (skipped if no tags or --no-tag)
   7. Generated agent configs are up to date (delegates to generate_agent_configs.py --check)
   8. Public safety scan passes for tracked release files
+  9. Product baseline readiness guard passes
 
 Usage:
   python scripts/check_release_consistency.py [--strict] [--no-tag]
@@ -21,6 +22,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -147,6 +149,37 @@ def check_public_safety() -> bool:
     return True
 
 
+def check_product_baseline() -> bool:
+    """Run v0.11 product-baseline readiness guard and return True if it passes."""
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "check_product_baseline.py"), "--json"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    payload_ok = False
+    if result.returncode == 0 and stdout:
+        try:
+            payload = json.loads(stdout)
+            payload_ok = payload.get("ok") is True
+        except json.JSONDecodeError:
+            payload_ok = False
+    if result.returncode != 0 or not payload_ok:
+        print("  [FAIL] Product baseline readiness failed:")
+        if stdout:
+            print("         stdout:")
+            for line in stdout.splitlines():
+                print(f"           {line}")
+        if stderr:
+            print("         stderr:")
+            for line in stderr.splitlines():
+                print(f"           {line}")
+        if not stdout and not stderr:
+            print("         no stdout/stderr captured")
+        return False
+    return True
+
+
 def main(strict: bool = False, check_tag: bool = True) -> int:
     print("Release Consistency Check")
     print("=" * 40)
@@ -212,6 +245,12 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("Public safety scan passes", public_safety_ok)
     except Exception as exc:
         check("Public safety scan passes", False, str(exc))
+
+    try:
+        product_baseline_ok = check_product_baseline()
+        check("Product baseline readiness passes", product_baseline_ok)
+    except Exception as exc:
+        check("Product baseline readiness passes", False, str(exc))
 
     print()
     if ERRORS:
