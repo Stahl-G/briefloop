@@ -606,6 +606,7 @@ def test_new_report_pack_workspace_rejects_unknown_pack(tmp_path: Path, capsys) 
     assert main(["new", "missing-pack", str(workspace)]) == 1
 
     output = capsys.readouterr().out
+    assert output.count("[new] ok: False") == 1
     assert "unknown report pack" in output
     assert "industry-weekly" in output
     assert "document-review" in output
