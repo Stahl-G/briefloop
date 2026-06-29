@@ -182,6 +182,65 @@ def test_extract_force_preserves_managed_source_used_as_input(tmp_path: Path, ca
     assert scope["sources"][0]["path"] == payload["sources"][0]["path"]
 
 
+def test_extract_force_does_not_stage_external_sources(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    workspace = tmp_path / "evidence-ws"
+    initial_source = tmp_path / "initial-source.md"
+    initial_source.write_text("# Source\n\nInitial durable bytes.\n", encoding="utf-8")
+    next_source = tmp_path / "large-external-source.md"
+    next_source.write_text("# Source\n\nReplacement durable bytes.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "initial scope",
+                "--source",
+                str(initial_source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    def fail_stage(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("external source should not be staged")
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.product_commands._stage_extract_source_files",
+        fail_stage,
+    )
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "updated scope",
+                "--source",
+                str(next_source),
+                "--force",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    next_managed_source = workspace / payload["sources"][0]["path"]
+    assert next_managed_source.read_text(encoding="utf-8") == "# Source\n\nReplacement durable bytes.\n"
+
+
 def test_extract_expands_home_globs(tmp_path: Path, monkeypatch, capsys) -> None:
     workspace = tmp_path / "evidence-ws"
     home = tmp_path / "home"

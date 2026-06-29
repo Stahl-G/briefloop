@@ -586,20 +586,40 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         raise FileExistsError(
             f"Refusing to overwrite existing evidence-extract sources: {sources_dir}. Use --force."
         )
-    with tempfile.TemporaryDirectory(prefix="briefloop-evidence-extract-") as staging_dir_text:
-        staged_sources = _stage_extract_source_files(
-            resolved_sources,
-            staging_dir=Path(staging_dir_text),
+    staged_sources: dict[Path, Path] = {}
+    staging_parent = workspace / "output" / "intermediate"
+    managed_sources = (
+        _managed_extract_source_inputs(resolved_sources, sources_dir=sources_dir)
+        if getattr(args, "force", False)
+        else []
+    )
+    if managed_sources:
+        staging_parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=".briefloop-evidence-extract-",
+            dir=staging_parent,
+        ) as staging_dir_text:
+            staged_sources = _stage_extract_source_files(
+                managed_sources,
+                staging_dir=Path(staging_dir_text),
+            )
+            _copy_extract_sources(
+                workspace=workspace,
+                sources_dir=sources_dir,
+                sources=resolved_sources,
+                registered=registered,
+                staged_sources=staged_sources,
+                force=bool(getattr(args, "force", False)),
+            )
+    else:
+        _copy_extract_sources(
+            workspace=workspace,
+            sources_dir=sources_dir,
+            sources=resolved_sources,
+            registered=registered,
+            staged_sources={},
+            force=bool(getattr(args, "force", False)),
         )
-
-        sources_dir.mkdir(parents=True, exist_ok=True)
-        if getattr(args, "force", False):
-            for path in sources_dir.iterdir():
-                if path.is_file():
-                    path.unlink()
-
-        for staged, record in zip(staged_sources, registered):
-            shutil.copy2(staged, workspace / record["path"])
 
     _write_extraction_scope(workspace=workspace, text=extraction_scope_text)
     (workspace / "sources.yaml").write_text(sources_yaml_text, encoding="utf-8")
@@ -623,20 +643,52 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
     return payload
 
 
-def _stage_extract_source_files(sources: list[Path], *, staging_dir: Path) -> list[Path]:
-    """Copy inputs before managed-source cleanup.
+def _copy_extract_sources(
+    *,
+    workspace: Path,
+    sources_dir: Path,
+    sources: list[Path],
+    registered: list[dict[str, Any]],
+    staged_sources: dict[Path, Path],
+    force: bool,
+) -> None:
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    if force:
+        for path in sources_dir.iterdir():
+            if path.is_file():
+                path.unlink()
+
+    for source, record in zip(sources, registered):
+        shutil.copy2(staged_sources.get(source, source), workspace / record["path"])
+
+
+def _managed_extract_source_inputs(sources: list[Path], *, sources_dir: Path) -> list[Path]:
+    managed_root = sources_dir.expanduser().resolve()
+    managed: list[Path] = []
+    for source in sources:
+        try:
+            source.expanduser().resolve().relative_to(managed_root)
+        except ValueError:
+            continue
+        managed.append(source)
+    return managed
+
+
+def _stage_extract_source_files(sources: list[Path], *, staging_dir: Path) -> dict[Path, Path]:
+    """Copy managed inputs before managed-source cleanup.
 
     `extract --force` may be rerun with source paths that already live under
     `input/sources/evidence_extract/`. Staging first prevents the cleanup step
-    from deleting the file before the final copy reads it.
+    from deleting those managed inputs before the final copy reads them. External
+    inputs are not staged through system temp.
     """
 
     staging_dir.mkdir(parents=True, exist_ok=True)
-    staged: list[Path] = []
+    staged: dict[Path, Path] = {}
     for idx, source in enumerate(sources, start=1):
         target = staging_dir / f"{idx:03d}-{_safe_filename(source.name)}"
         shutil.copy2(source, target)
-        staged.append(target)
+        staged[source] = target
     return staged
 
 
