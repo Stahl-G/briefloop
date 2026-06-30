@@ -46,6 +46,7 @@ multi_agent_brief = [
   "evaluation_cases/fixtures/cases/*/workspace/improvement/*.jsonl",
   "evaluation_cases/fixtures/cases/*/workspace/improvement/*.md",
   "evaluation_cases/fixtures/cases/*/workspace/input/*.md",
+  "evaluation_cases/fixtures/cases/*/workspace/input/sources/*.md",
   "evaluation_cases/fixtures/cases/*/workspace/output/*.md",
   "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.json",
   "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.md",

@@ -38,14 +38,14 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
     assert rc == 0
     validation = json.loads(capsys.readouterr().out)
     assert validation["ok"] is True
-    assert validation["case_count"] == 12
+    assert validation["case_count"] == 14
 
     rc = main(["eval-cases", "run", "--repo-workdir", str(ROOT), "--json"])
 
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is True
-    assert result["passed_count"] == 12
+    assert result["passed_count"] == 14
     assert result["failed_count"] == 0
     assert {
         "unsupported_material_fact",
@@ -57,6 +57,8 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "control_switchboard_selection_is_not_execution",
         "reader_facing_source_appendix",
         "static_hermes_no_skip_finalize",
+        "source_evidence_pack_blocks_non_evidence_file",
+        "release_readiness_forged_event_blocker",
         "unapproved_entry_not_materialized",
         "approved_guidance_materialized",
         "reverted_entry_removed_from_next_snapshot",
@@ -260,6 +262,58 @@ def test_eval_cases_reject_disallowed_action(tmp_path, capsys):
     assert rc == 1
     result = json.loads(capsys.readouterr().out)
     assert any("not allowlisted" in error for error in result["errors"])
+
+
+def test_eval_cases_reject_malformed_artifact_status_expectation(tmp_path, capsys):
+    custom_root, manifest = _copy_packaged_cases(tmp_path)
+    manifest["cases"][0]["expected"]["artifact_statuses"] = [
+        {"status": "invalid"},
+        {"artifact_id": "source_evidence_pack_manifest", "status": 7},
+    ]
+    _write_manifest(custom_root, manifest)
+
+    rc = main([
+        "eval-cases",
+        "validate",
+        "--cases-dir",
+        str(custom_root),
+        "--json",
+    ])
+
+    assert rc == 1
+    result = json.loads(capsys.readouterr().out)
+    errors = " ".join(result["errors"])
+    assert "artifact_statuses[0].artifact_id is required" in errors
+    assert "artifact_statuses[1].status must be a string" in errors
+
+
+def test_eval_cases_artifact_statuses_detect_wrong_registry_status(tmp_path, capsys):
+    custom_root, manifest = _copy_packaged_cases(tmp_path)
+    case = next(
+        item
+        for item in manifest["cases"]
+        if item["case_id"] == "source_evidence_pack_blocks_non_evidence_file"
+    )
+    case["expected"]["artifact_statuses"][0]["status"] = "valid"
+    _write_manifest(custom_root, manifest)
+
+    rc = main([
+        "eval-cases",
+        "run",
+        "--cases-dir",
+        str(custom_root),
+        "--case-id",
+        "source_evidence_pack_blocks_non_evidence_file",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 1
+    result = json.loads(capsys.readouterr().out)
+    case_result = result["results"][0]
+    assert case_result["passed"] is False
+    assert any("status expected 'valid', got 'invalid'" in error for error in case_result["errors"])
 
 
 def test_eval_cases_reject_recursive_non_synthetic_claim_and_source_ids(tmp_path, capsys):

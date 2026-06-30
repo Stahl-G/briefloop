@@ -46,6 +46,7 @@ tree is fully bilingual.
 - [Runtime recipes](runtime-recipes.md)
 - [Support matrix](support-matrix.md)
 - [Red lines and anti-patterns](red-lines-and-anti-patterns.md)
+- [v0.11.1 synthetic regression pack](reference-runs/v0.11.1-synthetic-regression-pack.md)
 - [BriefLoop-090 A-controlled auditable-brief pilot](reference-runs/briefloop-090-a-controlled-pilot.md)
 - [Security](security.md)
 

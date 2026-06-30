@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registration surface only; it does not parse binary documents, assess
   semantic support, generate Claim-Support Matrix rows, draw legal or disclosure
   conclusions, run stages, approve delivery, or create release authority.
+- **Synthetic Product OS blocker eval cases**: packaged public-safe eval cases
+  now include deterministic blockers for invalid source evidence pack manifests
+  and forged release-readiness event links, plus artifact-registry status
+  assertions in the eval-case runner. These cases validate control-surface
+  behavior only; they do not prove output quality, source support, or release
+  authorization.
 - **Feedback contamination regression**: added a v0.11.1 issue-closure
   regression proving feedback-only input text remains classified as feedback
   and is not exposed through the runtime handoff as evidence material. The

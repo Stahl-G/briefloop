@@ -43,6 +43,7 @@ ALLOWED_ACTIONS = {
 ALLOWED_EXPECTED_KEYS = {
     "artifacts_absent",
     "artifacts_exist",
+    "artifact_statuses",
     "contains_text",
     "absent_text",
     "exit_code",
@@ -344,6 +345,23 @@ def _validate_expected_contract(*, prefix: str, expected: dict[str, Any]) -> lis
                     errors.append(f"{item_prefix}.file must be relative, not absolute.")
                 if _path_has_traversal_any_platform(rel_path):
                     errors.append(f"{item_prefix}.file must not contain path traversal.")
+    artifact_statuses = expected.get("artifact_statuses")
+    if artifact_statuses is not None:
+        if not isinstance(artifact_statuses, list):
+            errors.append(f"{prefix}.expected.artifact_statuses must be a list.")
+        else:
+            for idx, item in enumerate(artifact_statuses):
+                item_prefix = f"{prefix}.expected.artifact_statuses[{idx}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{item_prefix} must be an object.")
+                    continue
+                artifact_id = item.get("artifact_id")
+                if not isinstance(artifact_id, str) or not artifact_id.strip():
+                    errors.append(f"{item_prefix}.artifact_id is required.")
+                for field in ("status", "validation_result", "validation_result_contains"):
+                    value = item.get(field)
+                    if value is not None and not isinstance(value, str):
+                        errors.append(f"{item_prefix}.{field} must be a string.")
     return errors
 
 

@@ -1,0 +1,9 @@
+source_strategy:
+  enabled_providers:
+    - manual
+manual:
+  enabled: true
+  sources: []
+web_search:
+  enabled: false
+  mode: disabled

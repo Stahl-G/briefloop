@@ -1,0 +1,26 @@
+{
+  "schema_version": "mabw.source_evidence_pack_manifest.v1",
+  "source": "synthetic_eval_case",
+  "record_count": 1,
+  "error_count": 0,
+  "pack_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "records": [
+    {
+      "source_id": "SYN_SRC_001",
+      "path": "input/sources/README.md",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "size_bytes": 112,
+      "source_title": "Synthetic Source Directory Placeholder",
+      "publisher": "Synthetic Fixture Publisher",
+      "source_type": "local_file",
+      "source_category": "other",
+      "retrieval_source_type": "local_file",
+      "underlying_evidence_type": "unknown"
+    }
+  ],
+  "provider_errors": [],
+  "non_goals": [
+    "not_a_source_quality_or_truth_proof",
+    "not_a_runtime_stage_execution"
+  ]
+}

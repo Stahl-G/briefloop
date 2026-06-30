@@ -17,7 +17,9 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
 - Claim Ledger freeze 由 Python 控制面负责：Claim Ledger agents 写不带 claim ID 的 `claim_drafts.json`，然后 `state freeze-claim-ledger` 分配确定性 ID、写 canonical `claim_ledger.json`、记录 freeze metadata，并用冻结账本约束 Claim Ledger stage completion。
 - Stage completion transactions 可以在 workflow state 和 event log metadata 中记录该 stage 的 runtime/model provenance；这只是审计 metadata，不是输出质量声明。
 - Deterministic material-fact、freshness、target-relevance 和 editor-new-fact gates 可以写入 stage-scoped 质量门禁 reports，但不会自动找源、改稿或 repair。
-- Packaged public-safe evaluation cases 可以验证 gates、feedback、runtime blocker 和 Hermes path 相关回归，用于开发和 CI。
+- Packaged public-safe evaluation cases 可以验证 gates、feedback、runtime blocker、
+  durable source evidence pack、event-linked release readiness 和 Hermes path
+  相关回归，用于开发和 CI。
 - 可选 deterministic 溯源投影 可以基于已有 control files 写入 workspace-local audit/debug graph。
 - Workspace-local `audience_profile.md` 可以记录 reader taste；`run`、`start` 和 `handoff` 会创建或复用 frozen per-run `output/intermediate/audience_profile_snapshot.md`，并通过 handoff 暴露为 runtime context。
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。

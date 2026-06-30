@@ -1,6 +1,6 @@
 # Public-Safe Evaluation Cases
 
-v0.6.4 introduced packaged public-safe evaluation cases for developer and CI regression checks. v0.6.5 extended the packaged suite with provenance projection coverage. v0.7.0 adds Improvement Memory control cases.
+v0.6.4 introduced packaged public-safe evaluation cases for developer and CI regression checks. v0.6.5 extended the packaged suite with provenance projection coverage. v0.7.0 adds Improvement Memory control cases. v0.11.1 adds synthetic Product OS blocker cases for durable source evidence pack validation and event-linked release readiness reports.
 
 These cases validate control-surface behavior across:
 
@@ -9,13 +9,15 @@ These cases validate control-surface behavior across:
 - runtime state blockers
 - provenance projection controls
 - Improvement Ledger / Memory materialization controls
+- durable source evidence pack manifest validation
+- event-linked release-readiness projection validation
 - Hermes guidance invariants
 
 They are not benchmark scores and are not workflow artifacts.
 
 ## Evaluation Claim Boundary
 
-Evaluation cases prove deterministic control behavior, not model output quality. A passing case can show that an approved Improvement Memory entry was materialized into a frozen snapshot and referenced by handoff; it does not prove that a runtime model followed the guidance well.
+Evaluation cases prove deterministic control behavior, not model output quality. A passing case can show that an approved Improvement Memory entry was materialized into a frozen snapshot and referenced by handoff, or that an invalid optional control artifact stays invalid in the artifact registry. It does not prove that a runtime model followed guidance well, that a source supports a claim, or that a release is authorized.
 
 For v0.8 planning, guidance evaluation should distinguish two future measurements:
 
@@ -63,11 +65,14 @@ Evaluation cases:
 - prepare temporary runtime state from explicit `initial_stage`
 - compare only stable partial assertions and optional `expected_actions`
 - validate structured runtime manifest fields such as `runtime_manifest.json.improvement`
+- validate selected artifact-registry statuses for explicit synthetic blockers
 - do not infer workflow stage from files
 - do not execute workflow stages
 - do not run subagents
 - do not call LLM judges
 - do not fetch sources or live market data
+- do not treat source candidates, source-pack manifests, or release-readiness
+  reports as support proof or delivery approval
 - do not execute repair or rewrite briefs
 - do not add `evaluation_report.json` to runtime artifact contracts
 
