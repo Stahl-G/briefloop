@@ -143,6 +143,19 @@ def test_feedback_only_text_does_not_contaminate_evidence_or_reader_artifacts(tm
     assert [item["name"] for item in classification["feedback"]] == ["operator_feedback.md"]
     assert sentinel in (feedback_dir / "operator_feedback.md").read_text(encoding="utf-8")
 
+    result = main(["run", "--workspace", str(ws), "--skip-doctor"])
+
+    assert result == 0
+    handoff_json_path = ws / "output" / "intermediate" / "agent_handoff.json"
+    handoff_md_path = ws / "output" / "intermediate" / "agent_handoff.md"
+    handoff_payload = json.loads(handoff_json_path.read_text(encoding="utf-8"))
+    handoff_markdown = handoff_md_path.read_text(encoding="utf-8")
+    combined_handoff = json.dumps(handoff_payload, ensure_ascii=False) + "\n" + handoff_markdown
+    assert sentinel not in combined_handoff
+    assert "input/feedback" in combined_handoff
+    assert "remain non-evidence" in combined_handoff
+    assert "only extracted files under input/sources are evidence" in combined_handoff
+
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True, exist_ok=True)
     (intermediate / "candidate_claims.json").write_text(

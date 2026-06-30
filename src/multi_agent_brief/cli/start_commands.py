@@ -124,6 +124,11 @@ RUNTIME_WEBSEARCH_ZERO_RESULT_NOTE = (
     "or every query returns an empty result set, stop and request human review. "
     "Do not switch to source-planner or continue with stale sources."
 )
+INPUT_DIRECTORY_ROLE_NOTE = (
+    "Directory role still controls claim eligibility: only extracted files under "
+    "input/sources are evidence; input/context, input/instructions, and "
+    "input/feedback remain non-evidence."
+)
 STAGE_COMPLETION_PROTOCOL_SCHEMA = "multi-agent-brief-stage-completion-protocol/v1"
 STAGE_COMPLETION_PROTOCOL_RULES = [
     "Stage completion is artifact-based, not statement-based.",
@@ -256,6 +261,7 @@ def _hermes_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             DECISION_RECORDING_NOTE,
             FINALIZE_GATE_NOTE,
             REPAIR_GUIDANCE_NOTE,
+            INPUT_DIRECTORY_ROLE_NOTE,
             f"Orchestrator loop: {ORCHESTRATOR_LOOP}",
             "Each delegate_task child needs complete goal, context, input paths, and output paths.",
             "Parent must verify each artifact before proceeding to the next child.",
@@ -519,7 +525,7 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Each subagent step must complete before the next begins.",
             "Verify each artifact exists and is non-empty before continuing.",
             "Use inputs extract to convert PDF/DOCX/image inputs into .mineru.md before Scout reads evidence files.",
-            "Directory role still controls claim eligibility: only extracted files under input/sources are evidence.",
+            INPUT_DIRECTORY_ROLE_NOTE,
             REPAIR_GUIDANCE_NOTE,
             DECISION_RECORDING_NOTE,
             FINALIZE_GATE_NOTE,
