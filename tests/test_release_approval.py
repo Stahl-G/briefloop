@@ -243,6 +243,41 @@ def test_release_check_blocks_unauthorized_institution_branding(tmp_path: Path) 
     assert report["blockers"] == ["institution_branding_not_authorized:unauthorized"]
 
 
+def test_release_readiness_report_branding_context_must_match_event_metadata(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    config_path = ws / "config.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + (
+            "\nrelease:\n"
+            "  branding:\n"
+            "    required: true\n"
+            "    institution_name: Synthetic Institute\n"
+            "    institution_use_authorization: unauthorized\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["approval", "init", "--workspace", str(ws), "--mode", "internal_draft"]) == 0
+    assert main(["release", "check", "--workspace", str(ws), "--mode", "internal_draft"]) == 1
+
+    report_path = ws / "output" / "intermediate" / "release_readiness_report.json"
+    report = _json(report_path)
+    report["branding_context"]["status"] = "not_required"
+    report["branding_context"]["missing_fields"] = []
+    report["branding_context"]["blockers"] = []
+    _write_json(report_path, report)
+    assert validate_release_readiness_report_payload(report) is None
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    registry = _json(ws / "output" / "intermediate" / "artifact_registry.json")
+    report_record = registry["artifacts"]["release_readiness_report"]
+    assert report_record["status"] == "invalid"
+    assert report_record["validation_result"] == (
+        "release_readiness_report_event_link_error:event_metadata_mismatch"
+    )
+
+
 def test_release_check_passes_with_complete_required_branding_context(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     config_path = ws / "config.yaml"

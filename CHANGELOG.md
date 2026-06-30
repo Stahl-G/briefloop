@@ -82,6 +82,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Release branding event-link binding**: `release_readiness_report.json`
+  validation now requires the report `branding_context` status and blocked
+  state to match the recorded `release_readiness_checked` event metadata, so
+  hand-edited branding context cannot remain artifact-registry valid.
 - **ReportPack support-status alignment**: baseline ReportPacks now expose
   machine-readable `status: supported` for `market_weekly`,
   `management_monthly`, and `evidence_extract`, while

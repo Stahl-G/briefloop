@@ -525,6 +525,13 @@ def validate_release_readiness_report_event_link(
         return "release_readiness_report_event_link_error:event_metadata_mismatch"
     if bool(metadata.get("approval_required")) != bool(payload.get("approval_required")):
         return "release_readiness_report_event_link_error:event_metadata_mismatch"
+    branding_context = payload.get("branding_context")
+    if not isinstance(branding_context, Mapping):
+        return "release_readiness_report_event_link_error:branding_context"
+    if _clean_text(metadata.get("branding_status")) != _clean_text(branding_context.get("status")):
+        return "release_readiness_report_event_link_error:event_metadata_mismatch"
+    if bool(metadata.get("branding_blocked")) != bool(branding_context.get("blockers")):
+        return "release_readiness_report_event_link_error:event_metadata_mismatch"
     return None
 
 
