@@ -27,7 +27,7 @@ QUALITY_GATE_STATE_FILES = {
     "finalize_quality_gate_report": FINALIZE_QUALITY_GATE_REPORT_FILE,
 }
 
-GATE_IDS = {"editor_new_fact", "material_fact", "freshness", "target_relevance"}
+GATE_IDS = {"coverage_omission", "editor_new_fact", "material_fact", "freshness", "target_relevance"}
 GATE_STATUSES = {"pass", "warning", "fail"}
 FINDING_SEVERITIES = {"low", "medium", "high"}
 BLOCKING_LEVELS = {"none", "warning", "blocking"}

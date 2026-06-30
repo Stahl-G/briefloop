@@ -271,8 +271,9 @@ roles:
     - In default topology, read the already-joined candidate_claims.json, rank
       and deduplicate candidates, apply freshness and capacity policy, then write
       output/intermediate/screened_candidates.json.
-    - screened_candidates.json must contain selected candidates, excluded or deprioritized
-      candidates with stable reason_code values, short explanations, and the
+    - screened_candidates.json must contain selected candidates with stable
+      candidate_id values, plus excluded or deprioritized candidates with
+      stable reason_code values, short explanations, and the
       screening_policy snapshot actually applied. Use reason codes such as
       capacity_capped, stale_source, duplicate_source, weak_relevance, off_focus,
       low_confidence, low_tier, or unsafe_evidence_boundary.
@@ -333,7 +334,7 @@ roles:
       as a screening blocker or needs-human-review condition. Do not silently
       relax the threshold.
     - Screening rationale may explain staleness, but explanation is not approval.
-    - Preserve source identity for every included item.
+    - Preserve candidate_id, source identity, and evidence text for every included item.
     - Apply configured topic capacity caps.
   claim-ledger:
     stage: pipeline
@@ -345,9 +346,9 @@ roles:
     responsibilities:
     - Write output/intermediate/claim_drafts.json without claim_id fields.
     - Ensure every claim links to a registered source entry.
-    - Preserve source IDs, source URL/path, source title/name, publisher, source_type,
-      source_category, published_at, retrieved_at, and evidence text from screened
-      candidates into claim_drafts.json metadata.
+    - Preserve candidate_id, source IDs, source URL/path, source title/name,
+      publisher, source_type, source_category, published_at, retrieved_at, and
+      evidence text from screened candidates into claim_drafts.json metadata.
     - Carry useful Screener metadata forward.
     - Detect duplicate or unsupported claim drafts for Python freeze warnings and
       downstream repair.

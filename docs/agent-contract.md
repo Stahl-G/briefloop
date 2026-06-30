@@ -127,6 +127,14 @@ can explain findings without guessing the policy.
 
 ### Quality Gate IDs
 
+#### coverage_omission
+
+High-priority selected screened candidates should carry into Claim Ledger claims
+and cited brief references. This gate checks deterministic continuity from
+`screened_candidates.json` to Claim Ledger metadata and `[src:<claim_id>]`
+references only. It is not a full-world recall check and does not claim the
+system found every material item.
+
 #### material_fact
 
 Reader-facing factual claims must be traceable to Claim Ledger support. Numbers,

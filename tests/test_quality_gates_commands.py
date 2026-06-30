@@ -112,6 +112,48 @@ def _write_supported_target_ledger(ws: Path) -> None:
     )
 
 
+def _write_screened_candidates(
+    ws: Path,
+    *,
+    selected: list[dict],
+    excluded: list[dict] | None = None,
+) -> None:
+    (_intermediate(ws) / "screened_candidates.json").write_text(
+        json.dumps(
+            {
+                "selected": selected,
+                "excluded": excluded if excluded is not None else [],
+                "screening_policy": {
+                    "max_items": 8,
+                    "freshness_window_days": 90,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _selected_candidate(
+    *,
+    candidate_id: str = "CAND-001",
+    statement: str = "TargetCo opened a high-priority demo facility.",
+    priority: str = "high",
+    **extra: object,
+) -> dict:
+    return {
+        "candidate_id": candidate_id,
+        "statement": statement,
+        "evidence_text": statement,
+        "source_id": "SRC-001",
+        "published_at": "2026-06-01",
+        "priority": priority,
+        **extra,
+    }
+
+
 def _write_report_spec(ws: Path, *, policy_profile: str) -> None:
     (ws / "report_spec.yaml").write_text(
         yaml.safe_dump(
@@ -1073,6 +1115,149 @@ def test_quality_gate_atom_residue_is_warning_only(tmp_path):
     assert atom_findings[0]["blocking_level"] == "warning"
     assert atom_findings[0]["blocking"] is False
     assert atom_findings[0]["metadata"]["semantic_boundary"] == "deterministic_id_and_citation_projection_only"
+
+
+def test_coverage_omission_warns_when_high_priority_selected_candidate_missing_from_ledger(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    _write_screened_candidates(
+        ws,
+        selected=[
+            _selected_candidate(
+                candidate_id="CAND-999",
+                statement="TargetCo disclosed a high-priority omitted item.",
+            )
+        ],
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    projection = report["metadata"]["coverage_omission_projection"]
+    findings = [item for item in report["findings"] if item["finding_type"] == "selected_candidate_missing_from_ledger"]
+    assert projection["status"] == "checked"
+    assert projection["high_priority_selected_count"] == 1
+    assert projection["missing_from_ledger_count"] == 1
+    assert len(findings) == 1
+    assert findings[0]["gate_id"] == "coverage_omission"
+    assert findings[0]["blocking_level"] == "warning"
+    assert "not full-world recall" in findings[0]["metadata"]["semantic_boundary"]
+
+
+def test_coverage_omission_blocks_in_strict_mode(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    _write_screened_candidates(
+        ws,
+        selected=[
+            _selected_candidate(
+                candidate_id="CAND-999",
+                statement="TargetCo disclosed a high-priority omitted item.",
+            )
+        ],
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT, strict=True)
+
+    findings = [item for item in state["quality_gate_report"]["findings"] if item["gate_id"] == "coverage_omission"]
+    assert findings[0]["blocking_level"] == "blocking"
+
+
+def test_coverage_omission_warns_when_selected_ledger_claim_is_not_cited(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(
+        ws,
+        [
+            {
+                "claim_id": "CL-001",
+                "statement": "TargetCo opened a high-priority demo facility.",
+                "source_id": "SRC-001",
+                "evidence_text": "TargetCo opened a high-priority demo facility.",
+                "source_url": "https://example.com/targetco-demo",
+                "source_type": "web_search",
+                "metadata": {
+                    "candidate_id": "CAND-001",
+                    "source_title": "TargetCo Demo Facility",
+                    "published_at": "2026-06-01",
+                    "importance": "high",
+                },
+            }
+        ],
+    )
+    _write_screened_candidates(ws, selected=[_selected_candidate()])
+    _write_audited_brief(ws, "## Executive Summary\nTargetCo update.\n")
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    report = state["quality_gate_report"]
+    projection = report["metadata"]["coverage_omission_projection"]
+    findings = [item for item in report["findings"] if item["finding_type"] == "selected_candidate_missing_from_brief"]
+    assert projection["missing_from_brief_count"] == 1
+    assert len(findings) == 1
+    assert findings[0]["claim_id"] == "CL-001"
+
+
+def test_coverage_omission_respects_explicit_omission_reason(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    _write_screened_candidates(
+        ws,
+        selected=[
+            _selected_candidate(
+                candidate_id="CAND-999",
+                statement="TargetCo disclosed a high-priority scoped-out item.",
+                omission_reason="Outside the configured report scope.",
+            )
+        ],
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    projection = state["quality_gate_report"]["metadata"]["coverage_omission_projection"]
+    findings = [item for item in state["quality_gate_report"]["findings"] if item["gate_id"] == "coverage_omission"]
+    assert projection["scoped_out_count"] == 1
+    assert projection["missing_from_ledger_count"] == 0
+    assert findings == []
+
+
+def test_coverage_omission_does_not_interpret_invalid_screened_candidates(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    (_intermediate(ws) / "screened_candidates.json").write_text(
+        json.dumps(
+            {
+                "selected": [{"candidate_id": "CAND-999", "statement": "No evidence.", "priority": "high"}],
+                "excluded": [],
+                "screening_policy": {"max_items": 8},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    projection = state["quality_gate_report"]["metadata"]["coverage_omission_projection"]
+    findings = [item for item in state["quality_gate_report"]["findings"] if item["gate_id"] == "coverage_omission"]
+    assert projection["status"] == "invalid"
+    assert "screened_candidates_schema_error" in projection["not_interpreted_reason"]
+    assert findings == []
 
 
 def test_quality_gate_invalid_atomic_graph_is_non_blocking(tmp_path):

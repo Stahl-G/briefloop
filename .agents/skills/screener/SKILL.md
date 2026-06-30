@@ -35,7 +35,8 @@ Use after Scout has written `candidate_claims.json` only when the selected topol
 - Rank candidates by relevance, freshness, source quality, and user focus.
 - Deduplicate exact and near-duplicate candidates.
 - Apply topic capacity and reporting-window rules from config.
-- Preserve source identity and evidence text.
+- Preserve stable `candidate_id`, source identity, and evidence text for every
+  included item.
 - Record exclusion reasons for every dropped or deprioritized candidate with a stable
   `reason_code` and short `explanation`. Use reason codes such as
   `duplicate_source`, `stale_source`, `capacity_capped`, `weak_relevance`,

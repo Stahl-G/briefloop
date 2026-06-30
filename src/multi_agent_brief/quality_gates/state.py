@@ -32,6 +32,10 @@ from multi_agent_brief.orchestrator.runtime_state import (
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
+    ARTIFACT_VALID,
+    _validate_screened_candidates_payload,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ACTIVE_REPAIR_OPEN,
     E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
@@ -84,6 +88,13 @@ STRATEGIC_IMPLICATION_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 GATE_RULE_DOC_ANCHOR = "docs/agent-contract.md#quality-gate-rule-summaries"
 GATE_RULES: dict[str, dict[str, str]] = {
+    "coverage_omission": {
+        "rule_summary": (
+            "High-priority selected screened candidates should carry into Claim Ledger claims and cited brief "
+            "references, unless an explicit limitation or omission reason is recorded."
+        ),
+        "docs_anchor": "docs/agent-contract.md#coverage_omission",
+    },
     "material_fact": {
         "rule_summary": (
             "Reader-facing factual claims must be traceable to supported Claim Ledger entries; numbers "
@@ -165,6 +176,20 @@ FINDING_RULES: dict[str, dict[str, str]] = {
             "A present valid Claim-Support Matrix explicitly records inferential support requiring reader-facing framing."
         ),
         "docs_anchor": "docs/agent-contract.md#claim-support-matrix",
+    },
+    "selected_candidate_missing_from_ledger": {
+        "rule_summary": (
+            "Selected high-priority screened candidates should not disappear before Claim Ledger freeze "
+            "without an explicit limitation or omission reason."
+        ),
+        "docs_anchor": "docs/agent-contract.md#coverage_omission",
+    },
+    "selected_candidate_missing_from_brief": {
+        "rule_summary": (
+            "Selected high-priority screened candidates that reach the Claim Ledger should be cited in the "
+            "audited or reader-facing brief unless intentionally scoped out."
+        ),
+        "docs_anchor": "docs/agent-contract.md#coverage_omission",
     },
 }
 
@@ -967,6 +992,317 @@ def _claim_ledger_support_text(ledger: ClaimLedger) -> str:
     return "\n".join(part for part in parts if isinstance(part, str)).lower()
 
 
+HIGH_PRIORITY_SCREENING_VALUES = {"high", "critical", "blocking", "direct", "must_include", "must-include"}
+COVERAGE_LIMITATION_FIELDS = (
+    "omission_reason",
+    "coverage_limitation",
+    "limitation",
+    "limitations",
+    "limitation_reason",
+    "not_included_reason",
+    "scope_reason",
+    "defer_reason",
+    "deferred_reason",
+)
+COVERAGE_LIMITATION_WORDS = (
+    "limitation",
+    "limitations",
+    "scope",
+    "scoped out",
+    "not covered",
+    "not included",
+    "omitted",
+    "deferred",
+    "排除",
+    "范围",
+    "限制",
+    "未覆盖",
+    "未纳入",
+    "省略",
+)
+
+
+def _coverage_omission_projection(
+    *,
+    workspace: Path | None,
+    markdown: str,
+    ledger: ClaimLedger,
+) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "status": "not_available",
+        "semantic_boundary": (
+            "deterministic_selected_candidate_continuity_only; not full-world recall, semantic proof, "
+            "or source-discovery completeness"
+        ),
+        "selected_count": 0,
+        "high_priority_selected_count": 0,
+        "missing_from_ledger_count": 0,
+        "missing_from_brief_count": 0,
+        "not_interpreted_reason": "",
+    }
+    if workspace is None:
+        base["not_interpreted_reason"] = "workspace_not_provided"
+        return base
+
+    path = workspace / "output" / "intermediate" / "screened_candidates.json"
+    if not path.exists():
+        base["status"] = "missing"
+        base["not_interpreted_reason"] = "screened_candidates_missing"
+        return base
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        base["status"] = "invalid"
+        base["not_interpreted_reason"] = f"screened_candidates_unreadable:{type(exc).__name__}"
+        return base
+
+    artifact_status, validation_result = _validate_screened_candidates_payload(payload)
+    base["screened_candidates_validation_result"] = validation_result
+    if artifact_status != ARTIFACT_VALID:
+        base["status"] = "invalid"
+        base["not_interpreted_reason"] = validation_result
+        return base
+    if not isinstance(payload, dict):
+        base["status"] = "legacy_not_interpreted"
+        base["not_interpreted_reason"] = "legacy_list_shape_has_no_selected_bucket"
+        return base
+
+    selected = [item for item in payload.get("selected") or [] if isinstance(item, dict)]
+    high_priority = [candidate for candidate in selected if _screened_candidate_is_high_priority(candidate)]
+    base["status"] = "checked"
+    base["selected_count"] = len(selected)
+    base["high_priority_selected_count"] = len(high_priority)
+    base["trace_basis"] = "candidate_id_or_exact_statement"
+
+    cited_claim_ids = set(SRC_REF_PATTERN.findall(markdown))
+    missing_from_ledger: list[dict[str, Any]] = []
+    missing_from_brief: list[dict[str, Any]] = []
+    scoped_out: list[dict[str, Any]] = []
+    untraceable: list[dict[str, Any]] = []
+
+    for candidate in high_priority:
+        trace = _screened_candidate_trace(candidate)
+        if not trace["candidate_id"] and not trace["statement"]:
+            untraceable.append(trace)
+            continue
+        limitation = _coverage_limitation_reason(candidate=candidate, markdown=markdown)
+        matches = _matching_claims_for_screened_candidate(candidate, ledger)
+        if not matches:
+            if limitation:
+                scoped_out.append({**trace, "limitation": limitation})
+                continue
+            missing_from_ledger.append(trace)
+            continue
+        cited_matches = [claim for claim in matches if claim.claim_id in cited_claim_ids]
+        if not cited_matches and not limitation:
+            missing_from_brief.append({
+                **trace,
+                "claim_ids": [claim.claim_id for claim in matches],
+                "source_ids": [claim.source_id for claim in matches],
+            })
+        elif limitation:
+            scoped_out.append({**trace, "limitation": limitation})
+
+    base.update(
+        {
+            "missing_from_ledger_count": len(missing_from_ledger),
+            "missing_from_brief_count": len(missing_from_brief),
+            "scoped_out_count": len(scoped_out),
+            "untraceable_high_priority_count": len(untraceable),
+            "missing_from_ledger": missing_from_ledger,
+            "missing_from_brief": missing_from_brief,
+            "scoped_out": scoped_out,
+            "untraceable_high_priority": untraceable,
+        }
+    )
+    return base
+
+
+def _coverage_omission_findings(
+    *,
+    projection: dict[str, Any],
+    strict: bool,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+    reader_facing_mode: bool,
+) -> list[dict[str, Any]]:
+    if projection.get("status") != "checked":
+        return []
+    findings: list[dict[str, Any]] = []
+    blocking_level = _blocking_level(default_blocking=False, strict=strict)
+    severity = "high" if blocking_level == "blocking" else "medium"
+    ledger_stage = _stage_or_none(stages, "claim-ledger")
+    ledger_artifact = _artifact_or_none(artifacts, "claim_ledger")
+    editor_stage = _stage_or_none(stages, "editor")
+    brief_artifact = _artifact_or_none(artifacts, "reader_brief" if reader_facing_mode else "audited_brief")
+
+    for item in _row_list(projection.get("missing_from_ledger")):
+        findings.append(
+            _finding(
+                finding_id=f"QG_COVERAGE_OMISSION_{len(findings)+1:03d}",
+                gate_id="coverage_omission",
+                finding_type="selected_candidate_missing_from_ledger",
+                severity=severity,
+                blocking_level=blocking_level,
+                repair_owner="claim-ledger",
+                stage_id=ledger_stage,
+                artifact_id=ledger_artifact,
+                source_id=_text_or_none(item.get("source_id")),
+                description=(
+                    "A high-priority selected screened candidate is not carried into the Claim Ledger "
+                    f"and has no explicit omission or limitation reason: {item.get('display') or 'unknown'}."
+                ),
+                recommendation=(
+                    "Carry the selected candidate into claim_drafts.json before freezing, or record an explicit "
+                    "scope/limitation reason instead of silently dropping it."
+                ),
+                category="coverage_gap",
+                evidence_ref=_text_or_none(item.get("candidate_id")) or _text_or_none(item.get("statement")) or "",
+                metadata={
+                    "screened_candidate": item,
+                    "semantic_boundary": projection.get("semantic_boundary"),
+                },
+            )
+        )
+    for item in _row_list(projection.get("missing_from_brief")):
+        findings.append(
+            _finding(
+                finding_id=f"QG_COVERAGE_OMISSION_{len(findings)+1:03d}",
+                gate_id="coverage_omission",
+                finding_type="selected_candidate_missing_from_brief",
+                severity=severity,
+                blocking_level=blocking_level,
+                repair_owner="editor",
+                stage_id=editor_stage,
+                artifact_id=brief_artifact,
+                claim_id=_first_text(item.get("claim_ids")),
+                source_id=_first_text(item.get("source_ids")) or _text_or_none(item.get("source_id")),
+                description=(
+                    "A high-priority selected screened candidate reached the Claim Ledger but is not cited in "
+                    f"the brief and has no explicit omission or limitation reason: {item.get('display') or 'unknown'}."
+                ),
+                recommendation=(
+                    "Cite the corresponding Claim Ledger entry in the brief, or add an explicit scope/limitation "
+                    "reason for omitting the selected item."
+                ),
+                category="coverage_gap",
+                evidence_ref=", ".join(str(claim_id) for claim_id in item.get("claim_ids") or []),
+                metadata={
+                    "screened_candidate": item,
+                    "semantic_boundary": projection.get("semantic_boundary"),
+                },
+            )
+        )
+    return findings
+
+
+def _text_or_none(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _first_text(value: Any) -> str | None:
+    if isinstance(value, list):
+        for item in value:
+            text = _text_or_none(item)
+            if text:
+                return text
+    return _text_or_none(value)
+
+
+def _screened_candidate_trace(candidate: dict[str, Any]) -> dict[str, Any]:
+    candidate_id = _text_or_none(candidate.get("candidate_id"))
+    statement = _text_or_none(candidate.get("statement")) or _text_or_none(candidate.get("claim"))
+    source_id = _text_or_none(candidate.get("source_id"))
+    source_title = _text_or_none(candidate.get("source_title")) or _text_or_none(candidate.get("title"))
+    display = candidate_id or statement or source_title or source_id or "unknown"
+    return {
+        "candidate_id": candidate_id,
+        "statement": statement,
+        "source_id": source_id,
+        "source_title": source_title,
+        "display": display,
+        "priority": _screened_candidate_priority_value(candidate),
+    }
+
+
+def _screened_candidate_priority_value(candidate: dict[str, Any]) -> str:
+    for container in (candidate, candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}):
+        for key in ("priority", "importance", "materiality", "severity", "selected_priority"):
+            value = container.get(key) if isinstance(container, dict) else None
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+    if candidate.get("high_priority") is True:
+        return "high"
+    return ""
+
+
+def _screened_candidate_is_high_priority(candidate: dict[str, Any]) -> bool:
+    return _screened_candidate_priority_value(candidate) in HIGH_PRIORITY_SCREENING_VALUES
+
+
+def _matching_claims_for_screened_candidate(candidate: dict[str, Any], ledger: ClaimLedger) -> list[Any]:
+    candidate_id = _text_or_none(candidate.get("candidate_id"))
+    explicit_claim_id = _text_or_none(candidate.get("claim_id"))
+    normalized_statement = _normalize_candidate_statement(
+        _text_or_none(candidate.get("statement")) or _text_or_none(candidate.get("claim")) or ""
+    )
+    matches: list[Any] = []
+    for claim in ledger:
+        metadata = claim.metadata if isinstance(claim.metadata, dict) else {}
+        metadata_candidate_ids = _metadata_candidate_ids(metadata)
+        if explicit_claim_id and claim.claim_id == explicit_claim_id:
+            matches.append(claim)
+            continue
+        if candidate_id and candidate_id in metadata_candidate_ids:
+            matches.append(claim)
+            continue
+        if not candidate_id and normalized_statement and _normalize_candidate_statement(claim.statement) == normalized_statement:
+            matches.append(claim)
+    return matches
+
+
+def _metadata_candidate_ids(metadata: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    for key in ("candidate_id", "screened_candidate_id", "candidate_ids", "screened_candidate_ids"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            values.add(value.strip())
+        elif isinstance(value, list):
+            values.update(str(item).strip() for item in value if str(item).strip())
+    return values
+
+
+def _normalize_candidate_statement(value: str) -> str:
+    return " ".join(value.lower().split()).strip(".,;:()[]{}")
+
+
+def _coverage_limitation_reason(*, candidate: dict[str, Any], markdown: str) -> str:
+    for field in COVERAGE_LIMITATION_FIELDS:
+        value = candidate.get(field)
+        if isinstance(value, str) and value.strip():
+            return f"{field}:{value.strip()}"
+        if isinstance(value, list):
+            joined = "; ".join(str(item).strip() for item in value if str(item).strip())
+            if joined:
+                return f"{field}:{joined}"
+    tokens = [
+        _text_or_none(candidate.get("candidate_id")),
+        _text_or_none(candidate.get("source_id")),
+        _text_or_none(candidate.get("source_title")),
+        _text_or_none(candidate.get("title")),
+    ]
+    tokens = [token.lower() for token in tokens if token]
+    if not tokens:
+        return ""
+    for line in markdown.splitlines():
+        lower = line.lower()
+        if any(word in lower for word in COVERAGE_LIMITATION_WORDS) and any(token in lower for token in tokens):
+            return f"brief_limitation:{line.strip()}"
+    return ""
+
+
 def _freshness_findings(
     *,
     markdown: str,
@@ -1362,6 +1698,7 @@ def evaluate_quality_gate_findings(
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
     policy_gate_adapter: dict[str, Any] | None = None,
+    coverage_omission_projection: dict[str, Any] | None = None,
     parallel: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Evaluate deterministic quality gates from preloaded inputs without writes.
@@ -1376,6 +1713,19 @@ def evaluate_quality_gate_findings(
     material_fact_strict = policy_gate_is_strict(policy_gate_adapter, "material_fact", cli_strict=strict)
     freshness_strict = policy_gate_is_strict(policy_gate_adapter, "freshness", cli_strict=strict)
     target_relevance_strict = policy_gate_is_strict(policy_gate_adapter, "target_relevance", cli_strict=strict)
+    coverage_omission_strict = policy_gate_is_strict(policy_gate_adapter, "coverage_omission", cli_strict=strict)
+    coverage_projection = coverage_omission_projection or _coverage_omission_projection(
+        workspace=None,
+        markdown=markdown,
+        ledger=ledger,
+    )
+    gate_tasks["coverage_omission"] = lambda: _coverage_omission_findings(
+        projection=coverage_projection,
+        strict=coverage_omission_strict,
+        stages=stages,
+        artifacts=artifacts,
+        reader_facing_mode=reader_facing_mode,
+    )
     if not reader_facing_mode:
         gate_tasks["material_fact"] = lambda: _material_findings(
             markdown=markdown,
@@ -1481,11 +1831,17 @@ def check_quality_gates(
     )
     policy_gate_adapter = resolve_workspace_policy_gate_adapter(ws)
     gate_strictness = {
+        "coverage_omission": policy_gate_is_strict(policy_gate_adapter, "coverage_omission", cli_strict=strict),
         "material_fact": policy_gate_is_strict(policy_gate_adapter, "material_fact", cli_strict=strict),
         "freshness": policy_gate_is_strict(policy_gate_adapter, "freshness", cli_strict=strict),
         "target_relevance": policy_gate_is_strict(policy_gate_adapter, "target_relevance", cli_strict=strict),
         "editor_new_fact": strict,
     }
+    coverage_omission_projection = _coverage_omission_projection(
+        workspace=ws,
+        markdown=markdown,
+        ledger=claim_ledger,
+    )
 
     gate_findings = evaluate_quality_gate_findings(
         markdown=markdown,
@@ -1498,6 +1854,7 @@ def check_quality_gates(
         stages=stages,
         artifacts=artifacts,
         policy_gate_adapter=policy_gate_adapter,
+        coverage_omission_projection=coverage_omission_projection,
         strict=strict,
         reader_facing_mode=reader_mode,
     )
@@ -1559,6 +1916,7 @@ def check_quality_gates(
             "policy_gate_adapter": policy_gate_adapter,
             "atomic_reader_projection": atomic_projection,
             "claim_support_matrix_projection": claim_support_projection,
+            "coverage_omission_projection": coverage_omission_projection,
         },
     }
 

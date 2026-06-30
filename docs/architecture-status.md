@@ -19,7 +19,10 @@ breaking rename.
 - Topology-satisfied stages are recorded in workflow state and event log; they do not synthesize a separate downstream stage execution history.
 - Claim Ledger freeze is Python-owned: Claim Ledger agents write `claim_drafts.json` without claim IDs, then `state freeze-claim-ledger` assigns deterministic IDs, writes canonical `claim_ledger.json`, records freeze metadata, and gates Claim Ledger stage completion on the frozen ledger.
 - Stage completion transactions can record runtime/model provenance for the stage in workflow state and event log metadata; this is audit metadata only and is not an output-quality claim.
-- Deterministic material-fact, freshness, target-relevance, and editor-new-fact gates can write stage-scoped quality gate reports without fetching sources, rewriting briefs, or executing repair.
+- Deterministic material-fact, freshness, target-relevance,
+  coverage/omission-continuity, and editor-new-fact gates can write
+  stage-scoped quality gate reports without fetching sources, rewriting briefs,
+  inferring full recall, or executing repair.
 - Packaged public-safe evaluation cases can validate known gates, feedback,
   runtime blocker, durable source evidence pack, event-linked release
   readiness, and Hermes path regressions for development and CI.

@@ -20,7 +20,7 @@ Use when implementing or reviewing claim draft wording, source evidence storage,
 Responsibilities:
 - Write output/intermediate/claim_drafts.json without claim_id fields.
 - Ensure every claim links to a registered source entry.
-- Preserve source IDs, source URL/path, source title/name, publisher, source_type, source_category, published_at, retrieved_at, and evidence text from screened candidates into claim_drafts.json metadata.
+- Preserve candidate_id, source IDs, source URL/path, source title/name, publisher, source_type, source_category, published_at, retrieved_at, and evidence text from screened candidates into claim_drafts.json metadata.
 - Carry useful Screener metadata forward.
 - Detect duplicate or unsupported claim drafts for Python freeze warnings and downstream repair.
 

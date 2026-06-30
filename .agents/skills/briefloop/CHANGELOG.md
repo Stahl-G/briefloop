@@ -2,6 +2,9 @@
 
 ## briefloop-operator-skill-v0.1.2 — 2026-06-30
 
+- Added coverage/omission gate guidance for selected screened-candidate
+  continuity from `screened_candidates.json` to Claim Ledger metadata and cited
+  brief references, with explicit no-full-recall / no-semantic-proof boundary.
 - Added Quality Panel / Quality Summary / static HTML operator guidance,
   including `briefloop quality summarize`, SHA-bound summary/HTML projections,
   and audit-bundle-only boundaries.

@@ -24,7 +24,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     check_parser = actions.add_parser(
         "check",
-        help="Run material-fact, freshness, target-relevance, and editor-new-fact gates.",
+        help="Run material-fact, freshness, target-relevance, coverage/omission, and editor-new-fact gates.",
     )
     check_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
     check_parser.add_argument(

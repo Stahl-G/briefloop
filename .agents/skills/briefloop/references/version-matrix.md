@@ -29,6 +29,12 @@ Historical implementation name: MABW
     - schema and reference validation
     - proposal-only Claim-Support Matrix delta projection
     - read-only status visibility
+- Quality-gate surfaces:
+  - `coverage_omission` detects selected high-priority screened candidates that
+    do not carry into Claim Ledger metadata or cited brief references unless an
+    explicit limitation / omission reason exists
+  - this is selected-item continuity only, not full-world recall, semantic
+    support proof, or source-discovery completeness
 - Experimental product-layer contracts:
   - `multi-agent-brief packs list`
   - `multi-agent-brief packs show <pack_id>`
