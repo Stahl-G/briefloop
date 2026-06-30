@@ -254,6 +254,11 @@ canonical, for example `market_weekly`, `management_monthly`, and
 `evidence_extract`. `document-review` prepares a document evidence review
 workspace; it does not make legal, compliance, or disclosure judgments.
 
+These three entries are the v0.11 product-baseline target. In the current
+v0.10.7 release line they are guarded by readiness checks; advanced Product OS
+surfaces such as `solar-periodic`, Quality Panel, SourceHub Lite, and internal
+release approvals remain experimental.
+
 | Path | Best for | What to do |
 |---|---|---|
 | Look once | You want to understand the project quickly | Run the demos and read the reference runs |

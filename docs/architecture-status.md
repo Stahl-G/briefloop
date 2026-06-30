@@ -55,15 +55,23 @@ breaking rename.
   Claim-Support Matrix delta candidates, and surface read-only status counts.
   This is a proposal surface only, not accepted support truth, adjudication
   queue creation, delivery gating, release authority, or semantic proof.
-- Experimental ReportSpec / ReportPack / ReportTemplate / PolicyProfile
-  controls can validate a product-layer `report_spec.yaml`, inspect packaged
-  report pack, section order template, and policy default contracts such as
-  `market_weekly`, `management_monthly`, `solar_industry_periodic`,
-  `evidence_extract`, `manufacturing_default`, `solar_manufacturing_default`,
-  `evidence_extract_default`, `finance_default`, and `internet_default`,
-  create conservative local-first
-  workspace skeletons with `briefloop new <pack> <workspace>` /
-  `multi-agent-brief new <pack> <workspace>`, and project finalized workspace
+- The v0.11 product-baseline target has stable product-facing workspace
+  entries for `briefloop new industry-weekly`, `briefloop new
+  management-monthly`, and `briefloop new document-review`. These entries map
+  to canonical internal ReportPack ids `market_weekly`,
+  `management_monthly`, and `evidence_extract`, create conservative
+  local-first workspace skeletons, and preserve the Claim Ledger, artifact
+  registry, quality gates, event log, archive, source appendix, support
+  records, human delivery approval, and frozen-artifact integrity control
+  spine. This is a workspace setup and contract baseline only; it does not run
+  stages, fetch sources, parse PDFs, approve delivery, prove truth, or
+  authorize publication.
+- Beyond that baseline, experimental ReportSpec / ReportPack / ReportTemplate
+  / PolicyProfile controls can validate a product-layer `report_spec.yaml`,
+  inspect packaged report pack, section order template, and policy default
+  contracts such as `solar_industry_periodic`, `manufacturing_default`,
+  `solar_manufacturing_default`, `evidence_extract_default`,
+  `finance_default`, and `internet_default`, and project finalized workspace
   artifacts into explicit delivery/audit bundle manifests.
   Workspaces with `report_spec.yaml` expose the resolved PolicyProfile in
   read-only status and generated handoff artifacts so defaults are traceable.

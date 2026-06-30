@@ -3,8 +3,8 @@
 
 This is a pre-release readiness guard. It verifies product-facing CLI entries,
 ReportPack defaults, packaged config parity, public documentation boundaries,
-and reference-run surface presence. It does not promote any experimental
-surface to stable support status and does not run a BriefLoop workspace.
+and reference-run surface presence. It does not promote wider Product OS
+extensions to stable support status and does not run a BriefLoop workspace.
 """
 
 from __future__ import annotations
@@ -73,6 +73,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     "README.md": [
         "Writer entry:",
         "runtime",
+        "v0.11 product-baseline target",
+        "advanced Product OS",
         "do not parse PDFs automatically",
         "prove semantic truth",
         "publish reports",
@@ -86,6 +88,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "README.zh-CN.md": [
         "写作入口",
+        "v0.11 产品基线目标",
+        "实验性能力",
         "不自动发布报告",
         "不绕过人工审核",
         "不保证来源语义上支持每个子主张",
@@ -102,9 +106,18 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     "docs/support-matrix.md": [
         "Supported",
         "Experimental",
+        "v0.11 product-facing workspace entries",
+        "ReportSpec / ReportPack baseline contracts",
+        "Wider Product OS extensions",
+        "solar-periodic",
         "force-deliver",
         "Quality Panel projection",
     ],
+}
+EXPECTED_SUPPORT_MATRIX_STATUSES = {
+    "v0.11 product-facing workspace entries": "Supported",
+    "ReportSpec / ReportPack baseline contracts": "Supported",
+    "Wider Product OS extensions": "Experimental",
 }
 FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
     (
@@ -234,6 +247,7 @@ def main() -> int:
     _check_packs_cli_surface(checks)
     _check_workspace_creation(checks)
     _check_cli_and_docs_boundaries(checks)
+    _check_support_matrix_alignment(checks)
     _check_reference_run_surface(checks)
 
     ok = all(item["status"] == "pass" for item in checks)
@@ -245,7 +259,7 @@ def main() -> int:
         "checks": checks,
         "non_goals": [
             "version_bump",
-            "support_status_promotion",
+            "wider_product_os_support_promotion",
             "stage_execution",
             "gate_execution",
             "delivery_approval",
@@ -464,6 +478,32 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
         not public_overclaims,
         f"forbidden positive claims={public_overclaims}",
     )
+
+
+def _check_support_matrix_alignment(checks: list[dict[str, str]]) -> None:
+    text = (ROOT / "docs" / "support-matrix.md").read_text(encoding="utf-8")
+    for needle, expected_status in EXPECTED_SUPPORT_MATRIX_STATUSES.items():
+        status = _support_matrix_status_for(text, needle)
+        _append_check(
+            checks,
+            f"support_matrix.{_slug(needle)}",
+            status == expected_status,
+            f"{needle} status={status!r} expected={expected_status!r}",
+        )
+
+
+def _support_matrix_status_for(text: str, needle: str) -> str | None:
+    for line in text.splitlines():
+        if not line.startswith("|") or needle not in line:
+            continue
+        columns = [column.strip() for column in line.strip().strip("|").split("|")]
+        if len(columns) >= 2:
+            return columns[-1]
+    return None
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
 def _check_reference_run_surface(checks: list[dict[str, str]]) -> None:
