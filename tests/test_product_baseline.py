@@ -49,7 +49,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert payload["ok"] is True
     assert payload["baseline_target"] == "v0.11.0"
     assert payload["runtime_effect"] == "readiness_check_only"
-    assert "support_status_promotion" in payload["non_goals"]
+    assert "wider_product_os_support_promotion" in payload["non_goals"]
     assert "release_authority" in payload["non_goals"]
     assert checks["docs.README.md"]["status"] == "pass"
     assert checks["docs.README_en.md"]["status"] == "pass"

@@ -3,8 +3,8 @@
 
 This is a pre-release readiness guard. It verifies product-facing CLI entries,
 ReportPack defaults, packaged config parity, public documentation boundaries,
-and reference-run surface presence. It does not promote any experimental
-surface to stable support status and does not run a BriefLoop workspace.
+and reference-run surface presence. It does not promote wider Product OS
+extensions to stable support status and does not run a BriefLoop workspace.
 """
 
 from __future__ import annotations
@@ -259,7 +259,7 @@ def main() -> int:
         "checks": checks,
         "non_goals": [
             "version_bump",
-            "support_status_promotion",
+            "wider_product_os_support_promotion",
             "stage_execution",
             "gate_execution",
             "delivery_approval",
