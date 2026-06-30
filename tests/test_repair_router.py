@@ -1114,6 +1114,66 @@ def test_repair_start_fails_when_no_deterministic_route_exists(tmp_path, capsys)
     assert "No deterministic repair route found" in payload["error"]
 
 
+def test_final_abstract_quality_warning_does_not_open_repair_route(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "warning",
+                "gate_results": [
+                    {
+                        "gate_id": "final_abstract_quality",
+                        "status": "warning",
+                        "blocking": False,
+                        "finding_ids": ["QG_FINAL_ABSTRACT_QUALITY_001"],
+                    }
+                ],
+                "findings": [
+                    {
+                        "finding_id": "QG_FINAL_ABSTRACT_QUALITY_001",
+                        "gate_id": "final_abstract_quality",
+                        "finding_type": "final_missing_limitation_section",
+                        "severity": "medium",
+                        "blocking_level": "warning",
+                        "blocking": False,
+                        "repair_owner": "none",
+                        "stage_id": "editor",
+                        "artifact_id": "audited_brief",
+                        "repair_stage_id": None,
+                        "repair_artifact_id": None,
+                        "description": "Advisory final abstract warning.",
+                        "recommendation": "Review manually; do not open repair.",
+                        "metadata": {"repair_boundary": "advisory_non_routable"},
+                    }
+                ],
+                "metadata": {"gate_stage_id": "auditor"},
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    route_rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+    assert route_rc == 0
+    route_payload = json.loads(capsys.readouterr().out)
+    assert route_payload["repair_owner"] == "none"
+    assert route_payload["routes"] == []
+
+    start_rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+    assert start_rc == 1
+    start_payload = json.loads(capsys.readouterr().out)
+    assert start_payload["error_code"] == "E_ILLEGAL_TRANSITION"
+    workflow = json.loads(runtime_state_paths(ws)["workflow_state"].read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
+
+
 def test_repair_start_fails_on_invalid_gate_report_json(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)

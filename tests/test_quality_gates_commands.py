@@ -1078,6 +1078,61 @@ def test_quality_gates_do_not_warn_when_strategic_implication_is_ledger_supporte
     ]
 
 
+def test_final_abstract_quality_warns_without_blocking_under_strict(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    (ws / "config.yaml").write_text(
+        (ws / "config.yaml").read_text(encoding="utf-8")
+        + "\nreport:\n  cadence: weekly\n",
+        encoding="utf-8",
+    )
+    _write_supported_target_ledger(ws)
+    _write_audited_brief(
+        ws,
+        "# Monthly Market Brief\n\n"
+        "## Executive Summary\n"
+        "TargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n"
+        "TargetCo is the dominant choice for municipal buyers.\n\n"
+        "## Comparison\n"
+        "TargetCo outperforms peers on deployment velocity. [src:CL-001]\n\n"
+        "## Key Cases\n"
+        "- Case: TargetCo demo facility\n",
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--strict",
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    findings = [item for item in report["findings"] if item["gate_id"] == "final_abstract_quality"]
+    finding_types = {item["finding_type"] for item in findings}
+    assert report["status"] == "warning"
+    assert finding_types == {
+        "final_scope_title_mismatch",
+        "final_missing_comparison_basis",
+        "final_missing_limitation_section",
+        "final_incomplete_key_case_fields",
+        "final_unsupported_superlative",
+    }
+    assert all(item["blocking_level"] == "warning" for item in findings)
+    assert all(item["blocking"] is False for item in findings)
+    assert all(item["repair_owner"] == "none" for item in findings)
+    assert all(item["repair_stage_id"] is None for item in findings)
+    assert all(item["repair_artifact_id"] is None for item in findings)
+    result = next(item for item in report["gate_results"] if item["gate_id"] == "final_abstract_quality")
+    assert result["status"] == "warning"
+    assert result["blocking"] is False
+    assert "not a prose-quality score" in findings[0]["metadata"]["semantic_boundary"]
+    assert findings[0]["metadata"]["repair_boundary"] == "advisory_non_routable"
+
+
 def test_quality_gate_report_includes_atomic_reader_projection_metadata(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_supported_target_ledger(ws)

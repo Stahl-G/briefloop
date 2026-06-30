@@ -137,6 +137,19 @@ finalize checks do not require delivery Markdown to retain internal Claim
 Ledger markers. It is not a full-world recall check and does not claim the
 system found every material item.
 
+#### final_abstract_quality
+
+Final abstract quality checks surface deterministic reader-risk patterns as
+warning-only findings. The first version checks cadence/title mismatch,
+comparison framing without a basis/methodology/scope section,
+recommendation/forecast/superlative framing without limitations or assumptions,
+incomplete key-case bullets, and locally unsupported superlatives.
+
+This gate never blocks delivery by default, including under `--strict`. It does
+not score prose, judge semantic quality, prove truth, approve delivery, decide
+release readiness, open owner-stage repair, or claim that a report is
+publishable.
+
 #### material_fact
 
 Reader-facing factual claims must be traceable to Claim Ledger support. Numbers,

@@ -6327,6 +6327,51 @@ def test_auditable_target_auditor_stage_complete_requires_gate_status_pass(tmp_p
     )
 
 
+def test_auditable_target_auditor_stage_complete_allows_final_abstract_advisory_warning(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_auditable_condition_metadata(ws)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_quality_gate_report(ws, stage_id="auditor")
+    report_path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    finding = {
+        "finding_id": "QG_FINAL_ABSTRACT_QUALITY_001",
+        "gate_id": "final_abstract_quality",
+        "finding_type": "final_missing_limitation_section",
+        "severity": "medium",
+        "blocking_level": "warning",
+        "blocking": False,
+        "repair_owner": "none",
+        "stage_id": "editor",
+        "artifact_id": "audited_brief",
+        "repair_stage_id": None,
+        "repair_artifact_id": None,
+        "description": "Advisory final abstract warning.",
+        "recommendation": "Review before delivery.",
+        "metadata": {"repair_boundary": "advisory_non_routable"},
+    }
+    report["status"] = "warning"
+    report["gate_results"] = [
+        {"gate_id": "coverage_omission", "status": "pass", "blocking": False, "finding_ids": []},
+        {"gate_id": "freshness", "status": "pass", "blocking": False, "finding_ids": []},
+        {"gate_id": "final_abstract_quality", "status": "warning", "blocking": False, "finding_ids": [finding["finding_id"]]},
+        {"gate_id": "material_fact", "status": "pass", "blocking": False, "finding_ids": []},
+        {"gate_id": "target_relevance", "status": "pass", "blocking": False, "finding_ids": []},
+    ]
+    report["findings"] = [finding]
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor completed with advisory final abstract warning",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "finalize"
+
+
 def test_auditor_stage_complete_ignores_legacy_quality_gate_projection(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

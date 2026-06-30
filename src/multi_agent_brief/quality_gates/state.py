@@ -86,6 +86,45 @@ STRATEGIC_IMPLICATION_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("policy_driven_demand", ("policy-driven demand", "policy driven demand")),
     ("partnership_recommendations", ("partnership recommendation", "partnership recommendations")),
 )
+FINAL_ABSTRACT_COMPARISON_RE = re.compile(
+    r"\b(?:better than|worse than|outperform(?:s|ed|ing)?|underperform(?:s|ed|ing)?|"
+    r"compared with|compared to|versus|vs\.?|higher than|lower than)\b|"
+    r"(?:相比|相较|优于|劣于|高于|低于|超过)",
+    re.IGNORECASE,
+)
+FINAL_ABSTRACT_SUPERLATIVE_RE = re.compile(
+    r"\b(?:best|largest|smallest|leading|market-leading|dominant|unmatched)\b|"
+    r"(?:最佳|最大|最小|领先|主导)",
+    re.IGNORECASE,
+)
+FINAL_ABSTRACT_RECOMMENDATION_RE = re.compile(
+    r"\b(?:recommend(?:s|ed|ing|ation)?|should|must|outlook|forecast|projection|scenario)\b|"
+    r"(?:建议|应该|必须|展望|预测|情景|推演)",
+    re.IGNORECASE,
+)
+FINAL_ABSTRACT_BASIS_HEADING_RE = re.compile(
+    r"\b(?:basis|methodology|method|benchmark|comparison basis|assumptions?|scope)\b|"
+    r"(?:比较基准|方法|基准|假设|范围)",
+    re.IGNORECASE,
+)
+FINAL_ABSTRACT_LIMITATION_HEADING_RE = re.compile(
+    r"\b(?:limitations?|assumptions?|scope|caveats?|constraints?)\b|"
+    r"(?:限制|局限|假设|范围|注意事项)",
+    re.IGNORECASE,
+)
+FINAL_ABSTRACT_SOURCE_HEADING_RE = re.compile(
+    r"\b(?:source appendix|sources|references|bibliography)\b|(?:来源|参考)",
+    re.IGNORECASE,
+)
+FINAL_ABSTRACT_CASE_HEADING_RE = re.compile(
+    r"\b(?:key cases|case studies|cases)\b|(?:关键案例|案例)",
+    re.IGNORECASE,
+)
+FINAL_ABSTRACT_CASE_FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
+    "date_or_period": re.compile(r"\b20\d{2}(?:-\d{2}(?:-\d{2})?)?\b|(?:日期|时间|期间|窗口)"),
+    "source_reference": re.compile(r"\[src:[^\]]+\]|\[S\d+\]|(?:source|来源)[:：]", re.IGNORECASE),
+    "impact_or_relevance": re.compile(r"\b(?:impact|relevance|implication|why it matters)\b|(?:影响|意义|启示|相关性)"),
+}
 GATE_RULE_DOC_ANCHOR = "docs/agent-contract.md#quality-gate-rule-summaries"
 GATE_RULES: dict[str, dict[str, str]] = {
     "coverage_omission": {
@@ -120,6 +159,13 @@ GATE_RULES: dict[str, dict[str, str]] = {
             "Analyst draft."
         ),
         "docs_anchor": "docs/agent-contract.md#editor_new_fact",
+    },
+    "final_abstract_quality": {
+        "rule_summary": (
+            "Final abstract quality checks surface deterministic reader-risk patterns as warnings only; "
+            "they do not score prose, prove quality, or approve delivery."
+        ),
+        "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
     },
 }
 FINDING_RULES: dict[str, dict[str, str]] = {
@@ -190,6 +236,26 @@ FINDING_RULES: dict[str, dict[str, str]] = {
             "audited or reader-facing brief unless intentionally scoped out."
         ),
         "docs_anchor": "docs/agent-contract.md#coverage_omission",
+    },
+    "final_scope_title_mismatch": {
+        "rule_summary": "Report title cadence should not contradict the configured report cadence.",
+        "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
+    },
+    "final_missing_comparison_basis": {
+        "rule_summary": "Comparison framing should include an explicit basis, method, benchmark, or scope.",
+        "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
+    },
+    "final_missing_limitation_section": {
+        "rule_summary": "Recommendation, forecast, comparison, or superlative framing should declare limitations, scope, or assumptions.",
+        "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
+    },
+    "final_incomplete_key_case_fields": {
+        "rule_summary": "Key-case bullets should carry date/period, source reference, and relevance/impact fields.",
+        "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
+    },
+    "final_unsupported_superlative": {
+        "rule_summary": "Superlative wording should carry explicit local support or be downgraded.",
+        "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
     },
 }
 
@@ -498,8 +564,15 @@ def _apply_gate_context(
     gate_artifact_id: str,
 ) -> list[dict[str, Any]]:
     for finding in findings:
-        repair_stage_id = finding.get("repair_stage_id") or finding.get("stage_id")
-        repair_artifact_id = finding.get("repair_artifact_id") or finding.get("artifact_id")
+        metadata = finding.get("metadata") if isinstance(finding.get("metadata"), dict) else {}
+        advisory_non_routable = (
+            finding.get("gate_id") == "final_abstract_quality"
+            and metadata.get("repair_boundary") == "advisory_non_routable"
+        )
+        repair_stage_id = None if advisory_non_routable else finding.get("repair_stage_id") or finding.get("stage_id")
+        repair_artifact_id = (
+            None if advisory_non_routable else finding.get("repair_artifact_id") or finding.get("artifact_id")
+        )
         finding["gate_stage_id"] = gate_stage_id
         finding["gate_artifact_id"] = gate_artifact_id
         finding["repair_stage_id"] = repair_stage_id
@@ -1470,6 +1543,279 @@ def _editor_introduced_new_fact_findings(
     ]
 
 
+def _final_abstract_quality_findings(
+    *,
+    markdown: str,
+    config: dict[str, Any],
+    reader_facing_mode: bool,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Surface deterministic final-quality risks as warning-only findings."""
+
+    stage_id = _stage_or_none(stages, "editor")
+    artifact_id = _artifact_or_none(artifacts, "reader_brief" if reader_facing_mode else "audited_brief")
+    findings: list[dict[str, Any]] = []
+
+    def append_finding(
+        *,
+        finding_type: str,
+        description: str,
+        recommendation: str,
+        category: str,
+        line_number: int | None = None,
+        evidence_ref: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        finding = _finding(
+            finding_id=f"QG_FINAL_ABSTRACT_QUALITY_{len(findings)+1:03d}",
+            gate_id="final_abstract_quality",
+            finding_type=finding_type,
+            severity="medium",
+            blocking_level="warning",
+            repair_owner="none",
+            stage_id=stage_id,
+            artifact_id=artifact_id,
+            description=description,
+            recommendation=recommendation,
+            category=category,
+            line_number=line_number,
+            evidence_ref=evidence_ref,
+            metadata={
+                "semantic_boundary": (
+                    "warning_only_deterministic_pattern_surface; not a prose-quality score, "
+                    "truth proof, release authority, delivery approval, or repair authority"
+                ),
+                "repair_boundary": "advisory_non_routable",
+                **(metadata or {}),
+            },
+        )
+        finding["repair_stage_id"] = None
+        finding["repair_artifact_id"] = None
+        findings.append(finding)
+
+    title = _first_markdown_h1(markdown)
+    expected_cadence = _configured_report_cadence(config)
+    title_cadence = _title_cadence(title)
+    if expected_cadence and title_cadence and expected_cadence != title_cadence:
+        append_finding(
+            finding_type="final_scope_title_mismatch",
+            description=(
+                f"Report title cadence appears to be {title_cadence}, but workspace config expects "
+                f"{expected_cadence}."
+            ),
+            recommendation="Align the title with the configured report cadence or update config/report_spec before delivery.",
+            category="final_abstract_quality",
+            line_number=_line_number_for_token(markdown, title) if title else None,
+            evidence_ref=title,
+            metadata={"expected_cadence": expected_cadence, "title_cadence": title_cadence},
+        )
+
+    comparison_line = _first_body_line_matching(markdown, FINAL_ABSTRACT_COMPARISON_RE)
+    has_comparison = comparison_line is not None
+    if has_comparison and not _has_markdown_heading(markdown, FINAL_ABSTRACT_BASIS_HEADING_RE):
+        append_finding(
+            finding_type="final_missing_comparison_basis",
+            description="The brief uses comparison framing without an explicit basis, method, benchmark, or scope section.",
+            recommendation="Add a comparison basis/methodology/scope section or downgrade the comparison wording.",
+            category="final_abstract_quality",
+            line_number=comparison_line[0],
+            evidence_ref=comparison_line[1],
+            metadata={"matched_pattern": "comparison_without_basis_section"},
+        )
+
+    risk_line = _first_body_line_matching(
+        markdown,
+        re.compile(
+            "|".join(
+                [
+                    FINAL_ABSTRACT_RECOMMENDATION_RE.pattern,
+                    FINAL_ABSTRACT_COMPARISON_RE.pattern,
+                    FINAL_ABSTRACT_SUPERLATIVE_RE.pattern,
+                ]
+            ),
+            re.IGNORECASE,
+        ),
+    )
+    if risk_line and not _has_markdown_heading(markdown, FINAL_ABSTRACT_LIMITATION_HEADING_RE):
+        append_finding(
+            finding_type="final_missing_limitation_section",
+            description=(
+                "The brief uses recommendation, forecast, comparison, or superlative framing without a "
+                "limitations, assumptions, or scope section."
+            ),
+            recommendation="Add a limitations/scope/assumptions section or soften the abstract framing.",
+            category="final_abstract_quality",
+            line_number=risk_line[0],
+            evidence_ref=risk_line[1],
+            metadata={"matched_pattern": "risk_framing_without_limitation_section"},
+        )
+
+    for line_number, line in _key_case_lines(markdown):
+        missing = [
+            field
+            for field, pattern in FINAL_ABSTRACT_CASE_FIELD_PATTERNS.items()
+            if not pattern.search(line)
+        ]
+        if missing:
+            append_finding(
+                finding_type="final_incomplete_key_case_fields",
+                description=f"Key-case entry is missing required deterministic fields: {', '.join(missing)}.",
+                recommendation="Add date/period, source reference, and impact/relevance fields to key-case entries.",
+                category="final_abstract_quality",
+                line_number=line_number,
+                evidence_ref=line,
+                metadata={"missing_fields": missing},
+            )
+
+    for line_number, line in _unsupported_superlative_lines(markdown):
+        append_finding(
+            finding_type="final_unsupported_superlative",
+            description="Superlative wording appears without a local citation or source reference on the same line.",
+            recommendation="Attach explicit local support for the superlative or downgrade the wording.",
+            category="final_abstract_quality",
+            line_number=line_number,
+            evidence_ref=line,
+            metadata={"matched_pattern": "superlative_without_local_reference"},
+        )
+
+    return findings
+
+
+def _configured_report_cadence(config: dict[str, Any]) -> str:
+    candidates: list[Any] = []
+    report = config.get("report")
+    if isinstance(report, dict):
+        candidates.append(report.get("cadence"))
+    candidates.append(config.get("cadence"))
+    for value in candidates:
+        normalized = _normalize_cadence(value)
+        if normalized:
+            return normalized
+    return ""
+
+
+def _normalize_cadence(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().lower().replace("_", "-")
+    if normalized in {"weekly", "week", "周报", "weekly-report"}:
+        return "weekly"
+    if normalized in {"monthly", "month", "月报", "monthly-report"}:
+        return "monthly"
+    return ""
+
+
+def _title_cadence(title: str) -> str:
+    lower = title.lower()
+    if "weekly" in lower or "周报" in title:
+        return "weekly"
+    if "monthly" in lower or "月报" in title:
+        return "monthly"
+    return ""
+
+
+def _first_markdown_h1(markdown: str) -> str:
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# ") and not stripped.startswith("## "):
+            return stripped[2:].strip(" #")
+    return ""
+
+
+def _has_markdown_heading(markdown: str, pattern: re.Pattern[str]) -> bool:
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            continue
+        heading = stripped.lstrip("#").strip()
+        if pattern.search(heading):
+            return True
+    return False
+
+
+def _first_body_line_matching(markdown: str, pattern: re.Pattern[str]) -> tuple[int, str] | None:
+    for line_number, line in _body_lines(markdown):
+        if pattern.search(line):
+            return line_number, line
+    return None
+
+
+def _body_lines(markdown: str) -> list[tuple[int, str]]:
+    lines: list[tuple[int, str]] = []
+    in_code_block = False
+    in_source_section = False
+    for line_number, line in enumerate(markdown.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+        if stripped.startswith("#"):
+            heading = stripped.lstrip("#").strip()
+            in_source_section = bool(FINAL_ABSTRACT_SOURCE_HEADING_RE.search(heading))
+            continue
+        if in_source_section or not stripped:
+            continue
+        lines.append((line_number, stripped))
+    return lines
+
+
+def _key_case_lines(markdown: str) -> list[tuple[int, str]]:
+    results: list[tuple[int, str]] = []
+    in_case_section = False
+    case_level: int | None = None
+    for line_number, line in enumerate(markdown.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        heading_level = _markdown_heading_level(stripped)
+        if heading_level is not None:
+            heading = stripped.lstrip("#").strip()
+            if FINAL_ABSTRACT_CASE_HEADING_RE.search(heading):
+                in_case_section = True
+                case_level = heading_level
+            elif in_case_section and case_level is not None and heading_level <= case_level:
+                in_case_section = False
+            continue
+        if not in_case_section:
+            continue
+        if re.match(r"^(?:[-*+]|\d+[.)])\s+", stripped):
+            results.append((line_number, stripped))
+    return results
+
+
+def _markdown_heading_level(stripped_line: str) -> int | None:
+    if not stripped_line.startswith("#"):
+        return None
+    marker = stripped_line.split(maxsplit=1)[0]
+    if set(marker) == {"#"}:
+        return len(marker)
+    return None
+
+
+def _unsupported_superlative_lines(markdown: str) -> list[tuple[int, str]]:
+    findings: list[tuple[int, str]] = []
+    for line_number, line in _body_lines(markdown):
+        if not FINAL_ABSTRACT_SUPERLATIVE_RE.search(line):
+            continue
+        if _line_has_local_source_reference(line):
+            continue
+        findings.append((line_number, line))
+        if len(findings) >= 3:
+            break
+    return findings
+
+
+def _line_has_local_source_reference(line: str) -> bool:
+    return bool(
+        SRC_REF_PATTERN.search(line)
+        or re.search(r"\[S\d+\]", line)
+        or re.search(r"https?://", line, re.IGNORECASE)
+    )
+
+
 def _market_quote_metadata_findings(
     *,
     ledger: ClaimLedger,
@@ -1738,6 +2084,13 @@ def evaluate_quality_gate_findings(
         artifacts=artifacts,
         reader_facing_mode=reader_facing_mode,
     )
+    gate_tasks["final_abstract_quality"] = lambda: _final_abstract_quality_findings(
+        markdown=markdown,
+        config=config,
+        reader_facing_mode=reader_facing_mode,
+        stages=stages,
+        artifacts=artifacts,
+    )
     if not reader_facing_mode:
         gate_tasks["material_fact"] = lambda: _material_findings(
             markdown=markdown,
@@ -1844,6 +2197,7 @@ def check_quality_gates(
     policy_gate_adapter = resolve_workspace_policy_gate_adapter(ws)
     gate_strictness = {
         "coverage_omission": policy_gate_is_strict(policy_gate_adapter, "coverage_omission", cli_strict=strict),
+        "final_abstract_quality": False,
         "material_fact": policy_gate_is_strict(policy_gate_adapter, "material_fact", cli_strict=strict),
         "freshness": policy_gate_is_strict(policy_gate_adapter, "freshness", cli_strict=strict),
         "target_relevance": policy_gate_is_strict(policy_gate_adapter, "target_relevance", cli_strict=strict),

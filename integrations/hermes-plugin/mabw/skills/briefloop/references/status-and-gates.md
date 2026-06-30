@@ -36,6 +36,11 @@ They detect high-priority selected screened candidates that disappear without an
 explicit limitation or omission reason. They are not full-world recall checks,
 semantic support proof, or source-discovery completeness claims.
 
+Final abstract quality findings are warning-only deterministic pattern
+surfaces. They flag scope/title, comparison-basis, limitation, key-case, and
+superlative risks; they do not score prose, prove quality, approve delivery, or
+create repair routes or release authority.
+
 Legacy `output/intermediate/quality_gate_report.json` is a latest/compatibility
 projection. Stage-scoped gate authority lives under
 `output/intermediate/gates/*_quality_gate_report.json`.

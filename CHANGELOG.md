@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Final Abstract Quality warning surface**: `gates check` now includes a
+  warning-only `final_abstract_quality` gate for deterministic final-abstract
+  risk patterns such as cadence/title mismatch, comparison framing without a
+  basis section, recommendation/forecast/superlative framing without
+  limitations, incomplete key-case bullets, and locally unsupported
+  superlatives. Findings flow through normal Quality Panel / Quality Summary
+  warning counts. This is not a prose-quality score, semantic quality judgment,
+  truth proof, repair route, delivery approval, release authority, or
+  publication-readiness claim.
 - **Coverage/Omission gate foundation**: `gates check` now includes a
   deterministic `coverage_omission` gate that compares valid
   `screened_candidates.json` selected high-priority candidates against Claim

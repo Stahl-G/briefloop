@@ -271,10 +271,37 @@ def _write_gate_report(
 ) -> None:
     gates = ws / "output" / "intermediate" / "gates"
     gates.mkdir(parents=True, exist_ok=True)
+    normalized_findings = findings or []
+    gate_results: list[dict] = []
+    gate_ids = sorted({
+        str(finding.get("gate_id") or "target_relevance")
+        for finding in normalized_findings
+        if isinstance(finding, dict)
+    })
+    if not gate_ids and status != "pass":
+        gate_ids = ["target_relevance"]
+    for gate_id in gate_ids:
+        refs = [
+            str(finding.get("finding_id"))
+            for finding in normalized_findings
+            if isinstance(finding, dict)
+            and str(finding.get("gate_id") or "target_relevance") == gate_id
+            and finding.get("finding_id")
+        ]
+        result_status = status if not refs else ("fail" if status == "fail" else "warning")
+        gate_results.append(
+            {
+                "gate_id": gate_id,
+                "status": result_status,
+                "blocking": result_status == "fail",
+                "finding_ids": refs,
+            }
+        )
     payload = {
-        "schema_version": "mabw.quality_gate_report.v1",
+        "schema_version": "multi-agent-brief-quality-gates/v1",
         "status": status,
-        "findings": findings or [],
+        "gate_results": gate_results,
+        "findings": normalized_findings,
         "metadata": {"gate_stage_id": stage},
     }
     (gates / f"{stage}_quality_gate_report.json").write_text(
@@ -439,6 +466,40 @@ def test_quality_summary_renders_human_markdown_without_authority_claims(tmp_pat
     assert "truth proven" not in markdown.lower()
     assert "release authorized" not in markdown.lower()
     assert validate_quality_summary_markdown(markdown) is None
+
+
+def test_quality_panel_surfaces_final_abstract_quality_warnings(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_claim_ledger(ws)
+    _write_gate_report(
+        ws,
+        status="warning",
+        findings=[
+            {
+                "finding_id": "QG_FINAL_ABSTRACT_QUALITY_001",
+                "gate_id": "final_abstract_quality",
+                "finding_type": "final_missing_limitation_section",
+                "severity": "medium",
+                "blocking": False,
+                "blocking_level": "warning",
+                "description": "warning only",
+            }
+        ],
+    )
+    _write_gate_report(ws, stage="finalize")
+    _write_finalize_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    panel = write_quality_panel(workspace=ws)
+    panel_sha = _sha256_file(quality_panel_path(ws))
+    markdown = render_quality_summary(panel, quality_panel_sha256=panel_sha)
+
+    assert panel["overall_status"] == "warning"
+    assert panel["gates"]["warning_count"] == 1
+    assert panel["gates"]["blocking_count"] == 0
+    assert "Quality gates report `1` warning finding(s)." in markdown
+    assert "approved for release" not in markdown.lower()
 
 
 def test_quality_summary_write_reads_existing_panel_and_registers_artifact(tmp_path: Path) -> None:

@@ -36,8 +36,12 @@ Historical implementation name: MABW
     omission reason exists
   - reader-facing finalize checks do not require delivery Markdown to retain
     internal Claim Ledger reference markers
+  - `final_abstract_quality` surfaces deterministic final-abstract risk
+    patterns as warning-only findings and feeds normal Quality Panel / Quality
+    Summary warning counts
   - this is selected-item continuity only, not full-world recall, semantic
-    support proof, or source-discovery completeness
+    support proof, prose-quality scoring, release authority, or
+    source-discovery completeness
 - Experimental product-layer contracts:
   - `multi-agent-brief packs list`
   - `multi-agent-brief packs show <pack_id>`
