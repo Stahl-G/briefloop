@@ -1205,6 +1205,63 @@ def test_coverage_omission_warns_when_selected_ledger_claim_is_not_cited(tmp_pat
     assert findings[0]["claim_id"] == "CL-001"
 
 
+def test_coverage_omission_does_not_require_internal_claim_refs_in_reader_brief(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    _write_ledger(
+        ws,
+        [
+            {
+                "claim_id": "CL-001",
+                "statement": "TargetCo opened a high-priority demo facility.",
+                "source_id": "SRC-001",
+                "evidence_text": "TargetCo opened a high-priority demo facility.",
+                "source_url": "https://example.com/targetco-demo",
+                "source_type": "web_search",
+                "metadata": {
+                    "candidate_id": "CAND-001",
+                    "source_title": "TargetCo Demo Facility",
+                    "published_at": "2026-06-01",
+                    "importance": "high",
+                },
+            }
+        ],
+    )
+    _write_screened_candidates(ws, selected=[_selected_candidate()])
+    _write_reader_brief(
+        ws,
+        "## Executive Summary\n"
+        "TargetCo opened a high-priority demo facility. [S1]\n\n"
+        "## Source Appendix\n"
+        "### [S1] TargetCo Demo Facility\n"
+        "- URL: [https://example.com/targetco-demo](https://example.com/targetco-demo)\n",
+    )
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--stage",
+        "finalize",
+        "--brief",
+        "output/brief.md",
+        "--strict",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)["quality_gate_report"]
+    projection = report["metadata"]["coverage_omission_projection"]
+    findings = [item for item in report["findings"] if item["gate_id"] == "coverage_omission"]
+    assert report["metadata"]["reader_facing_mode"] is True
+    assert projection["reader_facing_mode"] is True
+    assert projection["missing_from_brief_check"] == "skipped_reader_facing_no_internal_claim_refs"
+    assert projection["missing_from_brief_count"] == 0
+    assert findings == []
+
+
 def test_coverage_omission_respects_explicit_omission_reason(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_supported_target_ledger(ws)

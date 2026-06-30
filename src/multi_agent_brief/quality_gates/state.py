@@ -1027,6 +1027,7 @@ def _coverage_omission_projection(
     workspace: Path | None,
     markdown: str,
     ledger: ClaimLedger,
+    reader_facing_mode: bool = False,
 ) -> dict[str, Any]:
     base: dict[str, Any] = {
         "status": "not_available",
@@ -1034,10 +1035,16 @@ def _coverage_omission_projection(
             "deterministic_selected_candidate_continuity_only; not full-world recall, semantic proof, "
             "or source-discovery completeness"
         ),
+        "reader_facing_mode": reader_facing_mode,
         "selected_count": 0,
         "high_priority_selected_count": 0,
         "missing_from_ledger_count": 0,
         "missing_from_brief_count": 0,
+        "missing_from_brief_check": (
+            "skipped_reader_facing_no_internal_claim_refs"
+            if reader_facing_mode
+            else "internal_claim_ref_citation_continuity"
+        ),
         "not_interpreted_reason": "",
     }
     if workspace is None:
@@ -1094,6 +1101,10 @@ def _coverage_omission_projection(
             missing_from_ledger.append(trace)
             continue
         cited_matches = [claim for claim in matches if claim.claim_id in cited_claim_ids]
+        if reader_facing_mode:
+            if limitation:
+                scoped_out.append({**trace, "limitation": limitation})
+            continue
         if not cited_matches and not limitation:
             missing_from_brief.append({
                 **trace,
@@ -1718,6 +1729,7 @@ def evaluate_quality_gate_findings(
         workspace=None,
         markdown=markdown,
         ledger=ledger,
+        reader_facing_mode=reader_facing_mode,
     )
     gate_tasks["coverage_omission"] = lambda: _coverage_omission_findings(
         projection=coverage_projection,
@@ -1841,6 +1853,7 @@ def check_quality_gates(
         workspace=ws,
         markdown=markdown,
         ledger=claim_ledger,
+        reader_facing_mode=reader_mode,
     )
 
     gate_findings = evaluate_quality_gate_findings(

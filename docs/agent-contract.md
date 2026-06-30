@@ -130,9 +130,11 @@ can explain findings without guessing the policy.
 #### coverage_omission
 
 High-priority selected screened candidates should carry into Claim Ledger claims
-and cited brief references. This gate checks deterministic continuity from
-`screened_candidates.json` to Claim Ledger metadata and `[src:<claim_id>]`
-references only. It is not a full-world recall check and does not claim the
+and, for auditable briefs, cited internal brief references. This gate checks
+deterministic continuity from `screened_candidates.json` to Claim Ledger
+metadata and auditable-brief `[src:<claim_id>]` references only. Reader-facing
+finalize checks do not require delivery Markdown to retain internal Claim
+Ledger markers. It is not a full-world recall check and does not claim the
 system found every material item.
 
 #### material_fact
