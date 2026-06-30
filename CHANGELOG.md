@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **README/public-claim release guards**: tightened `README_en.md` checks so the
+  file must remain only the compatibility pointer, and expanded product-baseline
+  public-claim rejection to catch modal truth-proof claims and publication
+  overclaims that start with `without`.
 - **Quality Panel legacy gate-report compatibility**: Quality Panel now surfaces
   legacy `output/intermediate/quality_gate_report.json` status separately from
   v0.10 scoped auditor/finalize gate reports. Legacy reports are not treated as

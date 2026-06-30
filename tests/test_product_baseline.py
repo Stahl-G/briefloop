@@ -54,6 +54,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["docs.README.md"]["status"] == "pass"
     assert checks["docs.README_en.md"]["status"] == "pass"
     assert checks["docs.README.zh-CN.md"]["status"] == "pass"
+    assert checks["docs.README_en.md.pointer_shape"]["status"] == "pass"
     assert checks["new.industry-weekly"]["status"] == "pass"
     assert "report_pack=market_weekly" in checks["new.industry-weekly"]["detail"]
     assert checks["new.management-monthly"]["status"] == "pass"
@@ -81,10 +82,19 @@ def test_public_overclaim_detector_rejects_contradictory_readme_claims() -> None
     findings = module._public_overclaim_findings(
         "README.md",
         "BriefLoop proves semantic truth and can authorize public release.\n"
+        "BriefLoop can prove semantic truth for every claim.\n"
+        "BriefLoop proves truth.\n"
+        "BriefLoop can prove truth.\n"
+        "BriefLoop proves every claim is true.\n"
+        "BriefLoop publishes reports automatically.\n"
         "It eliminates hallucinations and is automatically ready to send.\n",
     )
 
-    assert any("proves_semantic_truth" in finding for finding in findings)
+    assert any("proves_truth" in finding for finding in findings)
+    assert any("proves truth" in finding for finding in findings)
+    assert any("can prove truth" in finding for finding in findings)
+    assert any("proves every claim is true" in finding for finding in findings)
+    assert any("publishes reports automatically" in finding for finding in findings)
     assert any("authorize_public_release" in finding for finding in findings)
     assert any("eliminates_hallucinations" in finding for finding in findings)
     assert any("automatically_ready_to_send" in finding for finding in findings)
@@ -96,8 +106,10 @@ def test_public_overclaim_guard_fails_doc_boundary_check(tmp_path, monkeypatch) 
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
+        if rel_path == "README_en.md":
+            text = module.README_EN_POINTER
         if rel_path == "README.md":
-            text += "\nBriefLoop proves semantic truth and can authorize public release.\n"
+            text += "\nBriefLoop proves truth and can authorize public release.\n"
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
@@ -108,8 +120,28 @@ def test_public_overclaim_guard_fails_doc_boundary_check(tmp_path, monkeypatch) 
     assert checks_by_id["docs.README.md"]["status"] == "pass"
     overclaim_check = checks_by_id["docs.public_claims.no_forbidden_positive_claims"]
     assert overclaim_check["status"] == "fail"
-    assert "proves_semantic_truth" in overclaim_check["detail"]
+    assert "proves_truth" in overclaim_check["detail"]
     assert "authorize_public_release" in overclaim_check["detail"]
+
+
+def test_readme_en_pointer_shape_rejects_extra_legacy_body(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "README_en.md":
+            text = module.README_EN_POINTER + "\nCurrent version: **v0.1.0**\nOld README body.\n"
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_cli_and_docs_boundaries(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["docs.README_en.md"]["status"] == "pass"
+    pointer_shape = checks_by_id["docs.README_en.md.pointer_shape"]
+    assert pointer_shape["status"] == "fail"
 
 
 def test_public_overclaim_detector_rejects_chinese_positive_claims() -> None:
@@ -130,8 +162,13 @@ def test_public_overclaim_detector_allows_negative_boundary_language() -> None:
 
     findings = module._public_overclaim_findings(
         "README.md",
-        "BriefLoop does not prove semantic truth, publish reports automatically, "
+        "BriefLoop does not prove truth, prove semantic truth, publish reports automatically, "
         "or authorize public release.\n",
+    )
+    bullet_findings = module._public_overclaim_findings(
+        "README.md",
+        "It is not the right tool if you only want:\n\n"
+        "- a system that proves every claim is true;\n",
     )
     zh_findings = module._public_overclaim_findings(
         "README.zh-CN.md",
@@ -139,4 +176,16 @@ def test_public_overclaim_detector_allows_negative_boundary_language() -> None:
     )
 
     assert findings == []
+    assert bullet_findings == []
     assert zh_findings == []
+
+
+def test_public_overclaim_detector_does_not_treat_without_as_negation() -> None:
+    module = _load_product_baseline_module()
+
+    findings = module._public_overclaim_findings(
+        "README.md",
+        "Without human review, BriefLoop can publish reports automatically.\n",
+    )
+
+    assert any("publish_reports_automatically" in finding for finding in findings)

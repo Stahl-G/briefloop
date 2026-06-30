@@ -17,7 +17,8 @@ README_EN_POINTER = (
     "# BriefLoop English README\n\n"
     "The English README has moved to [README.md](README.md).\n\n"
     "This file is kept as a compatibility pointer so existing external links to\n"
-    "`README_en.md` do not break.\n"
+    "`README_en.md` do not break.\n\n"
+    "For the Simplified Chinese README, see [README.zh-CN.md](README.zh-CN.md).\n"
 )
 
 
@@ -115,6 +116,22 @@ class TestCheckReleaseConsistency:
         assert "baseline failed" in output
 
 
+def test_release_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    root = tmp_path
+    (root / "README_en.md").write_text(
+        README_EN_POINTER + "\nCurrent version: **v0.1.0**\nOld full README body.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "REPO_ROOT", root)
+
+    assert module.readme_en_is_pointer() is False
+
+
 def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("check_version_consistency_test", VERSION_SCRIPT)
     assert spec and spec.loader
@@ -187,8 +204,43 @@ def test_bump_version_does_not_rewrite_ruff_target_version(tmp_path, monkeypatch
     assert 'target-version = "py39"' in pyproject
     assert 'target-version = "1.2.3"' not in pyproject
     readme_en = (root / "README_en.md").read_text(encoding="utf-8")
-    assert "English README has moved to [README.md](README.md)." in readme_en
+    assert readme_en == README_EN_POINTER
     assert "Current version:" not in readme_en
+
+
+def test_check_version_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("check_version_consistency_test", VERSION_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    root = tmp_path
+    (root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    (root / "README.md").write_text("Current version: **v1.2.3**\n", encoding="utf-8")
+    (root / "README_en.md").write_text(
+        README_EN_POINTER + "\nCurrent version: **v0.1.0**\nOld full README body.\n",
+        encoding="utf-8",
+    )
+    (root / "README.zh-CN.md").write_text("当前版本：**v1.2.3**\n", encoding="utf-8")
+    (root / "CHANGELOG.md").write_text("## [1.2.3]\n", encoding="utf-8")
+    package_dir = root / "src" / "multi_agent_brief"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        'from importlib.metadata import version\n__version__ = version("multi-agent-brief-workflow")\n',
+        encoding="utf-8",
+    )
+    hermes_dir = package_dir / "hermes"
+    hermes_dir.mkdir()
+    (hermes_dir / "adapter.py").write_text('version="v1.2.3"\nversion: 1.2.3\n', encoding="utf-8")
+    skill_dir = root / ".agents" / "hermes-skills" / "multi-agent-brief-hermes"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("version: 1.2.3\n", encoding="utf-8")
+
+    monkeypatch.setattr(module, "ROOT", root)
+    monkeypatch.setattr(module, "VERSION_FILE", root / "VERSION")
+
+    assert module.main() == 1
 
 
 def test_release_script_syntax():

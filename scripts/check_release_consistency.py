@@ -30,6 +30,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ERRORS: list[str] = []
+README_EN_POINTER = """# BriefLoop English README
+
+The English README has moved to [README.md](README.md).
+
+This file is kept as a compatibility pointer so existing external links to
+`README_en.md` do not break.
+
+For the Simplified Chinese README, see [README.zh-CN.md](README.zh-CN.md).
+"""
 
 
 def check(label: str, ok: bool, detail: str = "") -> None:
@@ -77,7 +86,7 @@ def readme_en_is_pointer() -> bool:
     if not path.exists():
         return False
     text = path.read_text(encoding="utf-8")
-    return "English README has moved to [README.md](README.md)." in text
+    return text.strip() == README_EN_POINTER.strip()
 
 
 def extract_changelog_latest() -> str:
