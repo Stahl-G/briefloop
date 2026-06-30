@@ -12,6 +12,20 @@ from multi_agent_brief.core.schemas import AuditFinding, AuditReport, PipelineCo
 
 
 NUMBER_PATTERN = re.compile(r"(\$[\d,.]+|[\d,.]+%|\b\d+(?:\.\d+)?\s?(?:GW|GWh|MW|MWh|million|billion)\b)")
+HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+SOURCE_REFERENCE_SECTION_TITLES = {
+    "bibliography",
+    "data sources",
+    "references",
+    "source appendix",
+    "source list",
+    "sources",
+    "sources cited",
+    "works cited",
+}
+SOURCE_REFERENCE_SECTION_KEYWORDS = (
+    re.compile(r"(数据来源|资料来源|参考资料|参考来源|参考文献|来源附录)"),
+)
 
 
 def _tag(finding_type: str, **kwargs) -> AuditFinding:
@@ -48,6 +62,37 @@ def extract_src_refs(markdown: str) -> list[dict]:
     return refs
 
 
+def _heading_level(line: str) -> int | None:
+    match = HEADING_PATTERN.match(line.strip())
+    if not match:
+        return None
+    return len(match.group(1))
+
+
+def _plain_heading_text(line: str) -> str:
+    match = HEADING_PATTERN.match(line.strip())
+    if not match:
+        return ""
+    text = match.group(2).strip()
+    text = re.sub(r"[*_`]+", "", text)
+    text = re.sub(r"^\d+(?:\.\d+)*[.)、．]?\s*", "", text)
+    text = re.sub(r"^[一二三四五六七八九十]+[、.．]\s*", "", text)
+    return text.strip(" \t:-—–：")
+
+
+def _source_reference_section_level(line: str) -> int | None:
+    level = _heading_level(line)
+    if level is None:
+        return None
+    heading = _plain_heading_text(line)
+    english_heading = re.sub(r"\s+", " ", heading.casefold())
+    if english_heading in SOURCE_REFERENCE_SECTION_TITLES:
+        return level
+    if any(pattern.search(heading) for pattern in SOURCE_REFERENCE_SECTION_KEYWORDS):
+        return level
+    return None
+
+
 def run_deterministic_audit(
     markdown: str,
     ledger: ClaimLedger,
@@ -75,7 +120,18 @@ def run_deterministic_audit(
                 )
             )
 
+    source_reference_section_level: int | None = None
     for line_number, line in enumerate(markdown.splitlines(), start=1):
+        heading_level = _heading_level(line)
+        if heading_level is not None and source_reference_section_level is not None:
+            if heading_level <= source_reference_section_level:
+                source_reference_section_level = None
+        section_level = _source_reference_section_level(line)
+        if section_level is not None:
+            source_reference_section_level = section_level
+            continue
+        if source_reference_section_level is not None:
+            continue
         if not line.strip() or line.startswith("#"):
             continue
         if SRC_REF_PATTERN.search(line):

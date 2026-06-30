@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Material-fact bibliography false positives**: deterministic audit now skips
+  bibliography / source-reference sections when checking
+  `number_without_source`, so numbers in source titles do not become blocking
+  material-fact findings while body text remains checked.
 - **README/public-claim release guards**: tightened `README_en.md` checks so the
   file must remain only the compatibility pointer, and expanded product-baseline
   public-claim rejection to catch modal truth-proof claims and publication

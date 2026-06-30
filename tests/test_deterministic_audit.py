@@ -61,6 +61,60 @@ def test_audit_flags_number_without_source():
     assert report.findings[0].finding_type == "number_without_source"
 
 
+def test_audit_ignores_numbers_in_source_reference_section():
+    ledger = ClaimLedger(
+        [
+            Claim(
+                claim_id="CL-001",
+                statement="A cited body fact appears before the source section.",
+                source_id="SRC",
+                evidence_text="A cited body fact appears before the source section.",
+            )
+        ]
+    )
+    markdown = """
+- A cited body fact appears before the source section. [src:CL-001]
+
+## **数据来源**
+
+- PV Tech: *Meta and RWE ink 298MW Texas solar PPA*
+- PV Tech: *Cypress Creek secures US$3.5 billion to fund 1.63GW/1.9GWh...*
+""".strip()
+
+    report = run_deterministic_audit(markdown, ledger)
+
+    assert not [finding for finding in report.findings if finding.finding_type == "number_without_source"]
+
+
+def test_audit_resumes_number_scan_after_source_reference_section():
+    markdown = """
+## 数据来源
+
+- PV Tech: *Meta and RWE ink 298MW Texas solar PPA*
+
+## Market Takeaways
+
+- The benchmark price was $140 per kWh.
+""".strip()
+
+    report = run_deterministic_audit(markdown, ClaimLedger())
+
+    assert report.audit_status == "warning"
+    assert any(finding.finding_type == "number_without_source" for finding in report.findings)
+
+
+def test_audit_does_not_skip_business_section_with_sources_word():
+    markdown = """
+## Sources of Demand
+
+- Demand sources represented 298MW of announced capacity.
+""".strip()
+
+    report = run_deterministic_audit(markdown, ClaimLedger())
+
+    assert any(finding.finding_type == "number_without_source" for finding in report.findings)
+
+
 def test_audit_fails_stale_source_when_reporting_window_is_strict():
     ledger = ClaimLedger(
         [
