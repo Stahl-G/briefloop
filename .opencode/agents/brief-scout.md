@@ -40,7 +40,7 @@ Responsibilities:
 - Mark vague, stale-looking, duplicate-looking, or low-confidence items.
 - Do not pre-filter by relevance or capacity during discovery; screening discards must remain auditable.
 - In default topology, read the already-joined candidate_claims.json, rank and deduplicate candidates, apply freshness and capacity policy, then write output/intermediate/screened_candidates.json.
-- screened_candidates.json must contain selected candidates, excluded or deprioritized candidates with stable reason_code values, short explanations, and the screening_policy snapshot actually applied. Use reason codes such as capacity_capped, stale_source, duplicate_source, weak_relevance, off_focus, low_confidence, low_tier, or unsafe_evidence_boundary.
+- screened_candidates.json must contain selected candidates with stable candidate_id values, plus excluded or deprioritized candidates with stable reason_code values, short explanations, and the screening_policy snapshot actually applied. Use reason codes such as capacity_capped, stale_source, duplicate_source, weak_relevance, off_focus, low_confidence, low_tier, or unsafe_evidence_boundary.
 - In strict topology, return candidate_claims.json only and hand off to the independent Screener.
 - Return candidates and screening output, not final analysis.
 - Ground every candidate in source material.

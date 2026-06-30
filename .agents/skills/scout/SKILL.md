@@ -74,7 +74,8 @@ Use after source discovery, doctor, and input governance have identified evidenc
 - Deduplicate exact and near-duplicate candidates.
 - Apply topic capacity caps and reporting-window rules from config.
 - Write `screened_candidates.json` with:
-  - `selected`: reportable candidates with source identity and evidence preserved.
+  - `selected`: reportable candidates with stable `candidate_id`, source
+    identity, and evidence preserved.
   - `excluded`: every dropped or deprioritized candidate with a stable `reason_code`
     and short `explanation`. Use reason codes such as `duplicate_source`,
     `stale_source`, `capacity_capped`, `weak_relevance`, `off_focus`,

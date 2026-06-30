@@ -56,7 +56,7 @@ Current baseline: **v0.10 Product OS development line**.
 | Function | What it protects | Status | Boundary |
 |---|---|---|---|
 | Stage-complete transactions | Prevents a stage from advancing without required artifacts and recorded state | Always on | CLI transaction, not prompt memory |
-| Quality gates | Freshness, material facts, target relevance, editor-new-fact checks, and related findings | Always on | Deterministic gates block when configured to block |
+| Quality gates | Freshness, material facts, target relevance, coverage/omission continuity, editor-new-fact checks, and related findings | Always on | Deterministic gates block when configured to block |
 | Reader-final gate | Rejects reader-facing residue such as internal claim IDs, process wording, malformed source markers, and blank citation rows | Always on for final delivery | Reader surface only |
 | Run integrity contamination | Marks frozen-artifact changes, replay hazards, and integrity violations explicitly | Always on | Contaminated runs are not clean reference evidence |
 | Repair routing | Routes blockers and findings to scoped repair paths | Supported, still improving | Repair does not erase the original trace |

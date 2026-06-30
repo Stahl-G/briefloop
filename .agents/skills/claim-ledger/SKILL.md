@@ -30,7 +30,9 @@ Use after screened_candidates.json exists, whether default Scout or strict Scree
 ## Work
 
 - Write claim drafts without `claim_id` fields.
-- Preserve statement, evidence text, source URL/path, source title/name, publisher/institution, provider source type, reader-facing source category, source date, retrieved date, topic, claim type, and confidence.
+- Preserve `candidate_id`, statement, evidence text, source URL/path, source
+  title/name, publisher/institution, provider source type, reader-facing source
+  category, source date, retrieved date, topic, claim type, and confidence.
 - `source_url` is only for HTTP(S) URLs. Do not put titles, source names, source IDs, search queries, or local paths in `source_url`.
 - Local-file or packaged sources may omit `source_url` only when `source_path` plus `source_title` or `source_name` and `source_category` are preserved.
 - Merge overlapping candidates only when traceability remains clear; otherwise keep separate drafts.

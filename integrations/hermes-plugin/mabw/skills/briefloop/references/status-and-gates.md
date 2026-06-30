@@ -30,6 +30,12 @@ Blocking findings stop stage completion. Warning-only findings are still
 evidence and should be reported, but they are not Python proof of semantic
 failure.
 
+Coverage/omission findings are deterministic continuity checks over valid
+`screened_candidates.json`, Claim Ledger metadata, and cited brief references.
+They detect high-priority selected screened candidates that disappear without an
+explicit limitation or omission reason. They are not full-world recall checks,
+semantic support proof, or source-discovery completeness claims.
+
 Legacy `output/intermediate/quality_gate_report.json` is a latest/compatibility
 projection. Stage-scoped gate authority lives under
 `output/intermediate/gates/*_quality_gate_report.json`.

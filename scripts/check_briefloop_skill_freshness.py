@@ -21,6 +21,7 @@ HERMES_PLUGIN_PROJECTION = ROOT / "integrations" / "hermes-plugin" / "mabw" / "s
 
 REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
     "references/version-matrix.md": [
+        "coverage_omission",
         "quality summarize",
         "quality_panel.json",
         "quality_summary.md",
@@ -37,6 +38,10 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "README_en.md",
         "compatibility-pointer shape",
         "v0.11.0 product-baseline readiness",
+    ],
+    "references/status-and-gates.md": [
+        "Coverage/omission findings",
+        "not full-world recall checks",
     ],
     "references/control-record-map.md": [
         "quality_panel.json",

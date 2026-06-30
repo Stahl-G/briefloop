@@ -82,7 +82,7 @@ validation unless that is stated separately.
 
 Feedback commands structure issues and repair plans for the Orchestrator. They do not automatically edit brief artifacts or execute repair.
 
-Quality gate commands write deterministic gate reports and can block unsafe current-stage continue/finalize decisions. They include material-fact, freshness, target-relevance, and editor-new-fact checks. They do not fetch sources, rewrite briefs, execute repair, or create feedback issues automatically.
+Quality gate commands write deterministic gate reports and can block unsafe current-stage continue/finalize decisions. They include material-fact, freshness, target-relevance, coverage/omission-continuity, and editor-new-fact checks. The coverage/omission check detects high-priority selected screened candidates that disappear before Claim Ledger or cited-brief references without an explicit limitation; it is not full-world recall. Quality gates do not fetch sources, rewrite briefs, execute repair, or create feedback issues automatically.
 
 Evaluation cases are developer/CI regression checks for control-surface behavior. They do not create workflow artifacts, run subagents, fetch sources, score prose, call an LLM judge, or execute repair.
 

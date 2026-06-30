@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Coverage/Omission gate foundation**: `gates check` now includes a
+  deterministic `coverage_omission` gate that compares valid
+  `screened_candidates.json` selected high-priority candidates against Claim
+  Ledger `candidate_id` metadata and, for auditable briefs only, cited internal
+  `[src:<claim_id>]` references. Reader-facing finalize checks do not require
+  delivery Markdown to retain internal Claim Ledger markers. The gate warns by
+  default, blocks under `--strict`, and ignores invalid or legacy screening
+  artifacts instead of treating them as authority. This is a selected-item
+  continuity check only; it does not infer full-world recall, prove semantic
+  support, execute source discovery, or claim the system found every material
+  item.
 - **Evidence Extract text-span seed registry**: `briefloop extract` /
   `multi-agent-brief extract` now writes a valid
   `output/intermediate/evidence_span_registry.json` for registered UTF-8 text
