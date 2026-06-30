@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Feedback contamination regression**: added a v0.11.1 issue-closure
+  regression proving feedback-only input text remains classified as feedback
+  and does not appear in candidate claims, screened candidates, Claim Ledger,
+  audited brief, reader Markdown, delivery Markdown, or DOCX output. This is a
+  boundary regression only; it does not add semantic contamination detection or
+  convert feedback into Improvement Memory.
 - **v0.11 product-baseline readiness check**: added
   `scripts/check_product_baseline.py` to verify the stable CLI product baseline
   entrypoints, canonical ReportPack mappings, local-first workspace skeletons,
