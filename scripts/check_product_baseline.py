@@ -33,6 +33,15 @@ from multi_agent_brief.product.report_pack_aliases import (  # noqa: E402
 )
 
 BASELINE_TARGET = "v0.11.0"
+README_EN_POINTER = """# BriefLoop English README
+
+The English README has moved to [README.md](README.md).
+
+This file is kept as a compatibility pointer so existing external links to
+`README_en.md` do not break.
+
+For the Simplified Chinese README, see [README.zh-CN.md](README.zh-CN.md).
+"""
 EXPECTED_PRODUCT_ENTRIES = {
     "industry-weekly": "market_weekly",
     "management-monthly": "management_monthly",
@@ -99,8 +108,14 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
 }
 FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
     (
-        "proves_semantic_truth",
-        re.compile(r"\b(proves|proved|proving)\s+semantic\s+truth\b", re.IGNORECASE),
+        "proves_truth",
+        re.compile(
+            r"\b(can|could|will|does|may)\s+prove\s+(semantic\s+)?truth\b"
+            r"|\b(proves|proved|proving)\s+(semantic\s+)?truth\b"
+            r"|\b(proves|proved|proving)\s+every\s+claims?\s+is\s+true\b"
+            r"|\b(can|could|will|does|may)\s+prove\s+every\s+claims?\s+is\s+true\b",
+            re.IGNORECASE,
+        ),
     ),
     (
         "eliminates_hallucinations",
@@ -126,6 +141,7 @@ FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
         "publish_reports_automatically",
         re.compile(
             r"\b(can|could|will|does|may)\s+publish\s+reports?\s+automatically\b"
+            r"|\b(publishes|published|publishing)\s+reports?\s+automatically\b"
             r"|\bautomatically\s+publishes?\s+reports?\b",
             re.IGNORECASE,
         ),
@@ -153,7 +169,6 @@ NEGATING_CONTEXT_TOKENS = (
     "cannot",
     "can't",
     "not ",
-    "without",
     "不",
     "不能",
     "不会",
@@ -391,6 +406,14 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
         )
         public_overclaims.extend(_public_overclaim_findings(rel_path, raw_text))
 
+    readme_en_text = (ROOT / "README_en.md").read_text(encoding="utf-8")
+    _append_check(
+        checks,
+        "docs.README_en.md.pointer_shape",
+        readme_en_text.strip() == README_EN_POINTER.strip(),
+        "README_en.md must contain only the compatibility pointer",
+    )
+
     _append_check(
         checks,
         "docs.public_claims.no_forbidden_positive_claims",
@@ -453,18 +476,31 @@ def _run_cli_json(argv: list[str]) -> tuple[int, dict[str, Any]]:
 
 def _public_overclaim_findings(rel_path: str, text: str) -> list[str]:
     findings: list[str] = []
-    for line_no, line in enumerate(text.splitlines(), 1):
+    lines = text.splitlines()
+    for line_no, line in enumerate(lines, 1):
         for label, pattern in FORBIDDEN_PUBLIC_CLAIM_PATTERNS:
             for match in pattern.finditer(line):
-                if _has_negating_context(line, match.start()):
+                if _has_negating_context(lines, line_no - 1, match.start()):
                     continue
                 findings.append(f"{rel_path}:{line_no}:{label}:{match.group(0)}")
     return findings
 
 
-def _has_negating_context(line: str, match_start: int) -> bool:
+def _has_negating_context(lines: list[str], line_idx: int, match_start: int) -> bool:
+    line = lines[line_idx]
     prefix = line[max(0, match_start - 32):match_start].lower()
-    return any(token in prefix for token in NEGATING_CONTEXT_TOKENS)
+    if any(token in prefix for token in NEGATING_CONTEXT_TOKENS):
+        return True
+    if not line.lstrip().startswith("-"):
+        return False
+    for prior in reversed(lines[max(0, line_idx - 4):line_idx]):
+        stripped = prior.strip().lower()
+        if not stripped:
+            continue
+        if stripped.startswith("-"):
+            continue
+        return "not the right tool" in stripped or "not right tool" in stripped
+    return False
 
 
 def _append_check(checks: list[dict[str, str]], check_id: str, ok: bool, detail: str) -> None:

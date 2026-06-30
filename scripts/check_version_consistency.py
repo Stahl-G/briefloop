@@ -11,6 +11,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ROOT / "VERSION"
+README_EN_POINTER = """# BriefLoop English README
+
+The English README has moved to [README.md](README.md).
+
+This file is kept as a compatibility pointer so existing external links to
+`README_en.md` do not break.
+
+For the Simplified Chinese README, see [README.zh-CN.md](README.zh-CN.md).
+"""
 
 # ── helpers ──────────────────────────────────────────────────────────
 
@@ -81,7 +90,7 @@ def main() -> int:
     readme_en_path = ROOT / "README_en.md"
     if readme_en_path.exists():
         readme_en = _read(readme_en_path)
-        if "English README has moved to [README.md](README.md)." in readme_en:
+        if readme_en.strip() == README_EN_POINTER.strip():
             _ok("README_en.md compatibility pointer")
         else:
             _error("README_en.md is not the compatibility pointer to README.md")
