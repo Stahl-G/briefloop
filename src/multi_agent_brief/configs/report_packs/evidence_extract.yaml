@@ -44,4 +44,5 @@ default_report_spec:
       - no_automatic_publication
       - no_semantic_proof
       - no_hidden_web_crawling
-      - no_automatic_span_extraction
+      - no_binary_span_extraction
+      - no_semantic_support_assessment

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Evidence Extract text-span seed registry**: `briefloop extract` /
+  `multi-agent-brief extract` now writes a valid
+  `output/intermediate/evidence_span_registry.json` for registered UTF-8 text
+  sources, preserving workspace-relative source paths, deterministic
+  `SRC-###` / `ESP-###-01` ids, source-text character offsets
+  (`char_start` / `char_end`), and raw-excerpt hashes. Binary/PDF sources
+  remain registered-only with warnings. This is a bounded source/span
+  registration surface only; it does not parse binary documents, assess
+  semantic support, generate Claim-Support Matrix rows, draw legal or disclosure
+  conclusions, run stages, approve delivery, or create release authority.
 - **Feedback contamination regression**: added a v0.11.1 issue-closure
   regression proving feedback-only input text remains classified as feedback
   and is not exposed through the runtime handoff as evidence material. The

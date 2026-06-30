@@ -182,10 +182,12 @@ ReportTemplate section order during finalize for already-present reader
 Markdown sections, or write a bundle manifest with `packs bundle`.
 For `evidence_extract` workspaces, `extract` can copy explicit local source
 files into `input/sources/evidence_extract/`, write `extraction_scope.yaml`,
-and update `sources.yaml` manual source entries. This is source/scope setup
-only: it does not parse PDFs or binary documents, generate Evidence Span
-Registry entries, draw legal or disclosure conclusions, run stages, or
-authorize delivery.
+update `sources.yaml` manual source entries, and write deterministic text-span
+seed entries to `output/intermediate/evidence_span_registry.json` for UTF-8
+text sources. This remains bounded source/scope/span registration: it does not
+parse PDFs or binary documents, judge semantic support, generate Claim-Support
+Matrix rows, draw legal or disclosure conclusions, run stages, or authorize
+delivery.
 SourceHub Lite commands can copy explicit local text files into
 `input/sources/sourcehub/`, register RSS feeds, and register runtime web-search
 handoff tasks in `sources.yaml`. This is source setup only: local files remain

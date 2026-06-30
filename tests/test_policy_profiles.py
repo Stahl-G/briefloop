@@ -156,7 +156,8 @@ def test_evidence_extract_profile_is_registration_contract_only() -> None:
     assert payload["metadata"]["maturity"] == "conservative_skeleton"
     assert "no_legal_conclusion" in payload["metadata"]["non_claims"]
     assert "no_disclosure_readiness" in payload["metadata"]["non_claims"]
-    assert "no_automatic_span_extraction" in payload["metadata"]["non_claims"]
+    assert "no_binary_span_extraction" in payload["metadata"]["non_claims"]
+    assert "no_semantic_support_assessment" in payload["metadata"]["non_claims"]
     assert "no_release_authority" in payload["metadata"]["non_claims"]
     assert "tier_weights" not in payload["source_policy"]
 

@@ -53,5 +53,6 @@ metadata:
     - no_legal_conclusion
     - no_disclosure_readiness
     - no_semantic_proof
-    - no_automatic_span_extraction
+    - no_binary_span_extraction
+    - no_semantic_support_assessment
     - no_release_authority

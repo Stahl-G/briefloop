@@ -65,9 +65,12 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   reader-final checks；缺失或额外的 top-level sections 只记录 diagnostic/no-op。
   `briefloop extract` / `multi-agent-brief extract` 可以在
   `evidence_extract` workspace 中登记显式 extraction scope，并把本地 source
-  files 复制到 `input/sources/evidence_extract/`；这只是 setup surface，不解析
-  PDF、不生成 evidence spans、不形成法律或披露结论、不运行 stages、不批准
-  delivery，也不绕过 gates。
+  files 复制到 `input/sources/evidence_extract/`。对于 UTF-8 文本来源，它还会
+  在 `output/intermediate/evidence_span_registry.json` 写入确定性的 text-span
+  seed registry，记录 source-text character offsets（`char_start` /
+  `char_end`）和 raw-excerpt hashes。它仍然不解析 PDF 或二进制文档、不判断
+  语义支持、不生成 Claim-Support Matrix rows、不形成法律或披露结论、不运行
+  stages、不批准 delivery，也不绕过 gates。
   这些契约只在现有 Claim Ledger、artifact registry、gates、event log、
   archive、source appendix、support records、frozen-artifact integrity 和 human
   delivery approval 主链之上描述 report type metadata。这些 product-layer

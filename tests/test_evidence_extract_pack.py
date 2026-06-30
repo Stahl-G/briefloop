@@ -8,6 +8,10 @@ from pathlib import Path
 import yaml
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
+from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
+    validate_evidence_span_registry_against_source_pack,
+)
 from multi_agent_brief.sources.registry import collect_all_sources, load_sources_config
 
 
@@ -44,9 +48,14 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
-    assert payload["boundary"] == "evidence_extract_scope_and_source_registration_only"
+    assert payload["boundary"] == "evidence_extract_scope_source_and_text_span_registration_only"
     assert payload["source_count"] == 2
+    assert payload["evidence_span_registry"] == "output/intermediate/evidence_span_registry.json"
+    assert payload["evidence_span_registry_source_count"] == 1
+    assert payload["evidence_span_registry_span_count"] == 1
     assert "no_legal_conclusion" in payload["non_claims"]
+    assert "no_binary_span_extraction" in payload["non_claims"]
+    assert "no_semantic_support_assessment" in payload["non_claims"]
     assert any(item["code"] == "binary_source_registered_only" for item in payload["warnings"])
 
     scope_path = workspace / "extraction_scope.yaml"
@@ -57,9 +66,29 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert scope["schema_version"] == "briefloop.extraction_scope.v1"
     assert scope["scope"] == "utilities, permits, production capacity"
     assert scope["source_count"] == 2
-    assert scope["sources"][0]["source_id"] == "EVID-001"
+    assert scope["sources"][0]["source_id"] == "SRC-001"
     assert scope["sources"][0]["path"].startswith("input/sources/evidence_extract/")
     assert (workspace / scope["sources"][0]["path"]).read_text(encoding="utf-8").startswith("# Permit Summary")
+    assert scope["boundary"] == "scope_source_and_text_span_registration_only"
+    assert "no_binary_span_extraction" in scope["non_claims"]
+    assert "no_semantic_support_assessment" in scope["non_claims"]
+
+    registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
+    registry_payload = json.loads(registry_path.read_text(encoding="utf-8"))
+    assert EvidenceSpanRegistryContract.validate(registry_payload) == []
+    assert validate_evidence_span_registry_against_source_pack(
+        registry_payload=registry_payload,
+        workspace=workspace,
+    ) is None
+    assert registry_payload["metadata"]["boundary"] == "deterministic_text_span_seed_not_semantic_support"
+    assert registry_payload["sources"][0]["source_id"] == "SRC-001"
+    assert registry_payload["sources"][0]["source_path"] == scope["sources"][0]["path"]
+    span = registry_payload["sources"][0]["spans"][0]
+    assert span["span_id"] == "ESP-001-01"
+    assert span["raw_excerpt"].startswith("# Permit Summary")
+    source_text = (workspace / scope["sources"][0]["path"]).read_text(encoding="utf-8")
+    assert source_text[span["char_start"]:span["char_end"]] == span["raw_excerpt"]
+    assert not any(source["source_path"].endswith(".pdf") for source in registry_payload["sources"])
 
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     assert "manual" in sources["source_strategy"]["enabled_providers"]
@@ -72,7 +101,7 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert evidence_entries[0]["category"] == "regulator"
     assert evidence_entries[0]["enabled"] is True
     assert evidence_entries[0]["registered_only"] is False
-    assert evidence_entries[0]["metadata"]["source_id"] == "EVID-001"
+    assert evidence_entries[0]["metadata"]["source_id"] == "SRC-001"
     assert "original_path" not in evidence_entries[0]["metadata"]
     assert evidence_entries[0]["metadata"]["source_sha256"]
     assert evidence_entries[0]["metadata"]["source_size_bytes"] > 0
@@ -180,6 +209,58 @@ def test_extract_force_preserves_managed_source_used_as_input(tmp_path: Path, ca
     scope = yaml.safe_load((workspace / "extraction_scope.yaml").read_text(encoding="utf-8"))
     assert scope["scope"] == "updated scope"
     assert scope["sources"][0]["path"] == payload["sources"][0]["path"]
+
+
+def test_extract_force_removes_stale_span_registry_when_no_text_sources(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("# Source\n\nInitial durable bytes.\n", encoding="utf-8")
+    pdf = tmp_path / "source.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nplaceholder\n")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "initial scope",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    first_payload = json.loads(capsys.readouterr().out)
+    registry_path = workspace / first_payload["evidence_span_registry"]
+    assert registry_path.exists()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "pdf scope",
+                "--source",
+                str(pdf),
+                "--force",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["evidence_span_registry"] == ""
+    assert payload["evidence_span_registry_span_count"] == 0
+    assert any(item["code"] == "no_text_evidence_spans_generated" for item in payload["warnings"])
+    assert not registry_path.exists()
 
 
 def test_extract_force_does_not_stage_external_sources(

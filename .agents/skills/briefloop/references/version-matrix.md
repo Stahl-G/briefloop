@@ -36,7 +36,8 @@ Historical implementation name: MABW
   - `multi-agent-brief packs bundle --workspace <workspace>`
   - `multi-agent-brief validate-report-spec <report_spec.yaml>`
   - `multi-agent-brief extract --workspace <workspace> --scope <text>
-    --source <file>` for `evidence_extract` source/scope registration
+    --source <file>` for `evidence_extract` source/scope registration and
+    deterministic text-span seed registry generation for UTF-8 text sources
   - `multi-agent-brief sources add-file <path>`
   - `multi-agent-brief sources add-rss <url>`
   - `multi-agent-brief sources add-web-search --query <text>`
@@ -93,9 +94,9 @@ Historical implementation name: MABW
     - verifies stable product entries, README boundary wording,
       `README_en.md` compatibility-pointer shape, and forbidden public
       overclaims
-  - no stage execution from Product OS commands, publication approval,
-    web-search execution, section-conformance gate, gate bypass, semantic truth
-    proof, or second gate engine
+  - no binary/PDF span extraction from `extract`, no stage execution from Product OS commands, publication approval,
+    web-search execution, section-conformance gate, gate bypass, semantic support
+    assessment, semantic truth proof, or second gate engine
 - MABW-080 experiment operations:
   - `validate-case`
   - `scaffold-condition`

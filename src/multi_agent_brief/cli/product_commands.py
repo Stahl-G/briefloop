@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from multi_agent_brief.contracts.schemas.evidence_span_registry import EVIDENCE_SPAN_REGISTRY_SCHEMA_VERSION
 from multi_agent_brief.contracts.source_metadata import normalize_source_category
 from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
@@ -49,6 +50,7 @@ SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
 }
 EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"}
 EVIDENCE_EXTRACT_TEXT_EXTENSIONS = {".md", ".txt", ".json"}
+EVIDENCE_EXTRACT_SPAN_EXCERPT_LIMIT = 1200
 
 
 def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
@@ -103,7 +105,7 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
 
     templates_parser = actions.add_parser(
         "templates",
-        help="List packaged experimental ReportTemplate contracts.",
+        help="List packaged ReportTemplate contracts.",
     )
     templates_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
@@ -319,7 +321,7 @@ def handle_extract(args: argparse.Namespace) -> int:
             "ok": False,
             "error": str(exc),
             "workspace": str(workspace),
-            "boundary": "evidence_extract_scope_and_source_registration_only",
+            "boundary": "evidence_extract_scope_source_and_text_span_registration_only",
         }
         _print_payload("extract", payload, as_json=getattr(args, "json", False))
         return 1
@@ -472,11 +474,14 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print(f"registered_sources: {payload.get('source_count')}")
             print(f"extraction_scope: {payload.get('extraction_scope')}")
             print(f"audit_extraction_scope: {payload.get('audit_extraction_scope')}")
+            if payload.get("evidence_span_registry"):
+                print(f"evidence_span_registry: {payload.get('evidence_span_registry')}")
+                print(f"evidence_span_registry_span_count: {payload.get('evidence_span_registry_span_count')}")
             for warning in payload.get("warnings", []):
                 print(f"[warning] {warning.get('code')}: {warning.get('message')}")
             print(
-                "boundary: source/scope registration only; no parsing, span extraction,"
-                " legal conclusion, delivery, or gate bypass"
+                "boundary: source/scope/text-span registration only; no binary parsing,"
+                " semantic support assessment, legal conclusion, delivery, or gate bypass"
             )
         else:
             print(payload.get("error"))
@@ -706,7 +711,7 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
             )
         registered.append(
             {
-                "source_id": f"EVID-{idx:03d}",
+                "source_id": f"SRC-{idx:03d}",
                 "name": resolved.stem,
                 "path": rel_target,
                 "filename": target.name,
@@ -723,7 +728,6 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         source_category=normalize_source_category(getattr(args, "source_category", None), default="other"),
         language=str(getattr(args, "language", "") or "en").strip() or "en",
     )
-    extraction_scope_text = _extraction_scope_text(scope=scope, sources=registered, warnings=warnings)
 
     if sources_dir.exists() and any(sources_dir.iterdir()) and not getattr(args, "force", False):
         raise FileExistsError(
@@ -764,6 +768,12 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
             force=bool(getattr(args, "force", False)),
         )
 
+    span_registry_path, span_count, span_source_count = _write_evidence_extract_span_registry(
+        workspace=workspace,
+        sources=registered,
+        warnings=warnings,
+    )
+    extraction_scope_text = _extraction_scope_text(scope=scope, sources=registered, warnings=warnings)
     _write_extraction_scope(workspace=workspace, text=extraction_scope_text)
     (workspace / "sources.yaml").write_text(sources_yaml_text, encoding="utf-8")
     payload = {
@@ -774,10 +784,15 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         "sources": registered,
         "extraction_scope": "extraction_scope.yaml",
         "audit_extraction_scope": "output/audit/extraction_scope.yaml",
+        "evidence_span_registry": _workspace_relative(workspace, span_registry_path) if span_registry_path else "",
+        "evidence_span_registry_source_count": span_source_count,
+        "evidence_span_registry_span_count": span_count,
         "warnings": warnings,
-        "boundary": "evidence_extract_scope_and_source_registration_only",
+        "boundary": "evidence_extract_scope_source_and_text_span_registration_only",
         "non_claims": [
-            "no_automatic_span_extraction",
+            "no_binary_span_extraction",
+            "no_claim_support_matrix_generation",
+            "no_semantic_support_assessment",
             "no_legal_conclusion",
             "no_disclosure_readiness",
             "no_delivery_or_publication_authority",
@@ -861,6 +876,137 @@ def _write_extraction_scope(
     (audit_dir / "extraction_scope.yaml").write_text(text, encoding="utf-8")
 
 
+def _write_evidence_extract_span_registry(
+    *,
+    workspace: Path,
+    sources: list[dict[str, Any]],
+    warnings: list[dict[str, str]],
+) -> tuple[Path | None, int, int]:
+    registry_sources: list[dict[str, Any]] = []
+    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    for record in sources:
+        if not bool(record.get("manual_enabled")):
+            continue
+        source_path = str(record.get("path") or "")
+        source_file = workspace / source_path
+        source_text = _source_text_for_span_registry(source_file)
+        if source_text is None:
+            warnings.append(
+                {
+                    "code": "text_span_seed_skipped",
+                    "message": f"{source_path} is not readable as UTF-8 text; no evidence span was generated.",
+                }
+            )
+            continue
+        span = _first_text_span(
+            source_text,
+            source_id=str(record.get("source_id") or ""),
+        )
+        if span is None:
+            warnings.append(
+                {
+                    "code": "text_span_seed_skipped",
+                    "message": f"{source_path} has no non-empty text; no evidence span was generated.",
+                }
+            )
+            continue
+        registry_sources.append(
+            {
+                "source_id": record["source_id"],
+                "source_type": "local_file",
+                "source_tier": "registered_local_source",
+                "source_path": source_path,
+                "retrieved_at": generated_at,
+                "spans": [span],
+                "metadata": {
+                    "source_sha256": record.get("source_sha256", ""),
+                    "source_size_bytes": record.get("source_size_bytes", 0),
+                    "evidence_extract_source": True,
+                    "extraction_scope": "extraction_scope.yaml",
+                },
+            }
+        )
+
+    if not registry_sources:
+        registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
+        try:
+            registry_path.unlink()
+        except FileNotFoundError:
+            pass
+        warnings.append(
+            {
+                "code": "no_text_evidence_spans_generated",
+                "message": "No text source supported deterministic evidence-span seed generation.",
+            }
+        )
+        return None, 0, 0
+
+    payload = {
+        "schema_version": EVIDENCE_SPAN_REGISTRY_SCHEMA_VERSION,
+        "sources": registry_sources,
+        "metadata": {
+            "source": "evidence_extract",
+            "boundary": "deterministic_text_span_seed_not_semantic_support",
+            "extraction_scope": "extraction_scope.yaml",
+            "non_claims": [
+                "no_semantic_support_assessment",
+                "no_claim_support_matrix_generation",
+                "no_binary_span_extraction",
+                "no_legal_conclusion",
+                "no_disclosure_readiness",
+            ],
+        },
+    }
+    intermediate = workspace / "output" / "intermediate"
+    intermediate.mkdir(parents=True, exist_ok=True)
+    registry_path = intermediate / "evidence_span_registry.json"
+    registry_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    span_count = sum(len(source.get("spans") or []) for source in registry_sources)
+    return registry_path, span_count, len(registry_sources)
+
+
+def _source_text_for_span_registry(path: Path) -> str | None:
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if path.suffix.lower() == ".json":
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError:
+            return raw_text
+        if isinstance(payload, dict) and isinstance(payload.get("content"), str):
+            return payload["content"]
+    return raw_text
+
+
+def _first_text_span(source_text: str, *, source_id: str) -> dict[str, Any] | None:
+    start = next((idx for idx, char in enumerate(source_text) if not char.isspace()), None)
+    if start is None:
+        return None
+    paragraph_end = source_text.find("\n\n", start)
+    if paragraph_end == -1:
+        paragraph_end = len(source_text)
+    end = min(paragraph_end, start + EVIDENCE_EXTRACT_SPAN_EXCERPT_LIMIT)
+    while end > start and source_text[end - 1].isspace():
+        end -= 1
+    if end <= start:
+        return None
+    raw_excerpt = source_text[start:end]
+    source_digits = source_id.removeprefix("SRC-")
+    return {
+        "span_id": f"ESP-{source_digits}-01",
+        "raw_excerpt": raw_excerpt,
+        "hash": "sha256:" + hashlib.sha256(raw_excerpt.encode("utf-8")).hexdigest(),
+        "span_role": "direct_statement",
+        "char_start": start,
+        "char_end": end,
+    }
+
+
 def _extraction_scope_text(
     *,
     scope: str,
@@ -875,9 +1021,10 @@ def _extraction_scope_text(
         "sources": sources,
         "created_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "warnings": warnings,
-        "boundary": "scope_and_source_registration_only",
+        "boundary": "scope_source_and_text_span_registration_only",
         "non_claims": [
-            "no_automatic_span_extraction",
+            "no_binary_span_extraction",
+            "no_semantic_support_assessment",
             "no_legal_conclusion",
             "no_disclosure_readiness",
             "no_semantic_proof",

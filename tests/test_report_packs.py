@@ -66,7 +66,8 @@ def test_report_spec_contract_accepts_evidence_extract_spec() -> None:
     assert spec["policy_profile"] == "evidence_extract_default"
     assert spec["source_policy"]["mode"] == "explicit_sources"
     assert "no_legal_conclusion" in spec["metadata"]["non_claims"]
-    assert "no_automatic_span_extraction" in spec["metadata"]["non_claims"]
+    assert "no_binary_span_extraction" in spec["metadata"]["non_claims"]
+    assert "no_semantic_support_assessment" in spec["metadata"]["non_claims"]
 
 
 def test_report_spec_contract_rejects_control_spine_bypass() -> None:

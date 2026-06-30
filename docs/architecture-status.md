@@ -100,9 +100,13 @@ breaking rename.
   trust scoring, source-policy gating, or semantic support judgment.
   `briefloop extract` / `multi-agent-brief extract` can register an explicit
   extraction scope and copy local source files into an `evidence_extract`
-  workspace's `input/sources/evidence_extract/` directory, but this is setup
-  only: it does not parse PDFs, generate evidence spans, create legal or
-  disclosure conclusions, run stages, approve delivery, or bypass gates.
+  workspace's `input/sources/evidence_extract/` directory. For UTF-8 text
+  sources, it also writes a deterministic text-span seed registry at
+  `output/intermediate/evidence_span_registry.json` with source-text character
+  offsets (`char_start` / `char_end`) and raw-excerpt hashes. It still does not
+  parse PDFs or binary documents, judge semantic support, generate
+  Claim-Support Matrix rows, create legal or disclosure conclusions, run stages,
+  approve delivery, or bypass gates.
   Experimental SourceHub Lite setup commands can copy local text evidence files
   into `input/sources/sourcehub/`, register RSS feeds, and register
   `runtime_tool` web-search handoff tasks in `sources.yaml`. These commands are
