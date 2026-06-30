@@ -1,6 +1,11 @@
 # Public-Safe Evaluation Cases
 
-v0.6.4 introduced packaged public-safe evaluation cases for developer and CI regression checks. v0.6.5 extended the packaged suite with provenance projection coverage. v0.7.0 adds Improvement Memory control cases. v0.11.1 adds synthetic Product OS blocker cases for durable source evidence pack validation and event-linked release readiness reports.
+v0.6.4 introduced packaged public-safe evaluation cases for developer and CI
+regression checks. v0.6.5 extended the packaged suite with provenance
+projection coverage. v0.7.0 adds Improvement Memory control cases. The
+pre-release v0.11.1 issue-closure line adds synthetic Product OS blocker cases
+for durable source evidence pack validation and event-linked release readiness
+reports.
 
 These cases validate control-surface behavior across:
 
