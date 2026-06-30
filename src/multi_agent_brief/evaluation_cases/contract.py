@@ -171,6 +171,12 @@ def validate_case_contract(root: str | Path) -> dict[str, Any]:
             workspace = resolved / "cases" / case_id / "workspace"
             if case_id and not workspace.exists():
                 errors.append(f"{prefix} workspace fixture is missing: {workspace}.")
+        else:
+            expected = case.get("expected")
+            if isinstance(expected, dict) and expected.get("artifact_statuses") is not None:
+                errors.append(
+                    f"{prefix}.expected.artifact_statuses requires a workspace case."
+                )
 
         commands = case.get("commands") or []
         if not isinstance(commands, list):

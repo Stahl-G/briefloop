@@ -287,6 +287,34 @@ def test_eval_cases_reject_malformed_artifact_status_expectation(tmp_path, capsy
     assert "artifact_statuses[1].status must be a string" in errors
 
 
+def test_eval_cases_reject_artifact_statuses_on_static_case(tmp_path, capsys):
+    custom_root, manifest = _copy_packaged_cases(tmp_path)
+    static_case = next(
+        item
+        for item in manifest["cases"]
+        if item["case_id"] == "static_hermes_no_skip_finalize"
+    )
+    static_case["expected"]["artifact_statuses"] = [
+        {"artifact_id": "source_evidence_pack_manifest", "status": "invalid"},
+    ]
+    _write_manifest(custom_root, manifest)
+
+    rc = main([
+        "eval-cases",
+        "validate",
+        "--cases-dir",
+        str(custom_root),
+        "--json",
+    ])
+
+    assert rc == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(
+        "expected.artifact_statuses requires a workspace case" in error
+        for error in result["errors"]
+    )
+
+
 def test_eval_cases_artifact_statuses_detect_wrong_registry_status(tmp_path, capsys):
     custom_root, manifest = _copy_packaged_cases(tmp_path)
     case = next(
