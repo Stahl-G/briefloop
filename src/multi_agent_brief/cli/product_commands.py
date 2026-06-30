@@ -414,7 +414,7 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 print(f"aliases: {', '.join(payload.get('aliases') or [])}")
             print(f"report_type: {pack.get('report_type')}")
             print(f"status: {pack.get('status')}")
-            print("boundary: experimental product-layer contract only")
+            print(f"boundary: {_report_pack_boundary_text(pack)}")
         else:
             print(payload.get("error"))
             recommended = payload.get("recommended_entries") or []
@@ -537,6 +537,13 @@ def _with_report_pack_aliases(payload: dict[str, Any]) -> dict[str, Any]:
         packs.append(updated)
     enriched["packs"] = packs
     return enriched
+
+
+def _report_pack_boundary_text(pack: dict[str, Any]) -> str:
+    status = str(pack.get("status") or "").strip()
+    if status == "supported":
+        return "supported product-layer contract; control spine and gates remain required"
+    return "experimental product-layer contract only"
 
 
 def _resolve_report_pack_policy_profile(

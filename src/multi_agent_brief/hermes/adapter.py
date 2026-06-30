@@ -550,7 +550,7 @@ If runtime WebSearch reports `Did 0 searches`, or every query returns an empty r
 multi-agent-brief inputs extract --config <workspace>/config.yaml
 ```
 
-This converts PDF/DOCX/image inputs to adjacent `.mineru.md` files before classification. Directory role still controls claim eligibility: extracted files under `input/sources/` are evidence; extracted files under `input/context/`, `input/instructions/`, and `input/feedback/` are not evidence.
+This converts PDF/DOCX/image inputs to adjacent `.mineru.md` files before classification. Directory role still controls claim eligibility: eligible evidence files under `input/sources/` count as evidence; binary inputs require extracted Markdown before use. Extracted files under `input/context/`, `input/instructions/`, and `input/feedback/` are not evidence.
 
 7. Classify input files:
 

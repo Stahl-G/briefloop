@@ -193,6 +193,21 @@ def test_packs_cli_list_and_show_pack(capsys) -> None:
     assert shown["pack"]["default_policy_profile"] == "evidence_extract_default"
 
 
+def test_packs_show_human_output_matches_pack_support_status(capsys) -> None:
+    assert main(["packs", "show", "industry-weekly"]) == 0
+
+    output = capsys.readouterr().out
+    assert "status: supported" in output
+    assert "boundary: supported product-layer contract" in output
+    assert "boundary: experimental product-layer contract only" not in output
+
+    assert main(["packs", "show", "solar-periodic"]) == 0
+
+    output = capsys.readouterr().out
+    assert "status: experimental" in output
+    assert "boundary: experimental product-layer contract only" in output
+
+
 def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> None:
     spec_path = tmp_path / "report_spec.yaml"
     spec_path.write_text(yaml.safe_dump(_market_spec(), sort_keys=False), encoding="utf-8")

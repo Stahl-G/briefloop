@@ -125,9 +125,10 @@ RUNTIME_WEBSEARCH_ZERO_RESULT_NOTE = (
     "Do not switch to source-planner or continue with stale sources."
 )
 INPUT_DIRECTORY_ROLE_NOTE = (
-    "Directory role still controls claim eligibility: only extracted files under "
-    "input/sources are evidence; input/context, input/instructions, and "
-    "input/feedback remain non-evidence."
+    "Directory role still controls claim eligibility: eligible evidence files "
+    "under input/sources count as evidence; binary inputs require extracted "
+    "Markdown before use. input/context, input/instructions, and input/feedback "
+    "remain non-evidence."
 )
 STAGE_COMPLETION_PROTOCOL_SCHEMA = "multi-agent-brief-stage-completion-protocol/v1"
 STAGE_COMPLETION_PROTOCOL_RULES = [

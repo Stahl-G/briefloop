@@ -154,7 +154,9 @@ def test_feedback_only_text_does_not_contaminate_evidence_or_reader_artifacts(tm
     assert sentinel not in combined_handoff
     assert "input/feedback" in combined_handoff
     assert "remain non-evidence" in combined_handoff
-    assert "only extracted files under input/sources are evidence" in combined_handoff
+    assert "eligible evidence files under input/sources count as evidence" in combined_handoff
+    assert "binary inputs require extracted Markdown before use" in combined_handoff
+    assert "only extracted files under input/sources are evidence" not in combined_handoff
 
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True, exist_ok=True)
