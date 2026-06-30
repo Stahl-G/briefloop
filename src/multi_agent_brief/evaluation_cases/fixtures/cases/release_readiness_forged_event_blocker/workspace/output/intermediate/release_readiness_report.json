@@ -1,0 +1,19 @@
+{
+  "schema_version": "briefloop.release_readiness_report.v1",
+  "run_id": "SYNTHETIC_RUN_FORGED",
+  "event_id": "evt-synthetic-forged-release-check",
+  "mode": "internal_draft",
+  "status": "pass",
+  "approval_required": false,
+  "required_roles": [],
+  "approved_roles": [],
+  "missing_roles": [],
+  "rejected_or_changes_requested_roles": [],
+  "blockers": [],
+  "records_considered": [],
+  "ledger_path": "",
+  "generated_at": "2026-06-30T00:00:00+00:00",
+  "boundary": "release_readiness_check_not_public_release_authorization",
+  "authorization": "not_authorized_for_public_release",
+  "next_step": "Synthetic report must remain invalid because the event id is forged."
+}

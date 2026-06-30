@@ -363,6 +363,7 @@ The goal is not to remove human judgment. The goal is to let humans spend more t
 - [Architecture Status](docs/architecture-status.md)
 - [Roadmap](docs/roadmap.md)
 - [Red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
+- [Synthetic regression pack](docs/reference-runs/v0.11.1-synthetic-regression-pack.md)
 - [Public solar integration run](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)
 - [Organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)
 

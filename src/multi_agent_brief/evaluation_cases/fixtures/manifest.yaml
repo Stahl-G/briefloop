@@ -246,6 +246,36 @@ cases:
     expected:
       exit_code: 0
 
+  - case_id: source_evidence_pack_blocks_non_evidence_file
+    case_type: workspace
+    synthetic: true
+    description: Durable source evidence pack manifests reject placeholder files as evidence.
+    initial_stage: scout
+    commands:
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifact_statuses:
+        - artifact_id: source_evidence_pack_manifest
+          status: invalid
+          validation_result: source_evidence_pack_manifest_validation_error:source_file_not_evidence:SYN_SRC_001
+
+  - case_id: release_readiness_forged_event_blocker
+    case_type: workspace
+    synthetic: true
+    description: Release readiness reports with forged event ids stay invalid.
+    initial_stage: finalize
+    commands:
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifact_statuses:
+        - artifact_id: release_readiness_report
+          status: invalid
+          validation_result: release_readiness_report_event_link_error:event_missing
+
   - case_id: unapproved_entry_not_materialized
     case_type: workspace
     synthetic: true

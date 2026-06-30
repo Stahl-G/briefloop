@@ -709,6 +709,7 @@ def _assert_expected(
         errors.extend(_assert_graph_absent_text(workspace=workspace, expected=expected))
         errors.extend(_assert_workflow_state(workspace=workspace, expected=expected))
         errors.extend(_assert_manifest_improvement(workspace=workspace, expected=expected))
+        errors.extend(_assert_artifact_statuses(workspace=workspace, expected=expected))
 
     errors.extend(_assert_contains_text(root=root, repo_workdir=repo_workdir, workspace=workspace, expected=expected))
     errors.extend(_assert_absent_text(root=root, repo_workdir=repo_workdir, workspace=workspace, expected=expected))
@@ -899,6 +900,50 @@ def _assert_manifest_improvement(*, workspace: Path, expected: dict[str, Any]) -
             continue
         if actual != value:
             errors.append(f"manifest_improvement.{key} expected {value!r}, got {actual!r}.")
+    return errors
+
+
+def _assert_artifact_statuses(*, workspace: Path, expected: dict[str, Any]) -> list[str]:
+    conditions = expected.get("artifact_statuses") or []
+    if not conditions:
+        return []
+    registry_path = workspace / "output" / "intermediate" / "artifact_registry.json"
+    if not registry_path.exists():
+        return ["artifact_registry.json is missing."]
+    registry = _load_json(registry_path)
+    artifacts = registry.get("artifacts") if isinstance(registry.get("artifacts"), dict) else {}
+    errors: list[str] = []
+    for idx, condition in enumerate(conditions):
+        if not isinstance(condition, dict):
+            errors.append(f"artifact_statuses[{idx}] condition must be an object.")
+            continue
+        artifact_id = str(condition.get("artifact_id") or "")
+        if not artifact_id:
+            errors.append(f"artifact_statuses[{idx}].artifact_id is required.")
+            continue
+        record = artifacts.get(artifact_id)
+        if not isinstance(record, dict):
+            errors.append(f"artifact_statuses[{idx}] missing artifact: {artifact_id}.")
+            continue
+        expected_status = condition.get("status")
+        if expected_status is not None and record.get("status") != expected_status:
+            errors.append(
+                f"artifact_statuses[{idx}].status expected {expected_status!r}, "
+                f"got {record.get('status')!r}."
+            )
+        expected_validation = condition.get("validation_result")
+        actual_validation = str(record.get("validation_result") or "")
+        if expected_validation is not None and actual_validation != expected_validation:
+            errors.append(
+                f"artifact_statuses[{idx}].validation_result expected "
+                f"{expected_validation!r}, got {actual_validation!r}."
+            )
+        expected_fragment = condition.get("validation_result_contains")
+        if expected_fragment is not None and str(expected_fragment) not in actual_validation:
+            errors.append(
+                f"artifact_statuses[{idx}].validation_result_contains missing "
+                f"{expected_fragment!r}."
+            )
     return errors
 
 
