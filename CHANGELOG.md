@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now verify this split before release prep. This is a public-link and
   public-claim guard only; it does not change support status or product
   behavior.
+- **v0.11 support-status alignment guard**: clarified that
+  `industry-weekly`, `management-monthly`, and `document-review` are the
+  stable v0.11 product-baseline workspace entries, while `solar-periodic`,
+  Quality Panel, SourceHub Lite, internal release approvals, and other wider
+  Product OS extensions remain experimental. The product-baseline readiness
+  check now verifies this support-matrix split before release prep.
 
 ### Fixed
 

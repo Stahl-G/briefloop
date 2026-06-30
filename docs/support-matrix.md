@@ -41,7 +41,9 @@ validation unless that is stated separately.
 | Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
-| ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry, workspace skeletons, template renderer MVP, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, and bundle projection (`report_spec.yaml` contract, packaged `market_weekly`, `management_monthly`, `solar_industry_periodic`, and `evidence_extract` pack/template registry, packaged `manufacturing_default`, `solar_manufacturing_default`, `evidence_extract_default`, `finance_default`, and `internet_default` policy profiles, `packs` / `validate-report-spec` CLI, `new <pack> <workspace>` local-first setup, `extract` source/scope registration for evidence_extract workspaces, `sources add-file` / `sources add-rss` / `sources add-web-search` source setup, finalize-time section-order rendering, `approval init/record`, `release check`, `quality summarize`, optional `quality_panel.json` / `quality_summary.md` / `quality_panel.html`, and `packs bundle` delivery/audit manifest projection) | Experimental |
+| v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
+| ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
+| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -148,29 +150,36 @@ projected. This does not create support truth, write the Claim-Support Matrix,
 create adjudication queue items, gate delivery, decide release eligibility, or
 prove truth.
 
-ReportSpec / ReportPack / ReportTemplate / PolicyProfile registry support is
-experimental since the v0.10.1 release. Product-layer report contracts can
-describe report type metadata,
-required control-spine preservation, stable section order, deterministic policy
-defaults such as `manufacturing_default`, `finance_default`, and
-`internet_default`, dogfood defaults such as `solar_manufacturing_default`,
-specialized extraction defaults such as `evidence_extract_default`,
-conservative local-first workspace skeletons, explicit evidence-extract
-source/scope registration, and a
-delivery/audit bundle manifest projection over existing finalized artifacts.
-The CLI can list packaged packs/templates, validate a `report_spec.yaml`
-including its resolved policy profile, create a workspace skeleton with
-`new <pack> <workspace>`, show the resolved profile in read-only status and
-generated handoff artifacts, tighten existing deterministic quality-gate
-strictness and reader-final forbidden-phrase checks through a limited adapter,
-show the resolved ReportTemplate section order in read-only status and
-generated handoff artifacts, report read-only section-conformance diagnostics
-for existing audited/final reader Markdown in status and generated handoff
-artifacts, project read-only render-plan diagnostics that name the future render
-source artifact, section heading mapping, unresolved sections, and planned
-delivery targets, apply the resolved ReportTemplate section order during
-finalize for already-present reader Markdown sections, or write a bundle
-manifest with `packs bundle`.
+ReportSpec / ReportPack baseline support is stable for the v0.11.0 product
+baseline target when used through the product-facing entries
+`industry-weekly`, `management-monthly`, and `document-review`. These entries
+create local-first workspace skeletons, write canonical `report_spec.yaml`
+values such as `market_weekly`, `management_monthly`, and `evidence_extract`,
+and preserve the Claim Ledger, artifact registry, quality gates, event log,
+archive, source appendix, support records, human delivery approval, and frozen
+artifact integrity control spine. This baseline creates workspace structure and
+contracts only; it does not run stages, fetch sources, approve delivery, prove
+truth, or authorize publication.
+
+The wider Product OS extensions remain experimental. Product-layer report
+contracts can describe report type metadata, stable section order,
+deterministic policy defaults such as `manufacturing_default`,
+`finance_default`, and `internet_default`, dogfood defaults such as
+`solar_manufacturing_default`, specialized extraction defaults such as
+`evidence_extract_default`, explicit evidence-extract source/scope
+registration, and a delivery/audit bundle manifest projection over existing
+finalized artifacts. The CLI can list packaged packs/templates, validate a
+`report_spec.yaml` including its resolved policy profile, show the resolved
+profile in read-only status and generated handoff artifacts, tighten existing
+deterministic quality-gate strictness and reader-final forbidden-phrase checks
+through a limited adapter, show the resolved ReportTemplate section order in
+read-only status and generated handoff artifacts, report read-only
+section-conformance diagnostics for existing audited/final reader Markdown in
+status and generated handoff artifacts, project read-only render-plan
+diagnostics that name the future render source artifact, section heading
+mapping, unresolved sections, and planned delivery targets, apply the resolved
+ReportTemplate section order during finalize for already-present reader
+Markdown sections, or write a bundle manifest with `packs bundle`.
 For `evidence_extract` workspaces, `extract` can copy explicit local source
 files into `input/sources/evidence_extract/`, write `extraction_scope.yaml`,
 and update `sources.yaml` manual source entries. This is source/scope setup

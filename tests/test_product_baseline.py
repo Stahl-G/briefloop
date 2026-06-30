@@ -71,9 +71,37 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["packs_unknown_cli.internal_pack_ids"]["status"] == "pass"
     assert checks["no_force_deliver_cli"]["status"] == "pass"
     assert checks["docs.public_claims.no_forbidden_positive_claims"]["status"] == "pass"
+    assert checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
+    assert checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
+    assert checks["support_matrix.wider_product_os_extensions"]["status"] == "pass"
     assert checks["reference_run_surface_count"]["status"] == "pass"
     readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
     assert "English README has moved to [README.md](README.md)." in readme_en
+
+
+def test_support_matrix_alignment_rejects_product_os_overpromotion(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    support_matrix = tmp_path / "docs" / "support-matrix.md"
+    support_matrix.parent.mkdir(parents=True, exist_ok=True)
+    support_matrix.write_text(
+        "| Capability | Status |\n"
+        "|---|---|\n"
+        "| v0.11 product-facing workspace entries | Supported |\n"
+        "| ReportSpec / ReportPack baseline contracts | Supported |\n"
+        "| Wider Product OS extensions | Supported |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_support_matrix_alignment(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
+    assert checks_by_id["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
+    extension_check = checks_by_id["support_matrix.wider_product_os_extensions"]
+    assert extension_check["status"] == "fail"
+    assert "expected='Experimental'" in extension_check["detail"]
 
 
 def test_public_overclaim_detector_rejects_contradictory_readme_claims() -> None:

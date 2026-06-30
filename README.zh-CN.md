@@ -246,6 +246,10 @@ briefloop new document-review ./document-review
 例如 `market_weekly`、`management_monthly` 和 `evidence_extract`。
 `document-review` 是文档证据审阅工作区入口，不代表自动法律、合规或披露判断。
 
+这三个入口是 v0.11 产品基线目标。当前 v0.10.7 release line 已用 readiness
+check 守住它们；`solar-periodic`、Quality Panel、SourceHub Lite 和内部
+release approval 等高级 Product OS surface 仍是实验性能力。
+
 | 路径 | 适合谁 | 怎么做 |
 |---|---|---|
 | 看一眼 | 想判断这个项目是不是有意义 | 跑 demo，读公开运行摘要 |
