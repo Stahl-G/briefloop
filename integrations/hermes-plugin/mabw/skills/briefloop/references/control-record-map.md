@@ -29,9 +29,12 @@ Owning commands for recent control-tool projections:
 - `briefloop quality summarize --workspace <workspace>` writes
   `quality_panel.json`, source-bound `quality_summary.md`, and static
   `quality_panel.html`.
-- `multi-agent-brief approval init`, `multi-agent-brief approval record`, and
-  `multi-agent-brief release check` write `human_approval_ledger.json` and
-  `release_readiness_report.json` with event-log linkage.
+- `multi-agent-brief approval init` and `multi-agent-brief approval record`
+  write `human_approval_ledger.json` with event-log linkage.
+- `multi-agent-brief release check` reads `human_approval_ledger.json` and
+  writes a fresh `release_readiness_report.json` with event-log linkage. Do
+  not treat a readiness report as refreshed merely because an approval was
+  recorded.
 
 These files are operator/audit projections or approval records. They are not
 agent draft surfaces, not final reader content, and not repair shortcuts.

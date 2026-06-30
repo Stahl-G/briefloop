@@ -61,6 +61,8 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert "report_pack=management_monthly" in checks["new.management-monthly"]["detail"]
     assert checks["new.document-review"]["status"] == "pass"
     assert "report_pack=evidence_extract" in checks["new.document-review"]["detail"]
+    assert "new.solar-periodic" not in checks
+    assert checks["entry.solar-periodic"]["status"] == "pass"
     assert checks["entry.market-weekly"]["status"] == "pass"
     assert checks["entry.evidence-extract"]["status"] == "pass"
     assert checks["packs_list_cli.ok"]["status"] == "pass"
