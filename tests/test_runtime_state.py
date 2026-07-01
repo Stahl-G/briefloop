@@ -609,6 +609,12 @@ def _write_quality_gate_report(
         "status": status,
         "gate_results": [
             {
+                "gate_id": "coverage_omission",
+                "status": "pass",
+                "blocking": False,
+                "finding_ids": [],
+            },
+            {
                 "gate_id": "freshness",
                 "status": "pass",
                 "blocking": False,

@@ -408,6 +408,7 @@ def _write_auditable_target_workspace(
                 "ledger": "output/intermediate/claim_ledger.json",
             },
             "gate_results": [
+                {"gate_id": "coverage_omission", "status": "pass", "blocking": False, "finding_ids": []},
                 {"gate_id": "material_fact", "status": "pass", "blocking": False, "finding_ids": []},
                 {"gate_id": "freshness", "status": "pass", "blocking": False, "finding_ids": []},
                 {"gate_id": "target_relevance", "status": "pass", "blocking": False, "finding_ids": []},

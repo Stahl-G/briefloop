@@ -329,6 +329,7 @@ def check_release_readiness(
                 "missing_roles": missing_roles,
                 "branding_status": branding_context["status"],
                 "branding_blocked": bool(branding_context["blockers"]),
+                "branding_blockers": list(branding_context["blockers"]),
                 "blocked": bool(blockers),
                 "boundary": RELEASE_CHECK_BOUNDARY,
             },
@@ -531,6 +532,8 @@ def validate_release_readiness_report_event_link(
     if _clean_text(metadata.get("branding_status")) != _clean_text(branding_context.get("status")):
         return "release_readiness_report_event_link_error:event_metadata_mismatch"
     if bool(metadata.get("branding_blocked")) != bool(branding_context.get("blockers")):
+        return "release_readiness_report_event_link_error:event_metadata_mismatch"
+    if _clean_text_list(metadata.get("branding_blockers")) != _clean_text_list(branding_context.get("blockers")):
         return "release_readiness_report_event_link_error:event_metadata_mismatch"
     return None
 
@@ -1019,6 +1022,12 @@ def _next_step(*, status: str, mode: str, blockers: list[str]) -> str:
 
 def _clean_text(value: Any) -> str:
     return str(value).strip() if isinstance(value, str) else ""
+
+
+def _clean_text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [_clean_text(item) for item in value if _clean_text(item)]
 
 
 def payload_to_json(payload: Mapping[str, Any]) -> str:
