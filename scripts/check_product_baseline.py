@@ -131,6 +131,61 @@ EXPECTED_SUPPORT_MATRIX_STATUSES = {
     "ReportSpec / ReportPack baseline contracts": "Supported",
     "Wider Product OS extensions": "Experimental",
 }
+REQUIRED_GOLDEN_PATH_PHRASES = {
+    "docs/golden-path.md": [
+        "v0.11 product baseline",
+        "industry-weekly",
+        "management-monthly",
+        "document-review",
+        "solar-periodic remains an experimental Product OS extension",
+        "not an experiment harness",
+        "does not prove semantic truth",
+        "does not authorize public release",
+        "human delivery",
+        "Claim Ledger",
+        "quality gates",
+        "event logs",
+        "briefloop run --workspace",
+        "briefloop status --workspace",
+        "briefloop deliver --workspace",
+        "briefloop feedback ingest",
+        "--source human",
+        "--feedback",
+    ],
+    "docs/golden-path.zh-CN.md": [
+        "v0.11 产品基线",
+        "industry-weekly",
+        "management-monthly",
+        "document-review",
+        "solar-periodic",
+        "实验性 Product OS 扩展",
+        "不是实验 harness",
+        "不证明语义真实性",
+        "不授权公开发布",
+        "human delivery",
+        "Claim Ledger",
+        "quality gates",
+        "briefloop run --workspace",
+        "briefloop status --workspace",
+        "briefloop deliver --workspace",
+        "briefloop feedback ingest",
+        "--source human",
+        "--feedback",
+    ],
+}
+FORBIDDEN_GOLDEN_PATH_PHRASES = [
+    "experiments 080",
+    "score-run",
+    "A-controlled",
+    "manifestation score",
+    "briefloop new solar-periodic",
+]
+FORBIDDEN_GOLDEN_PATH_SHELL_COMMAND_PATTERNS = [
+    ("briefloop run ./", re.compile(r"(?m)^\s*briefloop\s+run\s+\./")),
+    ("briefloop status ./", re.compile(r"(?m)^\s*briefloop\s+status\s+\./")),
+    ("briefloop deliver ./", re.compile(r"(?m)^\s*briefloop\s+deliver\s+\./")),
+    ("briefloop feedback ./", re.compile(r"(?m)^\s*briefloop\s+feedback\s+\./")),
+]
 FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
     (
         "proves_truth",
@@ -259,6 +314,7 @@ def main() -> int:
     _check_packs_cli_surface(checks)
     _check_workspace_creation(checks)
     _check_cli_and_docs_boundaries(checks)
+    _check_golden_path_surface(checks)
     _check_support_matrix_alignment(checks)
     _check_reference_run_surface(checks)
 
@@ -530,6 +586,32 @@ def _check_support_matrix_alignment(checks: list[dict[str, str]]) -> None:
             f"support_matrix.{_slug(needle)}",
             status == expected_status,
             f"{needle} status={status!r} expected={expected_status!r}",
+        )
+
+
+def _check_golden_path_surface(checks: list[dict[str, str]]) -> None:
+    for rel_path, phrases in REQUIRED_GOLDEN_PATH_PHRASES.items():
+        path = ROOT / rel_path
+        raw_text = path.read_text(encoding="utf-8")
+        text = raw_text.lower()
+        missing = [phrase for phrase in phrases if phrase.lower() not in text]
+        forbidden = [phrase for phrase in FORBIDDEN_GOLDEN_PATH_PHRASES if phrase.lower() in text]
+        forbidden.extend(
+            label
+            for label, pattern in FORBIDDEN_GOLDEN_PATH_SHELL_COMMAND_PATTERNS
+            if pattern.search(raw_text)
+        )
+        _append_check(
+            checks,
+            f"golden_path.{rel_path}.required_product_entries",
+            not missing,
+            f"required phrases missing={missing}",
+        )
+        _append_check(
+            checks,
+            f"golden_path.{rel_path}.no_experiment_surface",
+            not forbidden,
+            f"forbidden experiment/product-drift phrases={forbidden}",
         )
 
 

@@ -8,17 +8,18 @@ Status labels:
 
 - **Always on**: part of the supported accountability spine.
 - **Optional**: enabled by configuration, source setup, or runtime support.
+- **Supported baseline**: part of the v0.11 product-baseline entry surface.
 - **Experimental**: implemented but not yet a stable v0.11.0 contract.
 - **Roadmap**: planned or scoped, not an implemented capability.
 
-Current baseline: **v0.10 Product OS development line**.
+Current product baseline: **v0.11 product-baseline target on the v0.10.7 release line**.
 
 ## Start And Operate A Brief
 
 | Function | What it does | Status | Entry points |
 |---|---|---|---|
 | Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `multi-agent-brief onboard`, `multi-agent-brief init --from-onboarding` |
-| Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from an experimental packaged ReportPack | Experimental | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
+| Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from a supported baseline ReportPack | Supported baseline | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Claude writer command | Gives writers a five-verb interface for normal work | Optional, first-class writer path | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`; `/mabw` remains a compatibility alias |
 | Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `multi-agent-brief run --workspace <workspace>` |
 | Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/briefloop status`, `multi-agent-brief status` |

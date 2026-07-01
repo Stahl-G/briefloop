@@ -81,9 +81,77 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
     assert checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
     assert checks["support_matrix.wider_product_os_extensions"]["status"] == "pass"
+    assert checks["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
+    assert checks["golden_path.docs/golden-path.md.no_experiment_surface"]["status"] == "pass"
+    assert checks["golden_path.docs/golden-path.zh-CN.md.required_product_entries"]["status"] == "pass"
+    assert checks["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
     assert checks["reference_run_surface_count"]["status"] == "pass"
     readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
     assert "English README has moved to [README.md](README.md)." in readme_en
+
+
+def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/golden-path.md":
+            text += "\nUse experiments 080 score-run for the product golden path.\n"
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_golden_path_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
+    drift_check = checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]
+    assert drift_check["status"] == "fail"
+    assert "experiments 080" in drift_check["detail"]
+    assert "score-run" in drift_check["detail"]
+    assert checks_by_id["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
+
+
+def test_golden_path_guard_rejects_non_executable_shell_shorthand(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/golden-path.md":
+            text += "\nbriefloop run ./weekly-brief\nbriefloop feedback ./weekly-brief \"Fix this.\"\n"
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_golden_path_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
+    command_check = checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]
+    assert command_check["status"] == "fail"
+    assert "briefloop run ./" in command_check["detail"]
+    assert "briefloop feedback ./" in command_check["detail"]
+
+
+def test_golden_path_guard_allows_slash_command_workspace_shorthand(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/golden-path.md":
+            text += "\n/briefloop run ./weekly-brief\n/briefloop status ./weekly-brief\n"
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_golden_path_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
+    assert checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]["status"] == "pass"
 
 
 def test_support_matrix_alignment_rejects_product_os_overpromotion(tmp_path, monkeypatch) -> None:

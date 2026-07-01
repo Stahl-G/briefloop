@@ -1,166 +1,170 @@
-# BriefLoop 黄金路径
+# BriefLoop v0.11 产品黄金路径
 
-这是一份给写作者看的最短操作路径。它不解释所有控制面，只回答一件事：从零开始，按什么顺序把一份简报交付出去。
+这是一份给普通 BriefLoop 用户看的最短产品路径。它不是实验 harness，不是
+benchmark protocol，也不是 reference run 展示。它只回答一个实际问题：怎样从
+零开始创建、运行、检查并交付一份可追溯的业务简报，同时不绕过控制脊柱。
 
-## 0. 开始前
+当你要做下面三类 v0.11 产品基线工作区时，走这条路径：
 
-确认你正在 Claude Code 的 BriefLoop 项目里，并且 `/briefloop` 命令可用。
+| 产品入口 | 内部 ReportPack | 适合什么 |
+|---|---|---|
+| `industry-weekly` | `market_weekly` | 行业、市场、政策、竞品等周期性周报 |
+| `management-monthly` | `management_monthly` | 管理层月度复盘和经营简报 |
+| `document-review` | `evidence_extract` | 有明确范围的本地文档证据审阅 |
 
-先在仓库目录确认你实际调用到的是当前版本：
+`solar-periodic` 仍是实验性 Product OS 扩展。它可以用于 dogfood，但不是稳定
+v0.11 产品基线的一部分。
+
+## 边界
+
+BriefLoop 帮你生成带有可追溯主张、来源纪律、质量门禁、事件记录和人工交付边界
+的业务简报。它不证明语义真实性，不消除幻觉，不授权公开发布，不自动发布报告，
+也不替代人工审核。
+
+产品层只能包装控制脊柱，不能绕过控制脊柱。Claim Ledger、artifact registry、
+quality gates、event log、archive、source appendix、support records、human
+delivery approval 和 frozen artifact integrity 都必须保留。
+
+## 1. 创建工作区
+
+按工作类型选择产品入口。
 
 ```bash
-which multi-agent-brief
-multi-agent-brief version
+briefloop new industry-weekly ./weekly-brief \
+  --company "ExampleCo" \
+  --industry "industrial equipment" \
+  --audience "management team" \
+  --title "ExampleCo Industry Weekly" \
+  --language en-US
+
+briefloop new management-monthly ./monthly-review \
+  --company "ExampleCo" \
+  --audience "executive team" \
+  --title "ExampleCo Management Monthly" \
+  --language en-US
+
+briefloop new document-review ./document-review \
+  --company "ExampleCo" \
+  --audience "review team" \
+  --title "ExampleCo Document Review" \
+  --language en-US
 ```
 
-如果版本不是当前仓库声明的版本，先刷新安装入口。开发 checkout 中可用：
+生成的 workspace 是 local-first。它会写入 `report_spec.yaml`、`config.yaml`、
+`sources.yaml`、`user.md`、`input/` 和 `.gitignore`。它不会运行 stage，不会
+隐藏抓取来源，也不会交付文件。
+
+## 2. 放入来源材料
+
+`industry-weekly` 和 `management-monthly` 第一次建议只放几份整理好的本地文本：
 
 ```bash
-bash scripts/setup.sh
-source .venv/bin/activate
-multi-agent-brief version
+cp ./sources/*.md ./weekly-brief/input/sources/
 ```
 
-如果 `/briefloop` 不可用，先在仓库目录运行：
+`document-review` 要显式登记来源和审阅范围：
 
 ```bash
-multi-agent-brief claude install --repo-workdir .
+briefloop extract \
+  --workspace ./document-review \
+  --sources "./docs/*.md" \
+  --scope "contracts, permits, production capacity, dates, named obligations"
 ```
 
-## 首次运行变体：本地材料，零 API key
+二进制 / PDF 文件不会因为选择了产品入口就自动变成可用证据。如果某个二进制来源
+只是 registered-only，先通过受支持的输入路径把它转换或抽取成可读文本，再让
+runtime 使用其中内容作为 evidence。
 
-如果你只是想用自己的几份材料跑一遍，不要先配置搜索后端。先走最小路径：
+## 3. 启动 runtime handoff
 
-1. 按报告类型创建 workspace：
+创建或刷新 runtime handoff：
 
-   ```bash
-   briefloop new industry-weekly ./weekly-brief
-   briefloop new management-monthly ./monthly-review
-   briefloop new document-review ./document-review
-   ```
+```bash
+briefloop run --workspace ./weekly-brief
+```
 
-   这些入口会映射到内部 ReportPack id，例如 `market_weekly`、
-   `management_monthly` 和 `evidence_extract`。
-2. 把少量已整理好的本地文本材料放进 `input/sources/`。
-3. 用 `/briefloop run <workspace>` 生成 handoff。
-4. 用 `/generate-brief <workspace>` 执行 delegated workflow。
-5. 用 `/briefloop status <workspace>` 看哪里被拦住。
-6. 用 `/briefloop deliver <workspace>` 交付。
-
-第一次建议只放 3-5 份 Markdown 或纯文本材料。PDF / DOCX 如果不能被当前输入治理路径直接读取，先转成文本再放入 `input/sources/`。不要为了快而绕过 Claim Ledger、gates 或 reader-final gate。
-
-## 1. `/briefloop new`
-
-在 Claude Code 里用它创建新简报工作区。Shell 里建议优先使用产品入口，
-例如 `briefloop new industry-weekly ./weekly-brief`。
-
-你需要回答几类问题：
-
-- 写给谁；
-- 本期范围是什么；
-- 重点关注什么；
-- 输出想要什么形态。
-
-它会创建 workspace、配置基础文件，并准备本期运行交接单。它不会生成简报，也不会自动批准任何偏好。
-
-## 2. `/briefloop run <workspace>`
-
-用它创建或刷新本期 runtime handoff。
-
-这一步会准备运行时需要看的控制面和交接单，但不会替你跑完整 pipeline，也不会绕过阶段完成事务。
-
-如果要执行完整 delegated subagent workflow，按 handoff 提示使用：
+Claude Code 里的 writer 命令是：
 
 ```text
-/generate-brief <workspace>
+/briefloop run ./weekly-brief
 ```
 
-## 3. 中途随时 `/briefloop status <workspace>`
-
-`status` 是只读的。它只回答四件事：
-
-- 本期写到哪了；
-- 来源相关 surface 是否已出现或可能过期；具体数字要去 Claim Ledger / 来源附录 / 审计记录里查；
-- 哪些读者偏好已经在本 run 冻结；
-- 交付前有哪些门禁或反馈还在拦。
-
-如果它说状态可能过期，不要把这当成失败。按它提示的显式命令刷新控制记录。
-
-## 4. 被拦住时怎么办
-
-先运行：
+然后按照生成的 handoff 执行。Claude writer 路径里，完整 delegated workflow
+通常用：
 
 ```text
-/briefloop status <workspace>
+/generate-brief ./weekly-brief
 ```
 
-看清楚拦住的是哪一类：
+`run` 是 handoff launcher。它本身不完成 stage，也不会绕过确定性 transaction。
 
-| 类型 | 怎么处理 |
-|---|---|
-| 缺产物 | 让对应阶段继续执行，或按 handoff 重新跑该阶段。 |
-| 事实/来源问题 | 走 feedback / repair / audit 路径，不要记成长期偏好。 |
-| 固定格式问题 | 先作为反馈记录；反复出现时应升级成模板或交付标准。 |
-| 读者偏好 | 由人写成 guidance，进入 Improvement Ledger proposal，再由人批准。 |
-| 已由系统执行 | 查看它指向的 gate/report，不要重复写进 memory。 |
+## 4. 先看状态，再行动
 
-## 5. `/briefloop feedback <workspace> "..."`
+不确定下一步时先看 status：
 
-读草稿时，不顺眼的地方直接用人话说。
+```bash
+briefloop status --workspace ./weekly-brief
+briefloop status --workspace ./weekly-brief --json
+```
 
-例子：
+`status` 是只读的。它显示当前 stage、缺失 artifact、blocker、gate 状态、产品
+projection 和下一步安全动作。如果控制 artifact 缺失或过期，按它提示的确定性命令
+处理，不要手工编辑 artifact。
+
+## 5. 把反馈当反馈处理
+
+草稿需要修改时，记录 feedback，而不是直接改 frozen artifact：
+
+```bash
+printf '%s\n' "先讲业务影响，再列新闻。" > ./weekly-brief/input/feedback/human-feedback.md
+briefloop feedback ingest \
+  --workspace ./weekly-brief \
+  --source human \
+  --feedback ./weekly-brief/input/feedback/human-feedback.md
+```
+
+Feedback 不是 source evidence，也不会自动进入 Improvement Memory。事实或来源问题
+走 repair、audit 或 gates；稳定的读者偏好必须由人批准后，才会在后续 run 中复用。
+
+## 6. 门禁通过后再交付
+
+run 通过必要门禁并完成 finalize 状态后，再交付：
+
+```bash
+briefloop deliver --workspace ./weekly-brief
+```
+
+读者可见文件在：
 
 ```text
-/briefloop feedback <workspace> "这一段太像新闻摘要了，先说对我们公司的影响。"
+output/delivery/brief.md
+output/delivery/<named-brief>.docx
 ```
 
-它会先记录反馈。后续处置必须再确认：
-
-- 本期修复；
-- 生成 repair plan；
-- 标记 issue resolved；
-- 提成长期读者偏好；
-- 批准或撤销 Improvement Ledger 条目。
-
-事实问题不会被记成长期偏好。固定格式应该升级为模板或交付标准，而不是长期停在 memory 里。
-
-## 6. 已批准偏好什么时候生效
-
-批准一条 Improvement Ledger guidance 不会改变已经创建的当前 run snapshot。
-
-它只会在下一次：
+审计和控制 artifact 继续保留在 workspace 中，用于追溯和复盘。它们不是第二份读者
+交付文件：
 
 ```text
-/briefloop run <workspace>
+output/intermediate/claim_ledger.json
+output/intermediate/audit_report.json
+output/source_appendix.md
+event_log.jsonl
 ```
 
-或等价的 `run` / `start` / `handoff` 中被冻结为新的 `output/intermediate/improvement_memory_snapshot.md`。
+如果 reader-final gate 失败，不要手工搬走或发布文件。打开对应 gate 或 finalize
+report，按 workflow 修复，然后重新走确定性交付路径。
 
-一句话：它会观察、会提议；但只有你点头的，才会被记住，而且记在一本你随时能翻、能撤销的账上。
+## 7. 第一次产品运行 checklist
 
-## 7. `/briefloop deliver <workspace>`
+第一次产品运行建议收窄范围：
 
-用它交付最终读者文件。
+- 只选一个产品入口：`industry-weekly`、`management-monthly` 或
+  `document-review`；
+- 放三到五份本地文本来源；
+- 不做隐藏 web crawling；
+- 不手工编辑 frozen control files；
+- 不使用 force-delivery 路径；
+- 读者文件分享前必须人工 review。
 
-它必须经过：
-
-- quality gates；
-- reader-final gate；
-- `state finalize-complete`。
-
-通过后才把 `output/delivery/` 里的 reader-facing artifacts 当成交付结果：
-
-- `output/delivery/brief.md`
-- `output/delivery/<命名周报>.docx`
-
-审计追溯文件继续保留，但不要当作交付给读者的文件：
-
-- `output/intermediate/claim_ledger.json`
-- `output/intermediate/audit_report.json`
-- `output/source_appendix.md`
-
-如果 reader-final gate 失败，不要手工搬走坏文件。看 `output/intermediate/finalize_report.json`，先处理残留的内部 ID、路径、空来源行或流程痕迹。
-
-## 下一次真实周报测试要求
-
-下一份真实周报只能照这份黄金路径操作；中途每一次“该按哪个键”的困惑都要记录为文档缺陷。
+如果这条路径仍然让人困惑，把困惑当作文档缺陷记录下来。不要为了补救文档缺陷而
+绕过 ledger、gate、event、archive 或 human delivery。

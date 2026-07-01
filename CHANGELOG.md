@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **v0.11 product golden path**: refreshed the public English/Chinese Golden
+  Path docs around the supported `industry-weekly`, `management-monthly`, and
+  `document-review` product entries, with explicit local-first, gates-on,
+  human-delivery boundaries. The product-baseline readiness check now guards
+  these docs against drifting back into experiment/scorecard language. This is
+  documentation and release-readiness guardrail work only; it does not add an
+  experiment harness, prove output quality, authorize release, or change runtime
+  stage behavior.
 - **Final Abstract Quality warning surface**: `gates check` now includes a
   warning-only `final_abstract_quality` gate for deterministic final-abstract
   risk patterns such as cadence/title mismatch, comparison framing without a
