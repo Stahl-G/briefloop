@@ -554,6 +554,46 @@ def test_status_command_treats_final_abstract_advisory_warning_as_auditable_targ
     assert experiment["reasons"] == []
 
 
+def test_status_command_rejects_unknown_final_abstract_warning_type_for_auditable_target(
+    tmp_path,
+    capsys,
+):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    _write_auditable_target_complete_state(ws)
+    gate_path = ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json"
+    report = json.loads(gate_path.read_text(encoding="utf-8"))
+    finding = {
+        "finding_id": "QG_FINAL_ABSTRACT_QUALITY_001",
+        "gate_id": "final_abstract_quality",
+        "finding_type": "future_non_advisory_rule",
+        "blocking_level": "warning",
+        "blocking": False,
+        "metadata": {"repair_boundary": "advisory_non_routable"},
+    }
+    report["status"] = "warning"
+    report["findings"] = [finding]
+    report["gate_results"].append(
+        {
+            "gate_id": "final_abstract_quality",
+            "status": "warning",
+            "blocking": False,
+            "finding_ids": [finding["finding_id"]],
+        }
+    )
+    gate_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    experiment = payload["experiment_080"]
+    assert experiment["assessment_target"] == "auditable_brief"
+    assert experiment["target_complete"] is False
+    assert experiment["status"] == "incomplete"
+    assert "auditor quality gate report status is not pass" in experiment["reasons"]
+
+
 def test_status_command_requires_auditable_downstream_stage_completion_events(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")

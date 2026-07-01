@@ -270,6 +270,8 @@ def auditable_gate_has_only_final_abstract_advisory_warnings(payload: dict[str, 
             return False
         if finding.get("gate_id") != "final_abstract_quality":
             return False
+        if finding.get("finding_type") not in FINAL_ABSTRACT_QUALITY_WARNING_TYPES:
+            return False
         if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
             return False
         finding_id = str(finding.get("finding_id") or "")
