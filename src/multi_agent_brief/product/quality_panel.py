@@ -21,6 +21,7 @@ from multi_agent_brief.product.guidance_manifestation import (
     validate_guidance_manifestation_projection_payload,
 )
 from multi_agent_brief.product.materiality_selection import validate_materiality_selection_payload
+from multi_agent_brief.product.template_conformance import validate_report_template_conformance_payload
 from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
 
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
@@ -69,6 +70,7 @@ _QUALITY_PANEL_RECOMMENDED_ACTIONS = {
     "request_human_review",
     "block_run",
     "review_materiality_exclusions",
+    "review_reader_template_conformance",
 }
 
 
@@ -121,6 +123,11 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         if isinstance(workspace_status.get("materiality_selection"), dict)
         else {}
     )
+    report_template_conformance = (
+        workspace_status.get("report_template_conformance")
+        if isinstance(workspace_status.get("report_template_conformance"), dict)
+        else {}
+    )
     control_integrity = {
         "run_integrity": run_integrity.get("status") or "unknown",
         "reference_eligible": bool(run_integrity.get("reference_eligible")),
@@ -135,6 +142,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         delivery=delivery,
         trajectory=trajectory,
         materiality_selection=materiality_selection,
+        report_template_conformance=report_template_conformance,
     )
     overall_status = _overall_status(
         workspace_status=workspace_status,
@@ -145,6 +153,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         claims=claims,
         delivery=delivery,
         materiality_selection=materiality_selection,
+        report_template_conformance=report_template_conformance,
     )
 
     return {
@@ -164,6 +173,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         "trajectory_regulation": trajectory,
         "guidance_manifestation": guidance_manifestation,
         "materiality_selection": materiality_selection,
+        "report_template_conformance": report_template_conformance,
         "recommended_actions": recommended_actions,
         "non_goals": [
             "quality_score",
@@ -221,6 +231,8 @@ def render_quality_summary(
     control = control if isinstance(control, Mapping) else {}
     materiality = panel_payload.get("materiality_selection")
     materiality = materiality if isinstance(materiality, Mapping) else {}
+    template_conformance = panel_payload.get("report_template_conformance")
+    template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
 
@@ -245,7 +257,17 @@ def render_quality_summary(
     ]
     _extend_bullets(lines, _quality_summary_blocking_items(control, gates, claims, delivery))
     lines.extend(["", "## Warnings", ""])
-    _extend_bullets(lines, _quality_summary_warning_items(source, gates, claims, delivery, materiality))
+    _extend_bullets(
+        lines,
+        _quality_summary_warning_items(
+            source,
+            gates,
+            claims,
+            delivery,
+            materiality,
+            template_conformance,
+        ),
+    )
     lines.extend(["", "## Missing Or Incomplete Surfaces", ""])
     _extend_bullets(lines, _quality_summary_missing_items(control, source, gates, delivery))
     lines.extend(["", "## Source Evidence", ""])
@@ -277,6 +299,10 @@ def render_quality_summary(
         f"- Materiality selection status: `{_text(materiality.get('status')) or 'unknown'}`",
         "- Materiality/focus exclusions: "
         f"`{_materiality_selection_warning_count(materiality)}`",
+        "- Reader template conformance: "
+        f"`{_text(template_conformance.get('status')) or 'unknown'}`",
+        "- Reader template warnings: "
+        f"`{_template_conformance_warning_count(template_conformance)}`",
         "",
         "## Recommended Next Actions",
         "",
@@ -346,6 +372,8 @@ def render_quality_panel_html(
     control = control if isinstance(control, Mapping) else {}
     materiality = panel_payload.get("materiality_selection")
     materiality = materiality if isinstance(materiality, Mapping) else {}
+    template_conformance = panel_payload.get("report_template_conformance")
+    template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
     overall_status = _text(panel_payload.get("overall_status")) or "unknown"
@@ -365,6 +393,11 @@ def render_quality_panel_html(
                     (
                         "Materiality findings",
                         _materiality_selection_warning_count(materiality),
+                        "warning",
+                    ),
+                    (
+                        "Template warnings",
+                        _template_conformance_warning_count(template_conformance),
                         "warning",
                     ),
                     ("Recommended actions", len(actions), "action"),
@@ -426,6 +459,14 @@ def render_quality_panel_html(
                     (
                         "Materiality/focus exclusions",
                         str(_materiality_selection_warning_count(materiality)),
+                    ),
+                    (
+                        "Reader template conformance",
+                        _text(template_conformance.get("status")) or "unknown",
+                    ),
+                    (
+                        "Reader template warnings",
+                        str(_template_conformance_warning_count(template_conformance)),
                     ),
                 ],
             ),
@@ -542,6 +583,13 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         materiality_error = validate_materiality_selection_payload(materiality)
         if materiality_error:
             return f"quality_panel_schema_error:materiality_selection:{materiality_error}"
+    template_conformance = payload.get("report_template_conformance")
+    if template_conformance is not None:
+        if not isinstance(template_conformance, dict):
+            return "quality_panel_schema_error:report_template_conformance"
+        template_error = validate_report_template_conformance_payload(template_conformance)
+        if template_error:
+            return f"quality_panel_schema_error:report_template_conformance:{template_error}"
     recommended_actions = payload.get("recommended_actions")
     if not isinstance(recommended_actions, list):
         return "quality_panel_schema_error:recommended_actions"
@@ -785,6 +833,7 @@ def _overall_status(
     claims: Mapping[str, Any],
     delivery: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
+    report_template_conformance: Mapping[str, Any],
 ) -> str:
     if not workspace_status.get("ok"):
         return "incomplete"
@@ -818,6 +867,7 @@ def _overall_status(
         or delivery.get("source_appendix_warning_count", 0) > 0
         or claims.get("weak_support_count", 0) > 0
         or _materiality_selection_warning_count(materiality_selection) > 0
+        or _template_conformance_warning_count(report_template_conformance) > 0
     ):
         return "warning"
     return "pass"
@@ -833,6 +883,7 @@ def _recommended_actions(
     delivery: Mapping[str, Any],
     trajectory: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
+    report_template_conformance: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
     if workflow.get("blocked"):
@@ -895,6 +946,11 @@ def _recommended_actions(
             "action": "review_materiality_exclusions",
             "reason": "materiality_or_focus_candidate_deprioritized",
         })
+    if _template_conformance_warning_count(report_template_conformance) > 0:
+        actions.append({
+            "action": "review_reader_template_conformance",
+            "reason": "reader_template_conformance_warning_only",
+        })
     for item in trajectory.get("recommended_actions") or []:
         if not isinstance(item, Mapping):
             continue
@@ -916,6 +972,20 @@ def _materiality_selection_warning_count(materiality_selection: Mapping[str, Any
         else {}
     )
     return int(counts.get("finding_count") or 0)
+
+
+def _template_conformance_warning_count(report_template_conformance: Mapping[str, Any]) -> int:
+    counts = (
+        report_template_conformance.get("summary_counts")
+        if isinstance(report_template_conformance.get("summary_counts"), Mapping)
+        else {}
+    )
+    return (
+        int(counts.get("reader_block_warning_count") or 0)
+        + int(counts.get("missing_section_count") or 0)
+        + int(counts.get("out_of_order_section_count") or 0)
+        + int(counts.get("extra_heading_count") or 0)
+    )
 
 
 def _fact_layer_status(artifacts: Mapping[str, Any], source_evidence: Mapping[str, Any]) -> str:
@@ -1015,6 +1085,7 @@ def _quality_summary_warning_items(
     claims: Mapping[str, Any],
     delivery: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
+    report_template_conformance: Mapping[str, Any],
 ) -> list[str]:
     items: list[str] = []
     if _text(source.get("source_pack_status")) == "invalid":
@@ -1038,6 +1109,11 @@ def _quality_summary_warning_items(
             "Materiality selection projection found "
             f"`{_materiality_selection_warning_count(materiality_selection)}` "
             "excluded/deprioritized candidate(s) matching explicit materiality or focus terms."
+        )
+    if _template_conformance_warning_count(report_template_conformance) > 0:
+        items.append(
+            "Reader template conformance projection found "
+            f"`{_template_conformance_warning_count(report_template_conformance)}` warning(s)."
         )
     return items
 

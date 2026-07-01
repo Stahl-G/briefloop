@@ -62,7 +62,11 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   `briefloop new <pack> <workspace>` /
   `multi-agent-brief new <pack> <workspace>` 创建保守的 local-first workspace
   skeleton，并把已 finalize 的 workspace artifacts 投影为显式 delivery/audit
-  bundle manifest。render-plan projection 只读显示 render source artifact、
+  bundle manifest。ReportTemplate 可以声明 warning-only reader contract，
+  检查 required reader blocks、Markdown table slots、executive-summary length
+  和 Source Appendix position；这些结果只投影到 status、handoff、
+  finalize_report 和 Quality Panel，不成为 gate、delivery approval 或
+  release authority。render-plan projection 只读显示 render source artifact、
   section heading mapping、unresolved sections 和 planned delivery targets。
   finalize 期间的 experimental renderer 可以把已存在的 reader Markdown
   sections 按 resolved ReportTemplate 顺序重排，再进入 DOCX generation 和

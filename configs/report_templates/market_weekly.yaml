@@ -29,6 +29,20 @@ section_aliases:
     - Risks & Watchlist
   source_appendix:
     - Source Appendix
+reader_contract:
+  required_blocks:
+    - executive_summary
+    - market_signals
+    - demand_and_supply
+    - competitor_moves
+    - policy_and_regulatory
+    - risks_and_watchlist
+    - source_appendix
+  required_table_sections:
+    - market_signals
+    - risks_and_watchlist
+  max_executive_summary_words: 220
+  source_appendix_position: last
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

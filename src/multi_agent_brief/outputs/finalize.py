@@ -28,6 +28,7 @@ from multi_agent_brief.product.policy_gate_adapter import (
     resolve_workspace_policy_gate_adapter,
 )
 from multi_agent_brief.product.template_renderer import render_reader_markdown_with_template
+from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 
 _SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
 _AUDIT_CLAIM_ID_RE = re.compile(
@@ -76,6 +77,7 @@ class FinalizeResult:
     delivery_snapshot_semantics: str = "convenience_copy_not_immutable_archive"
     delivery_snapshot_error: str = ""
     template_rendering: dict[str, Any] = field(default_factory=dict)
+    report_template_conformance: dict[str, Any] = field(default_factory=dict)
     reader_clean: dict[str, Any] | None = None
     audit_binding: dict[str, Any] | None = None
     policy_gate_adapter: dict[str, Any] = field(default_factory=dict)
@@ -369,6 +371,7 @@ def finalize_reader_outputs(
         forbidden_phrases=forbidden_phrases,
     )
     result.reader_clean = reader_clean
+    result.report_template_conformance = project_workspace_report_template_conformance(workspace)
     if result.audit_binding and result.audit_binding.get("status") == "fail":
         result.status = "fail"
         _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)

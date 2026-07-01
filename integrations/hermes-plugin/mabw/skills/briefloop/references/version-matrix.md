@@ -79,6 +79,14 @@ Historical implementation name: MABW
     generated handoff artifacts
   - read-only ReportTemplate section-conformance diagnostics in status and
     generated handoff artifacts for existing audited/final reader Markdown
+  - Reader Template Conformance v1:
+    - packaged ReportTemplates may declare `reader_contract` fields for
+      required reader blocks, Markdown table slots, executive-summary length,
+      and Source Appendix position
+    - status, handoff, `finalize_report.json`, and Quality Panel can surface
+      `report_template_conformance` with `reader_block_warnings`
+    - warning-only projection; no gate execution, delivery block, rewrite,
+      DOCX parsing, quality score, release authority, or semantic proof
   - limited PolicyProfile deterministic gate adapter for existing gate
     strictness and reader-final forbidden-phrase checks
   - SourceHub Lite setup for local text files, RSS feed registration, and

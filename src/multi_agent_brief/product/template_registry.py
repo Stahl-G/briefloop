@@ -1,7 +1,8 @@
 """Experimental ReportTemplate registry.
 
-Templates currently define product-layer section order only. They do not render
-reader text or relax finalize/delivery gates.
+Templates currently define product-layer section order and reader-contract
+diagnostics only. They do not render reader text or relax finalize/delivery
+gates.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ class ReportTemplate:
     status: str
     section_order: tuple[str, ...]
     section_aliases: Mapping[str, tuple[str, ...]]
+    reader_contract: Mapping[str, Any]
     source_path: str
     payload: Mapping[str, Any]
 
@@ -47,6 +49,7 @@ class ReportTemplate:
                 for key, value in section_aliases.items()
                 if isinstance(value, list)
             },
+            reader_contract=_reader_contract_from_payload(payload.get("reader_contract")),
             source_path=str(source_path),
             payload=payload,
         )
@@ -62,6 +65,7 @@ class ReportTemplate:
                 key: list(value)
                 for key, value in self.section_aliases.items()
             },
+            "reader_contract": dict(self.reader_contract),
         }
 
 
@@ -153,4 +157,75 @@ def _template_errors(payload: Mapping[str, Any], *, path_name: str) -> list[dict
                         "field": f"{path_name}.section_aliases.{section_id}",
                         "error": "must be a list of non-empty strings",
                     })
+    errors.extend(_reader_contract_errors(payload.get("reader_contract"), path_name=path_name, section_order=section_order))
+    return errors
+
+
+def _reader_contract_from_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    contract: dict[str, Any] = {}
+    for key in ("required_blocks", "required_table_sections"):
+        raw_items = value.get(key)
+        if isinstance(raw_items, list):
+            contract[key] = [
+                str(item).strip()
+                for item in raw_items
+                if isinstance(item, str) and item.strip()
+            ]
+    max_words = value.get("max_executive_summary_words")
+    if isinstance(max_words, int) and max_words > 0:
+        contract["max_executive_summary_words"] = max_words
+    position = value.get("source_appendix_position")
+    if isinstance(position, str) and position.strip():
+        contract["source_appendix_position"] = position.strip()
+    return contract
+
+
+def _reader_contract_errors(
+    value: Any,
+    *,
+    path_name: str,
+    section_order: Any,
+) -> list[dict[str, str]]:
+    if value is None:
+        return []
+    if not isinstance(value, Mapping):
+        return [{"field": f"{path_name}.reader_contract", "error": "must be an object when present"}]
+    errors: list[dict[str, str]] = []
+    allowed_keys = {
+        "required_blocks",
+        "required_table_sections",
+        "max_executive_summary_words",
+        "source_appendix_position",
+    }
+    for key in value:
+        if key not in allowed_keys:
+            errors.append({"field": f"{path_name}.reader_contract.{key}", "error": "unknown reader contract field"})
+    known_sections = {str(item) for item in section_order} if isinstance(section_order, list) else set()
+    for key in ("required_blocks", "required_table_sections"):
+        items = value.get(key)
+        if items is None:
+            continue
+        if not isinstance(items, list) or any(not isinstance(item, str) or not item.strip() for item in items):
+            errors.append({"field": f"{path_name}.reader_contract.{key}", "error": "must be a list of section ids"})
+            continue
+        for item in items:
+            if known_sections and item not in known_sections:
+                errors.append({
+                    "field": f"{path_name}.reader_contract.{key}",
+                    "error": f"unknown section id:{item}",
+                })
+    max_words = value.get("max_executive_summary_words")
+    if max_words is not None and (not isinstance(max_words, int) or max_words <= 0):
+        errors.append({
+            "field": f"{path_name}.reader_contract.max_executive_summary_words",
+            "error": "must be a positive integer",
+        })
+    position = value.get("source_appendix_position")
+    if position is not None and position not in {"last", "any"}:
+        errors.append({
+            "field": f"{path_name}.reader_contract.source_appendix_position",
+            "error": "must be last or any",
+        })
     return errors

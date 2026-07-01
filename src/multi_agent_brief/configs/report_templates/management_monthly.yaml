@@ -28,6 +28,20 @@ section_aliases:
     - Next Month Watchlist
   source_appendix:
     - Source Appendix
+reader_contract:
+  required_blocks:
+    - executive_summary
+    - operating_context
+    - key_decisions
+    - financial_and_market_indicators
+    - risks_and_dependencies
+    - next_month_watchlist
+    - source_appendix
+  required_table_sections:
+    - financial_and_market_indicators
+    - risks_and_dependencies
+  max_executive_summary_words: 260
+  source_appendix_position: last
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

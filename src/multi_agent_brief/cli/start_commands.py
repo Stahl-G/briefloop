@@ -715,6 +715,7 @@ def _apply_report_template_conformance_projection(handoff: AgentHandoff, workspa
         f"missing_sections={counts.get('missing_section_count', 0)}; "
         f"out_of_order={counts.get('out_of_order_section_count', 0)}; "
         f"extra_headings={counts.get('extra_heading_count', 0)}; "
+        f"reader_contract_warnings={counts.get('reader_block_warning_count', 0)}; "
         f"diagnostics={diagnostics or 'none'}; "
         "boundary=product_report_template_conformance_projection_only; runtime_effect=none. "
         f"{guidance} "
@@ -764,6 +765,11 @@ def _report_template_conformance_diagnostics(targets: list[Any]) -> str:
         missing = [str(item) for item in (target.get("missing_sections") or [])[:5]]
         out_of_order = [str(item) for item in (target.get("out_of_order_sections") or [])[:5]]
         extra = [str(item) for item in (target.get("extra_headings") or [])[:5]]
+        reader_warnings = [
+            str(item.get("type"))
+            for item in (target.get("reader_block_warnings") or [])[:5]
+            if isinstance(item, dict) and item.get("type")
+        ]
         bits: list[str] = []
         if missing:
             bits.append("missing=" + ",".join(missing))
@@ -771,6 +777,8 @@ def _report_template_conformance_diagnostics(targets: list[Any]) -> str:
             bits.append("out_of_order=" + ",".join(out_of_order))
         if extra:
             bits.append("extra=" + ",".join(extra))
+        if reader_warnings:
+            bits.append("reader_contract=" + ",".join(reader_warnings))
         if target.get("error"):
             bits.append("error=" + str(target.get("error")))
         if bits:
@@ -1337,17 +1345,24 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             f"- Missing sections: `{counts.get('missing_section_count', 0)}`",
             f"- Out-of-order sections: `{counts.get('out_of_order_section_count', 0)}`",
             f"- Extra section headings: `{counts.get('extra_heading_count', 0)}`",
+            f"- Reader contract warnings: `{counts.get('reader_block_warning_count', 0)}`",
             "",
             "Target diagnostics:",
         ])
         for target in targets:
             if not isinstance(target, dict) or target.get("status") == "missing":
                 continue
+            reader_warnings = [
+                str(item.get("type"))
+                for item in (target.get("reader_block_warnings") or [])
+                if isinstance(item, dict) and item.get("type")
+            ]
             md_content.append(
                 f"- `{target.get('target_artifact')}`: status=`{target.get('status')}`, "
                 f"missing=`{', '.join(str(item) for item in (target.get('missing_sections') or [])) or 'none'}`, "
                 f"out_of_order=`{', '.join(str(item) for item in (target.get('out_of_order_sections') or [])) or 'none'}`, "
-                f"extra=`{', '.join(str(item) for item in (target.get('extra_headings') or [])) or 'none'}`"
+                f"extra=`{', '.join(str(item) for item in (target.get('extra_headings') or [])) or 'none'}`, "
+                f"reader_contract=`{', '.join(reader_warnings) or 'none'}`"
             )
         md_content.extend([
             "",

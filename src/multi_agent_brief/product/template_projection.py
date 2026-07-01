@@ -102,6 +102,7 @@ def project_workspace_report_template(workspace: str | Path) -> dict[str, Any]:
             key: list(value)
             for key, value in template.section_aliases.items()
         },
+        "reader_contract": dict(template.reader_contract),
         "section_count": len(template.section_order),
         "template_sha256": _sha256_file(Path(template.source_path)),
     }

@@ -422,6 +422,78 @@ def test_quality_panel_builds_incomplete_projection_without_writing(tmp_path: Pa
     assert validate_quality_panel_payload(payload) is None
 
 
+def test_quality_panel_surfaces_reader_template_conformance_without_authority(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    (ws / "report_spec.yaml").write_text(
+        "\n".join([
+            "schema_version: briefloop.report_spec.v1",
+            "report_pack: market_weekly",
+            "report_type: market_weekly",
+            "title: Market Weekly Brief",
+            "cadence: weekly",
+            "policy_profile: manufacturing_default",
+            "audience:",
+            "  label: business reader",
+            "  language: en-US",
+            "source_policy:",
+            "  mode: local_first",
+            "  hidden_autonomous_crawling: false",
+            "control_spine:",
+            "  claim_ledger: true",
+            "  artifact_registry: true",
+            "  quality_gates: true",
+            "  event_log: true",
+            "  archive: true",
+            "  source_appendix: true",
+            "  support_records: true",
+            "  human_delivery_approval: true",
+            "  frozen_artifact_integrity: true",
+            "outputs:",
+            "  - markdown",
+            "  - docx",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    delivery = ws / "output" / "delivery"
+    delivery.mkdir(parents=True, exist_ok=True)
+    (delivery / "brief.md").write_text(
+        "\n".join([
+            "# Market Weekly Brief",
+            "Title.",
+            "## Executive Summary",
+            "Summary.",
+            "## Market Signals",
+            "Signals without the required reader table.",
+            "## Demand and Supply",
+            "Demand.",
+            "## Competitor Moves",
+            "Competitors.",
+            "## Policy and Regulatory",
+            "Policy.",
+            "## Risks and Watchlist",
+            "| Risk | Status |",
+            "| --- | --- |",
+            "| Supply | Watch |",
+            "## Source Appendix",
+            "Sources.",
+        ]),
+        encoding="utf-8",
+    )
+
+    payload = build_quality_panel(ws)
+
+    assert validate_quality_panel_payload(payload) is None
+    conformance = payload["report_template_conformance"]
+    assert conformance["status"] == "warning"
+    assert conformance["summary_counts"]["reader_block_warning_count"] == 1
+    assert {
+        "action": "review_reader_template_conformance",
+        "reason": "reader_template_conformance_warning_only",
+    } in payload["recommended_actions"]
+    assert payload["runtime_effect"] == "projection_only"
+
+
 def test_quality_panel_writes_source_gate_claim_summary(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_source_evidence_pack(ws)
@@ -1169,3 +1241,37 @@ def test_quality_panel_payload_validator_rejects_forged_trajectory_authority() -
     forged_action = json.loads(json.dumps(payload))
     forged_action["recommended_actions"] = [{"action": "approve_delivery"}]
     assert validate_quality_panel_payload(forged_action) == "quality_panel_schema_error:recommended_actions.action"
+
+
+def test_quality_panel_payload_validator_rejects_forged_template_conformance_authority() -> None:
+    payload = {
+        "schema_version": "briefloop.quality_panel.v1",
+        "workspace": ".",
+        "run_id": "run-test",
+        "runtime_effect": "projection_only",
+        "boundary": QUALITY_PANEL_BOUNDARY,
+        "overall_status": "warning",
+        "control_integrity": {},
+        "source_evidence": {},
+        "gates": {},
+        "claims": {},
+        "delivery": {},
+        "report_template_conformance": {
+            "boundary": "product_report_template_conformance_projection_only",
+            "runtime_effect": "state_transition",
+            "status": "warning",
+            "targets": [],
+            "summary_counts": {},
+        },
+        "recommended_actions": [],
+        "non_goals": [
+            "semantic_truth_proof",
+            "release_eligibility_decision",
+            "delivery_approval",
+        ],
+    }
+
+    assert validate_quality_panel_payload(payload) == (
+        "quality_panel_schema_error:report_template_conformance:"
+        "report_template_conformance_schema_error:runtime_effect"
+    )

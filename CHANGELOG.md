@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Reader Template Conformance v1**: packaged ReportTemplates can now declare
+  warning-only reader contracts for required reader blocks, Markdown table
+  slots, executive-summary length, and Source Appendix position. Status,
+  handoff, finalize reports, and Quality Panel surface deterministic
+  `report_template_conformance` diagnostics for finalized reader Markdown.
+  This does not rewrite briefs, invent missing sections, parse DOCX content,
+  run gates, block delivery, approve release, score prose quality, or prove
+  semantic correctness.
 - **Materiality-aware selection diagnostic projection**: `status --json` and
   Quality Panel now surface when excluded or deprioritized screened candidates
   match explicit PolicyProfile `materiality_terms` or workspace focus terms

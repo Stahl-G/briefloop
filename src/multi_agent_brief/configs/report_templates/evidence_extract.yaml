@@ -34,6 +34,17 @@ section_aliases:
   source_appendix:
     - Source Appendix
     - 来源附录
+reader_contract:
+  required_blocks:
+    - scope
+    - extracted_points
+    - source_trace
+    - gaps_and_flags
+    - source_appendix
+  required_table_sections:
+    - source_trace
+  max_executive_summary_words: 260
+  source_appendix_position: last
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

@@ -235,13 +235,17 @@ def test_status_projects_report_template_conformance_for_audited_brief(tmp_path:
             "### Key Takeaways",
             "Nested heading.",
             "## Supply Chain Price Tracker",
-            "Prices.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| Module | 1.00 |",
             "## Demand Installation Outlook",
             "Demand.",
             "## Policy Tax Financing",
             "Policy.",
             "## FX Rates Tracker",
-            "Rates.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| USD/CNY | 7.20 |",
             "## Company Implications",
             "Implications.",
             "## Source Appendix",
@@ -284,13 +288,17 @@ def test_status_projects_report_template_render_plan_for_audited_brief(tmp_path:
             "## Executive Summary",
             "Summary.",
             "## Supply Chain Price Tracker",
-            "Prices.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| Module | 1.00 |",
             "## Demand Installation Outlook",
             "Demand.",
             "## Policy Tax Financing",
             "Policy.",
             "## FX Rates Tracker",
-            "Rates.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| USD/CNY | 7.20 |",
             "## Company Implications",
             "Implications.",
             "## Source Appendix",
@@ -350,13 +358,17 @@ def test_status_render_plan_degrades_on_malformed_config(tmp_path: Path) -> None
             "## Executive Summary",
             "Summary.",
             "## Supply Chain Price Tracker",
-            "Prices.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| Module | 1.00 |",
             "## Demand Installation Outlook",
             "Demand.",
             "## Policy Tax Financing",
             "Policy.",
             "## FX Rates Tracker",
-            "Rates.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| USD/CNY | 7.20 |",
             "## Company Implications",
             "Implications.",
             "## Source Appendix",
@@ -393,13 +405,17 @@ def test_status_template_conformance_ignores_source_appendix_child_headings(tmp_
             "## Executive Summary",
             "Summary.",
             "## Supply Chain Price Tracker",
-            "Prices.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| Module | 1.00 |",
             "## Demand Installation Outlook",
             "Demand.",
             "## Policy Tax Financing",
             "Policy.",
             "## FX Rates Tracker",
-            "Rates.",
+            "| Item | Value |",
+            "| --- | --- |",
+            "| USD/CNY | 7.20 |",
             "## Company Implications",
             "Implications.",
             "# Source Appendix",
@@ -423,6 +439,64 @@ def test_status_template_conformance_ignores_source_appendix_child_headings(tmp_
     assert target["out_of_order_sections"] == []
     assert target["extra_headings"] == []
     assert target["nested_heading_count"] == 1
+
+
+def test_status_reader_template_conformance_warns_on_reader_contract(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    delivery = ws / "output" / "delivery"
+    delivery.mkdir(parents=True)
+    (ws / "report_spec.yaml").write_text(
+        yaml.safe_dump(_market_report_spec(policy_profile="manufacturing_default"), sort_keys=False),
+        encoding="utf-8",
+    )
+    long_summary = " ".join(["signal"] * 230)
+    (delivery / "brief.md").write_text(
+        "\n".join([
+            "# Market Weekly Brief",
+            "Title.",
+            "## Executive Summary",
+            long_summary,
+            "## Market Signals",
+            "Signals paragraph without a required table.",
+            "## Demand and Supply",
+            "Demand.",
+            "## Competitor Moves",
+            "Competitors.",
+            "## Policy and Regulatory",
+            "Policy.",
+            "## Source Appendix",
+            "Sources.",
+            "## Risks and Watchlist",
+            "Risks paragraph without a required table.",
+        ]),
+        encoding="utf-8",
+    )
+
+    status = build_workspace_status(ws)
+    formatted = format_workspace_status(status)
+
+    projection = status["report_template_conformance"]
+    target = next(
+        item for item in projection["targets"]
+        if item["target_artifact"] == "output/delivery/brief.md"
+    )
+    warning_types = {
+        item["type"]
+        for item in target["reader_block_warnings"]
+    }
+
+    assert projection["status"] == "warning"
+    assert target["reader_contract_applied"] is True
+    assert {
+        "executive_summary_too_long",
+        "missing_table_slot",
+        "source_appendix_not_last",
+    }.issubset(warning_types)
+    assert projection["summary_counts"]["reader_block_warning_count"] >= 4
+    assert projection["summary_counts"]["missing_table_slot_count"] == 2
+    assert projection["summary_counts"]["overlong_executive_summary_count"] == 1
+    assert projection["summary_counts"]["source_appendix_position_warning_count"] == 1
+    assert "reader_contract_warnings=" in formatted
 
 
 def test_status_matches_chinese_report_template_section_aliases(tmp_path: Path) -> None:

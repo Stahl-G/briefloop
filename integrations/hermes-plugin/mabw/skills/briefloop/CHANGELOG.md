@@ -1,5 +1,15 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.6 — 2026-07-01
+
+- Added Reader Template Conformance v1 guidance for `reader_contract`
+  diagnostics over finalized reader Markdown.
+- Clarified that `report_template_conformance` may surface
+  `reader_block_warnings` through status, handoff, `finalize_report.json`, and
+  Quality Panel, but remains warning-only and does not rewrite content, parse
+  DOCX, run gates, block delivery, approve release, score prose quality, or
+  prove semantic correctness.
+
 ## briefloop-operator-skill-v0.1.5 — 2026-07-01
 
 - Added Materiality Selection diagnostic guidance for status / Quality Panel

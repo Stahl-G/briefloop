@@ -434,6 +434,9 @@ def test_finalize_applies_report_template_order_before_delivery(tmp_path: Path):
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["template_rendering"]["status"] == "rendered"
     assert report["template_rendering"]["blocking"] is False
+    assert report["report_template_conformance"]["runtime_effect"] == "none"
+    assert report["report_template_conformance"]["status"] == "warning"
+    assert report["report_template_conformance"]["summary_counts"]["reader_block_warning_count"] > 0
 
 
 def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, capsys):

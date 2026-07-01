@@ -34,6 +34,10 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "Trajectory Regulation",
         "Guidance Manifestation",
         "Materiality Selection",
+        "Reader Template Conformance",
+        "reader_contract",
+        "report_template_conformance",
+        "reader_block_warnings",
         "guidance_manifestation_report.json",
         "explicitly_reflected",
         "partially_reflected",
@@ -61,6 +65,7 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "Trajectory Regulation is read-only",
         "Guidance Manifestation is diagnostic-only",
         "Materiality Selection is diagnostic-only",
+        "Reader Template Conformance is warning-only",
     ],
     "references/control-record-map.md": [
         "quality_panel.json",

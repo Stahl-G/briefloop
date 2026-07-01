@@ -15,7 +15,7 @@ Status can show:
 - `auditable_brief` target complete or incomplete
 - ReportPack, PolicyProfile, ReportTemplate, source-evidence, release-mode, and
   Quality Panel / Trajectory Regulation / Guidance Manifestation /
-  Materiality Selection projections when present
+  Materiality Selection / Reader Template Conformance projections when present
 - next suggested command
 
 Projection status is not authority by itself. Invalid optional artifacts must
@@ -43,6 +43,14 @@ Treat it as operator review guidance only. It does not infer semantic
 importance, mutate screening output, resurrect candidates, alter the Claim
 Ledger, run gates, approve delivery, decide release readiness, or prove output
 quality.
+
+Reader Template Conformance is warning-only. It reads resolved ReportTemplate
+`reader_contract` metadata and existing finalized reader Markdown to surface
+missing reader blocks, overlong executive summaries, missing Markdown table
+slots, and Source Appendix position warnings. It can appear in status, handoff,
+`finalize_report.json`, and Quality Panel. It does not rewrite content, invent
+sections, parse DOCX content, run gates, block delivery, approve release, score
+prose quality, or prove semantic correctness.
 
 ## Gates
 

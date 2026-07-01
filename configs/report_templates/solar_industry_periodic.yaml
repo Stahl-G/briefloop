@@ -53,6 +53,21 @@ section_aliases:
   source_appendix:
     - Source Appendix
     - 来源附录
+reader_contract:
+  required_blocks:
+    - cover
+    - executive_summary
+    - supply_chain_price_tracker
+    - demand_installation_outlook
+    - policy_tax_financing
+    - fx_rates_tracker
+    - company_implications
+    - source_appendix
+  required_table_sections:
+    - supply_chain_price_tracker
+    - fx_rates_tracker
+  max_executive_summary_words: 260
+  source_appendix_position: last
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

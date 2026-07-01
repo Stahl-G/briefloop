@@ -331,6 +331,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"missing_sections={counts.get('missing_section_count', 0)} "
             f"out_of_order={counts.get('out_of_order_section_count', 0)} "
             f"extra_headings={counts.get('extra_heading_count', 0)} "
+            f"reader_contract_warnings={counts.get('reader_block_warning_count', 0)} "
             "boundary=projection_only "
             "runtime_effect=none"
         )

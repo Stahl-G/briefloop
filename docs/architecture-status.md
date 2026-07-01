@@ -89,10 +89,15 @@ breaking rename.
   ReportTemplate section order in read-only status and generated handoff
   artifacts so product section contracts are visible before drafting. Read-only
   status and generated handoff artifacts can also project whether existing
-  audited/final reader Markdown headings cover those sections in order, plus a
-  render-plan projection that names the future render source artifact, section
-  heading mapping, unresolved sections, and planned delivery targets before any
-  renderer runs. During finalize, an experimental renderer can apply the
+  audited/final reader Markdown headings cover those sections in order. Packaged
+  ReportTemplates can also declare warning-only reader contracts for required
+  reader blocks, Markdown table slots, executive-summary length, and Source
+  Appendix position; these diagnostics are surfaced through status, handoff,
+  finalize reports, and Quality Panel without becoming gates or delivery
+  approval. The same product layer exposes a render-plan projection that names
+  the future render source artifact, section heading mapping, unresolved
+  sections, and planned delivery targets before any renderer runs. During
+  finalize, an experimental renderer can apply the
   resolved ReportTemplate section order to already-present reader Markdown
   sections before DOCX generation and reader-final checks; unresolved or extra
   top-level sections remain diagnostic/no-op.
