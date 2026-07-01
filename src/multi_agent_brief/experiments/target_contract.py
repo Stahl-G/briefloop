@@ -20,6 +20,14 @@ AUDITABLE_TARGET_ARTIFACTS = {
     "auditor_quality_gate_report": "output/intermediate/gates/auditor_quality_gate_report.json",
 }
 
+FINAL_ABSTRACT_QUALITY_WARNING_TYPES = {
+    "final_scope_title_mismatch",
+    "final_missing_comparison_basis",
+    "final_missing_limitation_section",
+    "final_incomplete_key_case_fields",
+    "final_unsupported_superlative",
+}
+
 ASSESSMENT_TARGET_CLAIM_SCOPE = {
     "auditable_brief": [
         "guidance_manifestation_in_audited_brief",
@@ -233,7 +241,7 @@ def _auditable_target_incomplete_reasons(
     )
 
     gate = auditor_gate_report if isinstance(auditor_gate_report, dict) else {}
-    if gate.get("status") != "pass":
+    if gate.get("status") != "pass" and not auditable_gate_has_only_final_abstract_advisory_warnings(gate):
         reasons.append("auditor quality gate report status is not pass")
     for result in gate.get("gate_results") or []:
         if isinstance(result, dict) and (result.get("status") == "fail" or result.get("blocking") is True):
@@ -247,6 +255,54 @@ def _auditable_target_incomplete_reasons(
             break
 
     return reasons
+
+
+def auditable_gate_has_only_final_abstract_advisory_warnings(payload: dict[str, Any]) -> bool:
+    if payload.get("status") != "warning":
+        return False
+    gate_results = payload.get("gate_results")
+    findings = payload.get("findings")
+    if not isinstance(gate_results, list) or not isinstance(findings, list):
+        return False
+    advisory_finding_ids: set[str] = set()
+    for finding in findings:
+        if not isinstance(finding, dict):
+            return False
+        if finding.get("gate_id") != "final_abstract_quality":
+            return False
+        if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
+            return False
+        finding_id = str(finding.get("finding_id") or "")
+        if finding_id:
+            advisory_finding_ids.add(finding_id)
+
+    saw_advisory_warning = False
+    for result in gate_results:
+        if not isinstance(result, dict):
+            return False
+        gate_id = result.get("gate_id")
+        status = result.get("status")
+        if status == "pass":
+            continue
+        if gate_id != "final_abstract_quality" or status != "warning" or result.get("blocking") is True:
+            return False
+        finding_ids = result.get("finding_ids")
+        if not isinstance(finding_ids, list):
+            return False
+        if any(str(finding_id) not in advisory_finding_ids for finding_id in finding_ids):
+            return False
+        saw_advisory_warning = True
+    return saw_advisory_warning
+
+
+def auditable_gate_projection_has_only_final_abstract_advisory_warnings(gate: dict[str, Any]) -> bool:
+    if gate.get("report_status") != "warning" or gate.get("no_blocking") is not True:
+        return False
+    warning_types = gate.get("warning_finding_types")
+    if not isinstance(warning_types, list) or not warning_types:
+        return False
+    normalized = {str(item) for item in warning_types if isinstance(item, str) and item}
+    return bool(normalized) and normalized <= FINAL_ABSTRACT_QUALITY_WARNING_TYPES
 
 
 def auditable_stage_completion_event_reasons(

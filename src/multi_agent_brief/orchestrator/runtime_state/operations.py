@@ -15,6 +15,7 @@ from typing import Any
 
 from multi_agent_brief.experiments.target_contract import (
     AUDIT_BINDING_SCHEMA,
+    auditable_gate_has_only_final_abstract_advisory_warnings,
     load_experiment_080_condition_metadata,
     project_assessment_target_status,
 )
@@ -3366,50 +3367,12 @@ def _auditable_target_auditor_gate_pass_reasons(
             "080 auditable_brief target requires output/intermediate/gates/auditor_quality_gate_report.json before auditor stage-complete."
         ]
     status = str(payload.get("status") or "")
-    if status != "pass" and not _auditable_target_gate_has_only_advisory_warnings(payload):
+    if status != "pass" and not auditable_gate_has_only_final_abstract_advisory_warnings(payload):
         return [
             "080 auditable_brief target requires auditor quality gate report status pass before auditor stage-complete; "
             f"got {status or '<missing>'}. Repair warnings before completing auditor."
         ]
     return []
-
-
-def _auditable_target_gate_has_only_advisory_warnings(payload: dict[str, Any]) -> bool:
-    if payload.get("status") != "warning":
-        return False
-    gate_results = payload.get("gate_results")
-    findings = payload.get("findings")
-    if not isinstance(gate_results, list) or not isinstance(findings, list):
-        return False
-    advisory_finding_ids: set[str] = set()
-    for finding in findings:
-        if not isinstance(finding, dict):
-            return False
-        if finding.get("gate_id") != "final_abstract_quality":
-            return False
-        if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
-            return False
-        finding_id = str(finding.get("finding_id") or "")
-        if finding_id:
-            advisory_finding_ids.add(finding_id)
-
-    saw_advisory_warning = False
-    for result in gate_results:
-        if not isinstance(result, dict):
-            return False
-        gate_id = result.get("gate_id")
-        status = result.get("status")
-        if status == "pass":
-            continue
-        if gate_id != "final_abstract_quality" or status != "warning" or result.get("blocking") is True:
-            return False
-        finding_ids = result.get("finding_ids")
-        if not isinstance(finding_ids, list):
-            return False
-        if any(str(finding_id) not in advisory_finding_ids for finding_id in finding_ids):
-            return False
-        saw_advisory_warning = True
-    return saw_advisory_warning
 
 
 def _stale_expected_artifact_refresh_reasons(
