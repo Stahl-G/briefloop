@@ -83,18 +83,27 @@ def project_workspace_guidance_manifestation(
     """Project guidance manifestation labels without writing workspace state."""
 
     ws = Path(workspace).expanduser().resolve()
-    manifest = dict(runtime_manifest) if isinstance(runtime_manifest, Mapping) else _read_json_mapping(
-        ws / _INTERMEDIATE / "runtime_manifest.json"
-    )
+    if runtime_manifest is None:
+        manifest, manifest_reason = _read_runtime_manifest(ws / _INTERMEDIATE / "runtime_manifest.json")
+    else:
+        manifest = dict(runtime_manifest) if isinstance(runtime_manifest, Mapping) else None
+        manifest_reason = None if manifest is not None else "runtime_manifest_missing"
     if not isinstance(manifest, dict):
+        return _projection(
+            status="not_available",
+            run_id="unknown",
+            materialized_entry_ids=[],
+            reason=manifest_reason or "runtime_manifest_missing",
+        )
+
+    run_id = _text(manifest.get("run_id")) or "unknown"
+    if run_id == "unknown":
         return _projection(
             status="not_available",
             run_id="unknown",
             materialized_entry_ids=[],
             reason="runtime_manifest_missing",
         )
-
-    run_id = _text(manifest.get("run_id")) or "unknown"
     improvement = manifest.get("improvement") if isinstance(manifest.get("improvement"), Mapping) else {}
     materialized_entry_ids = _string_list(improvement.get("materialized_entry_ids"))
     report_path = guidance_manifestation_report_path(ws)
@@ -349,6 +358,22 @@ def _read_json_mapping(path: Path) -> dict[str, Any]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _read_runtime_manifest(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None, "runtime_manifest_missing"
+    except (OSError, UnicodeDecodeError):
+        return None, "runtime_manifest_unreadable"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, "runtime_manifest_unreadable"
+    if not isinstance(payload, dict):
+        return None, "runtime_manifest_unreadable"
+    return payload, None
 
 
 def _string_list(value: Any) -> list[str]:
