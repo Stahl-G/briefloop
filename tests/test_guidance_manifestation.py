@@ -128,10 +128,11 @@ def test_guidance_manifestation_missing_runtime_manifest_is_not_available(tmp_pa
 def test_guidance_manifestation_unreadable_runtime_manifest_is_not_available(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     manifest_path = ws / "output" / "intermediate" / "runtime_manifest.json"
-    manifest_path.write_text("{not valid json", encoding="utf-8")
+    manifest_path.write_bytes(b"\xff\xfe\x00bad-runtime-manifest")
 
     projection = project_workspace_guidance_manifestation(ws)
     status = build_workspace_status(ws)
+    panel = build_quality_panel(ws)
 
     assert validate_guidance_manifestation_projection_payload(projection) is None
     assert projection["status"] == "not_available"
@@ -139,6 +140,8 @@ def test_guidance_manifestation_unreadable_runtime_manifest_is_not_available(tmp
     assert status["guidance_manifestation"]["status"] == "not_available"
     assert status["guidance_manifestation"]["reason"] == "runtime_manifest_unreadable"
     assert status["guidance_manifestation"]["summary_counts"]["materialized_entry_count"] == 0
+    assert panel["guidance_manifestation"]["status"] == "not_available"
+    assert panel["guidance_manifestation"]["reason"] == "runtime_manifest_unreadable"
 
 
 def test_guidance_manifestation_missing_report_is_explicit_and_read_only(tmp_path: Path) -> None:

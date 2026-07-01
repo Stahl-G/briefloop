@@ -473,7 +473,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {"status": "missing", "path": str(path), "payload": None}
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         return {"status": "error", "path": str(path), "payload": None, "error": str(exc)}
     if not isinstance(payload, dict):
         return {"status": "error", "path": str(path), "payload": None, "error": "JSON root is not an object"}
