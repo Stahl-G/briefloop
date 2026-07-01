@@ -1,5 +1,15 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.5 — 2026-07-01
+
+- Added Materiality Selection diagnostic guidance for status / Quality Panel
+  projections over excluded or deprioritized screened candidates that match
+  explicit PolicyProfile materiality terms or workspace focus terms.
+- Clarified that Materiality Selection is deterministic keyword diagnostics
+  only; it does not judge semantic importance, mutate screening output,
+  resurrect candidates, alter the Claim Ledger, run gates, approve delivery,
+  decide release readiness, or score quality.
+
 ## briefloop-operator-skill-v0.1.4 — 2026-07-01
 
 - Added Guidance Manifestation diagnostic guidance for

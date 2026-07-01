@@ -26,6 +26,7 @@ from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report imp
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_reader_text_from_workspace
 from multi_agent_brief.product.guidance_manifestation import project_workspace_guidance_manifestation
+from multi_agent_brief.product.materiality_selection import project_workspace_materiality_selection
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
@@ -68,6 +69,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "report_template_render_plan": {},
         "trajectory_regulation": {},
         "guidance_manifestation": {},
+        "materiality_selection": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -132,6 +134,10 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["claim_support_matrix"] = project_claim_support_matrix_from_workspace(ws)
     payload["semantic_assessment_report"] = project_semantic_assessment_report_from_workspace(ws)
     payload["policy_profile"] = project_workspace_policy_profile(ws)
+    payload["materiality_selection"] = project_workspace_materiality_selection(
+        ws,
+        policy_profile=payload["policy_profile"],
+    )
     payload["report_template"] = project_workspace_report_template(ws)
     payload["report_template_conformance"] = project_workspace_report_template_conformance(ws)
     payload["report_template_render_plan"] = project_workspace_report_template_render_plan(ws)
@@ -208,6 +214,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     report_template_render_plan = status.get("report_template_render_plan") or {}
     trajectory_regulation = status.get("trajectory_regulation") or {}
     guidance_manifestation = status.get("guidance_manifestation") or {}
+    materiality_selection = status.get("materiality_selection") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -365,6 +372,17 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"not_observable={counts.get('not_observable_count', 0)} "
             f"contradicted={counts.get('contradicted_count', 0)} "
             "boundary=diagnostic_only "
+            "runtime_effect=none"
+        )
+    if materiality_selection.get("status") not in {None, "not_available"}:
+        counts = materiality_selection.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        lines.append(
+            "[status] materiality_selection: "
+            f"{materiality_selection.get('status')} "
+            f"findings={counts.get('finding_count', 0)} "
+            f"human_review={counts.get('human_review_recommended_count', 0)} "
+            "boundary=projection_only "
             "runtime_effect=none"
         )
     for marker in status.get("stale_or_unknown") or []:
