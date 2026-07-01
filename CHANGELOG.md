@@ -91,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Generated workspace selector floor**: `briefloop new` now initializes
+  Product OS workspaces with `selector.max_items: 20`, matching the current
+  `brief_quality.min_items: 20` floor instead of creating conservative
+  workspaces that could not satisfy their own configured item count. The legacy
+  `init` path now rejects explicit selector counts below that floor instead of
+  writing internally conflicting configs.
 - **Release branding event-link binding**: `release_readiness_report.json`
   validation now requires the report `branding_context` status and blocked
   state to match the recorded `release_readiness_checked` event metadata, so

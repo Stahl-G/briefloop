@@ -276,6 +276,11 @@ def test_new_report_pack_workspace_creates_local_first_skeleton(tmp_path: Path, 
     assert spec["source_policy"]["mode"] == "local_first"
     assert spec["source_policy"]["hidden_autonomous_crawling"] is False
 
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    assert config["brief_quality"]["min_items"] == 20
+    assert config["selector"]["max_items"] == 20
+    assert config["selector"]["max_items"] >= config["brief_quality"]["min_items"]
+
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     assert sources["source_strategy"]["profile"] == "conservative"
     assert sources["source_strategy"]["enabled_providers"] == ["manual"]
@@ -300,6 +305,8 @@ def test_new_report_pack_workspace_accepts_product_aliases(tmp_path: Path, capsy
         capsys.readouterr()
         spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
         assert spec["report_pack"] == expected_pack
+        config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+        assert config["selector"]["max_items"] >= config["brief_quality"]["min_items"]
 
 
 def test_new_report_pack_workspace_overrides_are_written_to_report_spec(

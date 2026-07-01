@@ -53,6 +53,9 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
     # web_search is disabled by default (user must explicitly enable it)
     assert sources["web_search"]["enabled"] is False
     assert sources["web_search"]["mode"] == "disabled"
+    config = yaml.safe_load((ws / "config.yaml").read_text(encoding="utf-8"))
+    assert config["selector"]["max_items"] == 20
+    assert config["selector"]["max_items"] >= config["brief_quality"]["min_items"]
 
 
 def test_init_from_onboarding_cli_workspace_overrides_target(tmp_path: Path):
@@ -197,6 +200,28 @@ def test_init_from_onboarding_canonical_brief_title_beats_title_alias(tmp_path: 
     assert config["project"]["name"] == "美国光储市场周报"
 
 
+def test_init_from_onboarding_rejects_selector_below_quality_floor(tmp_path: Path, capsys):
+    onboarding = {
+        "company": "Example Solar",
+        "industry": "美国光储市场",
+        "title": "美国光储市场周报",
+        "audience": "管理层",
+        "language": "zh-CN",
+        "cadence": "weekly",
+        "max_items_per_brief": 1,
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding, ensure_ascii=False), encoding="utf-8")
+    ws = tmp_path / "ws"
+
+    rc = main(["init", str(ws), "--from-onboarding", str(ob_path)])
+
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "--selector-max-items must be at least 20" in out
+    assert not (ws / "config.yaml").exists()
+
+
 def test_direct_init_creates_audience_profile(tmp_path: Path):
     ws = tmp_path / "direct-ws"
 
@@ -225,6 +250,40 @@ def test_direct_init_creates_audience_profile(tmp_path: Path):
     assert "DirectCo" in profile
     assert "DirectCo Weekly Brief" in profile
     assert "Audience Profile" in profile
+
+
+def test_direct_init_rejects_selector_below_quality_floor(tmp_path: Path, capsys):
+    for value in ("0", "-1", "1"):
+        ws = tmp_path / f"direct-ws-{value.replace('-', 'neg')}"
+
+        rc = main([
+            "init",
+            str(ws),
+            "--language",
+            "en-US",
+            "--company",
+            "DirectCo",
+            "--role",
+            "operator",
+            "--industry",
+            "manufacturing",
+            "--title",
+            "DirectCo Weekly Brief",
+            "--audience",
+            "management",
+            "--cadence",
+            "weekly",
+            "--source-profile",
+            "research",
+            "--selector-max-items",
+            value,
+            "--force",
+        ])
+
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "--selector-max-items must be at least 20" in out
+        assert not (ws / "config.yaml").exists()
 
 
 def test_demo_init_creates_public_safe_audience_profile(tmp_path: Path):

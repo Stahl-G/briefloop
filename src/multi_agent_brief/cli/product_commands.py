@@ -51,6 +51,7 @@ SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
 EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"}
 EVIDENCE_EXTRACT_TEXT_EXTENSIONS = {".md", ".txt", ".json"}
 EVIDENCE_EXTRACT_SPAN_EXCERPT_LIMIT = 1200
+PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS = 20
 
 
 def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
@@ -631,7 +632,7 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
             "material non-public information",
         ],
         cadence=cadence,
-        selector_max_items=12,
+        selector_max_items=PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS,
         output_formats=[str(item) for item in outputs],
         source_profile="conservative",
         web_search_enabled=False,

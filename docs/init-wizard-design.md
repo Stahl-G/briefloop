@@ -92,7 +92,7 @@ Selector defaults:
 ```yaml
 selector:
   enabled: true
-  max_items: 8
+  max_items: 20
   require_fresh_source: true
   topic_diversity: true
 ```

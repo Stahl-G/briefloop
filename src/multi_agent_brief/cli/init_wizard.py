@@ -484,7 +484,8 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
         profile.audience = args.audience or profile.audience
         profile.focus_areas = parse_list_arg(args.focus_areas) or profile.focus_areas
         profile.cadence = args.cadence or profile.cadence
-        profile.selector_max_items = args.selector_max_items or profile.selector_max_items
+        if args.selector_max_items is not None:
+            profile.selector_max_items = args.selector_max_items
         apply_rag_args(profile, args.rag, args.retrieval_provider)
         profile.output_formats = parse_list_arg(args.output_formats) or profile.output_formats
         profile.source_profile = getattr(args, "source_profile", None) or profile.source_profile

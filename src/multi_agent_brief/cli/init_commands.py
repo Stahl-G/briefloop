@@ -277,7 +277,7 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
         profile.focus_areas = focus
     if getattr(args, "cadence", None):
         profile.cadence = args.cadence
-    if getattr(args, "selector_max_items", None):
+    if getattr(args, "selector_max_items", None) is not None:
         profile.selector_max_items = args.selector_max_items
     apply_rag_args(
         profile,
@@ -325,6 +325,12 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
 def _profile_option_errors(profile) -> list[str]:
     """Return errors for option combinations that cannot produce runnable config."""
     errors: list[str] = []
+    selector_max_items = getattr(profile, "selector_max_items", None)
+    if not isinstance(selector_max_items, int) or selector_max_items < 20:
+        errors.append(
+            "--selector-max-items must be at least 20 because generated workspaces "
+            "set brief_quality.min_items to 20."
+        )
     if (
         getattr(profile, "initial_news_backfill_enabled", False)
         and getattr(profile, "source_profile", "") != "llm_decide"
