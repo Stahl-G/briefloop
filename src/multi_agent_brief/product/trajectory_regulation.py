@@ -211,6 +211,7 @@ def _stage_summaries(
     limits: dict[str, int],
 ) -> list[dict[str, Any]]:
     stage_ids = _stage_ids(workflow, events)
+    current_stage = _text(workflow.get("current_stage"))
     retry_counts: Counter[str] = Counter()
     repair_started_counts: Counter[str] = Counter()
     repair_completed_counts: Counter[str] = Counter()
@@ -240,6 +241,11 @@ def _stage_summaries(
 
     stages: list[dict[str, Any]] = []
     for stage_id in stage_ids:
+        stage_status = _workflow_stage_status(workflow, stage_id)
+        recommendation_eligible = (
+            stage_id == current_stage
+            and stage_status not in {"complete", "skipped"}
+        )
         retry_count = retry_counts[stage_id]
         repair_started = repair_started_counts[stage_id]
         repair_completed = repair_completed_counts[stage_id]
@@ -247,26 +253,37 @@ def _stage_summaries(
         repeated_blocker_count = max(blocker_reason_counts[stage_id].values() or [0])
         attempt_count = retry_count + repair_started
         reasons: list[str] = []
-        recommended_decision = "none"
+        raw_recommended_decision = "none"
         if attempt_count >= limits["hard_block_attempts_per_stage"]:
-            recommended_decision = "block_run"
+            raw_recommended_decision = "block_run"
             reasons.append("hard_attempt_budget_exceeded")
         elif repeated_blocker_count >= limits["max_repeated_blockers_per_stage"]:
-            recommended_decision = "request_human_review"
+            raw_recommended_decision = "request_human_review"
             reasons.append("repeated_blocker")
         elif retry_count >= limits["max_retry_stage_events_per_stage"]:
-            recommended_decision = "request_human_review"
+            raw_recommended_decision = "request_human_review"
             reasons.append("retry_budget_exhausted")
         elif repair_started >= limits["max_repair_cycles_per_stage"]:
-            recommended_decision = "request_human_review"
+            raw_recommended_decision = "request_human_review"
             reasons.append("repair_cycle_budget_exhausted")
+        recommended_decision = raw_recommended_decision if recommendation_eligible else "none"
         warning = (
-            recommended_decision == "none"
+            recommendation_eligible
+            and raw_recommended_decision == "none"
+            and recommended_decision == "none"
             and attempt_count > 0
             and attempt_count >= max(1, limits["max_retry_stage_events_per_stage"] - 1)
         )
+        history_only = (
+            not recommendation_eligible
+            and raw_recommended_decision != "none"
+        )
         stages.append({
             "stage_id": stage_id,
+            "stage_status": stage_status or "unknown",
+            "recommendation_eligible": recommendation_eligible,
+            "history_only": history_only,
+            "historical_recommended_decision": raw_recommended_decision if history_only else "none",
             "retry_stage_count": retry_count,
             "repair_started_count": repair_started,
             "repair_completed_count": repair_completed,
@@ -277,9 +294,20 @@ def _stage_summaries(
             "warning": warning,
             "exhausted_attempt_budget": recommended_decision != "none",
             "recommended_decision": recommended_decision,
-            "reasons": reasons,
+            "reasons": reasons if recommended_decision != "none" else [],
+            "history_only_reasons": reasons if history_only else [],
         })
     return stages
+
+
+def _workflow_stage_status(workflow: Mapping[str, Any], stage_id: str) -> str:
+    statuses = workflow.get("stage_statuses")
+    if not isinstance(statuses, Mapping):
+        return ""
+    entry = statuses.get(stage_id)
+    if not isinstance(entry, Mapping):
+        return ""
+    return _text(entry.get("status"))
 
 
 def _stage_ids(workflow: Mapping[str, Any], events: list[dict[str, Any]]) -> list[str]:

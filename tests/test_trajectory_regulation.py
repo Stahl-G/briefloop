@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -58,6 +59,9 @@ def _json(path: Path) -> dict:
 
 
 def test_trajectory_regulation_direct_import_has_no_runtime_state_cycle() -> None:
+    root = Path(__file__).resolve().parent.parent
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(root / "src")
     result = subprocess.run(
         [
             sys.executable,
@@ -71,10 +75,43 @@ def test_trajectory_regulation_direct_import_has_no_runtime_state_cycle() -> Non
         capture_output=True,
         text=True,
         check=False,
+        cwd=root,
+        env=env,
     )
 
     assert result.returncode == 0, result.stderr
     assert "project_workspace_trajectory_regulation" in result.stdout
+
+
+def test_trajectory_regulation_suppresses_actions_for_completed_prior_stage(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _advance_to_source_discovery(ws)
+    _retry_source_discovery(ws, 3)
+    assert main([
+        "state",
+        "stage-complete",
+        "--workspace",
+        str(ws),
+        "--stage",
+        "source-discovery",
+        "--reason",
+        "Source discovery recovered after retries.",
+    ]) == 0
+
+    projection = build_workspace_status(ws)["trajectory_regulation"]
+    source_stage = next(
+        stage for stage in projection["stages"] if stage["stage_id"] == "source-discovery"
+    )
+
+    assert validate_trajectory_regulation_payload(projection) is None
+    assert projection["status"] == "ok"
+    assert projection["summary_counts"]["retry_stage_count"] == 3
+    assert projection["recommended_actions"] == []
+    assert source_stage["stage_status"] == "complete"
+    assert source_stage["recommendation_eligible"] is False
+    assert source_stage["history_only"] is True
+    assert source_stage["historical_recommended_decision"] == "request_human_review"
+    assert source_stage["recommended_decision"] == "none"
 
 
 def test_trajectory_regulation_projects_retry_budget_without_writing_state(tmp_path: Path) -> None:

@@ -107,6 +107,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Trajectory Regulation completed-stage guidance**: retry/repair history for
+  completed or non-current stages remains visible as diagnostic history, but no
+  longer emits impossible `request_human_review` / `block_run` recommendations
+  for stages that deterministic state transitions cannot currently accept.
 - **Coverage gate stage-completion binding**: stage-scoped quality-gate reports
   must include the `coverage_omission` gate result before auditor/finalize
   completion can accept them, closing the upgraded-workspace gap where older
