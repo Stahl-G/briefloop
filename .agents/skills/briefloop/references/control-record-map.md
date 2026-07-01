@@ -40,6 +40,11 @@ Owning commands for recent control-tool projections:
   for approved guidance manifestation labels; it is validated and surfaced by
   status / Quality Panel, but it is not an Improvement Memory writer and not a
   gate or release artifact.
+- Materiality Selection is a status / Quality Panel projection derived from
+  existing `screened_candidates.json`, PolicyProfile materiality terms, and
+  workspace focus terms. It has no standalone control file and must not be
+  patched into screening output, Claim Ledger, gates, delivery, or release
+  records.
 
 These files are operator/audit projections or approval records. They are not
 agent draft surfaces, not final reader content, and not repair shortcuts.

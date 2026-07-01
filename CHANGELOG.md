@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Materiality-aware selection diagnostic projection**: `status --json` and
+  Quality Panel now surface when excluded or deprioritized screened candidates
+  match explicit PolicyProfile `materiality_terms` or workspace focus terms
+  such as must-watch topics, with capacity/scope reason summaries and
+  `request_human_review` / `review_materiality_exclusions` operator actions.
+  This is deterministic keyword diagnostics only; Python does not infer
+  semantic importance, mutate screening results, resurrect candidates, alter
+  the Claim Ledger, run gates, approve delivery, or decide release readiness.
 - **Guidance Manifestation diagnostic projection**: status and Quality Panel
   can now surface optional
   `output/intermediate/guidance_manifestation_report.json` labels for

@@ -20,6 +20,7 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.product.guidance_manifestation import (
     validate_guidance_manifestation_projection_payload,
 )
+from multi_agent_brief.product.materiality_selection import validate_materiality_selection_payload
 from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
 
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
@@ -67,6 +68,7 @@ _QUALITY_PANEL_RECOMMENDED_ACTIONS = {
     "inspect_run_integrity",
     "request_human_review",
     "block_run",
+    "review_materiality_exclusions",
 }
 
 
@@ -114,6 +116,11 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         if isinstance(workspace_status.get("guidance_manifestation"), dict)
         else {}
     )
+    materiality_selection = (
+        workspace_status.get("materiality_selection")
+        if isinstance(workspace_status.get("materiality_selection"), dict)
+        else {}
+    )
     control_integrity = {
         "run_integrity": run_integrity.get("status") or "unknown",
         "reference_eligible": bool(run_integrity.get("reference_eligible")),
@@ -127,6 +134,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         claims=claims,
         delivery=delivery,
         trajectory=trajectory,
+        materiality_selection=materiality_selection,
     )
     overall_status = _overall_status(
         workspace_status=workspace_status,
@@ -136,6 +144,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         gates=gates,
         claims=claims,
         delivery=delivery,
+        materiality_selection=materiality_selection,
     )
 
     return {
@@ -154,6 +163,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         "delivery": delivery,
         "trajectory_regulation": trajectory,
         "guidance_manifestation": guidance_manifestation,
+        "materiality_selection": materiality_selection,
         "recommended_actions": recommended_actions,
         "non_goals": [
             "quality_score",
@@ -209,6 +219,8 @@ def render_quality_summary(
     delivery = delivery if isinstance(delivery, Mapping) else {}
     control = panel_payload.get("control_integrity")
     control = control if isinstance(control, Mapping) else {}
+    materiality = panel_payload.get("materiality_selection")
+    materiality = materiality if isinstance(materiality, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
 
@@ -233,7 +245,7 @@ def render_quality_summary(
     ]
     _extend_bullets(lines, _quality_summary_blocking_items(control, gates, claims, delivery))
     lines.extend(["", "## Warnings", ""])
-    _extend_bullets(lines, _quality_summary_warning_items(source, gates, claims, delivery))
+    _extend_bullets(lines, _quality_summary_warning_items(source, gates, claims, delivery, materiality))
     lines.extend(["", "## Missing Or Incomplete Surfaces", ""])
     _extend_bullets(lines, _quality_summary_missing_items(control, source, gates, delivery))
     lines.extend(["", "## Source Evidence", ""])
@@ -262,6 +274,9 @@ def render_quality_summary(
         f"- Claim-Support Matrix status: `{_text(claims.get('claim_support_matrix_status')) or 'unknown'}`",
         f"- Unsupported/contradicted/insufficient support rows: `{_intish(claims.get('unsupported_count'))}`",
         f"- Weak-support atoms: `{_intish(claims.get('weak_support_count'))}`",
+        f"- Materiality selection status: `{_text(materiality.get('status')) or 'unknown'}`",
+        "- Materiality/focus exclusions: "
+        f"`{_materiality_selection_warning_count(materiality)}`",
         "",
         "## Recommended Next Actions",
         "",
@@ -329,6 +344,8 @@ def render_quality_panel_html(
     delivery = delivery if isinstance(delivery, Mapping) else {}
     control = panel_payload.get("control_integrity")
     control = control if isinstance(control, Mapping) else {}
+    materiality = panel_payload.get("materiality_selection")
+    materiality = materiality if isinstance(materiality, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
     overall_status = _text(panel_payload.get("overall_status")) or "unknown"
@@ -344,6 +361,11 @@ def render_quality_panel_html(
                         "Missing/incomplete",
                         _quality_panel_incomplete_count(control, source, gates, delivery),
                         "incomplete",
+                    ),
+                    (
+                        "Materiality findings",
+                        _materiality_selection_warning_count(materiality),
+                        "warning",
                     ),
                     ("Recommended actions", len(actions), "action"),
                 ]
@@ -397,6 +419,14 @@ def render_quality_panel_html(
                         str(_intish(claims.get("unsupported_count"))),
                     ),
                     ("Weak-support atoms", str(_intish(claims.get("weak_support_count")))),
+                    (
+                        "Materiality selection",
+                        _text(materiality.get("status")) or "unknown",
+                    ),
+                    (
+                        "Materiality/focus exclusions",
+                        str(_materiality_selection_warning_count(materiality)),
+                    ),
                 ],
             ),
             _html_section(
@@ -505,6 +535,13 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         guidance_error = validate_guidance_manifestation_projection_payload(guidance)
         if guidance_error:
             return f"quality_panel_schema_error:guidance_manifestation:{guidance_error}"
+    materiality = payload.get("materiality_selection")
+    if materiality is not None:
+        if not isinstance(materiality, dict):
+            return "quality_panel_schema_error:materiality_selection"
+        materiality_error = validate_materiality_selection_payload(materiality)
+        if materiality_error:
+            return f"quality_panel_schema_error:materiality_selection:{materiality_error}"
     recommended_actions = payload.get("recommended_actions")
     if not isinstance(recommended_actions, list):
         return "quality_panel_schema_error:recommended_actions"
@@ -747,6 +784,7 @@ def _overall_status(
     gates: Mapping[str, Any],
     claims: Mapping[str, Any],
     delivery: Mapping[str, Any],
+    materiality_selection: Mapping[str, Any],
 ) -> str:
     if not workspace_status.get("ok"):
         return "incomplete"
@@ -779,6 +817,7 @@ def _overall_status(
         or gates.get("warning_count", 0) > 0
         or delivery.get("source_appendix_warning_count", 0) > 0
         or claims.get("weak_support_count", 0) > 0
+        or _materiality_selection_warning_count(materiality_selection) > 0
     ):
         return "warning"
     return "pass"
@@ -793,6 +832,7 @@ def _recommended_actions(
     claims: Mapping[str, Any],
     delivery: Mapping[str, Any],
     trajectory: Mapping[str, Any],
+    materiality_selection: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
     if workflow.get("blocked"):
@@ -840,6 +880,21 @@ def _recommended_actions(
         actions.append({"action": "repair_reader_final_residue", "reason": "reader_clean_failed"})
     if control_integrity.get("run_integrity") not in {"clean", "unknown"}:
         actions.append({"action": "inspect_run_integrity", "reason": "run_integrity_not_clean"})
+    materiality_counts = (
+        materiality_selection.get("summary_counts")
+        if isinstance(materiality_selection.get("summary_counts"), Mapping)
+        else {}
+    )
+    if int(materiality_counts.get("human_review_recommended_count") or 0) > 0:
+        actions.append({
+            "action": "request_human_review",
+            "reason": "materiality_or_focus_candidate_excluded_by_capacity_or_scope",
+        })
+    elif int(materiality_counts.get("finding_count") or 0) > 0:
+        actions.append({
+            "action": "review_materiality_exclusions",
+            "reason": "materiality_or_focus_candidate_deprioritized",
+        })
     for item in trajectory.get("recommended_actions") or []:
         if not isinstance(item, Mapping):
             continue
@@ -852,6 +907,15 @@ def _recommended_actions(
             "stage_id": _text(item.get("stage_id")) or "unknown",
         })
     return actions[:20]
+
+
+def _materiality_selection_warning_count(materiality_selection: Mapping[str, Any]) -> int:
+    counts = (
+        materiality_selection.get("summary_counts")
+        if isinstance(materiality_selection.get("summary_counts"), Mapping)
+        else {}
+    )
+    return int(counts.get("finding_count") or 0)
 
 
 def _fact_layer_status(artifacts: Mapping[str, Any], source_evidence: Mapping[str, Any]) -> str:
@@ -950,6 +1014,7 @@ def _quality_summary_warning_items(
     gates: Mapping[str, Any],
     claims: Mapping[str, Any],
     delivery: Mapping[str, Any],
+    materiality_selection: Mapping[str, Any],
 ) -> list[str]:
     items: list[str] = []
     if _text(source.get("source_pack_status")) == "invalid":
@@ -967,6 +1032,12 @@ def _quality_summary_warning_items(
     if _intish(delivery.get("source_appendix_warning_count")) > 0:
         items.append(
             f"Source appendix surfaces `{_intish(delivery.get('source_appendix_warning_count'))}` warning(s)."
+        )
+    if _materiality_selection_warning_count(materiality_selection) > 0:
+        items.append(
+            "Materiality selection projection found "
+            f"`{_materiality_selection_warning_count(materiality_selection)}` "
+            "excluded/deprioritized candidate(s) matching explicit materiality or focus terms."
         )
     return items
 

@@ -14,8 +14,8 @@ Status can show:
 - topology-satisfied stages
 - `auditable_brief` target complete or incomplete
 - ReportPack, PolicyProfile, ReportTemplate, source-evidence, release-mode, and
-  Quality Panel / Trajectory Regulation / Guidance Manifestation projections
-  when present
+  Quality Panel / Trajectory Regulation / Guidance Manifestation /
+  Materiality Selection projections when present
 - next suggested command
 
 Projection status is not authority by itself. Invalid optional artifacts must
@@ -34,6 +34,15 @@ entries and can surface `explicitly_reflected`, `partially_reflected`,
 human/imported assessment, not Python semantic judgment. Do not treat this as
 Improvement Memory mutation, guidance approval, quality scoring, gate authority,
 delivery approval, release readiness, or proof that guidance improved output.
+
+Materiality Selection is diagnostic-only. It reads valid
+`screened_candidates.json`, resolved PolicyProfile `materiality_terms`, and
+workspace focus terms to surface excluded or deprioritized candidates that
+matched explicit materiality/focus terms after capacity or scope screening.
+Treat it as operator review guidance only. It does not infer semantic
+importance, mutate screening output, resurrect candidates, alter the Claim
+Ledger, run gates, approve delivery, decide release readiness, or prove output
+quality.
 
 ## Gates
 

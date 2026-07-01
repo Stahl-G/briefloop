@@ -156,6 +156,13 @@ breaking rename.
   does not judge manifestation, mutate Improvement Memory, approve guidance,
   create a quality score, run gates, approve delivery, or decide release
   readiness.
+  Experimental Materiality Selection projection can read valid
+  `screened_candidates.json`, the resolved PolicyProfile materiality terms, and
+  workspace focus terms to surface excluded or deprioritized candidates that
+  match explicit materiality/focus terms after capacity or scope screening.
+  It is deterministic keyword diagnostics only: it does not infer semantic
+  importance, mutate screening output, resurrect candidates, alter the Claim
+  Ledger, run gates, approve delivery, or decide release readiness.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These

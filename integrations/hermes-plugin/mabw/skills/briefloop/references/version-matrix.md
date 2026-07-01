@@ -125,6 +125,19 @@ Historical implementation name: MABW
     - Python validates and counts labels; it does not judge manifestation,
       mutate Improvement Memory, approve guidance, run gates, approve delivery,
       decide release readiness, or claim output-quality improvement
+  - Materiality Selection diagnostic projection:
+    - surfaced through `multi-agent-brief status --workspace <workspace>
+      --json` and Quality Panel
+    - reads valid `screened_candidates.json`, resolved PolicyProfile
+      `materiality_terms`, and workspace focus terms
+    - surfaces excluded/deprioritized candidates with capacity/scope reason
+      codes that match explicit materiality or focus terms
+    - may suggest `request_human_review` or
+      `review_materiality_exclusions` for the operator
+    - deterministic keyword diagnostics only; no semantic-importance judgment,
+      screening mutation, candidate resurrection, Claim Ledger mutation, gate
+      authority, delivery approval, release readiness decision, or quality
+      score
   - Packaged synthetic eval fixtures include a trajectory retry-budget case
     that proves repeated retry decisions project human-review guidance without
     mutating workflow state, plus a guidance manifestation `not_observable`
