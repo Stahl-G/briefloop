@@ -34,6 +34,7 @@ from multi_agent_brief.experiments.target_contract import (
     DEFAULT_ASSESSMENT_TARGET,
     assessment_target as _target_contract_assessment_target,
     assessment_target_manifest,
+    auditable_gate_projection_has_only_final_abstract_advisory_warnings,
     auditable_stage_completion_event_reasons,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
@@ -4106,8 +4107,9 @@ def _auditable_scorecard_gate_status(run_record: dict[str, Any]) -> dict[str, An
         else {}
     )
     auditor_status = gate.get("report_status") if isinstance(gate.get("report_status"), str) else "missing"
+    advisory_warning_pass = auditable_gate_projection_has_only_final_abstract_advisory_warnings(gate)
     return {
-        "passed": auditor_status == "pass" and gate.get("no_blocking") is True,
+        "passed": (auditor_status == "pass" or advisory_warning_pass) and gate.get("no_blocking") is True,
         "auditor_status": auditor_status,
         "finalize_status": "not_required_for_target",
         "source": "run_record.target_artifacts",
