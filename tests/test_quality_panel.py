@@ -1079,8 +1079,93 @@ def test_quality_panel_payload_validator_rejects_release_authority_shape() -> No
         "gates": {},
         "claims": {},
         "delivery": {},
+        "trajectory_regulation": {
+            "schema_version": "briefloop.trajectory_regulation.v1",
+            "status": "ok",
+            "read_only": True,
+            "runtime_effect": "none",
+            "boundary": "trajectory_regulation_projection_only_not_state_transition_or_repair_execution",
+            "run_id": "run-1",
+            "current_stage": "doctor",
+            "event_log_present": True,
+            "event_log_corrupt_count": 0,
+            "limits": {},
+            "summary_counts": {},
+            "stages": [],
+            "recommended_actions": [],
+            "non_goals": [
+                "state_transition",
+                "repair_execution",
+                "gate_decision",
+                "release_authority",
+                "quality_score",
+            ],
+        },
         "recommended_actions": [],
         "non_goals": ["quality_score"],
     }
 
     assert validate_quality_panel_payload(payload) == "quality_panel_schema_error:non_goals"
+
+
+def test_quality_panel_payload_validator_rejects_forged_trajectory_authority() -> None:
+    trajectory = {
+        "schema_version": "briefloop.trajectory_regulation.v1",
+        "status": "ok",
+        "read_only": True,
+        "runtime_effect": "none",
+        "boundary": "trajectory_regulation_projection_only_not_state_transition_or_repair_execution",
+        "run_id": "run-1",
+        "current_stage": "doctor",
+        "event_log_present": True,
+        "event_log_corrupt_count": 0,
+        "limits": {},
+        "summary_counts": {},
+        "stages": [],
+        "recommended_actions": [],
+        "non_goals": [
+            "state_transition",
+            "repair_execution",
+            "gate_decision",
+            "release_authority",
+            "quality_score",
+        ],
+    }
+    payload = {
+        "schema_version": "briefloop.quality_panel.v1",
+        "workspace": ".",
+        "run_id": "run-1",
+        "runtime_effect": "projection_only",
+        "boundary": QUALITY_PANEL_BOUNDARY,
+        "overall_status": "pass",
+        "control_integrity": {},
+        "source_evidence": {},
+        "gates": {},
+        "claims": {},
+        "delivery": {},
+        "trajectory_regulation": trajectory,
+        "recommended_actions": [],
+        "non_goals": [
+            "semantic_truth_proof",
+            "release_eligibility_decision",
+            "delivery_approval",
+        ],
+    }
+
+    forged_trajectory = json.loads(json.dumps(payload))
+    forged_trajectory["trajectory_regulation"]["runtime_effect"] = "state_transition"
+    assert (
+        validate_quality_panel_payload(forged_trajectory)
+        == "quality_panel_schema_error:trajectory_regulation:trajectory_regulation_schema_error:runtime_effect"
+    )
+
+    forged_nested_action = json.loads(json.dumps(payload))
+    forged_nested_action["trajectory_regulation"]["recommended_actions"] = [{"action": "approve_delivery"}]
+    assert (
+        validate_quality_panel_payload(forged_nested_action)
+        == "quality_panel_schema_error:trajectory_regulation:trajectory_regulation_schema_error:recommended_actions.action"
+    )
+
+    forged_action = json.loads(json.dumps(payload))
+    forged_action["recommended_actions"] = [{"action": "approve_delivery"}]
+    assert validate_quality_panel_payload(forged_action) == "quality_panel_schema_error:recommended_actions.action"

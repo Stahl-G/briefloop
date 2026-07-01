@@ -29,6 +29,7 @@ from multi_agent_brief.product.policy_projection import project_workspace_policy
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
 from multi_agent_brief.product.template_render_plan import project_workspace_report_template_render_plan
+from multi_agent_brief.product.trajectory_regulation import project_workspace_trajectory_regulation
 
 
 INTERMEDIATE_DIR = Path("output/intermediate")
@@ -64,6 +65,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "report_template": {},
         "report_template_conformance": {},
         "report_template_render_plan": {},
+        "trajectory_regulation": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -131,6 +133,14 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["report_template"] = project_workspace_report_template(ws)
     payload["report_template_conformance"] = project_workspace_report_template_conformance(ws)
     payload["report_template_render_plan"] = project_workspace_report_template_render_plan(ws)
+    payload["trajectory_regulation"] = project_workspace_trajectory_regulation(
+        ws,
+        workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
+        event_records=event_records,
+        event_log_present=event_log_path.exists(),
+        event_log_corrupt_count=int(payload["events"].get("corrupt_count") or 0),
+        run_id=(manifest_payload or {}).get("run_id") if isinstance(manifest_payload, dict) else None,
+    )
     payload["timing"] = derive_control_timing_from_path(
         event_log_path,
         workflow_state=workflow_payload if isinstance(workflow_payload, dict) else None,
@@ -190,6 +200,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     report_template = status.get("report_template") or {}
     report_template_conformance = status.get("report_template_conformance") or {}
     report_template_render_plan = status.get("report_template_render_plan") or {}
+    trajectory_regulation = status.get("trajectory_regulation") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -320,6 +331,20 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             f"sections={counts.get('section_count', 0)} "
             f"unresolved={counts.get('unresolved_section_count', 0)} "
             f"targets={counts.get('planned_delivery_target_count', 0)} "
+            "boundary=projection_only "
+            "runtime_effect=none"
+        )
+    if trajectory_regulation.get("status") not in {None, "not_available"}:
+        counts = trajectory_regulation.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        actions = trajectory_regulation.get("recommended_actions")
+        actions = actions if isinstance(actions, list) else []
+        lines.append(
+            "[status] trajectory_regulation: "
+            f"{trajectory_regulation.get('status')} "
+            f"retry_events={counts.get('retry_stage_count', 0)} "
+            f"repair_starts={counts.get('repair_started_count', 0)} "
+            f"actions={len(actions)} "
             "boundary=projection_only "
             "runtime_effect=none"
         )

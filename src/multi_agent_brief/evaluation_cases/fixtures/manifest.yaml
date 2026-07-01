@@ -276,6 +276,51 @@ cases:
           status: invalid
           validation_result: release_readiness_report_event_link_error:event_missing
 
+  - case_id: trajectory_retry_budget_exhausted
+    case_type: workspace
+    synthetic: true
+    description: Repeated retry decisions project a human-review trajectory action without mutating state.
+    initial_stage: source-discovery
+    commands:
+      - action: state.decide
+        args:
+          stage: source-discovery
+          decision: retry_stage
+          reason: Synthetic retry one.
+      - action: state.decide
+        args:
+          stage: source-discovery
+          decision: retry_stage
+          reason: Synthetic retry two.
+      - action: state.decide
+        args:
+          stage: source-discovery
+          decision: retry_stage
+          reason: Synthetic retry three.
+      - action: status.show
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: state.decide
+          exit_code: 0
+        - action: state.decide
+          exit_code: 0
+        - action: state.decide
+          exit_code: 0
+        - action: status.show
+          exit_code: 0
+          result_contains:
+            trajectory_regulation:
+              status: action_required
+              recommended_actions:
+                - action: request_human_review
+                  stage_id: source-discovery
+                  reason: retry_budget_exhausted
+      workflow_state:
+        current_stage: source-discovery
+        blocked: false
+
   - case_id: unapproved_entry_not_materialized
     case_type: workspace
     synthetic: true

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
 
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
 QUALITY_PANEL_BOUNDARY = "product_quality_panel_projection_only_not_gate_or_release_authority"
@@ -51,6 +52,19 @@ _QUALITY_PANEL_HTML_FORBIDDEN_MARKERS = (
     " onload=",
     " onclick=",
 )
+_QUALITY_PANEL_RECOMMENDED_ACTIONS = {
+    "inspect_workflow_blocker",
+    "materialize_durable_source_evidence",
+    "repair_source_evidence_pack_manifest",
+    "resolve_quality_gate_blockers",
+    "regenerate_scoped_gate_reports",
+    "complete_finalize_delivery_hygiene",
+    "review_claim_support_records",
+    "repair_reader_final_residue",
+    "inspect_run_integrity",
+    "request_human_review",
+    "block_run",
+}
 
 
 class QualityPanelError(ValueError):
@@ -87,6 +101,11 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
     gates = _gate_summary(ws)
     claims = _claim_summary(ws, workspace_status, artifacts)
     delivery = _delivery_summary(ws, workspace_status)
+    trajectory = (
+        workspace_status.get("trajectory_regulation")
+        if isinstance(workspace_status.get("trajectory_regulation"), dict)
+        else {}
+    )
     control_integrity = {
         "run_integrity": run_integrity.get("status") or "unknown",
         "reference_eligible": bool(run_integrity.get("reference_eligible")),
@@ -99,6 +118,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         gates=gates,
         claims=claims,
         delivery=delivery,
+        trajectory=trajectory,
     )
     overall_status = _overall_status(
         workspace_status=workspace_status,
@@ -124,6 +144,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         "gates": gates,
         "claims": claims,
         "delivery": delivery,
+        "trajectory_regulation": trajectory,
         "recommended_actions": recommended_actions,
         "non_goals": [
             "quality_score",
@@ -461,8 +482,21 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
     for field in ("control_integrity", "source_evidence", "gates", "claims", "delivery"):
         if not isinstance(payload.get(field), dict):
             return f"quality_panel_schema_error:{field}"
-    if not isinstance(payload.get("recommended_actions"), list):
+    trajectory = payload.get("trajectory_regulation")
+    if trajectory is not None:
+        if not isinstance(trajectory, dict):
+            return "quality_panel_schema_error:trajectory_regulation"
+        trajectory_error = validate_trajectory_regulation_payload(trajectory)
+        if trajectory_error:
+            return f"quality_panel_schema_error:trajectory_regulation:{trajectory_error}"
+    recommended_actions = payload.get("recommended_actions")
+    if not isinstance(recommended_actions, list):
         return "quality_panel_schema_error:recommended_actions"
+    for item in recommended_actions:
+        if not isinstance(item, dict):
+            return "quality_panel_schema_error:recommended_actions"
+        if _text(item.get("action")) not in _QUALITY_PANEL_RECOMMENDED_ACTIONS:
+            return "quality_panel_schema_error:recommended_actions.action"
     if not isinstance(payload.get("non_goals"), list):
         return "quality_panel_schema_error:non_goals"
     forbidden = {"semantic_truth_proof", "release_eligibility_decision", "delivery_approval"}
@@ -742,6 +776,7 @@ def _recommended_actions(
     gates: Mapping[str, Any],
     claims: Mapping[str, Any],
     delivery: Mapping[str, Any],
+    trajectory: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
     if workflow.get("blocked"):
@@ -789,6 +824,17 @@ def _recommended_actions(
         actions.append({"action": "repair_reader_final_residue", "reason": "reader_clean_failed"})
     if control_integrity.get("run_integrity") not in {"clean", "unknown"}:
         actions.append({"action": "inspect_run_integrity", "reason": "run_integrity_not_clean"})
+    for item in trajectory.get("recommended_actions") or []:
+        if not isinstance(item, Mapping):
+            continue
+        action = _text(item.get("action"))
+        if action not in {"request_human_review", "block_run"}:
+            continue
+        actions.append({
+            "action": action,
+            "reason": _text(item.get("reason")) or "trajectory_regulation",
+            "stage_id": _text(item.get("stage_id")) or "unknown",
+        })
     return actions[:20]
 
 

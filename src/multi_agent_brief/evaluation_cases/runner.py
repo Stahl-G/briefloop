@@ -59,6 +59,7 @@ from multi_agent_brief.quality_gates.state import (
     show_quality_gates,
     validate_quality_gates_workspace,
 )
+from multi_agent_brief.status import build_workspace_status
 
 
 class EvaluationCaseRunError(Exception):
@@ -480,6 +481,10 @@ def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[s
             result["coverage"] = data["coverage"]
         if "source_repo_mode" in data:
             result["source_repo_mode"] = data["source_repo_mode"]
+        if "trajectory_regulation" in data:
+            result["trajectory_regulation"] = data["trajectory_regulation"]
+        if "suggested_next_command" in data:
+            result["suggested_next_command"] = data["suggested_next_command"]
         return result
     except (RuntimeStateError, EvaluationCaseRunError, ControlSwitchboardError) as exc:
         return {
@@ -547,6 +552,13 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             repo_workdir=repo_workdir,
             actor="system",
         )
+    if action == "status.show":
+        status = build_workspace_status(_require_workspace(workspace))
+        return {
+            "ok": bool(status.get("ok")),
+            "trajectory_regulation": status.get("trajectory_regulation") or {},
+            "suggested_next_command": status.get("suggested_next_command"),
+        }
     if action == "state.decide":
         return record_decision(
             workspace=_require_workspace(workspace),
@@ -764,6 +776,11 @@ def _assert_expected_actions(
                     errors.append(
                         f"expected_actions[{idx}].error_contains missing {fragment!r}."
                     )
+        result_contains = expected.get("result_contains")
+        if isinstance(result_contains, dict) and not _matches_nested_partial(action, result_contains):
+            errors.append(
+                f"expected_actions[{idx}].result_contains expected {result_contains!r}, got {action!r}."
+            )
     return errors
 
 
@@ -1044,6 +1061,21 @@ def _matches_partial(item: dict[str, Any], condition: dict[str, Any]) -> bool:
         if item.get(key) != value:
             return False
     return True
+
+
+def _matches_nested_partial(item: Any, condition: Any) -> bool:
+    if isinstance(condition, dict):
+        if not isinstance(item, dict):
+            return False
+        for key, value in condition.items():
+            if key not in item or not _matches_nested_partial(item.get(key), value):
+                return False
+        return True
+    if isinstance(condition, list):
+        if not isinstance(item, list) or len(item) < len(condition):
+            return False
+        return all(_matches_nested_partial(item[idx], value) for idx, value in enumerate(condition))
+    return item == condition
 
 
 def _check_hermes_no_skip_finalize(*, repo_workdir: Path) -> dict[str, Any]:

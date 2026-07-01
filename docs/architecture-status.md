@@ -25,7 +25,8 @@ breaking rename.
   inferring full recall, or executing repair.
 - Packaged public-safe evaluation cases can validate known gates, feedback,
   runtime blocker, durable source evidence pack, event-linked release
-  readiness, and Hermes path regressions for development and CI.
+  readiness, trajectory-regulation, and Hermes path regressions for development
+  and CI.
 - Optional deterministic provenance projection can write a workspace-local audit/debug graph from existing control files.
 - Workspace-local audience taste profiles can be frozen into per-run snapshots and exposed through runtime handoff as context.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
@@ -140,6 +141,12 @@ breaking rename.
   projections do not run gates, create a quality score, replace gate reports,
   decide release eligibility, approve delivery, prove semantic truth, or execute
   repair.
+  Experimental Trajectory Regulation projection can read
+  `workflow_state.json` and `event_log.jsonl` to summarize repeated retry,
+  repair, and blocker patterns in `status --json` and Quality Panel
+  recommended actions. It is a read-only operator safety diagnostic: it does
+  not change workflow state, start repair, run gates, block stages, approve
+  delivery, or decide release readiness.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These

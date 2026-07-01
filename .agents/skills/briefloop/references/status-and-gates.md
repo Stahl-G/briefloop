@@ -14,11 +14,17 @@ Status can show:
 - topology-satisfied stages
 - `auditable_brief` target complete or incomplete
 - ReportPack, PolicyProfile, ReportTemplate, source-evidence, release-mode, and
-  Quality Panel projections when present
+  Quality Panel / Trajectory Regulation projections when present
 - next suggested command
 
 Projection status is not authority by itself. Invalid optional artifacts must
 not become support, release, gate, or delivery authority.
+
+Trajectory Regulation is read-only. It derives retry, repair-cycle, and
+repeated-blocker counts from `workflow_state.json` and `event_log.jsonl`, then
+may suggest `request_human_review` or `block_run` as operator actions. It does
+not write workflow state, start repair, run gates, execute repair, approve
+delivery, or decide release readiness.
 
 ## Gates
 

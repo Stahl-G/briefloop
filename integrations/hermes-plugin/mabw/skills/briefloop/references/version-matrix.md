@@ -104,6 +104,19 @@ Historical implementation name: MABW
       inclusion is not
     - projection only; no gate execution, quality score, repair, delivery
       approval, or release authority
+  - Trajectory Regulation read-only projection:
+    - surfaced through `multi-agent-brief status --workspace <workspace>
+      --json` and Quality Panel recommended actions
+    - reads existing `workflow_state.json` and `event_log.jsonl`
+    - summarizes retry-stage events, repair starts/completions, repeated
+      blockers, and exhausted attempt budgets
+    - may suggest `request_human_review` or `block_run` for the operator
+    - projection only; no workflow-state write, repair execution, gate
+      execution, delivery approval, release readiness decision, or quality
+      score
+  - Packaged synthetic eval fixtures include a trajectory retry-budget case
+    that proves repeated retry decisions project human-review guidance without
+    mutating workflow state.
   - v0.11.0 product-baseline readiness guard:
     - `scripts/check_product_baseline.py`
     - release consistency runs the baseline guard before release prep

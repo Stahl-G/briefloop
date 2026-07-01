@@ -1,0 +1,4 @@
+project:
+  name: Trajectory Retry Budget Fixture
+brief_quality:
+  min_items: 3

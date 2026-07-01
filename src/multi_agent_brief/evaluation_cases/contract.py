@@ -33,6 +33,7 @@ ALLOWED_ACTIONS = {
     "provenance.show",
     "provenance.validate",
     "runtime.run_handoff",
+    "status.show",
     "state.check",
     "state.decide",
     "state.finalize_complete",
@@ -308,6 +309,9 @@ def _validate_expected_contract(*, prefix: str, expected: dict[str, Any]) -> lis
                     errors.append(
                         f"{item_prefix}.error_contains must be a string or list of strings."
                     )
+                result_contains = item.get("result_contains")
+                if result_contains is not None and not isinstance(result_contains, dict):
+                    errors.append(f"{item_prefix}.result_contains must be an object.")
 
     contains_text = expected.get("contains_text")
     if contains_text is not None:

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Trajectory Regulation read-only projection**: `status --json` and Quality
+  Panel now surface retry-stage, repair-cycle, repeated-blocker, and exhausted
+  attempt-budget summaries derived from existing `workflow_state.json` and
+  `event_log.jsonl`. Packaged public-safe eval cases include a synthetic
+  repeated-retry case that projects `request_human_review` without mutating
+  workflow state. This is operator guidance only; it does not write state,
+  execute repair, run gates, approve delivery, decide release readiness, score
+  quality, or prove output correctness.
 - **v0.11 product golden path**: refreshed the public English/Chinese Golden
   Path docs around the supported `industry-weekly`, `management-monthly`, and
   `document-review` product entries, with explicit local-first, gates-on,

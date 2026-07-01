@@ -1,5 +1,14 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.3 — 2026-07-01
+
+- Added Trajectory Regulation operator guidance: status / Quality Panel can
+  surface read-only retry, repair-cycle, and repeated-blocker projections from
+  `workflow_state.json` and `event_log.jsonl`.
+- Clarified that trajectory recommendations may suggest `request_human_review`
+  or `block_run`, but do not write workflow state, execute repair, run gates,
+  approve delivery, decide release readiness, or claim output quality.
+
 ## briefloop-operator-skill-v0.1.2 — 2026-06-30
 
 - Added coverage/omission gate guidance for selected screened-candidate

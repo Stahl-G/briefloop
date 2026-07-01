@@ -31,6 +31,12 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "release check",
         "release_readiness_report.json",
         "branding_context",
+        "Trajectory Regulation",
+        "workflow_state.json",
+        "event_log.jsonl",
+        "retry-stage events",
+        "request_human_review",
+        "block_run",
         "industry-weekly",
         "management-monthly",
         "document-review",
@@ -42,6 +48,7 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
     "references/status-and-gates.md": [
         "Coverage/omission findings",
         "not full-world recall checks",
+        "Trajectory Regulation is read-only",
     ],
     "references/control-record-map.md": [
         "quality_panel.json",

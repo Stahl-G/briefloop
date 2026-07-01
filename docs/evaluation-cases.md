@@ -4,8 +4,8 @@ v0.6.4 introduced packaged public-safe evaluation cases for developer and CI
 regression checks. v0.6.5 extended the packaged suite with provenance
 projection coverage. v0.7.0 adds Improvement Memory control cases. The
 pre-release v0.11.1 issue-closure line adds synthetic Product OS blocker cases
-for durable source evidence pack validation and event-linked release readiness
-reports.
+for durable source evidence pack validation, event-linked release readiness
+reports, and trajectory retry-budget projection.
 
 These cases validate control-surface behavior across:
 
@@ -16,6 +16,7 @@ These cases validate control-surface behavior across:
 - Improvement Ledger / Memory materialization controls
 - durable source evidence pack manifest validation
 - event-linked release-readiness projection validation
+- trajectory-regulation projection from repeated retry decisions
 - Hermes guidance invariants
 
 They are not benchmark scores and are not workflow artifacts.

@@ -43,7 +43,7 @@ validation unless that is stated separately.
 | Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
 | v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
 | ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
-| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
+| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
@@ -214,6 +214,11 @@ bundles while keeping them out of reader-facing delivery bundles. These are
 product-quality projections only: they do not run gates, replace gate reports,
 create a quality score, decide release eligibility, approve delivery, prove
 semantic truth, or execute repair.
+Trajectory Regulation projection reads existing `workflow_state.json` and
+`event_log.jsonl` records to surface repeated retry, repair-cycle, and blocker
+patterns in status and Quality Panel recommended actions. It is read-only
+operator guidance only: it does not write workflow state, start repair, execute
+repair, run gates, block stages, approve delivery, or decide release readiness.
 Workspace creation may use an
 explicit `--policy-profile` or deterministic `--industry` hint, but the result
 is written into `report_spec.yaml` with its resolution source and is not
