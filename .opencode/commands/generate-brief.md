@@ -54,6 +54,7 @@ Stage sequence:
 
 6. Read `configs/policy_packs/default.yaml` and apply role topology:
    - `default`: Scout performs discovery + screening and writes both `candidate_claims.json` and `screened_candidates.json`.
+     Do not delegate Screener and do not call `state stage-complete --stage screener` in default topology.
    - `strict`: Scout writes only `candidate_claims.json`; then Screener writes `screened_candidates.json`.
    - In all modes both artifacts are required before Claim Ledger.
    - Optional chunk parallelism is parent-side only: chunk outputs are scratch/intermediate runtime material, not workflow artifacts.
@@ -67,6 +68,7 @@ Stage sequence:
    - Extract candidate reportable items.
    - Write `$ARGUMENTS/output/intermediate/candidate_claims.json`.
    - In default topology, screen candidates and write `$ARGUMENTS/output/intermediate/screened_candidates.json` before recording `stage-complete --stage scout`.
+   - Do not replay Screener delegation or `stage-complete --stage screener` in default topology.
 
 8. Strict topology only: check `candidate_claims.json`, then delegate the **brief-screener** subagent:
    - Dedupe, rank, freshness-check, and cap candidates.
