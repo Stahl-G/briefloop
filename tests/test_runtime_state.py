@@ -872,6 +872,15 @@ def _advance_to_auditor(ws: Path) -> None:
     _set_current_stage(ws, "auditor")
 
 
+def _advance_to_source_discovery(ws: Path) -> None:
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="doctor",
+        reason="doctor complete",
+    )
+
+
 def _complete_finalized_workspace(ws: Path) -> dict:
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
@@ -1121,6 +1130,225 @@ def test_state_decide_finalize_requires_completion_transaction(tmp_path):
     assert excinfo.value.error_code == "E_COMPLETION_TRANSACTION_REQUIRED"
     assert excinfo.value.details["required_command"] == "finalize-complete"
     assert after == before
+
+
+def test_trajectory_regulation_narrows_retry_budget_and_rejects_retry(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_source_discovery(ws)
+
+    for idx in range(3):
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            decision="retry_stage",
+            reason=f"retry {idx + 1}",
+        )
+
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["next_allowed_decisions"] == ["request_human_review", "block_run"]
+    assert workflow["trajectory_regulation"]["status"] == "decision_narrowed"
+    assert workflow["trajectory_regulation"]["reasons"] == ["retry_budget_exhausted"]
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            decision="retry_stage",
+            reason="retry after exhausted budget",
+        )
+
+    assert excinfo.value.error_code == "E_ILLEGAL_TRANSITION"
+    assert excinfo.value.details["allowed_decisions"] == ["request_human_review", "block_run"]
+
+
+def test_trajectory_regulation_rejects_stage_complete_after_narrowing_without_mutation(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_source_discovery(ws)
+    for idx in range(3):
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            decision="retry_stage",
+            reason=f"retry {idx + 1}",
+        )
+
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_event_log = _state_file(ws, "event_log").read_bytes()
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            reason="source discovery complete after budget exhausted",
+        )
+
+    assert excinfo.value.error_code == "E_ILLEGAL_TRANSITION"
+    assert "Trajectory regulation narrowed current-stage decisions" in str(excinfo.value)
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_event_log
+
+
+def test_trajectory_regulation_completion_clears_stale_non_current_narrowing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    workflow["trajectory_regulation"] = {
+        "status": "decision_narrowed",
+        "stage_id": "source-discovery",
+        "reasons": ["retry_budget_exhausted"],
+        "allowed_decisions": ["request_human_review", "block_run"],
+        "runtime_effect": "decision_narrowing",
+        "source": "trajectory_regulation",
+    }
+    _state_file(ws, "workflow_state").write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="doctor",
+        reason="doctor complete",
+    )
+
+    workflow = state["workflow_state"]
+    assert workflow["current_stage"] == "source-discovery"
+    assert "trajectory_regulation" not in workflow
+    assert workflow["next_allowed_decisions"] == [
+        "continue",
+        "retry_stage",
+        "request_human_review",
+        "block_run",
+    ]
+
+
+def test_trajectory_regulation_allows_human_review_after_narrowing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_source_discovery(ws)
+    for idx in range(3):
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            decision="retry_stage",
+            reason=f"retry {idx + 1}",
+        )
+
+    state = record_decision(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        decision="request_human_review",
+        reason="budget exhausted",
+    )
+
+    workflow = state["workflow_state"]
+    assert workflow["blocked"] is True
+    assert workflow["last_decision"]["decision"] == "request_human_review"
+    assert workflow["next_allowed_decisions"] == ["request_human_review", "block_run"]
+    assert workflow["trajectory_regulation"]["status"] == "decision_narrowed"
+
+
+def test_trajectory_regulation_state_check_narrows_repair_cycle_budget(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_source_discovery(ws)
+    run_id = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))["run_id"]
+
+    for idx in range(3):
+        runtime_event_log.append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="repair_started",
+            actor="orchestrator",
+            stage_id="source-discovery",
+            reason=f"repair started {idx + 1}",
+            metadata={"repair_owner": "source-discovery"},
+        )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    workflow = state["workflow_state"]
+    assert workflow["trajectory_regulation"]["status"] == "decision_narrowed"
+    assert workflow["trajectory_regulation"]["reasons"] == ["repair_cycle_budget_exhausted"]
+    assert workflow["next_allowed_decisions"] == ["request_human_review", "block_run"]
+
+
+def test_trajectory_regulation_state_check_narrows_repeated_blocker_reason(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_source_discovery(ws)
+    run_id = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))["run_id"]
+
+    for idx in range(2):
+        runtime_event_log.append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="decision_recorded",
+            actor="orchestrator",
+            stage_id="source-discovery",
+            decision="request_human_review",
+            reason="same blocker",
+            metadata={"synthetic": idx + 1},
+        )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    workflow = state["workflow_state"]
+    assert workflow["trajectory_regulation"]["status"] == "decision_narrowed"
+    assert workflow["trajectory_regulation"]["reasons"] == ["repeated_blocker"]
+    assert workflow["next_allowed_decisions"] == ["request_human_review", "block_run"]
+
+
+def test_trajectory_regulation_completed_historical_stage_does_not_narrow(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_source_discovery(ws)
+    for idx in range(3):
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            decision="retry_stage",
+            reason=f"retry {idx + 1}",
+        )
+    _set_current_stage(ws, "input-governance")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    workflow = state["workflow_state"]
+    assert "trajectory_regulation" not in workflow
+    assert workflow["current_stage"] == "input-governance"
+    assert workflow["next_allowed_decisions"] == [
+        "continue",
+        "retry_stage",
+        "request_human_review",
+        "block_run",
+    ]
+
+
+def test_trajectory_regulation_corrupt_event_log_fails_closed_without_narrowing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_source_discovery(ws)
+    with _state_file(ws, "event_log").open("ab") as fh:
+        fh.write(b"{not-json}\n")
+
+    before = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    after = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert after == before
+    assert "trajectory_regulation" not in after
 
 
 def test_invalid_optional_expected_artifact_rejects_continue(tmp_path):

@@ -173,9 +173,11 @@ Historical implementation name: MABW
       support-row generation or acceptance, gate execution, delivery block,
       release authority, or quality score
   - Packaged synthetic eval fixtures include a trajectory retry-budget case
-    that proves repeated retry decisions project human-review guidance without
-    mutating workflow state, plus a guidance manifestation `not_observable`
-    case that keeps the result diagnostic-only.
+    that proves repeated retry decisions narrow
+    `workflow_state.next_allowed_decisions` to `request_human_review` and
+    `block_run` without adding decision vocabulary, executing repair, running
+    gates, approving delivery, or deciding release readiness, plus a guidance
+    manifestation `not_observable` case that keeps the result diagnostic-only.
   - v0.11.0 product-baseline readiness guard:
     - `scripts/check_product_baseline.py`
     - release consistency runs the baseline guard before release prep

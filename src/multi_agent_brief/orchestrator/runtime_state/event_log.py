@@ -71,6 +71,7 @@ EVENT_TYPES = {
     "fact_layer_imported",
     "claim_ledger_frozen",
     "claim_ledger_metadata_enriched",
+    "trajectory_decision_narrowed",
     "run_archived",
     "run_blocked",
     "run_integrity_contaminated",
@@ -97,8 +98,17 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
             error_code=E_TRANSACTION_INTEGRITY,
         )
 
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeStateError(
+            f"Event log is not valid UTF-8: {path}",
+            details={"path": str(path), "reason": str(exc)},
+            error_code=E_TRANSACTION_INTEGRITY,
+        ) from exc
+
     records: list[dict[str, Any]] = []
-    for lineno, line in enumerate(raw.decode("utf-8").splitlines(), start=1):
+    for lineno, line in enumerate(decoded.splitlines(), start=1):
         if not line.strip():
             continue
         try:

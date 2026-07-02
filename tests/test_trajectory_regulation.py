@@ -87,16 +87,31 @@ def test_trajectory_regulation_suppresses_actions_for_completed_prior_stage(tmp_
     ws = _workspace(tmp_path)
     _advance_to_source_discovery(ws)
     _retry_source_discovery(ws, 3)
-    assert main([
-        "state",
-        "stage-complete",
-        "--workspace",
-        str(ws),
-        "--stage",
-        "source-discovery",
-        "--reason",
-        "Source discovery recovered after retries.",
-    ]) == 0
+    workflow_path = ws / "output" / "intermediate" / "workflow_state.json"
+    workflow = _json(workflow_path)
+    statuses = dict(workflow["stage_statuses"])
+    statuses["source-discovery"] = {
+        "status": "complete",
+        "reason": "Source discovery recovered after retries.",
+        "updated_at": workflow["updated_at"],
+    }
+    statuses["input-governance"] = {
+        "status": "ready",
+        "reason": "",
+        "updated_at": workflow["updated_at"],
+    }
+    workflow["current_stage"] = "input-governance"
+    workflow["stage_statuses"] = statuses
+    workflow["blocked"] = False
+    workflow["blocking_reason"] = ""
+    workflow["next_allowed_decisions"] = [
+        "continue",
+        "retry_stage",
+        "request_human_review",
+        "block_run",
+    ]
+    workflow.pop("trajectory_regulation", None)
+    workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     projection = build_workspace_status(ws)["trajectory_regulation"]
     source_stage = next(
@@ -114,16 +129,15 @@ def test_trajectory_regulation_suppresses_actions_for_completed_prior_stage(tmp_
     assert source_stage["recommended_decision"] == "none"
 
 
-def test_trajectory_regulation_projects_retry_budget_without_writing_state(tmp_path: Path) -> None:
+def test_trajectory_regulation_enforces_retry_budget_decision_narrowing(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _advance_to_source_discovery(ws)
     _retry_source_discovery(ws, 3)
-    workflow_before = _json(ws / "output" / "intermediate" / "workflow_state.json")
 
     status = build_workspace_status(ws)
     formatted = format_workspace_status(status)
     projection = status["trajectory_regulation"]
-    workflow_after = _json(ws / "output" / "intermediate" / "workflow_state.json")
+    workflow = _json(ws / "output" / "intermediate" / "workflow_state.json")
 
     assert validate_trajectory_regulation_payload(projection) is None
     assert projection["status"] == "action_required"
@@ -135,10 +149,13 @@ def test_trajectory_regulation_projects_retry_budget_without_writing_state(tmp_p
             "reason": "retry_budget_exhausted",
         }
     ]
-    assert workflow_before == workflow_after
-    assert workflow_after["blocked"] is False
+    assert workflow["blocked"] is False
+    assert workflow["next_allowed_decisions"] == ["request_human_review", "block_run"]
+    assert workflow["trajectory_regulation"]["status"] == "decision_narrowed"
+    assert workflow["trajectory_regulation"]["reasons"] == ["retry_budget_exhausted"]
     assert "[status] trajectory_regulation: action_required" in formatted
     assert "runtime_effect=none" in formatted
+    assert "[status] trajectory_decision_narrowing: decision_narrowed" in formatted
 
 
 def test_trajectory_regulation_ignores_stale_prior_run_events(tmp_path: Path) -> None:

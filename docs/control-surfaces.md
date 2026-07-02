@@ -42,7 +42,7 @@ This ledger is also a release-freeze aid. The approximate distribution is:
 | v0.6.x | ~17 | Runtime state, artifact tracking, evidence, gates, feedback/repair, audience snapshots, provenance, and support/status docs. |
 | v0.7.0 | ~5 | Improvement Ledger, deterministic memory projection, frozen improvement snapshots, manifest improvement metadata, and packaged improvement eval cases. |
 | v0.7.2 | ~4 | Reader-final gate, stage/finalize completion transactions, Claude five-verb entrypoint, and Improvement Ledger supersession hygiene. |
-| Planned v0.8 | ~4 | Reference samples, manifestation/regression reporting, coverage-side gates, and trajectory-regulation implementation work. |
+| v0.11.x | ~4 | Reference samples, manifestation/regression reporting, coverage-side gates, and trajectory-regulation decision narrowing without repair execution. |
 
 The exact count may change as related files are merged or split. The useful
 unit is not the number itself, but whether each surface has a clear writer,
@@ -56,8 +56,8 @@ These surfaces describe the state of a specific run. They live under `output/int
 |---|---|---|---|---|
 | `runtime_manifest.json` | Run identity, runtime, paths, and manifest-level pointers such as improvement snapshot metadata. | Python | Implemented | Recomputed by runtime state initialization and handoff flows. |
 | `runtime_manifest.json.improvement` | Ledger hash, memory projection hash, snapshot hash, and `materialized_entry_ids` for this run. | Python | Implemented | Frozen for the run; later ledger changes do not invalidate prior snapshots. |
-| `workflow_state.json` | Current stage, stage statuses, last decision, and next allowed decisions. | Python via state commands | Implemented | Updated through runtime state commands; should not be hand-edited by agents. |
-| `event_log.jsonl` | Append-only runtime/control events. | Python | Implemented | Append-only; records control decisions and transitions. |
+| `workflow_state.json` | Current stage, stage statuses, last decision, next allowed decisions, and current-stage trajectory decision narrowing when budgets are exhausted. | Python via state commands | Implemented | Updated through runtime state commands; should not be hand-edited by agents. |
+| `event_log.jsonl` | Append-only runtime/control events. | Python | Implemented | Append-only; records control decisions, transitions, and trajectory narrowing. |
 | `artifact_registry.json` | Observed workflow artifacts and basic validation state. | Python | Implemented | Rebuilt/updated by state checks and artifact observation. |
 | `orchestrator_control_switchboard.json` | Deterministic control recommendations for the Orchestrator. | Python | Implemented | Rebuilt from current workspace state and config. |
 | `control_selections.json` | Orchestrator enable/defer/reject selections for recommended controls. | Python CLI from explicit Orchestrator/human selection | Implemented | Selection is a record, not execution. |
@@ -126,7 +126,7 @@ promise and CI guards. Surfaces can remain implemented without being frozen.
 
 | Surface | v0.11.0 freeze prerequisite |
 |---|---|
-| `event_log.jsonl` schema and event types | v0.7.2 completion transaction events must be stable; any v0.8 trajectory events must be added before freeze. |
+| `event_log.jsonl` schema and event types | v0.7.2 completion transaction events and trajectory narrowing events must remain stable before freeze. |
 | `workflow_state.json` and decision vocabulary | `stage-complete` / `finalize-complete` semantics are included; topology-satisfied stages are recorded as explicit workflow/event records, not hidden skips. |
 | `runtime_manifest.json` | Single-writer preservation for `improvement` and `recipe` must stay covered. `operator_reported_model` is deferred to v0.7.3 / v0.8; reference-run summaries record model identity manually until then. |
 | `artifact_registry.json` | Artifact names remain stable across default and strict topology: Scout may satisfy Screener, but `candidate_claims.json` and `screened_candidates.json` stay distinct artifacts. |

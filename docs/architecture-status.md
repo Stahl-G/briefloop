@@ -27,6 +27,12 @@ breaking rename.
   runtime blocker, durable source evidence pack, event-linked release
   readiness, trajectory-regulation, and Hermes path regressions for development
   and CI.
+- Trajectory Regulation can deterministically narrow the current stage's
+  `workflow_state.next_allowed_decisions` to `request_human_review` and
+  `block_run` after retry, repair-cycle, or repeated-blocker budgets are
+  exhausted. It records this as control state and event-log evidence, but does
+  not execute repair, run gates, approve delivery, decide release readiness, or
+  perform agent work.
 - Optional deterministic provenance projection can write a workspace-local audit/debug graph from existing control files.
 - Workspace-local audience taste profiles can be frozen into per-run snapshots and exposed through runtime handoff as context.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Trajectory Regulation decision narrowing**: repeated retry, repair-cycle,
+  or blocker patterns for the current stage now deterministically narrow
+  `workflow_state.next_allowed_decisions` to `request_human_review` and
+  `block_run`, record a `trajectory_decision_narrowed` event, and surface the
+  narrowing through status and runtime handoff. This does not add decision
+  vocabulary, execute repair, change stage order, run gates, approve delivery,
+  decide release readiness, or let Python perform agent work.
 - **Release/evidence synthetic blocker regressions**: packaged public-safe
   evaluation cases now cover the remaining #96 release/evidence failure
   patterns: unauthorized institution branding, mixed metric scope,
