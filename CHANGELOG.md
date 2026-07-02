@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Minimal comparative evaluation packet**: added a public-safe v0.11.4
+  comparison packet with three synthetic tasks, a direct prompt/template
+  baseline arm, a BriefLoop-style workflow arm, frozen raw-output hashes, raw
+  reviewer observations, and a second-reviewer subset. The release consistency
+  check now runs `scripts/check_minimal_comparative_eval.py` to verify the
+  packet shape and hash bindings. This is bounded evaluation evidence only; it
+  does not claim general output-quality improvement, speed improvement,
+  semantic truth proof, benchmark superiority, delivery approval, or release
+  authorization.
 - **Product OS reader-quality reference package**: the packaged
   `same_evidence_reader_quality_regression` eval case now generates
   Quality Panel JSON/summary/HTML plus clean delivery/audit bundle archives,
