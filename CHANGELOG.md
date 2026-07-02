@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Citation Profile Split**: packaged ReportTemplates can now declare
+  `reader_contract.citation_profile` values (`executive`, `analyst`, or
+  `audit`) so finalize reports and bundle manifests record the resolved
+  reader/audit citation profile. Reader delivery keeps reader-safe source
+  labels and does not expose Claim Ledger IDs, span IDs, local paths, or
+  hashes; audit bundles retain the trace artifacts when present. This is
+  citation-surface metadata only; it does not prove support, alter gates,
+  remove audit trace, approve delivery, or decide release readiness.
 - **Support-calibrated wording warnings**: `status --json` and Quality Panel
   now surface warning-only `support_wording` diagnostics when reader-facing
   Markdown uses strong or unframed wording for claims with explicit weak,

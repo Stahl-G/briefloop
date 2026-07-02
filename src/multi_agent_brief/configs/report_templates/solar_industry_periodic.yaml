@@ -68,6 +68,7 @@ reader_contract:
     - fx_rates_tracker
   max_executive_summary_words: 260
   source_appendix_position: last
+  citation_profile: executive
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

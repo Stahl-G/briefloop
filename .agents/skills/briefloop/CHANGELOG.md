@@ -1,5 +1,14 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.8 — 2026-07-02
+
+- Added Citation Profile Split guidance for `reader_contract.citation_profile`
+  values (`executive`, `analyst`, `audit`) and the corresponding
+  `finalize_report.json` / bundle manifest fields.
+- Clarified that citation profiles split reader-safe source labels from audit
+  trace retention only; they do not prove support, relax gates, remove audit
+  trace, approve delivery, or decide release readiness.
+
 ## briefloop-operator-skill-v0.1.7 — 2026-07-01
 
 - Added Support-Calibrated Wording guidance for warning-only

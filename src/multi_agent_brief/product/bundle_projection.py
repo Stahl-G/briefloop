@@ -17,6 +17,12 @@ from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
 )
+from multi_agent_brief.product.citation_profile import (
+    DEFAULT_CITATION_PROFILE,
+    citation_profile_report,
+    normalize_citation_profile,
+    validate_citation_profile_report,
+)
 from multi_agent_brief.product.quality_panel import (
     QualityPanelError,
     render_quality_panel_html,
@@ -53,12 +59,14 @@ def build_report_bundle_manifest(
         ws,
         template_registry=template_registry or ReportTemplateRegistry.from_package(),
     )
+    citation_profile = _citation_profile_projection(finalize_report)
     return {
         "schema_version": REPORT_BUNDLE_MANIFEST_SCHEMA_VERSION,
         "workspace": ".",
         "source": "finalize_report_projection",
         "semantics": "delivery_and_audit_bundle_projection_only",
         "template": template,
+        "citation_profile": citation_profile,
         "packaging_hygiene": hygiene,
         "bundle_archives": {"status": "not_requested"},
         "delivery_bundle": {
@@ -441,6 +449,57 @@ def _template_projection(
         "section_order": list(template.section_order),
         "semantics": "stable_section_order_only_not_renderer",
     }
+
+
+def _citation_profile_projection(finalize_report: dict[str, Any]) -> dict[str, Any]:
+    if "citation_profile" not in finalize_report:
+        report = citation_profile_report(
+            profile=DEFAULT_CITATION_PROFILE,
+            source="legacy_finalize_report_default",
+        )
+        report["status"] = "legacy_default"
+        report["semantics"] = "reader_delivery_citation_projection_and_audit_trace_split"
+        return report
+
+    raw_profile = finalize_report.get("citation_profile")
+    profile = normalize_citation_profile(raw_profile)
+    if not profile:
+        raise ReportBundleProjectionError("finalize_report citation profile invalid: citation_profile")
+    report = citation_profile_report(
+        profile=profile,
+        source=str(finalize_report.get("citation_profile_source") or "finalize_report"),
+        warnings=[
+            str(item)
+            for item in finalize_report.get("citation_profile_warnings", [])
+            if isinstance(item, str)
+        ],
+    )
+    for source_field, target_field in (
+        ("citation_profile_runtime_effect", "runtime_effect"),
+        ("citation_profile_reader_citation_style", "reader_citation_style"),
+        ("citation_profile_reader_metadata_level", "reader_metadata_level"),
+        ("citation_profile_audit_trace_level", "audit_trace_level"),
+    ):
+        value = finalize_report.get(source_field)
+        if value is not None and str(value).strip() != str(report.get(target_field) or ""):
+            raise ReportBundleProjectionError(
+                f"finalize_report citation profile invalid: {source_field}"
+            )
+    for source_field, target_field in (
+        ("citation_profile_delivery_exposes_internal_ids", "delivery_exposes_internal_ids"),
+        ("citation_profile_delivery_exposes_local_paths", "delivery_exposes_local_paths"),
+        ("citation_profile_audit_bundle_keeps_trace", "audit_bundle_keeps_trace"),
+    ):
+        if source_field in finalize_report and finalize_report[source_field] is not report[target_field]:
+            raise ReportBundleProjectionError(
+                f"finalize_report citation profile invalid: {source_field}"
+            )
+    reason = validate_citation_profile_report(report)
+    if reason:
+        raise ReportBundleProjectionError(f"finalize_report citation profile invalid: {reason}")
+    report["status"] = "available"
+    report["semantics"] = "reader_delivery_citation_projection_and_audit_trace_split"
+    return report
 
 
 def _optional_report_path(workspace: Path, report: dict[str, Any], field: str) -> Path | None:

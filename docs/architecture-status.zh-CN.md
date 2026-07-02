@@ -71,6 +71,12 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   finalize 期间的 experimental renderer 可以把已存在的 reader Markdown
   sections 按 resolved ReportTemplate 顺序重排，再进入 DOCX generation 和
   reader-final checks；缺失或额外的 top-level sections 只记录 diagnostic/no-op。
+  ReportTemplate 还可以声明 reader/audit `citation_profile`（`executive`、
+  `analyst` 或 `audit`）。finalize_report 和 bundle manifest 会记录 resolved
+  citation profile，使 reader delivery 继续使用读者安全的 source labels，同时
+  audit bundle 保留 trace artifacts。这只是 citation surface metadata，不证明
+  support、不放松 gates、不移除 audit trace、不批准 delivery，也不决定 release
+  readiness。
   `briefloop extract` / `multi-agent-brief extract` 可以在
   `evidence_extract` workspace 中登记显式 extraction scope，并把本地 source
   files 复制到 `input/sources/evidence_extract/`。对于 UTF-8 文本来源，它还会

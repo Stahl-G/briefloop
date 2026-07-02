@@ -87,6 +87,18 @@ Historical implementation name: MABW
       `report_template_conformance` with `reader_block_warnings`
     - warning-only projection; no gate execution, delivery block, rewrite,
       DOCX parsing, quality score, release authority, or semantic proof
+  - Citation Profile Split:
+    - packaged ReportTemplates may declare
+      `reader_contract.citation_profile`
+    - allowed profiles: `executive`, `analyst`, `audit`
+    - `finalize_report.json` and `report_bundle_manifest.json` record the
+      resolved citation profile, source, reader citation style, and audit trace
+      level
+    - reader delivery stays on reader-safe source labels and must not expose
+      Claim Ledger IDs, span IDs, local paths, or hashes
+    - audit bundles retain trace artifacts when present
+    - citation-surface metadata only; no support proof, gate relaxation, audit
+      trace removal, delivery approval, release authority, or quality score
   - limited PolicyProfile deterministic gate adapter for existing gate
     strictness and reader-final forbidden-phrase checks
   - SourceHub Lite setup for local text files, RSS feed registration, and
