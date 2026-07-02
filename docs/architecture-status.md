@@ -168,6 +168,14 @@ breaking rename.
   It is deterministic keyword diagnostics only: it does not infer semantic
   importance, mutate screening output, resurrect candidates, alter the Claim
   Ledger, run gates, approve delivery, or decide release readiness.
+  Experimental Support-Calibrated Wording projection can read existing reader
+  Markdown, Claim Ledger metadata, source taxonomy, and valid Claim-Support
+  Matrix policy signals to surface warning-only `support_wording` diagnostics
+  for strong or unframed wording on weak, downgrade-required, inferential,
+  unsupported, or media/report-style support records. This is deterministic
+  lexical projection only: it does not judge claim truth, generate or accept
+  support rows, run gates, block delivery, approve release, or create a quality
+  score.
   These contracts describe report type metadata over the existing Claim Ledger,
   artifact registry, gates, event log, archive, source appendix, support
   records, frozen-artifact integrity, and human delivery approval spine. These

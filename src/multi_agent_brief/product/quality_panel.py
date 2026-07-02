@@ -21,6 +21,7 @@ from multi_agent_brief.product.guidance_manifestation import (
     validate_guidance_manifestation_projection_payload,
 )
 from multi_agent_brief.product.materiality_selection import validate_materiality_selection_payload
+from multi_agent_brief.product.support_wording import validate_support_wording_payload
 from multi_agent_brief.product.template_conformance import validate_report_template_conformance_payload
 from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
 
@@ -71,6 +72,7 @@ _QUALITY_PANEL_RECOMMENDED_ACTIONS = {
     "block_run",
     "review_materiality_exclusions",
     "review_reader_template_conformance",
+    "review_support_wording_warnings",
 }
 
 
@@ -128,6 +130,11 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         if isinstance(workspace_status.get("report_template_conformance"), dict)
         else {}
     )
+    support_wording = (
+        workspace_status.get("support_wording")
+        if isinstance(workspace_status.get("support_wording"), dict)
+        else {}
+    )
     control_integrity = {
         "run_integrity": run_integrity.get("status") or "unknown",
         "reference_eligible": bool(run_integrity.get("reference_eligible")),
@@ -143,6 +150,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         trajectory=trajectory,
         materiality_selection=materiality_selection,
         report_template_conformance=report_template_conformance,
+        support_wording=support_wording,
     )
     overall_status = _overall_status(
         workspace_status=workspace_status,
@@ -154,6 +162,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         delivery=delivery,
         materiality_selection=materiality_selection,
         report_template_conformance=report_template_conformance,
+        support_wording=support_wording,
     )
 
     return {
@@ -174,6 +183,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         "guidance_manifestation": guidance_manifestation,
         "materiality_selection": materiality_selection,
         "report_template_conformance": report_template_conformance,
+        "support_wording": support_wording,
         "recommended_actions": recommended_actions,
         "non_goals": [
             "quality_score",
@@ -233,6 +243,8 @@ def render_quality_summary(
     materiality = materiality if isinstance(materiality, Mapping) else {}
     template_conformance = panel_payload.get("report_template_conformance")
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
+    support_wording = panel_payload.get("support_wording")
+    support_wording = support_wording if isinstance(support_wording, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
 
@@ -266,6 +278,7 @@ def render_quality_summary(
             delivery,
             materiality,
             template_conformance,
+            support_wording,
         ),
     )
     lines.extend(["", "## Missing Or Incomplete Surfaces", ""])
@@ -303,6 +316,8 @@ def render_quality_summary(
         f"`{_text(template_conformance.get('status')) or 'unknown'}`",
         "- Reader template warnings: "
         f"`{_template_conformance_warning_count(template_conformance)}`",
+        f"- Support wording status: `{_text(support_wording.get('status')) or 'unknown'}`",
+        f"- Support wording warnings: `{_support_wording_warning_count(support_wording)}`",
         "",
         "## Recommended Next Actions",
         "",
@@ -374,6 +389,8 @@ def render_quality_panel_html(
     materiality = materiality if isinstance(materiality, Mapping) else {}
     template_conformance = panel_payload.get("report_template_conformance")
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
+    support_wording = panel_payload.get("support_wording")
+    support_wording = support_wording if isinstance(support_wording, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
     overall_status = _text(panel_payload.get("overall_status")) or "unknown"
@@ -398,6 +415,11 @@ def render_quality_panel_html(
                     (
                         "Template warnings",
                         _template_conformance_warning_count(template_conformance),
+                        "warning",
+                    ),
+                    (
+                        "Support wording",
+                        _support_wording_warning_count(support_wording),
                         "warning",
                     ),
                     ("Recommended actions", len(actions), "action"),
@@ -467,6 +489,14 @@ def render_quality_panel_html(
                     (
                         "Reader template warnings",
                         str(_template_conformance_warning_count(template_conformance)),
+                    ),
+                    (
+                        "Support wording",
+                        _text(support_wording.get("status")) or "unknown",
+                    ),
+                    (
+                        "Support wording warnings",
+                        str(_support_wording_warning_count(support_wording)),
                     ),
                 ],
             ),
@@ -590,6 +620,13 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         template_error = validate_report_template_conformance_payload(template_conformance)
         if template_error:
             return f"quality_panel_schema_error:report_template_conformance:{template_error}"
+    support_wording = payload.get("support_wording")
+    if support_wording is not None:
+        if not isinstance(support_wording, dict):
+            return "quality_panel_schema_error:support_wording"
+        support_wording_error = validate_support_wording_payload(support_wording)
+        if support_wording_error:
+            return f"quality_panel_schema_error:support_wording:{support_wording_error}"
     recommended_actions = payload.get("recommended_actions")
     if not isinstance(recommended_actions, list):
         return "quality_panel_schema_error:recommended_actions"
@@ -834,6 +871,7 @@ def _overall_status(
     delivery: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
+    support_wording: Mapping[str, Any],
 ) -> str:
     if not workspace_status.get("ok"):
         return "incomplete"
@@ -868,6 +906,7 @@ def _overall_status(
         or claims.get("weak_support_count", 0) > 0
         or _materiality_selection_warning_count(materiality_selection) > 0
         or _template_conformance_warning_count(report_template_conformance) > 0
+        or _support_wording_warning_count(support_wording) > 0
     ):
         return "warning"
     return "pass"
@@ -884,6 +923,7 @@ def _recommended_actions(
     trajectory: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
+    support_wording: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
     if workflow.get("blocked"):
@@ -951,6 +991,21 @@ def _recommended_actions(
             "action": "review_reader_template_conformance",
             "reason": "reader_template_conformance_warning_only",
         })
+    support_counts = (
+        support_wording.get("summary_counts")
+        if isinstance(support_wording.get("summary_counts"), Mapping)
+        else {}
+    )
+    if int(support_counts.get("unsupported_reader_claim_count") or 0) > 0:
+        actions.append({
+            "action": "request_human_review",
+            "reason": "unsupported_claim_present_in_reader_text",
+        })
+    elif _support_wording_warning_count(support_wording) > 0:
+        actions.append({
+            "action": "review_support_wording_warnings",
+            "reason": "support_calibrated_wording_warning_only",
+        })
     for item in trajectory.get("recommended_actions") or []:
         if not isinstance(item, Mapping):
             continue
@@ -986,6 +1041,15 @@ def _template_conformance_warning_count(report_template_conformance: Mapping[str
         + int(counts.get("out_of_order_section_count") or 0)
         + int(counts.get("extra_heading_count") or 0)
     )
+
+
+def _support_wording_warning_count(support_wording: Mapping[str, Any]) -> int:
+    counts = (
+        support_wording.get("summary_counts")
+        if isinstance(support_wording.get("summary_counts"), Mapping)
+        else {}
+    )
+    return int(counts.get("finding_count") or 0)
 
 
 def _fact_layer_status(artifacts: Mapping[str, Any], source_evidence: Mapping[str, Any]) -> str:
@@ -1086,6 +1150,7 @@ def _quality_summary_warning_items(
     delivery: Mapping[str, Any],
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
+    support_wording: Mapping[str, Any],
 ) -> list[str]:
     items: list[str] = []
     if _text(source.get("source_pack_status")) == "invalid":
@@ -1114,6 +1179,11 @@ def _quality_summary_warning_items(
         items.append(
             "Reader template conformance projection found "
             f"`{_template_conformance_warning_count(report_template_conformance)}` warning(s)."
+        )
+    if _support_wording_warning_count(support_wording) > 0:
+        items.append(
+            "Support-calibrated wording projection found "
+            f"`{_support_wording_warning_count(support_wording)}` reader wording warning(s)."
         )
     return items
 

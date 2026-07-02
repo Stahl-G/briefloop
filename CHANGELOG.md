@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Support-calibrated wording warnings**: `status --json` and Quality Panel
+  now surface warning-only `support_wording` diagnostics when reader-facing
+  Markdown uses strong or unframed wording for claims with explicit weak,
+  downgrade-required, inferential, unsupported, or media/report-style support
+  metadata. The projection consumes recorded Claim Ledger, source taxonomy, and
+  valid Claim-Support Matrix policy signals when present. It does not judge
+  claim truth, generate or accept support rows, run gates, block delivery,
+  approve release, or create a quality score.
 - **Reader Template Conformance v1**: packaged ReportTemplates can now declare
   warning-only reader contracts for required reader blocks, Markdown table
   slots, executive-summary length, and Source Appendix position. Status,

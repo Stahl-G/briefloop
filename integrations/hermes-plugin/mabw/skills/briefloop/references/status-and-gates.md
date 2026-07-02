@@ -52,6 +52,15 @@ slots, and Source Appendix position warnings. It can appear in status, handoff,
 sections, parse DOCX content, run gates, block delivery, approve release, score
 prose quality, or prove semantic correctness.
 
+Support-Calibrated Wording is warning-only. It reads existing reader Markdown,
+Claim Ledger metadata, source taxonomy, and valid Claim-Support Matrix policy
+signals when present to surface `support_wording` risks such as weak support
+with strong wording, inference without framing, unsupported claims in reader
+text, and media/report-style sources written with strong unattributed wording.
+Treat these as operator review diagnostics, not proof. It does not judge claim
+truth, generate or accept support rows, run gates, block delivery, approve
+release, create repair authority, or create a quality score.
+
 ## Gates
 
 `gates check` writes stage-scoped gate reports. It is not a read-only helper.

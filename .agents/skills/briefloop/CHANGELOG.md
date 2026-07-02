@@ -1,5 +1,14 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.7 — 2026-07-01
+
+- Added Support-Calibrated Wording guidance for warning-only
+  `support_wording` diagnostics over reader Markdown, Claim Ledger metadata,
+  source taxonomy, and valid Claim-Support Matrix policy signals.
+- Clarified that Support-Calibrated Wording is deterministic lexical projection
+  only; it does not judge claim truth, generate or accept support rows, run
+  gates, block delivery, approve release, or create a quality score.
+
 ## briefloop-operator-skill-v0.1.6 — 2026-07-01
 
 - Added Reader Template Conformance v1 guidance for `reader_contract`

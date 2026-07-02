@@ -28,6 +28,7 @@ from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_re
 from multi_agent_brief.product.guidance_manifestation import project_workspace_guidance_manifestation
 from multi_agent_brief.product.materiality_selection import project_workspace_materiality_selection
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
+from multi_agent_brief.product.support_wording import project_workspace_support_wording
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
 from multi_agent_brief.product.template_render_plan import project_workspace_report_template_render_plan
@@ -70,6 +71,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "trajectory_regulation": {},
         "guidance_manifestation": {},
         "materiality_selection": {},
+        "support_wording": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -137,6 +139,10 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["materiality_selection"] = project_workspace_materiality_selection(
         ws,
         policy_profile=payload["policy_profile"],
+    )
+    payload["support_wording"] = project_workspace_support_wording(
+        ws,
+        claim_support_matrix=payload["claim_support_matrix"],
     )
     payload["report_template"] = project_workspace_report_template(ws)
     payload["report_template_conformance"] = project_workspace_report_template_conformance(ws)
@@ -215,6 +221,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     trajectory_regulation = status.get("trajectory_regulation") or {}
     guidance_manifestation = status.get("guidance_manifestation") or {}
     materiality_selection = status.get("materiality_selection") or {}
+    support_wording = status.get("support_wording") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -386,6 +393,18 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             "boundary=projection_only "
             "runtime_effect=none"
         )
+    if support_wording.get("status") not in {None, "not_available"}:
+        counts = support_wording.get("summary_counts")
+        counts = counts if isinstance(counts, dict) else {}
+        lines.append(
+            "[status] support_wording: "
+            f"{support_wording.get('status')} "
+            f"findings={counts.get('finding_count', 0)} "
+            f"unsupported_reader={counts.get('unsupported_reader_claim_count', 0)} "
+            f"weak_strong={counts.get('weak_support_strong_wording_count', 0)} "
+            "boundary=projection_only "
+            "runtime_effect=none"
+        )
     for marker in status.get("stale_or_unknown") or []:
         lines.append(f"[status] stale_or_unknown: {marker}")
     lines.append(f"[status] suggested_next: {status.get('suggested_next_command')}")
@@ -486,7 +505,7 @@ def _read_optional_text(path: Path) -> str | None:
         return None
     try:
         return path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
 
 

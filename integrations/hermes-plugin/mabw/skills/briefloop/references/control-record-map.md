@@ -45,6 +45,11 @@ Owning commands for recent control-tool projections:
   workspace focus terms. It has no standalone control file and must not be
   patched into screening output, Claim Ledger, gates, delivery, or release
   records.
+- Support-Calibrated Wording is a status / Quality Panel projection derived
+  from existing reader Markdown, Claim Ledger metadata, source taxonomy, and
+  valid Claim-Support Matrix policy signals. It has no standalone control file,
+  does not create accepted support rows, and must not be patched into gates,
+  delivery, or release records.
 
 These files are operator/audit projections or approval records. They are not
 agent draft surfaces, not final reader content, and not repair shortcuts.

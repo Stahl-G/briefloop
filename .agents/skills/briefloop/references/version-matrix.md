@@ -146,6 +146,17 @@ Historical implementation name: MABW
       screening mutation, candidate resurrection, Claim Ledger mutation, gate
       authority, delivery approval, release readiness decision, or quality
       score
+  - Support-Calibrated Wording warning projection:
+    - surfaced through `multi-agent-brief status --workspace <workspace>
+      --json` and Quality Panel as `support_wording`
+    - reads existing reader Markdown, Claim Ledger metadata, source taxonomy,
+      and valid Claim-Support Matrix policy signals when present
+    - surfaces warning-only risks such as weak support with strong wording,
+      inference without framing, unsupported claims in reader text, and
+      media/report-style source classes written with strong unattributed wording
+    - deterministic lexical projection only; no claim-truth judgment,
+      support-row generation or acceptance, gate execution, delivery block,
+      release authority, or quality score
   - Packaged synthetic eval fixtures include a trajectory retry-budget case
     that proves repeated retry decisions project human-review guidance without
     mutating workflow state, plus a guidance manifestation `not_observable`

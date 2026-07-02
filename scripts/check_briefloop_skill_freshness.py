@@ -35,6 +35,8 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "Guidance Manifestation",
         "Materiality Selection",
         "Reader Template Conformance",
+        "Support-Calibrated Wording",
+        "support_wording",
         "reader_contract",
         "report_template_conformance",
         "reader_block_warnings",
@@ -66,6 +68,7 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "Guidance Manifestation is diagnostic-only",
         "Materiality Selection is diagnostic-only",
         "Reader Template Conformance is warning-only",
+        "Support-Calibrated Wording is warning-only",
     ],
     "references/control-record-map.md": [
         "quality_panel.json",
@@ -73,6 +76,7 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "quality_panel.html",
         "guidance_manifestation_report.json",
         "Materiality Selection is a status / Quality Panel projection",
+        "Support-Calibrated Wording is a status / Quality Panel projection",
         "release_readiness_report.json",
     ],
     "references/repo-development.md": [

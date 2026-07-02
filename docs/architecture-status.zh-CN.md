@@ -79,6 +79,13 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   `char_end`）和 raw-excerpt hashes。它仍然不解析 PDF 或二进制文档、不判断
   语义支持、不生成 Claim-Support Matrix rows、不形成法律或披露结论、不运行
   stages、不批准 delivery，也不绕过 gates。
+  Experimental Support-Calibrated Wording projection 可以读取已有 reader
+  Markdown、Claim Ledger metadata、source taxonomy 和有效 Claim-Support Matrix
+  policy signals，输出 warning-only 的 `support_wording` diagnostics，用于提示
+  weak / downgrade-required / inferential / unsupported / media-report support
+  与强措辞或缺少归因/不确定性框架之间的错配。它只是确定性 lexical
+  projection，不判断 claim 真伪、不生成或接受 support rows、不运行 gates、
+  不阻断 delivery、不批准 release，也不创建 quality score。
   这些契约只在现有 Claim Ledger、artifact registry、gates、event log、
   archive、source appendix、support records、frozen-artifact integrity 和 human
   delivery approval 主链之上描述 report type metadata。这些 product-layer
