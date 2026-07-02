@@ -131,6 +131,14 @@ def test_eval_cases_issue_96_release_and_evidence_blockers(capsys):
         result = json.loads(capsys.readouterr().out)
         case = result["results"][0]
         assert case["passed"] is True, case
+        if case_id in {
+            "unauthorized_institution_branding_blocks_release",
+            "formal_release_missing_human_approval",
+        }:
+            assert case["actions"][0]["action"] == "release.check"
+            assert case["actions"][0]["exit_code"] == 1
+            assert case["actions"][0]["ok"] is False
+            assert case["actions"][1]["action"] == "state.check"
 
 
 def test_eval_cases_improvement_approved_case_materializes_snapshot(capsys):

@@ -215,7 +215,7 @@ def _run_single_case(
             action_result = _dispatch_action(command, context)
             actions.append(action_result)
             observed_exit_code = int(action_result.get("exit_code", 1))
-            if observed_exit_code != 0:
+            if observed_exit_code != 0 and command.get("continue_on_failure") is not True:
                 break
 
         errors.extend(
@@ -618,8 +618,9 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             mode=str(args.get("mode") or ""),
         )
         payload = result.payload
+        ok = payload.get("status") == "pass"
         return {
-            "ok": True,
+            "ok": ok,
             "release_readiness_report": release_readiness_report_path(ws).relative_to(ws).as_posix(),
             "release_readiness": {
                 "mode": payload.get("mode"),

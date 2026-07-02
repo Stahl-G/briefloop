@@ -283,6 +283,7 @@ cases:
     initial_stage: finalize
     commands:
       - action: release.check
+        continue_on_failure: true
         args:
           mode: internal_draft
       - action: state.check
@@ -291,7 +292,7 @@ cases:
       exit_code: 0
       expected_actions:
         - action: release.check
-          exit_code: 0
+          exit_code: 1
           result_contains:
             release_readiness:
               status: blocked
@@ -442,6 +443,7 @@ cases:
     initial_stage: finalize
     commands:
       - action: release.check
+        continue_on_failure: true
         args:
           mode: formal_release_candidate
       - action: state.check
@@ -450,7 +452,7 @@ cases:
       exit_code: 0
       expected_actions:
         - action: release.check
-          exit_code: 0
+          exit_code: 1
           result_contains:
             release_readiness:
               mode: formal_release_candidate
