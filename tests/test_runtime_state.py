@@ -2616,6 +2616,106 @@ def test_state_check_rejects_screened_candidates_missing_id_against_stable_unive
     assert record["validation_result"] == "screened_candidates_schema_error:selected[0].candidate_id"
 
 
+def test_state_check_rejects_screened_candidates_missing_id_without_declared_total(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "reason": "capacity_capped",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Dropped because section capacity was already filled.",
+                    }
+                ],
+                "screening_policy": {"max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:selected[0].candidate_id"
+
+
+def test_state_check_rejects_screened_candidates_unknown_id_without_declared_total(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-999",
+                        "reason": "capacity_capped",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Dropped because section capacity was already filled.",
+                    }
+                ],
+                "screening_policy": {"max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert (
+        record["validation_result"]
+        == "screened_candidates_schema_error:excluded[0].unknown_candidate_id:CAND-999"
+    )
+
+
 def test_state_check_accepts_screened_candidates_total_matching_candidate_universe(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

@@ -569,7 +569,7 @@ def _screened_candidates_candidate_universe_error(
     if not isinstance(screening_policy, dict):
         return None
     declared_total, total_error = _screened_candidates_total(payload, screening_policy)
-    if total_error or declared_total is None:
+    if total_error:
         return None
 
     candidate_payload = _read_json_payload(artifact_path.with_name("candidate_claims.json"))
@@ -579,13 +579,29 @@ def _screened_candidates_candidate_universe_error(
     if candidate_status != ARTIFACT_VALID:
         return None
 
-    if declared_total != len(candidate_payload):
+    if declared_total is not None and declared_total != len(candidate_payload):
         return "candidate_universe_count_mismatch"
 
     candidate_ids = _candidate_claim_ids(candidate_payload)
     if candidate_ids is None:
         return None
 
+    screened_ids, screened_id_error = _screened_candidate_ids(payload, candidate_ids)
+    if screened_id_error:
+        return screened_id_error
+
+    if declared_total is None:
+        return None
+
+    if screened_ids != candidate_ids:
+        return "candidate_universe_id_coverage_mismatch"
+    return None
+
+
+def _screened_candidate_ids(
+    payload: dict[str, Any],
+    candidate_ids: set[str],
+) -> tuple[set[str], str | None]:
     screened_ids: set[str] = set()
     for bucket in ("selected", "excluded", "deprioritized"):
         entries = payload.get(bucket)
@@ -596,17 +612,14 @@ def _screened_candidates_candidate_universe_error(
                 continue
             candidate_id = candidate.get("candidate_id")
             if not _non_empty_string(candidate_id):
-                return f"{bucket}[{idx}].candidate_id"
+                return screened_ids, f"{bucket}[{idx}].candidate_id"
             normalized_id = candidate_id.strip()
             if normalized_id not in candidate_ids:
-                return f"{bucket}[{idx}].unknown_candidate_id:{normalized_id}"
+                return screened_ids, f"{bucket}[{idx}].unknown_candidate_id:{normalized_id}"
             if normalized_id in screened_ids:
-                return f"duplicate_screened_candidate_id:{normalized_id}"
+                return screened_ids, f"duplicate_screened_candidate_id:{normalized_id}"
             screened_ids.add(normalized_id)
-
-    if screened_ids != candidate_ids:
-        return "candidate_universe_id_coverage_mismatch"
-    return None
+    return screened_ids, None
 
 
 def _candidate_claim_ids(payload: list[Any]) -> set[str] | None:
