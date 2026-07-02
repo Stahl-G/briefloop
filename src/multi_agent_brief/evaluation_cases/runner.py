@@ -41,6 +41,7 @@ from multi_agent_brief.product.guidance_manifestation import (
     GUIDANCE_MANIFESTATION_REQUIRED_NON_GOALS,
     GUIDANCE_MANIFESTATION_RUNTIME_EFFECT,
 )
+from multi_agent_brief.product.bundle_projection import write_report_bundle_manifest
 from multi_agent_brief.product.quality_panel import (
     quality_panel_path,
     write_quality_panel,
@@ -503,6 +504,18 @@ def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[s
             result["quality_summary"] = data["quality_summary"]
         if "quality_panel_html" in data:
             result["quality_panel_html"] = data["quality_panel_html"]
+        if "report_bundle_manifest" in data:
+            result["report_bundle_manifest"] = data["report_bundle_manifest"]
+        if "delivery_bundle_archive" in data:
+            result["delivery_bundle_archive"] = data["delivery_bundle_archive"]
+        if "audit_bundle_archive" in data:
+            result["audit_bundle_archive"] = data["audit_bundle_archive"]
+        if "delivery_artifact_count" in data:
+            result["delivery_artifact_count"] = data["delivery_artifact_count"]
+        if "audit_artifact_count" in data:
+            result["audit_artifact_count"] = data["audit_artifact_count"]
+        if "packaging_hygiene" in data:
+            result["packaging_hygiene"] = data["packaging_hygiene"]
         if "suggested_next_command" in data:
             result["suggested_next_command"] = data["suggested_next_command"]
         return result
@@ -587,6 +600,8 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
         )
     if action == "quality.summarize":
         return _write_quality_projection_artifacts(workspace=_require_workspace(workspace))
+    if action == "packs.bundle":
+        return _write_bundle_projection_artifacts(workspace=_require_workspace(workspace))
     if action == "state.decide":
         return record_decision(
             workspace=_require_workspace(workspace),
@@ -721,6 +736,24 @@ def _write_quality_projection_artifacts(*, workspace: Path) -> dict[str, Any]:
         "overall_status": panel.get("overall_status"),
         "recommended_actions": panel.get("recommended_actions", []),
         "boundary": "quality_projection_only_not_gate_or_release_authority",
+    }
+
+
+def _write_bundle_projection_artifacts(*, workspace: Path) -> dict[str, Any]:
+    ws = workspace.expanduser().resolve()
+    manifest = write_report_bundle_manifest(workspace=ws, write_archives=True)
+    archives = manifest.get("bundle_archives") if isinstance(manifest.get("bundle_archives"), dict) else {}
+    delivery = archives.get("delivery") if isinstance(archives.get("delivery"), dict) else {}
+    audit = archives.get("audit") if isinstance(archives.get("audit"), dict) else {}
+    return {
+        "ok": True,
+        "report_bundle_manifest": manifest.get("manifest_path"),
+        "delivery_bundle_archive": delivery.get("path"),
+        "audit_bundle_archive": audit.get("path"),
+        "delivery_artifact_count": (manifest.get("delivery_bundle") or {}).get("artifact_count"),
+        "audit_artifact_count": (manifest.get("audit_bundle") or {}).get("artifact_count"),
+        "packaging_hygiene": (manifest.get("packaging_hygiene") or {}).get("status"),
+        "boundary": "bundle_projection_only_not_delivery_or_release_authority",
     }
 
 

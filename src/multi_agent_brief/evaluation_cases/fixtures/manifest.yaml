@@ -373,6 +373,8 @@ cases:
         args: {}
       - action: quality.summarize
         args: {}
+      - action: packs.bundle
+        args: {}
       - action: state.check
         args: {}
       - action: status.show
@@ -390,6 +392,14 @@ cases:
             quality_panel: output/intermediate/quality_panel.json
             quality_summary: output/intermediate/quality_summary.md
             quality_panel_html: output/intermediate/quality_panel.html
+        - action: packs.bundle
+          exit_code: 0
+          result_contains:
+            report_bundle_manifest: output/report_bundle_manifest.json
+            delivery_bundle_archive: output/delivery_bundle.zip
+            audit_bundle_archive: output/audit_bundle.zip
+            delivery_artifact_count: 1
+            packaging_hygiene: clean
         - action: state.check
           exit_code: 0
         - action: status.show
@@ -398,6 +408,9 @@ cases:
         - output/intermediate/quality_panel.json
         - output/intermediate/quality_summary.md
         - output/intermediate/quality_panel.html
+        - output/report_bundle_manifest.json
+        - output/delivery_bundle.zip
+        - output/audit_bundle.zip
       artifact_statuses:
         - artifact_id: quality_panel
           status: valid
@@ -433,6 +446,12 @@ cases:
         - scope: workspace
           file: output/intermediate/quality_panel.html
           text: "Quality Panel"
+        - scope: workspace
+          file: output/report_bundle_manifest.json
+          text: "reader_facing_artifacts_only"
+        - scope: workspace
+          file: output/report_bundle_manifest.json
+          text: "audit_control_artifacts_only_not_reader_delivery"
       absent_text:
         - scope: workspace
           file: output/delivery/brief.md

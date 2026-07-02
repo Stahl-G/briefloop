@@ -1,5 +1,8 @@
 {
   "audit_binding": {
+    "audit_report_sha256": "aac0fcc4b91db3bc6d18970a06e5c9491c1d11d07fd6f76e80f7e1258c8bd701",
+    "audited_brief_sha256": "72826cb1e7ed20aa7b1b94af24af2d0d4cce2d3e57d22f801055d28ee9ef94ce",
+    "claim_ledger_sha256": "0f2407d58506b314d7c899fa77e692c6c3d01838a118b60ba6016dd917b7dc06",
     "findings": [],
     "status": "pass"
   },
@@ -16,6 +19,9 @@
   "delivery_artifacts": [
     "output/delivery/brief.md"
   ],
+  "delivery_artifact_sha256": {
+    "output/delivery/brief.md": "aec52d7b508b852dda9de6586974ef47ddb9d0162925e8c86f37f3bcd5286328"
+  },
   "duplicate_citation_count": 0,
   "quality_panel_closeout": {
     "status": "recommended"

@@ -30,6 +30,7 @@ ALLOWED_ACTIONS = {
     "gates.show",
     "gates.validate",
     "guidance_manifestation.seed_report",
+    "packs.bundle",
     "provenance.build",
     "provenance.show",
     "provenance.validate",

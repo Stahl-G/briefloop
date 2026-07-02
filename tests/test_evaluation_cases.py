@@ -87,6 +87,7 @@ def test_eval_cases_same_evidence_reader_quality_regression(capsys):
         "state.check",
         "status.show",
         "quality.summarize",
+        "packs.bundle",
         "state.check",
         "status.show",
     ]
@@ -94,6 +95,10 @@ def test_eval_cases_same_evidence_reader_quality_regression(capsys):
     assert quality_action["quality_panel"] == "output/intermediate/quality_panel.json"
     assert quality_action["quality_summary"] == "output/intermediate/quality_summary.md"
     assert quality_action["quality_panel_html"] == "output/intermediate/quality_panel.html"
+    bundle_action = case["actions"][3]
+    assert bundle_action["report_bundle_manifest"] == "output/report_bundle_manifest.json"
+    assert bundle_action["delivery_bundle_archive"] == "output/delivery_bundle.zip"
+    assert bundle_action["audit_bundle_archive"] == "output/audit_bundle.zip"
 
 
 def test_eval_cases_improvement_approved_case_materializes_snapshot(capsys):

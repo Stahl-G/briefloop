@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Product OS reader-quality reference package**: the packaged
+  `same_evidence_reader_quality_regression` eval case now generates
+  Quality Panel JSON/summary/HTML plus clean delivery/audit bundle archives,
+  and the docs include a public-safe v0.11.3 reference note. This is an
+  inspectable reference-package regression signal only; it does not claim
+  output-quality improvement, semantic proof, delivery approval, or release
+  authorization.
 - **Same-evidence reader-quality regression pack**: packaged public-safe
   evaluation cases now include a synthetic
   `same_evidence_reader_quality_regression` workspace that holds evidence
