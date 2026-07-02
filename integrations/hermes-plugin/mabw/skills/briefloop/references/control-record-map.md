@@ -29,7 +29,9 @@ Owning commands for recent control-tool projections:
 
 - `briefloop quality summarize --workspace <workspace>` writes
   `quality_panel.json`, source-bound `quality_summary.md`, and static
-  `quality_panel.html`.
+  `quality_panel.html`. `finalize_report.json` and `status --json` may
+  recommend this post-finalize closeout, but they do not write these artifacts
+  automatically.
 - `multi-agent-brief approval init` and `multi-agent-brief approval record`
   write `human_approval_ledger.json` with event-log linkage.
 - `multi-agent-brief release check` reads `human_approval_ledger.json` and

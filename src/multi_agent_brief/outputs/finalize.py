@@ -28,6 +28,7 @@ from multi_agent_brief.product.policy_gate_adapter import (
     resolve_workspace_policy_gate_adapter,
 )
 from multi_agent_brief.product.citation_profile import resolve_workspace_citation_profile
+from multi_agent_brief.product.quality_closeout import quality_panel_closeout_projection
 from multi_agent_brief.product.template_renderer import render_reader_markdown_with_template
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 
@@ -92,6 +93,7 @@ class FinalizeResult:
     citation_profile_delivery_exposes_local_paths: bool = False
     citation_profile_audit_bundle_keeps_trace: bool = True
     citation_profile_warnings: list[str] = field(default_factory=list)
+    quality_panel_closeout: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -103,6 +105,10 @@ class FinalizeResult:
             data["reader_clean"] = _empty_reader_clean_report()
         if data["audit_binding"] is None:
             data["audit_binding"] = _empty_audit_binding_report()
+        if not data["quality_panel_closeout"]:
+            data["quality_panel_closeout"] = quality_panel_closeout_projection(
+                finalize_report=data,
+            )
         return data
 
 

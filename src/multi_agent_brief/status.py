@@ -28,6 +28,7 @@ from multi_agent_brief.outputs.atomic_reader_projection import project_atomic_re
 from multi_agent_brief.product.guidance_manifestation import project_workspace_guidance_manifestation
 from multi_agent_brief.product.materiality_selection import project_workspace_materiality_selection
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
+from multi_agent_brief.product.quality_closeout import quality_panel_closeout_projection
 from multi_agent_brief.product.support_wording import project_workspace_support_wording
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 from multi_agent_brief.product.template_projection import project_workspace_report_template
@@ -72,6 +73,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "guidance_manifestation": {},
         "materiality_selection": {},
         "support_wording": {},
+        "quality_panel_closeout": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -115,6 +117,11 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         )
     )
     payload["reader_clean"] = _reader_clean_summary(finalize_report)
+    payload["quality_panel_closeout"] = quality_panel_closeout_projection(
+        workspace=ws,
+        finalize_report=finalize_report.get("payload") if finalize_report.get("status") == "present" else None,
+        artifact_registry=registry.get("payload") if registry.get("status") == "present" else None,
+    )
     payload["improvement"] = _improvement_summary(ws, manifest)
     payload["feedback"] = _feedback_summary(feedback_issues, repair_plan)
     payload["experiment_080"] = project_assessment_target_status(
@@ -222,6 +229,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     guidance_manifestation = status.get("guidance_manifestation") or {}
     materiality_selection = status.get("materiality_selection") or {}
     support_wording = status.get("support_wording") or {}
+    quality_panel_closeout = status.get("quality_panel_closeout") or {}
     events = status.get("events") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
@@ -253,6 +261,11 @@ def format_workspace_status(status: dict[str, Any]) -> str:
             *_format_experiment_080_lines(experiment_080),
             f"[status] quality_gate: {gate.get('status') or 'unknown'}",
             f"[status] reader_clean: {reader.get('status') or 'unknown'}",
+            (
+                "[status] quality_panel_closeout: "
+                f"{quality_panel_closeout.get('status') or 'unknown'} "
+                f"command={quality_panel_closeout.get('command') or ''}"
+            ),
             (
                 "[status] improvement: "
                 f"ledger={improvement.get('ledger_present')} "
@@ -807,6 +820,9 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
         return f"multi-agent-brief run --workspace {workspace} --recipe fast-rerun --skip-doctor"
     if current_stage == "finalize":
         return f"/mabw deliver {workspace}"
+    quality_closeout = status.get("quality_panel_closeout") or {}
+    if quality_closeout.get("status") in {"recommended", "stale_or_invalid"}:
+        return f"briefloop quality summarize --workspace {workspace}"
     if current_stage == "auditor" and gate.get("status") != "pass":
         return f"multi-agent-brief gates check --workspace {workspace} --stage auditor"
     if current_stage:

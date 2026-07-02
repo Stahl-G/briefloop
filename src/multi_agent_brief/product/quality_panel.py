@@ -21,6 +21,10 @@ from multi_agent_brief.product.guidance_manifestation import (
     validate_guidance_manifestation_projection_payload,
 )
 from multi_agent_brief.product.materiality_selection import validate_materiality_selection_payload
+from multi_agent_brief.product.quality_closeout import (
+    quality_panel_closeout_projection,
+    validate_quality_panel_closeout_payload,
+)
 from multi_agent_brief.product.support_wording import validate_support_wording_payload
 from multi_agent_brief.product.template_conformance import validate_report_template_conformance_payload
 from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
@@ -135,6 +139,13 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         if isinstance(workspace_status.get("support_wording"), dict)
         else {}
     )
+    finalize_report = _read_json_mapping(ws / _INTERMEDIATE / "finalize_report.json") or {}
+    closeout = quality_panel_closeout_projection(
+        workspace=ws,
+        finalize_report=finalize_report,
+        generated_by_quality_summarize=True,
+        artifact_registry=registry_payload,
+    )
     control_integrity = {
         "run_integrity": run_integrity.get("status") or "unknown",
         "reference_eligible": bool(run_integrity.get("reference_eligible")),
@@ -184,6 +195,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         "materiality_selection": materiality_selection,
         "report_template_conformance": report_template_conformance,
         "support_wording": support_wording,
+        "quality_panel_closeout": closeout,
         "recommended_actions": recommended_actions,
         "non_goals": [
             "quality_score",
@@ -245,6 +257,8 @@ def render_quality_summary(
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
     support_wording = panel_payload.get("support_wording")
     support_wording = support_wording if isinstance(support_wording, Mapping) else {}
+    closeout = panel_payload.get("quality_panel_closeout")
+    closeout = closeout if isinstance(closeout, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
 
@@ -319,6 +333,13 @@ def render_quality_summary(
         f"- Support wording status: `{_text(support_wording.get('status')) or 'unknown'}`",
         f"- Support wording warnings: `{_support_wording_warning_count(support_wording)}`",
         "",
+        "## Quality Closeout And Bundle Separation",
+        "",
+        f"- Quality closeout status: `{_text(closeout.get('status')) or 'unknown'}`",
+        f"- Closeout command: `{_text(closeout.get('command')) or 'unknown'}`",
+        f"- Audit bundle: `{_text(closeout.get('audit_bundle')) or 'unknown'}`",
+        f"- Delivery bundle: `{_text(closeout.get('delivery_bundle')) or 'unknown'}`",
+        "",
         "## Recommended Next Actions",
         "",
     ])
@@ -391,6 +412,8 @@ def render_quality_panel_html(
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
     support_wording = panel_payload.get("support_wording")
     support_wording = support_wording if isinstance(support_wording, Mapping) else {}
+    closeout = panel_payload.get("quality_panel_closeout")
+    closeout = closeout if isinstance(closeout, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
     actions = actions if isinstance(actions, list) else []
     overall_status = _text(panel_payload.get("overall_status")) or "unknown"
@@ -514,6 +537,15 @@ def render_quality_panel_html(
                     ),
                 ],
             ),
+            _html_section(
+                "Quality Closeout And Bundle Separation",
+                [
+                    ("Closeout status", _text(closeout.get("status")) or "unknown"),
+                    ("Closeout command", _text(closeout.get("command")) or "unknown"),
+                    ("Audit bundle", _text(closeout.get("audit_bundle")) or "unknown"),
+                    ("Delivery bundle", _text(closeout.get("delivery_bundle")) or "unknown"),
+                ],
+            ),
             _html_actions(actions),
         ]
     )
@@ -627,6 +659,13 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         support_wording_error = validate_support_wording_payload(support_wording)
         if support_wording_error:
             return f"quality_panel_schema_error:support_wording:{support_wording_error}"
+    closeout = payload.get("quality_panel_closeout")
+    if closeout is not None:
+        if not isinstance(closeout, dict):
+            return "quality_panel_schema_error:quality_panel_closeout"
+        closeout_error = validate_quality_panel_closeout_payload(closeout)
+        if closeout_error:
+            return f"quality_panel_schema_error:quality_panel_closeout:{closeout_error}"
     recommended_actions = payload.get("recommended_actions")
     if not isinstance(recommended_actions, list):
         return "quality_panel_schema_error:recommended_actions"
@@ -1564,7 +1603,7 @@ def _read_json_mapping(path: Path) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
 
