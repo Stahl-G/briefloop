@@ -175,7 +175,9 @@ def test_claude_generate_brief_is_topology_aware_for_scout_and_screener():
     text = _read(".claude/commands/generate-brief.md")
     assert "With `role_topology=default`, Scout writes both `candidate_claims.json`" in text
     assert "`screened_candidates.json` before `stage-complete --stage scout`" in text
-    assert "Do not delegate Screener in default topology." in text
+    assert "Do not delegate Screener in default topology" in text
+    assert "do not call `state stage-complete --stage screener`" in text
+    assert "Do not replay Screener delegation or `stage-complete --stage screener`" in text
     assert "Strict topology only: invoke the **screener** subagent" in text
     assert "With `role_topology=strict`, Scout writes only `candidate_claims.json`" in text
     assert "strict topology delegates Screener separately after Scout completion" in text
