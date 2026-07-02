@@ -13,6 +13,10 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.outputs.reader_final_gate import (
+    detect_reader_residue,
+    detect_reader_residue_in_docx,
+)
 from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
@@ -214,12 +218,17 @@ def _load_finalize_report(workspace: Path) -> dict[str, Any]:
         )
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReportBundleProjectionError(f"finalize_report.json is unreadable: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise ReportBundleProjectionError(f"finalize_report.json is invalid JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise ReportBundleProjectionError("finalize_report.json must contain an object.")
     if payload.get("status") != "pass":
         raise ReportBundleProjectionError("finalize_report.json status must be pass.")
+    reader_clean = payload.get("reader_clean")
+    if not isinstance(reader_clean, dict) or reader_clean.get("status") != "pass":
+        raise ReportBundleProjectionError("finalize_report.json reader_clean.status must be pass.")
     audit_binding_reasons = require_finalize_audit_binding_pass(
         interpret_finalize_audit_binding(
             workspace=workspace,
@@ -274,12 +283,32 @@ def _delivery_records(
             raise ReportBundleProjectionError(
                 f"delivery artifact hash mismatch: {_workspace_relative(workspace, path)}"
             )
+        _validate_reader_delivery_artifact(workspace, path)
         records.append(_artifact_record(workspace, path, role="reader_delivery"))
     if not records:
         raise ReportBundleProjectionError(
             "finalize_report.json delivery_artifacts did not include packageable reader artifacts."
         )
     return records
+
+
+def _validate_reader_delivery_artifact(workspace: Path, path: Path) -> None:
+    rel = _workspace_relative(workspace, path)
+    suffix = path.suffix.lower()
+    if suffix == ".docx":
+        result = detect_reader_residue_in_docx(path, artifact=rel)
+    else:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ReportBundleProjectionError(f"reader delivery artifact is unreadable: {rel}: {exc}") from exc
+        result = detect_reader_residue(text, artifact=rel)
+    if result.status != "pass":
+        finding_kinds = sorted({finding.kind for finding in result.findings})
+        detail = ", ".join(finding_kinds) or "reader_residue"
+        raise ReportBundleProjectionError(
+            f"reader delivery artifact failed reader-clean residue scan: {rel}: {detail}"
+        )
 
 
 def _audit_records(

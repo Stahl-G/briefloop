@@ -270,6 +270,45 @@ def test_report_bundle_manifest_rejects_forged_reader_citation_exposure(tmp_path
         build_report_bundle_manifest(workspace=ws)
 
 
+def test_report_bundle_archives_reject_reader_residue_even_with_matching_hash(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    brief = ws / "output" / "delivery" / "brief.md"
+    brief.write_text(
+        "# Reader Brief\n\n"
+        "Leaked internal citation [src:SYN_CLAIM_001] and local path /Users/example/source.md\n",
+        encoding="utf-8",
+    )
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifact_sha256"]["output/delivery/brief.md"] = _sha256_file(brief)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ReportBundleProjectionError, match="reader-clean residue scan"):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
+def test_report_bundle_manifest_rejects_failed_reader_clean_report(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["reader_clean"] = {"status": "fail", "src_marker_count": 1, "sample_findings": []}
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ReportBundleProjectionError, match="reader_clean.status must be pass"):
+        build_report_bundle_manifest(workspace=ws)
+
+
+def test_report_bundle_manifest_reports_unreadable_finalize_report(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    (ws / "output" / "intermediate" / "finalize_report.json").write_bytes(b"\xff\xfe\xfa")
+
+    with pytest.raises(ReportBundleProjectionError, match="finalize_report.json is unreadable"):
+        build_report_bundle_manifest(workspace=ws)
+
+
 def test_report_bundle_manifest_includes_quality_artifacts_in_audit_only(tmp_path: Path) -> None:
     ws = _finalized_workspace(tmp_path)
     _write_quality_projection_artifacts(ws)
