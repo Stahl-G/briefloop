@@ -183,6 +183,20 @@ def test_claude_generate_brief_is_topology_aware_for_scout_and_screener():
     assert "strict topology delegates Screener separately after Scout completion" in text
 
 
+def test_checked_in_hermes_skill_is_topology_aware_for_scout_and_screener():
+    for path in [
+        ".agents/hermes-skills/multi-agent-brief-hermes/SKILL.md",
+        ".agents/hermes-skills/multi-agent-brief-hermes/references/delegate-task-sequence.md",
+    ]:
+        text = _read(path)
+        normalized = " ".join(text.lower().split())
+        assert "default topology" in text, path
+        assert "screened_candidates.json" in text, path
+        assert "do not delegate screener" in normalized, path
+        assert "do not call `state stage-complete --stage screener`" in normalized, path
+        assert "strict" in normalized and "screener" in normalized, path
+
+
 def test_scout_contract_treats_chunk_outputs_as_scratch_only():
     paths = [
         "configs/agent_roles.yaml",
