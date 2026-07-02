@@ -57,7 +57,9 @@ and evidence text, not child completion order. Do not append to
 `candidate_claims.json` from chunk workers. Duplicates and near-duplicates must
 be represented or excluded with reasons; do not silently drop chunk-level
 outputs. Only the final joined `candidate_claims.json` and, in default topology,
-`screened_candidates.json` count for stage completion.
+`screened_candidates.json` count for stage completion. In default topology, do
+not delegate Screener and do not call `state stage-complete --stage screener`;
+Scout completion satisfies Screener by topology.
 
 Toolsets: `file`, `terminal`, `web` when source access is enabled.
 
@@ -69,6 +71,7 @@ Input: `output/intermediate/candidate_claims.json`
 Write: `output/intermediate/screened_candidates.json`
 
 Use only when `role_topology: strict` keeps screening independent, or when the Orchestrator explicitly routes a screening repair/review task. Rank, deduplicate, freshness-check, and capacity-cap candidates while preserving source evidence and exclusion reasons.
+Do not use this role to replay default-topology Screener after Scout completion.
 
 ### Claim Ledger
 

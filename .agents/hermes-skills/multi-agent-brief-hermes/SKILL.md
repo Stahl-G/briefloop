@@ -95,7 +95,7 @@ doctor → source discovery → input governance
 ```
 
 Read `configs/policy_packs/default.yaml` before delegating. Default topology:
-Scout writes `candidate_claims.json` and `screened_candidates.json`, then `stage-complete --stage scout` satisfies Screener. Strict topology: Scout writes only `candidate_claims.json`; independent Screener writes `screened_candidates.json`.
+Scout writes `candidate_claims.json` and `screened_candidates.json`, then `stage-complete --stage scout` satisfies Screener. Do not delegate Screener and do not call `state stage-complete --stage screener` in default topology. Strict topology: Scout writes only `candidate_claims.json`; independent Screener writes `screened_candidates.json`.
 If the Hermes parent splits Scout across chunks/children, child outputs are scratch/intermediate runtime material, not workflow artifacts; join chunks deterministically before writing `candidate_claims.json`, using source identity, source path or URL, source date, topic, and evidence text rather than child completion order.
 Scout and Claim Ledger must preserve source metadata: `source_url` only for HTTP(S) URLs, `source_path` for local/package sources, source title/name, publisher when known, `source_category`, provider `source_type`, dates, and evidence text. Do not put titles, search queries, source IDs, or local paths in `source_url`.
 Do not append to `candidate_claims.json` from chunk workers, and do not silently drop chunk-level duplicates or near-duplicates.

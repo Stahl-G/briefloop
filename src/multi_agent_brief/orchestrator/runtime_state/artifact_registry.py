@@ -587,7 +587,6 @@ def _screened_candidates_candidate_universe_error(
         return None
 
     screened_ids: set[str] = set()
-    missing_screened_id = False
     for bucket in ("selected", "excluded", "deprioritized"):
         entries = payload.get(bucket)
         if not isinstance(entries, list):
@@ -597,8 +596,7 @@ def _screened_candidates_candidate_universe_error(
                 continue
             candidate_id = candidate.get("candidate_id")
             if not _non_empty_string(candidate_id):
-                missing_screened_id = True
-                continue
+                return f"{bucket}[{idx}].candidate_id"
             normalized_id = candidate_id.strip()
             if normalized_id not in candidate_ids:
                 return f"{bucket}[{idx}].unknown_candidate_id:{normalized_id}"
@@ -606,7 +604,7 @@ def _screened_candidates_candidate_universe_error(
                 return f"duplicate_screened_candidate_id:{normalized_id}"
             screened_ids.add(normalized_id)
 
-    if not missing_screened_id and screened_ids != candidate_ids:
+    if screened_ids != candidate_ids:
         return "candidate_universe_id_coverage_mismatch"
     return None
 
