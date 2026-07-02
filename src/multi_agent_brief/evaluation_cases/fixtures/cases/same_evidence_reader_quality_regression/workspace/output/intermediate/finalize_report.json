@@ -1,0 +1,34 @@
+{
+  "audit_binding": {
+    "findings": [],
+    "status": "pass"
+  },
+  "citation_profile": "executive",
+  "citation_profile_audit_bundle_keeps_trace": true,
+  "citation_profile_audit_trace_level": "complete_when_available",
+  "citation_profile_delivery_exposes_internal_ids": false,
+  "citation_profile_delivery_exposes_local_paths": false,
+  "citation_profile_reader_citation_style": "source_label",
+  "citation_profile_reader_metadata_level": "low_interference",
+  "citation_profile_runtime_effect": "citation_profile_resolution_only",
+  "citation_profile_source": "report_template.reader_contract.citation_profile",
+  "citation_profile_warnings": [],
+  "delivery_artifacts": [
+    "output/delivery/brief.md"
+  ],
+  "duplicate_citation_count": 0,
+  "quality_panel_closeout": {
+    "status": "recommended"
+  },
+  "reader_clean": {
+    "sample_findings": [],
+    "status": "pass"
+  },
+  "report_template_conformance": {
+    "status": "warning"
+  },
+  "source_appendix": "output/source_appendix.md",
+  "source_appendix_trace": "output/source_appendix_trace.md",
+  "source_appendix_trace_generation": "generated",
+  "status": "pass"
+}

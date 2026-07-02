@@ -361,6 +361,92 @@ cases:
         current_stage: doctor
         blocked: false
 
+  - case_id: same_evidence_reader_quality_regression
+    case_type: workspace
+    synthetic: true
+    description: Same-evidence reader-quality surfaces stay visible through status, Quality Panel, and artifact validation.
+    initial_stage: finalize
+    commands:
+      - action: state.check
+        args: {}
+      - action: status.show
+        args: {}
+      - action: quality.summarize
+        args: {}
+      - action: state.check
+        args: {}
+      - action: status.show
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: state.check
+          exit_code: 0
+        - action: status.show
+          exit_code: 0
+        - action: quality.summarize
+          exit_code: 0
+          result_contains:
+            quality_panel: output/intermediate/quality_panel.json
+            quality_summary: output/intermediate/quality_summary.md
+            quality_panel_html: output/intermediate/quality_panel.html
+        - action: state.check
+          exit_code: 0
+        - action: status.show
+          exit_code: 0
+      artifacts_exist:
+        - output/intermediate/quality_panel.json
+        - output/intermediate/quality_summary.md
+        - output/intermediate/quality_panel.html
+      artifact_statuses:
+        - artifact_id: quality_panel
+          status: valid
+          validation_result_contains: experimental_quality_panel
+        - artifact_id: quality_summary
+          status: valid
+          validation_result_contains: experimental_quality_summary
+        - artifact_id: quality_panel_html
+          status: valid
+          validation_result_contains: experimental_quality_panel_html
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/quality_panel.json
+          text: materiality_selection
+        - scope: workspace
+          file: output/intermediate/quality_panel.json
+          text: support_wording
+        - scope: workspace
+          file: output/intermediate/quality_panel.json
+          text: report_template_conformance
+        - scope: workspace
+          file: output/intermediate/quality_panel.json
+          text: quality_panel_closeout
+        - scope: workspace
+          file: output/intermediate/quality_summary.md
+          text: "Materiality/focus exclusions: `2`"
+        - scope: workspace
+          file: output/intermediate/quality_summary.md
+          text: "Reader template warnings:"
+        - scope: workspace
+          file: output/intermediate/quality_summary.md
+          text: "Support wording warnings:"
+        - scope: workspace
+          file: output/intermediate/quality_panel.html
+          text: "Quality Panel"
+      absent_text:
+        - scope: workspace
+          file: output/delivery/brief.md
+          text: "[src:"
+        - scope: workspace
+          file: output/intermediate/quality_summary.md
+          text: "ready to publish"
+        - scope: workspace
+          file: output/intermediate/quality_panel.html
+          text: "approved for release"
+      workflow_state:
+        current_stage: finalize
+        blocked: false
+
   - case_id: unapproved_entry_not_materialized
     case_type: workspace
     synthetic: true

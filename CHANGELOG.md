@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Same-evidence reader-quality regression pack**: packaged public-safe
+  evaluation cases now include a synthetic
+  `same_evidence_reader_quality_regression` workspace that holds evidence
+  inputs fixed while surfacing existing materiality-selection,
+  reader-template-conformance, support-wording, and Quality Panel closeout
+  projections. The eval runner can call `quality.summarize` to generate and
+  validate Quality Panel JSON/summary/HTML artifacts in the fixture. This is a
+  deterministic regression guard only; it does not score model output quality,
+  prove semantic correctness, run subagents, fetch sources, or approve
+  delivery/release.
 - **Quality Panel real-run closeout guidance**: finalize reports and
   `status --json` now project a post-finalize Quality Panel closeout
   recommendation pointing operators to

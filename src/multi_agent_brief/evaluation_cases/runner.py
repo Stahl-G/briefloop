@@ -41,6 +41,12 @@ from multi_agent_brief.product.guidance_manifestation import (
     GUIDANCE_MANIFESTATION_REQUIRED_NON_GOALS,
     GUIDANCE_MANIFESTATION_RUNTIME_EFFECT,
 )
+from multi_agent_brief.product.quality_panel import (
+    quality_panel_path,
+    write_quality_panel,
+    write_quality_panel_html,
+    write_quality_summary,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
@@ -491,6 +497,12 @@ def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[s
             result["trajectory_regulation"] = data["trajectory_regulation"]
         if "guidance_manifestation" in data:
             result["guidance_manifestation"] = data["guidance_manifestation"]
+        if "quality_panel" in data:
+            result["quality_panel"] = data["quality_panel"]
+        if "quality_summary" in data:
+            result["quality_summary"] = data["quality_summary"]
+        if "quality_panel_html" in data:
+            result["quality_panel_html"] = data["quality_panel_html"]
         if "suggested_next_command" in data:
             result["suggested_next_command"] = data["suggested_next_command"]
         return result
@@ -573,6 +585,8 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             workspace=_require_workspace(workspace),
             args=args,
         )
+    if action == "quality.summarize":
+        return _write_quality_projection_artifacts(workspace=_require_workspace(workspace))
     if action == "state.decide":
         return record_decision(
             workspace=_require_workspace(workspace),
@@ -690,6 +704,24 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
         f"Unsupported evaluation action: {action}",
         details={"action": action},
     )
+
+
+def _write_quality_projection_artifacts(*, workspace: Path) -> dict[str, Any]:
+    ws = workspace.expanduser().resolve()
+    panel = write_quality_panel(workspace=ws)
+    summary = write_quality_summary(workspace=ws, panel_payload=panel)
+    html = write_quality_panel_html(workspace=ws, panel_payload=panel)
+    return {
+        "ok": True,
+        "quality_panel": quality_panel_path(ws).resolve().relative_to(ws).as_posix(),
+        "quality_summary": summary["path"],
+        "quality_summary_sha256": summary["sha256"],
+        "quality_panel_html": html["path"],
+        "quality_panel_html_sha256": html["sha256"],
+        "overall_status": panel.get("overall_status"),
+        "recommended_actions": panel.get("recommended_actions", []),
+        "boundary": "quality_projection_only_not_gate_or_release_authority",
+    }
 
 
 def _seed_guidance_manifestation_report(*, workspace: Path, args: dict[str, Any]) -> dict[str, Any]:
