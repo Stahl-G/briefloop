@@ -194,7 +194,7 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
             if artifact_id == "candidate_claims":
                 return _validate_candidate_claims_payload(payload)
             if artifact_id == "screened_candidates":
-                return _validate_screened_candidates_payload(payload)
+                return _validate_screened_candidates_payload(payload, artifact_path=path)
             if artifact_id == "input_classification":
                 return _validate_input_classification_payload(payload, artifact_path=path)
             if artifact_id == "source_evidence_pack_manifest":
@@ -324,11 +324,24 @@ def _non_empty_scalar(value: Any) -> bool:
     )
 
 
-def _validate_screened_candidates_payload(payload: Any) -> tuple[str, str]:
+def _validate_screened_candidates_payload(
+    payload: Any,
+    *,
+    artifact_path: Path | None = None,
+) -> tuple[str, str]:
     if isinstance(payload, list):
         return _validate_legacy_screened_candidates(payload)
     if isinstance(payload, dict):
-        return _validate_contract_screened_candidates(payload)
+        status, result = _validate_contract_screened_candidates(payload)
+        if status != ARTIFACT_VALID:
+            return status, result
+        universe_error = _screened_candidates_candidate_universe_error(
+            payload,
+            artifact_path=artifact_path,
+        )
+        if universe_error:
+            return ARTIFACT_INVALID, f"screened_candidates_schema_error:{universe_error}"
+        return status, result
     return ARTIFACT_INVALID, "screened_candidates_schema_error:not_list_or_object"
 
 
@@ -543,6 +556,71 @@ def _screened_candidates_discard_count(payload: dict[str, Any]) -> int:
         if isinstance(entries, list):
             count += len(entries)
     return count
+
+
+def _screened_candidates_candidate_universe_error(
+    payload: dict[str, Any],
+    *,
+    artifact_path: Path | None,
+) -> str | None:
+    if artifact_path is None:
+        return None
+    screening_policy = payload.get("screening_policy")
+    if not isinstance(screening_policy, dict):
+        return None
+    declared_total, total_error = _screened_candidates_total(payload, screening_policy)
+    if total_error or declared_total is None:
+        return None
+
+    candidate_payload = _read_json_payload(artifact_path.with_name("candidate_claims.json"))
+    if not isinstance(candidate_payload, list):
+        return None
+    candidate_status, _ = _validate_candidate_claims_payload(candidate_payload)
+    if candidate_status != ARTIFACT_VALID:
+        return None
+
+    if declared_total != len(candidate_payload):
+        return "candidate_universe_count_mismatch"
+
+    candidate_ids = _candidate_claim_ids(candidate_payload)
+    if candidate_ids is None:
+        return None
+
+    screened_ids: set[str] = set()
+    missing_screened_id = False
+    for bucket in ("selected", "excluded", "deprioritized"):
+        entries = payload.get(bucket)
+        if not isinstance(entries, list):
+            continue
+        for idx, candidate in enumerate(entries):
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = candidate.get("candidate_id")
+            if not _non_empty_string(candidate_id):
+                missing_screened_id = True
+                continue
+            normalized_id = candidate_id.strip()
+            if normalized_id not in candidate_ids:
+                return f"{bucket}[{idx}].unknown_candidate_id:{normalized_id}"
+            if normalized_id in screened_ids:
+                return f"duplicate_screened_candidate_id:{normalized_id}"
+            screened_ids.add(normalized_id)
+
+    if not missing_screened_id and screened_ids != candidate_ids:
+        return "candidate_universe_id_coverage_mismatch"
+    return None
+
+
+def _candidate_claim_ids(payload: list[Any]) -> set[str] | None:
+    ids: set[str] = set()
+    for candidate in payload:
+        if not isinstance(candidate, dict):
+            return None
+        candidate_id = candidate.get("candidate_id")
+        if not _non_empty_string(candidate_id):
+            return None
+        ids.add(candidate_id.strip())
+    return ids
 
 
 def _validate_input_classification_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
@@ -1106,6 +1184,13 @@ def _build_artifact_registry(
         "updated_at": updated_at,
         "artifacts": records,
     }
+
+
+def _read_json_payload(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
 
 
 def interpret_frozen_artifact_integrity(

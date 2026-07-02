@@ -1958,6 +1958,7 @@ def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -1996,6 +1997,7 @@ def test_state_check_accepts_legacy_object_screened_candidates_reason_only(tmp_p
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -2412,6 +2414,197 @@ def test_state_check_accepts_screened_candidates_complete_discard_audit(tmp_path
                     }
                 ],
                 "screening_policy": {"total_candidates": 4, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_screened_candidates_schema"
+
+
+def test_state_check_rejects_screened_candidates_total_below_candidate_universe(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [],
+                "screening_policy": {"total_candidates": 1, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:candidate_universe_count_mismatch"
+
+
+def test_state_check_rejects_screened_candidates_unknown_discard_id(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-999",
+                        "reason": "capacity_capped",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Dropped because section capacity was already filled.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert (
+        record["validation_result"]
+        == "screened_candidates_schema_error:excluded[0].unknown_candidate_id:CAND-999"
+    )
+
+
+def test_state_check_rejects_screened_candidates_duplicate_screened_id(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "reason": "capacity_capped",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Dropped because section capacity was already filled.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:duplicate_screened_candidate_id:CAND-001"
+
+
+def test_state_check_accepts_screened_candidates_total_matching_candidate_universe(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "reason": "capacity_capped",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Dropped because section capacity was already filled.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
             }
         )
         + "\n",
@@ -2851,6 +3044,62 @@ def test_default_topology_scout_completion_requires_screened_candidates(tmp_path
 
     assert excinfo.value.error_code == "E_REQUIRED_ARTIFACT_MISSING"
     assert "Required topology artifact for stage 'screener' 'screened_candidates'" in str(excinfo.value)
+    assert json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8")) == before_workflow
+    assert _event_records(ws) == before_events
+
+
+def test_default_topology_scout_completion_rejects_screened_candidate_universe_mismatch(tmp_path):
+    repo = _repo_with_role_topology(
+        tmp_path,
+        "default",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [],
+                "screening_policy": {"total_candidates": 1, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+    before_workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    before_events = _event_records(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="scout complete",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "candidate_universe_count_mismatch" in str(excinfo.value)
     assert json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8")) == before_workflow
     assert _event_records(ws) == before_events
 
