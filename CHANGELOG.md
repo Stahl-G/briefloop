@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Release/evidence synthetic blocker regressions**: packaged public-safe
+  evaluation cases now cover the remaining #96 release/evidence failure
+  patterns: unauthorized institution branding, mixed metric scope,
+  media-only legal/policy support, company-event claims missing latest official
+  checks, third-party price snapshots for formal-release treatment, and formal
+  release-candidate checks missing human approvals. These cases use explicit
+  synthetic Claim-Support Matrix records and release-readiness metadata only;
+  they do not add live source retrieval, automatic official-source judgment,
+  semantic truth proof, or public-release authorization.
 - **Minimal comparative evaluation packet**: added a public-safe v0.11.4
   comparison packet with three synthetic tasks, a direct prompt/template
   baseline arm, a BriefLoop-style workflow arm, frozen raw-output hashes, raw

@@ -48,6 +48,10 @@ from multi_agent_brief.product.quality_panel import (
     write_quality_panel_html,
     write_quality_summary,
 )
+from multi_agent_brief.product.release_approval import (
+    check_release_readiness,
+    release_readiness_report_path,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
@@ -506,6 +510,10 @@ def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[s
             result["quality_panel_html"] = data["quality_panel_html"]
         if "report_bundle_manifest" in data:
             result["report_bundle_manifest"] = data["report_bundle_manifest"]
+        if "release_readiness" in data:
+            result["release_readiness"] = data["release_readiness"]
+        if "release_readiness_report" in data:
+            result["release_readiness_report"] = data["release_readiness_report"]
         if "delivery_bundle_archive" in data:
             result["delivery_bundle_archive"] = data["delivery_bundle_archive"]
         if "audit_bundle_archive" in data:
@@ -598,6 +606,32 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             workspace=_require_workspace(workspace),
             args=args,
         )
+    if action == "synthetic.seed_claim_support_case":
+        return _seed_claim_support_case(
+            workspace=_require_workspace(workspace),
+            args=args,
+        )
+    if action == "release.check":
+        ws = _require_workspace(workspace).resolve()
+        result = check_release_readiness(
+            workspace=ws,
+            mode=str(args.get("mode") or ""),
+        )
+        payload = result.payload
+        return {
+            "ok": True,
+            "release_readiness_report": release_readiness_report_path(ws).relative_to(ws).as_posix(),
+            "release_readiness": {
+                "mode": payload.get("mode"),
+                "status": payload.get("status"),
+                "approval_required": payload.get("approval_required"),
+                "missing_roles": payload.get("missing_roles", []),
+                "blockers": payload.get("blockers", []),
+                "branding_context": payload.get("branding_context", {}),
+                "authorization": payload.get("authorization"),
+                "boundary": payload.get("boundary"),
+            },
+        }
     if action == "quality.summarize":
         return _write_quality_projection_artifacts(workspace=_require_workspace(workspace))
     if action == "packs.bundle":
@@ -755,6 +789,235 @@ def _write_bundle_projection_artifacts(*, workspace: Path) -> dict[str, Any]:
         "packaging_hygiene": (manifest.get("packaging_hygiene") or {}).get("status"),
         "boundary": "bundle_projection_only_not_delivery_or_release_authority",
     }
+
+
+def _seed_claim_support_case(*, workspace: Path, args: dict[str, Any]) -> dict[str, Any]:
+    scenario = str(args.get("scenario") or "").strip()
+    case = _claim_support_case_definition(scenario)
+    ws = workspace.expanduser().resolve()
+    intermediate = ws / "output" / "intermediate"
+    intermediate.mkdir(parents=True, exist_ok=True)
+    source_path = ws / "input" / "sources" / "source-001.md"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+
+    raw_excerpt = str(case["raw_excerpt"])
+    source_text = f"# Synthetic Source\n\n{raw_excerpt}\n"
+    source_path.write_text(source_text, encoding="utf-8")
+    char_start = source_text.index(raw_excerpt)
+    char_end = char_start + len(raw_excerpt)
+    span_id = case.get("evidence_span_id")
+    support_label = str(case["support_label"])
+    if span_id is None and support_label not in {"unsupported", "insufficient_evidence", "not_applicable"}:
+        span_id = "ESP-001-01"
+
+    _write_json(
+        intermediate / "claim_ledger.json",
+        [
+            {
+                "claim_id": "CL-0001",
+                "statement": str(case["claim_statement"]),
+                "source_id": "SRC-001",
+                "evidence_text": raw_excerpt,
+                "source_url": "https://example.com/synthetic-source",
+                "source_type": "web_search",
+                "claim_type": str(case.get("claim_type") or "fact"),
+                "metadata": {
+                    "source_title": str(case["source_title"]),
+                    "publisher": str(case["publisher"]),
+                    "published_at": "2026-06-30",
+                    "importance": "high",
+                    "synthetic_failure_pattern": scenario,
+                },
+            }
+        ],
+    )
+    _write_json(
+        intermediate / "atomic_claim_graph.json",
+        {
+            "schema_version": "mabw.atomic_claim_graph.v1",
+            "claims": [
+                {
+                    "claim_id": "CL-0001",
+                    "atoms": [
+                        {
+                            "atom_id": "AC-0001-01",
+                            "text": str(case["atom_text"]),
+                            "claim_role": str(case.get("claim_role") or "observed_fact"),
+                            "materiality": str(case.get("materiality") or "high"),
+                        }
+                    ],
+                    "edges": [],
+                }
+            ],
+        },
+    )
+    _write_json(
+        intermediate / "evidence_span_registry.json",
+        {
+            "schema_version": "mabw.evidence_span_registry.v1",
+            "sources": [
+                {
+                    "source_id": "SRC-001",
+                    "source_type": str(case["source_type"]),
+                    "source_path": "input/sources/source-001.md",
+                    "published_at": "2026-06-30",
+                    "source_tier": str(case["source_tier"]),
+                    "spans": [
+                        {
+                            "span_id": "ESP-001-01",
+                            "raw_excerpt": raw_excerpt,
+                            "hash": _span_hash(raw_excerpt),
+                            "span_role": str(case.get("span_role") or "direct_statement"),
+                            "char_start": char_start,
+                            "char_end": char_end,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    _write_json(
+        intermediate / "claim_support_matrix.json",
+        {
+            "schema_version": "mabw.claim_support_matrix.v1",
+            "metadata": {
+                "synthetic": True,
+                "issue": "#96",
+                "scenario": scenario,
+                "semantic_boundary": (
+                    "explicit_support_record_fixture_only_not_python_source_truth_judgment"
+                ),
+            },
+            "rows": [
+                {
+                    "row_id": "CSM-0001",
+                    "claim_id": "CL-0001",
+                    "atom_id": "AC-0001-01",
+                    "evidence_span_id": span_id,
+                    "support_label": support_label,
+                    "support_strength": str(case["support_strength"]),
+                    "support_reason": str(case["support_reason"]),
+                    "required_action": str(case["required_action"]),
+                    "repair_owner": str(case["repair_owner"]),
+                    "decision_source": "human",
+                    "metadata": {
+                        "synthetic_failure_pattern": scenario,
+                        "mode_scope": str(case["mode_scope"]),
+                    },
+                }
+            ],
+        },
+    )
+    (intermediate / "audited_brief.md").write_text(
+        f"# Synthetic Evidence Case\n\n## Executive Summary\n{case['claim_statement']} [src:CL-0001]\n",
+        encoding="utf-8",
+    )
+    return {
+        "ok": True,
+        "claim_support_matrix": "output/intermediate/claim_support_matrix.json",
+        "scenario": scenario,
+        "semantic_boundary": "synthetic_explicit_support_records_only_not_support_assessment",
+    }
+
+
+def _claim_support_case_definition(scenario: str) -> dict[str, Any]:
+    cases: dict[str, dict[str, Any]] = {
+        "mixed_metric_scope": {
+            "claim_statement": (
+                "Daily sector inflow, weekly concept inflow, and ETF subscription are comparable liquidity signals."
+            ),
+            "atom_text": "Mixed inflow metrics are comparable liquidity signals.",
+            "raw_excerpt": (
+                "Synthetic note lists daily sector inflow, weekly concept inflow, and ETF subscription as separate metrics."
+            ),
+            "source_title": "Synthetic Mixed Metric Snapshot",
+            "publisher": "Synthetic Data Service",
+            "source_type": "market_data",
+            "source_tier": "third_party_dataset",
+            "support_label": "insufficient_evidence",
+            "support_strength": "none",
+            "support_reason": (
+                "metric_scope_conflict: same-row metrics use different windows and populations."
+            ),
+            "required_action": "human_adjudication",
+            "repair_owner": "human_review",
+            "mode_scope": "research_review_or_above",
+            "evidence_span_id": None,
+        },
+        "media_only_legal_policy": {
+            "claim_statement": "A synthetic policy change is legally effective for covered issuers.",
+            "atom_text": "The policy change is legally effective.",
+            "raw_excerpt": (
+                "A synthetic media article says observers expect a policy change to become effective."
+            ),
+            "source_title": "Synthetic Policy Media Summary",
+            "publisher": "Example Media",
+            "source_type": "news_media",
+            "source_tier": "media_report",
+            "support_label": "unsupported",
+            "support_strength": "none",
+            "support_reason": "official_source_missing: media-only legal/policy claim lacks regulator text.",
+            "required_action": "block_release",
+            "repair_owner": "human_review",
+            "mode_scope": "research_review",
+            "evidence_span_id": None,
+        },
+        "company_event_missing_latest_official_check": {
+            "claim_statement": "SyntheticCo completed the asset sale described in media coverage.",
+            "atom_text": "SyntheticCo completed the asset sale.",
+            "raw_excerpt": (
+                "A synthetic media roundup says SyntheticCo was expected to close the asset sale."
+            ),
+            "source_title": "Synthetic Company Event Roundup",
+            "publisher": "Example Media",
+            "source_type": "news_media",
+            "source_tier": "media_report",
+            "support_label": "insufficient_evidence",
+            "support_strength": "none",
+            "support_reason": "latest_official_check_missing: no filing or company announcement check recorded.",
+            "required_action": "block_release",
+            "repair_owner": "human_review",
+            "mode_scope": "research_review",
+            "evidence_span_id": None,
+        },
+        "third_party_price_snapshot_formal_block": {
+            "claim_statement": "The benchmark price was 100 synthetic units at week-end close.",
+            "atom_text": "The benchmark price was 100 synthetic units.",
+            "raw_excerpt": "A third-party snapshot lists a 100 synthetic unit week-end indication.",
+            "source_title": "Synthetic Third-Party Price Snapshot",
+            "publisher": "Synthetic Price Page",
+            "source_type": "market_data",
+            "source_tier": "third_party_dataset",
+            "support_label": "weak_support",
+            "support_strength": "low",
+            "support_reason": (
+                "third_party_price_snapshot_formal_block: acceptable as internal caveat, "
+                "not a formal release source without exchange or terminal confirmation."
+            ),
+            "required_action": "block_release",
+            "repair_owner": "human_review",
+            "mode_scope": "formal_release_candidate",
+            "evidence_span_id": "ESP-001-01",
+        },
+    }
+    if scenario not in cases:
+        raise EvaluationCaseRunError(
+            f"Unknown synthetic claim-support scenario: {scenario}",
+            details={"scenario": scenario, "known_scenarios": sorted(cases)},
+        )
+    return cases[scenario]
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _span_hash(text: str) -> str:
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _seed_guidance_manifestation_report(*, workspace: Path, args: dict[str, Any]) -> dict[str, Any]:

@@ -6,7 +6,11 @@ projection coverage. v0.7.0 adds Improvement Memory control cases. The
 pre-release v0.11.1 issue-closure line adds synthetic Product OS blocker cases
 for durable source evidence pack validation, event-linked release readiness
 reports, trajectory retry-budget projection, and guidance manifestation
-`not_observable` diagnostics. The pre-release v0.11.2 reader-quality closeout
+`not_observable` diagnostics. It also includes #96 release/evidence synthetic
+blocker cases for unauthorized institution branding, mixed metric scope,
+media-only legal/policy support, company-event claims missing latest official
+checks, third-party price snapshots, and missing formal-release human
+approvals. The pre-release v0.11.2 reader-quality closeout
 line adds a same-evidence synthetic regression case that keeps materiality,
 reader-template, support-wording, and Quality Panel closeout projections visible
 without claiming model output improvement.
@@ -25,6 +29,7 @@ These cases validate control-surface behavior across:
 - Improvement Ledger / Memory materialization controls
 - durable source evidence pack manifest validation
 - event-linked release-readiness projection validation
+- explicit synthetic release/evidence blocker records for #96
 - trajectory-regulation projection from repeated retry decisions
 - guidance-manifestation diagnostics for materialized approved guidance
 - same-evidence reader-quality projection coverage
