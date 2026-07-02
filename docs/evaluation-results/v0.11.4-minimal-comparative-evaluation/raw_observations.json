@@ -1,0 +1,137 @@
+{
+  "schema_version": "briefloop.minimal_comparative_observations.v1",
+  "protocol_id": "v0.11.4-minimal-comparative-evaluation",
+  "synthetic": true,
+  "boundary": "public_safe_minimal_comparison_observations_not_quality_proof",
+  "observations": [
+    {
+      "observation_id": "OBS-001",
+      "task_id": "public_widget_weekly",
+      "arm_id": "C0_direct_prompt_template_baseline",
+      "reviewer_id": "R1",
+      "scores": {
+        "trace_visibility": 0,
+        "failure_visibility": 1,
+        "reader_cost": 0
+      },
+      "notes": [
+        "Concise output.",
+        "No explicit source-to-claim trace.",
+        "Monitoring language is not separated from fixture evidence."
+      ]
+    },
+    {
+      "observation_id": "OBS-002",
+      "task_id": "public_widget_weekly",
+      "arm_id": "C1_briefloop_workflow",
+      "reviewer_id": "R1",
+      "scores": {
+        "trace_visibility": 2,
+        "failure_visibility": 2,
+        "reader_cost": 1
+      },
+      "notes": [
+        "Source label and appendix are visible.",
+        "Unsupported timing language is downgraded.",
+        "Output is longer than the direct baseline."
+      ]
+    },
+    {
+      "observation_id": "OBS-003",
+      "task_id": "management_monthly",
+      "arm_id": "C0_direct_prompt_template_baseline",
+      "reviewer_id": "R1",
+      "scores": {
+        "trace_visibility": 0,
+        "failure_visibility": 0,
+        "reader_cost": 0
+      },
+      "notes": [
+        "Concise output.",
+        "Training-complete claim is not tied to fixture evidence."
+      ]
+    },
+    {
+      "observation_id": "OBS-004",
+      "task_id": "management_monthly",
+      "arm_id": "C1_briefloop_workflow",
+      "reviewer_id": "R1",
+      "scores": {
+        "trace_visibility": 2,
+        "failure_visibility": 2,
+        "reader_cost": 1
+      },
+      "notes": [
+        "Unsupported completion claim is reframed as under review.",
+        "Source appendix adds trace at the cost of extra length."
+      ]
+    },
+    {
+      "observation_id": "OBS-005",
+      "task_id": "document_review",
+      "arm_id": "C0_direct_prompt_template_baseline",
+      "reviewer_id": "R1",
+      "scores": {
+        "trace_visibility": 0,
+        "failure_visibility": 0,
+        "reader_cost": 0
+      },
+      "notes": [
+        "Output is short.",
+        "Ready-to-send and compliance language exceed the fixture boundary."
+      ]
+    },
+    {
+      "observation_id": "OBS-006",
+      "task_id": "document_review",
+      "arm_id": "C1_briefloop_workflow",
+      "reviewer_id": "R1",
+      "scores": {
+        "trace_visibility": 2,
+        "failure_visibility": 2,
+        "reader_cost": 1
+      },
+      "notes": [
+        "Release and compliance authority are explicitly excluded.",
+        "Output separates supported process description from approval."
+      ]
+    },
+    {
+      "observation_id": "OBS-007",
+      "task_id": "public_widget_weekly",
+      "arm_id": "C0_direct_prompt_template_baseline",
+      "reviewer_id": "R2",
+      "scores": {
+        "trace_visibility": 0,
+        "failure_visibility": 1,
+        "reader_cost": 0
+      },
+      "notes": [
+        "Second reviewer agreed that trace is absent.",
+        "Second reviewer treated the monitoring language as partially caveated."
+      ]
+    },
+    {
+      "observation_id": "OBS-008",
+      "task_id": "public_widget_weekly",
+      "arm_id": "C1_briefloop_workflow",
+      "reviewer_id": "R2",
+      "scores": {
+        "trace_visibility": 2,
+        "failure_visibility": 2,
+        "reader_cost": 1
+      },
+      "notes": [
+        "Second reviewer found the source appendix useful.",
+        "Second reviewer noted extra length as a reader cost."
+      ]
+    }
+  ],
+  "non_goals": [
+    "output_quality_proof",
+    "semantic_truth_proof",
+    "cross_domain_benchmark",
+    "speed_claim",
+    "delivery_or_release_approval"
+  ]
+}

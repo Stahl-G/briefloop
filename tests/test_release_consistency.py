@@ -53,6 +53,7 @@ class TestCheckReleaseConsistency:
         assert result.returncode == 0, f"Script failed:\n{result.stdout}\n{result.stderr}"
         assert "Product baseline readiness passes" in result.stdout
         assert "BriefLoop skill freshness passes" in result.stdout
+        assert "Minimal comparative evaluation packet passes" in result.stdout
         assert "ALL CHECKS PASSED" in result.stdout
 
     def test_strict_mode_runs(self):
@@ -137,6 +138,28 @@ class TestCheckReleaseConsistency:
         assert "BriefLoop skill freshness failed" in output
         assert "canonical.references/version-matrix.md.freshness" in output
         assert "skill freshness failed" in output
+
+    def test_minimal_comparative_eval_failure_prints_diagnostics(self, monkeypatch, capsys):
+        spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=1,
+                stdout='{"ok": false, "errors": ["protocol.yaml schema_version mismatch"]}\n',
+                stderr="comparative eval failed\n",
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        assert module.check_minimal_comparative_eval() is False
+        output = capsys.readouterr().out
+        assert "Minimal comparative evaluation check failed" in output
+        assert "protocol.yaml schema_version mismatch" in output
+        assert "comparative eval failed" in output
 
 
 def test_release_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):

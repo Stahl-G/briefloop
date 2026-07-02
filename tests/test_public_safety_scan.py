@@ -165,6 +165,19 @@ def test_public_safety_scan_does_not_flag_long_normal_f_words(tmp_path):
     assert findings == []
 
 
+def test_public_safety_scan_allows_sha256_hex_lines(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "protocol.yaml"
+    sample.write_text(
+        "sha256: f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert findings == []
+
+
 def test_public_safety_scan_does_not_broadly_allow_tests_directory(tmp_path):
     module = _load_module()
     module.ROOT = tmp_path

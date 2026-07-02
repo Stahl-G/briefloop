@@ -1,0 +1,121 @@
+schema_version: briefloop.minimal_comparative_evaluation.v1
+evaluation_id: v0.11.4-minimal-comparative-evaluation
+status: public_safe_observation_packet
+synthetic: true
+runtime_effect: none
+boundary: preregistered_minimal_comparison_not_quality_proof
+
+comparison:
+  arms:
+    - arm_id: C0_direct_prompt_template_baseline
+      label: Direct prompt / template baseline
+      description: A single-pass brief-style output without BriefLoop control artifacts.
+    - arm_id: C1_briefloop_workflow
+      label: BriefLoop workflow
+      description: A BriefLoop-style output with visible source labels and control-boundary framing.
+  primary_questions:
+    - Does the output preserve source/claim/audit trace better than the baseline?
+    - Does the output expose unsupported or over-authoritative language that the baseline hides?
+    - Does the output introduce reader-facing costs such as length, citation clutter, or template drift?
+
+tasks:
+  - task_id: public_widget_weekly
+    product_entry: industry-weekly
+    public_safe: true
+    allowed_sources:
+      - source_id: SYN_SRC_T1
+        title: Example public widget price bulletin
+        url: https://example.com/briefloop/public-widget-prices
+    output_constraints:
+      - Use only public-safe fixture facts.
+      - Do not claim market-wide truth.
+      - Do not claim publication or release readiness.
+    outputs:
+      C0_direct_prompt_template_baseline:
+        path: raw_outputs/task1_C0_direct_prompt.md
+        sha256: 9f2cb6da1abf4cc599e556cb4aec2e02192bd2feb4220c6b26749f7384ff6139
+      C1_briefloop_workflow:
+        path: raw_outputs/task1_C1_briefloop.md
+        sha256: b8a4a1aaf7cfc0c60a735e6a801298b35dea7e16345165304be775f36347cfab
+  - task_id: management_monthly
+    product_entry: management-monthly
+    public_safe: true
+    allowed_sources:
+      - source_id: SYN_SRC_T2
+        title: Example operations metric snapshot
+        url: https://example.com/briefloop/operations-metric-snapshot
+    output_constraints:
+      - Use only public-safe fixture facts.
+      - Keep completion claims tied to fixture support.
+      - Do not claim delivery or release approval.
+    outputs:
+      C0_direct_prompt_template_baseline:
+        path: raw_outputs/task2_C0_direct_prompt.md
+        sha256: ef5843f5bad5d8d9a0d597eaaa293d8025cae80e8f15036282f50f7ae084c5cc
+      C1_briefloop_workflow:
+        path: raw_outputs/task2_C1_briefloop.md
+        sha256: 09e1449e3918856a04f0f9b3bf6e613c1f487050b2df7956b26ef4315831e62a
+  - task_id: document_review
+    product_entry: document-review
+    public_safe: true
+    allowed_sources:
+      - source_id: SYN_SRC_T3
+        title: Example public-safe policy-change memo
+        url: https://example.com/briefloop/policy-change-memo
+    output_constraints:
+      - Use only public-safe fixture facts.
+      - Do not claim compliance approval.
+      - Do not claim the document is ready to send.
+    outputs:
+      C0_direct_prompt_template_baseline:
+        path: raw_outputs/task3_C0_direct_prompt.md
+        sha256: 67a6d3eff2a7fb479f4d0d1381c407e1fc4c64a581c57d3c6eef0fc7ccd0e0ef
+      C1_briefloop_workflow:
+        path: raw_outputs/task3_C1_briefloop.md
+        sha256: e3febe8d6e93b76bcbaa2fe535542c45ec85cd3917ef7bfa342f7a3193278ede
+
+rubric:
+  scale: 0_to_2_observation_only
+  dimensions:
+    trace_visibility:
+      description: Whether a reader can see source-to-claim or source-appendix trace.
+      values:
+        "0": no visible trace
+        "1": partial trace
+        "2": visible source/claim/audit trace
+    failure_visibility:
+      description: Whether unsupported or over-authoritative language is exposed or downgraded.
+      values:
+        "0": hidden or unmarked
+        "1": caveated but not fully surfaced
+        "2": explicit warning, downgrade, or boundary language
+    reader_cost:
+      description: Reader-facing cost such as length, citation clutter, or extra scaffolding.
+      values:
+        "0": low cost
+        "1": moderate cost
+        "2": high cost
+
+observations:
+  path: raw_observations.json
+  required_arms:
+    - C0_direct_prompt_template_baseline
+    - C1_briefloop_workflow
+  min_tasks: 3
+  min_distinct_reviewers: 2
+  min_tasks_with_second_reviewer: 1
+  metrics_policy: keep_raw_observations_separate_from_interpretable_metrics
+
+reporting_policy:
+  - Report negative, mixed, or null results without rewriting the hypothesis.
+  - Keep raw observed assessments separate from valid interpretable metrics.
+  - Do not aggregate these observations into a product-quality score.
+  - Do not describe synthetic observations as live runtime benchmark results.
+
+non_goals:
+  - output_quality_proof
+  - semantic_truth_proof
+  - speed_claim
+  - cross_domain_benchmark
+  - delivery_or_release_approval
+  - automatic_publication

@@ -188,6 +188,8 @@ def _allowed_fixture(path: Path, line: str, kind: str) -> bool:
         return True
     if kind == "lark_token" and re.search(r"\b(?:oc|ou|on|om)_x+\b", line):
         return True
+    if kind == "lark_token" and re.search(r"\bsha256\b", line, re.IGNORECASE):
+        return True
     return False
 
 

@@ -12,6 +12,7 @@ Checks:
   8. Public safety scan passes for tracked release files
   9. Product baseline readiness guard passes
   10. BriefLoop operator skill freshness guard passes
+  11. Minimal comparative evaluation packet guard passes
 
 Usage:
   python scripts/check_release_consistency.py [--strict] [--no-tag]
@@ -229,6 +230,37 @@ def check_briefloop_skill_freshness() -> bool:
     return True
 
 
+def check_minimal_comparative_eval() -> bool:
+    """Run v0.11.4 minimal comparative evaluation packet guard."""
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "check_minimal_comparative_eval.py"), "--json"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    payload_ok = False
+    if result.returncode == 0 and stdout:
+        try:
+            payload = json.loads(stdout)
+            payload_ok = payload.get("ok") is True
+        except json.JSONDecodeError:
+            payload_ok = False
+    if result.returncode != 0 or not payload_ok:
+        print("  [FAIL] Minimal comparative evaluation check failed:")
+        if stdout:
+            print("         stdout:")
+            for line in stdout.splitlines():
+                print(f"           {line}")
+        if stderr:
+            print("         stderr:")
+            for line in stderr.splitlines():
+                print(f"           {line}")
+        if not stdout and not stderr:
+            print("         no stdout/stderr captured")
+        return False
+    return True
+
+
 def main(strict: bool = False, check_tag: bool = True) -> int:
     print("Release Consistency Check")
     print("=" * 40)
@@ -301,6 +333,12 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("BriefLoop skill freshness passes", skill_freshness_ok)
     except Exception as exc:
         check("BriefLoop skill freshness passes", False, str(exc))
+
+    try:
+        comparative_eval_ok = check_minimal_comparative_eval()
+        check("Minimal comparative evaluation packet passes", comparative_eval_ok)
+    except Exception as exc:
+        check("Minimal comparative evaluation packet passes", False, str(exc))
 
     print()
     if ERRORS:

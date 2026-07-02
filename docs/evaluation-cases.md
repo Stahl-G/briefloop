@@ -11,6 +11,11 @@ line adds a same-evidence synthetic regression case that keeps materiality,
 reader-template, support-wording, and Quality Panel closeout projections visible
 without claiming model output improvement.
 
+The pre-release v0.11.4 minimal comparative evaluation packet lives under
+`docs/evaluation-results/`. It is a separate public-safe comparison packet with
+frozen raw outputs and raw observations; it is not a packaged eval-case runner
+benchmark and does not claim general output-quality improvement.
+
 These cases validate control-surface behavior across:
 
 - deterministic quality gates
