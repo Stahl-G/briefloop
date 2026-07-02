@@ -3203,6 +3203,88 @@ def test_default_topology_screener_replay_rejects_without_contamination(tmp_path
     assert _state_file(ws, "event_log").read_bytes() == before_events
 
 
+def test_default_topology_satisfied_screener_artifact_is_frozen(tmp_path):
+    repo = _repo_with_role_topology(
+        tmp_path,
+        "default",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {"candidate_id": "CAND-001", "claim": "ExampleCo opened a demo facility.", "source_id": "SRC-001"},
+                {"candidate_id": "CAND-002", "claim": "ExampleCo expanded production.", "source_id": "SRC-002"},
+            ]
+        )
+        + "\n",
+    )
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                        "evidence_text": "ExampleCo opened a demo facility in June.",
+                        "source_id": "SRC-001",
+                        "published_at": "2026-06-01",
+                    }
+                ],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "reason": "capacity_capped",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Dropped because section capacity was already filled.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 2, "max_items": 8},
+            }
+        )
+        + "\n",
+    )
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="scout complete",
+    )
+    registry_before = _state_file(ws, "artifact_registry").read_bytes()
+
+    screened_path = _intermediate(ws) / "screened_candidates.json"
+    screened = json.loads(screened_path.read_text(encoding="utf-8"))
+    screened["excluded"][0]["explanation"] = "Illegally changed after topology-satisfied Screener completion."
+    screened_path.write_text(
+        json.dumps(screened, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "Frozen artifact" in str(excinfo.value)
+    assert "screened_candidates.json" in str(excinfo.value)
+    assert "owner stage 'screener'" in str(excinfo.value)
+    assert _state_file(ws, "artifact_registry").read_bytes() == registry_before
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["run_integrity"]["status"] == "contaminated"
+    assert workflow["run_integrity"]["reference_eligible"] is False
+    assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
+    contamination_events = [
+        event for event in _event_records(ws)
+        if event["event_type"] == "run_integrity_contaminated"
+    ]
+    assert len(contamination_events) == 1
+    assert contamination_events[0]["metadata"]["reason_code"] == "frozen_artifact_changed"
+
+
 def test_topology_satisfaction_respects_target_stage_feedback_blockers(tmp_path):
     repo = _repo_with_role_topology(
         tmp_path,
