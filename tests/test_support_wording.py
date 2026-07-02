@@ -47,7 +47,13 @@ def _claim(*, source_category: str = "company_press_release", confidence: str = 
     }
 
 
-def _write_claim_stack(ws: Path, *, row: dict | None = None, claim: dict | None = None) -> None:
+def _write_claim_stack(
+    ws: Path,
+    *,
+    row: dict | None = None,
+    claim: dict | None = None,
+    atom_materiality: str = "high",
+) -> None:
     claim_payload = claim or _claim()
     _write_json(ws / "output" / "intermediate" / "claim_ledger.json", [claim_payload])
     source_file = ws / "input" / "sources" / "source-001.txt"
@@ -65,7 +71,7 @@ def _write_claim_stack(ws: Path, *, row: dict | None = None, claim: dict | None 
                             "atom_id": "AC-0001-01",
                             "text": "ExampleCo may expand shipments this quarter.",
                             "claim_role": "forward_looking_inference",
-                            "materiality": "high",
+                            "materiality": atom_materiality,
                         }
                     ],
                     "edges": [],
@@ -162,6 +168,56 @@ def test_support_wording_ignores_invalid_csm_as_support_authority(tmp_path: Path
     assert projection["support_artifact_status"] == "invalid"
     assert projection["summary_counts"]["unsupported_reader_claim_count"] == 0
     assert all(finding["finding_type"] != "unsupported_claim_reaches_reader" for finding in projection["findings"])
+
+
+def test_support_wording_flags_unsupported_label_even_when_not_policy_blocking(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_claim_stack(
+        ws,
+        atom_materiality="low",
+        row=_csm_row(
+            support_label="unsupported",
+            support_strength="none",
+            required_action="none",
+        ),
+    )
+    (ws / "output" / "brief.md").write_text(
+        "# Brief\n\nExampleCo will expand shipments this quarter. [S1]\n",
+        encoding="utf-8",
+    )
+
+    projection = project_workspace_support_wording(ws)
+
+    assert projection["support_artifact_status"] == "valid"
+    assert projection["summary_counts"]["unsupported_reader_claim_count"] == 1
+    assert any(
+        finding["finding_type"] == "unsupported_claim_reaches_reader"
+        and finding["severity"] == "human_review"
+        for finding in projection["findings"]
+    )
+    assert {item["action"] for item in projection["recommended_actions"]} == {"request_human_review"}
+    assert validate_support_wording_payload(projection) is None
+
+
+def test_support_wording_rejects_invalid_claim_ledger_entries(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    invalid_claim = {**_claim(), "statement": "", "source_id": ""}
+    _write_json(ws / "output" / "intermediate" / "claim_ledger.json", [invalid_claim])
+    (ws / "output" / "brief.md").write_text(
+        "# Brief\n\nExampleCo will expand shipments this quarter. [S1]\n",
+        encoding="utf-8",
+    )
+
+    projection = project_workspace_support_wording(ws)
+    status = build_workspace_status(ws)
+    panel = build_quality_panel(ws)
+
+    assert projection["status"] == "invalid_claim_ledger"
+    assert projection["reason"].startswith("claim_ledger_invalid:claims[0].")
+    assert projection["findings"] == []
+    assert status["support_wording"]["status"] == "invalid_claim_ledger"
+    assert panel["support_wording"]["status"] == "invalid_claim_ledger"
+    assert validate_support_wording_payload(projection) is None
 
 
 def test_support_wording_unreadable_reader_target_is_not_checked(tmp_path: Path) -> None:

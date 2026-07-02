@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 
 
@@ -56,6 +57,7 @@ SUPPORT_WORDING_SUMMARY_FIELDS = {
 
 _INTERMEDIATE = Path("output/intermediate")
 _READER_TARGETS = ("output/brief.md", "output/delivery/brief.md")
+_UNSUPPORTED_SUPPORT_LABELS = {"unsupported", "contradicted", "insufficient_evidence"}
 _AUTHORITY_KEYS = {
     "approve_delivery",
     "approved_for_delivery",
@@ -215,6 +217,15 @@ def _read_claims(path: Path) -> tuple[list[dict[str, Any]], str | None]:
         claims = ClaimLedger._claim_items_from_json(payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         return [], f"claim_ledger_unreadable:{type(exc).__name__}"
+    for index, claim in enumerate(claims):
+        violations = [
+            violation
+            for violation in ClaimContract.validate(claim)
+            if violation.severity == "error"
+        ]
+        if violations:
+            first = violations[0]
+            return [], f"claim_ledger_invalid:claims[{index}].{first.field}"
     return [dict(claim) for claim in claims], None
 
 
@@ -260,7 +271,7 @@ def _project_target(
         strong_wording = bool(_STRONG_WORDING_RE.search(context))
         framed = bool(_FRAMING_RE.search(context))
         attributed = bool(_ATTRIBUTION_RE.search(context))
-        if support.get("blocking"):
+        if support.get("blocking") or support.get("unsupported"):
             findings.append(_finding(
                 finding_type="unsupported_claim_reaches_reader",
                 severity="human_review",
@@ -336,6 +347,7 @@ def _support_index(projection: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                 "weak": False,
                 "downgrade_required": False,
                 "inference_required": False,
+                "unsupported": False,
             },
         )
         item["blocking"] = bool(item["blocking"] or atom.get("blocking"))
@@ -344,6 +356,10 @@ def _support_index(projection: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         item["inference_required"] = bool(item["inference_required"] or atom.get("inference_framing_required"))
         labels = atom.get("support_labels") if isinstance(atom.get("support_labels"), list) else []
         item["support_labels"].update(str(label) for label in labels if str(label).strip())
+        item["unsupported"] = bool(
+            item["unsupported"]
+            or any(str(label).strip() in _UNSUPPORTED_SUPPORT_LABELS for label in labels)
+        )
     for item in index.values():
         item["support_labels"] = sorted(item["support_labels"])
     return index
