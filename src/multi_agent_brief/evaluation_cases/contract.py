@@ -199,6 +199,9 @@ def validate_case_contract(root: str | Path) -> dict[str, Any]:
             action = str(command.get("action") or "")
             if action not in ALLOWED_ACTIONS:
                 errors.append(f"{command_prefix}.action is not allowlisted: {action}.")
+            continue_on_failure = command.get("continue_on_failure")
+            if continue_on_failure is not None and not isinstance(continue_on_failure, bool):
+                errors.append(f"{command_prefix}.continue_on_failure must be a boolean.")
             args = command.get("args") or {}
             if not isinstance(args, dict):
                 errors.append(f"{command_prefix}.args must be an object.")
