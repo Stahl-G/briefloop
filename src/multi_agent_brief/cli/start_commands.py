@@ -113,11 +113,13 @@ ROLE_TOPOLOGY_HANDOFF_NOTE = (
     "write output/intermediate/candidate_claims.json first, then "
     "output/intermediate/screened_candidates.json, and record "
     "`state stage-complete --stage scout`; the screener stage is satisfied by topology "
-    "and must not be run as a separate specialist. With role_topology=strict, Scout "
-    "writes only candidate_claims.json, then delegate Screener to write "
-    "screened_candidates.json. In all modes both artifacts remain required evidence "
-    "for Claim Ledger. Runtime may split Scout work internally, but chunk outputs "
-    "are scratch material only; only deterministic joined artifacts count."
+    "and must not be run as a separate specialist. Do not delegate Screener and "
+    "do not call `state stage-complete --stage screener` in default topology. "
+    "With role_topology=strict, Scout writes only candidate_claims.json, then "
+    "delegate Screener to write screened_candidates.json. In all modes both "
+    "artifacts remain required evidence for Claim Ledger. Runtime may split "
+    "Scout work internally, but chunk outputs are scratch material only; only "
+    "deterministic joined artifacts count."
 )
 RUNTIME_WEBSEARCH_ZERO_RESULT_NOTE = (
     "Runtime WebSearch zero-result guard: if runtime WebSearch reports `Did 0 searches`, "
@@ -506,7 +508,7 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"3. multi-agent-brief inputs extract --config {ws_path}/config.yaml  (if PDF/DOCX/image inputs exist)\n"
             f"4. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
             "5. Use the 'scout' subagent. Runtime may split Scout work internally, but chunk outputs are scratch only; write the deterministic joined output/intermediate/candidate_claims.json once. Default topology: also write output/intermediate/screened_candidates.json from the joined candidate universe, then stage-complete scout. Strict topology: write only candidate_claims.json.\n"
-            "6. Strict topology only: use the 'screener' subagent to write output/intermediate/screened_candidates.json.\n"
+            "6. Default topology: do not delegate Screener and do not call state stage-complete --stage screener; topology satisfaction records Screener after Scout completes. Strict topology only: use the 'screener' subagent to write output/intermediate/screened_candidates.json.\n"
             "7. Use the 'claim-ledger' subagent to write output/intermediate/claim_drafts.json, then run "
             f"multi-agent-brief state freeze-claim-ledger --workspace {ws_path} to create output/intermediate/claim_ledger.json, "
             f"then run multi-agent-brief state stage-complete --workspace {ws_path} --stage claim-ledger --reason \"Claim Ledger was frozen from claim drafts.\"\n"
@@ -790,6 +792,11 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
     artifact_by_id = {str(item.get("artifact_id")): item for item in artifacts if item.get("artifact_id")}
+    stage_ids = {
+        str(stage.get("stage_id") or "")
+        for stage in stages
+        if stage.get("stage_id")
+    }
     stage_protocol: list[dict[str, Any]] = []
 
     for stage in stages:
@@ -820,8 +827,10 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
                 })
 
         topology_satisfaction = _protocol_topology_satisfaction(
+            stage_id,
             stage.get("topology_satisfaction") or {},
             artifact_by_id,
+            stage_ids=stage_ids,
         )
         freeze_input_artifacts: list[dict[str, Any]] = []
         pre_completion_transactions: list[dict[str, Any]] = []
@@ -925,13 +934,17 @@ def _ordered_role_topologies() -> list[str]:
 
 
 def _protocol_topology_satisfaction(
+    stage_id: str,
     rules: dict[str, Any],
     artifact_by_id: dict[str, dict[str, Any]],
+    *,
+    stage_ids: set[str],
 ) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for topology, rule in sorted(rules.items()):
         if not isinstance(rule, dict):
             continue
+        satisfied_by = str(rule.get("satisfied_by") or "")
         required_artifacts: list[dict[str, Any]] = []
         for artifact_id in rule.get("required_artifacts") or []:
             artifact_key = str(artifact_id)
@@ -945,10 +958,16 @@ def _protocol_topology_satisfaction(
                     "required": True,
                     "format": "",
                 })
-        result[str(topology)] = {
-            "satisfied_by": str(rule.get("satisfied_by") or ""),
+        projected_rule = {
+            "satisfied_by": satisfied_by,
             "required_artifacts": required_artifacts,
         }
+        if satisfied_by in stage_ids:
+            projected_rule["forbidden_replay_actions"] = [
+                f"delegate {stage_id}",
+                f"state stage-complete --stage {stage_id}",
+            ]
+        result[str(topology)] = projected_rule
     return result
 
 
@@ -1023,9 +1042,11 @@ def _render_topology_satisfaction(rules: dict[str, Any]) -> str:
         if not isinstance(rule, dict):
             continue
         artifacts = _protocol_paths(rule.get("required_artifacts") or [])
+        forbidden = ", ".join(str(item) for item in (rule.get("forbidden_replay_actions") or []))
+        replay_text = f"; do not replay {forbidden}" if forbidden else ""
         parts.append(
             f"{topology}: satisfied by {rule.get('satisfied_by') or 'unknown'} "
-            f"when {artifacts} exist"
+            f"when {artifacts} exist{replay_text}"
         )
     return "; ".join(parts) if parts else "none"
 
@@ -1565,6 +1586,11 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
                 md_content.append(
                     f"  - `{topology}`: satisfied by `{rule.get('satisfied_by')}` when {artifacts} exist"
                 )
+                forbidden = rule.get("forbidden_replay_actions") or []
+                if forbidden:
+                    md_content.append(
+                        "    - Do not replay: " + ", ".join(str(item) for item in forbidden)
+                    )
             md_content.append(
                 "- Independent completion topologies: "
                 + (", ".join(stage.get("independent_completion_topologies") or []) or "none")

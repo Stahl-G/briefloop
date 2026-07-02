@@ -307,6 +307,10 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "drop duplicates silently during chunk join" in scout_chunk_contract["forbidden"]
     screener_protocol = protocol_stages["screener"]
     assert screener_protocol["topology_satisfaction"]["default"]["satisfied_by"] == "scout"
+    assert screener_protocol["topology_satisfaction"]["default"]["forbidden_replay_actions"] == [
+        "delegate screener",
+        "state stage-complete --stage screener",
+    ]
     assert screener_protocol["topology_satisfaction"]["default"]["required_artifacts"] == [
         {
             "artifact_id": "candidate_claims",
@@ -322,7 +326,17 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
         },
     ]
     assert screener_protocol["topology_satisfaction"]["human_assisted"]["satisfied_by"] == "scout"
+    assert screener_protocol["topology_satisfaction"]["human_assisted"]["forbidden_replay_actions"] == [
+        "delegate screener",
+        "state stage-complete --stage screener",
+    ]
     assert screener_protocol["independent_completion_topologies"] == ["strict"]
+    analyst_protocol = protocol_stages["analyst"]
+    assert analyst_protocol["topology_satisfaction"]["human_assisted"]["satisfied_by"] == "writer"
+    assert "forbidden_replay_actions" not in analyst_protocol["topology_satisfaction"]["human_assisted"]
+    editor_protocol = protocol_stages["editor"]
+    assert editor_protocol["topology_satisfaction"]["human_assisted"]["satisfied_by"] == "writer"
+    assert "forbidden_replay_actions" not in editor_protocol["topology_satisfaction"]["human_assisted"]
     claim_ledger_protocol = protocol_stages["claim-ledger"]
     assert claim_ledger_protocol["freeze_input_artifacts"] == [
         {
@@ -417,6 +431,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "runtime-internal scratch only" in text
     assert "append to candidate_claims.json from chunk workers" in text
     assert "topology satisfaction: default: satisfied by scout" in text
+    assert "do not replay delegate screener, state stage-complete --stage screener" in text
     assert "independent MUST produce (strict): screened_candidates at output/intermediate/screened_candidates.json" in text
     assert "role MUST produce freeze input: audited_brief at output/intermediate/audited_brief.md" in text
     assert (
@@ -1068,6 +1083,7 @@ def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
     assert "state stage-complete" in prompt
     assert "state finalize-complete" in prompt
     assert "With role_topology=default, Scout performs discovery and screening in one role" in prompt
+    assert "do not call `state stage-complete --stage screener`" in prompt
     assert "workspace is trusted in Codex" in prompt
     assert "install Codex runtime assets" in prompt
     assert "Codex writer flow protocol" in prompt
@@ -1242,6 +1258,7 @@ def test_handoff_with_config_generates_artifacts(tmp_path):
     assert "scratch only: `True`" in handoff_md
     assert "Join chunk outputs deterministically before writing workflow artifacts" in handoff_md
     assert "append to candidate_claims.json from chunk workers" in handoff_md
+    assert "Do not replay: delegate screener, state stage-complete --stage screener" in handoff_md
 
 
 def test_handoff_no_config_fails(tmp_path):
@@ -1283,6 +1300,7 @@ def test_build_handoff_claude_has_generate_brief(tmp_path):
     )
     assert "/generate-brief" in handoff.prompt
     assert "With role_topology=default, Scout performs discovery and screening in one role" in handoff.prompt
+    assert "do not call `state stage-complete --stage screener` in default topology" in handoff.prompt
     assert "strict: scout → screener" in handoff.prompt
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
@@ -1302,6 +1320,7 @@ def test_build_handoff_codex_maps_specialists_to_custom_agents(tmp_path):
     assert "Spawn the named Codex custom agent" in handoff.prompt
     assert ".codex/agents/scout.toml" in handoff.prompt
     assert "default: discovery + screening" in handoff.prompt
+    assert "do not call `state stage-complete --stage screener` in default topology" in handoff.prompt
     assert "strict topology or explicit repair/review only" in handoff.prompt
     assert ".codex/agents/claim-ledger.toml" in handoff.prompt
     assert "Do not call the next specialist until" in handoff.prompt

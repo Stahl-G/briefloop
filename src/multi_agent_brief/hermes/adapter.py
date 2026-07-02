@@ -649,6 +649,10 @@ count for stage completion.
 
 #### 2. Screener child (strict topology or explicit repair/review)
 
+In default topology, do not delegate Screener and do not call
+`state stage-complete --stage screener`; Scout writes `screened_candidates.json`
+and the Screener stage is satisfied by topology after Scout completion.
+
 ```python
 delegate_task(
     goal="Screen and rank MABW candidate claims",
@@ -977,6 +981,7 @@ As the Hermes Orchestrator main agent, execute:
    toolsets: ["file", "terminal", "web"]
 
 13. If role_topology is `strict`, after candidate_claims.json exists and is non-empty, delegate screener child. If role_topology is `default`, Scout must already have written screened_candidates.json and the screener stage is satisfied by topology:
+   Do not delegate Screener and do not call `state stage-complete --stage screener` in default topology.
    Goal: "Screen and rank MABW candidate claims"
    Input: output/intermediate/candidate_claims.json
    Write: output/intermediate/screened_candidates.json
