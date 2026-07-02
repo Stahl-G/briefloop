@@ -1,0 +1,20 @@
+[
+  {
+    "claim_id": "SYN_CLAIM_001",
+    "claim_type": "forecast",
+    "confidence": "low",
+    "epistemic_type": "hypothesis",
+    "evidence_relation": "inferred",
+    "evidence_text": "ExampleCo may expand shipments this quarter, according to a synthetic market report.",
+    "metadata": {
+      "retrieval_source_type": "local_file",
+      "source_category": "market_report",
+      "source_title": "Synthetic ExampleCo Market Report",
+      "underlying_evidence_type": "media_report"
+    },
+    "schema_version": "v2",
+    "source_id": "SYN_SRC_001",
+    "source_type": "manual",
+    "statement": "ExampleCo will expand shipments this quarter."
+  }
+]

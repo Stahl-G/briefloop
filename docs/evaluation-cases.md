@@ -6,7 +6,10 @@ projection coverage. v0.7.0 adds Improvement Memory control cases. The
 pre-release v0.11.1 issue-closure line adds synthetic Product OS blocker cases
 for durable source evidence pack validation, event-linked release readiness
 reports, trajectory retry-budget projection, and guidance manifestation
-`not_observable` diagnostics.
+`not_observable` diagnostics. The pre-release v0.11.2 reader-quality closeout
+line adds a same-evidence synthetic regression case that keeps materiality,
+reader-template, support-wording, and Quality Panel closeout projections visible
+without claiming model output improvement.
 
 These cases validate control-surface behavior across:
 
@@ -19,6 +22,7 @@ These cases validate control-surface behavior across:
 - event-linked release-readiness projection validation
 - trajectory-regulation projection from repeated retry decisions
 - guidance-manifestation diagnostics for materialized approved guidance
+- same-evidence reader-quality projection coverage
 - Hermes guidance invariants
 
 They are not benchmark scores and are not workflow artifacts.
@@ -83,6 +87,7 @@ Evaluation cases:
   reports as support proof or delivery approval
 - do not execute repair or rewrite briefs
 - do not add `evaluation_report.json` to runtime artifact contracts
+- do not claim that reader-quality projections prove better output quality
 
 ## Fixture Safety
 

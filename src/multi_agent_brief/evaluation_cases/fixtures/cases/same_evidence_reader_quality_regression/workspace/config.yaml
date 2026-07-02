@@ -1,0 +1,12 @@
+project:
+  name: Same Evidence Reader Quality Regression
+company: ExampleCo
+focus:
+  areas:
+    - tariff
+    - capacity
+language: en-US
+output:
+  formats:
+    - markdown
+  named_outputs: false

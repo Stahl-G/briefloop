@@ -1,0 +1,17 @@
+{
+  "claims": [
+    {
+      "atoms": [
+        {
+          "atom_id": "AC-0001-01",
+          "claim_role": "forward_looking_inference",
+          "materiality": "high",
+          "text": "ExampleCo may expand shipments this quarter."
+        }
+      ],
+      "claim_id": "SYN_CLAIM_001",
+      "edges": []
+    }
+  ],
+  "schema_version": "mabw.atomic_claim_graph.v1"
+}

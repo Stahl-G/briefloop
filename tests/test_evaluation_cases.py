@@ -38,14 +38,14 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
     assert rc == 0
     validation = json.loads(capsys.readouterr().out)
     assert validation["ok"] is True
-    assert validation["case_count"] == 16
+    assert validation["case_count"] == 17
 
     rc = main(["eval-cases", "run", "--repo-workdir", str(ROOT), "--json"])
 
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is True
-    assert result["passed_count"] == 16
+    assert result["passed_count"] == 17
     assert result["failed_count"] == 0
     assert {
         "unsupported_material_fact",
@@ -61,10 +61,39 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "release_readiness_forged_event_blocker",
         "trajectory_retry_budget_exhausted",
         "guidance_manifestation_not_observable",
+        "same_evidence_reader_quality_regression",
         "unapproved_entry_not_materialized",
         "approved_guidance_materialized",
         "reverted_entry_removed_from_next_snapshot",
     } == {case["case_id"] for case in result["results"]}
+
+
+def test_eval_cases_same_evidence_reader_quality_regression(capsys):
+    rc = main([
+        "eval-cases",
+        "run",
+        "--case-id",
+        "same_evidence_reader_quality_regression",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    result = json.loads(capsys.readouterr().out)
+    case = result["results"][0]
+    assert case["passed"] is True
+    assert [item["action"] for item in case["actions"]] == [
+        "state.check",
+        "status.show",
+        "quality.summarize",
+        "state.check",
+        "status.show",
+    ]
+    quality_action = case["actions"][2]
+    assert quality_action["quality_panel"] == "output/intermediate/quality_panel.json"
+    assert quality_action["quality_summary"] == "output/intermediate/quality_summary.md"
+    assert quality_action["quality_panel_html"] == "output/intermediate/quality_panel.html"
 
 
 def test_eval_cases_improvement_approved_case_materializes_snapshot(capsys):

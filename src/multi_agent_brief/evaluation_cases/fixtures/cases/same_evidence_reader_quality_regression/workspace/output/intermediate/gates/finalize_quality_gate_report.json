@@ -1,0 +1,42 @@
+{
+  "created_at": "2026-07-01T00:00:00+00:00",
+  "findings": [],
+  "gate_results": [
+    {
+      "blocking": false,
+      "finding_ids": [],
+      "gate_id": "coverage_omission",
+      "status": "pass"
+    },
+    {
+      "blocking": false,
+      "finding_ids": [],
+      "gate_id": "freshness",
+      "status": "pass"
+    },
+    {
+      "blocking": false,
+      "finding_ids": [],
+      "gate_id": "material_fact",
+      "status": "pass"
+    },
+    {
+      "blocking": false,
+      "finding_ids": [],
+      "gate_id": "target_relevance",
+      "status": "pass"
+    }
+  ],
+  "metadata": {
+    "brief": "output/brief.md",
+    "gate_stage_id": "finalize",
+    "ledger": "output/intermediate/claim_ledger.json",
+    "stage_id": "finalize"
+  },
+  "policy_pack": "default",
+  "report_date": "",
+  "schema_version": "multi-agent-brief-quality-gates/v1",
+  "workspace": ".",
+  "updated_at": "2026-07-01T00:00:00+00:00",
+  "status": "pass"
+}

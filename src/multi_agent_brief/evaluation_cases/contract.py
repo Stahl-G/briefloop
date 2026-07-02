@@ -33,6 +33,7 @@ ALLOWED_ACTIONS = {
     "provenance.build",
     "provenance.show",
     "provenance.validate",
+    "quality.summarize",
     "runtime.run_handoff",
     "status.show",
     "state.check",

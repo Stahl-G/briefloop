@@ -1,0 +1,33 @@
+{
+  "deprioritized": [
+    {
+      "candidate_id": "CAND-003",
+      "explanation": "Outside this synthetic brief's focus window.",
+      "reason_code": "off_focus",
+      "source_id": "SYN_SRC_003",
+      "statement": "Inventory movement commentary was outside the tariff watch focus."
+    }
+  ],
+  "excluded": [
+    {
+      "candidate_id": "CAND-002",
+      "explanation": "Capacity cap applied after same-evidence selection.",
+      "reason_code": "capacity_capped",
+      "source_id": "SYN_SRC_002",
+      "statement": "ExampleCo capacity expansion is delayed by tariff uncertainty."
+    }
+  ],
+  "screening_policy": {
+    "method": "synthetic_same_evidence_regression",
+    "total_candidates": 3
+  },
+  "selected": [
+    {
+      "candidate_id": "CAND-001",
+      "evidence_text": "ExampleCo may expand shipments this quarter, according to a synthetic market report.",
+      "retrieved_at": "2026-07-01",
+      "source_id": "SYN_SRC_001",
+      "statement": "ExampleCo will expand shipments this quarter."
+    }
+  ]
+}

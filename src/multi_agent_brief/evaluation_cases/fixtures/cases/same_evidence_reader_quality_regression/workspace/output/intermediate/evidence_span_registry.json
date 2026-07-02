@@ -1,0 +1,20 @@
+{
+  "schema_version": "mabw.evidence_span_registry.v1",
+  "sources": [
+    {
+      "retrieved_at": "2026-07-01T00:00:00Z",
+      "source_id": "SYN_SRC_001",
+      "source_path": "input/sources/source-001.txt",
+      "source_tier": "market_report",
+      "source_type": "manual",
+      "spans": [
+        {
+          "hash": "sha256:004025835bb813954b9ec7592145fa8513a5aefe6483aafd610ef0a818b67e16",
+          "raw_excerpt": "ExampleCo may expand shipments this quarter.",
+          "span_id": "ESP-001-01",
+          "span_role": "direct_statement"
+        }
+      ]
+    }
+  ]
+}
