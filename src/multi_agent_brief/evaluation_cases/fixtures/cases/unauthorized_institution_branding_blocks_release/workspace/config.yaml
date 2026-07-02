@@ -1,0 +1,18 @@
+project:
+  name: "Synthetic Unauthorized Branding Case"
+  company: "Synthetic Demo Company"
+  industry: "synthetic testing"
+  language: "en"
+  audience: "operator"
+report:
+  date: "2026-06-30"
+  cadence: "weekly"
+release:
+  branding:
+    required: true
+    institution_name: "Example Securities"
+    institution_use_authorization: "unauthorized"
+input:
+  path: "input"
+output:
+  path: "output"

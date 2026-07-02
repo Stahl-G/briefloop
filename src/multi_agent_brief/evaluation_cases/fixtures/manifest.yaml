@@ -276,6 +276,201 @@ cases:
           status: invalid
           validation_result: release_readiness_report_event_link_error:event_missing
 
+  - case_id: unauthorized_institution_branding_blocks_release
+    case_type: workspace
+    synthetic: true
+    description: Unauthorized synthetic institution branding blocks release readiness without authorizing public release.
+    initial_stage: finalize
+    commands:
+      - action: release.check
+        args:
+          mode: internal_draft
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: release.check
+          exit_code: 0
+          result_contains:
+            release_readiness:
+              status: blocked
+              blockers:
+                - institution_branding_not_authorized:unauthorized
+              branding_context:
+                status: blocked
+                institution_use_authorization: unauthorized
+              authorization: not_authorized_for_public_release
+        - action: state.check
+          exit_code: 0
+      artifact_statuses:
+        - artifact_id: release_readiness_report
+          status: valid
+          validation_result_contains: experimental_release_readiness_report
+
+  - case_id: mixed_metric_scope_support_blocker
+    case_type: workspace
+    synthetic: true
+    description: Mixed metric scopes are represented as explicit insufficient-evidence support records.
+    initial_stage: auditor
+    commands:
+      - action: synthetic.seed_claim_support_case
+        args:
+          scenario: mixed_metric_scope
+      - action: gates.check
+        args: {}
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: synthetic.seed_claim_support_case
+          exit_code: 0
+        - action: gates.check
+          exit_code: 0
+        - action: state.check
+          exit_code: 0
+      artifacts_exist:
+        - output/intermediate/claim_support_matrix.json
+        - output/intermediate/quality_gate_report.json
+      findings_any:
+        - finding_type: claim_support_matrix_blocking_support
+          blocking_level: blocking
+          gate_stage_id: auditor
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/claim_support_matrix.json
+          text: metric_scope_conflict
+      workflow_state:
+        current_stage: auditor
+        blocked: true
+
+  - case_id: media_only_legal_policy_blocks_research_review
+    case_type: workspace
+    synthetic: true
+    description: Media-only legal or policy claims are represented as unsupported official-source-missing records.
+    initial_stage: auditor
+    commands:
+      - action: synthetic.seed_claim_support_case
+        args:
+          scenario: media_only_legal_policy
+      - action: gates.check
+        args: {}
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifacts_exist:
+        - output/intermediate/claim_support_matrix.json
+        - output/intermediate/quality_gate_report.json
+      findings_any:
+        - finding_type: claim_support_matrix_blocking_support
+          blocking_level: blocking
+          gate_stage_id: auditor
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/claim_support_matrix.json
+          text: official_source_missing
+      workflow_state:
+        current_stage: auditor
+        blocked: true
+
+  - case_id: company_event_missing_latest_official_check
+    case_type: workspace
+    synthetic: true
+    description: Company-event claims missing latest official checks are represented as insufficient-evidence records.
+    initial_stage: auditor
+    commands:
+      - action: synthetic.seed_claim_support_case
+        args:
+          scenario: company_event_missing_latest_official_check
+      - action: gates.check
+        args: {}
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifacts_exist:
+        - output/intermediate/claim_support_matrix.json
+        - output/intermediate/quality_gate_report.json
+      findings_any:
+        - finding_type: claim_support_matrix_blocking_support
+          blocking_level: blocking
+          gate_stage_id: auditor
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/claim_support_matrix.json
+          text: latest_official_check_missing
+      workflow_state:
+        current_stage: auditor
+        blocked: true
+
+  - case_id: third_party_price_snapshot_formal_block
+    case_type: workspace
+    synthetic: true
+    description: Third-party price snapshots are explicit weak support that block formal-release treatment.
+    initial_stage: auditor
+    commands:
+      - action: synthetic.seed_claim_support_case
+        args:
+          scenario: third_party_price_snapshot_formal_block
+      - action: gates.check
+        args: {}
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      artifacts_exist:
+        - output/intermediate/claim_support_matrix.json
+        - output/intermediate/quality_gate_report.json
+      findings_any:
+        - finding_type: claim_support_matrix_blocking_support
+          blocking_level: blocking
+          gate_stage_id: auditor
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/claim_support_matrix.json
+          text: third_party_price_snapshot_formal_block
+      workflow_state:
+        current_stage: auditor
+        blocked: true
+
+  - case_id: formal_release_missing_human_approval
+    case_type: workspace
+    synthetic: true
+    description: Formal release-candidate checks remain blocked without required human approvals.
+    initial_stage: finalize
+    commands:
+      - action: release.check
+        args:
+          mode: formal_release_candidate
+      - action: state.check
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: release.check
+          exit_code: 0
+          result_contains:
+            release_readiness:
+              mode: formal_release_candidate
+              status: blocked
+              missing_roles:
+                - content_owner
+                - evidence_reviewer
+                - legal_or_compliance_reviewer
+              blockers:
+                - missing_required_approval:content_owner
+                - missing_required_approval:evidence_reviewer
+                - missing_required_approval:legal_or_compliance_reviewer
+              authorization: not_authorized_for_public_release
+        - action: state.check
+          exit_code: 0
+      artifact_statuses:
+        - artifact_id: release_readiness_report
+          status: valid
+          validation_result_contains: experimental_release_readiness_report
+
   - case_id: trajectory_retry_budget_exhausted
     case_type: workspace
     synthetic: true

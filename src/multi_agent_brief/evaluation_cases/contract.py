@@ -36,12 +36,14 @@ ALLOWED_ACTIONS = {
     "provenance.validate",
     "quality.summarize",
     "runtime.run_handoff",
+    "release.check",
     "status.show",
     "state.check",
     "state.decide",
     "state.finalize_complete",
     "state.stage_complete",
     "static.hermes_no_skip_finalize",
+    "synthetic.seed_claim_support_case",
 }
 
 ALLOWED_EXPECTED_KEYS = {
@@ -388,6 +390,14 @@ def _validate_command_args(*, prefix: str, action: str, args: dict[str, Any]) ->
             errors.append(f"{prefix}.args.feedback must be relative, not absolute.")
         elif _path_has_traversal_any_platform(feedback):
             errors.append(f"{prefix}.args.feedback must not contain path traversal.")
+    if action == "release.check":
+        mode = args.get("mode")
+        if not isinstance(mode, str) or not mode.strip():
+            errors.append(f"{prefix}.args.mode is required.")
+    if action == "synthetic.seed_claim_support_case":
+        scenario = args.get("scenario")
+        if not isinstance(scenario, str) or not scenario.strip():
+            errors.append(f"{prefix}.args.scenario is required.")
     return errors
 
 

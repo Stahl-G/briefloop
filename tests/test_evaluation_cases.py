@@ -38,14 +38,14 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
     assert rc == 0
     validation = json.loads(capsys.readouterr().out)
     assert validation["ok"] is True
-    assert validation["case_count"] == 17
+    assert validation["case_count"] == 23
 
     rc = main(["eval-cases", "run", "--repo-workdir", str(ROOT), "--json"])
 
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is True
-    assert result["passed_count"] == 17
+    assert result["passed_count"] == 23
     assert result["failed_count"] == 0
     assert {
         "unsupported_material_fact",
@@ -59,6 +59,12 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "static_hermes_no_skip_finalize",
         "source_evidence_pack_blocks_non_evidence_file",
         "release_readiness_forged_event_blocker",
+        "unauthorized_institution_branding_blocks_release",
+        "mixed_metric_scope_support_blocker",
+        "media_only_legal_policy_blocks_research_review",
+        "company_event_missing_latest_official_check",
+        "third_party_price_snapshot_formal_block",
+        "formal_release_missing_human_approval",
         "trajectory_retry_budget_exhausted",
         "guidance_manifestation_not_observable",
         "same_evidence_reader_quality_regression",
@@ -99,6 +105,32 @@ def test_eval_cases_same_evidence_reader_quality_regression(capsys):
     assert bundle_action["report_bundle_manifest"] == "output/report_bundle_manifest.json"
     assert bundle_action["delivery_bundle_archive"] == "output/delivery_bundle.zip"
     assert bundle_action["audit_bundle_archive"] == "output/audit_bundle.zip"
+
+
+def test_eval_cases_issue_96_release_and_evidence_blockers(capsys):
+    case_ids = [
+        "unauthorized_institution_branding_blocks_release",
+        "mixed_metric_scope_support_blocker",
+        "media_only_legal_policy_blocks_research_review",
+        "company_event_missing_latest_official_check",
+        "third_party_price_snapshot_formal_block",
+        "formal_release_missing_human_approval",
+    ]
+    for case_id in case_ids:
+        rc = main([
+            "eval-cases",
+            "run",
+            "--case-id",
+            case_id,
+            "--repo-workdir",
+            str(ROOT),
+            "--json",
+        ])
+
+        assert rc == 0, case_id
+        result = json.loads(capsys.readouterr().out)
+        case = result["results"][0]
+        assert case["passed"] is True, case
 
 
 def test_eval_cases_improvement_approved_case_materializes_snapshot(capsys):

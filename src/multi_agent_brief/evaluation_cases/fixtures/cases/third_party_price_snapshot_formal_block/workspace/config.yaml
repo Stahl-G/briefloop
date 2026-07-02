@@ -1,0 +1,13 @@
+project:
+  name: "Synthetic Third-Party Price Snapshot Case"
+  company: "Synthetic Demo Company"
+  industry: "synthetic testing"
+  language: "en"
+  audience: "operator"
+report:
+  date: "2026-06-30"
+  cadence: "weekly"
+input:
+  path: "input"
+output:
+  path: "output"
