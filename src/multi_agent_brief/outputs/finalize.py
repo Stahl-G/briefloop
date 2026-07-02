@@ -27,6 +27,7 @@ from multi_agent_brief.product.policy_gate_adapter import (
     policy_forbidden_phrases,
     resolve_workspace_policy_gate_adapter,
 )
+from multi_agent_brief.product.citation_profile import resolve_workspace_citation_profile
 from multi_agent_brief.product.template_renderer import render_reader_markdown_with_template
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
 
@@ -81,6 +82,16 @@ class FinalizeResult:
     reader_clean: dict[str, Any] | None = None
     audit_binding: dict[str, Any] | None = None
     policy_gate_adapter: dict[str, Any] = field(default_factory=dict)
+    citation_profile: str = "executive"
+    citation_profile_source: str = "default"
+    citation_profile_runtime_effect: str = "citation_profile_resolution_only"
+    citation_profile_reader_citation_style: str = "source_label"
+    citation_profile_reader_metadata_level: str = "low_interference"
+    citation_profile_audit_trace_level: str = "complete_when_available"
+    citation_profile_delivery_exposes_internal_ids: bool = False
+    citation_profile_delivery_exposes_local_paths: bool = False
+    citation_profile_audit_bundle_keeps_trace: bool = True
+    citation_profile_warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -224,6 +235,10 @@ def finalize_reader_outputs(
         output_formats=formats,
         source_appendix_config=source_appendix_config or {},
     )
+    citation_profile = resolve_workspace_citation_profile(
+        workspace,
+        source_appendix_config=source_appendix_config or {},
+    )
     appendix_path = out / "source_appendix.md"
     appendix_trace_path = out / "source_appendix_trace.md"
     if appendix_path.exists():
@@ -340,6 +355,30 @@ def finalize_reader_outputs(
             audited_markdown=audited_markdown,
         ),
         policy_gate_adapter=policy_gate_adapter,
+        citation_profile=str(citation_profile.get("profile") or "executive"),
+        citation_profile_source=str(citation_profile.get("source") or "default"),
+        citation_profile_runtime_effect=str(
+            citation_profile.get("runtime_effect") or "citation_profile_resolution_only"
+        ),
+        citation_profile_reader_citation_style=str(
+            citation_profile.get("reader_citation_style") or "source_label"
+        ),
+        citation_profile_reader_metadata_level=str(
+            citation_profile.get("reader_metadata_level") or "low_interference"
+        ),
+        citation_profile_audit_trace_level=str(
+            citation_profile.get("audit_trace_level") or "complete_when_available"
+        ),
+        citation_profile_delivery_exposes_internal_ids=bool(
+            citation_profile.get("delivery_exposes_internal_ids")
+        ),
+        citation_profile_delivery_exposes_local_paths=bool(
+            citation_profile.get("delivery_exposes_local_paths")
+        ),
+        citation_profile_audit_bundle_keeps_trace=bool(
+            citation_profile.get("audit_bundle_keeps_trace")
+        ),
+        citation_profile_warnings=list(citation_profile.get("warnings") or []),
     )
     delivery_bundle = _build_delivery_bundle(
         output_dir=out,

@@ -101,6 +101,12 @@ breaking rename.
   resolved ReportTemplate section order to already-present reader Markdown
   sections before DOCX generation and reader-final checks; unresolved or extra
   top-level sections remain diagnostic/no-op.
+  Packaged ReportTemplates can declare a reader/audit `citation_profile`
+  (`executive`, `analyst`, or `audit`). Finalize reports and bundle manifests
+  record the resolved profile so reader delivery can stay on reader-safe
+  source labels while audit bundles preserve trace artifacts. This is
+  citation-surface metadata only; it does not prove support, relax gates,
+  remove audit trace, approve delivery, or decide release readiness.
   `sources materialize-pack` can materialize explicit manual or cached-package
   source records into `input/sources/` plus an optional hash-validated
   `source_evidence_pack_manifest.json`, giving recurring reports a durable

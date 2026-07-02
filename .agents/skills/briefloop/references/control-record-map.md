@@ -36,6 +36,10 @@ Owning commands for recent control-tool projections:
   writes a fresh `release_readiness_report.json` with event-log linkage and
   configured `branding_context` metadata. Do not treat a readiness report as
   refreshed merely because an approval was recorded.
+- `multi-agent-brief finalize` writes `finalize_report.json` fields for the
+  resolved citation profile (`executive`, `analyst`, or `audit`). These fields
+  describe reader/audit citation surfaces only; do not patch them by hand and
+  do not treat them as support, gate, delivery, or release authority.
 - `guidance_manifestation_report.json` is an imported/human diagnostic record
   for approved guidance manifestation labels; it is validated and surfaced by
   status / Quality Panel, but it is not an Improvement Memory writer and not a

@@ -7,6 +7,7 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
@@ -127,6 +128,16 @@ def _finalized_workspace(tmp_path: Path) -> Path:
         "source_appendix": "output/source_appendix.md",
         "source_appendix_trace": "output/source_appendix_trace.md",
         "source_appendix_trace_generation": "generated",
+        "citation_profile": "executive",
+        "citation_profile_source": "report_template.reader_contract.citation_profile",
+        "citation_profile_runtime_effect": "citation_profile_resolution_only",
+        "citation_profile_reader_citation_style": "source_label",
+        "citation_profile_reader_metadata_level": "low_interference",
+        "citation_profile_audit_trace_level": "complete_when_available",
+        "citation_profile_delivery_exposes_internal_ids": False,
+        "citation_profile_delivery_exposes_local_paths": False,
+        "citation_profile_audit_bundle_keeps_trace": True,
+        "citation_profile_warnings": [],
     }
     (intermediate / "finalize_report.json").write_text(
         json.dumps(finalize_report, ensure_ascii=False, indent=2) + "\n",
@@ -152,8 +163,10 @@ def test_report_template_registry_discovers_root_and_packaged_templates() -> Non
         assert market is not None
         assert market.section_order[0] == "executive_summary"
         assert market.section_order[-1] == "source_appendix"
+        assert market.reader_contract["citation_profile"] == "executive"
         solar = registry.get_by_report_type("solar_industry_periodic")
         assert solar is not None
+        assert solar.reader_contract["citation_profile"] == "executive"
         assert solar.section_order == (
             "cover",
             "executive_summary",
@@ -166,6 +179,7 @@ def test_report_template_registry_discovers_root_and_packaged_templates() -> Non
         )
         extract = registry.get_by_report_type("evidence_extract")
         assert extract is not None
+        assert extract.reader_contract["citation_profile"] == "analyst"
         assert extract.section_order == (
             "scope",
             "extracted_points",
@@ -173,6 +187,25 @@ def test_report_template_registry_discovers_root_and_packaged_templates() -> Non
             "gaps_and_flags",
             "source_appendix",
         )
+
+
+def test_report_template_registry_rejects_invalid_citation_profile(tmp_path: Path) -> None:
+    payload = yaml.safe_load(
+        (ROOT / "configs" / "report_templates" / "market_weekly.yaml").read_text(encoding="utf-8")
+    )
+    payload["reader_contract"] = dict(payload["reader_contract"])
+    payload["reader_contract"]["citation_profile"] = "public_release"
+    (tmp_path / "market_weekly.yaml").write_text(
+        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    registry = ReportTemplateRegistry.from_config_dir(tmp_path)
+
+    assert any(
+        item["field"] == "market_weekly.yaml.reader_contract.citation_profile"
+        for item in registry.validation_errors
+    )
 
 
 def test_report_template_config_parity_between_root_and_package_copy() -> None:
@@ -194,6 +227,12 @@ def test_report_bundle_manifest_splits_delivery_and_audit_artifacts(tmp_path: Pa
 
     assert manifest["template"]["template_id"] == "market_weekly"
     assert manifest["template"]["section_order"][0] == "executive_summary"
+    assert manifest["citation_profile"]["status"] == "available"
+    assert manifest["citation_profile"]["profile"] == "executive"
+    assert manifest["citation_profile"]["source"] == "report_template.reader_contract.citation_profile"
+    assert manifest["citation_profile"]["delivery_exposes_internal_ids"] is False
+    assert manifest["citation_profile"]["delivery_exposes_local_paths"] is False
+    assert manifest["citation_profile"]["audit_bundle_keeps_trace"] is True
     delivery_paths = {item["path"] for item in manifest["delivery_bundle"]["artifacts"]}
     audit_paths = {item["path"] for item in manifest["audit_bundle"]["artifacts"]}
     assert delivery_paths == {"output/delivery/brief.md"}
@@ -207,6 +246,67 @@ def test_report_bundle_manifest_splits_delivery_and_audit_artifacts(tmp_path: Pa
     assert manifest["audit_bundle"]["semantics"] == "audit_control_artifacts_only_not_reader_delivery"
     assert manifest["packaging_hygiene"]["status"] == "clean"
     assert manifest["packaging_hygiene"]["excluded_artifacts"] == []
+
+
+def test_report_bundle_manifest_rejects_invalid_finalize_citation_profile(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["citation_profile"] = "public_release"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ReportBundleProjectionError, match="citation profile invalid"):
+        build_report_bundle_manifest(workspace=ws)
+
+
+def test_report_bundle_manifest_rejects_forged_reader_citation_exposure(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["citation_profile_delivery_exposes_internal_ids"] = True
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ReportBundleProjectionError, match="citation profile invalid"):
+        build_report_bundle_manifest(workspace=ws)
+
+
+def test_report_bundle_archives_reject_reader_residue_even_with_matching_hash(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    brief = ws / "output" / "delivery" / "brief.md"
+    brief.write_text(
+        "# Reader Brief\n\n"
+        "Leaked internal citation [src:SYN_CLAIM_001] and local path /Users/example/source.md\n",
+        encoding="utf-8",
+    )
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifact_sha256"]["output/delivery/brief.md"] = _sha256_file(brief)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ReportBundleProjectionError, match="reader-clean residue scan"):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
+def test_report_bundle_manifest_rejects_failed_reader_clean_report(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["reader_clean"] = {"status": "fail", "src_marker_count": 1, "sample_findings": []}
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ReportBundleProjectionError, match="reader_clean.status must be pass"):
+        build_report_bundle_manifest(workspace=ws)
+
+
+def test_report_bundle_manifest_reports_unreadable_finalize_report(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    (ws / "output" / "intermediate" / "finalize_report.json").write_bytes(b"\xff\xfe\xfa")
+
+    with pytest.raises(ReportBundleProjectionError, match="finalize_report.json is unreadable"):
+        build_report_bundle_manifest(workspace=ws)
 
 
 def test_report_bundle_manifest_includes_quality_artifacts_in_audit_only(tmp_path: Path) -> None:

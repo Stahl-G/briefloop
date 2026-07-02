@@ -14,6 +14,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from multi_agent_brief.product.citation_profile import VALID_CITATION_PROFILES, normalize_citation_profile
+
 REPORT_TEMPLATE_SCHEMA_VERSION = "briefloop.report_template.v1"
 
 
@@ -179,6 +181,9 @@ def _reader_contract_from_payload(value: Any) -> dict[str, Any]:
     position = value.get("source_appendix_position")
     if isinstance(position, str) and position.strip():
         contract["source_appendix_position"] = position.strip()
+    citation_profile = normalize_citation_profile(value.get("citation_profile"))
+    if citation_profile:
+        contract["citation_profile"] = citation_profile
     return contract
 
 
@@ -198,6 +203,7 @@ def _reader_contract_errors(
         "required_table_sections",
         "max_executive_summary_words",
         "source_appendix_position",
+        "citation_profile",
     }
     for key in value:
         if key not in allowed_keys:
@@ -227,5 +233,12 @@ def _reader_contract_errors(
         errors.append({
             "field": f"{path_name}.reader_contract.source_appendix_position",
             "error": "must be last or any",
+        })
+    citation_profile = value.get("citation_profile")
+    if citation_profile is not None and normalize_citation_profile(citation_profile) not in VALID_CITATION_PROFILES:
+        profiles = ", ".join(sorted(VALID_CITATION_PROFILES))
+        errors.append({
+            "field": f"{path_name}.reader_contract.citation_profile",
+            "error": f"must be one of: {profiles}",
         })
     return errors

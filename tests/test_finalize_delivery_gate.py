@@ -437,6 +437,12 @@ def test_finalize_applies_report_template_order_before_delivery(tmp_path: Path):
     assert report["report_template_conformance"]["runtime_effect"] == "none"
     assert report["report_template_conformance"]["status"] == "warning"
     assert report["report_template_conformance"]["summary_counts"]["reader_block_warning_count"] > 0
+    assert report["citation_profile"] == "executive"
+    assert report["citation_profile_source"] == "report_template.reader_contract.citation_profile"
+    assert report["citation_profile_runtime_effect"] == "citation_profile_resolution_only"
+    assert report["citation_profile_delivery_exposes_internal_ids"] is False
+    assert report["citation_profile_delivery_exposes_local_paths"] is False
+    assert report["citation_profile_audit_bundle_keeps_trace"] is True
 
 
 def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, capsys):
@@ -908,6 +914,39 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert report["delivery_artifacts"] == ["output/delivery/brief.md"]
     assert not (output_dir / "delivery" / "source_appendix.md").exists()
     assert not (output_dir / "delivery" / "claim_ledger.json").exists()
+
+
+def test_finalize_records_citation_profile_override_without_reader_internal_ids(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "ExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+    _write_claim_ledger(intermediate / "claim_ledger.json")
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+        source_appendix_config={"citation_profile": "analyst"},
+    )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader = (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8")
+
+    assert result.citation_profile == "analyst"
+    assert report["citation_profile"] == "analyst"
+    assert report["citation_profile_source"] == "config.output.source_appendix.citation_profile"
+    assert report["citation_profile_reader_citation_style"] == "source_label"
+    assert report["citation_profile_delivery_exposes_internal_ids"] is False
+    assert report["citation_profile_delivery_exposes_local_paths"] is False
+    assert "[S1]" in reader
+    assert "[src:" not in reader
+    assert "SYN_CLAIM" not in reader
 
 
 def test_finalize_maps_src_claim_to_reader_source_label(tmp_path: Path):

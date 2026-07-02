@@ -43,6 +43,7 @@ reader_contract:
     - risks_and_watchlist
   max_executive_summary_words: 220
   source_appendix_position: last
+  citation_profile: executive
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only

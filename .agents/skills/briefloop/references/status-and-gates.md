@@ -52,6 +52,14 @@ slots, and Source Appendix position warnings. It can appear in status, handoff,
 sections, parse DOCX content, run gates, block delivery, approve release, score
 prose quality, or prove semantic correctness.
 
+Citation profiles split reader and audit citation surfaces. A ReportTemplate
+may declare `reader_contract.citation_profile` as `executive`, `analyst`, or
+`audit`; finalize reports and bundle manifests record the resolved profile.
+Reader delivery must stay reader-safe and must not expose Claim Ledger IDs,
+span IDs, local paths, or hashes. Audit bundles keep trace artifacts when
+present. Citation profiles do not prove support, relax gates, remove audit
+trace, approve delivery, decide release readiness, or create a quality score.
+
 Support-Calibrated Wording is warning-only. It reads existing reader Markdown,
 Claim Ledger metadata, source taxonomy, and valid Claim-Support Matrix policy
 signals when present to surface `support_wording` risks such as weak support

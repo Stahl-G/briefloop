@@ -210,6 +210,7 @@ def test_status_projects_report_template_section_order_without_writes(tmp_path: 
     assert projection["section_count"] == 8
     assert projection["section_order"][0] == "cover"
     assert "supply_chain_price_tracker" in projection["section_order"]
+    assert projection["reader_contract"]["citation_profile"] == "executive"
     assert projection["runtime_effect"] == "none"
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
     assert "[status] report_template: resolved" in formatted
