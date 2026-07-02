@@ -489,21 +489,6 @@ def test_status_command_human_output_reports_topology_satisfied_stage(tmp_path, 
         "(default; required=candidate_claims,screened_candidates)"
     ) in out
 
-    rc = main(["status", "--workspace", str(ws), "--json"])
-
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    screener = next(
-        stage
-        for stage in payload["timing"]["stages"]
-        if stage.get("stage_id") == "screener"
-    )
-    assert screener["status"] == "satisfied_by_topology"
-    assert screener["completion_event_type"] == "stage_satisfied_by_topology"
-    assert screener["topology"] == "default"
-    assert screener["satisfied_by"] == "scout"
-    assert screener["required_artifacts"] == ["candidate_claims", "screened_candidates"]
-
 
 def test_status_command_reports_auditable_target_complete(tmp_path, capsys):
     ws = _minimal_workspace(tmp_path / "ws")

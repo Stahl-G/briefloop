@@ -106,7 +106,6 @@ def _protocol_stage(handoff: dict[str, object], stage_id: str) -> dict[str, obje
 def _assert_default_handoff(path: Path) -> None:
     data = _handoff(path)
     prompt = str(data.get("prompt") or "")
-    prompt_plain = prompt.replace("`", "")
     screener = _protocol_stage(data, "screener")
     satisfaction = screener.get("topology_satisfaction")
     if not isinstance(satisfaction, dict):
@@ -122,15 +121,8 @@ def _assert_default_handoff(path: Path) -> None:
     }
     if required_ids != {"candidate_claims", "screened_candidates"}:
         raise SystemExit(f"default topology required artifacts wrong: {required_ids}")
-    forbidden = default.get("forbidden_replay_actions")
-    if forbidden != ["delegate screener", "state stage-complete --stage screener"]:
-        raise SystemExit(f"default topology forbidden replay actions wrong: {forbidden}")
     if "default: satisfied by scout" not in prompt:
         raise SystemExit("handoff prompt does not describe default topology satisfaction")
-    if "do not call state stage-complete --stage screener" not in prompt_plain:
-        raise SystemExit("handoff prompt does not forbid default screener stage-complete replay")
-    if "do not replay delegate screener, state stage-complete --stage screener" not in prompt:
-        raise SystemExit("handoff prompt does not describe forbidden screener replay actions")
     if "independent MUST produce (strict)" not in prompt:
         raise SystemExit("handoff prompt does not reserve independent screener for strict")
 

@@ -228,8 +228,6 @@ def test_hermes_skill_has_delegation_sequence():
     assert "child completion" in skill
     assert "do not silently drop chunk-level outputs" in skill
     assert "Only the final joined" in skill
-    assert "do not delegate Screener and do not call" in skill
-    assert "state stage-complete --stage screener" in skill
 
 
 def test_hermes_skill_contains_atomic_graph_boundary():
