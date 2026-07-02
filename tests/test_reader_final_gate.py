@@ -165,6 +165,16 @@ def test_reader_final_gate_detects_atomic_claim_graph_residue() -> None:
     assert any(finding.kind == "process_wording" and "Atomic Claim Graph" in finding.text for finding in result.findings)
 
 
+def test_reader_final_gate_detects_evidence_span_registry_residue() -> None:
+    markdown = "The reader-facing brief leaked audit span ESP-001-01."
+
+    result = detect_reader_residue(markdown, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["span_id_count"] == 1
+    assert any(finding.kind == "span_id" and finding.text == "ESP-001-01" for finding in result.findings)
+
+
 def test_reader_final_gate_allows_generic_atom_domain_wording() -> None:
     markdown = (
         "The materials appendix describes atom identity checks and atom identification methods "
