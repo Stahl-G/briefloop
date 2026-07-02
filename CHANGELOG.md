@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quality Panel real-run closeout guidance**: finalize reports and
+  `status --json` now project a post-finalize Quality Panel closeout
+  recommendation pointing operators to
+  `briefloop quality summarize --workspace <workspace>`. The Quality Panel and
+  summary/HTML renderers also show the audit/delivery bundle separation for
+  these artifacts. This is operator follow-up guidance only; finalize does not
+  auto-generate Quality Panel artifacts, Quality Panel remains audit-bundle
+  material when valid, and it does not approve delivery, decide release
+  readiness, run gates, repair content, or prove report correctness.
 - **Citation Profile Split**: packaged ReportTemplates can now declare
   `reader_contract.citation_profile` values (`executive`, `analyst`, or
   `audit`) so finalize reports and bundle manifests record the resolved

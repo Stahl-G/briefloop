@@ -26,6 +26,7 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "quality_panel.json",
         "quality_summary.md",
         "quality_panel.html",
+        "quality_panel_closeout",
         "approval init",
         "approval record",
         "release check",
@@ -76,6 +77,8 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "Reader Template Conformance is warning-only",
         "Citation profiles split reader and audit citation surfaces",
         "Support-Calibrated Wording is warning-only",
+        "quality_panel_closeout",
+        "excluded from reader-facing delivery bundles",
     ],
     "references/control-record-map.md": [
         "quality_panel.json",
@@ -86,6 +89,7 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "Support-Calibrated Wording is a status / Quality Panel projection",
         "release_readiness_report.json",
         "resolved citation profile",
+        "post-finalize closeout",
     ],
     "references/repo-development.md": [
         "check_product_baseline.py",

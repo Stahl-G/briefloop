@@ -118,6 +118,9 @@ Historical implementation name: MABW
     - `briefloop quality summarize --workspace <workspace>`
     - artifacts: `quality_panel.json`, `quality_summary.md`,
       `quality_panel.html`
+    - `quality_panel_closeout` in finalize/status is a post-finalize
+      recommendation to run `briefloop quality summarize --workspace
+      <workspace>`, not an automatic writer
     - quality summary and HTML are SHA-bound projections of
       `quality_panel.json`
     - audit bundle inclusion is allowed when present and valid; delivery bundle

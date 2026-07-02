@@ -482,6 +482,17 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, 
     assert (output_dir / "delivery" / "brief.md").exists()
     assert "[finalize] Delivery snapshot:" in captured.out
     assert (intermediate / "finalize_report.json").exists()
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    closeout = report["quality_panel_closeout"]
+    assert closeout["status"] == "recommended"
+    assert closeout["command"] == "briefloop quality summarize --workspace <workspace>"
+    assert closeout["runtime_effect"] == "operator_followup_only"
+    assert closeout["delivery_bundle"] == "excluded"
+    assert closeout["delivery_authority"] is False
+    assert closeout["release_authority"] is False
+    assert not (intermediate / "quality_panel.json").exists()
+    assert not (intermediate / "quality_summary.md").exists()
+    assert not (intermediate / "quality_panel.html").exists()
 
 
 def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Path, capsys):

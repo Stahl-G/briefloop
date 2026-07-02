@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.status import build_workspace_status, format_workspace_status
 from multi_agent_brief.product.quality_panel import (
     QUALITY_PANEL_HTML_BOUNDARY,
     QUALITY_PANEL_BOUNDARY,
@@ -417,9 +418,112 @@ def test_quality_panel_builds_incomplete_projection_without_writing(tmp_path: Pa
     assert payload["overall_status"] == "incomplete"
     assert payload["source_evidence"]["source_pack_status"] == "missing"
     assert payload["control_integrity"]["fact_layer_status"] == "missing"
+    assert payload["quality_panel_closeout"]["status"] == "not_ready"
     assert payload["recommended_actions"][0]["action"] == "materialize_durable_source_evidence"
     assert not quality_panel_path(ws).exists()
     assert validate_quality_panel_payload(payload) is None
+
+
+def test_status_recommends_quality_closeout_after_finalize_report_pass(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+
+    status = build_workspace_status(ws)
+    closeout = status["quality_panel_closeout"]
+
+    assert closeout["status"] == "recommended"
+    assert closeout["command"] == "briefloop quality summarize --workspace <workspace>"
+    assert closeout["runtime_effect"] == "operator_followup_only"
+    assert closeout["delivery_authority"] is False
+    assert closeout["release_authority"] is False
+    assert "quality_panel.json" in "\n".join(closeout["missing_artifacts"])
+    assert "quality_panel_closeout: recommended" in format_workspace_status(status)
+
+
+def test_quality_summarize_marks_closeout_generated_and_then_complete(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+
+    panel = write_quality_panel(workspace=ws)
+    summary = write_quality_summary(workspace=ws, panel_payload=panel)
+    html = write_quality_panel_html(workspace=ws, panel_payload=panel)
+
+    assert panel["quality_panel_closeout"]["status"] == "generated"
+    assert panel["quality_panel_closeout"]["audit_bundle"] == "included_when_present_and_valid"
+    assert panel["quality_panel_closeout"]["delivery_bundle"] == "excluded"
+    assert panel["quality_panel_closeout"]["gate_authority"] is False
+    assert validate_quality_panel_payload(panel) is None
+    assert summary["path"] == "output/intermediate/quality_summary.md"
+    assert html["path"] == "output/intermediate/quality_panel.html"
+
+    pre_registry_status = build_workspace_status(ws)
+    assert pre_registry_status["quality_panel_closeout"]["status"] == "stale_or_invalid"
+
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    status = build_workspace_status(ws)
+    assert status["quality_panel_closeout"]["status"] == "complete"
+    assert not status["quality_panel_closeout"]["missing_artifacts"]
+
+    summary_text = quality_summary_path(ws).read_text(encoding="utf-8")
+    html_text = quality_panel_html_path(ws).read_text(encoding="utf-8")
+    assert "## Quality Closeout And Bundle Separation" in summary_text
+    assert "- Delivery bundle: `excluded`" in summary_text
+    assert "Quality Closeout And Bundle Separation" in html_text
+
+
+def test_quality_closeout_rejects_stale_or_hand_edited_quality_artifacts(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    panel = write_quality_panel(workspace=ws)
+    write_quality_summary(workspace=ws, panel_payload=panel)
+    write_quality_panel_html(workspace=ws, panel_payload=panel)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    assert build_workspace_status(ws)["quality_panel_closeout"]["status"] == "complete"
+
+    html_path = quality_panel_html_path(ws)
+    html_path.write_text(
+        html_path.read_text(encoding="utf-8").replace("Run integrity", "Run integrity edited", 1),
+        encoding="utf-8",
+    )
+    status = build_workspace_status(ws)
+
+    closeout = status["quality_panel_closeout"]
+    assert closeout["status"] == "stale_or_invalid"
+    assert closeout["reason"] == "quality_panel_html_stale_or_hand_edited"
+    assert "quality_panel.html" in "\n".join(closeout["invalid_artifacts"])
+    assert status["suggested_next_command"].startswith("briefloop quality summarize --workspace ")
+
+
+def test_quality_panel_handles_corrupt_finalize_report_utf8_without_crashing(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    (ws / "output" / "intermediate" / "finalize_report.json").write_bytes(b"\xff\xfe")
+
+    status = build_workspace_status(ws)
+    panel = build_quality_panel(ws)
+
+    assert status["quality_panel_closeout"]["status"] == "not_ready"
+    assert panel["quality_panel_closeout"]["status"] == "not_ready"
+    assert validate_quality_panel_payload(panel) is None
+
+
+def test_quality_panel_payload_validator_rejects_forged_closeout_authority(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_finalize_report(ws)
+    payload = build_quality_panel(ws)
+
+    forged_delivery_bundle = json.loads(json.dumps(payload))
+    forged_delivery_bundle["quality_panel_closeout"]["delivery_bundle"] = "included"
+    assert validate_quality_panel_payload(forged_delivery_bundle) == (
+        "quality_panel_schema_error:quality_panel_closeout:"
+        "quality_panel_closeout_schema_error:delivery_bundle"
+    )
+
+    forged_delivery_authority = json.loads(json.dumps(payload))
+    forged_delivery_authority["quality_panel_closeout"]["delivery_authority"] = True
+    assert validate_quality_panel_payload(forged_delivery_authority) == (
+        "quality_panel_schema_error:quality_panel_closeout:"
+        "quality_panel_closeout_schema_error:delivery_authority"
+    )
 
 
 def test_quality_panel_surfaces_reader_template_conformance_without_authority(tmp_path: Path) -> None:
@@ -612,6 +716,7 @@ def test_quality_panel_html_renders_static_audit_attachment_without_external_ass
     assert "<h2>Gate Findings</h2>" in html
     assert "<h2>Claim And Support Risk</h2>" in html
     assert "<h2>Reader Clean And Citation Hygiene</h2>" in html
+    assert "<h2>Quality Closeout And Bundle Separation</h2>" in html
     assert "<h2>Recommended Next Actions</h2>" in html
     lower = html.lower()
     assert "<script" not in lower
