@@ -127,11 +127,11 @@ promise and CI guards. Surfaces can remain implemented without being frozen.
 | Surface | v0.11.0 freeze prerequisite |
 |---|---|
 | `event_log.jsonl` schema and event types | v0.7.2 completion transaction events must be stable; any v0.8 trajectory events must be added before freeze. |
-| `workflow_state.json` and decision vocabulary | `stage-complete` / `finalize-complete` semantics must be included; role convergence must settle the final stage set. |
+| `workflow_state.json` and decision vocabulary | `stage-complete` / `finalize-complete` semantics are included; topology-satisfied stages are recorded as explicit workflow/event records, not hidden skips. |
 | `runtime_manifest.json` | Single-writer preservation for `improvement` and `recipe` must stay covered. `operator_reported_model` is deferred to v0.7.3 / v0.8; reference-run summaries record model identity manually until then. |
-| `artifact_registry.json` | Artifact names must be stable after role convergence. |
-| `stage_specs.yaml` / stage order | Role convergence remains v0.8 work and must happen before freezing stage order. |
-| `artifact_contracts.yaml` | Role convergence must settle the artifact contract set; the candidate/screened coverage anchor remains an invariant unless migrated explicitly. |
+| `artifact_registry.json` | Artifact names remain stable across default and strict topology: Scout may satisfy Screener, but `candidate_claims.json` and `screened_candidates.json` stay distinct artifacts. |
+| `stage_specs.yaml` / stage order | Implemented topology satisfaction lets default topology mark Screener satisfied by Scout while strict topology keeps Screener independent. |
+| `artifact_contracts.yaml` | The artifact contract set is preserved across topology modes; the candidate/screened coverage anchor remains an invariant unless migrated explicitly. |
 | `orchestrator_contract.yaml` | Completion transaction semantics must be part of the frozen decision table. |
 | Gate report schema and gate ids | Reader-final / process-residue gates and coverage-side gates must be settled before freeze. |
 | Policy pack schema | Needs at least a second pack to prove generality. Pack contents are not frozen; they are a tuning layer. |
@@ -146,7 +146,7 @@ promise and CI guards. Surfaces can remain implemented without being frozen.
 | `audience_profile.md` format | Format may freeze, but profile content remains human-editable and never freezes. |
 | Reference sample manifest | Planned v0.8; experimental until at least one real usage cycle. |
 | Manifestation report | Planned v0.8 evaluation-only. It must never become a runtime blocker. |
-| Mode registry / role topology | Planned v0.8+; not eligible for v0.11.0 freeze until role convergence has been tested. |
+| Mode registry / role topology | Implemented for the supported default/strict role-topology contract. The default topology lets Scout satisfy Screener only when both candidate and screened artifacts exist; strict topology keeps Screener independent. This is workflow-shape control, not a speed or output-quality claim. |
 | Support matrix | It defines the freeze promise and must be updated with every frozen surface. |
 
 ## Allocation Principles

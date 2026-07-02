@@ -81,6 +81,22 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
     assert checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
     assert checks["support_matrix.wider_product_os_extensions"]["status"] == "pass"
+    assert (
+        checks["topology_convergence.docs/control-surfaces.md.required_current_contract"]["status"]
+        == "pass"
+    )
+    assert (
+        checks["topology_convergence.docs/control-surfaces.md.no_stale_planned_wording"]["status"]
+        == "pass"
+    )
+    assert (
+        checks["topology_convergence.docs/control-surfaces.zh-CN.md.required_current_contract"]["status"]
+        == "pass"
+    )
+    assert (
+        checks["topology_convergence.docs/control-surfaces.zh-CN.md.no_stale_planned_wording"]["status"]
+        == "pass"
+    )
     assert checks["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
     assert checks["golden_path.docs/golden-path.md.no_experiment_surface"]["status"] == "pass"
     assert checks["golden_path.docs/golden-path.zh-CN.md.required_product_entries"]["status"] == "pass"
@@ -177,6 +193,37 @@ def test_support_matrix_alignment_rejects_product_os_overpromotion(tmp_path, mon
     extension_check = checks_by_id["support_matrix.wider_product_os_extensions"]
     assert extension_check["status"] == "fail"
     assert "expected='Experimental'" in extension_check["detail"]
+
+
+def test_topology_convergence_guard_rejects_stale_planned_wording(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_TOPOLOGY_CONVERGENCE_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/control-surfaces.md":
+            text += (
+                "\n| Mode registry / role topology | Planned v0.8+; not eligible "
+                "for v0.11.0 freeze until role convergence has been tested. |\n"
+            )
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_topology_convergence_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert (
+        checks_by_id["topology_convergence.docs/control-surfaces.md.required_current_contract"]["status"]
+        == "pass"
+    )
+    stale_check = checks_by_id["topology_convergence.docs/control-surfaces.md.no_stale_planned_wording"]
+    assert stale_check["status"] == "fail"
+    assert "Planned v0.8+" in stale_check["detail"]
+    assert (
+        checks_by_id["topology_convergence.docs/control-surfaces.zh-CN.md.no_stale_planned_wording"]["status"]
+        == "pass"
+    )
 
 
 def test_public_overclaim_detector_rejects_contradictory_readme_claims() -> None:

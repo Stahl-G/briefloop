@@ -131,6 +131,31 @@ EXPECTED_SUPPORT_MATRIX_STATUSES = {
     "ReportSpec / ReportPack baseline contracts": "Supported",
     "Wider Product OS extensions": "Experimental",
 }
+REQUIRED_TOPOLOGY_CONVERGENCE_PHRASES = {
+    "docs/control-surfaces.md": [
+        "Implemented topology satisfaction",
+        "default topology mark Screener satisfied by Scout",
+        "strict topology keeps Screener independent",
+        "candidate_claims.json",
+        "screened_candidates.json",
+        "not a speed or output-quality claim",
+    ],
+    "docs/control-surfaces.zh-CN.md": [
+        "已实现 topology satisfaction",
+        "default topology 可由 Scout 满足 Screener",
+        "strict topology 保留独立 Screener",
+        "candidate_claims.json",
+        "screened_candidates.json",
+        "不是速度或输出质量声明",
+    ],
+}
+FORBIDDEN_TOPOLOGY_CONVERGENCE_PHRASES = [
+    "Mode registry / role topology | Planned v0.8+",
+    "not eligible for v0.11.0 freeze until role convergence has been tested",
+    "Role convergence remains v0.8 work",
+    "角色收敛通过真实测试前不冻结",
+    "角色收敛仍属 v0.8 工作",
+]
 REQUIRED_GOLDEN_PATH_PHRASES = {
     "docs/golden-path.md": [
         "v0.11 product baseline",
@@ -316,6 +341,7 @@ def main() -> int:
     _check_cli_and_docs_boundaries(checks)
     _check_golden_path_surface(checks)
     _check_support_matrix_alignment(checks)
+    _check_topology_convergence_surface(checks)
     _check_reference_run_surface(checks)
 
     ok = all(item["status"] == "pass" for item in checks)
@@ -586,6 +612,30 @@ def _check_support_matrix_alignment(checks: list[dict[str, str]]) -> None:
             f"support_matrix.{_slug(needle)}",
             status == expected_status,
             f"{needle} status={status!r} expected={expected_status!r}",
+        )
+
+
+def _check_topology_convergence_surface(checks: list[dict[str, str]]) -> None:
+    for rel_path, phrases in REQUIRED_TOPOLOGY_CONVERGENCE_PHRASES.items():
+        raw_text = (ROOT / rel_path).read_text(encoding="utf-8")
+        text = raw_text.lower()
+        missing = [phrase for phrase in phrases if phrase.lower() not in text]
+        forbidden = [
+            phrase
+            for phrase in FORBIDDEN_TOPOLOGY_CONVERGENCE_PHRASES
+            if phrase.lower() in text
+        ]
+        _append_check(
+            checks,
+            f"topology_convergence.{rel_path}.required_current_contract",
+            not missing,
+            f"required phrases missing={missing}",
+        )
+        _append_check(
+            checks,
+            f"topology_convergence.{rel_path}.no_stale_planned_wording",
+            not forbidden,
+            f"stale topology wording={forbidden}",
         )
 
 
