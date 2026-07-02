@@ -217,7 +217,16 @@ def _read_claims(path: Path) -> tuple[list[dict[str, Any]], str | None]:
         claims = ClaimLedger._claim_items_from_json(payload)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         return [], f"claim_ledger_unreadable:{type(exc).__name__}"
+    seen_ids: set[str] = set()
     for index, claim in enumerate(claims):
+        for field in ("claim_id", "statement", "source_id", "evidence_text"):
+            value = claim.get(field)
+            if not isinstance(value, str) or not value.strip():
+                return [], f"claim_ledger_invalid:claims[{index}].{field}"
+        claim_id = claim["claim_id"].strip()
+        if claim_id in seen_ids:
+            return [], f"claim_ledger_invalid:duplicate_claim_id:{claim_id}"
+        seen_ids.add(claim_id)
         violations = [
             violation
             for violation in ClaimContract.validate(claim)

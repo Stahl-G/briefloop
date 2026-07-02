@@ -15,6 +15,7 @@ FindingKind = Literal[
     "local_path",
     "debug_residue",
     "atom_id",
+    "span_id",
     "policy_forbidden_phrase",
 ]
 
@@ -27,6 +28,7 @@ COUNT_KEYS = {
     "local_path": "local_path_count",
     "debug_residue": "debug_residue_count",
     "atom_id": "atom_id_count",
+    "span_id": "span_id_count",
     "policy_forbidden_phrase": "policy_forbidden_phrase_count",
 }
 
@@ -43,6 +45,7 @@ _CONTEXTUAL_SRC_ID_RE = re.compile(
 _LOCAL_PATH_RE = re.compile(r"(?:/Users/[^\s)]+|/mnt/data/[^\s)]+|file://[^\s)]+|[A-Za-z]:\\[^\s)]+)")
 _DEBUG_RE = re.compile(r"\b(?:DEBUG|TRACE)\b")
 _ATOM_ID_RE = re.compile(r"(?<![A-Za-z0-9_])AC-\d{4}-\d{2}(?![A-Za-z0-9_])")
+_SPAN_ID_RE = re.compile(r"(?<![A-Za-z0-9_])ESP-\d{3,4}-\d{2}(?![A-Za-z0-9_])")
 _ATOM_ID_WORDING_RE = re.compile(r"\batom(?:\s+|-)+ids?\b", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
@@ -220,6 +223,15 @@ def detect_reader_residue(
             line_number=line_number,
             artifact=artifact,
             message="Reader-facing output contains an Atomic Claim Graph atom ID.",
+        )
+        _collect_regex_findings(
+            findings,
+            kind="span_id",
+            regex=_SPAN_ID_RE,
+            line=line,
+            line_number=line_number,
+            artifact=artifact,
+            message="Reader-facing output contains an Evidence Span Registry span ID.",
         )
         _collect_process_wording_findings(
             findings,

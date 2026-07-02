@@ -220,6 +220,28 @@ def test_support_wording_rejects_invalid_claim_ledger_entries(tmp_path: Path) ->
     assert validate_support_wording_payload(projection) is None
 
 
+def test_support_wording_rejects_non_string_claim_ledger_fields(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    invalid_claim = {**_claim(), "claim_id": 123}
+    _write_json(ws / "output" / "intermediate" / "claim_ledger.json", [invalid_claim])
+    (ws / "output" / "brief.md").write_text(
+        "# Brief\n\nExampleCo will expand shipments this quarter. [S1]\n",
+        encoding="utf-8",
+    )
+
+    projection = project_workspace_support_wording(ws)
+    status = build_workspace_status(ws)
+    panel = build_quality_panel(ws)
+
+    assert projection["status"] == "invalid_claim_ledger"
+    assert projection["reason"] == "claim_ledger_invalid:claims[0].claim_id"
+    assert projection["findings"] == []
+    assert status["support_wording"]["status"] == "invalid_claim_ledger"
+    assert status["support_wording"]["reason"] == "claim_ledger_invalid:claims[0].claim_id"
+    assert panel["support_wording"]["status"] == "invalid_claim_ledger"
+    assert validate_support_wording_payload(projection) is None
+
+
 def test_support_wording_unreadable_reader_target_is_not_checked(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_claim_stack(ws, row=None)

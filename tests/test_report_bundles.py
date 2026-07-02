@@ -290,6 +290,26 @@ def test_report_bundle_archives_reject_reader_residue_even_with_matching_hash(tm
     assert not (ws / "output" / "audit_bundle.zip").exists()
 
 
+def test_report_bundle_archives_reject_evidence_span_id_residue(tmp_path: Path) -> None:
+    ws = _finalized_workspace(tmp_path)
+    brief = ws / "output" / "delivery" / "brief.md"
+    brief.write_text(
+        "# Reader Brief\n\n"
+        "The reader text accidentally exposes audit span ESP-001-01. [S1]\n",
+        encoding="utf-8",
+    )
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifact_sha256"]["output/delivery/brief.md"] = _sha256_file(brief)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(ReportBundleProjectionError, match="span_id"):
+        write_report_bundle_manifest(workspace=ws, write_archives=True)
+
+    assert not (ws / "output" / "delivery_bundle.zip").exists()
+    assert not (ws / "output" / "audit_bundle.zip").exists()
+
+
 def test_report_bundle_manifest_rejects_failed_reader_clean_report(tmp_path: Path) -> None:
     ws = _finalized_workspace(tmp_path)
     report_path = ws / "output" / "intermediate" / "finalize_report.json"
