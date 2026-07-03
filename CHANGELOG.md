@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Release checklist**: added `docs/release-checklist.md` as an
+  operator-facing release preparation checklist covering version/tag/release
+  checks, release consistency, product baseline, launch smoke, public-claim
+  guardrails, GitHub release existence, and package metadata when applicable.
+  This is release operations documentation only, not a capability claim,
+  benchmark claim, or roadmap commitment.
 - **Launch/demo smoke guard**: added `scripts/check_launch_smoke.py` to verify
   the fresh source-checkout demo path reaches import, CLI version, demo init,
   doctor, and runtime handoff from a temporary workspace. The release

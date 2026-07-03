@@ -1,0 +1,162 @@
+# BriefLoop Release Checklist
+
+This checklist is an operator document for release preparation. It is not a
+capability claim, benchmark claim, or roadmap commitment. Passing this checklist
+means the release mechanics and public wording were checked; it does not prove
+semantic truth, output-quality improvement, automatic ready-to-send delivery, or
+publication readiness.
+
+Use it after the implementation line is already reviewed. Do not use it to rush
+unfinished product work into a release.
+
+## 1. Version, Tag, And Release Source Files
+
+Confirm the release version is represented consistently in the release source
+files before publishing:
+
+```bash
+python3 scripts/check_version_consistency.py
+python3 scripts/check_release_consistency.py --no-tag
+```
+
+Before creating a public release, check the version-bearing files that are
+expected to change together:
+
+- `VERSION`
+- `pyproject.toml`
+- `README.md`
+- `README.zh-CN.md`
+- `README_en.md` compatibility pointer shape
+- `CHANGELOG.md`
+- Hermes skill metadata and runtime asset parity when applicable
+- `Formula/multi-agent-brief.rb` when Homebrew/formula metadata is part of the
+  release
+
+If a branch claims a released version, the corresponding tag and GitHub release
+must exist before the release is called published.
+
+## 2. Required Release Guards
+
+Run the release/readiness guards from a clean checkout:
+
+```bash
+python3 scripts/check_release_consistency.py --no-tag
+python3 scripts/check_product_baseline.py
+python3 scripts/check_briefloop_skill_freshness.py
+python3 scripts/check_launch_smoke.py
+python3 scripts/check_launch_smoke.py --json
+git diff --check
+```
+
+`check_release_consistency.py --no-tag` delegates to the product baseline,
+skill freshness, minimal comparative evaluation packet, public-safety, and
+launch-smoke guards. Running the component scripts directly is still useful
+when diagnosing a failure because their output is narrower.
+
+The launch smoke is a setup and runtime-handoff check only. It creates a
+temporary demo workspace outside the repo and verifies import, CLI version,
+demo init, doctor, and runtime handoff. It does not call an LLM, require an API
+key, run subagents, judge output quality, or approve delivery.
+
+## 3. Public-Claim Guard
+
+Public docs, README text, release notes, launch notes, and demos must stay
+within the artifact-supported boundary. Required language:
+
+- traceability, not semantic proof
+- measurement infrastructure, not a benchmark claim
+- no output-quality improvement proof unless a specific public artifact supports
+  that exact claim
+- human-triggered delivery
+
+Forbidden release-claim categories include:
+
+- truth proof;
+- hallucination elimination;
+- automatic ready-to-send reports;
+- Python judgment of prose quality, semantic manifestation, or factual
+  regression;
+- benchmark-win proof from experiment/evaluation packets.
+
+Run:
+
+```bash
+python3 scripts/check_product_baseline.py
+```
+
+If the guard passes but a new public sentence still sounds stronger than the
+artifact can support, narrow the sentence anyway.
+
+## 4. GitHub Release And Package Metadata
+
+Before calling a release complete:
+
+```bash
+git tag --list "v<version>"
+gh release view "v<version>"
+```
+
+If the release uses package/archive metadata, verify those surfaces too:
+
+- GitHub release exists and points at the intended tag.
+- Source archive URL references the same tag.
+- Homebrew formula URL references the same tag when applicable.
+- Formula checksum matches the published archive when applicable.
+- Any package-index or install instructions point at a real published artifact,
+  not a local branch or private path.
+
+Do not update formula/package metadata ahead of the tag or release unless the
+release notes explicitly mark it as staged and unpublished.
+
+## 5. Public-Safe Evidence Links
+
+When release notes or launch docs cite evidence, verify each link exists and
+the linked document states its boundary:
+
+```bash
+test -f docs/reference-runs/v0.7.4-organoid-failure-study.md
+test -f docs/evaluation-results/v0.11.4-minimal-comparative-evaluation/README.md
+test -f docs/reference-runs/v0.11.3-product-os-reader-quality-reference.md
+```
+
+Evidence links may support process traceability, guard behavior, or a bounded
+public-safe observation. They must not be presented as semantic proof,
+output-quality proof, or release approval.
+
+## 6. Do Not Expand Scope During Release Prep
+
+Do not use this checklist as a reason to add new product scope during release
+prep. In particular, do not:
+
+- complete issue #156 Evidence Extraction Mode;
+- add a new warning surface;
+- add Studio, TypeScript, React, or UI work;
+- add semantic proof, quality score, support-sufficiency judgment, or release
+  authority;
+- rush an 080 formal experiment before release;
+- treat #357 or another unrelated slice as a launch blocker unless it is
+  already naturally fixed, reviewed, and merged.
+
+If a late issue is truly release-blocking, open a narrow hotfix PR. Otherwise,
+record it as a known limitation or follow-up.
+
+## 7. Release Record
+
+Record the final state in the release notes or an internal release log:
+
+```text
+Version:
+Commit:
+Tag:
+GitHub release:
+Release consistency: PASS / FAIL
+Product baseline: PASS / FAIL
+Launch smoke: PASS / FAIL
+Public-claim guard: PASS / FAIL
+GitHub release exists: PASS / FAIL
+Formula/package metadata: PASS / FAIL / NOT APPLICABLE
+Known non-blocking follow-ups:
+```
+
+Only mark the release complete after the code line, public wording, tag/release,
+and package metadata agree.
