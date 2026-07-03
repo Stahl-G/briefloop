@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -27,8 +28,33 @@ def test_launch_smoke_json_runs_demo_handoff_path():
         "repo_layout",
         "source_import",
         "cli_version",
+        "cli_version_matches_repo",
         "demo_init",
         "demo_doctor",
         "demo_runtime_handoff",
         "handoff_artifacts",
     }
+    by_id = {step["id"]: step for step in payload["steps"]}
+    assert by_id["cli_version_matches_repo"]["expected"] == (
+        SCRIPT.parent.parent / "VERSION"
+    ).read_text(encoding="utf-8").strip()
+    assert (
+        by_id["cli_version_matches_repo"]["actual"]
+        == by_id["cli_version_matches_repo"]["expected"]
+    )
+    assert not by_id["handoff_artifacts"]["missing"]
+
+
+def test_launch_smoke_rejects_cli_version_drift():
+    spec = importlib.util.spec_from_file_location("launch_smoke_test", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    result = module._check_cli_version({"stdout_tail": "0.8.5\n"})
+
+    assert result["ok"] is False
+    assert result["expected"] == (
+        SCRIPT.parent.parent / "VERSION"
+    ).read_text(encoding="utf-8").strip()
+    assert result["actual"] == "0.8.5"

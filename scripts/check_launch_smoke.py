@@ -85,6 +85,7 @@ def _run_step(
 
 def _check_repo_layout() -> dict[str, Any]:
     required = [
+        "VERSION",
         "pyproject.toml",
         "scripts/setup.sh",
         "scripts/demo.sh",
@@ -100,23 +101,79 @@ def _check_repo_layout() -> dict[str, Any]:
     }
 
 
+def _repo_version() -> str:
+    return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+
+
+def _check_cli_version(cli_step: dict[str, Any]) -> dict[str, Any]:
+    expected = _repo_version()
+    stdout = str(cli_step.get("stdout_tail") or "")
+    actual = stdout.strip().splitlines()[-1].strip() if stdout.strip() else ""
+    ok = actual == expected
+    return {
+        "id": "cli_version_matches_repo",
+        "ok": ok,
+        "expected": expected,
+        "actual": actual,
+        "error": (
+            f"CLI version {actual!r} did not match repo VERSION {expected!r}"
+            if not ok
+            else ""
+        ),
+    }
+
+
 def _check_artifacts(workspace: Path) -> dict[str, Any]:
     required = [
         workspace / "config.yaml",
         workspace / "sources.yaml",
         workspace / "user.md",
+        workspace / "output" / "intermediate" / "artifact_registry.json",
         workspace / "output" / "intermediate" / "agent_handoff.md",
         workspace / "output" / "intermediate" / "agent_handoff.json",
+        workspace / "output" / "intermediate" / "event_log.jsonl",
         workspace / "output" / "intermediate" / "runtime_manifest.json",
         workspace / "output" / "intermediate" / "workflow_state.json",
     ]
     missing = [str(path) for path in required if not path.exists()]
+    missing.extend(_missing_runtime_state_files(workspace))
     return {
         "id": "handoff_artifacts",
         "ok": not missing,
         "missing": missing,
         "error": f"missing expected handoff artifacts: {missing}" if missing else "",
     }
+
+
+def _missing_runtime_state_files(workspace: Path) -> list[str]:
+    handoff_path = workspace / "output" / "intermediate" / "agent_handoff.json"
+    try:
+        payload = json.loads(handoff_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return [str(handoff_path)]
+    files = payload.get("runtime_state_files")
+    if files is None:
+        return []
+    if isinstance(files, dict):
+        values = list(files.values())
+    elif isinstance(files, list):
+        values = files
+    else:
+        return ["agent_handoff.json.runtime_state_files"]
+    missing: list[str] = []
+    for item in values:
+        if not isinstance(item, str) or not item.strip():
+            missing.append("agent_handoff.json.runtime_state_files[]")
+            continue
+        candidate = (workspace / item).resolve(strict=False)
+        try:
+            candidate.relative_to(workspace.resolve())
+        except ValueError:
+            missing.append(item)
+            continue
+        if not candidate.exists():
+            missing.append(item)
+    return missing
 
 
 def run_launch_smoke() -> dict[str, Any]:
@@ -192,6 +249,11 @@ def run_launch_smoke() -> dict[str, Any]:
             steps.append(result)
             if not result["ok"]:
                 return _payload(False, steps, tmp_root=tmp_root, workspace_path=workspace_path)
+            if step_id == "cli_version":
+                version_check = _check_cli_version(result)
+                steps.append(version_check)
+                if not version_check["ok"]:
+                    return _payload(False, steps, tmp_root=tmp_root, workspace_path=workspace_path)
         steps.append(_check_artifacts(workspace))
         ok = all(step.get("ok") is True for step in steps)
         return _payload(ok, steps, tmp_root=tmp_root, workspace_path=workspace_path)
