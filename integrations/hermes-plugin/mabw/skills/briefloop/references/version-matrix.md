@@ -51,7 +51,9 @@ Historical implementation name: MABW
   - `multi-agent-brief extract --workspace <workspace> --scope <text>
     --source <file>` for `evidence_extract` source/scope registration and
     deterministic source-lock / logical-page seed / text-span seed registry
-    generation for copied source files and UTF-8 text sources
+    generation for copied source files and UTF-8 text sources; PDF/binary
+    sources can use already-present adjacent MinerU-derived `.mineru.md` text
+    representations, with original source bytes still bound in source lock
   - `multi-agent-brief sources add-file <path>`
   - `multi-agent-brief sources add-rss <url>`
   - `multi-agent-brief sources add-web-search --query <text>`

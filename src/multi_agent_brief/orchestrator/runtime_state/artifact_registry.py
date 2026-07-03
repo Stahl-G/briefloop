@@ -739,7 +739,73 @@ def _validate_evidence_extract_source_lock_payload(payload: Any, *, artifact_pat
         if source.get("lock_status") != "locked_source_bytes":
             return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.lock_status"
 
+        derived = source.get("derived_markdown")
+        if derived is not None:
+            derived_reason = _evidence_extract_derived_markdown_error(
+                workspace=workspace,
+                source=source,
+                normalized_id=normalized_id,
+            )
+            if derived_reason:
+                return ARTIFACT_INVALID, f"evidence_extract_source_lock_validation_error:{derived_reason}:{normalized_id}"
+            if source.get("registered_only") is True:
+                return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.registered_only"
+            if source.get("text_evidence_basis") != "mineru_derived_markdown":
+                return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.text_evidence_basis"
+            if source.get("text_evidence_path") != derived.get("path"):
+                return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.text_evidence_path"
+
     return ARTIFACT_VALID, "experimental_evidence_extract_source_lock"
+
+
+def _evidence_extract_derived_markdown_error(
+    *,
+    workspace: Path,
+    source: dict[str, Any],
+    normalized_id: str,
+) -> str | None:
+    derived = source.get("derived_markdown")
+    if not isinstance(derived, dict):
+        return "derived_markdown"
+    if derived.get("derivation") != "mineru_adjacent_markdown":
+        return "derived_markdown_derivation"
+    if derived.get("extractor") != "mineru":
+        return "derived_markdown_extractor"
+    if derived.get("source_path") != source.get("path"):
+        return "derived_markdown_source_path"
+    rel_path = derived.get("path")
+    if not _non_empty_string(rel_path):
+        return "derived_markdown_path"
+    derived_path, path_reason = _evidence_extract_locked_source_path(
+        workspace=workspace,
+        rel_path=rel_path.strip(),
+    )
+    if path_reason:
+        return "derived_markdown_path_unsafe"
+    assert derived_path is not None
+    if derived_path.suffix.lower() != ".md":
+        return "derived_markdown_extension"
+    if not derived_path.exists() or not derived_path.is_file():
+        return "derived_markdown_missing"
+    expected_sha = derived.get("sha256")
+    if not _non_empty_string(expected_sha):
+        return "derived_markdown_sha256"
+    if _sha256_file(derived_path) != expected_sha.strip():
+        return "derived_markdown_sha256_mismatch"
+    expected_size = derived.get("size_bytes")
+    if not isinstance(expected_size, int) or expected_size < 0:
+        return "derived_markdown_size_bytes"
+    try:
+        actual_size = derived_path.stat().st_size
+    except OSError:
+        return "derived_markdown_unreadable"
+    if actual_size != expected_size:
+        return "derived_markdown_size_mismatch"
+    filename = derived.get("filename")
+    if _non_empty_string(filename) and filename.strip() != derived_path.name:
+        return "derived_markdown_filename"
+    _ = normalized_id
+    return None
 
 
 def _evidence_extract_locked_source_path(*, workspace: Path, rel_path: str) -> tuple[Path | None, str | None]:
@@ -844,8 +910,30 @@ def _validate_evidence_extract_page_inventory_payload(payload: Any, *, artifact_
         assert locked_path is not None
         locked_source_text = ""
         locked_text_reason: str | None = None
+        text_basis = "utf8_text_file"
+        text_source_path = str(lock_source.get("path") or "")
+        text_source_sha256 = str(lock_source.get("source_sha256") or "")
+        text_needs_visual_inspection = False
         if lock_source.get("registered_only") is not True:
-            locked_source_text, locked_text_reason = _evidence_extract_inventory_text_for_source(locked_path)
+            (
+                locked_source_text,
+                locked_text_reason,
+                text_basis,
+                text_source_path,
+                text_source_sha256,
+                text_needs_visual_inspection,
+            ) = _evidence_extract_inventory_text_binding(
+                workspace=workspace,
+                lock_source=lock_source,
+                locked_path=locked_path,
+            )
+            if lock_source.get("derived_markdown") is not None or source.get("text_source_path") is not None:
+                if source.get("text_source_path") != text_source_path:
+                    return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:text_source_path_mismatch:{normalized_id}"
+                if source.get("text_source_sha256") != text_source_sha256:
+                    return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:text_source_sha256_mismatch:{normalized_id}"
+                if source.get("text_evidence_basis") != text_basis:
+                    return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:text_evidence_basis_mismatch:{normalized_id}"
 
         status = source.get("inventory_status")
         if status not in {
@@ -877,7 +965,7 @@ def _validate_evidence_extract_page_inventory_payload(payload: Any, *, artifact_
                 return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:source_text_not_empty:{normalized_id}"
             if source.get("needs_external_extraction_tool") is not False:
                 return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.needs_external_extraction_tool"
-            if source.get("visual_inspection_required") is not False:
+            if source.get("visual_inspection_required") is not text_needs_visual_inspection:
                 return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.visual_inspection_required"
         elif status == "unsupported_source_format_registered_only":
             if lock_source.get("registered_only") is not True and not locked_text_reason:
@@ -895,6 +983,10 @@ def _validate_evidence_extract_page_inventory_payload(payload: Any, *, artifact_
                 page_idx=page_idx,
                 seen_page_ids=seen_page_ids,
                 expected_char_end=len(locked_source_text) if status == "text_logical_page_seeded" else None,
+                expected_page_basis=text_basis if status == "text_logical_page_seeded" else None,
+                expected_needs_visual_inspection=(
+                    text_needs_visual_inspection if status == "text_logical_page_seeded" else None
+                ),
             )
             if page_reason:
                 return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.{page_reason}"
@@ -915,6 +1007,8 @@ def _evidence_extract_page_entry_error(
     page_idx: int,
     seen_page_ids: set[str],
     expected_char_end: int | None,
+    expected_page_basis: str | None = None,
+    expected_needs_visual_inspection: bool | None = None,
 ) -> str | None:
     if not isinstance(page, dict):
         return f"pages[{page_idx}]"
@@ -929,11 +1023,14 @@ def _evidence_extract_page_entry_error(
         return f"pages[{page_idx}].page_number"
     if page.get("page_label") != f"logical-page-{page_idx + 1}":
         return f"pages[{page_idx}].page_label"
-    if page.get("page_basis") != "utf8_text_file":
+    if expected_page_basis is not None and page.get("page_basis") != expected_page_basis:
         return f"pages[{page_idx}].page_basis"
     if page.get("has_searchable_text") is not True:
         return f"pages[{page_idx}].has_searchable_text"
-    if page.get("needs_visual_inspection") is not False:
+    if (
+        expected_needs_visual_inspection is not None
+        and page.get("needs_visual_inspection") is not expected_needs_visual_inspection
+    ):
         return f"pages[{page_idx}].needs_visual_inspection"
     char_start = page.get("char_start")
     char_end = page.get("char_end")
@@ -944,6 +1041,42 @@ def _evidence_extract_page_entry_error(
     if expected_char_end is not None and (char_start != 0 or char_end != expected_char_end):
         return f"pages[{page_idx}].char_range"
     return None
+
+
+def _evidence_extract_inventory_text_binding(
+    *,
+    workspace: Path,
+    lock_source: dict[str, Any],
+    locked_path: Path,
+) -> tuple[str, str | None, str, str, str, bool]:
+    derived = lock_source.get("derived_markdown")
+    if isinstance(derived, dict):
+        rel_path = str(derived.get("path") or "")
+        derived_path, path_reason = _evidence_extract_locked_source_path(
+            workspace=workspace,
+            rel_path=rel_path,
+        )
+        if path_reason or derived_path is None:
+            return "", "derived_markdown_path_unsafe", "mineru_derived_markdown", rel_path, "", True
+        text, reason = _evidence_extract_inventory_text_for_source(derived_path)
+        return (
+            text,
+            reason,
+            "mineru_derived_markdown",
+            rel_path,
+            str(derived.get("sha256") or ""),
+            True,
+        )
+
+    text, reason = _evidence_extract_inventory_text_for_source(locked_path)
+    return (
+        text,
+        reason,
+        "utf8_text_file",
+        str(lock_source.get("path") or ""),
+        str(lock_source.get("source_sha256") or ""),
+        False,
+    )
 
 
 def _evidence_extract_inventory_text_for_source(path: Path) -> tuple[str, str | None]:
