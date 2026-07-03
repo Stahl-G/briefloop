@@ -1,5 +1,14 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.10 — 2026-07-03
+
+- Added Evidence Extract source-lock guidance for
+  `output/intermediate/evidence_extract_source_lock.json` and its audit copy.
+- Clarified that `briefloop extract` records scope, copied source bytes,
+  source-lock hashes, and UTF-8 text-span seeds only; it does not parse binary
+  documents, build page inventory, judge semantic support, generate CSM rows,
+  or approve delivery/release.
+
 ## briefloop-operator-skill-v0.1.9 — 2026-07-02
 
 - Updated Trajectory Regulation guidance from read-only recommendation to

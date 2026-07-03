@@ -79,12 +79,15 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   readiness。
   `briefloop extract` / `multi-agent-brief extract` 可以在
   `evidence_extract` workspace 中登记显式 extraction scope，并把本地 source
-  files 复制到 `input/sources/evidence_extract/`。对于 UTF-8 文本来源，它还会
-  在 `output/intermediate/evidence_span_registry.json` 写入确定性的 text-span
+  files 复制到 `input/sources/evidence_extract/`。它还会在
+  `output/intermediate/evidence_extract_source_lock.json` 写入确定性的 source
+  byte lock，并在 `output/audit/` 保留 audit copy，让后续 status check 能发现
+  已登记 source bytes 漂移。对于 UTF-8 文本来源，它还会在
+  `output/intermediate/evidence_span_registry.json` 写入确定性的 text-span
   seed registry，记录 source-text character offsets（`char_start` /
   `char_end`）和 raw-excerpt hashes。它仍然不解析 PDF 或二进制文档、不判断
-  语义支持、不生成 Claim-Support Matrix rows、不形成法律或披露结论、不运行
-  stages、不批准 delivery，也不绕过 gates。
+  语义支持、不生成 page inventory、不生成 Claim-Support Matrix rows、不形成法律或
+  披露结论、不运行 stages、不批准 delivery，也不绕过 gates。
   Experimental Support-Calibrated Wording projection 可以读取已有 reader
   Markdown、Claim Ledger metadata、source taxonomy 和有效 Claim-Support Matrix
   policy signals，输出 warning-only 的 `support_wording` diagnostics，用于提示

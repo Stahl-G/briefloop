@@ -9,10 +9,13 @@ import yaml
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
+from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
 from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
     validate_evidence_span_registry_against_source_pack,
 )
 from multi_agent_brief.sources.registry import collect_all_sources, load_sources_config
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> None:
@@ -51,6 +54,8 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert payload["boundary"] == "evidence_extract_scope_source_and_text_span_registration_only"
     assert payload["source_count"] == 2
     assert payload["evidence_span_registry"] == "output/intermediate/evidence_span_registry.json"
+    assert payload["source_lock"] == "output/intermediate/evidence_extract_source_lock.json"
+    assert payload["audit_source_lock"] == "output/audit/evidence_extract_source_lock.json"
     assert payload["evidence_span_registry_source_count"] == 1
     assert payload["evidence_span_registry_span_count"] == 1
     assert "no_legal_conclusion" in payload["non_claims"]
@@ -72,6 +77,19 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert scope["boundary"] == "scope_source_and_text_span_registration_only"
     assert "no_binary_span_extraction" in scope["non_claims"]
     assert "no_semantic_support_assessment" in scope["non_claims"]
+
+    source_lock_path = workspace / "output" / "intermediate" / "evidence_extract_source_lock.json"
+    audit_source_lock_path = workspace / "output" / "audit" / "evidence_extract_source_lock.json"
+    assert source_lock_path.exists()
+    assert audit_source_lock_path.read_text(encoding="utf-8") == source_lock_path.read_text(encoding="utf-8")
+    source_lock = json.loads(source_lock_path.read_text(encoding="utf-8"))
+    assert source_lock["schema_version"] == "briefloop.evidence_extract_source_lock.v1"
+    assert source_lock["source_count"] == 2
+    assert source_lock["sources"][0]["source_id"] == "SRC-001"
+    assert source_lock["sources"][0]["path"] == scope["sources"][0]["path"]
+    assert source_lock["sources"][0]["source_sha256"] == scope["sources"][0]["source_sha256"]
+    assert source_lock["sources"][1]["registered_only"] is True
+    assert "no_page_inventory" in source_lock["non_claims"]
 
     registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
     registry_payload = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -114,6 +132,47 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert provider_errors == []
     assert len(items) == 1
     assert items[0].metadata["path"].endswith("001-permit-summary.md")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
+    assert source_lock_record["status"] == "valid"
+    assert source_lock_record["validation_result"] == "experimental_evidence_extract_source_lock"
+
+
+def test_extract_source_lock_invalidates_modified_registered_source(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("Alpha source bytes.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    copied_source = workspace / payload["sources"][0]["path"]
+    copied_source.write_text("Omega source bytes.\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
+    assert source_lock_record["status"] == "invalid"
+    assert source_lock_record["validation_result"] == (
+        "evidence_extract_source_lock_validation_error:source_sha256_mismatch:SRC-001"
+    )
 
 
 def test_extract_does_not_persist_external_absolute_source_paths(tmp_path: Path, capsys) -> None:

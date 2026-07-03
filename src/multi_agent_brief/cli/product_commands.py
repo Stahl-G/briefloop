@@ -51,6 +51,7 @@ SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
 EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".png", ".jpg", ".jpeg"}
 EVIDENCE_EXTRACT_TEXT_EXTENSIONS = {".md", ".txt", ".json"}
 EVIDENCE_EXTRACT_SPAN_EXCERPT_LIMIT = 1200
+EVIDENCE_EXTRACT_SOURCE_LOCK_SCHEMA_VERSION = "briefloop.evidence_extract_source_lock.v1"
 PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS = 20
 
 
@@ -730,17 +731,16 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
             }
         )
 
-    sources_yaml_text = _build_sources_yaml_text(
+    if sources_dir.exists() and any(sources_dir.iterdir()) and not getattr(args, "force", False):
+        raise FileExistsError(
+            f"Refusing to overwrite existing evidence-extract sources: {sources_dir}. Use --force."
+        )
+    _build_sources_yaml_text(
         workspace=workspace,
         sources=registered,
         source_category=normalize_source_category(getattr(args, "source_category", None), default="other"),
         language=str(getattr(args, "language", "") or "en").strip() or "en",
     )
-
-    if sources_dir.exists() and any(sources_dir.iterdir()) and not getattr(args, "force", False):
-        raise FileExistsError(
-            f"Refusing to overwrite existing evidence-extract sources: {sources_dir}. Use --force."
-        )
     staged_sources: dict[Path, Path] = {}
     staging_parent = workspace / "output" / "intermediate"
     managed_sources = (
@@ -776,6 +776,19 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
             force=bool(getattr(args, "force", False)),
         )
 
+    _refresh_registered_source_digests(workspace=workspace, registered=registered)
+    sources_yaml_text = _build_sources_yaml_text(
+        workspace=workspace,
+        sources=registered,
+        source_category=normalize_source_category(getattr(args, "source_category", None), default="other"),
+        language=str(getattr(args, "language", "") or "en").strip() or "en",
+    )
+    source_lock_path = _write_evidence_extract_source_lock(
+        workspace=workspace,
+        sources=registered,
+        scope=scope,
+        warnings=warnings,
+    )
     span_registry_path, span_count, span_source_count = _write_evidence_extract_span_registry(
         workspace=workspace,
         sources=registered,
@@ -792,6 +805,8 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         "sources": registered,
         "extraction_scope": "extraction_scope.yaml",
         "audit_extraction_scope": "output/audit/extraction_scope.yaml",
+        "source_lock": _workspace_relative(workspace, source_lock_path),
+        "audit_source_lock": "output/audit/evidence_extract_source_lock.json",
         "evidence_span_registry": _workspace_relative(workspace, span_registry_path) if span_registry_path else "",
         "evidence_span_registry_source_count": span_source_count,
         "evidence_span_registry_span_count": span_count,
@@ -807,6 +822,58 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         ],
     }
     return payload
+
+
+def _write_evidence_extract_source_lock(
+    *,
+    workspace: Path,
+    sources: list[dict[str, Any]],
+    scope: str,
+    warnings: list[dict[str, str]],
+) -> Path:
+    created_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    payload = {
+        "schema_version": EVIDENCE_EXTRACT_SOURCE_LOCK_SCHEMA_VERSION,
+        "report_pack": "evidence_extract",
+        "created_at": created_at,
+        "scope_path": "extraction_scope.yaml",
+        "source_count": len(sources),
+        "sources": [
+            {
+                "source_id": str(record.get("source_id") or ""),
+                "path": str(record.get("path") or ""),
+                "filename": str(record.get("filename") or ""),
+                "extension": str(record.get("extension") or ""),
+                "source_sha256": str(record.get("source_sha256") or ""),
+                "source_size_bytes": int(record.get("source_size_bytes") or 0),
+                "registered_only": not bool(record.get("manual_enabled")),
+                "lock_status": "locked_source_bytes",
+            }
+            for record in sources
+        ],
+        "scope_excerpt": scope[:500],
+        "warnings": warnings,
+        "boundary": "deterministic_registered_source_lock_only",
+        "non_claims": [
+            "no_text_or_binary_extraction",
+            "no_page_inventory",
+            "no_evidence_ledger_generation",
+            "no_visual_page_check",
+            "no_citation_gate",
+            "no_semantic_support_assessment",
+            "no_legal_conclusion",
+            "no_disclosure_readiness",
+            "no_delivery_or_publication_authority",
+        ],
+    }
+    lock_path = workspace / "output" / "intermediate" / "evidence_extract_source_lock.json"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    lock_path.write_text(text, encoding="utf-8")
+    audit_path = workspace / "output" / "audit" / "evidence_extract_source_lock.json"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(text, encoding="utf-8")
+    return lock_path
 
 
 def _copy_extract_sources(
@@ -826,6 +893,13 @@ def _copy_extract_sources(
 
     for source, record in zip(sources, registered):
         shutil.copy2(staged_sources.get(source, source), workspace / record["path"])
+
+
+def _refresh_registered_source_digests(*, workspace: Path, registered: list[dict[str, Any]]) -> None:
+    for record in registered:
+        source_path = workspace / str(record.get("path") or "")
+        record["source_sha256"] = _sha256_file(source_path)
+        record["source_size_bytes"] = source_path.stat().st_size
 
 
 def _managed_extract_source_inputs(sources: list[Path], *, sources_dir: Path) -> list[Path]:

@@ -23,10 +23,11 @@ Read this when operating a real BriefLoop/MABW workspace.
   approval, or quality score.
 - Use `briefloop extract --workspace <workspace> --scope <text> --source <file>`
   in `document-review` / `evidence_extract` workspaces to register explicit
-  extraction scope, durable local source bytes, and deterministic text-span
-  registry seeds for UTF-8 text sources. This is not binary/PDF parsing,
-  semantic support assessment, Claim-Support Matrix generation, or legal /
-  disclosure review.
+  extraction scope, durable local source bytes, source-lock hashes, and
+  deterministic text-span registry seeds for UTF-8 text sources. This is not
+  binary/PDF parsing, page inventory generation, semantic support assessment,
+  Claim-Support Matrix generation, citation gating, or legal / disclosure
+  review.
 - Use `multi-agent-brief approval init`, `multi-agent-brief approval record`,
   and `multi-agent-brief release check` only for internal release-mode approval
   records. These commands write event-linked control records; they do not
