@@ -1,0 +1,47 @@
+[
+  {
+    "claim_id": "CL-001",
+    "statement": "Northstar Grid Components reported that monthly order intake rose by 6% from the prior month after utility customers advanced replacement transformer purchases.",
+    "source_id": "SRC-001",
+    "evidence_text": "Northstar Grid Components reported monthly order intake rose 6% from the prior month, citing replacement transformer purchases by utility customers.",
+    "source_url": "https://example.com/briefloop-fixtures/northstar-grid-weekly-update",
+    "source_type": "public_fixture",
+    "metadata": {
+      "source_title": "Northstar Grid Components Weekly Fixture Update",
+      "publisher": "BriefLoop Public Fixture Set",
+      "published_at": "2026-06-12",
+      "importance": "high",
+      "support_strength": "direct"
+    }
+  },
+  {
+    "claim_id": "CL-002",
+    "statement": "Tender notices in the fixture highlight long lead times for transformers and switchgear.",
+    "source_id": "SRC-002",
+    "evidence_text": "Grid-modernization tender notices highlighted transformer and switchgear lead times as schedule risks for replacement programs.",
+    "source_url": "https://example.com/briefloop-fixtures/grid-modernization-tenders",
+    "source_type": "public_fixture",
+    "metadata": {
+      "source_title": "Grid Modernization Tender Fixture Summary",
+      "publisher": "BriefLoop Public Fixture Set",
+      "published_at": "2026-06-13",
+      "importance": "medium",
+      "support_strength": "direct"
+    }
+  },
+  {
+    "claim_id": "CL-003",
+    "statement": "A regional storage integrator disclosed that two container shipments were delayed for inspection.",
+    "source_id": "SRC-003",
+    "evidence_text": "The regional storage integrator disclosed two battery-container shipments were delayed for inspection before site delivery.",
+    "source_url": "https://example.com/briefloop-fixtures/storage-integrator-operations-note",
+    "source_type": "public_fixture",
+    "metadata": {
+      "source_title": "Storage Integrator Operations Fixture Note",
+      "publisher": "BriefLoop Public Fixture Set",
+      "published_at": "2026-06-14",
+      "importance": "medium",
+      "support_strength": "direct"
+    }
+  }
+]

@@ -1,0 +1,53 @@
+{
+  "schema_version": "briefloop.quality_gate_report.v1",
+  "stage": "auditor",
+  "status": "warning",
+  "blocking_count": 0,
+  "warning_count": 1,
+  "gate_results": [
+    {
+      "gate_id": "material_fact",
+      "status": "pass",
+      "blocking": false,
+      "finding_ids": []
+    },
+    {
+      "gate_id": "freshness",
+      "status": "pass",
+      "blocking": false,
+      "finding_ids": []
+    },
+    {
+      "gate_id": "target_relevance",
+      "status": "pass",
+      "blocking": false,
+      "finding_ids": []
+    },
+    {
+      "gate_id": "coverage_omission",
+      "status": "pass",
+      "blocking": false,
+      "finding_ids": []
+    },
+    {
+      "gate_id": "final_abstract_quality",
+      "status": "warning",
+      "blocking": false,
+      "finding_ids": ["F-001"]
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "F-001",
+      "gate_id": "final_abstract_quality",
+      "finding_type": "final_missing_comparison_basis",
+      "severity": "warning",
+      "blocking": false,
+      "blocking_level": "warning",
+      "artifact": "output/delivery/brief.md",
+      "message": "The brief uses a comparative phrase about demand improving, but the comparison basis is limited to the sample fixture.",
+      "recommended_action": "Keep the narrow sample framing in the reader-facing text."
+    }
+  ],
+  "boundary": "deterministic_warning_surface_only_no_delivery_authority"
+}
