@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaving compatibility exports for existing callers. This is layer-boundary
   cleanup only; it does not change handoff schema, handoff wording, runtime
   state files, gates, delivery, release authority, or support status.
+- **Shared test workspace helpers**: added shared pytest fixtures and test
+  helpers for repeated workspace skeleton and SHA-256 setup in CLI/status/
+  delivery tests. This is test infrastructure cleanup only; it does not change
+  runtime behavior, artifact contracts, gates, delivery, release authority, or
+  support status.
 
 ## [0.11.6] — 2026-07-03
 

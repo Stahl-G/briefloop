@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -13,18 +12,16 @@ from multi_agent_brief.orchestrator.runtime_state import (
     record_decision,
     runtime_state_paths,
 )
-
-
-def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+from tests.helpers import sha256_file as _sha256_file
+from tests.helpers import write_minimal_workspace
 
 
 def _minimal_workspace(path: Path) -> Path:
-    path.mkdir(parents=True)
-    (path / "config.yaml").write_text("project:\n  name: status-test\n", encoding="utf-8")
-    (path / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (path / "user.md").write_text("# Status test\n", encoding="utf-8")
-    return path
+    return write_minimal_workspace(
+        path,
+        project_name="status-test",
+        user_text="# Status test\n",
+    )
 
 
 def _mark_fact_layer_imported(ws: Path) -> None:

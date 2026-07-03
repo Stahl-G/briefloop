@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import zipfile
 from pathlib import Path
@@ -22,6 +21,7 @@ from multi_agent_brief.product.quality_panel import (
     write_quality_summary,
 )
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
+from tests.helpers import sha256_file as _sha256_file
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_TEMPLATE_IDS = {
@@ -30,14 +30,6 @@ EXPECTED_TEMPLATE_IDS = {
     "management_monthly",
     "solar_industry_periodic",
 }
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _finalized_workspace(tmp_path: Path) -> Path:

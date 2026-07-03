@@ -19,16 +19,9 @@ from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
 )
+from tests.helpers import sha256_file as _sha256_file
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def _docx_text(path: Path) -> str:
