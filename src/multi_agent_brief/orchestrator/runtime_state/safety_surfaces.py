@@ -1,8 +1,9 @@
-"""Registry of runtime safety surfaces guarded by structural tests.
+"""Test-only registry of runtime safety surfaces guarded by structural tests.
 
-The registry is intentionally metadata-only. It lets tests assert that each
-control-plane safety surface keeps one interpreter and explicit read/write
-adapters without importing those surfaces into runtime_state's public facade.
+This module is intentionally metadata-only and is not imported by production
+runtime paths. It lets structural tests assert that each control-plane safety
+surface keeps one interpreter and explicit read/write adapters without
+importing those surfaces into runtime_state's public facade.
 """
 
 from __future__ import annotations

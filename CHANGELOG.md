@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   helper, its dedicated test, and a zero-reference source-quality helper module.
   This is repo cleanup only, not a BriefLoop product behavior or support-status
   change.
+- **Orphan module triage**: removed test-only effort-budget and market
+  competitor enrichment modules with their dedicated tests, and marked the
+  runtime safety surface registry as a test-only structural guard. This is
+  layer-boundary cleanup only; it does not change runtime behavior, gates,
+  delivery, release authority, or support status.
 
 ## [0.11.6] — 2026-07-03
 

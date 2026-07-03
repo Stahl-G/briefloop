@@ -24,11 +24,9 @@ competitors init: 创建空白候选模板
 competitors merge: 用户确认 → competitor_universe.yaml
        ↓
 每期运行:
-  Source Collection: 为每个竞对 × 维度生成定向搜索任务
-  Scout: 提取 Claim
-  EntityEnricher: 确定性标注实体、事件类型、地理、维度
-  Screener: 根据竞对优先级和覆盖约束筛选
-  MarketCompetitorModule: 构建 MarketEvent + 5 个中间产物
+  Source Collection / Scout: 按通用来源策略收集并提取 Claim
+  Screener / Claim Ledger: 冻结可追溯的竞对相关 Claim
+  MarketCompetitorModule: 基于已冻结 Claim 和竞对配置构建结构化中间产物
   Analyst: 读取 analysis_cards.json 撰写竞对章节
   Editor: 润色管理层表达
   Auditor: 通用审计 + 6 种竞对专项审计
@@ -113,7 +111,7 @@ multi-agent-brief competitors merge --config workspace/config.yaml
 
 ## 设计原则
 
-1. **不在 Python 层调用外部模型** — 实体标注、事件归并、矩阵生成全为确定性代码
+1. **不在 Python 层调用外部模型** — 竞对配置、结构化产物和专项审计保持确定性；语义判断留给 agent / human 层
 2. **不绕过 事实账本** — AnalysisCard 的 supporting_claim_ids 全部可追溯
 3. **分析判断与来源事实分离** — 事实账本（事实）→ AnalysisCard（判断）→ Brief（表达）
 4. **禁用时零影响** — 模块关闭时管道行为完全不变
