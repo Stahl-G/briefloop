@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from multi_agent_brief.experiments.target_contract import (
+from multi_agent_brief.contracts.target_contract import (
     AUDIT_BINDING_SCHEMA,
     ALLOWED_ASSESSMENT_TARGETS,
     ASSESSMENT_TARGET_CLAIM_SCOPE,

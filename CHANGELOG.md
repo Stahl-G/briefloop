@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runtime safety surface registry as a test-only structural guard. This is
   layer-boundary cleanup only; it does not change runtime behavior, gates,
   delivery, release authority, or support status.
+- **Assessment target contract namespace**: moved the production assessment
+  target contract from the `experiments` namespace to `contracts`, leaving a
+  compatibility shim for older experiment imports. This is layer-boundary
+  cleanup only; it does not change target ids, artifact paths, experiment
+  behavior, gates, delivery, release authority, or support status.
 
 ## [0.11.6] — 2026-07-03
 

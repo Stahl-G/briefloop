@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -192,6 +193,36 @@ def test_artifact_contracts_preserve_future_provenance_fields():
     assert "derived/output artifact" in contract["edge_direction_notes"]["artifact_derived_from"]
     for artifact in _load_yaml(ARTIFACT_CONTRACTS)["artifacts"]:
         assert required_fields <= set(artifact), artifact["artifact_id"]
+
+
+def test_production_modules_do_not_import_experiment_target_contract():
+    allowed = {
+        "src/multi_agent_brief/experiments/target_contract.py",
+    }
+    violations: list[str] = []
+    for path in (ROOT / "src" / "multi_agent_brief").rglob("*.py"):
+        rel = path.relative_to(ROOT).as_posix()
+        if rel in allowed:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "multi_agent_brief.experiments.target_contract":
+                violations.append(f"{rel}:{node.lineno}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "multi_agent_brief.experiments.target_contract":
+                        violations.append(f"{rel}:{node.lineno}")
+
+    assert violations == []
+
+
+def test_experiment_080_imports_contract_target_contract():
+    text = (ROOT / "src" / "multi_agent_brief" / "experiments" / "experiment_080.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "from multi_agent_brief.contracts.target_contract import" in text
+    assert "from multi_agent_brief.experiments.target_contract import" not in text
 
 
 def test_v060_public_overview_uses_precise_boundary():
