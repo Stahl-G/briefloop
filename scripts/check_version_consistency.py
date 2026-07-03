@@ -246,7 +246,11 @@ def _remote_git_tag_exists(tag: str) -> bool:
     if result.returncode != 0:
         return False
     expected_ref = f"refs/tags/{tag}"
-    return any(line.strip().endswith(expected_ref) for line in result.stdout.splitlines())
+    for line in result.stdout.splitlines():
+        parts = line.rstrip().split("\t", 1)
+        if len(parts) == 2 and parts[1] == expected_ref:
+            return True
+    return False
 
 
 if __name__ == "__main__":
