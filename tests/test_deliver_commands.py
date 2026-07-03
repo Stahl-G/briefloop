@@ -12,6 +12,9 @@ from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 def _workspace(tmp_path: Path) -> Path:
     return write_minimal_workspace(
         tmp_path / "ws",
@@ -502,7 +505,7 @@ def test_deliver_feishu_success_event_failure_warns_in_text_output(
 
 
 def test_mabw_deliver_guidance_uses_delivery_command() -> None:
-    text = Path(".claude/commands/mabw.md").read_text(encoding="utf-8")
+    text = (ROOT / ".claude" / "commands" / "mabw.md").read_text(encoding="utf-8")
     assert "multi-agent-brief deliver --workspace <workspace> --target local" in text
     assert "multi-agent-brief deliver --workspace <workspace> --target feishu" in text
     assert "delivery_artifacts" in text
