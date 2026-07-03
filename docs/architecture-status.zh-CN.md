@@ -82,12 +82,16 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   files 复制到 `input/sources/evidence_extract/`。它还会在
   `output/intermediate/evidence_extract_source_lock.json` 写入确定性的 source
   byte lock，并在 `output/audit/` 保留 audit copy，让后续 status check 能发现
-  已登记 source bytes 漂移。对于 UTF-8 文本来源，它还会在
+  已登记 source bytes 漂移。它会在
+  `output/intermediate/evidence_extract_page_inventory.json` 写入确定性的 page
+  inventory seed：UTF-8 文本来源得到一个 logical page ID，PDF/二进制来源只标为
+  registered-only 并等待后续 extraction tool。对于 UTF-8 文本来源，它还会在
   `output/intermediate/evidence_span_registry.json` 写入确定性的 text-span
   seed registry，记录 source-text character offsets（`char_start` /
-  `char_end`）和 raw-excerpt hashes。它仍然不解析 PDF 或二进制文档、不判断
-  语义支持、不生成 page inventory、不生成 Claim-Support Matrix rows、不形成法律或
-  披露结论、不运行 stages、不批准 delivery，也不绕过 gates。
+  `char_end`）、page IDs 和 raw-excerpt hashes。它仍然不解析 PDF 或二进制文档、
+  不渲染页面做视觉检查、不抽取表格或图、不判断语义支持、不生成 Claim-Support
+  Matrix rows、不形成法律或披露结论、不运行 stages、不批准 delivery，也不绕过
+  gates。
   Experimental Support-Calibrated Wording projection 可以读取已有 reader
   Markdown、Claim Ledger metadata、source taxonomy 和有效 Claim-Support Matrix
   policy signals，输出 warning-only 的 `support_wording` diagnostics，用于提示

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
@@ -56,6 +58,10 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert payload["evidence_span_registry"] == "output/intermediate/evidence_span_registry.json"
     assert payload["source_lock"] == "output/intermediate/evidence_extract_source_lock.json"
     assert payload["audit_source_lock"] == "output/audit/evidence_extract_source_lock.json"
+    assert payload["page_inventory"] == "output/intermediate/evidence_extract_page_inventory.json"
+    assert payload["audit_page_inventory"] == "output/audit/evidence_extract_page_inventory.json"
+    assert payload["page_inventory_source_count"] == 1
+    assert payload["page_inventory_page_count"] == 1
     assert payload["evidence_span_registry_source_count"] == 1
     assert payload["evidence_span_registry_span_count"] == 1
     assert "no_legal_conclusion" in payload["non_claims"]
@@ -89,7 +95,24 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert source_lock["sources"][0]["path"] == scope["sources"][0]["path"]
     assert source_lock["sources"][0]["source_sha256"] == scope["sources"][0]["source_sha256"]
     assert source_lock["sources"][1]["registered_only"] is True
-    assert "no_page_inventory" in source_lock["non_claims"]
+    assert "no_pdf_or_binary_page_extraction" in source_lock["non_claims"]
+
+    page_inventory_path = workspace / "output" / "intermediate" / "evidence_extract_page_inventory.json"
+    audit_page_inventory_path = workspace / "output" / "audit" / "evidence_extract_page_inventory.json"
+    assert page_inventory_path.exists()
+    assert audit_page_inventory_path.read_text(encoding="utf-8") == page_inventory_path.read_text(encoding="utf-8")
+    page_inventory = json.loads(page_inventory_path.read_text(encoding="utf-8"))
+    assert page_inventory["schema_version"] == "briefloop.evidence_extract_page_inventory.v1"
+    assert page_inventory["source_lock_path"] == "output/intermediate/evidence_extract_source_lock.json"
+    assert page_inventory["source_count"] == 2
+    assert page_inventory["page_count"] == 1
+    assert page_inventory["inventory_source_count"] == 1
+    assert page_inventory["sources"][0]["inventory_status"] == "text_logical_page_seeded"
+    assert page_inventory["sources"][0]["pages"][0]["page_id"] == "PAGE-SRC-001-001"
+    assert page_inventory["sources"][0]["pages"][0]["page_basis"] == "utf8_text_file"
+    assert page_inventory["sources"][1]["inventory_status"] == "unsupported_source_format_registered_only"
+    assert page_inventory["sources"][1]["pages"] == []
+    assert "no_pdf_or_binary_page_extraction" in page_inventory["non_claims"]
 
     registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
     registry_payload = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -103,6 +126,8 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     assert registry_payload["sources"][0]["source_path"] == scope["sources"][0]["path"]
     span = registry_payload["sources"][0]["spans"][0]
     assert span["span_id"] == "ESP-001-01"
+    assert span["page_id"] == "PAGE-SRC-001-001"
+    assert span["page_number"] == 1
     assert span["raw_excerpt"].startswith("# Permit Summary")
     source_text = (workspace / scope["sources"][0]["path"]).read_text(encoding="utf-8")
     assert source_text[span["char_start"]:span["char_end"]] == span["raw_excerpt"]
@@ -138,6 +163,9 @@ def test_extract_registers_scope_and_local_sources(tmp_path: Path, capsys) -> No
     source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
     assert source_lock_record["status"] == "valid"
     assert source_lock_record["validation_result"] == "experimental_evidence_extract_source_lock"
+    page_inventory_record = state["artifact_registry"]["artifacts"]["evidence_extract_page_inventory"]
+    assert page_inventory_record["status"] == "valid"
+    assert page_inventory_record["validation_result"] == "experimental_evidence_extract_page_inventory"
 
 
 def test_extract_source_lock_invalidates_modified_registered_source(tmp_path: Path, capsys) -> None:
@@ -173,6 +201,173 @@ def test_extract_source_lock_invalidates_modified_registered_source(tmp_path: Pa
     assert source_lock_record["validation_result"] == (
         "evidence_extract_source_lock_validation_error:source_sha256_mismatch:SRC-001"
     )
+
+
+def test_extract_source_lock_rejects_symlinked_evidence_extract_root(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("Alpha source bytes.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    copied_source = workspace / payload["sources"][0]["path"]
+    outside = tmp_path / "outside-evidence-root"
+    outside.mkdir()
+    (outside / copied_source.name).write_bytes(copied_source.read_bytes())
+    shutil.rmtree(workspace / "input" / "sources" / "evidence_extract")
+    try:
+        (workspace / "input" / "sources" / "evidence_extract").symlink_to(
+            outside,
+            target_is_directory=True,
+        )
+    except OSError as exc:
+        pytest.skip(f"symlink creation not available: {exc}")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
+    assert source_lock_record["status"] == "invalid"
+    assert source_lock_record["validation_result"] == (
+        "evidence_extract_source_lock_validation_error:source_path_unsafe:SRC-001"
+    )
+
+
+def test_extract_page_inventory_rejects_unknown_source_id(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("Alpha source bytes.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    inventory_path = workspace / "output" / "intermediate" / "evidence_extract_page_inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["sources"][0]["source_id"] = "SRC-999"
+    inventory_path.write_text(json.dumps(inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_extract_page_inventory"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == (
+        "evidence_extract_page_inventory_validation_error:unknown_source_id:SRC-999"
+    )
+
+
+def test_extract_page_inventory_rejects_stale_source_lock_sha(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("Alpha source bytes.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    inventory_path = workspace / "output" / "intermediate" / "evidence_extract_page_inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["source_lock_sha256"] = "0" * 64
+    inventory_path.write_text(json.dumps(inventory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_extract_page_inventory"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == (
+        "evidence_extract_page_inventory_validation_error:source_lock_sha256_mismatch"
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("page_id", "PAGE-SRC-999-001", "span_page_unknown:ESP-001-01"),
+        ("page_number", 99, "span_page_number_mismatch:ESP-001-01"),
+    ],
+)
+def test_extract_evidence_span_registry_rejects_forged_page_trace(
+    tmp_path: Path,
+    capsys,
+    field: str,
+    value: object,
+    reason: str,
+) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("# Permit Summary\n\nCapacity: 100 MW.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["sources"][0]["spans"][0][field] = value
+    registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == f"evidence_span_registry_validation_error:{reason}"
 
 
 def test_extract_does_not_persist_external_absolute_source_paths(tmp_path: Path, capsys) -> None:

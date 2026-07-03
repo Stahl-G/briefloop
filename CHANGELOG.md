@@ -14,11 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `output/intermediate/evidence_extract_source_lock.json` plus an audit copy,
   binding registered `input/sources/evidence_extract/` files to file size and
   SHA-256 so status/artifact-registry checks can detect later source-byte
-  drift. This is bounded source locking for `document-review` /
-  `evidence_extract`; it does not parse PDFs or binary files, build a page
-  inventory, generate an evidence ledger or Claim-Support Matrix, judge
-  semantic support, draw legal/disclosure conclusions, approve delivery, or
-  authorize publication.
+  drift.
+- **Evidence Extract page inventory seed v1**: `briefloop extract` /
+  `multi-agent-brief extract` now writes
+  `output/intermediate/evidence_extract_page_inventory.json` plus an audit
+  copy, binding the inventory to the source lock and giving UTF-8 text sources
+  deterministic logical page IDs. PDF/binary sources remain registered-only and
+  are flagged as requiring a future extraction tool. This is bounded
+  source-lock/page-seed/span registration for `document-review` /
+  `evidence_extract`; it does not parse PDFs or binary files, render pages for
+  visual inspection, extract tables or figures, generate an evidence ledger or
+  Claim-Support Matrix, judge semantic support, draw legal/disclosure
+  conclusions, approve delivery, or authorize publication.
 - **Trajectory Regulation decision narrowing**: repeated retry, repair-cycle,
   or blocker patterns for the current stage now deterministically narrow
   `workflow_state.next_allowed_decisions` to `request_human_review` and

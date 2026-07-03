@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Mapping
 
 from multi_agent_brief.orchestrator.source_evidence import is_evidence_input_path
 
@@ -16,12 +16,15 @@ def validate_evidence_span_registry_against_source_pack(
     *,
     registry_payload: dict[str, Any],
     workspace: Path,
+    page_inventory_payload: Mapping[str, Any] | None = None,
 ) -> str | None:
     """Return the first deterministic source-pack validation reason, if any.
 
     This helper validates only machine-checkable source byte binding. It does
     not judge whether a source span supports a claim or atom.
     """
+
+    page_index = _page_inventory_index(page_inventory_payload)
 
     for source in registry_payload.get("sources", []):
         if not isinstance(source, dict):
@@ -52,6 +55,13 @@ def validate_evidence_span_registry_against_source_pack(
             if not isinstance(span, dict):
                 continue
             reason = _validate_span_against_text(span=span, source_text=source_text, source_id=source_id)
+            if reason:
+                return reason
+            reason = _validate_span_against_page_inventory(
+                span=span,
+                source_id=source_id,
+                page_index=page_index,
+            )
             if reason:
                 return reason
 
@@ -150,3 +160,74 @@ def _validate_span_against_text(
             return f"span_offset_mismatch:{stable_span_id}"
 
     return None
+
+
+def _page_inventory_index(
+    page_inventory_payload: Mapping[str, Any] | None,
+) -> dict[str, dict[str, Mapping[str, Any]]] | None:
+    if page_inventory_payload is None:
+        return None
+    sources = page_inventory_payload.get("sources")
+    if not isinstance(sources, list):
+        return None
+    page_index: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for source in sources:
+        if not isinstance(source, Mapping):
+            continue
+        source_id = source.get("source_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            continue
+        pages = source.get("pages")
+        if not isinstance(pages, list):
+            continue
+        page_index[source_id.strip()] = {
+            page["page_id"].strip(): page
+            for page in pages
+            if isinstance(page, Mapping)
+            and isinstance(page.get("page_id"), str)
+            and page.get("page_id", "").strip()
+        }
+    return page_index
+
+
+def _validate_span_against_page_inventory(
+    *,
+    span: dict[str, Any],
+    source_id: str,
+    page_index: dict[str, dict[str, Mapping[str, Any]]] | None,
+) -> str | None:
+    if page_index is None:
+        return None
+    stable_span_id = _span_id(span, source_id)
+    pages = page_index.get(source_id)
+    if pages is None:
+        return f"span_page_source_missing:{source_id}"
+
+    page_id = span.get("page_id")
+    if not isinstance(page_id, str) or not page_id.strip():
+        return f"span_page_id_missing:{stable_span_id}"
+    page = pages.get(page_id.strip())
+    if page is None:
+        return f"span_page_unknown:{stable_span_id}"
+
+    if span.get("page_number") != page.get("page_number"):
+        return f"span_page_number_mismatch:{stable_span_id}"
+
+    page_start = page.get("char_start")
+    page_end = page.get("char_end")
+    if isinstance(page_start, int) and isinstance(page_end, int):
+        char_start = span.get("char_start")
+        char_end = span.get("char_end")
+        if not isinstance(char_start, int) or not isinstance(char_end, int):
+            return f"span_page_offset_missing:{stable_span_id}"
+        if char_start < page_start or char_end > page_end:
+            return f"span_page_range_mismatch:{stable_span_id}"
+
+    return None
+
+
+def _span_id(span: Mapping[str, Any], source_id: str) -> str:
+    span_id = span.get("span_id")
+    if isinstance(span_id, str) and span_id.strip():
+        return span_id.strip()
+    return f"{source_id}:<unknown_span>"

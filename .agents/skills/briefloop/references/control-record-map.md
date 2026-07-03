@@ -22,6 +22,7 @@ Do not edit directly:
 - `output/intermediate/quality_panel.html`
 - `output/intermediate/guidance_manifestation_report.json`
 - `output/intermediate/evidence_extract_source_lock.json`
+- `output/intermediate/evidence_extract_page_inventory.json`
 - `output/runs/<run_id>/`
 
 Use the owning CLI transaction instead.
@@ -44,11 +45,13 @@ Owning commands for recent control-tool projections:
   describe reader/audit citation surfaces only; do not patch them by hand and
   do not treat them as support, gate, delivery, or release authority.
 - `briefloop extract` / `multi-agent-brief extract` writes
-  `evidence_extract_source_lock.json` and an audit copy for
-  `document-review` / `evidence_extract` workspaces. The lock binds registered
-  `input/sources/evidence_extract/` files to file size and SHA-256; it is not a
-  page inventory, evidence ledger, support judgment, citation gate, or delivery
-  approval.
+  `evidence_extract_source_lock.json`, `evidence_extract_page_inventory.json`,
+  and audit copies for `document-review` / `evidence_extract` workspaces. The
+  lock binds registered `input/sources/evidence_extract/` files to file size
+  and SHA-256; the inventory gives UTF-8 text sources logical page IDs and
+  flags PDF/binary files as requiring a future extraction tool. These artifacts
+  are not rendered-page visual checks, evidence ledgers, support judgments,
+  citation gates, or delivery approvals.
 - `guidance_manifestation_report.json` is an imported/human diagnostic record
   for approved guidance manifestation labels; it is validated and surfaced by
   status / Quality Panel, but it is not an Improvement Memory writer and not a

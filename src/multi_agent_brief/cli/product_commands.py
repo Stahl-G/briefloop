@@ -52,6 +52,7 @@ EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls",
 EVIDENCE_EXTRACT_TEXT_EXTENSIONS = {".md", ".txt", ".json"}
 EVIDENCE_EXTRACT_SPAN_EXCERPT_LIMIT = 1200
 EVIDENCE_EXTRACT_SOURCE_LOCK_SCHEMA_VERSION = "briefloop.evidence_extract_source_lock.v1"
+EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION = "briefloop.evidence_extract_page_inventory.v1"
 PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS = 20
 
 
@@ -789,6 +790,13 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         scope=scope,
         warnings=warnings,
     )
+    page_inventory_path, page_count, page_inventory_source_count = _write_evidence_extract_page_inventory(
+        workspace=workspace,
+        sources=registered,
+        scope=scope,
+        warnings=warnings,
+        source_lock_path=source_lock_path,
+    )
     span_registry_path, span_count, span_source_count = _write_evidence_extract_span_registry(
         workspace=workspace,
         sources=registered,
@@ -807,6 +815,10 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         "audit_extraction_scope": "output/audit/extraction_scope.yaml",
         "source_lock": _workspace_relative(workspace, source_lock_path),
         "audit_source_lock": "output/audit/evidence_extract_source_lock.json",
+        "page_inventory": _workspace_relative(workspace, page_inventory_path),
+        "audit_page_inventory": "output/audit/evidence_extract_page_inventory.json",
+        "page_inventory_source_count": page_inventory_source_count,
+        "page_inventory_page_count": page_count,
         "evidence_span_registry": _workspace_relative(workspace, span_registry_path) if span_registry_path else "",
         "evidence_span_registry_source_count": span_source_count,
         "evidence_span_registry_span_count": span_count,
@@ -856,9 +868,9 @@ def _write_evidence_extract_source_lock(
         "boundary": "deterministic_registered_source_lock_only",
         "non_claims": [
             "no_text_or_binary_extraction",
-            "no_page_inventory",
+            "no_pdf_or_binary_page_extraction",
+            "no_rendered_page_visual_check",
             "no_evidence_ledger_generation",
-            "no_visual_page_check",
             "no_citation_gate",
             "no_semantic_support_assessment",
             "no_legal_conclusion",
@@ -874,6 +886,107 @@ def _write_evidence_extract_source_lock(
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     audit_path.write_text(text, encoding="utf-8")
     return lock_path
+
+
+def _write_evidence_extract_page_inventory(
+    *,
+    workspace: Path,
+    sources: list[dict[str, Any]],
+    scope: str,
+    warnings: list[dict[str, str]],
+    source_lock_path: Path,
+) -> tuple[Path, int, int]:
+    generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    inventory_sources: list[dict[str, Any]] = []
+    page_count = 0
+    inventory_source_count = 0
+    for record in sources:
+        source_id = str(record.get("source_id") or "")
+        source_path = str(record.get("path") or "")
+        extension = str(record.get("extension") or "")
+        source_file = workspace / source_path
+        source_text = _source_text_for_span_registry(source_file) if bool(record.get("manual_enabled")) else None
+        pages: list[dict[str, Any]] = []
+        if source_text is not None and source_text.strip():
+            page_id = _evidence_extract_page_id(source_id)
+            pages.append(
+                {
+                    "page_id": page_id,
+                    "page_number": 1,
+                    "page_label": "logical-page-1",
+                    "page_basis": "utf8_text_file",
+                    "has_searchable_text": True,
+                    "needs_visual_inspection": False,
+                    "char_start": 0,
+                    "char_end": len(source_text),
+                }
+            )
+            inventory_status = "text_logical_page_seeded"
+            inventory_source_count += 1
+            page_count += 1
+        elif source_text is not None:
+            inventory_status = "text_empty_no_pages"
+            warnings.append(
+                {
+                    "code": "page_inventory_skipped_empty_text_source",
+                    "message": f"{source_path} has no non-empty text; no logical page was generated.",
+                }
+            )
+        else:
+            inventory_status = "unsupported_source_format_registered_only"
+
+        inventory_sources.append(
+            {
+                "source_id": source_id,
+                "source_path": source_path,
+                "extension": extension,
+                "source_sha256": str(record.get("source_sha256") or ""),
+                "inventory_status": inventory_status,
+                "page_count": len(pages),
+                "needs_external_extraction_tool": source_text is None,
+                "visual_inspection_required": source_text is None,
+                "pages": pages,
+            }
+        )
+
+    payload = {
+        "schema_version": EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION,
+        "report_pack": "evidence_extract",
+        "generated_at": generated_at,
+        "scope_path": "extraction_scope.yaml",
+        "source_lock_path": "output/intermediate/evidence_extract_source_lock.json",
+        "source_lock_sha256": _sha256_file(source_lock_path),
+        "source_count": len(inventory_sources),
+        "page_count": page_count,
+        "inventory_source_count": inventory_source_count,
+        "sources": inventory_sources,
+        "scope_excerpt": scope[:500],
+        "warnings": warnings,
+        "boundary": "deterministic_page_inventory_seed_not_document_parsing",
+        "non_claims": [
+            "no_pdf_or_binary_page_extraction",
+            "no_rendered_page_visual_check",
+            "no_table_or_figure_extraction",
+            "no_evidence_ledger_generation",
+            "no_citation_gate",
+            "no_semantic_support_assessment",
+            "no_legal_conclusion",
+            "no_disclosure_readiness",
+            "no_delivery_or_publication_authority",
+        ],
+    }
+    inventory_path = workspace / "output" / "intermediate" / "evidence_extract_page_inventory.json"
+    inventory_path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    inventory_path.write_text(text, encoding="utf-8")
+    audit_path = workspace / "output" / "audit" / "evidence_extract_page_inventory.json"
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(text, encoding="utf-8")
+    return inventory_path, page_count, inventory_source_count
+
+
+def _evidence_extract_page_id(source_id: str) -> str:
+    return f"PAGE-{source_id}-001"
 
 
 def _copy_extract_sources(
@@ -1081,6 +1194,8 @@ def _first_text_span(source_text: str, *, source_id: str) -> dict[str, Any] | No
     source_digits = source_id.removeprefix("SRC-")
     return {
         "span_id": f"ESP-{source_digits}-01",
+        "page_id": _evidence_extract_page_id(source_id),
+        "page_number": 1,
         "raw_excerpt": raw_excerpt,
         "hash": "sha256:" + hashlib.sha256(raw_excerpt.encode("utf-8")).hexdigest(),
         "span_role": "direct_statement",

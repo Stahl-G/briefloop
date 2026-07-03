@@ -127,13 +127,17 @@ breaking rename.
   deterministic source-byte lock at
   `output/intermediate/evidence_extract_source_lock.json`, with an audit copy
   under `output/audit/`, so later status checks can detect registered source
-  byte drift. For UTF-8 text sources, it also writes a deterministic
-  text-span seed registry at
+  byte drift. It writes a deterministic page-inventory seed at
+  `output/intermediate/evidence_extract_page_inventory.json`, giving UTF-8 text
+  sources a single logical page ID while marking binary/PDF sources as
+  registered-only and requiring a future extraction tool. For UTF-8 text
+  sources, it also writes a deterministic text-span seed registry at
   `output/intermediate/evidence_span_registry.json` with source-text character
-  offsets (`char_start` / `char_end`) and raw-excerpt hashes. It still does not
-  parse PDFs or binary documents, build a page inventory, judge semantic
-  support, generate Claim-Support Matrix rows, create legal or disclosure
-  conclusions, run stages, approve delivery, or bypass gates.
+  offsets (`char_start` / `char_end`), page IDs, and raw-excerpt hashes. It
+  still does not parse PDFs or binary documents, render pages for visual
+  inspection, extract tables or figures, judge semantic support, generate
+  Claim-Support Matrix rows, create legal or disclosure conclusions, run
+  stages, approve delivery, or bypass gates.
   Experimental SourceHub Lite setup commands can copy local text evidence files
   into `input/sources/sourcehub/`, register RSS feeds, and register
   `runtime_tool` web-search handoff tasks in `sources.yaml`. These commands are

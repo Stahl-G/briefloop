@@ -50,8 +50,8 @@ Historical implementation name: MABW
   - `multi-agent-brief validate-report-spec <report_spec.yaml>`
   - `multi-agent-brief extract --workspace <workspace> --scope <text>
     --source <file>` for `evidence_extract` source/scope registration and
-    deterministic source-lock / text-span seed registry generation for copied
-    source files and UTF-8 text sources
+    deterministic source-lock / logical-page seed / text-span seed registry
+    generation for copied source files and UTF-8 text sources
   - `multi-agent-brief sources add-file <path>`
   - `multi-agent-brief sources add-rss <url>`
   - `multi-agent-brief sources add-web-search --query <text>`
