@@ -2,9 +2,9 @@
 """Quick launch smoke for a fresh source checkout.
 
 This guard validates that the public setup/demo path still reaches a working
-demo workspace handoff from the current checkout. It does not install package
-dependencies, call an LLM, access the network, run subagents, or prove output
-quality.
+runtime handoff and deterministic demo artifact package from the current
+checkout. It does not install package dependencies, call an LLM, access the
+network, run subagents, or prove output quality.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 BOUNDARY = (
     "Launch smoke verifies source-checkout setup/demo mechanics only: import, "
-    "CLI version, demo init, doctor, and runtime handoff. It is not semantic "
-    "truth proof, output-quality improvement proof, delivery approval, or "
-    "release authorization."
+    "CLI version, demo init, doctor, runtime handoff, and deterministic demo "
+    "artifacts. It is not semantic truth proof, output-quality improvement "
+    "proof, delivery approval, or release authorization."
 )
 
 
@@ -153,6 +153,28 @@ def _check_artifacts(workspace: Path) -> dict[str, Any]:
     }
 
 
+def _check_demo_script_artifacts(workspace: Path) -> dict[str, Any]:
+    required = [
+        workspace / "README.md",
+        workspace / "config.yaml",
+        workspace / "sources.yaml",
+        workspace / "user.md",
+        workspace / "output" / "delivery" / "brief.md",
+        workspace / "output" / "intermediate" / "claim_ledger.json",
+        workspace / "output" / "intermediate" / "quality_summary.md",
+        workspace / "output" / "intermediate" / "quality_gate_report.json",
+        workspace / "output" / "intermediate" / "event_log_excerpt.jsonl",
+        workspace / "output" / "source_appendix.md",
+    ]
+    missing = [str(path) for path in required if not path.exists()]
+    return {
+        "id": "deterministic_demo_artifacts",
+        "ok": not missing,
+        "missing": missing,
+        "error": f"missing expected deterministic demo artifacts: {missing}" if missing else "",
+    }
+
+
 def _missing_runtime_state_files(workspace: Path) -> list[str]:
     handoff_path = workspace / "output" / "intermediate" / "agent_handoff.json"
     try:
@@ -198,6 +220,8 @@ def run_launch_smoke() -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="briefloop-launch-smoke-") as tmp:
         tmp_dir = Path(tmp).resolve()
         workspace = tmp_dir / "demo-workspace"
+        deterministic_demo_root = tmp_dir / "deterministic-demo"
+        deterministic_demo_workspace = deterministic_demo_root / "industry-weekly-demo"
         tmp_root = str(tmp_dir)
         workspace_path = str(workspace)
         commands = [
@@ -245,6 +269,15 @@ def run_launch_smoke() -> dict[str, Any]:
                     "manual",
                 ],
             ),
+            (
+                "deterministic_demo_script",
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "demo.py"),
+                    "--output",
+                    str(deterministic_demo_root),
+                ],
+            ),
         ]
         for step_id, command in commands:
             result = _run_step(
@@ -263,6 +296,7 @@ def run_launch_smoke() -> dict[str, Any]:
                 if not version_check["ok"]:
                     return _payload(False, steps, tmp_root=tmp_root, workspace_path=workspace_path)
         steps.append(_check_artifacts(workspace))
+        steps.append(_check_demo_script_artifacts(deterministic_demo_workspace))
         ok = all(step.get("ok") is True for step in steps)
         return _payload(ok, steps, tmp_root=tmp_root, workspace_path=workspace_path)
 

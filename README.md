@@ -166,9 +166,14 @@ If a source is stale, a number is unregistered, or an editor adds a new material
 git clone https://github.com/Stahl-G/briefloop.git
 cd briefloop
 bash scripts/setup.sh
+bash scripts/demo.sh
 ```
 
-Create your first briefing workspace:
+`scripts/demo.sh` creates an API-free reference workspace with a final brief,
+Claim Ledger, Quality Summary, source appendix, and event-log excerpt.
+
+When you are ready to use your own materials, create your first briefing
+workspace:
 
 ```bash
 multi-agent-brief onboard
