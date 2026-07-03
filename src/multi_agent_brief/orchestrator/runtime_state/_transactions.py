@@ -296,4 +296,3 @@ def _current_run_start_event_exists(event_records: list[dict[str, Any]], run_id:
         event.get("run_id") == run_id and event.get("event_type") in {"run_initialized", "run_reset"}
         for event in event_records
     )
-
