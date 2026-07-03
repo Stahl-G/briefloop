@@ -14,6 +14,10 @@ tree is fully bilingual.
 | Topic | English | Chinese |
 |---|---|---|
 | README | [README.md](../README.md) | [README.zh-CN.md](../README.zh-CN.md) |
+| Getting started | [getting-started.md](getting-started.md) | English-first |
+| Weekly loop | [weekly-loop.md](weekly-loop.md) | English-first |
+| Troubleshooting | [troubleshooting.md](troubleshooting.md) | English-first |
+| Golden reference workspace | [industry-weekly-demo](../examples/reference-workspaces/industry-weekly-demo/README.md) | English-first |
 | Function map | [features.md](features.md) | [features.zh-CN.md](features.zh-CN.md) |
 | Windows PowerShell setup | [windows-powershell.md](windows-powershell.md) | [windows-powershell.zh-CN.md](windows-powershell.zh-CN.md) |
 | Golden path | [golden-path.md](golden-path.md) | [golden-path.zh-CN.md](golden-path.zh-CN.md) |
@@ -34,6 +38,9 @@ tree is fully bilingual.
 
 ## English-First Reference Docs
 
+- [Getting started](getting-started.md)
+- [Weekly loop](weekly-loop.md)
+- [Troubleshooting](troubleshooting.md)
 - [Claude Code quickstart](claude-code-quickstart.md)
 - [Function map](features.md)
 - [Runtime agent contract](agent-contract.md)

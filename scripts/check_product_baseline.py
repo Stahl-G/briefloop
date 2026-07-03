@@ -144,6 +144,57 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "不等于语义证明",
     ],
 }
+REQUIRED_FIRST_USER_DOC_PHRASES = {
+    "docs/getting-started.md": [
+        "BriefLoop helps you produce briefing packages",
+        "traceability and process accountability",
+        "not semantic proof",
+        "bash scripts/demo.sh",
+        "python scripts/demo.py",
+        "output/delivery/brief.md",
+        "output/intermediate/claim_ledger.json",
+        "output/intermediate/quality_summary.md",
+        "briefloop new industry-weekly",
+        "briefloop run --workspace",
+        "does not call a model",
+        "does not prove",
+    ],
+    "docs/weekly-loop.md": [
+        "create or select workspace",
+        "add sources",
+        "run handoff",
+        "inspect quality summary",
+        "repair or record feedback",
+        "deliver by human action",
+        "briefloop status --workspace",
+        "briefloop feedback ingest",
+        "briefloop deliver --workspace",
+        "Delivery is human-triggered",
+    ],
+    "docs/troubleshooting.md": [
+        "briefloop status --workspace",
+        "Gate Blocked",
+        "Missing Sources",
+        "Reader-Clean Failure",
+        "Stale Or Frozen Artifact Issue",
+        "No API Key Or No Runtime",
+        "Active Repair",
+        "When To Start A New Run Or Workspace",
+        "Do not edit",
+    ],
+}
+README_FIRST_SCREEN_REQUIRED_LINKS = [
+    "docs/getting-started.md",
+    "docs/weekly-loop.md",
+    "docs/troubleshooting.md",
+    "examples/reference-workspaces/industry-weekly-demo/README.md",
+]
+README_FIRST_SCREEN_FORBIDDEN_LINKS = [
+    "docs/features.md",
+    "docs/golden-path.md",
+    "docs/architecture-status.md",
+    "docs/roadmap.md",
+]
 EXPECTED_SUPPORT_MATRIX_STATUSES = {
     "v0.11 product-facing workspace entries": "Supported",
     "ReportSpec / ReportPack baseline contracts": "Supported",
@@ -357,6 +408,7 @@ def main() -> int:
     _check_packs_cli_surface(checks)
     _check_workspace_creation(checks)
     _check_cli_and_docs_boundaries(checks)
+    _check_first_user_docs_surface(checks)
     _check_golden_path_surface(checks)
     _check_support_matrix_alignment(checks)
     _check_topology_convergence_surface(checks)
@@ -604,6 +656,12 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
             f"required boundary phrases missing={missing}",
         )
         public_overclaims.extend(_public_overclaim_findings(rel_path, raw_text))
+    for rel_path in REQUIRED_FIRST_USER_DOC_PHRASES:
+        path = ROOT / rel_path
+        if path.exists():
+            public_overclaims.extend(
+                _public_overclaim_findings(rel_path, path.read_text(encoding="utf-8"))
+            )
 
     readme_en_text = (ROOT / "README_en.md").read_text(encoding="utf-8")
     _append_check(
@@ -619,6 +677,39 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
         not public_overclaims,
         f"forbidden positive claims={public_overclaims}",
     )
+
+
+def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
+    for rel_path, phrases in REQUIRED_FIRST_USER_DOC_PHRASES.items():
+        raw_text = (ROOT / rel_path).read_text(encoding="utf-8")
+        text = raw_text.lower()
+        missing = [phrase for phrase in phrases if phrase.lower() not in text]
+        _append_check(
+            checks,
+            f"first_user_docs.{rel_path}",
+            not missing,
+            f"required first-user phrases missing={missing}",
+        )
+
+    readme_first_screen = _readme_first_screen_text((ROOT / "README.md").read_text(encoding="utf-8"))
+    missing_links = [link for link in README_FIRST_SCREEN_REQUIRED_LINKS if link not in readme_first_screen]
+    forbidden_links = [link for link in README_FIRST_SCREEN_FORBIDDEN_LINKS if link in readme_first_screen]
+    _append_check(
+        checks,
+        "first_user_docs.README.md.first_screen_links",
+        not missing_links and not forbidden_links,
+        f"missing_links={missing_links} forbidden_links={forbidden_links}",
+    )
+
+
+def _readme_first_screen_text(text: str) -> str:
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "---" or stripped.startswith("## ✨ In one sentence"):
+            break
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _check_support_matrix_alignment(checks: list[dict[str, str]]) -> None:
