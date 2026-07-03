@@ -298,12 +298,12 @@ v0.11.0 应包含：
 - 至少三个 report packs。
 - 明确 delivery/audit bundle separation。
 - 显式 human delivery。
-- 无 force-deliver path。
+- 无 force-deliver path 或 delivery override flag。
 - 清晰 runtime dependence、support status 和 non-goals。
 
 ## 研究轨道
 
-v0.12.0 可以在 CLI product path 跑通后增加 local Studio preview。Studio 必须调用现有 CLI/service transactions，不得直接修改 frozen artifacts，也不得提供 force-deliver path。
+v0.12.0 可以在 CLI product path 跑通后增加 local Studio preview。Studio 必须调用现有 CLI/service transactions，不得直接修改 frozen artifacts，也不得提供 force-deliver path 或 delivery override flag。
 
 v0.13.0+ 可以增加 IR/disclosure support packs，但它们是 review-support surfaces，不是 publication automation。这些 pack 可以标记 forward-looking statements、materiality review items、KPI consistency issues 和 evidence-annex gaps，但不能声称自动判断 materiality、自动生成 SEC-ready filing，或替代律师、审计师、IR 负责人和 disclosure committee。
 

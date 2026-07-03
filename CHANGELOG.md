@@ -540,7 +540,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tighten existing deterministic quality-gate strictness and reader-final
   forbidden-phrase checks. This is a limited adapter over existing gates, not a
   second gate engine, semantic support assessment, industry compliance
-  judgment, truth proof, release authority, or force-delivery path.
+  judgment, truth proof, release authority, delivery override flag, or
+  force-deliver path.
 - **PolicyProfile dogfood fixtures**: added public-safe synthetic fixtures for
   resolved profile projection, deterministic gate-adapter strictness, and
   reader-final forbidden-phrase checks. These fixtures do not establish
@@ -966,7 +967,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Boundaries
 
-- v0.7.3 is a release-hardening patch over v0.7.2. It does not add new autonomous learning, role topology changes, output-quality scoring, public raw trace packs, or A-grade manifestation experiments.
+- v0.7.3 is a release-hardening patch over v0.7.2. It does not add new autonomous learning, role topology changes, output-quality scoring, public raw trace packs, or benchmark claims. The repo includes experiment/evaluation harnesses and public evaluation packets; these are measurement infrastructure, not a benchmark claim.
 
 ## [0.7.2] — 2026-06-12
 

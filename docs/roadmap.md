@@ -317,14 +317,14 @@ v0.11.0 should provide:
 - at least three report packs
 - clear delivery/audit bundle separation
 - explicit human delivery
-- no force-deliver path
+- no force-deliver path or delivery override flag
 - clear runtime dependence, support status, and non-goals
 
 ## Research Track
 
 v0.12.0 may add a local Studio preview after the CLI product path works. Studio
 must call existing CLI/service transactions, must not mutate frozen artifacts
-directly, and must not provide a force-deliver path.
+directly, and must not provide a force-deliver path or delivery override flag.
 
 v0.13.0+ may add IR/disclosure support packs as review-support surfaces, not
 publication automation. Those packs may flag forward-looking statements,

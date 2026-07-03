@@ -173,7 +173,7 @@ For a first product run, keep the scope small:
 - three to five local text sources;
 - no hidden web crawling;
 - no manual edits to frozen control files;
-- no force-delivery path;
+- no force-deliver path or delivery override flag;
 - human review before sharing the reader-facing files.
 
 When this path is confusing, treat the confusion as a product documentation bug.
