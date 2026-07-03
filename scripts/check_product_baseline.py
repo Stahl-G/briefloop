@@ -149,6 +149,7 @@ REQUIRED_FIRST_USER_DOC_PHRASES = {
         "BriefLoop helps you produce briefing packages",
         "traceability and process accountability",
         "not semantic proof",
+        "source .venv/bin/activate",
         "bash scripts/demo.sh",
         "python scripts/demo.py",
         "output/delivery/brief.md",
@@ -691,6 +692,15 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
             f"required first-user phrases missing={missing}",
         )
 
+    getting_started = (ROOT / "docs" / "getting-started.md").read_text(encoding="utf-8")
+    activation_reason = _getting_started_unix_activation_reason(getting_started)
+    _append_check(
+        checks,
+        "first_user_docs.docs/getting-started.md.unix_venv_activation",
+        activation_reason == "",
+        activation_reason or "setup.sh followed by source .venv/bin/activate before CLI verification",
+    )
+
     readme_first_screen = _readme_first_screen_text((ROOT / "README.md").read_text(encoding="utf-8"))
     missing_links = [link for link in README_FIRST_SCREEN_REQUIRED_LINKS if link not in readme_first_screen]
     forbidden_links = [link for link in README_FIRST_SCREEN_FORBIDDEN_LINKS if link in readme_first_screen]
@@ -700,6 +710,23 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         not missing_links and not forbidden_links,
         f"missing_links={missing_links} forbidden_links={forbidden_links}",
     )
+
+
+def _getting_started_unix_activation_reason(text: str) -> str:
+    required_markers = {
+        "bash scripts/setup.sh": text.find("bash scripts/setup.sh"),
+        "source .venv/bin/activate": text.find("source .venv/bin/activate"),
+        "multi-agent-brief version": text.find("multi-agent-brief version"),
+    }
+    missing = [marker for marker, index in required_markers.items() if index < 0]
+    if missing:
+        return f"missing Unix setup marker(s): {missing}"
+    setup_index = required_markers["bash scripts/setup.sh"]
+    activation_index = required_markers["source .venv/bin/activate"]
+    version_index = required_markers["multi-agent-brief version"]
+    if not setup_index < activation_index < version_index:
+        return "Unix source-clone path must activate .venv after setup.sh and before multi-agent-brief version"
+    return ""
 
 
 def _readme_first_screen_text(text: str) -> str:
