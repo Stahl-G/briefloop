@@ -236,6 +236,82 @@ cases:
           file: output/source_appendix.md
           text: "Unused Source"
 
+  - case_id: final_abstract_quality_warning_surface
+    case_type: workspace
+    synthetic: true
+    description: Final reader quality risks are warning-only diagnostics surfaced through Quality Panel.
+    initial_stage: finalize
+    commands:
+      - action: gates.check
+        args:
+          stage: finalize
+          brief: output/brief.md
+          strict: true
+      - action: state.check
+        args: {}
+      - action: quality.summarize
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: gates.check
+          exit_code: 0
+        - action: state.check
+          exit_code: 0
+        - action: quality.summarize
+          exit_code: 0
+      artifacts_exist:
+        - output/intermediate/gates/finalize_quality_gate_report.json
+        - output/intermediate/quality_panel.json
+        - output/intermediate/quality_summary.md
+        - output/intermediate/quality_panel.html
+      artifact_statuses:
+        - artifact_id: finalize_quality_gate_report
+          status: valid
+      findings_any:
+        - gate_id: final_abstract_quality
+          finding_type: final_scope_title_mismatch
+          blocking_level: warning
+          gate_stage_id: finalize
+        - gate_id: final_abstract_quality
+          finding_type: final_missing_comparison_basis
+          blocking_level: warning
+          gate_stage_id: finalize
+        - gate_id: final_abstract_quality
+          finding_type: final_missing_limitation_section
+          blocking_level: warning
+          gate_stage_id: finalize
+        - gate_id: final_abstract_quality
+          finding_type: final_incomplete_key_case_fields
+          blocking_level: warning
+          gate_stage_id: finalize
+        - gate_id: final_abstract_quality
+          finding_type: final_unsupported_superlative
+          blocking_level: warning
+          gate_stage_id: finalize
+      findings_absent:
+        - gate_id: final_abstract_quality
+          blocking_level: blocking
+        - gate_id: final_abstract_quality
+          repair_owner: editor
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/quality_summary.md
+          text: "Quality gates report `5` warning finding(s)."
+      absent_text:
+        - scope: workspace
+          file: output/brief.md
+          text: "Add a limitations/scope/assumptions section"
+        - scope: workspace
+          file: output/brief.md
+          text: "downgrade the wording"
+        - scope: workspace
+          file: output/brief.md
+          text: "repair route"
+      workflow_state:
+        current_stage: finalize
+        blocked: false
+
   - case_id: static_hermes_no_skip_finalize
     case_type: static_contract
     synthetic: true

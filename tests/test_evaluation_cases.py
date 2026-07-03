@@ -38,14 +38,14 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
     assert rc == 0
     validation = json.loads(capsys.readouterr().out)
     assert validation["ok"] is True
-    assert validation["case_count"] == 23
+    assert validation["case_count"] == 24
 
     rc = main(["eval-cases", "run", "--repo-workdir", str(ROOT), "--json"])
 
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is True
-    assert result["passed_count"] == 23
+    assert result["passed_count"] == 24
     assert result["failed_count"] == 0
     assert {
         "unsupported_material_fact",
@@ -68,10 +68,33 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "trajectory_retry_budget_exhausted",
         "guidance_manifestation_not_observable",
         "same_evidence_reader_quality_regression",
+        "final_abstract_quality_warning_surface",
         "unapproved_entry_not_materialized",
         "approved_guidance_materialized",
         "reverted_entry_removed_from_next_snapshot",
     } == {case["case_id"] for case in result["results"]}
+
+
+def test_eval_cases_final_abstract_quality_warning_surface(capsys):
+    rc = main([
+        "eval-cases",
+        "run",
+        "--case-id",
+        "final_abstract_quality_warning_surface",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    result = json.loads(capsys.readouterr().out)
+    case = result["results"][0]
+    assert case["passed"] is True
+    assert [item["action"] for item in case["actions"]] == [
+        "gates.check",
+        "state.check",
+        "quality.summarize",
+    ]
 
 
 def test_eval_cases_same_evidence_reader_quality_regression(capsys):

@@ -1,0 +1,8 @@
+project:
+  name: Final Abstract Quality Warning Surface
+report:
+  cadence: weekly
+output:
+  path: output
+input:
+  path: input
