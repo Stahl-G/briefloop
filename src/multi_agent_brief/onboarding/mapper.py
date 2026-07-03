@@ -12,10 +12,10 @@ Architecture principle:
 """
 from __future__ import annotations
 
-from multi_agent_brief.cli.init_wizard import InitProfile
 from multi_agent_brief.onboarding.schema import OnboardingResult
 from multi_agent_brief.sources.industry_packs import INDUSTRY_PACKS
 from multi_agent_brief.audience.profiles import map_audience_to_profile
+from multi_agent_brief.workspace.init_profile import InitProfile
 
 
 # ── language mapping ────────────────────────────────────────────────

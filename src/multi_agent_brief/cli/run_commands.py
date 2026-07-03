@@ -5,33 +5,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from multi_agent_brief.cli.start_commands import (
+from multi_agent_brief.orchestrator.handoff import (
     RUNTIME_RECIPE_FAST_RERUN,
     VALID_RUNTIMES,
     VALID_RUNTIME_RECIPES,
-    AgentHandoff,
     build_handoff,
     render_handoff_cli,
-    write_handoff_artifacts,
+    write_handoff_and_state,
 )
 from multi_agent_brief.orchestrator.fact_layer_import import require_fast_rerun_handoff_ready
-from multi_agent_brief.audience_memory import (
-    create_audience_profile_snapshot,
-    profile_data_from_workspace_config,
-)
-from multi_agent_brief.controls.contract import ControlSwitchboardError
-from multi_agent_brief.controls.switchboard import build_control_switchboard
-from multi_agent_brief.improvement.memory import freeze_improvement_memory_for_run
-from multi_agent_brief.improvement.state import ImprovementLedgerError
-from multi_agent_brief.orchestrator.runtime_state import (
-    RuntimeStateError,
-    append_event,
-    check_runtime_state,
-    complete_stage_transaction,
-    initialize_runtime_state,
-    record_decision,
-    record_handoff_written,
-)
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
@@ -224,7 +206,7 @@ def _run_launcher(args: argparse.Namespace) -> int:
         print(f"{prefix} {exc}")
         return 1
 
-    written = _write_handoff_and_state(
+    written = write_handoff_and_state(
         handoff=handoff,
         workspace=workspace_path,
         repo_workdir=repo_workdir,
@@ -285,7 +267,7 @@ def _run_handoff(args: argparse.Namespace) -> int:
         print(f"[handoff] {exc}")
         return 1
 
-    written = _write_handoff_and_state(
+    written = write_handoff_and_state(
         handoff=handoff,
         workspace=workspace,
         repo_workdir=repo_workdir,
@@ -298,146 +280,3 @@ def _run_handoff(args: argparse.Namespace) -> int:
     print(f"[handoff] Written: {md_path}")
     print(f"[handoff] JSON:   {json_path}")
     return 0
-
-
-def _write_handoff_and_state(
-    *,
-    handoff: AgentHandoff,
-    workspace: Path,
-    repo_workdir: Path,
-    prefix: str,
-) -> tuple[Path, Path] | None:
-    """Initialize runtime control files and write handoff artifacts."""
-    try:
-        state = initialize_runtime_state(
-            workspace=workspace,
-            runtime=handoff.runtime,
-            repo_workdir=repo_workdir,
-            actor="cli",
-            recipe=handoff.recipe,
-        )
-        snapshot = create_audience_profile_snapshot(
-            workspace=workspace,
-            run_id=str((state.get("manifest") or {}).get("run_id") or ""),
-            profile_data=profile_data_from_workspace_config(workspace),
-        )
-        if snapshot.created:
-            append_event(
-                workspace=workspace,
-                run_id=snapshot.run_id,
-                event_type="audience_profile_snapshot_created",
-                actor="cli",
-                reason="Audience profile snapshot created for the current run.",
-                metadata={
-                    "audience_profile": "audience_profile.md",
-                    "audience_profile_snapshot": snapshot.relative_path,
-                    "profile_created": snapshot.profile_created,
-                    "profile_missing": snapshot.profile_missing,
-                    "source_sha256": snapshot.source_sha256,
-                    "snapshot_sha256": snapshot.snapshot_sha256,
-                },
-            )
-        if snapshot.profile_missing:
-            handoff.notes.append(
-                "Audience profile was missing; a default audience_profile.md and frozen snapshot were created for this run."
-            )
-        if handoff.recipe != RUNTIME_RECIPE_FAST_RERUN:
-            _record_doctor_state(
-                handoff=handoff,
-                workspace=workspace,
-                repo_workdir=repo_workdir,
-            )
-        build_control_switchboard(
-            workspace=workspace,
-            repo_workdir=repo_workdir,
-            actor="cli",
-        )
-        improvement_snapshot = freeze_improvement_memory_for_run(
-            workspace=workspace,
-            run_id=str((state.get("manifest") or {}).get("run_id") or ""),
-        )
-        _apply_improvement_memory_handoff(handoff, improvement_snapshot)
-        if improvement_snapshot.snapshot_created_or_changed:
-            append_event(
-                workspace=workspace,
-                run_id=str((state.get("manifest") or {}).get("run_id") or ""),
-                event_type="improvement_memory_snapshot_created",
-                actor="cli",
-                reason="Improvement memory snapshot created for the current run.",
-                metadata={
-                    "ledger_sha256": improvement_snapshot.manifest_improvement["ledger_sha256"],
-                    "memory_sha256": improvement_snapshot.manifest_improvement["memory_sha256"],
-                    "snapshot_path": improvement_snapshot.snapshot_path,
-                    "snapshot_sha256": improvement_snapshot.snapshot_sha256,
-                    "materialized_entry_ids": improvement_snapshot.manifest_improvement["materialized_entry_ids"],
-                },
-            )
-        md_path, json_path = write_handoff_artifacts(handoff, workspace)
-        record_handoff_written(
-            workspace=workspace,
-            handoff_markdown=md_path,
-            handoff_json=json_path,
-            actor="cli",
-        )
-        check_runtime_state(
-            workspace=workspace,
-            repo_workdir=repo_workdir,
-            actor="cli",
-        )
-        return md_path, json_path
-    except RuntimeStateError as exc:
-        print(f"{prefix} {exc}")
-        return None
-    except ControlSwitchboardError as exc:
-        print(f"{prefix} {exc}")
-        return None
-    except ImprovementLedgerError as exc:
-        print(f"{prefix} {exc}")
-        return None
-
-
-def _apply_improvement_memory_handoff(handoff: AgentHandoff, snapshot_result) -> None:
-    if not snapshot_result.snapshot_path:
-        handoff.improvement_memory_files = {}
-        return
-
-    handoff.improvement_memory_files = {
-        "improvement_memory_snapshot": snapshot_result.snapshot_path,
-    }
-    rules = (
-        "Read frozen improvement memory snapshot for this run:\n"
-        f"- {snapshot_result.snapshot_path}\n"
-        "Use it only as taste/audience guidance. It is not evidence, not source material, "
-        "not Claim Ledger input, and not a repair instruction. It must not alter material "
-        "facts, claims, citations, or source support. Mid-run ledger or memory edits apply "
-        "to later runs only."
-    )
-    handoff.prompt = f"{handoff.prompt}\n\n{rules}"
-    handoff.notes.append(
-        "Improvement memory is frozen per run: read the improvement memory snapshot only when present; do not read live improvement memory projections as runtime guidance."
-    )
-
-
-def _record_doctor_state(
-    *,
-    handoff: AgentHandoff,
-    workspace: Path,
-    repo_workdir: Path,
-) -> None:
-    if handoff.doctor_status == "passed":
-        complete_stage_transaction(
-            workspace=workspace,
-            repo_workdir=repo_workdir,
-            stage_id="doctor",
-            reason="Doctor passed during runtime handoff launch.",
-            actor="cli",
-        )
-    elif handoff.doctor_status == "failed":
-        record_decision(
-            workspace=workspace,
-            repo_workdir=repo_workdir,
-            stage_id="doctor",
-            decision="block_run",
-            reason="Doctor failed during runtime handoff launch.",
-            actor="cli",
-        )

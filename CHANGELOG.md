@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compatibility shim for older experiment imports. This is layer-boundary
   cleanup only; it does not change target ids, artifact paths, experiment
   behavior, gates, delivery, release authority, or support status.
+- **Runtime handoff domain boundary**: moved runtime handoff domain helpers out
+  of CLI-owned modules and moved `InitProfile` into a workspace domain module,
+  leaving compatibility exports for existing callers. This is layer-boundary
+  cleanup only; it does not change handoff schema, handoff wording, runtime
+  state files, gates, delivery, release authority, or support status.
 
 ## [0.11.6] — 2026-07-03
 

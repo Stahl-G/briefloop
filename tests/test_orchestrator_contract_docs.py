@@ -225,6 +225,27 @@ def test_experiment_080_imports_contract_target_contract():
     assert "from multi_agent_brief.experiments.target_contract import" not in text
 
 
+def test_evaluation_and_onboarding_modules_do_not_import_cli_layer():
+    roots = [
+        ROOT / "src" / "multi_agent_brief" / "evaluation_cases",
+        ROOT / "src" / "multi_agent_brief" / "onboarding",
+    ]
+    violations: list[str] = []
+    for root in roots:
+        for path in root.rglob("*.py"):
+            rel = path.relative_to(ROOT).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("multi_agent_brief.cli"):
+                    violations.append(f"{rel}:{node.lineno}")
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.name.startswith("multi_agent_brief.cli"):
+                            violations.append(f"{rel}:{node.lineno}")
+
+    assert violations == []
+
+
 def test_v060_public_overview_uses_precise_boundary():
     text = (ROOT / "docs" / "implementation" / "v0.6.0-explicit-orchestrator-contract.md").read_text(
         encoding="utf-8"
