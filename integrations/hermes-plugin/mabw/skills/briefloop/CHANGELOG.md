@@ -1,5 +1,15 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.11 — 2026-07-03
+
+- Clarified the Evidence Extract MinerU-derived Markdown bridge:
+  `briefloop extract` can bind an already-present adjacent `.mineru.md`
+  representation for PDF/binary sources, while the original source bytes remain
+  the root source-lock object.
+- Reiterated that `briefloop extract` does not run MinerU automatically, parse
+  PDFs by itself, perform rendered-page visual inspection, judge support,
+  generate CSM rows, or approve delivery/release.
+
 ## briefloop-operator-skill-v0.1.10 — 2026-07-03
 
 - Added Evidence Extract source-lock guidance for

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Evidence Extract MinerU-derived Markdown bridge**: `briefloop extract` /
+  `multi-agent-brief extract` can now bind an already-present adjacent
+  `.mineru.md` representation for PDF/binary `evidence_extract` sources,
+  keeping the original source bytes in the source lock while using the derived
+  Markdown for deterministic logical-page and text-span seed registration. This
+  does not run MinerU automatically, parse PDFs by itself, perform rendered-page
+  visual inspection, extract tables or figures, judge semantic support,
+  generate Claim-Support Matrix rows, approve delivery, authorize publication,
+  or close the full Evidence Extraction Mode scope.
+
 ### Fixed
 
 - **Architecture reference version label**: corrected the mislabeled

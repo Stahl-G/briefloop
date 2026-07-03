@@ -25,10 +25,14 @@ Read this when operating a real BriefLoop/MABW workspace.
   in `document-review` / `evidence_extract` workspaces to register explicit
   extraction scope, durable local source bytes, source-lock hashes,
   deterministic logical-page seeds, and deterministic text-span registry seeds
-  for UTF-8 text sources. This is not binary/PDF parsing, rendered-page visual
-  inspection, table/figure extraction, semantic support assessment,
-  Claim-Support Matrix generation, citation gating, or legal / disclosure
-  review.
+  for UTF-8 text sources. For PDF/binary sources, run or provide extraction
+  explicitly first; if an adjacent MinerU-derived `.mineru.md` file already
+  exists, `briefloop extract` can bind the original source bytes plus that
+  derived Markdown representation and seed logical pages/spans from the derived
+  text. This is not automatic MinerU execution, binary/PDF parsing by
+  BriefLoop itself, rendered-page visual inspection, table/figure extraction,
+  semantic support assessment, Claim-Support Matrix generation, citation
+  gating, or legal / disclosure review.
 - Use `multi-agent-brief approval init`, `multi-agent-brief approval record`,
   and `multi-agent-brief release check` only for internal release-mode approval
   records. These commands write event-linked control records; they do not

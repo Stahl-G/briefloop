@@ -17,6 +17,7 @@ import yaml
 
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EVIDENCE_SPAN_REGISTRY_SCHEMA_VERSION
 from multi_agent_brief.contracts.source_metadata import normalize_source_category
+from multi_agent_brief.inputs.contracts import extracted_markdown_path
 from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
     write_report_bundle_manifest,
@@ -690,21 +691,50 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
     sources_dir = workspace / "input" / "sources" / "evidence_extract"
     warnings: list[dict[str, str]] = []
     registered: list[dict[str, Any]] = []
+    derived_inputs_by_source: dict[Path, Path] = {}
     for idx, resolved in enumerate(resolved_sources, start=1):
         target = sources_dir / f"{idx:03d}-{_safe_filename(resolved.name)}"
         rel_target = _workspace_relative(workspace, target)
         extension = target.suffix.lower()
-        manual_enabled = extension in EVIDENCE_EXTRACT_TEXT_EXTENSIONS
+        derived_input = (
+            _adjacent_mineru_markdown_for_source(resolved)
+            if extension in EVIDENCE_EXTRACT_BINARY_EXTENSIONS
+            else None
+        )
+        derived_target = extracted_markdown_path(target) if derived_input is not None else None
+        derived_rel_target = _workspace_relative(workspace, derived_target) if derived_target is not None else ""
+        manual_enabled = extension in EVIDENCE_EXTRACT_TEXT_EXTENSIONS or derived_input is not None
         if extension in EVIDENCE_EXTRACT_BINARY_EXTENSIONS:
-            warnings.append(
-                {
-                    "code": "binary_source_registered_only",
-                    "message": (
-                        f"{rel_target} was registered as durable source bytes; "
-                        "BriefLoop does not parse binary/PDF spans in this command."
-                    ),
-                }
-            )
+            if derived_input is None:
+                warnings.append(
+                    {
+                        "code": "binary_source_registered_only",
+                        "message": (
+                            f"{rel_target} was registered as durable source bytes; "
+                            "BriefLoop does not parse binary/PDF spans in this command."
+                        ),
+                    }
+                )
+                warnings.append(
+                    {
+                        "code": "requires_mineru_extraction",
+                        "message": (
+                            f"{rel_target} has no adjacent MinerU Markdown representation; "
+                            f"expected {extracted_markdown_path(resolved).name} before text-span registration."
+                        ),
+                    }
+                )
+            else:
+                derived_inputs_by_source[resolved] = derived_input
+                warnings.append(
+                    {
+                        "code": "mineru_derived_markdown_registered",
+                        "message": (
+                            f"{rel_target} remains the locked source bytes; "
+                            f"{derived_rel_target} is used as the MinerU-derived text representation."
+                        ),
+                    }
+                )
         elif extension and extension not in EVIDENCE_EXTRACT_TEXT_EXTENSIONS:
             warnings.append(
                 {
@@ -731,6 +761,21 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
                 "manual_enabled": manual_enabled,
             }
         )
+        if derived_input is not None and derived_target is not None:
+            registered[-1].update(
+                {
+                    "derived_markdown_path": derived_rel_target,
+                    "derived_markdown_filename": derived_target.name,
+                    "derived_markdown_sha256": _sha256_file(derived_input),
+                    "derived_markdown_size_bytes": derived_input.stat().st_size,
+                    "derived_markdown_derivation": "mineru_adjacent_markdown",
+                    "derived_markdown_extractor": "mineru",
+                    "text_evidence_path": derived_rel_target,
+                    "text_evidence_sha256": _sha256_file(derived_input),
+                    "text_evidence_size_bytes": derived_input.stat().st_size,
+                    "text_evidence_basis": "mineru_derived_markdown",
+                }
+            )
 
     if sources_dir.exists() and any(sources_dir.iterdir()) and not getattr(args, "force", False):
         raise FileExistsError(
@@ -744,8 +789,9 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
     )
     staged_sources: dict[Path, Path] = {}
     staging_parent = workspace / "output" / "intermediate"
+    managed_candidates = [*resolved_sources, *derived_inputs_by_source.values()]
     managed_sources = (
-        _managed_extract_source_inputs(resolved_sources, sources_dir=sources_dir)
+        _managed_extract_source_inputs(managed_candidates, sources_dir=sources_dir)
         if getattr(args, "force", False)
         else []
     )
@@ -764,6 +810,7 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
                 sources_dir=sources_dir,
                 sources=resolved_sources,
                 registered=registered,
+                derived_inputs_by_source=derived_inputs_by_source,
                 staged_sources=staged_sources,
                 force=bool(getattr(args, "force", False)),
             )
@@ -773,6 +820,7 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
             sources_dir=sources_dir,
             sources=resolved_sources,
             registered=registered,
+            derived_inputs_by_source=derived_inputs_by_source,
             staged_sources={},
             force=bool(getattr(args, "force", False)),
         )
@@ -844,31 +892,46 @@ def _write_evidence_extract_source_lock(
     warnings: list[dict[str, str]],
 ) -> Path:
     created_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    locked_sources: list[dict[str, Any]] = []
+    for record in sources:
+        source_record = {
+            "source_id": str(record.get("source_id") or ""),
+            "path": str(record.get("path") or ""),
+            "filename": str(record.get("filename") or ""),
+            "extension": str(record.get("extension") or ""),
+            "source_sha256": str(record.get("source_sha256") or ""),
+            "source_size_bytes": int(record.get("source_size_bytes") or 0),
+            "registered_only": not bool(record.get("manual_enabled")),
+            "lock_status": "locked_source_bytes",
+        }
+        if record.get("derived_markdown_path"):
+            source_record["derived_markdown"] = {
+                "path": str(record.get("derived_markdown_path") or ""),
+                "filename": str(record.get("derived_markdown_filename") or ""),
+                "sha256": str(record.get("derived_markdown_sha256") or ""),
+                "size_bytes": int(record.get("derived_markdown_size_bytes") or 0),
+                "derivation": str(record.get("derived_markdown_derivation") or ""),
+                "extractor": str(record.get("derived_markdown_extractor") or ""),
+                "source_path": str(record.get("path") or ""),
+            }
+            source_record["text_evidence_path"] = str(record.get("text_evidence_path") or "")
+            source_record["text_evidence_basis"] = str(record.get("text_evidence_basis") or "")
+        locked_sources.append(source_record)
     payload = {
         "schema_version": EVIDENCE_EXTRACT_SOURCE_LOCK_SCHEMA_VERSION,
         "report_pack": "evidence_extract",
         "created_at": created_at,
         "scope_path": "extraction_scope.yaml",
         "source_count": len(sources),
-        "sources": [
-            {
-                "source_id": str(record.get("source_id") or ""),
-                "path": str(record.get("path") or ""),
-                "filename": str(record.get("filename") or ""),
-                "extension": str(record.get("extension") or ""),
-                "source_sha256": str(record.get("source_sha256") or ""),
-                "source_size_bytes": int(record.get("source_size_bytes") or 0),
-                "registered_only": not bool(record.get("manual_enabled")),
-                "lock_status": "locked_source_bytes",
-            }
-            for record in sources
-        ],
+        "sources": locked_sources,
         "scope_excerpt": scope[:500],
         "warnings": warnings,
         "boundary": "deterministic_registered_source_lock_only",
         "non_claims": [
-            "no_text_or_binary_extraction",
+            "extract_command_does_not_run_mineru",
+            "derived_markdown_is_text_representation_not_original_source",
             "no_pdf_or_binary_page_extraction",
+            "no_pdf_or_binary_page_extraction_without_derived_markdown",
             "no_rendered_page_visual_check",
             "no_evidence_ledger_generation",
             "no_citation_gate",
@@ -905,7 +968,10 @@ def _write_evidence_extract_page_inventory(
         source_path = str(record.get("path") or "")
         extension = str(record.get("extension") or "")
         source_file = workspace / source_path
-        source_text = _source_text_for_span_registry(source_file) if bool(record.get("manual_enabled")) else None
+        text_evidence = _text_evidence_for_record(workspace=workspace, record=record)
+        source_text = _source_text_for_span_registry(text_evidence["path"]) if text_evidence else None
+        page_basis = str(text_evidence["basis"]) if text_evidence else ""
+        needs_visual_inspection = page_basis == "mineru_derived_markdown"
         pages: list[dict[str, Any]] = []
         if source_text is not None and source_text.strip():
             page_id = _evidence_extract_page_id(source_id)
@@ -914,9 +980,9 @@ def _write_evidence_extract_page_inventory(
                     "page_id": page_id,
                     "page_number": 1,
                     "page_label": "logical-page-1",
-                    "page_basis": "utf8_text_file",
+                    "page_basis": page_basis,
                     "has_searchable_text": True,
-                    "needs_visual_inspection": False,
+                    "needs_visual_inspection": needs_visual_inspection,
                     "char_start": 0,
                     "char_end": len(source_text),
                 }
@@ -944,10 +1010,14 @@ def _write_evidence_extract_page_inventory(
                 "inventory_status": inventory_status,
                 "page_count": len(pages),
                 "needs_external_extraction_tool": source_text is None,
-                "visual_inspection_required": source_text is None,
+                "visual_inspection_required": source_text is None or needs_visual_inspection,
                 "pages": pages,
             }
         )
+        if text_evidence is not None:
+            inventory_sources[-1]["text_source_path"] = str(text_evidence["rel_path"])
+            inventory_sources[-1]["text_source_sha256"] = str(text_evidence["sha256"])
+            inventory_sources[-1]["text_evidence_basis"] = str(text_evidence["basis"])
 
     payload = {
         "schema_version": EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION,
@@ -995,6 +1065,7 @@ def _copy_extract_sources(
     sources_dir: Path,
     sources: list[Path],
     registered: list[dict[str, Any]],
+    derived_inputs_by_source: dict[Path, Path],
     staged_sources: dict[Path, Path],
     force: bool,
 ) -> None:
@@ -1006,6 +1077,12 @@ def _copy_extract_sources(
 
     for source, record in zip(sources, registered):
         shutil.copy2(staged_sources.get(source, source), workspace / record["path"])
+        derived_input = derived_inputs_by_source.get(source)
+        if derived_input is not None and record.get("derived_markdown_path"):
+            shutil.copy2(
+                staged_sources.get(derived_input, derived_input),
+                workspace / str(record["derived_markdown_path"]),
+            )
 
 
 def _refresh_registered_source_digests(*, workspace: Path, registered: list[dict[str, Any]]) -> None:
@@ -1013,6 +1090,14 @@ def _refresh_registered_source_digests(*, workspace: Path, registered: list[dict
         source_path = workspace / str(record.get("path") or "")
         record["source_sha256"] = _sha256_file(source_path)
         record["source_size_bytes"] = source_path.stat().st_size
+        if record.get("derived_markdown_path"):
+            derived_path = workspace / str(record.get("derived_markdown_path") or "")
+            derived_sha = _sha256_file(derived_path)
+            derived_size = derived_path.stat().st_size
+            record["derived_markdown_sha256"] = derived_sha
+            record["derived_markdown_size_bytes"] = derived_size
+            record["text_evidence_sha256"] = derived_sha
+            record["text_evidence_size_bytes"] = derived_size
 
 
 def _managed_extract_source_inputs(sources: list[Path], *, sources_dir: Path) -> list[Path]:
@@ -1082,9 +1167,11 @@ def _write_evidence_extract_span_registry(
     for record in sources:
         if not bool(record.get("manual_enabled")):
             continue
-        source_path = str(record.get("path") or "")
-        source_file = workspace / source_path
-        source_text = _source_text_for_span_registry(source_file)
+        text_evidence = _text_evidence_for_record(workspace=workspace, record=record)
+        if text_evidence is None:
+            continue
+        source_path = str(text_evidence["rel_path"])
+        source_text = _source_text_for_span_registry(text_evidence["path"])
         if source_text is None:
             warnings.append(
                 {
@@ -1116,11 +1203,17 @@ def _write_evidence_extract_span_registry(
                 "metadata": {
                     "source_sha256": record.get("source_sha256", ""),
                     "source_size_bytes": record.get("source_size_bytes", 0),
+                    "text_evidence_sha256": text_evidence.get("sha256", ""),
+                    "text_evidence_size_bytes": text_evidence.get("size_bytes", 0),
+                    "text_evidence_basis": text_evidence.get("basis", ""),
                     "evidence_extract_source": True,
                     "extraction_scope": "extraction_scope.yaml",
                 },
             }
         )
+        if record.get("derived_markdown_path"):
+            registry_sources[-1]["metadata"]["original_source_path"] = record.get("path", "")
+            registry_sources[-1]["metadata"]["derived_markdown_path"] = record.get("derived_markdown_path", "")
 
     if not registry_sources:
         registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
@@ -1176,6 +1269,28 @@ def _source_text_for_span_registry(path: Path) -> str | None:
         if isinstance(payload, dict) and isinstance(payload.get("content"), str):
             return payload["content"]
     return raw_text
+
+
+def _adjacent_mineru_markdown_for_source(path: Path) -> Path | None:
+    candidate = extracted_markdown_path(path)
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    return None
+
+
+def _text_evidence_for_record(*, workspace: Path, record: dict[str, Any]) -> dict[str, Any] | None:
+    if not bool(record.get("manual_enabled")):
+        return None
+    rel_path = str(record.get("text_evidence_path") or record.get("path") or "")
+    if not rel_path:
+        return None
+    return {
+        "path": workspace / rel_path,
+        "rel_path": rel_path,
+        "sha256": str(record.get("text_evidence_sha256") or record.get("source_sha256") or ""),
+        "size_bytes": int(record.get("text_evidence_size_bytes") or record.get("source_size_bytes") or 0),
+        "basis": str(record.get("text_evidence_basis") or "utf8_text_file"),
+    }
 
 
 def _first_text_span(source_text: str, *, source_id: str) -> dict[str, Any] | None:
@@ -1261,10 +1376,11 @@ def _build_sources_yaml_text(
         if isinstance(item, dict) and not item.get("evidence_extract_registered")
     ]
     for record in sources:
+        text_path = str(record.get("text_evidence_path") or record["path"])
         existing.append(
             {
                 "name": record["name"],
-                "path": record["path"],
+                "path": text_path,
                 "category": source_category,
                 "language": language,
                 "enabled": bool(record.get("manual_enabled")),
@@ -1275,9 +1391,19 @@ def _build_sources_yaml_text(
                     "extraction_scope": "extraction_scope.yaml",
                     "source_sha256": record["source_sha256"],
                     "source_size_bytes": record["source_size_bytes"],
+                    "original_source_path": record["path"],
                 },
             }
         )
+        if record.get("derived_markdown_path"):
+            existing[-1]["metadata"].update(
+                {
+                    "derived_markdown_path": record["derived_markdown_path"],
+                    "derived_markdown_sha256": record["derived_markdown_sha256"],
+                    "derived_markdown_size_bytes": record["derived_markdown_size_bytes"],
+                    "text_evidence_basis": record.get("text_evidence_basis", ""),
+                }
+            )
     manual["enabled"] = True
     manual["sources"] = existing
     data["manual"] = manual

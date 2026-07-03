@@ -11,6 +11,7 @@ import yaml
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
+from multi_agent_brief.inputs.contracts import extracted_markdown_path
 from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
 from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import (
     validate_evidence_span_registry_against_source_pack,
@@ -200,6 +201,172 @@ def test_extract_source_lock_invalidates_modified_registered_source(tmp_path: Pa
     assert source_lock_record["status"] == "invalid"
     assert source_lock_record["validation_result"] == (
         "evidence_extract_source_lock_validation_error:source_sha256_mismatch:SRC-001"
+    )
+
+
+def test_extract_bridges_adjacent_mineru_markdown_for_pdf(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source_dir = tmp_path / "source-docs"
+    source_dir.mkdir()
+    pdf = source_dir / "permit.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nplaceholder\n")
+    derived = extracted_markdown_path(pdf)
+    derived.write_text("# Permit PDF\n\nMinerU extracted capacity: 100 MW.\n", encoding="utf-8")
+
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(pdf),
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["source_count"] == 1
+    assert payload["page_inventory_source_count"] == 1
+    assert payload["page_inventory_page_count"] == 1
+    assert payload["evidence_span_registry_source_count"] == 1
+    assert payload["evidence_span_registry_span_count"] == 1
+    assert not any(item["code"] == "binary_source_registered_only" for item in payload["warnings"])
+
+    source_lock = json.loads(
+        (workspace / "output" / "intermediate" / "evidence_extract_source_lock.json").read_text(encoding="utf-8")
+    )
+    locked_source = source_lock["sources"][0]
+    assert locked_source["path"].endswith("001-permit.pdf")
+    assert locked_source["registered_only"] is False
+    assert locked_source["derived_markdown"]["path"].endswith("001-permit_pdf.mineru.md")
+    assert locked_source["derived_markdown"]["derivation"] == "mineru_adjacent_markdown"
+    copied_pdf = workspace / locked_source["path"]
+    copied_derived = workspace / locked_source["derived_markdown"]["path"]
+    assert copied_pdf.read_bytes() == pdf.read_bytes()
+    assert copied_derived.read_text(encoding="utf-8") == derived.read_text(encoding="utf-8")
+
+    page_inventory = json.loads(
+        (workspace / "output" / "intermediate" / "evidence_extract_page_inventory.json").read_text(encoding="utf-8")
+    )
+    inventory_source = page_inventory["sources"][0]
+    assert inventory_source["source_path"] == locked_source["path"]
+    assert inventory_source["text_source_path"] == locked_source["derived_markdown"]["path"]
+    assert inventory_source["inventory_status"] == "text_logical_page_seeded"
+    assert inventory_source["pages"][0]["page_basis"] == "mineru_derived_markdown"
+    assert inventory_source["pages"][0]["needs_visual_inspection"] is True
+
+    registry_payload = json.loads(
+        (workspace / "output" / "intermediate" / "evidence_span_registry.json").read_text(encoding="utf-8")
+    )
+    assert registry_payload["sources"][0]["source_path"] == locked_source["derived_markdown"]["path"]
+    span = registry_payload["sources"][0]["spans"][0]
+    assert span["raw_excerpt"].startswith("# Permit PDF")
+    assert copied_derived.read_text(encoding="utf-8")[span["char_start"]:span["char_end"]] == span["raw_excerpt"]
+
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    evidence_entry = next(item for item in sources["manual"]["sources"] if item.get("evidence_extract_registered"))
+    assert evidence_entry["enabled"] is True
+    assert evidence_entry["registered_only"] is False
+    assert evidence_entry["path"] == locked_source["derived_markdown"]["path"]
+    assert evidence_entry["metadata"]["original_source_path"] == locked_source["path"]
+    assert evidence_entry["metadata"]["derived_markdown_path"] == locked_source["derived_markdown"]["path"]
+
+    source_config = load_sources_config(workspace / "sources.yaml")
+    items, provider_errors = collect_all_sources(source_config)
+    assert provider_errors == []
+    assert len(items) == 1
+    assert "MinerU extracted capacity" in items[0].content
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    assert state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]["status"] == "valid"
+    assert state["artifact_registry"]["artifacts"]["evidence_extract_page_inventory"]["status"] == "valid"
+    assert state["artifact_registry"]["artifacts"]["evidence_span_registry"]["status"] == "valid"
+
+
+def test_extract_source_lock_invalidates_modified_derived_mineru_markdown(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    pdf = tmp_path / "permit.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nplaceholder\n")
+    extracted_markdown_path(pdf).write_text("# Permit PDF\n\nOriginal derived text.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(pdf),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    copied_derived = workspace / payload["sources"][0]["derived_markdown_path"]
+    copied_derived.write_text("# Permit PDF\n\nTampered derived text.\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == (
+        "evidence_extract_source_lock_validation_error:derived_markdown_sha256_mismatch:SRC-001"
+    )
+
+
+def test_extract_source_lock_rejects_derived_markdown_outside_evidence_root(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    pdf = tmp_path / "permit.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nplaceholder\n")
+    extracted_markdown_path(pdf).write_text("# Permit PDF\n\nDerived text.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(pdf),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    outside = workspace / "input" / "context" / "permit_pdf.mineru.md"
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text("# Derived outside evidence root\n", encoding="utf-8")
+    lock_path = workspace / "output" / "intermediate" / "evidence_extract_source_lock.json"
+    source_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    source_lock["sources"][0]["derived_markdown"]["path"] = "input/context/permit_pdf.mineru.md"
+    lock_path.write_text(json.dumps(source_lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == (
+        "evidence_extract_source_lock_validation_error:derived_markdown_path_unsafe:SRC-001"
     )
 
 

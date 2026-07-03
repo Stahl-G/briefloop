@@ -48,10 +48,13 @@ Owning commands for recent control-tool projections:
   `evidence_extract_source_lock.json`, `evidence_extract_page_inventory.json`,
   and audit copies for `document-review` / `evidence_extract` workspaces. The
   lock binds registered `input/sources/evidence_extract/` files to file size
-  and SHA-256; the inventory gives UTF-8 text sources logical page IDs and
-  flags PDF/binary files as requiring a future extraction tool. These artifacts
-  are not rendered-page visual checks, evidence ledgers, support judgments,
-  citation gates, or delivery approvals.
+  and SHA-256. If a PDF/binary source already has an adjacent MinerU-derived
+  Markdown representation, the lock also binds that `.mineru.md` file and the
+  inventory/span registry use the derived text while the original source bytes
+  remain the root evidence object. PDF/binary files without derived Markdown are
+  still registered-only and require explicit extraction. These artifacts are
+  not automatic MinerU execution, rendered-page visual checks, evidence
+  ledgers, support judgments, citation gates, or delivery approvals.
 - `guidance_manifestation_report.json` is an imported/human diagnostic record
   for approved guidance manifestation labels; it is validated and surfaced by
   status / Quality Panel, but it is not an Improvement Memory writer and not a
