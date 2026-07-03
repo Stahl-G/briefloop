@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- **Architecture reference version label**: corrected the mislabeled
+  `docs/mabw-architecture-reference-v0.2.0.md` path by turning it into a
+  compatibility pointer and moving the legacy MABW v0.3.0 architecture
+  reference to `docs/mabw-architecture-reference-v0.3.0-legacy.md`. This is a
+  documentation-label fix only, not a product capability change.
 
 ## [0.11.6] — 2026-07-03
 

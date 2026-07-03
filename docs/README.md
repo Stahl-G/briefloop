@@ -63,7 +63,8 @@ These longer-form technical notes are design and architecture references. Treat
 implementation/support source of truth when they differ.
 
 - [BriefLoop architecture reference v0.3.0](briefloop-architecture-reference-v0.3.0.md)
-- [MABW architecture reference v0.2.0](mabw-architecture-reference-v0.2.0.md)
+- [MABW architecture reference v0.2.0 compatibility pointer](mabw-architecture-reference-v0.2.0.md)
+- [MABW architecture reference v0.3.0 legacy](mabw-architecture-reference-v0.3.0-legacy.md)
 - [MABW architecture reference v0.3.0 revision roadmap](mabw-architecture-reference-v0.3.0-revision-roadmap.md)
 - [Tech report v0.3.0 abstract draft](tech-report-v0.3.0/abstract-draft-v0.3.0.md)
 - [Tech report v0.3.0 industrial related work](tech-report-v0.3.0/industrial-related-work.md)
