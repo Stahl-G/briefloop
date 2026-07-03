@@ -54,6 +54,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["docs.README.md"]["status"] == "pass"
     assert checks["docs.README_en.md"]["status"] == "pass"
     assert checks["docs.README.zh-CN.md"]["status"] == "pass"
+    assert checks["docs.docs/packaging-pipx.md"]["status"] == "pass"
     assert checks["docs.README_en.md.pointer_shape"]["status"] == "pass"
     assert checks["new.industry-weekly"]["status"] == "pass"
     assert "report_pack=market_weekly" in checks["new.industry-weekly"]["detail"]
@@ -80,6 +81,8 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["docs.public_claims.no_forbidden_positive_claims"]["status"] == "pass"
     assert checks["first_user_docs.docs/getting-started.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"] == "pass"
+    assert checks["first_user_docs.README.md.unix_venv_activation"]["status"] == "pass"
+    assert checks["first_user_docs.no_current_pipx_install"]["status"] == "pass"
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
@@ -125,7 +128,8 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
         "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
-        "[Architecture Status](docs/architecture-status.md)\n",
+        "[Architecture Status](docs/architecture-status.md)\n"
+        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief onboard\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(module, "ROOT", tmp_path)
@@ -155,7 +159,8 @@ def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_pat
         "[Getting Started](docs/getting-started.md) · "
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
-        "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n",
+        "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
+        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief onboard\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(module, "ROOT", tmp_path)
@@ -167,6 +172,65 @@ def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_pat
     activation_check = checks_by_id["first_user_docs.docs/getting-started.md.unix_venv_activation"]
     assert activation_check["status"] == "fail"
     assert "activate .venv" in activation_check["detail"]
+
+
+def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/getting-started.md":
+            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
+        path.write_text(text, encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "[Getting Started](docs/getting-started.md) · "
+        "[Weekly Loop](docs/weekly-loop.md) · "
+        "[Troubleshooting](docs/troubleshooting.md) · "
+        "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
+        "\nbash scripts/setup.sh\nmulti-agent-brief onboard\nsource .venv/bin/activate\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_first_user_docs_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    activation_check = checks_by_id["first_user_docs.README.md.unix_venv_activation"]
+    assert activation_check["status"] == "fail"
+    assert "activate .venv" in activation_check["detail"]
+
+
+def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/getting-started.md":
+            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
+            text += "\n```bash\npipx install briefloop\n```\n"
+        path.write_text(text, encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "[Getting Started](docs/getting-started.md) · "
+        "[Weekly Loop](docs/weekly-loop.md) · "
+        "[Troubleshooting](docs/troubleshooting.md) · "
+        "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
+        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief onboard\n"
+        "\nDo not use `pipx install briefloop` until release notes say it is published.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_first_user_docs_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    pipx_check = checks_by_id["first_user_docs.no_current_pipx_install"]
+    assert pipx_check["status"] == "fail"
+    assert "docs/getting-started.md" in pipx_check["detail"]
+    assert "README.md" not in pipx_check["detail"]
 
 
 def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:

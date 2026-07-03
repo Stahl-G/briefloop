@@ -143,6 +143,13 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "更宽的 Product OS surface 仍是实验性",
         "不等于语义证明",
     ],
+    "docs/packaging-pipx.md": [
+        "not a current install instruction",
+        "Source-clone setup remains the supported launch path",
+        "Do not add `pipx install briefloop`",
+        "does not prove semantic truth",
+        "does not approve delivery",
+    ],
 }
 REQUIRED_FIRST_USER_DOC_PHRASES = {
     "docs/getting-started.md": [
@@ -196,6 +203,20 @@ README_FIRST_SCREEN_FORBIDDEN_LINKS = [
     "docs/architecture-status.md",
     "docs/roadmap.md",
 ]
+PIPX_CURRENT_INSTALL_DOCS = [
+    "README.md",
+    *REQUIRED_FIRST_USER_DOC_PHRASES.keys(),
+]
+PIPX_INSTALL_BRIEFLOOP_RE = re.compile(r"\bpipx\s+install\s+briefloop\b", re.IGNORECASE)
+PIPX_INSTALL_NEGATING_CONTEXT = (
+    "do not",
+    "don't",
+    "not the launch path",
+    "until release notes",
+    "不是当前",
+    "不要",
+    "除非",
+)
 EXPECTED_SUPPORT_MATRIX_STATUSES = {
     "v0.11 product-facing workspace entries": "Supported",
     "ReportSpec / ReportPack baseline contracts": "Supported",
@@ -693,7 +714,10 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         )
 
     getting_started = (ROOT / "docs" / "getting-started.md").read_text(encoding="utf-8")
-    activation_reason = _getting_started_unix_activation_reason(getting_started)
+    activation_reason = _unix_source_clone_activation_reason(
+        getting_started,
+        cli_markers=("multi-agent-brief version",),
+    )
     _append_check(
         checks,
         "first_user_docs.docs/getting-started.md.unix_venv_activation",
@@ -701,7 +725,24 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         activation_reason or "setup.sh followed by source .venv/bin/activate before CLI verification",
     )
 
-    readme_first_screen = _readme_first_screen_text((ROOT / "README.md").read_text(encoding="utf-8"))
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_activation_reason = _unix_source_clone_activation_reason(readme_text)
+    _append_check(
+        checks,
+        "first_user_docs.README.md.unix_venv_activation",
+        readme_activation_reason == "",
+        readme_activation_reason or "setup.sh followed by source .venv/bin/activate before README CLI usage",
+    )
+
+    pipx_findings = _current_install_pipx_findings()
+    _append_check(
+        checks,
+        "first_user_docs.no_current_pipx_install",
+        not pipx_findings,
+        f"forbidden current pipx install instructions={pipx_findings}",
+    )
+
+    readme_first_screen = _readme_first_screen_text(readme_text)
     missing_links = [link for link in README_FIRST_SCREEN_REQUIRED_LINKS if link not in readme_first_screen]
     forbidden_links = [link for link in README_FIRST_SCREEN_FORBIDDEN_LINKS if link in readme_first_screen]
     _append_check(
@@ -712,21 +753,51 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
     )
 
 
-def _getting_started_unix_activation_reason(text: str) -> str:
-    required_markers = {
-        "bash scripts/setup.sh": text.find("bash scripts/setup.sh"),
-        "source .venv/bin/activate": text.find("source .venv/bin/activate"),
-        "multi-agent-brief version": text.find("multi-agent-brief version"),
-    }
-    missing = [marker for marker, index in required_markers.items() if index < 0]
+def _unix_source_clone_activation_reason(
+    text: str,
+    *,
+    cli_markers: tuple[str, ...] = (
+        "multi-agent-brief version",
+        "multi-agent-brief onboard",
+        "multi-agent-brief init",
+        "multi-agent-brief run",
+        "briefloop new",
+        "briefloop run",
+    ),
+) -> str:
+    setup_index = text.find("bash scripts/setup.sh")
+    activation_index = text.find("source .venv/bin/activate")
+    cli_indexes = [text.find(marker) for marker in cli_markers if text.find(marker) >= 0]
+    missing = []
+    if setup_index < 0:
+        missing.append("bash scripts/setup.sh")
+    if activation_index < 0:
+        missing.append("source .venv/bin/activate")
+    if not cli_indexes:
+        missing.append("Unix CLI usage")
     if missing:
         return f"missing Unix setup marker(s): {missing}"
-    setup_index = required_markers["bash scripts/setup.sh"]
-    activation_index = required_markers["source .venv/bin/activate"]
-    version_index = required_markers["multi-agent-brief version"]
-    if not setup_index < activation_index < version_index:
-        return "Unix source-clone path must activate .venv after setup.sh and before multi-agent-brief version"
+    first_cli_index = min(cli_indexes)
+    if not setup_index < activation_index < first_cli_index:
+        return "Unix source-clone path must activate .venv after setup.sh and before CLI usage"
     return ""
+
+
+def _current_install_pipx_findings() -> list[str]:
+    findings: list[str] = []
+    for rel_path in PIPX_CURRENT_INSTALL_DOCS:
+        path = ROOT / rel_path
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            if not PIPX_INSTALL_BRIEFLOOP_RE.search(line):
+                continue
+            context = "\n".join(lines[max(0, index - 1) : min(len(lines), index + 2)]).lower()
+            if any(token in context for token in PIPX_INSTALL_NEGATING_CONTEXT):
+                continue
+            findings.append(f"{rel_path}:{index + 1}:{line.strip()}")
+    return findings
 
 
 def _readme_first_screen_text(text: str) -> str:

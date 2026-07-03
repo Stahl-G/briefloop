@@ -166,11 +166,17 @@ If a source is stale, a number is unregistered, or an editor adds a new material
 git clone https://github.com/Stahl-G/briefloop.git
 cd briefloop
 bash scripts/setup.sh
+source .venv/bin/activate
 bash scripts/demo.sh
 ```
 
 `scripts/demo.sh` creates an API-free reference workspace with a final brief,
 Claim Ledger, Quality Summary, source appendix, and event-log excerpt.
+
+Package-index installs are not the launch path yet. `pipx` / PyPI packaging is
+tracked in [pipx And PyPI Packaging Prep](docs/packaging-pipx.md); do not use
+`pipx install briefloop` until release notes say a real package-index artifact
+has been published and smoked.
 
 When you are ready to use your own materials, create your first briefing
 workspace:
