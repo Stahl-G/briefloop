@@ -79,6 +79,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["no_force_deliver_cli"]["status"] == "pass"
     assert checks["docs.public_claims.no_forbidden_positive_claims"]["status"] == "pass"
     assert checks["first_user_docs.docs/getting-started.md"]["status"] == "pass"
+    assert checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
@@ -115,7 +116,10 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(phrases), encoding="utf-8")
+        text = "\n".join(phrases)
+        if rel_path == "docs/getting-started.md":
+            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
+        path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
         "[Getting Started](docs/getting-started.md) · "
         "[Weekly Loop](docs/weekly-loop.md) · "
@@ -136,6 +140,33 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     readme_check = checks_by_id["first_user_docs.README.md.first_screen_links"]
     assert readme_check["status"] == "fail"
     assert "docs/architecture-status.md" in readme_check["detail"]
+
+
+def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/getting-started.md":
+            text += "\nbash scripts/setup.sh\nmulti-agent-brief version\nsource .venv/bin/activate\n"
+        path.write_text(text, encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "[Getting Started](docs/getting-started.md) · "
+        "[Weekly Loop](docs/weekly-loop.md) · "
+        "[Troubleshooting](docs/troubleshooting.md) · "
+        "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_first_user_docs_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    activation_check = checks_by_id["first_user_docs.docs/getting-started.md.unix_venv_activation"]
+    assert activation_check["status"] == "fail"
+    assert "activate .venv" in activation_check["detail"]
 
 
 def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:

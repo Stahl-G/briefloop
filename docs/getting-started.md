@@ -15,6 +15,7 @@ macOS or Linux:
 git clone https://github.com/Stahl-G/briefloop.git
 cd briefloop
 bash scripts/setup.sh
+source .venv/bin/activate
 ```
 
 Windows PowerShell:
