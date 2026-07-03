@@ -118,11 +118,24 @@ If the release uses package/archive metadata, verify those surfaces too:
 - Source archive URL references the same tag.
 - Homebrew formula URL references the same tag when applicable.
 - Formula checksum matches the published archive when applicable.
+- PyPI / pipx install instructions only appear after the package-index artifact
+  exists and has passed a published-artifact smoke.
 - Any package-index or install instructions point at a real published artifact,
   not a local branch or private path.
 
 Do not update formula/package metadata ahead of the tag or release unless the
 release notes explicitly mark it as staged and unpublished.
+
+For pipx / PyPI prep, follow
+[`docs/packaging-pipx.md`](packaging-pipx.md). The short version:
+
+- do not add `pipx install briefloop` to first-user docs until the distribution
+  name exists on the package index;
+- verify `pyproject.toml` metadata and both console scripts,
+  `briefloop` and `multi-agent-brief`;
+- install the built wheel in a fresh virtual environment before publishing;
+- after publishing, verify the real `pipx install ...` command from a clean
+  environment.
 
 ## 5. Public-Safe Evidence Links
 
@@ -171,6 +184,7 @@ Launch smoke: PASS / FAIL
 Public-claim guard: PASS / FAIL
 GitHub release exists: PASS / FAIL
 Formula/package metadata: PASS / FAIL / NOT APPLICABLE
+PyPI/pipx published-artifact smoke: PASS / FAIL / NOT APPLICABLE
 Known non-blocking follow-ups:
 ```
 

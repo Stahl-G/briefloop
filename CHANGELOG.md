@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **pipx / PyPI packaging prep**: added future package-index readiness
+  documentation, neutral PyPI project metadata, and release-checklist guardrails
+  for a later `pipx` path while keeping source-clone setup as the current
+  launch install path. This does not publish a PyPI artifact, rename the Python
+  package, remove the `multi-agent-brief` console script, or make `pipx` a
+  current install instruction.
 - **Evidence Extract MinerU-derived Markdown bridge**: `briefloop extract` /
   `multi-agent-brief extract` can now bind an already-present adjacent
   `.mineru.md` representation for PDF/binary `evidence_extract` sources,

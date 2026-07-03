@@ -12,6 +12,25 @@ license = "MIT"
 authors = [
   {name = "multi-agent-brief-workflow contributors"}
 ]
+keywords = [
+  "briefing",
+  "workflow",
+  "audit",
+  "traceability",
+  "multi-agent",
+]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business",
+  "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
   "pyyaml>=6.0",
 ]
@@ -29,6 +48,13 @@ dev = [
 [project.scripts]
 multi-agent-brief = "multi_agent_brief.cli.main:main"
 briefloop = "multi_agent_brief.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/Stahl-G/briefloop"
+Repository = "https://github.com/Stahl-G/briefloop"
+Issues = "https://github.com/Stahl-G/briefloop/issues"
+Documentation = "https://github.com/Stahl-G/briefloop/tree/main/docs"
+Changelog = "https://github.com/Stahl-G/briefloop/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
