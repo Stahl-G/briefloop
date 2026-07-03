@@ -369,6 +369,25 @@ def test_check_version_consistency_accepts_formula_when_tag_exists_on_origin(tmp
     assert module.main() == 0
 
 
+def test_remote_git_tag_exists_requires_exact_ref(monkeypatch):
+    spec = importlib.util.spec_from_file_location("check_version_consistency_test", VERSION_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class Result:
+        returncode = 0
+        stdout = (
+            "1111111111111111111111111111111111111111\trefs/tags/foo/refs/tags/v1.2.3\n"
+            "2222222222222222222222222222222222222222\trefs/tags/v1.2.4\n"
+        )
+        stderr = ""
+
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: Result())
+
+    assert module._remote_git_tag_exists("v1.2.3") is False
+
+
 def test_check_version_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("check_version_consistency_test", VERSION_SCRIPT)
     assert spec and spec.loader
