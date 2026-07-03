@@ -7,7 +7,7 @@ The public project name is now **BriefLoop**; MABW remains as the implementation
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[Function Map](docs/features.md) · [Golden Path](docs/golden-path.md) · [Architecture Status](docs/architecture-status.md) · [Roadmap](docs/roadmap.md)
+[Function Map](docs/features.md) · [Golden Path](docs/golden-path.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [Architecture Status](docs/architecture-status.md) · [Roadmap](docs/roadmap.md)
 
 Writer entry: use `/briefloop` in Claude Code (`/mabw` remains a compatibility alias), or `briefloop` / `multi-agent-brief` in a shell.
 
