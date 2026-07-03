@@ -1195,14 +1195,31 @@ def _validate_evidence_span_registry_payload(payload: Any, *, artifact_path: Pat
         return ARTIFACT_INVALID, f"evidence_span_registry_schema_error:{first.field}"
 
     workspace = artifact_path.parents[2]
+    page_inventory_payload = _valid_evidence_extract_page_inventory_payload_for_span_registry(
+        artifact_path.with_name("evidence_extract_page_inventory.json")
+    )
     reason = validate_evidence_span_registry_against_source_pack(
         registry_payload=payload,
         workspace=workspace,
+        page_inventory_payload=page_inventory_payload,
     )
     if reason:
         return ARTIFACT_INVALID, f"{EVIDENCE_SPAN_REGISTRY_VALIDATION_PREFIX}:{reason}"
 
     return ARTIFACT_VALID, "experimental_evidence_span_registry_schema"
+
+
+def _valid_evidence_extract_page_inventory_payload_for_span_registry(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    status, _validation_result = _validate_evidence_extract_page_inventory_payload(payload, artifact_path=path)
+    if status != ARTIFACT_VALID:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _validate_claim_support_matrix_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:

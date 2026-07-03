@@ -322,6 +322,54 @@ def test_extract_page_inventory_rejects_stale_source_lock_sha(tmp_path: Path, ca
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("page_id", "PAGE-SRC-999-001", "span_page_unknown:ESP-001-01"),
+        ("page_number", 99, "span_page_number_mismatch:ESP-001-01"),
+    ],
+)
+def test_extract_evidence_span_registry_rejects_forged_page_trace(
+    tmp_path: Path,
+    capsys,
+    field: str,
+    value: object,
+    reason: str,
+) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("# Permit Summary\n\nCapacity: 100 MW.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    registry_path = workspace / "output" / "intermediate" / "evidence_span_registry.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["sources"][0]["spans"][0][field] = value
+    registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["evidence_span_registry"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == f"evidence_span_registry_validation_error:{reason}"
+
+
 def test_extract_does_not_persist_external_absolute_source_paths(tmp_path: Path, capsys) -> None:
     workspace = tmp_path / "evidence-ws"
     outside = tmp_path / "outside-user-folder"
