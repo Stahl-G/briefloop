@@ -31,17 +31,12 @@ from multi_agent_brief.product.quality_panel import (
     write_quality_panel_html,
     write_quality_summary,
 )
+from tests.helpers import initialized_workspace_writer
 
 
-def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text(
-        "project:\n  name: Quality Panel Test\n",
-        encoding="utf-8",
-    )
-    assert main(["state", "init", "--workspace", str(ws)]) == 0
-    return ws
+_workspace = initialized_workspace_writer(
+    project_name="Quality Panel Test",
+)
 
 
 def _json(path: Path) -> dict:

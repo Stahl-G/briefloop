@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -37,17 +38,15 @@ from multi_agent_brief.orchestrator.run_archive import archive_finalized_run
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 from multi_agent_brief.outputs.source_appendix import build_source_appendix
+from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _write_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "input").mkdir()
-    (ws / "config.yaml").write_text(
-        """
+_write_workspace = partial(
+    write_workspace_files_under,
+    config_text="""
 project:
   name: "Runtime State Test"
 output:
@@ -55,11 +54,9 @@ output:
 input:
   path: "input"
 """.strip(),
-        encoding="utf-8",
-    )
-    (ws / "user.md").write_text("# User\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    return ws
+    user_text="# User\n",
+    include_input_dir=True,
+)
 
 
 def _write_auditable_condition_metadata(ws: Path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
@@ -14,17 +15,15 @@ from multi_agent_brief.orchestrator.runtime_state import (
     initialize_runtime_state,
 )
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
+from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _write_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "input").mkdir()
-    (ws / "config.yaml").write_text(
-        """
+_write_workspace = partial(
+    write_workspace_files_under,
+    config_text="""
 project:
   name: "Feedback Test"
 output:
@@ -32,11 +31,9 @@ output:
 input:
   path: "input"
 """.strip(),
-        encoding="utf-8",
-    )
-    (ws / "user.md").write_text("# User\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    return ws
+    user_text="# User\n",
+    include_input_dir=True,
+)
 
 
 def _issues_path(ws: Path) -> Path:

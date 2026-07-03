@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 import multi_agent_brief.controls.switchboard as switchboard_module
@@ -12,17 +13,15 @@ from multi_agent_brief.controls.switchboard import build_control_switchboard, re
 from multi_agent_brief.improvement.memory import freeze_improvement_memory_for_run
 from multi_agent_brief.improvement.state import approve_improvement, propose_improvement
 from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, initialize_runtime_state
+from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _write_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "input").mkdir()
-    (ws / "config.yaml").write_text(
-        """
+_write_workspace = partial(
+    write_workspace_files_under,
+    config_text="""
 project:
   name: "Control Switchboard Test"
   company: "Demo Holdings Ltd"
@@ -36,14 +35,8 @@ input:
 output:
   path: "output"
 """.strip(),
-        encoding="utf-8",
-    )
-    (ws / "user.md").write_text(
-        "# User\n\nNeed management-ready brief with consumer pain point coverage.\n",
-        encoding="utf-8",
-    )
-    (ws / "sources.yaml").write_text(
-        """
+    user_text="# User\n\nNeed management-ready brief with consumer pain point coverage.\n",
+    sources_text="""
 source_strategy:
   enabled_providers:
     - manual
@@ -51,9 +44,8 @@ manual:
   enabled: true
   sources: []
 """.strip(),
-        encoding="utf-8",
-    )
-    return ws
+    include_input_dir=True,
+)
 
 
 def _event_types(ws: Path) -> list[str]:

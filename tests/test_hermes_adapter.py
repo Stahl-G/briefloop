@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 import yaml
@@ -12,18 +13,16 @@ from multi_agent_brief.hermes import (
     render_hermes_setup_success,
     render_hermes_skill,
 )
+from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 
-def _write_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "input").mkdir()
-    (ws / "config.yaml").write_text(
-        """
+_write_workspace = partial(
+    write_workspace_files_under,
+    config_text="""
 project:
   name: "AI Agent Weekly"
   company: "ExampleCo"
@@ -37,10 +36,7 @@ input:
 output:
   path: "output"
 """.strip(),
-        encoding="utf-8",
-    )
-    (ws / "sources.yaml").write_text(
-        """
+    sources_text="""
 source_strategy:
   profile: "conservative"
   enabled_providers:
@@ -49,9 +45,8 @@ manual:
   enabled: true
   sources: []
 """.strip(),
-        encoding="utf-8",
-    )
-    return ws
+    include_input_dir=True,
+)
 
 
 def _assert_atomic_graph_boundary(text: str) -> None:

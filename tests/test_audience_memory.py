@@ -13,17 +13,16 @@ from multi_agent_brief.audience_memory import (
 )
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES, initialize_runtime_state
+from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def _write_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "input" / "sources").mkdir(parents=True)
-    (ws / "config.yaml").write_text(
-        """
+    ws = write_workspace_files_under(
+        tmp_path,
+        config_text="""
 project:
   name: "Audience Memory Test"
   company: "TestCo"
@@ -38,19 +37,17 @@ input:
 output:
   path: "output"
 """.strip(),
-        encoding="utf-8",
-    )
-    (ws / "user.md").write_text("# User\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text(
-        """
+        user_text="# User\n",
+        sources_text="""
 manual:
   enabled: true
   sources:
     - name: "Local evidence"
       path: "input/sources/"
 """.strip(),
-        encoding="utf-8",
+        include_input_dir=True,
     )
+    (ws / "input" / "sources").mkdir(parents=True, exist_ok=True)
     return ws
 
 

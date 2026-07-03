@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     import_fact_layer_transaction,
     show_runtime_state,
 )
+from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,12 +39,10 @@ SOURCE_PLAN_ONLY_FIXTURE_MANIFEST = (
 )
 
 
-def _write_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "workspace"
-    ws.mkdir()
-    (ws / "input").mkdir()
-    (ws / "config.yaml").write_text(
-        """
+_write_workspace = partial(
+    write_workspace_files_under,
+    name="workspace",
+    config_text="""
 project:
   name: "Public Fast Rerun Fixture Test"
 report:
@@ -54,12 +54,10 @@ input:
 output:
   path: "output"
 """.strip()
-        + "\n",
-        encoding="utf-8",
-    )
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (ws / "user.md").write_text("# User\n", encoding="utf-8")
-    return ws
+    + "\n",
+    user_text="# User\n",
+    include_input_dir=True,
+)
 
 
 def test_public_fast_rerun_fixture_imports_without_delivery(tmp_path):

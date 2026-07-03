@@ -15,17 +15,12 @@ from multi_agent_brief.product.release_approval import (
     validate_human_approval_ledger_payload,
     validate_release_readiness_report_payload,
 )
+from tests.helpers import initialized_workspace_writer
 
 
-def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text(
-        "project:\n  name: Release Approval Test\n",
-        encoding="utf-8",
-    )
-    assert main(["state", "init", "--workspace", str(ws)]) == 0
-    return ws
+_workspace = initialized_workspace_writer(
+    project_name="Release Approval Test",
+)
 
 
 def _json(path: Path) -> dict:

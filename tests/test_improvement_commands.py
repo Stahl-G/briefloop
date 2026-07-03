@@ -1,40 +1,26 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.improvement.state import improvement_ledger_path
 from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state
+from tests.helpers import write_minimal_workspace_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text(
-        """
-project:
-  name: "Improvement CLI Test"
-  company: "Demo Holdings"
-  industry: "testing"
-  language: "en"
-  audience: "management"
-report:
-  cadence: "weekly"
-input:
-  path: "input"
-output:
-  path: "output"
-""".strip(),
-        encoding="utf-8",
-    )
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (ws / "user.md").write_text("# User\n\nNeed concise management guidance.\n", encoding="utf-8")
-    (ws / "input").mkdir()
-    return ws
+_workspace = partial(
+    write_minimal_workspace_under,
+    project_name="Improvement CLI Test",
+    user_text="# User\n\nNeed concise management guidance.\n",
+    include_input_dir=True,
+    input_path="input",
+    output_path="output",
+)
 
 
 def _ledger_text(ws: Path) -> str:
