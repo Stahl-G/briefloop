@@ -199,6 +199,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_input_classification_payload(payload, artifact_path=path)
             if artifact_id == "source_evidence_pack_manifest":
                 return _validate_source_evidence_pack_manifest_payload(payload, artifact_path=path)
+            if artifact_id == "evidence_extract_source_lock":
+                return _validate_evidence_extract_source_lock_payload(payload, artifact_path=path)
             if artifact_id == "human_approval_ledger":
                 return _validate_human_approval_ledger_payload(payload, artifact_path=path)
             if artifact_id == "release_readiness_report":
@@ -674,6 +676,84 @@ def _validate_source_evidence_pack_manifest_payload(payload: Any, *, artifact_pa
     if reason:
         return ARTIFACT_INVALID, f"{SOURCE_EVIDENCE_PACK_VALIDATION_PREFIX}:{reason}"
     return ARTIFACT_VALID, "experimental_source_evidence_pack_manifest"
+
+
+def _validate_evidence_extract_source_lock_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ARTIFACT_INVALID, "evidence_extract_source_lock_schema_error:not_object"
+    if payload.get("schema_version") != "briefloop.evidence_extract_source_lock.v1":
+        return ARTIFACT_INVALID, "evidence_extract_source_lock_schema_error:schema_version"
+    if payload.get("report_pack") != "evidence_extract":
+        return ARTIFACT_INVALID, "evidence_extract_source_lock_schema_error:report_pack"
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return ARTIFACT_INVALID, "evidence_extract_source_lock_schema_error:sources"
+    source_count = payload.get("source_count")
+    if not isinstance(source_count, int) or source_count != len(sources):
+        return ARTIFACT_INVALID, "evidence_extract_source_lock_schema_error:source_count"
+
+    workspace = artifact_path.parents[2]
+    seen_ids: set[str] = set()
+    for idx, source in enumerate(sources):
+        if not isinstance(source, dict):
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:sources[{idx}]"
+        source_id = source.get("source_id")
+        if not _non_empty_string(source_id):
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:sources[{idx}].source_id"
+        normalized_id = source_id.strip()
+        if normalized_id in seen_ids:
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:duplicate_source_id:{normalized_id}"
+        seen_ids.add(normalized_id)
+
+        rel_path = source.get("path")
+        if not _non_empty_string(rel_path):
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.path"
+        source_path, path_reason = _evidence_extract_locked_source_path(
+            workspace=workspace,
+            rel_path=rel_path.strip(),
+        )
+        if path_reason:
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_validation_error:{path_reason}:{normalized_id}"
+        assert source_path is not None
+        if not source_path.exists() or not source_path.is_file():
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_validation_error:source_file_missing:{normalized_id}"
+
+        expected_sha = source.get("source_sha256")
+        if not _non_empty_string(expected_sha):
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.source_sha256"
+        if _sha256_file(source_path) != expected_sha.strip():
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_validation_error:source_sha256_mismatch:{normalized_id}"
+
+        expected_size = source.get("source_size_bytes")
+        if not isinstance(expected_size, int) or expected_size < 0:
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.source_size_bytes"
+        try:
+            actual_size = source_path.stat().st_size
+        except OSError:
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_validation_error:source_file_unreadable:{normalized_id}"
+        if actual_size != expected_size:
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_validation_error:source_size_mismatch:{normalized_id}"
+
+        if source.get("lock_status") != "locked_source_bytes":
+            return ARTIFACT_INVALID, f"evidence_extract_source_lock_schema_error:{normalized_id}.lock_status"
+
+    return ARTIFACT_VALID, "experimental_evidence_extract_source_lock"
+
+
+def _evidence_extract_locked_source_path(*, workspace: Path, rel_path: str) -> tuple[Path | None, str | None]:
+    normalized = rel_path.replace("\\", "/")
+    posix_path = PurePosixPath(normalized)
+    windows_path = PureWindowsPath(rel_path)
+    if rel_path.startswith("~") or Path(rel_path).is_absolute() or windows_path.drive:
+        return None, "source_path_unsafe"
+    if ".." in posix_path.parts or not normalized.startswith("input/sources/evidence_extract/"):
+        return None, "source_path_unsafe"
+    source_path = (workspace / normalized).resolve(strict=False)
+    try:
+        source_path.relative_to((workspace / "input" / "sources" / "evidence_extract").resolve(strict=False))
+    except ValueError:
+        return None, "source_path_unsafe"
+    return source_path, None
 
 
 def _validate_human_approval_ledger_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:

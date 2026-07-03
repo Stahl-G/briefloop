@@ -169,6 +169,25 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
+  - artifact_id: evidence_extract_source_lock
+    path: output/intermediate/evidence_extract_source_lock.json
+    format: json
+    required: false
+    producer_kind: control_tool
+    producer_stage: source-discovery
+    producer_role: python_tool
+    consumer_stages:
+      - scout
+      - claim-ledger
+      - finalize
+    validation_result: experimental_evidence_extract_source_lock
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - retry_stage
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
   - artifact_id: claim_support_matrix
     path: output/intermediate/claim_support_matrix.json
     format: json
