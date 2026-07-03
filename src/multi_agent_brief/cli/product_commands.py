@@ -687,6 +687,7 @@ def _register_evidence_extract_scope(*, workspace: Path, args: argparse.Namespac
         if not resolved.exists() or not resolved.is_file():
             raise ValueError(f"source file not found: {source_path}")
         resolved_sources.append(resolved)
+    resolved_sources = _filter_paired_mineru_markdown_sources(resolved_sources)
 
     sources_dir = workspace / "input" / "sources" / "evidence_extract"
     warnings: list[dict[str, str]] = []
@@ -1276,6 +1277,19 @@ def _adjacent_mineru_markdown_for_source(path: Path) -> Path | None:
     if candidate.exists() and candidate.is_file():
         return candidate
     return None
+
+
+def _filter_paired_mineru_markdown_sources(sources: list[Path]) -> list[Path]:
+    source_set = set(sources)
+    consumed_markdown = {
+        extracted_markdown_path(source).resolve()
+        for source in sources
+        if source.suffix.lower() in EVIDENCE_EXTRACT_BINARY_EXTENSIONS
+        and extracted_markdown_path(source).resolve() in source_set
+    }
+    if not consumed_markdown:
+        return sources
+    return [source for source in sources if source not in consumed_markdown]
 
 
 def _text_evidence_for_record(*, workspace: Path, record: dict[str, Any]) -> dict[str, Any] | None:
