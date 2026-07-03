@@ -246,9 +246,9 @@ briefloop new document-review ./document-review
 例如 `market_weekly`、`management_monthly` 和 `evidence_extract`。
 `document-review` 是文档证据审阅工作区入口，不代表自动法律、合规或披露判断。
 
-这三个入口是 v0.11 产品基线目标。当前 v0.10.7 release line 已用 readiness
-check 守住它们；`solar-periodic`、Quality Panel、SourceHub Lite 和内部
-release approval 等高级 Product OS surface 仍是实验性能力。
+这三个入口是 v0.11 支持的产品基线 surface。`solar-periodic`、Quality
+Panel、SourceHub Lite 和内部 release approval 等高级 Product OS surface 仍是
+实验性能力，除非 support matrix 另有明确说明。
 
 | 路径 | 适合谁 | 怎么做 |
 |---|---|---|
@@ -269,7 +269,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.10.7**
+当前版本：**v0.11.6**
 
 当前主要入口：
 
@@ -278,20 +278,30 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 - Claude command：`/briefloop`
 - 兼容 alias：`/mabw`
 
-v0.10.7 发布的是累计的实验性 Product OS hardening line，包括：
+v0.11.6 发布的是累计的 v0.11 产品基线、reader-quality、role topology、
+launch readiness 和 issue-closure hardening line，包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract
 - workspace skeleton 和确定性的 PolicyProfile 解析
 - delivery / audit bundle manifest 与干净 bundle archive
-- 实验性的 `evidence_extract` source/scope 注册入口
+- 支持的 `industry-weekly`、`management-monthly` 和 `document-review` 产品入口
+- 有边界的 `evidence_extract` source/scope 注册、source lock、logical page
+  inventory seed 和 text-span seed registry
 - 实验性的 SourceHub Lite 来源设置入口，用于本地文件、RSS feed 和 runtime web-search handoff task
 - durable source evidence pack materialization 和 source taxonomy normalization
 - 内部 review release-mode approval record
 - Quality Panel JSON / Markdown / HTML 投影及 audit bundle 集成
+- reader-quality warning / projection surface：template conformance、
+  materiality selection、support-calibrated wording、citation profile、
+  coverage/omission 和 scoped final-abstract diagnostics
+- 针对重复 retry / repair / blocker loop 的 trajectory-regulation decision narrowing
+- 公开安全的 reference、synthetic regression、minimal comparative evaluation、
+  launch smoke 和 release checklist guardrail
 
 这些功能的定位是：**让报告类型、来源证据、默认策略、交付包和 operator quality visibility 更产品化**。
 
-但这些功能仍然只是元数据、默认配置、设置入口、审批记录和投影控制，不代表系统已经能自动解析 PDF、执行隐藏搜索或爬取、判断行业合规、投资建议、披露可用性、语义真实性，或授权公开发布。
+但这些功能仍然只是 contract、元数据、默认配置、设置入口、审批记录、确定性 warning
+和投影控制，不代表系统已经能自动解析 PDF、执行隐藏搜索或爬取、判断行业合规、投资建议、披露可用性、语义真实性，或授权公开发布。
 
 ---
 

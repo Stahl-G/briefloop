@@ -48,6 +48,21 @@ python3 scripts/check_launch_smoke.py --json
 git diff --check
 ```
 
+When the release includes a generated reference pack, demo bundle, launch pack,
+or other public artifact outside the normal git-tracked file set, also scan the
+actual candidate artifact paths before publishing:
+
+```bash
+MABW_PUBLIC_SAFETY_BANNED_TERMS="<private-term-1>,<private-term-2>" \
+  python3 scripts/check_public_safety.py \
+    --path <candidate-reference-pack-or-demo-bundle>
+```
+
+Use as many `--path` arguments as needed. This explicit path scan is separate
+from the default tracked-file public-safety scan and is required when the thing
+being published is generated, archived, or otherwise not represented exactly by
+tracked source files.
+
 `check_release_consistency.py --no-tag` delegates to the product baseline,
 skill freshness, minimal comparative evaluation packet, public-safety, and
 launch-smoke guards. Running the component scripts directly is still useful

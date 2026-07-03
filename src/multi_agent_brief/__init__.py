@@ -8,13 +8,19 @@ from typing import Optional
 def _source_checkout_version() -> Optional[str]:
     """Return repo VERSION when this package is imported from a source checkout."""
 
+    module_path = Path(__file__).resolve()
     for parent in Path(__file__).resolve().parents:
         version_file = parent / "VERSION"
+        source_package_dir = (parent / "src" / "multi_agent_brief").resolve(strict=False)
         if (
             version_file.exists()
             and (parent / "pyproject.toml").exists()
-            and (parent / "src" / "multi_agent_brief").exists()
+            and source_package_dir.exists()
         ):
+            try:
+                module_path.relative_to(source_package_dir)
+            except ValueError:
+                continue
             text = version_file.read_text(encoding="utf-8").strip()
             return text or None
     return None

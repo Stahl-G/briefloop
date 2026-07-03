@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ROOT / "VERSION"
+PENDING_FORMULA_SHA256 = "0" * 64
 README_EN_POINTER = """# BriefLoop English README
 
 The English README has moved to [README.md](README.md).
@@ -166,11 +167,38 @@ def main() -> int:
     formula_path = ROOT / "Formula" / "multi-agent-brief.rb"
     if formula_path.exists():
         formula = _read(formula_path)
-        if f"refs/tags/{tag}.tar.gz" in formula:
-            _ok("Homebrew formula tag")
-        else:
-            _error(f"Homebrew formula URL does not point at {tag}")
+        match = re.search(r"refs/tags/(v\d+\.\d+\.\d+)\.tar\.gz", formula)
+        formula_tag = match.group(1) if match else ""
+        sha_match = re.search(r'sha256\s+"([0-9a-fA-F]{64})"', formula)
+        formula_sha = sha_match.group(1).lower() if sha_match else ""
+        if not formula_tag:
+            _error("Homebrew formula URL tag missing")
             errors.append("Formula/multi-agent-brief.rb")
+        elif formula_tag != tag:
+            _error(f"Homebrew formula URL points at {formula_tag}, expected {tag}")
+            errors.append("Formula/multi-agent-brief.rb")
+        elif not formula_sha:
+            _error("Homebrew formula sha256 missing")
+            errors.append("Formula/multi-agent-brief.rb")
+        elif _git_tag_exists(tag):
+            if formula_sha == PENDING_FORMULA_SHA256:
+                _error(
+                    "Homebrew formula checksum is still pending after the git tag exists; "
+                    "recompute the release archive sha256."
+                )
+                errors.append("Formula/multi-agent-brief.rb")
+            else:
+                _ok("Homebrew formula tag and checksum")
+        else:
+            if formula_sha == PENDING_FORMULA_SHA256:
+                _ok("Homebrew formula staged for current tag; checksum pending until tag exists")
+            else:
+                _error(
+                    "Homebrew formula points at current VERSION before the git tag exists "
+                    "with a non-pending checksum; use the pending checksum marker until "
+                    "the release archive can be hashed."
+                )
+                errors.append("Formula/multi-agent-brief.rb")
 
     # ── report ──
     print()
@@ -181,6 +209,23 @@ def main() -> int:
 
     print("ALL CHECKS PASSED.", flush=True)
     return 0
+
+
+def _git_tag_exists(tag: str) -> bool:
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "tag", "--list", tag],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    return tag in {line.strip() for line in result.stdout.splitlines()}
 
 
 if __name__ == "__main__":

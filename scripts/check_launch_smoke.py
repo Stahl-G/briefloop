@@ -35,6 +35,14 @@ def _tail(text: str, *, limit: int = 2000) -> str:
     return text[-limit:]
 
 
+def _coerce_output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 def _base_env() -> dict[str, str]:
     env = os.environ.copy()
     src = str(ROOT / "src")
@@ -69,8 +77,8 @@ def _run_step(
             "returncode": None,
             "duration_seconds": round(time.monotonic() - started, 3),
             "error": f"timeout after {timeout}s",
-            "stdout_tail": _tail(exc.stdout or ""),
-            "stderr_tail": _tail(exc.stderr or ""),
+            "stdout_tail": _tail(_coerce_output_text(exc.stdout)),
+            "stderr_tail": _tail(_coerce_output_text(exc.stderr)),
         }
     return {
         "id": step_id,
