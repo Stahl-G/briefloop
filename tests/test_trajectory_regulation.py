@@ -13,16 +13,13 @@ from multi_agent_brief.product.trajectory_regulation import (
     validate_trajectory_regulation_payload,
 )
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
+from tests.helpers import initialized_workspace_writer
 
 
-def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text("project:\n  name: Trajectory Test\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (ws / "user.md").write_text("# Trajectory test\n", encoding="utf-8")
-    assert main(["state", "init", "--workspace", str(ws)]) == 0
-    return ws
+_workspace = initialized_workspace_writer(
+    project_name="Trajectory Test",
+    user_text="# Trajectory test\n",
+)
 
 
 def _advance_to_source_discovery(ws: Path) -> None:

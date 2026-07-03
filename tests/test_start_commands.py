@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 import yaml
@@ -29,17 +30,15 @@ from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
 from tests.helpers import sha256_file as _sha256_file
+from tests.helpers import write_workspace_files_under
 
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _write_workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "input").mkdir()
-    (ws / "config.yaml").write_text(
-        """
+_write_workspace = partial(
+    write_workspace_files_under,
+    config_text="""
 project:
   name: "Test Brief"
   company: "TestCo"
@@ -53,11 +52,8 @@ input:
 output:
   path: "output"
 """.strip(),
-        encoding="utf-8",
-    )
-    (ws / "user.md").write_text("# Test User Profile\n\nCompany: TestCo\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text(
-        """
+    user_text="# Test User Profile\n\nCompany: TestCo\n",
+    sources_text="""
 source_strategy:
   profile: "conservative"
   enabled_providers:
@@ -66,9 +62,8 @@ manual:
   enabled: true
   sources: []
 """.strip(),
-        encoding="utf-8",
-    )
-    return ws
+    include_input_dir=True,
+)
 
 
 def _write_market_report_spec(ws: Path, *, policy_profile: str = "internet_default") -> None:

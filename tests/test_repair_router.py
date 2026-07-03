@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 from multi_agent_brief.cli.main import main
@@ -11,15 +12,14 @@ from multi_agent_brief.orchestrator.runtime_state import (
     utc_now,
 )
 from multi_agent_brief.repair.router import route_repair
+from tests.helpers import write_minimal_workspace_under
 
 
-def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text("project:\n  name: repair-route-test\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (ws / "user.md").write_text("# Repair route test\n", encoding="utf-8")
-    return ws
+_workspace = partial(
+    write_minimal_workspace_under,
+    project_name="repair-route-test",
+    user_text="# Repair route test\n",
+)
 
 
 def _intermediate(ws: Path) -> Path:

@@ -1,4 +1,5 @@
 import json
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -17,31 +18,27 @@ from multi_agent_brief.provenance.builder import (
 )
 from multi_agent_brief.provenance.model import ProvenanceError
 from multi_agent_brief.provenance.validator import validate_graph_payload
+from tests.helpers import write_workspace_files_under
 
 
 REPO = Path(__file__).resolve().parents[1]
 
 
-def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text(
-        "\n".join([
-            "project:",
-            "  name: Synthetic TargetCo",
-            "report:",
-            "  date: '2026-06-09'",
-            "output:",
-            "  path: output",
-            "input:",
-            "  path: input",
-            "",
-        ]),
-        encoding="utf-8",
-    )
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (ws / "user.md").write_text("# User\n\nSynthetic TargetCo\n", encoding="utf-8")
-    return ws
+_workspace = partial(
+    write_workspace_files_under,
+    config_text="\n".join([
+        "project:",
+        "  name: Synthetic TargetCo",
+        "report:",
+        "  date: '2026-06-09'",
+        "output:",
+        "  path: output",
+        "input:",
+        "  path: input",
+        "",
+    ]),
+    user_text="# User\n\nSynthetic TargetCo\n",
+)
 
 
 def _init_state(ws: Path) -> str:

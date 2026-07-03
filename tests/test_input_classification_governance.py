@@ -5,11 +5,13 @@ import json
 import os
 import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
+from tests.helpers import write_workspace_files_under
 
 CLI = sys.executable, "-m", "multi_agent_brief.cli.main"
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,17 +25,15 @@ def _cli_env() -> dict[str, str]:
     return env
 
 
-def _write_workspace(tmp: Path, name: str = "test-ws") -> Path:
-    ws = tmp / name
-    ws.mkdir(parents=True, exist_ok=True)
-    (ws / "config.yaml").write_text(
+_write_workspace = partial(
+    write_workspace_files_under,
+    config_text=(
         "project:\n  name: Test\n  language: zh-CN\n"
         "input:\n  path: input\n"
-        "output:\n  path: output\n",
-        encoding="utf-8",
-    )
-    (ws / "output").mkdir(exist_ok=True)
-    return ws
+        "output:\n  path: output\n"
+    ),
+    include_output_dir=True,
+)
 
 
 def _docx_text(path: Path) -> str:

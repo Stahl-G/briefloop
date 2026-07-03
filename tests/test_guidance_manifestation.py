@@ -18,16 +18,13 @@ from multi_agent_brief.product.guidance_manifestation import (
 )
 from multi_agent_brief.product.quality_panel import build_quality_panel, validate_quality_panel_payload
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
+from tests.helpers import initialized_workspace_writer
 
 
-def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text("project:\n  name: Guidance Manifestation Test\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (ws / "user.md").write_text("# Guidance manifestation test\n", encoding="utf-8")
-    assert main(["state", "init", "--workspace", str(ws)]) == 0
-    return ws
+_workspace = initialized_workspace_writer(
+    project_name="Guidance Manifestation Test",
+    user_text="# Guidance manifestation test\n",
+)
 
 
 def _json(path: Path) -> dict:
