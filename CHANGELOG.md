@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deterministic regression guard only; it does not score model output quality,
   prove semantic correctness, run subagents, fetch sources, or approve
   delivery/release.
+- **Final quality scoped eval case**: packaged public-safe eval cases now include
+  `final_abstract_quality_warning_surface`, which exercises the scoped #79
+  warning surface on reader-facing Markdown and confirms the findings flow into
+  Quality Summary without blocking, opening repair, or writing repair
+  instructions into reader output. This remains deterministic warning
+  projection only; it is not a semantic quality judge, delivery approval,
+  release authority, or publication-readiness claim.
 - **Quality Panel real-run closeout guidance**: finalize reports and
   `status --json` now project a post-finalize Quality Panel closeout
   recommendation pointing operators to

@@ -13,7 +13,10 @@ checks, third-party price snapshots, and missing formal-release human
 approvals. The pre-release v0.11.2 reader-quality closeout
 line adds a same-evidence synthetic regression case that keeps materiality,
 reader-template, support-wording, and Quality Panel closeout projections visible
-without claiming model output improvement.
+without claiming model output improvement. The pre-release v0.11.6 final-quality
+line adds a synthetic final-abstract warning case for scoped #79 checks without
+turning them into delivery approval, release authority, or a prose-quality
+score.
 
 The pre-release v0.11.4 minimal comparative evaluation packet lives under
 `docs/evaluation-results/`. It is a separate public-safe comparison packet with
@@ -33,6 +36,7 @@ These cases validate control-surface behavior across:
 - trajectory-regulation projection from repeated retry decisions
 - guidance-manifestation diagnostics for materialized approved guidance
 - same-evidence reader-quality projection coverage
+- final-abstract warning-only quality diagnostics
 - Hermes guidance invariants
 
 They are not benchmark scores and are not workflow artifacts.
