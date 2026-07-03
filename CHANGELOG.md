@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Launch/demo smoke guard**: added `scripts/check_launch_smoke.py` to verify
+  the fresh source-checkout demo path reaches import, CLI version, demo init,
+  doctor, and runtime handoff from a temporary workspace. The release
+  consistency check runs the JSON mode. This is setup/handoff readiness only;
+  it does not call an LLM, require a private path or API key, prove semantic
+  truth, prove output-quality improvement, approve delivery, or authorize
+  release.
 - **Evidence Extract source lock v1**: `briefloop extract` /
   `multi-agent-brief extract` now writes
   `output/intermediate/evidence_extract_source_lock.json` plus an audit copy,
