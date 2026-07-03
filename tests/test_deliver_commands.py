@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -9,23 +8,16 @@ import pytest
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.delivery.base import DeliveryResult
 from multi_agent_brief.orchestrator.runtime_state import RuntimeStateError, initialize_runtime_state, runtime_state_paths
-
-
-def _sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+from tests.helpers import sha256_file as _sha256_file
+from tests.helpers import write_minimal_workspace
 
 
 def _workspace(tmp_path: Path) -> Path:
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    (ws / "config.yaml").write_text("project:\n  name: Deliver Test\n", encoding="utf-8")
-    (ws / "sources.yaml").write_text("manual:\n  sources: []\n", encoding="utf-8")
-    (ws / "user.md").write_text("# Deliver test\n", encoding="utf-8")
-    return ws
+    return write_minimal_workspace(
+        tmp_path / "ws",
+        project_name="Deliver Test",
+        user_text="# Deliver test\n",
+    )
 
 
 def _write_bundle(

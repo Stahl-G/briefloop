@@ -1,7 +1,6 @@
 """Tests for multi-agent-brief start / handoff launcher."""
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -29,13 +28,10 @@ from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
+from tests.helpers import sha256_file as _sha256_file
 
 
 ROOT = Path(__file__).resolve().parent.parent
-
-
-def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _write_workspace(tmp_path: Path) -> Path:
