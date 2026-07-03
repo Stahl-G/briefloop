@@ -205,6 +205,7 @@ README_FIRST_SCREEN_FORBIDDEN_LINKS = [
 ]
 PIPX_CURRENT_INSTALL_DOCS = [
     "README.md",
+    "README.zh-CN.md",
     *REQUIRED_FIRST_USER_DOC_PHRASES.keys(),
 ]
 PIPX_INSTALL_BRIEFLOOP_RE = re.compile(r"\bpipx\s+install\s+briefloop\b", re.IGNORECASE)

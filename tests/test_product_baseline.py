@@ -221,6 +221,13 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
         "\nDo not use `pipx install briefloop` until release notes say it is published.\n",
         encoding="utf-8",
     )
+    (tmp_path / "README.zh-CN.md").write_text(
+        "Package-index 安装还不是当前 launch 路径；"
+        "除非 release notes 明确说明真实 package-index artifact 已发布，"
+        "否则不要使用 `pipx install briefloop`。\n"
+        "\n```bash\npipx install briefloop\n```\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
     checks: list[dict[str, str]] = []
@@ -230,6 +237,7 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
     pipx_check = checks_by_id["first_user_docs.no_current_pipx_install"]
     assert pipx_check["status"] == "fail"
     assert "docs/getting-started.md" in pipx_check["detail"]
+    assert "README.zh-CN.md" in pipx_check["detail"]
     assert "README.md" not in pipx_check["detail"]
 
 
