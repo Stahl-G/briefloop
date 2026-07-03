@@ -6,6 +6,7 @@ Every other file must agree with it.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -212,8 +213,10 @@ def main() -> int:
 
 
 def _git_tag_exists(tag: str) -> bool:
-    import subprocess
+    return _local_git_tag_exists(tag) or _remote_git_tag_exists(tag)
 
+
+def _local_git_tag_exists(tag: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "tag", "--list", tag],
@@ -226,6 +229,24 @@ def _git_tag_exists(tag: str) -> bool:
     except (FileNotFoundError, OSError):
         return False
     return tag in {line.strip() for line in result.stdout.splitlines()}
+
+
+def _remote_git_tag_exists(tag: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--exit-code", "--tags", "origin", f"refs/tags/{tag}"],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (FileNotFoundError, OSError):
+        return False
+    if result.returncode != 0:
+        return False
+    expected_ref = f"refs/tags/{tag}"
+    return any(line.strip().endswith(expected_ref) for line in result.stdout.splitlines())
 
 
 if __name__ == "__main__":
