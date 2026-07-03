@@ -750,9 +750,24 @@ def _evidence_extract_locked_source_path(*, workspace: Path, rel_path: str) -> t
         return None, "source_path_unsafe"
     if ".." in posix_path.parts or not normalized.startswith("input/sources/evidence_extract/"):
         return None, "source_path_unsafe"
-    source_path = (workspace / normalized).resolve(strict=False)
+    workspace_root = workspace.resolve(strict=False)
+    input_root = workspace / "input"
+    sources_root = input_root / "sources"
+    evidence_root = sources_root / "evidence_extract"
+    for root in (input_root, sources_root, evidence_root):
+        if root.is_symlink():
+            return None, "source_path_unsafe"
+        try:
+            root.resolve(strict=False).relative_to(workspace_root)
+        except ValueError:
+            return None, "source_path_unsafe"
+    raw_source_path = workspace / normalized
+    if raw_source_path.is_symlink():
+        return None, "source_path_unsafe"
+    source_path = raw_source_path.resolve(strict=False)
     try:
-        source_path.relative_to((workspace / "input" / "sources" / "evidence_extract").resolve(strict=False))
+        source_path.relative_to(evidence_root.resolve(strict=False))
+        source_path.relative_to(workspace_root)
     except ValueError:
         return None, "source_path_unsafe"
     return source_path, None

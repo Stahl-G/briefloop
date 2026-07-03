@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
@@ -198,6 +200,51 @@ def test_extract_source_lock_invalidates_modified_registered_source(tmp_path: Pa
     assert source_lock_record["status"] == "invalid"
     assert source_lock_record["validation_result"] == (
         "evidence_extract_source_lock_validation_error:source_sha256_mismatch:SRC-001"
+    )
+
+
+def test_extract_source_lock_rejects_symlinked_evidence_extract_root(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source = tmp_path / "source.md"
+    source.write_text("Alpha source bytes.\n", encoding="utf-8")
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--source",
+                str(source),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    copied_source = workspace / payload["sources"][0]["path"]
+    outside = tmp_path / "outside-evidence-root"
+    outside.mkdir()
+    (outside / copied_source.name).write_bytes(copied_source.read_bytes())
+    shutil.rmtree(workspace / "input" / "sources" / "evidence_extract")
+    try:
+        (workspace / "input" / "sources" / "evidence_extract").symlink_to(
+            outside,
+            target_is_directory=True,
+        )
+    except OSError as exc:
+        pytest.skip(f"symlink creation not available: {exc}")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    source_lock_record = state["artifact_registry"]["artifacts"]["evidence_extract_source_lock"]
+    assert source_lock_record["status"] == "invalid"
+    assert source_lock_record["validation_result"] == (
+        "evidence_extract_source_lock_validation_error:source_path_unsafe:SRC-001"
     )
 
 
