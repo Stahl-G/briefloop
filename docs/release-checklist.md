@@ -68,10 +68,11 @@ skill freshness, minimal comparative evaluation packet, public-safety, and
 launch-smoke guards. Running the component scripts directly is still useful
 when diagnosing a failure because their output is narrower.
 
-The launch smoke is a setup and runtime-handoff check only. It creates a
-temporary demo workspace outside the repo and verifies import, CLI version,
-demo init, doctor, and runtime handoff. It does not call an LLM, require an API
-key, run subagents, judge output quality, or approve delivery.
+The launch smoke is a setup/runtime-handoff and deterministic-demo check. It
+creates temporary workspaces outside the repo and verifies import, CLI version,
+demo init, doctor, runtime handoff, and the API-free demo artifact package. It
+does not call an LLM, require an API key, run subagents, judge output quality,
+or approve delivery.
 
 ## 3. Public-Claim Guard
 

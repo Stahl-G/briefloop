@@ -64,23 +64,23 @@ Use `--case-id <id>` to run one case and `--cases-dir <path>` for a custom fixtu
 
 ## Demo Scripts
 
-Two source-clone demo scripts exercise the public-safe deterministic control
-surface without network access, LLM calls, private fixtures, or tracked-file
-changes:
+Two source-clone demo scripts exercise public-safe deterministic surfaces
+without network access, LLM calls, private fixtures, or tracked-file changes:
 
 ```bash
 bash scripts/demo.sh
 bash scripts/demo-deep-dive.sh
 ```
 
-`scripts/demo.sh` validates and runs packaged eval cases, then highlights the
-three Improvement Memory cases and the `materialized_entry_ids` manifest
-assertion. `scripts/demo-deep-dive.sh` creates a temporary workspace, records
-and approves synthetic audience guidance, rebuilds `improvement/memory.md`, runs
-handoff preparation, and prints the `runtime_manifest.json.improvement` block.
+`scripts/demo.sh` creates a temporary reference workspace from the public-safe
+golden example and prints the final brief, Claim Ledger, Quality Summary, source
+appendix, and event-log excerpt paths. `scripts/demo-deep-dive.sh` creates a
+temporary workspace, records and approves synthetic audience guidance, rebuilds
+`improvement/memory.md`, runs handoff preparation, and prints the
+`runtime_manifest.json.improvement` block.
 
-These scripts demonstrate deterministic control behavior only. They do not
-prove model output quality improvement.
+These scripts demonstrate inspectable artifacts and deterministic control
+behavior only. They do not prove model output quality improvement.
 
 ## Boundaries
 

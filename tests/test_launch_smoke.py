@@ -32,7 +32,9 @@ def test_launch_smoke_json_runs_demo_handoff_path():
         "demo_init",
         "demo_doctor",
         "demo_runtime_handoff",
+        "deterministic_demo_script",
         "handoff_artifacts",
+        "deterministic_demo_artifacts",
     }
     by_id = {step["id"]: step for step in payload["steps"]}
     assert by_id["cli_version_matches_repo"]["expected"] == (
@@ -43,6 +45,7 @@ def test_launch_smoke_json_runs_demo_handoff_path():
         == by_id["cli_version_matches_repo"]["expected"]
     )
     assert not by_id["handoff_artifacts"]["missing"]
+    assert not by_id["deterministic_demo_artifacts"]["missing"]
 
 
 def test_launch_smoke_rejects_cli_version_drift():
