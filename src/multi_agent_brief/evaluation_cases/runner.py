@@ -26,8 +26,7 @@ from multi_agent_brief.controls.switchboard import (
     validate_control_switchboard,
 )
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
-from multi_agent_brief.cli.run_commands import _write_handoff_and_state
-from multi_agent_brief.cli.start_commands import build_handoff
+from multi_agent_brief.orchestrator.handoff import build_handoff, write_handoff_and_state
 from multi_agent_brief.evaluation_cases.fixtures import evaluation_cases_root
 from multi_agent_brief.feedback.feedback_contract import feedback_state_paths
 from multi_agent_brief.feedback.feedback_state import (
@@ -733,7 +732,7 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
             venv=args.get("venv"),
             run_doctor=not bool(args.get("skip_doctor", True)),
         )
-        written = _write_handoff_and_state(
+        written = write_handoff_and_state(
             handoff=handoff,
             workspace=ws,
             repo_workdir=repo_workdir,
