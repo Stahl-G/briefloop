@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.experiments.target_contract import (
+from multi_agent_brief.contracts.target_contract import (
     assessment_target,
     assessment_target_manifest,
     load_experiment_080_condition_metadata,

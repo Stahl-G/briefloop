@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
-from multi_agent_brief.experiments.target_contract import load_experiment_080_condition_metadata
+from multi_agent_brief.contracts.target_contract import load_experiment_080_condition_metadata
 from multi_agent_brief.orchestrator.runtime_state import (
     E_ACTIVE_REPAIR_OPEN,
     E_ASSESSMENT_TARGET_COMPLETE,

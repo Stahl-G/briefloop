@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.experiments.target_contract import (
+from multi_agent_brief.contracts.target_contract import (
     load_experiment_080_condition_metadata,
     project_assessment_target_status,
 )
