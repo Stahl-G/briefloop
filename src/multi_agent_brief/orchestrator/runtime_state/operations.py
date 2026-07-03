@@ -4219,6 +4219,25 @@ def start_repair_transaction(
             details={"active_repair": workflow.get("active_repair")},
             error_code=E_ILLEGAL_TRANSITION,
         )
+    run_id = str(manifest["run_id"])
+    event_records = _read_event_log_records(paths["event_log"])
+    existing_narrowing = _trajectory_decision_narrowing(
+        workspace=ws,
+        workflow=workflow,
+        event_records=event_records,
+        run_id=run_id,
+    )
+    if existing_narrowing:
+        raise RuntimeStateError(
+            "Repair start is blocked because trajectory regulation narrowed current-stage decisions.",
+            details={
+                "stage_id": workflow.get("current_stage"),
+                "decision": "delegate_repair",
+                "allowed_decisions": list(TRAJECTORY_NARROWED_DECISIONS),
+                "trajectory_regulation": existing_narrowing,
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
 
     from multi_agent_brief.repair.router import route_repair
 
@@ -4270,7 +4289,7 @@ def start_repair_transaction(
         )
     baseline_registry = _build_artifact_registry(
         workspace=ws,
-        run_id=str(manifest["run_id"]),
+        run_id=run_id,
         artifacts=artifacts,
         workflow=workflow,
         updated_at=now,
