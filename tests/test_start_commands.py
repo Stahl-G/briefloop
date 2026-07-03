@@ -18,7 +18,12 @@ from multi_agent_brief.cli.start_commands import (
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.orchestrator.runtime_state import RUNTIME_STATE_FILES
-from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state import (
+    complete_stage_transaction,
+    initialize_runtime_state,
+    record_decision,
+    runtime_state_paths,
+)
 from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
 from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.feedback.feedback_contract import FEEDBACK_STATE_FILES
@@ -937,6 +942,42 @@ def test_start_handoff_does_not_treat_invalid_report_template_as_contract(tmp_pa
     assert "Do not use this as a section-order contract" in data["prompt"]
     assert "validate and fix report_spec.yaml first" in data["prompt"]
     assert "Use this as a stable product section-order contract" not in data["prompt"]
+
+
+def test_run_handoff_projects_trajectory_decision_narrowing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="doctor",
+        reason="doctor complete",
+    )
+    for idx in range(3):
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            decision="retry_stage",
+            reason=f"retry {idx + 1}",
+        )
+
+    rc = main([
+        "run",
+        "--workspace", str(ws),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+
+    assert rc == 0
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    text = data["prompt"] + "\n" + "\n".join(data["notes"]) + "\n" + md
+    assert any("Trajectory regulation narrowed current-stage decisions" in note for note in data["notes"])
+    assert "stage=source-discovery" in text
+    assert "allowed=request_human_review, block_run" in text
+    assert "retry_budget_exhausted" in text
+    assert "Do not call `state decide --decision retry_stage`" in text
 
 
 def test_start_handoff_projects_auditable_assessment_target(tmp_path):

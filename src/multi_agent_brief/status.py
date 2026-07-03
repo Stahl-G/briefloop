@@ -247,6 +247,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
                 f"{run_integrity.get('status') or 'unknown'} "
                 f"reference_eligible={run_integrity.get('reference_eligible')}"
             ),
+            _format_trajectory_decision_narrowing_line(workflow),
             (
                 "[status] artifacts: "
                 f"valid={artifacts.get('valid_count', 0)} "
@@ -576,8 +577,27 @@ def _workflow_summary(result: dict[str, Any]) -> dict[str, Any]:
         "blocked": payload.get("blocked"),
         "blocking_reason": payload.get("blocking_reason"),
         "next_allowed_decisions": payload.get("next_allowed_decisions") or [],
+        "trajectory_regulation": payload.get("trajectory_regulation")
+        if isinstance(payload.get("trajectory_regulation"), dict)
+        else {},
         "run_integrity": _run_integrity_summary(payload),
     }
+
+
+def _format_trajectory_decision_narrowing_line(workflow: dict[str, Any]) -> str:
+    narrowing = workflow.get("trajectory_regulation")
+    if not isinstance(narrowing, dict) or narrowing.get("status") != "decision_narrowed":
+        return "[status] trajectory_decision_narrowing: none"
+    reasons = narrowing.get("reasons") if isinstance(narrowing.get("reasons"), list) else []
+    allowed = workflow.get("next_allowed_decisions")
+    allowed = allowed if isinstance(allowed, list) else narrowing.get("allowed_decisions")
+    allowed = allowed if isinstance(allowed, list) else []
+    return (
+        "[status] trajectory_decision_narrowing: "
+        f"decision_narrowed stage={narrowing.get('stage_id') or 'unknown'} "
+        f"allowed={','.join(str(item) for item in allowed)} "
+        f"reasons={','.join(str(item) for item in reasons)}"
+    )
 
 
 def _run_integrity_summary(workflow: dict[str, Any]) -> dict[str, Any]:

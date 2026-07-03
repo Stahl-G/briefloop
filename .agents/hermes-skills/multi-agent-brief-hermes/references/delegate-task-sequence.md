@@ -150,7 +150,7 @@ multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 
-Repair best practice: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating repair or request human review. This is runtime guidance only; v0.7 does not implement automatic retry counters or trajectory regulation.
+Repair best practice: repeated retry/repair budgets are enforced by `workflow_state.json.next_allowed_decisions` after `state check` or `state decide`; when trajectory regulation narrows decisions, use only `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating repair or request human review. Trajectory regulation narrows operator decisions only; it does not execute repair, run gates, approve delivery, or perform agent work.
 
 Optional provenance projection after runtime state exists:
 

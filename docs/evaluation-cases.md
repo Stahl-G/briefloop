@@ -5,7 +5,7 @@ regression checks. v0.6.5 extended the packaged suite with provenance
 projection coverage. v0.7.0 adds Improvement Memory control cases. The
 pre-release v0.11.1 issue-closure line adds synthetic Product OS blocker cases
 for durable source evidence pack validation, event-linked release readiness
-reports, trajectory retry-budget projection, and guidance manifestation
+reports, trajectory retry-budget decision narrowing, and guidance manifestation
 `not_observable` diagnostics. It also includes #96 release/evidence synthetic
 blocker cases for unauthorized institution branding, mixed metric scope,
 media-only legal/policy support, company-event claims missing latest official
@@ -33,7 +33,7 @@ These cases validate control-surface behavior across:
 - durable source evidence pack manifest validation
 - event-linked release-readiness projection validation
 - explicit synthetic release/evidence blocker records for #96
-- trajectory-regulation projection from repeated retry decisions
+- trajectory-regulation decision narrowing from repeated retry decisions
 - guidance-manifestation diagnostics for materialized approved guidance
 - same-evidence reader-quality projection coverage
 - final-abstract warning-only quality diagnostics

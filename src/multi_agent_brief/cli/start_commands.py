@@ -65,10 +65,11 @@ EXPECTED_WORKFLOW_ARTIFACTS = [
     "output/delivery/brief.md",
 ]
 REPAIR_GUIDANCE_NOTE = (
-    "Repair guidance is bounded runtime guidance, not an automatic trajectory "
-    "regulator: if the same stage has already needed roughly three retry/repair "
-    "rounds, prefer request_human_review or block_run; if a repair would touch "
-    "more than two sections, narrow the scope before delegating or request human review. "
+    "Repair guidance is bounded runtime guidance: repeated retry/repair budgets are "
+    "enforced by `workflow_state.json.next_allowed_decisions` after `state check` or "
+    "`state decide`; when trajectory regulation narrows decisions, use only "
+    "request_human_review or block_run. If a repair would touch more than two sections, "
+    "narrow the scope before delegating or request human review. "
     "Audit warnings, overstatement findings, support-calibration findings, and quality-gate "
     "findings do not authorize direct edits to frozen artifacts. "
     "For owner-stage artifact repair, first run `multi-agent-brief repair route --workspace "
@@ -582,6 +583,7 @@ def build_handoff(
     _apply_report_template_projection(handoff, ws)
     _apply_report_template_conformance_projection(handoff, ws)
     _apply_report_template_render_plan_projection(handoff, ws)
+    _apply_trajectory_decision_narrowing_projection(handoff, ws)
 
     if run_doctor:
         rc, status = _run_doctor(ws)
@@ -610,6 +612,38 @@ def build_handoff(
     )
 
     return handoff
+
+
+def _apply_trajectory_decision_narrowing_projection(handoff: AgentHandoff, workspace: Path) -> None:
+    narrowing = _read_workflow_trajectory_narrowing(workspace)
+    if not narrowing:
+        return
+    allowed = narrowing.get("allowed_decisions") if isinstance(narrowing.get("allowed_decisions"), list) else []
+    reasons = narrowing.get("reasons") if isinstance(narrowing.get("reasons"), list) else []
+    handoff.notes.insert(
+        0,
+        "Trajectory regulation narrowed current-stage decisions: "
+        f"stage={narrowing.get('stage_id') or 'unknown'}; "
+        f"allowed={', '.join(str(item) for item in allowed) or 'request_human_review, block_run'}; "
+        f"reasons={', '.join(str(item) for item in reasons) or 'trajectory_budget_exceeded'}. "
+        "Do not call `state decide --decision retry_stage`; record request_human_review or block_run.",
+    )
+
+
+def _read_workflow_trajectory_narrowing(workspace: Path) -> dict[str, Any] | None:
+    path = workspace / RUNTIME_STATE_FILES["workflow_state"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    narrowing = payload.get("trajectory_regulation")
+    if not isinstance(narrowing, dict):
+        return None
+    if narrowing.get("status") != "decision_narrowed":
+        return None
+    return narrowing
 
 
 def _apply_sourcehub_projection(handoff: AgentHandoff, workspace: Path) -> None:

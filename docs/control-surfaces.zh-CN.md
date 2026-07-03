@@ -41,8 +41,8 @@ MABW 的控制面可以按不同粒度统计：
 |---|---|---|---|---|
 | `runtime_manifest.json` | 记录 run identity、runtime、路径，以及 improvement snapshot 等 manifest 指针。 | Python | 已实现 | 由 runtime state 初始化和 handoff flow 重算。 |
 | `runtime_manifest.json.improvement` | 记录本 run 的 ledger hash、memory projection hash、snapshot hash 和 `materialized_entry_ids`。 | Python | 已实现 | 对本 run 冻结；后续 ledger 变化不使旧 snapshot 失效。 |
-| `workflow_state.json` | 当前 stage、stage status、last decision 和 next allowed decisions。 | Python，经 state commands | 已实现 | 通过 runtime state commands 更新；agent 不应手改。 |
-| `event_log.jsonl` | append-only runtime/control events。 | Python | 已实现 | 只追加；记录控制决策和状态迁移。 |
+| `workflow_state.json` | 当前 stage、stage status、last decision、next allowed decisions，以及当前 stage 预算耗尽时的 trajectory decision narrowing。 | Python，经 state commands | 已实现 | 通过 runtime state commands 更新；agent 不应手改。 |
+| `event_log.jsonl` | append-only runtime/control events。 | Python | 已实现 | 只追加；记录控制决策、状态迁移和 trajectory narrowing。 |
 | `artifact_registry.json` | 记录 workflow artifacts 的观测和基础验证状态。 | Python | 已实现 | 由 state check 和 artifact observation 更新。 |
 | `orchestrator_control_switchboard.json` | 给 Orchestrator 的确定性控制建议。 | Python | 已实现 | 从当前 workspace state/config 重建。 |
 | `control_selections.json` | Orchestrator 对推荐控制的 enable/defer/reject 选择记录。 | Python CLI，由 Orchestrator/human 显式选择触发 | 已实现 | selection 是记录，不是执行。 |
@@ -110,7 +110,7 @@ MABW 的控制面可以按不同粒度统计：
 
 | Surface | v0.11.0 冻结前提 |
 |---|---|
-| `event_log.jsonl` schema 和 event types | v0.7.2 completion transaction events 必须稳定；若 v0.8 增加 trajectory events，需先加后冻。 |
+| `event_log.jsonl` schema 和 event types | v0.7.2 completion transaction events 和 trajectory narrowing events 必须在冻结前保持稳定。 |
 | `workflow_state.json` 和 decision vocabulary | `stage-complete` / `finalize-complete` 语义已纳入；topology-satisfied stages 会作为显式 workflow / event 记录，而不是隐藏跳过。 |
 | `runtime_manifest.json` | `improvement` 和 `recipe` 的单写者保留必须继续有回归覆盖。`operator_reported_model` 延后至 v0.7.3 / v0.8；在此之前 reference-run summary 手工记录 model identity。 |
 | `artifact_registry.json` | default / strict topology 下 artifact 名称保持稳定：Scout 可以满足 Screener，但 `candidate_claims.json` 和 `screened_candidates.json` 仍是两个独立 artifacts。 |

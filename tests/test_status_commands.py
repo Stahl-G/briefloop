@@ -8,7 +8,9 @@ from pathlib import Path
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
+    complete_stage_transaction,
     initialize_runtime_state,
+    record_decision,
     runtime_state_paths,
 )
 
@@ -367,6 +369,35 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
         assert path.read_bytes() == before_bytes[path]
         assert path.stat().st_mtime_ns == before_mtime[path]
     assert len(paths["event_log"].read_text(encoding="utf-8").splitlines()) == before_event_count
+
+
+def test_status_command_reports_trajectory_decision_narrowing(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    complete_stage_transaction(workspace=ws, stage_id="doctor", reason="doctor complete")
+    for idx in range(3):
+        record_decision(
+            workspace=ws,
+            stage_id="source-discovery",
+            decision="retry_stage",
+            reason=f"retry {idx + 1}",
+        )
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["workflow"]["next_allowed_decisions"] == ["request_human_review", "block_run"]
+    assert payload["workflow"]["trajectory_regulation"]["status"] == "decision_narrowed"
+    assert payload["workflow"]["trajectory_regulation"]["reasons"] == ["retry_budget_exhausted"]
+    assert payload["trajectory_regulation"]["status"] == "action_required"
+
+    rc = main(["status", "--workspace", str(ws)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "[status] trajectory_decision_narrowing: decision_narrowed" in out
+    assert "allowed=request_human_review,block_run" in out
+    assert "reasons=retry_budget_exhausted" in out
 
 
 def test_status_command_reports_contaminated_run_integrity(tmp_path, capsys):

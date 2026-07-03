@@ -38,6 +38,12 @@ Read this when operating a real BriefLoop/MABW workspace.
 - Do not patch frozen artifacts after stage completion.
 - Do not use `state decide` to bypass `stage-complete`, `repair complete`, gate
   checks, or `finalize-complete`.
+- If `workflow_state.json.trajectory_regulation.status` is
+  `decision_narrowed`, only record decisions listed in
+  `workflow_state.json.next_allowed_decisions`. The deterministic control plane
+  may narrow repeated retry, repair-cycle, or blocker loops to
+  `request_human_review` and `block_run`; this does not execute repair or
+  approve delivery.
 - Do not write source evidence from search summaries alone; source files must be
   durable evidence inputs.
 - Do not hand-edit `quality_panel.json`, `quality_summary.md`,

@@ -1,5 +1,16 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.9 — 2026-07-02
+
+- Updated Trajectory Regulation guidance from read-only recommendation to
+  deterministic current-stage decision narrowing: exhausted retry,
+  repair-cycle, or repeated-blocker budgets can narrow
+  `workflow_state.next_allowed_decisions` to `request_human_review` and
+  `block_run`.
+- Clarified that trajectory narrowing records control state and event-log
+  evidence only; it does not execute repair, run gates, approve delivery,
+  decide release readiness, or let Python perform agent work.
+
 ## briefloop-operator-skill-v0.1.8 — 2026-07-02
 
 - Added Citation Profile Split guidance for `reader_contract.citation_profile`

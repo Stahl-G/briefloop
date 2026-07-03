@@ -32,6 +32,7 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.quality_gates.contract import (
     current_stage_quality_gate_blocking_reasons,
 )
+from multi_agent_brief.product.trajectory_regulation import project_workspace_trajectory_regulation
 from multi_agent_brief.orchestrator_contract import (
     DECISION_VOCABULARY,
     resolve_repo_workdir,
@@ -171,6 +172,10 @@ from multi_agent_brief.orchestrator.run_integrity import (
     workflow_with_persistable_run_integrity as _workflow_with_persistable_run_integrity,
     workflow_with_sticky_contamination_events as _workflow_with_sticky_contamination_events,
 )
+
+
+TRAJECTORY_DECISION_NARROWING_STATUS = "decision_narrowed"
+TRAJECTORY_NARROWED_DECISIONS = ["request_human_review", "block_run"]
 
 
 __all__ = [
@@ -1605,6 +1610,130 @@ def _recompute_stage_state(
     return workflow
 
 
+def _trajectory_decision_narrowing(
+    *,
+    workspace: Path,
+    workflow: dict[str, Any],
+    event_records: list[dict[str, Any]],
+    run_id: str,
+) -> dict[str, Any] | None:
+    current_stage = str(workflow.get("current_stage") or "")
+    if not current_stage:
+        return None
+    projection = project_workspace_trajectory_regulation(
+        workspace,
+        workflow_state=workflow,
+        event_records=event_records,
+        event_log_present=True,
+        event_log_corrupt_count=0,
+        run_id=run_id,
+    )
+    if projection.get("status") != "action_required":
+        return None
+    actions = projection.get("recommended_actions") if isinstance(projection.get("recommended_actions"), list) else []
+    relevant_actions: list[dict[str, str]] = []
+    reasons: list[str] = []
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        decision = str(action.get("action") or "")
+        stage_id = str(action.get("stage_id") or "")
+        if stage_id != current_stage or decision not in TRAJECTORY_NARROWED_DECISIONS:
+            continue
+        reason = str(action.get("reason") or "trajectory_budget_exceeded")
+        relevant_actions.append({
+            "action": decision,
+            "stage_id": stage_id,
+            "reason": reason,
+        })
+        if reason not in reasons:
+            reasons.append(reason)
+    if not relevant_actions:
+        return None
+    return {
+        "status": TRAJECTORY_DECISION_NARROWING_STATUS,
+        "stage_id": current_stage,
+        "reasons": reasons or ["trajectory_budget_exceeded"],
+        "allowed_decisions": list(TRAJECTORY_NARROWED_DECISIONS),
+        "recommended_actions": relevant_actions,
+        "runtime_effect": "decision_narrowing",
+        "source": "trajectory_regulation",
+    }
+
+
+def _workflow_with_trajectory_decision_narrowing(
+    *,
+    workspace: Path,
+    workflow: dict[str, Any],
+    stages: list[dict[str, Any]],
+    event_records: list[dict[str, Any]],
+    run_id: str,
+) -> dict[str, Any]:
+    updated = dict(workflow)
+    updated.pop("trajectory_regulation", None)
+    narrowing = _trajectory_decision_narrowing(
+        workspace=workspace,
+        workflow=updated,
+        event_records=event_records,
+        run_id=run_id,
+    )
+    if narrowing:
+        updated["trajectory_regulation"] = narrowing
+        updated["next_allowed_decisions"] = list(TRAJECTORY_NARROWED_DECISIONS)
+    else:
+        updated["next_allowed_decisions"] = _allowed_decisions_for_stage(
+            stages,
+            str(updated.get("current_stage") or "") or None,
+        )
+    return updated
+
+
+def _trajectory_narrowing_changed(old_workflow: dict[str, Any], workflow: dict[str, Any]) -> bool:
+    return old_workflow.get("trajectory_regulation") != workflow.get("trajectory_regulation")
+
+
+def _raise_if_trajectory_narrows_success_path(
+    *,
+    workspace: Path,
+    workflow: dict[str, Any],
+    event_records: list[dict[str, Any]],
+    run_id: str,
+    stage_id: str,
+    decision: str,
+) -> None:
+    narrowing = _trajectory_decision_narrowing(
+        workspace=workspace,
+        workflow=workflow,
+        event_records=event_records,
+        run_id=run_id,
+    )
+    if not narrowing:
+        return
+    if str(narrowing.get("stage_id") or "") != stage_id:
+        return
+    allowed = [str(item) for item in narrowing.get("allowed_decisions") or []]
+    if decision in allowed:
+        return
+    reasons = [
+        (
+            "Trajectory regulation narrowed current-stage decisions to "
+            f"{', '.join(allowed) or ', '.join(TRAJECTORY_NARROWED_DECISIONS)}; "
+            f"decision '{decision}' is not allowed."
+        )
+    ]
+    _raise_completion_reasons(
+        message=f"Cannot complete stage '{stage_id}' because trajectory regulation narrowed decisions",
+        reasons=reasons,
+        error_code=E_ILLEGAL_TRANSITION,
+        details={
+            "stage_id": stage_id,
+            "decision": decision,
+            "allowed_decisions": allowed or list(TRAJECTORY_NARROWED_DECISIONS),
+            "trajectory_regulation": narrowing,
+        },
+    )
+
+
 def check_runtime_state(
     *,
     workspace: str | Path,
@@ -1618,7 +1747,7 @@ def check_runtime_state(
         initialize_runtime_state(workspace=ws, repo_workdir=repo_workdir, actor=actor)
 
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
-    _read_event_log_records(paths["event_log"])
+    event_records = _read_event_log_records(paths["event_log"])
     old_registry = _read_json_if_exists(paths["artifact_registry"])
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
@@ -1673,6 +1802,13 @@ def check_runtime_state(
         previous_workflow=workflow,
         updated_at=now,
     )
+    refreshed_workflow = _workflow_with_trajectory_decision_narrowing(
+        workspace=ws,
+        workflow=refreshed_workflow,
+        stages=stages,
+        event_records=event_records,
+        run_id=run_id,
+    )
     transaction_integrity_warning = _completion_transaction_integrity_reason(
         paths=paths,
         workflow=refreshed_workflow,
@@ -1694,6 +1830,18 @@ def check_runtime_state(
         *_changed_artifact_events(old_registry=old_registry, registry=registry),
         *_changed_workflow_events(old_workflow=workflow, workflow=refreshed_workflow),
     ]
+    if _trajectory_narrowing_changed(workflow, refreshed_workflow):
+        narrowing = refreshed_workflow.get("trajectory_regulation")
+        if isinstance(narrowing, dict) and narrowing.get("status") == TRAJECTORY_DECISION_NARROWING_STATUS:
+            planned_events.append({
+                "event_type": "trajectory_decision_narrowed",
+                "stage_id": narrowing.get("stage_id"),
+                "reason": ", ".join(str(item) for item in narrowing.get("reasons") or []),
+                "metadata": {
+                    "allowed_decisions": list(narrowing.get("allowed_decisions") or []),
+                    "recommended_actions": list(narrowing.get("recommended_actions") or []),
+                },
+            })
     for event in planned_events:
         append_event(
             workspace=ws,
@@ -3477,6 +3625,16 @@ def _complete_stage_transaction(
         stage_by_id=stage_by_id,
         finalize=finalize,
     )
+    run_id = str(manifest["run_id"])
+    decision = "finalize" if finalize else "continue"
+    _raise_if_trajectory_narrows_success_path(
+        workspace=ws,
+        workflow=workflow,
+        event_records=event_records,
+        run_id=run_id,
+        stage_id=stage_id,
+        decision=decision,
+    )
     replay_message = _older_stage_replay_message(
         stage_id=stage_id,
         current_stage=workflow.get("current_stage"),
@@ -3502,7 +3660,6 @@ def _complete_stage_transaction(
         model=stage_model,
         actor=actor,
     )
-    run_id = str(manifest["run_id"])
     analyst_snapshot_before: dict[Path, bytes | None] | None = None
     if stage_id == "analyst":
         analyst_snapshot_before = _snapshot_file_paths([ws / ANALYST_DRAFT_SNAPSHOT_PATH])
@@ -3662,6 +3819,13 @@ def _complete_stage_transaction(
             trigger_stage_id=stage_id,
             now=now,
             transaction_id=transaction_id,
+        )
+        next_workflow = _workflow_with_trajectory_decision_narrowing(
+            workspace=ws,
+            workflow=next_workflow,
+            stages=stages,
+            event_records=event_records,
+            run_id=run_id,
         )
         old_registry = _read_json_if_exists(paths["artifact_registry"])
         registry = _build_artifact_registry(
@@ -4708,6 +4872,7 @@ def record_decision(
         initialize_runtime_state(workspace=ws, repo_workdir=repo_workdir, actor=actor)
 
     ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
+    workflow_before_decision = dict(workflow)
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
@@ -4742,6 +4907,26 @@ def record_decision(
                 "current_stage": current_stage_before,
                 "decision": decision,
             },
+        )
+
+    run_id = str(manifest["run_id"])
+    event_records = _read_event_log_records(paths["event_log"])
+    existing_narrowing = _trajectory_decision_narrowing(
+        workspace=ws,
+        workflow=workflow,
+        event_records=event_records,
+        run_id=run_id,
+    )
+    if existing_narrowing and decision not in TRAJECTORY_NARROWED_DECISIONS:
+        raise RuntimeStateError(
+            f"Decision '{decision}' is blocked because trajectory regulation narrowed current-stage decisions.",
+            details={
+                "stage_id": stage_id,
+                "decision": decision,
+                "allowed_decisions": list(TRAJECTORY_NARROWED_DECISIONS),
+                "trajectory_regulation": existing_narrowing,
+            },
+            error_code=E_ILLEGAL_TRANSITION,
         )
 
     if decision == "delegate_repair":
@@ -4798,17 +4983,57 @@ def record_decision(
         "reason": reason,
         "created_at": now,
     }
-    workflow["next_allowed_decisions"] = _allowed_decisions_for_stage(stages, current_stage)
+    decision_metadata = {"next_stage": current_stage}
+    post_decision_events = [
+        *event_records,
+        {
+            "run_id": run_id,
+            "event_type": "decision_recorded",
+            "stage_id": stage_id,
+            "decision": decision,
+            "reason": reason,
+            "metadata": decision_metadata,
+        },
+    ]
+    workflow = _workflow_with_trajectory_decision_narrowing(
+        workspace=ws,
+        workflow=workflow,
+        stages=stages,
+        event_records=post_decision_events,
+        run_id=run_id,
+    )
+    trajectory_narrowing_changed = _trajectory_narrowing_changed(
+        workflow_before_decision,
+        workflow,
+    )
 
     append_event(
         workspace=ws,
-        run_id=str(manifest["run_id"]),
+        run_id=run_id,
         event_type="decision_recorded",
         actor=actor,
         stage_id=stage_id,
         decision=decision,
         reason=reason,
-        metadata={"next_stage": current_stage},
+        metadata=decision_metadata,
     )
+    narrowing = workflow.get("trajectory_regulation")
+    if (
+        trajectory_narrowing_changed
+        and isinstance(narrowing, dict)
+        and narrowing.get("status") == TRAJECTORY_DECISION_NARROWING_STATUS
+    ):
+        append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="trajectory_decision_narrowed",
+            actor=actor,
+            stage_id=str(narrowing.get("stage_id") or stage_id),
+            reason=", ".join(str(item) for item in narrowing.get("reasons") or []),
+            metadata={
+                "allowed_decisions": list(narrowing.get("allowed_decisions") or []),
+                "recommended_actions": list(narrowing.get("recommended_actions") or []),
+            },
+        )
     _write_json_atomic(paths["workflow_state"], workflow)
     return show_runtime_state(workspace=ws)

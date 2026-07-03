@@ -552,7 +552,7 @@ cases:
   - case_id: trajectory_retry_budget_exhausted
     case_type: workspace
     synthetic: true
-    description: Repeated retry decisions project a human-review trajectory action without mutating state.
+    description: Repeated retry decisions narrow current-stage decisions to human-review or block.
     initial_stage: source-discovery
     commands:
       - action: state.decide
@@ -593,6 +593,16 @@ cases:
       workflow_state:
         current_stage: source-discovery
         blocked: false
+        next_allowed_decisions:
+          - request_human_review
+          - block_run
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/workflow_state.json
+          text: decision_narrowed
+        - scope: workspace
+          file: output/intermediate/workflow_state.json
+          text: retry_budget_exhausted
 
   - case_id: guidance_manifestation_not_observable
     case_type: workspace
