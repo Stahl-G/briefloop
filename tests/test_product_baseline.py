@@ -78,6 +78,10 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["packs_unknown_cli.internal_pack_ids"]["status"] == "pass"
     assert checks["no_force_deliver_cli"]["status"] == "pass"
     assert checks["docs.public_claims.no_forbidden_positive_claims"]["status"] == "pass"
+    assert checks["first_user_docs.docs/getting-started.md"]["status"] == "pass"
+    assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
+    assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
+    assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
     assert checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
     assert checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
     assert checks["support_matrix.wider_product_os_extensions"]["status"] == "pass"
@@ -104,6 +108,63 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["reference_run_surface_count"]["status"] == "pass"
     readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
     assert "English README has moved to [README.md](README.md)." in readme_en
+
+
+def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(phrases), encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "[Getting Started](docs/getting-started.md) · "
+        "[Weekly Loop](docs/weekly-loop.md) · "
+        "[Troubleshooting](docs/troubleshooting.md) · "
+        "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
+        "[Architecture Status](docs/architecture-status.md)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_first_user_docs_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["first_user_docs.docs/getting-started.md"]["status"] == "pass"
+    assert checks_by_id["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
+    assert checks_by_id["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
+    readme_check = checks_by_id["first_user_docs.README.md.first_screen_links"]
+    assert readme_check["status"] == "fail"
+    assert "docs/architecture-status.md" in readme_check["detail"]
+
+
+def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "README_en.md":
+            text = module.README_EN_POINTER
+        path.write_text(text, encoding="utf-8")
+    for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = "\n".join(phrases)
+        if rel_path == "docs/getting-started.md":
+            text += "\nBriefLoop proves every claim is true.\n"
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_cli_and_docs_boundaries(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    overclaim_check = checks_by_id["docs.public_claims.no_forbidden_positive_claims"]
+    assert overclaim_check["status"] == "fail"
+    assert "docs/getting-started.md:" in overclaim_check["detail"]
+    assert "proves_truth" in overclaim_check["detail"]
+    assert "proves every claim is true" in overclaim_check["detail"]
 
 
 def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatch) -> None:

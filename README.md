@@ -7,7 +7,7 @@ The public project name is now **BriefLoop**; MABW remains as the implementation
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[Function Map](docs/features.md) · [Golden Path](docs/golden-path.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [Architecture Status](docs/architecture-status.md) · [Roadmap](docs/roadmap.md)
+[Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
 
 Writer entry: use `/briefloop` in Claude Code (`/mabw` remains a compatibility alias), or `briefloop` / `multi-agent-brief` in a shell.
 
@@ -238,8 +238,9 @@ Then use the five main writer commands:
 
 Good next reads:
 
-- [Golden Path](docs/golden-path.md)
-- [Weekly Use](docs/weekly-use.md)
+- [Getting Started](docs/getting-started.md)
+- [Weekly Loop](docs/weekly-loop.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Claude Code quickstart](docs/claude-code-quickstart.md)
 
 ---
@@ -373,9 +374,17 @@ The goal is not to remove human judgment. The goal is to let humans spend more t
 
 ## 🗂️ Useful docs
 
+First-user path:
+
+- [Getting Started](docs/getting-started.md)
+- [Weekly Loop](docs/weekly-loop.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Golden reference workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
+
+Architecture reference and contributor docs:
+
 - [Function Map](docs/features.md)
 - [Golden Path](docs/golden-path.md)
-- [Weekly Use](docs/weekly-use.md)
 - [Architecture Status](docs/architecture-status.md)
 - [Roadmap](docs/roadmap.md)
 - [Red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
