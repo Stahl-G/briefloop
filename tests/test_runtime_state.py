@@ -1325,6 +1325,52 @@ def test_trajectory_regulation_rejects_repair_start_after_narrowing_without_muta
     assert _state_file(ws, "event_log").read_bytes() == before_event_log
 
 
+def test_trajectory_regulation_rejects_repair_start_for_exhausted_route_owner(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor draft needing repair. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    _write_editor_repair_gate_report(ws)
+    run_id = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))["run_id"]
+    for idx in range(3):
+        runtime_event_log.append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="repair_started",
+            actor="orchestrator",
+            stage_id="editor",
+            reason=f"editor repair started {idx + 1}",
+            metadata={"repair_owner": "editor"},
+        )
+
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_event_log = _state_file(ws, "event_log").read_bytes()
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_ILLEGAL_TRANSITION"
+    assert "narrowed the selected repair route" in str(excinfo.value)
+    assert excinfo.value.details["stage_id"] == "editor"
+    assert excinfo.value.details["trajectory_regulation"]["reasons"] == ["repair_cycle_budget_exhausted"]
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_event_log
+
+
 def test_trajectory_regulation_state_check_narrows_repeated_blocker_reason(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

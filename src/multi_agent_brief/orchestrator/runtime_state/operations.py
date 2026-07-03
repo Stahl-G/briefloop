@@ -1616,13 +1616,26 @@ def _trajectory_decision_narrowing(
     workflow: dict[str, Any],
     event_records: list[dict[str, Any]],
     run_id: str,
+    stage_id: str | None = None,
+    assume_stage_ready: bool = False,
 ) -> dict[str, Any] | None:
-    current_stage = str(workflow.get("current_stage") or "")
+    current_stage = str(stage_id or workflow.get("current_stage") or "")
     if not current_stage:
         return None
+    projection_workflow = workflow
+    if stage_id or assume_stage_ready:
+        projection_workflow = dict(workflow)
+        projection_workflow["current_stage"] = current_stage
+        if assume_stage_ready:
+            statuses = dict(projection_workflow.get("stage_statuses") or {})
+            entry = statuses.get(current_stage) if isinstance(statuses.get(current_stage), dict) else {}
+            entry = dict(entry)
+            entry["status"] = STAGE_READY
+            statuses[current_stage] = entry
+            projection_workflow["stage_statuses"] = statuses
     projection = project_workspace_trajectory_regulation(
         workspace,
-        workflow_state=workflow,
+        workflow_state=projection_workflow,
         event_records=event_records,
         event_log_present=True,
         event_log_corrupt_count=0,
@@ -1659,6 +1672,44 @@ def _trajectory_decision_narrowing(
         "runtime_effect": "decision_narrowing",
         "source": "trajectory_regulation",
     }
+
+
+def _raise_if_trajectory_narrows_repair_route(
+    *,
+    workspace: Path,
+    workflow: dict[str, Any],
+    event_records: list[dict[str, Any]],
+    run_id: str,
+    route: dict[str, Any],
+) -> None:
+    repair_owner = str(route.get("repair_owner") or "")
+    if not repair_owner:
+        return
+    narrowing = _trajectory_decision_narrowing(
+        workspace=workspace,
+        workflow=workflow,
+        event_records=event_records,
+        run_id=run_id,
+        stage_id=repair_owner,
+        assume_stage_ready=True,
+    )
+    if not narrowing:
+        return
+    raise RuntimeStateError(
+        "Repair start is blocked because trajectory regulation narrowed the selected repair route.",
+        details={
+            "stage_id": repair_owner,
+            "decision": "delegate_repair",
+            "allowed_decisions": list(TRAJECTORY_NARROWED_DECISIONS),
+            "trajectory_regulation": narrowing,
+            "selected_route": {
+                "repair_owner": route.get("repair_owner"),
+                "source": route.get("source") or {},
+                "recommended_action": route.get("recommended_action"),
+            },
+        },
+        error_code=E_ILLEGAL_TRANSITION,
+    )
 
 
 def _workflow_with_trajectory_decision_narrowing(
@@ -4269,6 +4320,13 @@ def start_repair_transaction(
             details=route,
             error_code=E_ILLEGAL_TRANSITION,
         )
+    _raise_if_trajectory_narrows_repair_route(
+        workspace=ws,
+        workflow=workflow,
+        event_records=event_records,
+        run_id=run_id,
+        route=route,
+    )
 
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
