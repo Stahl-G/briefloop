@@ -35,6 +35,49 @@ def test_runtime_state_facade_does_not_proxy_impl_internals():
     assert not hasattr(runtime_state, "E_TRANSACTION_INTEGRITY")
 
 
+def test_operations_compatibility_surface_is_preserved() -> None:
+    """operations.py stays a compatibility surface during/after the split.
+
+    This locks the names that tests and legacy callers reach through
+    runtime_state.operations.<name>. It intentionally does not lock the full
+    historical implementation surface, so unused internals can still move or
+    disappear later.
+    """
+
+    runtime_state = importlib.import_module(RUNTIME_STATE_MODULE)
+
+    compat_names = [
+        "check_runtime_state",
+        "complete_finalize_transaction",
+        "complete_repair_transaction",
+        "complete_stage_transaction",
+        "enrich_claim_metadata_transaction",
+        "freeze_claim_ledger_transaction",
+        "import_fact_layer_transaction",
+        "initialize_runtime_state",
+        "record_decision",
+        "raise_if_active_repair_open",
+        "raise_if_auditable_target_complete_blocks_downstream",
+        "show_runtime_state",
+        "start_repair_transaction",
+        "EVENT_LOG_SCHEMA",
+        "E_ILLEGAL_TRANSITION",
+        "E_READER_FINAL_GATE_FAILED",
+        "E_REPAIR_TRANSACTION_REQUIRED",
+        "E_RUN_ARCHIVE_CONFLICT",
+        "E_TRANSACTION_INTEGRITY",
+        "E_TRANSACTION_PARTIAL_WRITE",
+        "FACT_LAYER_IMPORT_SCHEMA",
+        "RunArchiveError",
+        "RuntimeStateError",
+        "_write_json_atomic",
+        "_build_artifact_registry",
+        "_source_evidence_metadata_from_file",
+    ]
+    missing = [name for name in compat_names if not hasattr(runtime_state.operations, name)]
+    assert not missing, f"operations compatibility surface lost: {missing}"
+
+
 def test_core_manifest_has_no_live_consumers():
     consumers: list[str] = []
     for path in _python_files():
