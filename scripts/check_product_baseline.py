@@ -85,8 +85,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     "README.md": [
         "Writer entry:",
         "runtime",
-        "v0.11 product-baseline target",
-        "advanced Product OS",
+        "supported v0.11 product-baseline surface",
+        "Product OS surfaces",
         "do not parse PDFs automatically",
         "prove semantic truth",
         "publish reports",
@@ -100,7 +100,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "README.zh-CN.md": [
         "写作入口",
-        "v0.11 产品基线目标",
+        "v0.11 支持的产品基线 surface",
         "实验性能力",
         "不自动发布报告",
         "不绕过人工审核",
@@ -124,6 +124,24 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "solar-periodic",
         "force-deliver",
         "Quality Panel projection",
+    ],
+    "docs/features.md": [
+        "Current product baseline:",
+        "v0.11.6 supported baseline entries",
+        "industry-weekly",
+        "management-monthly",
+        "document-review",
+        "Product OS surfaces remain experimental",
+        "Traceability, not proof by itself",
+    ],
+    "docs/features.zh-CN.md": [
+        "当前产品基线",
+        "v0.11.6 支持的 baseline 入口",
+        "industry-weekly",
+        "management-monthly",
+        "document-review",
+        "更宽的 Product OS surface 仍是实验性",
+        "不等于语义证明",
     ],
 }
 EXPECTED_SUPPORT_MATRIX_STATUSES = {

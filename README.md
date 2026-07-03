@@ -254,10 +254,10 @@ canonical, for example `market_weekly`, `management_monthly`, and
 `evidence_extract`. `document-review` prepares a document evidence review
 workspace; it does not make legal, compliance, or disclosure judgments.
 
-These three entries are the v0.11 product-baseline target. In the current
-v0.10.7 release line they are guarded by readiness checks; advanced Product OS
-surfaces such as `solar-periodic`, Quality Panel, SourceHub Lite, and internal
-release approvals remain experimental.
+These three entries are the supported v0.11 product-baseline surface. Advanced
+Product OS surfaces such as `solar-periodic`, Quality Panel, SourceHub Lite,
+and internal release approvals remain experimental unless the support matrix
+states otherwise.
 
 | Path | Best for | What to do |
 |---|---|---|
@@ -278,7 +278,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.10.7**
+Current version: **v0.11.6**
 
 Current main entrypoints:
 
@@ -287,25 +287,36 @@ Current main entrypoints:
 - Claude command: `/briefloop`
 - compatibility alias: `/mabw`
 
-v0.10.7 releases the accumulated experimental Product OS hardening line, including:
+v0.11.6 releases the accumulated v0.11 product-baseline, reader-quality,
+topology, launch-readiness, and issue-closure hardening line, including:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
 - workspace skeletons and deterministic PolicyProfile resolution
 - delivery / audit bundle manifests and clean bundle archives
-- experimental `evidence_extract` source/scope registration
+- supported `industry-weekly`, `management-monthly`, and `document-review`
+  product entrypoints
+- bounded `evidence_extract` source/scope registration, source locks, logical
+  page inventory seeds, and text-span seed registries
 - experimental SourceHub Lite setup for local files, RSS feeds, and runtime web-search handoff tasks
 - durable source evidence pack materialization and source taxonomy normalization
 - internal release-mode approval records
 - Quality Panel JSON / Markdown / HTML projections and audit-bundle integration
+- reader-quality warning/projection surfaces for template conformance,
+  materiality selection, support-calibrated wording, citation profiles,
+  coverage/omission, and scoped final-abstract diagnostics
+- trajectory-regulation decision narrowing for repeated retry/repair/blocker
+  loops
+- public-safe reference, synthetic regression, minimal comparative evaluation,
+  launch smoke, and release checklist guardrails
 
 These features are meant to make report types, source evidence, default policies,
 delivery bundles, and operator quality visibility more product-like.
 
-These features are still metadata, defaults, setup paths, approval records, and
-projection controls. They do not parse PDFs automatically, execute hidden web
-search or crawling, judge industry compliance, detect investment advice, verify
-internet rumors, claim IR/disclosure readiness, prove semantic truth, publish
-reports, or authorize public release.
+These features are still contracts, metadata, defaults, setup paths, approval
+records, deterministic warnings, and projection controls. They do not parse PDFs automatically,
+execute hidden web search or crawling, judge industry compliance, detect
+investment advice, verify internet rumors, claim IR/disclosure readiness,
+prove semantic truth, publish reports, or authorize public release.
 
 ---
 

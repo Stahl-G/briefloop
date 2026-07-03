@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.11.6] — 2026-07-03
+
 ### Added
 
 - **Release checklist**: added `docs/release-checklist.md` as an

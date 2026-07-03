@@ -58,3 +58,31 @@ def test_launch_smoke_rejects_cli_version_drift():
         SCRIPT.parent.parent / "VERSION"
     ).read_text(encoding="utf-8").strip()
     assert result["actual"] == "0.8.5"
+
+
+def test_launch_smoke_timeout_output_is_json_serializable(monkeypatch, tmp_path):
+    spec = importlib.util.spec_from_file_location("launch_smoke_test", SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def fake_run(*args, **kwargs):
+        exc = subprocess.TimeoutExpired(cmd=["demo"], timeout=1)
+        exc.stdout = b"partial stdout"
+        exc.stderr = b"partial stderr"
+        raise exc
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = module._run_step(
+        step_id="timeout_demo",
+        command=["demo"],
+        cwd=tmp_path,
+        env={},
+        timeout=1,
+    )
+
+    assert result["ok"] is False
+    assert result["stdout_tail"] == "partial stdout"
+    assert result["stderr_tail"] == "partial stderr"
+    json.dumps(result)

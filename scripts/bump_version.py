@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ROOT / "VERSION"
+PENDING_FORMULA_SHA256 = "0" * 64
 
 
 def main() -> int:
@@ -88,12 +89,19 @@ def main() -> int:
         "Hermes skill SKILL.md",
     )
 
-    # 8. Homebrew Formula (tag in URL)
+    # 8. Homebrew Formula tag is current, but checksum is a pending marker until
+    # the GitHub release archive exists and can be hashed.
     changed += _replace_in_file(
         ROOT / "Formula" / "multi-agent-brief.rb",
         r'refs/tags/v\d+\.\d+\.\d+',
         f'refs/tags/{tag}',
-        "Homebrew formula",
+        "Homebrew formula tag",
+    )
+    changed += _replace_in_file(
+        ROOT / "Formula" / "multi-agent-brief.rb",
+        r'sha256\s+"[0-9a-fA-F]{64}"',
+        f'sha256 "{PENDING_FORMULA_SHA256}"',
+        "Homebrew formula pending checksum",
     )
 
     print(f"[bump] Synced {version} across {changed} location(s)")
