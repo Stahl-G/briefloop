@@ -201,6 +201,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_source_evidence_pack_manifest_payload(payload, artifact_path=path)
             if artifact_id == "evidence_extract_source_lock":
                 return _validate_evidence_extract_source_lock_payload(payload, artifact_path=path)
+            if artifact_id == "evidence_extract_page_inventory":
+                return _validate_evidence_extract_page_inventory_payload(payload, artifact_path=path)
             if artifact_id == "human_approval_ledger":
                 return _validate_human_approval_ledger_payload(payload, artifact_path=path)
             if artifact_id == "release_readiness_report":
@@ -754,6 +756,194 @@ def _evidence_extract_locked_source_path(*, workspace: Path, rel_path: str) -> t
     except ValueError:
         return None, "source_path_unsafe"
     return source_path, None
+
+
+def _validate_evidence_extract_page_inventory_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+    if not isinstance(payload, dict):
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:not_object"
+    if payload.get("schema_version") != "briefloop.evidence_extract_page_inventory.v1":
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:schema_version"
+    if payload.get("report_pack") != "evidence_extract":
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:report_pack"
+    if payload.get("source_lock_path") != "output/intermediate/evidence_extract_source_lock.json":
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:source_lock_path"
+
+    lock_path = artifact_path.with_name("evidence_extract_source_lock.json")
+    try:
+        lock_payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_validation_error:source_lock_missing"
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_validation_error:source_lock_unreadable"
+    lock_status, lock_reason = _validate_evidence_extract_source_lock_payload(lock_payload, artifact_path=lock_path)
+    if lock_status != ARTIFACT_VALID:
+        return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:source_lock_invalid:{lock_reason}"
+
+    expected_lock_sha = payload.get("source_lock_sha256")
+    if not _non_empty_string(expected_lock_sha):
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:source_lock_sha256"
+    if _sha256_file(lock_path) != expected_lock_sha.strip():
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_validation_error:source_lock_sha256_mismatch"
+
+    lock_sources = lock_payload.get("sources")
+    if not isinstance(lock_sources, list):
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_validation_error:source_lock_sources"
+    lock_by_id = {
+        str(source.get("source_id") or "").strip(): source
+        for source in lock_sources
+        if isinstance(source, dict) and _non_empty_string(source.get("source_id"))
+    }
+    workspace = artifact_path.parents[2]
+
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:sources"
+    if payload.get("source_count") != len(sources):
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:source_count"
+    seen_source_ids: set[str] = set()
+    total_pages = 0
+    inventory_sources = 0
+    for idx, source in enumerate(sources):
+        if not isinstance(source, dict):
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:sources[{idx}]"
+        source_id = source.get("source_id")
+        if not _non_empty_string(source_id):
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:sources[{idx}].source_id"
+        normalized_id = source_id.strip()
+        if normalized_id in seen_source_ids:
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:duplicate_source_id:{normalized_id}"
+        seen_source_ids.add(normalized_id)
+        lock_source = lock_by_id.get(normalized_id)
+        if lock_source is None:
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:unknown_source_id:{normalized_id}"
+        if source.get("source_path") != lock_source.get("path"):
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:source_path_mismatch:{normalized_id}"
+        if source.get("source_sha256") != lock_source.get("source_sha256"):
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:source_sha256_mismatch:{normalized_id}"
+        locked_path, path_reason = _evidence_extract_locked_source_path(
+            workspace=workspace,
+            rel_path=str(lock_source.get("path") or ""),
+        )
+        if path_reason:
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:{path_reason}:{normalized_id}"
+        assert locked_path is not None
+        locked_source_text = ""
+        locked_text_reason: str | None = None
+        if lock_source.get("registered_only") is not True:
+            locked_source_text, locked_text_reason = _evidence_extract_inventory_text_for_source(locked_path)
+
+        status = source.get("inventory_status")
+        if status not in {
+            "text_logical_page_seeded",
+            "text_empty_no_pages",
+            "unsupported_source_format_registered_only",
+        }:
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.inventory_status"
+        pages = source.get("pages")
+        if not isinstance(pages, list):
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.pages"
+        page_count = source.get("page_count")
+        if not isinstance(page_count, int) or page_count != len(pages):
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.page_count"
+        if status != "text_logical_page_seeded" and pages:
+            return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.pages_for_unsupported_source"
+        if status == "text_logical_page_seeded":
+            if len(pages) != 1:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.logical_page_count"
+            inventory_sources += 1
+            if locked_text_reason:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:{locked_text_reason}:{normalized_id}"
+            if not locked_source_text.strip():
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:source_text_empty:{normalized_id}"
+        elif status == "text_empty_no_pages":
+            if locked_text_reason:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:{locked_text_reason}:{normalized_id}"
+            if locked_source_text.strip():
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:source_text_not_empty:{normalized_id}"
+            if source.get("needs_external_extraction_tool") is not False:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.needs_external_extraction_tool"
+            if source.get("visual_inspection_required") is not False:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.visual_inspection_required"
+        elif status == "unsupported_source_format_registered_only":
+            if lock_source.get("registered_only") is not True and not locked_text_reason:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_validation_error:source_text_supported:{normalized_id}"
+            if source.get("needs_external_extraction_tool") is not True:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.needs_external_extraction_tool"
+            if source.get("visual_inspection_required") is not True:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.visual_inspection_required"
+        total_pages += len(pages)
+        seen_page_ids: set[str] = set()
+        for page_idx, page in enumerate(pages):
+            page_reason = _evidence_extract_page_entry_error(
+                page,
+                source_id=normalized_id,
+                page_idx=page_idx,
+                seen_page_ids=seen_page_ids,
+                expected_char_end=len(locked_source_text) if status == "text_logical_page_seeded" else None,
+            )
+            if page_reason:
+                return ARTIFACT_INVALID, f"evidence_extract_page_inventory_schema_error:{normalized_id}.{page_reason}"
+
+    if seen_source_ids != set(lock_by_id):
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_validation_error:source_universe_mismatch"
+    if payload.get("page_count") != total_pages:
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:page_count"
+    if payload.get("inventory_source_count") != inventory_sources:
+        return ARTIFACT_INVALID, "evidence_extract_page_inventory_schema_error:inventory_source_count"
+    return ARTIFACT_VALID, "experimental_evidence_extract_page_inventory"
+
+
+def _evidence_extract_page_entry_error(
+    page: Any,
+    *,
+    source_id: str,
+    page_idx: int,
+    seen_page_ids: set[str],
+    expected_char_end: int | None,
+) -> str | None:
+    if not isinstance(page, dict):
+        return f"pages[{page_idx}]"
+    page_id = page.get("page_id")
+    expected_page_id = f"PAGE-{source_id}-{page_idx + 1:03d}"
+    if page_id != expected_page_id:
+        return f"pages[{page_idx}].page_id"
+    if page_id in seen_page_ids:
+        return f"duplicate_page_id:{page_id}"
+    seen_page_ids.add(page_id)
+    if page.get("page_number") != page_idx + 1:
+        return f"pages[{page_idx}].page_number"
+    if page.get("page_label") != f"logical-page-{page_idx + 1}":
+        return f"pages[{page_idx}].page_label"
+    if page.get("page_basis") != "utf8_text_file":
+        return f"pages[{page_idx}].page_basis"
+    if page.get("has_searchable_text") is not True:
+        return f"pages[{page_idx}].has_searchable_text"
+    if page.get("needs_visual_inspection") is not False:
+        return f"pages[{page_idx}].needs_visual_inspection"
+    char_start = page.get("char_start")
+    char_end = page.get("char_end")
+    if not isinstance(char_start, int) or char_start < 0:
+        return f"pages[{page_idx}].char_start"
+    if not isinstance(char_end, int) or char_end < char_start:
+        return f"pages[{page_idx}].char_end"
+    if expected_char_end is not None and (char_start != 0 or char_end != expected_char_end):
+        return f"pages[{page_idx}].char_range"
+    return None
+
+
+def _evidence_extract_inventory_text_for_source(path: Path) -> tuple[str, str | None]:
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "", "source_text_unreadable"
+    if path.suffix.lower() == ".json":
+        try:
+            payload = json.loads(raw_text)
+        except json.JSONDecodeError:
+            return raw_text, None
+        if isinstance(payload, dict) and isinstance(payload.get("content"), str):
+            return payload["content"], None
+    return raw_text, None
 
 
 def _validate_human_approval_ledger_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
