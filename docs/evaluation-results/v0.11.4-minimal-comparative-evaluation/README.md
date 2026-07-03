@@ -36,7 +36,7 @@ The rubric records three observation dimensions:
 - `reader_cost`
 
 These are raw reviewer labels. They are not a quality score, semantic judge,
-benchmark win, or release gate.
+benchmark claim, or release gate.
 
 ## Current Read
 

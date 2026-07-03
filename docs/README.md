@@ -49,6 +49,7 @@ tree is fully bilingual.
 - [Pre-release v0.11.3 Product OS reader-quality reference package](reference-runs/v0.11.3-product-os-reader-quality-reference.md)
 - [Pre-release v0.11.4 minimal comparative evaluation packet](evaluation-results/v0.11.4-minimal-comparative-evaluation/README.md)
 - [Pre-release v0.11.1 synthetic regression pack](reference-runs/v0.11.1-synthetic-regression-pack.md)
+- [v0.7.4 organoid-industry failure study](reference-runs/v0.7.4-organoid-failure-study.md)
 - [BriefLoop-090 A-controlled auditable-brief pilot](reference-runs/briefloop-090-a-controlled-pilot.md)
 - [Security](security.md)
 

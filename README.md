@@ -364,9 +364,11 @@ The goal is not to remove human judgment. The goal is to let humans spend more t
 - [Roadmap](docs/roadmap.md)
 - [Red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
 - [Product OS reader-quality reference package](docs/reference-runs/v0.11.3-product-os-reader-quality-reference.md)
+- [Minimal comparative evaluation packet](docs/evaluation-results/v0.11.4-minimal-comparative-evaluation/README.md)
 - [Synthetic regression pack](docs/reference-runs/v0.11.1-synthetic-regression-pack.md)
 - [Public solar integration run](docs/reference-runs/v0.7.2-public-solar-integration.zh-CN.md)
-- [Organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md)
+- [Organoid-industry failure study](docs/reference-runs/v0.7.4-organoid-failure-study.md)
+  ([中文](docs/reference-runs/v0.7.4-organoid-failure-study.zh-CN.md))
 
 ---
 

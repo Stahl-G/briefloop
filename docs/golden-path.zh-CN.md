@@ -163,7 +163,7 @@ report，按 workflow 修复，然后重新走确定性交付路径。
 - 放三到五份本地文本来源；
 - 不做隐藏 web crawling；
 - 不手工编辑 frozen control files；
-- 不使用 force-delivery 路径；
+- 不存在 force-deliver 路径或 delivery override flag；
 - 读者文件分享前必须人工 review。
 
 如果这条路径仍然让人困惑，把困惑当作文档缺陷记录下来。不要为了补救文档缺陷而
