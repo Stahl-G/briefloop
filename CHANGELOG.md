@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compatibility pointer and moving the legacy MABW v0.3.0 architecture
   reference to `docs/mabw-architecture-reference-v0.3.0-legacy.md`. This is a
   documentation-label fix only, not a product capability change.
+- **Repository hygiene**: removed an unrelated Understand Anything graph-merge
+  helper, its dedicated test, and a zero-reference source-quality helper module.
+  This is repo cleanup only, not a BriefLoop product behavior or support-status
+  change.
 
 ## [0.11.6] — 2026-07-03
 
