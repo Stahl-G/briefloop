@@ -293,6 +293,50 @@ def test_extract_bridges_adjacent_mineru_markdown_for_pdf(tmp_path: Path, capsys
     assert state["artifact_registry"]["artifacts"]["evidence_span_registry"]["status"] == "valid"
 
 
+def test_extract_glob_does_not_register_paired_mineru_markdown_twice(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "evidence-ws"
+    source_dir = tmp_path / "source-docs"
+    source_dir.mkdir()
+    pdf = source_dir / "permit.pdf"
+    pdf.write_bytes(b"%PDF-1.4\nplaceholder\n")
+    derived = extracted_markdown_path(pdf)
+    derived.write_text("# Permit PDF\n\nMinerU extracted capacity: 100 MW.\n", encoding="utf-8")
+
+    assert main(["new", "evidence-extract", str(workspace)]) == 0
+    capsys.readouterr()
+
+    assert (
+        main(
+            [
+                "extract",
+                "--workspace",
+                str(workspace),
+                "--scope",
+                "permits",
+                "--sources",
+                str(source_dir / "*"),
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source_count"] == 1
+    assert payload["page_inventory_source_count"] == 1
+    assert payload["page_inventory_page_count"] == 1
+    assert payload["evidence_span_registry_source_count"] == 1
+    assert payload["evidence_span_registry_span_count"] == 1
+
+    copied_files = sorted(path.name for path in (workspace / "input" / "sources" / "evidence_extract").iterdir())
+    assert copied_files == ["001-permit.pdf", "001-permit_pdf.mineru.md"]
+
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    evidence_entries = [item for item in sources["manual"]["sources"] if item.get("evidence_extract_registered")]
+    assert len(evidence_entries) == 1
+    assert evidence_entries[0]["path"].endswith("001-permit_pdf.mineru.md")
+
+
 def test_extract_source_lock_invalidates_modified_derived_mineru_markdown(tmp_path: Path, capsys) -> None:
     workspace = tmp_path / "evidence-ws"
     pdf = tmp_path / "permit.pdf"
