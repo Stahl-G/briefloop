@@ -61,7 +61,7 @@ tree is fully bilingual.
 - [v0.7.4 organoid-industry failure study](reference-runs/v0.7.4-organoid-failure-study.md)
 - [BriefLoop-090 A-controlled auditable-brief pilot](reference-runs/briefloop-090-a-controlled-pilot.md)
 - [Security](security.md)
-- [Release notes v0.11.6](releases/v0.11.6.md)
+- [Release notes v0.11.9](releases/v0.11.9.md)
 
 ## Technical Reports And Architecture References
 

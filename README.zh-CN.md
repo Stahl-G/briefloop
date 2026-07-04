@@ -275,7 +275,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.11.6**
+当前版本：**v0.11.9**
 
 当前主要入口：
 
@@ -284,7 +284,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 - Claude command：`/briefloop`
 - 兼容 alias：`/mabw`
 
-v0.11.6 发布的是累计的 v0.11 产品基线、reader-quality、role topology、
+v0.11.9 发布的是累计的 v0.11 产品基线、reader-quality、role topology、
 launch readiness 和 issue-closure hardening line，包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract
