@@ -721,6 +721,13 @@ def test_quality_panel_html_renders_static_audit_attachment_without_external_ass
     assert 'data-section="reader-clean-citation-hygiene"' in html
     assert 'data-section="quality-closeout-bundle-separation"' in html
     assert 'data-section="recommended-next-actions"' in html
+    # status values render as color-level badges, bilingual (en = machine value, zh = translation)
+    assert '<span class="badge badge-' in html
+    assert 'class="status-pill level-' in html
+    assert 'data-section="color-legend"' in html
+    assert '<span class="lang-zh" lang="zh-CN">通过</span>' in html
+    # boundary statement is bilingual
+    assert "仅为 quality_panel.json 的静态确定性投影" in html
     lower = html.lower()
     assert "<script" not in lower
     assert "<link" not in lower
