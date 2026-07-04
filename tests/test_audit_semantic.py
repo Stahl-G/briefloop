@@ -35,13 +35,56 @@ from multi_agent_brief.core.schemas import Claim
 def _ledger() -> ClaimLedger:
     return ClaimLedger(
         [
-            Claim("CL-src", "Revenue rose 4% in Q2.", "SRC-1", "Q2 revenue was up 4% YoY."),
+            Claim("CL-0001", "Revenue rose 4% in Q2.", "SRC-001", "Q2 revenue was up 4% YoY."),
         ]
     )
 
 
+def _graph() -> dict:
+    return {
+        "schema_version": "mabw.atomic_claim_graph.v1",
+        "claims": [
+            {
+                "claim_id": "CL-0001",
+                "statement": "Revenue rose 4% in Q2.",
+                "atoms": [
+                    {
+                        "atom_id": "AC-0001-01",
+                        "text": "Q2 revenue was up 4% year over year.",
+                        "claim_role": "numeric_fact",
+                        "materiality": "high",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _registry() -> dict:
+    return {
+        "schema_version": "mabw.evidence_span_registry.v1",
+        "sources": [
+            {
+                "source_id": "SRC-001",
+                "spans": [
+                    {
+                        "span_id": "ESP-001-01",
+                        "raw_excerpt": "Q2 revenue was up 4% YoY.",
+                        "span_role": "numeric_observation",
+                    }
+                ],
+            }
+        ],
+    }
+
+
 def _prompt() -> str:
-    return SemanticAuditPromptBuilder().build_prompt("- Revenue rose 4% [src:SRC-1]", _ledger())
+    return SemanticAuditPromptBuilder().build_prompt(
+        "- Revenue rose 4% [src:SRC-001]",
+        _ledger(),
+        atomic_claim_graph=_graph(),
+        evidence_span_registry=_registry(),
+    )
 
 
 class TestSemanticAuditPromptContract:
@@ -80,6 +123,34 @@ class TestSemanticAuditPromptContract:
         # promise an unmatched-text fallback. Unbound material is out of scope.
         assert "unmatched draft text" not in prompt
         assert "out of scope" in prompt
+
+    def test_prompt_renders_real_atom_and_span_ids_from_frozen_artifacts(self):
+        prompt = _prompt()
+        # The auditor is given the concrete ids it must bind rows to.
+        assert "CL-0001" in prompt
+        assert "AC-0001-01" in prompt
+        assert "ESP-001-01" in prompt
+        assert "Frozen Atom/Span Binding Table" in prompt
+
+    def test_prompt_without_binding_artifacts_instructs_skip(self):
+        prompt = SemanticAuditPromptBuilder().build_prompt("- draft", _ledger())
+        lowered = prompt.lower()
+        # No binding artifacts -> no report, no invented ids.
+        assert "skipped" in lowered
+        assert "do not write a semantic_assessment_report" in lowered
+        assert "do not invent" in lowered
+        # It must not fabricate atom/span ids the auditor cannot know.
+        assert "AC-0001-01" not in prompt
+        assert "ESP-001-01" not in prompt
+
+    def test_prompt_binding_table_truncates_long_text(self):
+        graph = _graph()
+        graph["claims"][0]["atoms"][0]["text"] = "x" * 500
+        prompt = SemanticAuditPromptBuilder().build_prompt(
+            "- draft", _ledger(), atomic_claim_graph=graph, evidence_span_registry=_registry()
+        )
+        assert "…" in prompt
+        assert "x" * 500 not in prompt
 
     def test_prompt_declares_response_shape_contract(self):
         prompt = _prompt()

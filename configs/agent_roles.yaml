@@ -475,6 +475,11 @@ roles:
       that role. It compares audited_brief.md against the frozen claim_ledger.json
       and proposes support-calibration issues such as overstatement, missing
       limitations, or unsupported numbers.
+    - The Semantic Support Auditor reads frozen output/intermediate/atomic_claim_graph.json
+      and output/intermediate/evidence_span_registry.json (read-only) to obtain
+      the atom (AC-####-##) and evidence span (ESP-###-##) ids that each
+      semantic_assessment_report row must bind to. If those frozen artifacts are
+      absent, skip the check and report it skipped; never invent atom or span ids.
     - When run, the Semantic Support Auditor writes only
       output/intermediate/semantic_assessment_report.json. Its raw rows are
       proposals, not authoritative audit_report findings, gate results, or

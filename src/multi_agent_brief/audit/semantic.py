@@ -86,19 +86,48 @@ class SemanticAuditPromptBuilder:
     ``semantic_assessment_report.json``. Python then validates and projects it.
     """
 
-    def build_prompt(self, markdown: str, ledger: ClaimLedger) -> str:
-        claim_lines = []
-        for claim in ledger:
-            claim_lines.append(
-                f"- {claim.claim_id}: {claim.statement}\n"
-                f"  Evidence: {claim.evidence_text}"
+    def build_prompt(
+        self,
+        markdown: str,
+        ledger: ClaimLedger,
+        *,
+        atomic_claim_graph: Mapping[str, Any] | None = None,
+        evidence_span_registry: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Build the Semantic Support Auditor prompt.
+
+        The SAR schema requires each row to bind to an existing claim_id
+        (CL-####), atom_id (AC-####-##), and evidence span (ESP-###-##). Those
+        atom/span ids live in the frozen ``atomic_claim_graph.json`` and
+        ``evidence_span_registry.json``, not in the Claim Ledger. When both
+        frozen artifacts are supplied, this renders a binding table of the real
+        ids the auditor must reference. When they are absent, the prompt
+        instructs the auditor to SKIP (write no report) rather than invent ids —
+        the semantic support check is optional and cannot run without them.
+        """
+
+        binding_table = _render_binding_table(atomic_claim_graph, evidence_span_registry)
+        has_binding_data = bool(binding_table)
+        claims = _render_ledger(ledger)
+
+        if has_binding_data:
+            binding_section = f"## Frozen Atom/Span Binding Table\n{binding_table}"
+        else:
+            binding_section = (
+                "## Frozen Atom/Span Binding Table\n"
+                "No frozen atomic_claim_graph.json or evidence_span_registry.json "
+                "binding artifacts are available. Do not invent AC-####-## or "
+                "ESP-###-## ids and do not write a semantic_assessment_report; "
+                "report that the semantic support check was skipped because the "
+                "frozen atom/span artifacts are missing."
             )
-        claims = "\n".join(claim_lines) or "- (no frozen claims provided)"
+
         return (
             f"{self._role_and_task()}\n\n"
             f"{self._hard_boundaries()}\n\n"
             f"{self._preservation_rules()}\n\n"
-            f"{self.response_contract()}\n\n"
+            f"{self.response_contract(has_binding_data=has_binding_data)}\n\n"
+            f"{binding_section}\n\n"
             f"## Reader Draft (audited_brief.md)\n{markdown}\n\n"
             f"## Frozen Claim Ledger\n{claims}\n"
         )
@@ -139,7 +168,15 @@ class SemanticAuditPromptBuilder:
         )
 
     @classmethod
-    def response_contract(cls) -> str:
+    def response_contract(cls, *, has_binding_data: bool = True) -> str:
+        if not has_binding_data:
+            return (
+                "## Response Contract\n"
+                "The frozen atom/span binding artifacts required to bind rows are "
+                "unavailable. Do not write a semantic_assessment_report and do not "
+                "invent ids. Report that the semantic support check was skipped "
+                "for lack of frozen atom/span artifacts."
+            )
         support_labels = ", ".join(sorted(VALID_SUPPORT_LABELS))
         proposal_labels = ", ".join(SEMANTIC_SUPPORT_PROPOSAL_LABELS)
         return (
@@ -157,10 +194,10 @@ class SemanticAuditPromptBuilder:
             "Record the support-calibration label in row metadata under "
             f'"{SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY}" using one of: '
             f"{proposal_labels}.\n"
-            "Every row must reference an existing claim_id, atom_id, and "
-            "evidence span from the frozen artifacts. Do not invent ids. If "
-            "draft material cannot be bound to a frozen claim, atom, or evidence "
-            "span, do not emit a semantic-support row for it: unbound or uncited "
+            "Use only the claim_id, atom_id, and evidence span ids listed in the "
+            "Frozen Atom/Span Binding Table below. Do not invent ids. If draft "
+            "material cannot be bound to a listed claim, atom, or evidence span, "
+            "do not emit a semantic-support row for it: unbound or uncited "
             "material is out of scope for this report and is handled by the "
             "deterministic auditor's citation and missing-source checks.\n"
             "If you would rely on external knowledge to judge a bound claim, do "
@@ -253,6 +290,81 @@ def findings_from_semantic_proposal_rows(
         for row in proposal_rows
         if isinstance(row, Mapping)
     ]
+
+
+def _render_ledger(ledger: ClaimLedger) -> str:
+    claim_lines = [
+        f"- {claim.claim_id}: {claim.statement}\n  Evidence: {claim.evidence_text}"
+        for claim in ledger
+    ]
+    return "\n".join(claim_lines) or "- (no frozen claims provided)"
+
+
+def _render_binding_table(
+    atomic_claim_graph: Mapping[str, Any] | None,
+    evidence_span_registry: Mapping[str, Any] | None,
+) -> str:
+    """Render the frozen atom/span binding table, or "" when unavailable.
+
+    Returns an empty string unless both artifacts contribute at least one atom
+    and one evidence span, so callers can treat "" as "no binding data — skip".
+    """
+
+    if not isinstance(atomic_claim_graph, Mapping) or not isinstance(evidence_span_registry, Mapping):
+        return ""
+
+    claim_blocks: list[str] = []
+    claims = atomic_claim_graph.get("claims")
+    for claim in claims if isinstance(claims, list) else []:
+        if not isinstance(claim, Mapping):
+            continue
+        claim_id = _text(claim.get("claim_id"))
+        if not claim_id:
+            continue
+        statement = _truncate(_text(claim.get("statement")))
+        lines = [f"- {claim_id}: {statement}" if statement else f"- {claim_id}"]
+        atoms = claim.get("atoms")
+        for atom in atoms if isinstance(atoms, list) else []:
+            if not isinstance(atom, Mapping):
+                continue
+            atom_id = _text(atom.get("atom_id"))
+            if not atom_id:
+                continue
+            role = _text(atom.get("claim_role")) or _text(atom.get("materiality"))
+            atom_text = _truncate(_text(atom.get("text")))
+            lines.append(f"    - {atom_id}{f' [{role}]' if role else ''}: {atom_text}")
+        claim_blocks.append("\n".join(lines))
+
+    span_lines: list[str] = []
+    sources = evidence_span_registry.get("sources")
+    for source in sources if isinstance(sources, list) else []:
+        if not isinstance(source, Mapping):
+            continue
+        source_id = _text(source.get("source_id"))
+        spans = source.get("spans")
+        for span in spans if isinstance(spans, list) else []:
+            if not isinstance(span, Mapping):
+                continue
+            span_id = _text(span.get("span_id"))
+            if not span_id:
+                continue
+            role = _text(span.get("span_role"))
+            excerpt = _truncate(_text(span.get("raw_excerpt")))
+            source_note = f" (source {source_id})" if source_id else ""
+            span_lines.append(f"    - {span_id}{f' [{role}]' if role else ''}{source_note}: {excerpt}")
+
+    if not claim_blocks or not span_lines:
+        return ""
+    return (
+        "Claims and atoms — bind each row to these ids:\n"
+        + "\n".join(claim_blocks)
+        + "\n\nEvidence spans — bind each row to these span ids:\n"
+        + "\n".join(span_lines)
+    )
+
+
+def _truncate(text: str, limit: int = 200) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
 def _calibration_label(proposal_row: Mapping[str, Any]) -> str:

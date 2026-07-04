@@ -73,6 +73,11 @@ Use after editor has completed audited_brief.md.
 - It compares `output/intermediate/audited_brief.md` against the frozen
   `output/intermediate/claim_ledger.json` and proposes support-calibration
   issues such as overstatement, missing limitations, or unsupported numbers.
+- Read frozen `output/intermediate/atomic_claim_graph.json` and
+  `output/intermediate/evidence_span_registry.json` (read-only) to obtain the
+  atom (`AC-####-##`) and evidence span (`ESP-###-##`) ids that each
+  `semantic_assessment_report.json` row must bind to. If those frozen artifacts
+  are absent, skip the check and report it skipped; never invent atom or span ids.
 - Judge claims only against frozen Claim Ledger evidence. Do not use external
   knowledge or infer missing sources.
 - Write only `output/intermediate/semantic_assessment_report.json`. Its raw rows
