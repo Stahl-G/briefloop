@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.audit.semantic import findings_from_semantic_proposal_rows
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     _read_json_mapping,
@@ -136,6 +137,29 @@ def project_semantic_assessment_proposals(report_payload: Mapping[str, Any]) -> 
             "candidate_rows": deepcopy(proposed_rows),
         },
     }
+
+
+def semantic_support_findings_from_report(report_payload: Any) -> list[Any]:
+    """Adapt a valid Semantic Assessment Report into advisory audit findings.
+
+    Returns ``list[AuditFinding]`` with ``finding_type="semantic_support_proposal"``.
+    An invalid or non-mapping report yields no findings, keeping its invalid
+    status visible through the existing registry/status path. This is pure
+    conversion: it never writes ``audit_report.json``, the Claim-Support Matrix,
+    workflow state, gate reports, or delivery files, and the findings carry no
+    gate or release authority.
+    """
+
+    if not isinstance(report_payload, Mapping):
+        return []
+    violations = SemanticAssessmentReportContract.validate(dict(report_payload))
+    if any(violation.severity == "error" for violation in violations):
+        return []
+    projection = project_semantic_assessment_proposals(report_payload)
+    proposal_rows = projection.get("proposed_claim_support_rows")
+    if not isinstance(proposal_rows, list):
+        return []
+    return findings_from_semantic_proposal_rows(proposal_rows)
 
 
 def _workspace_projection_base(*, workspace: Path, report_path: Path) -> dict[str, Any]:
