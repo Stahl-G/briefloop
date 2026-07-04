@@ -32,8 +32,14 @@ Before operating a workspace:
    ```
 
 2. Report the resolved binary path and version to the user.
-3. Ask for an explicit workspace path if one was not provided.
-4. If creating a workspace, use a product entry:
+3. If no workspace path is provided, do not ask only "where is the workspace?"
+   First classify:
+   - existing workspace: ask for the folder path;
+   - first-time run: offer to create one.
+4. Explain that a BriefLoop workspace is the local folder for this report
+   project. Before creating it, ask for explicit confirmation of the target
+   path.
+5. If creating a workspace, use a product entry:
 
    ```bash
    briefloop new industry-weekly <workspace>
@@ -58,10 +64,15 @@ It does not assume WorkBuddy delegated any role.
 If WorkBuddy has not explicitly delegated and recorded a role, do not claim that
 the role ran as a subagent.
 
-After each BriefLoop CLI command, re-open the relevant step in
-`output/intermediate/agent_handoff.md` before continuing. Do not skip handoff
-steps or claim that a subagent ran unless WorkBuddy actually delegated and
-recorded that role.
+Before each stage or role-owned artifact action, and after each BriefLoop CLI
+command, re-open the relevant step in `output/intermediate/agent_handoff.md`
+and `output/intermediate/agent_handoff.json` before continuing. Do not skip
+handoff steps or claim that a subagent ran unless WorkBuddy actually delegated
+and recorded that role.
+
+After each deterministic CLI transaction, summarize progress to the user. Only
+report completed states that are visible in `status`, `workflow_state.json`,
+`event_log.jsonl`, or generated artifacts.
 
 ## Required References
 
@@ -83,5 +94,7 @@ Read the relevant reference before acting:
 - Do not run delivery unless the user explicitly asks and current gates allow it.
 - Do not approve releases, human approval ledgers, or memory entries.
 - Do not present traceability as semantic proof or output-quality improvement.
+- Do not say "Analyst is complete" or "Auditor passed" unless the matching
+  artifact, event, status, or transaction is present.
 - Stop and ask when the workspace path, active binary, gate status, or delivery
   intent is unclear.

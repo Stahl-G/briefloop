@@ -20,6 +20,21 @@ checkout.
 
 ## 2. Create A Workspace
 
+If the user asks "跑周报" and has no workspace:
+
+1. Explain in one sentence: a BriefLoop workspace is the local folder for this
+   report project.
+2. Suggest a safe local folder, for example `~/BriefLoop/<topic-slug>`.
+3. Ask for explicit confirmation before creating it. Suggest only; do not create
+   the folder or workspace silently.
+4. Choose the product entry from the user's plain-language request:
+   - weekly, industry, market, competitor, 周报, 行业, or 竞品 ->
+     `industry-weekly`
+   - management monthly, 管理月报, or 月报 -> `management-monthly`
+   - file review, PDF review, document review, 文件, PDF, or 审阅 ->
+     `document-review`
+5. Run `briefloop new ...` only after the user confirms the target path.
+
 Use one product entry:
 
 ```bash
@@ -46,6 +61,18 @@ Then inspect:
 multi-agent-brief status --workspace <workspace>
 multi-agent-brief state check --workspace <workspace>
 ```
+
+After handoff, report only deterministic progress that is visible in files or
+CLI output, for example:
+
+```text
+已创建工作区。
+已生成 operator handoff。
+当前状态：等待 source/scout artifact。
+```
+
+Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
+artifact, event, transaction, or status output exists.
 
 ## 4. Summarize Quality
 
