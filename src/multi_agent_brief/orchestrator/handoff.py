@@ -185,6 +185,99 @@ DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not edit workflow_state.json, artifact_registry.json, runtime_manifest.json, or event_log.jsonl directly.",
     "Do not bypass workflow_state.json next_allowed_decisions or skip state stage-complete/finalize-complete.",
 ]
+OPERATOR_ARTIFACT_OWNERSHIP_SCHEMA = "briefloop.operator_artifact_ownership.v1"
+OPERATOR_ARTIFACT_OWNERSHIP = {
+    "schema_version": OPERATOR_ARTIFACT_OWNERSHIP_SCHEMA,
+    "boundary": (
+        "Artifact ownership map for compact operator handoff. It is guidance only; "
+        "deterministic CLI transactions and validators remain authoritative."
+    ),
+    "agent_owned_drafts": [
+        {
+            "path": "output/intermediate/candidate_claims.json",
+            "owner": "scout",
+            "write_rule": "Scout/operator-authored draft artifact; complete through `multi-agent-brief state stage-complete --stage scout`.",
+        },
+        {
+            "path": "output/intermediate/screened_candidates.json",
+            "owner": "scout_or_screener",
+            "write_rule": "Scout owns this in default topology; Screener owns it only in strict topology.",
+        },
+        {
+            "path": "output/intermediate/claim_drafts.json",
+            "owner": "claim-ledger",
+            "write_rule": "Claim Ledger/operator-authored draft input for the freeze transaction.",
+        },
+        {
+            "path": "output/intermediate/audited_brief.md",
+            "owner": "analyst_then_editor",
+            "write_rule": "Analyst drafts from frozen Claim Ledger; Editor polishes without adding facts.",
+        },
+        {
+            "path": "output/intermediate/audit_report.json",
+            "owner": "auditor",
+            "write_rule": "Auditor/operator-authored audit artifact before gates/finalize.",
+        },
+    ],
+    "cli_owned_outputs": [
+        {
+            "path": "output/intermediate/claim_ledger.json",
+            "command": "multi-agent-brief state freeze-claim-ledger --workspace <workspace>",
+        },
+        {
+            "path": "output/intermediate/analyst_draft_snapshot.md",
+            "command": "multi-agent-brief state stage-complete --workspace <workspace> --stage analyst --reason \"<reason>\"",
+        },
+        {
+            "path": "output/intermediate/gates/auditor_quality_gate_report.json",
+            "command": "multi-agent-brief gates check --workspace <workspace> --stage auditor",
+        },
+        {
+            "path": "output/intermediate/gates/finalize_quality_gate_report.json",
+            "command": "multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <brief>",
+        },
+        {
+            "path": "output/intermediate/finalize_report.json",
+            "command": "multi-agent-brief finalize --config <workspace>/config.yaml",
+        },
+        {
+            "path": "output/delivery/brief.md",
+            "command": "multi-agent-brief finalize --config <workspace>/config.yaml",
+        },
+        {
+            "path": "output/intermediate/quality_panel.json",
+            "command": "multi-agent-brief quality summarize --workspace <workspace>",
+        },
+        {
+            "path": "output/intermediate/quality_summary.md",
+            "command": "multi-agent-brief quality summarize --workspace <workspace>",
+        },
+        {
+            "path": "output/intermediate/quality_panel.html",
+            "command": "multi-agent-brief quality summarize --workspace <workspace>",
+        },
+    ],
+    "read_only_diagnostics": [
+        "output/intermediate/agent_handoff.md",
+        "output/intermediate/agent_handoff.json",
+        "output/intermediate/artifact_registry.json",
+        "output/intermediate/runtime_manifest.json",
+        "output/intermediate/event_log.jsonl",
+        "output/intermediate/quality_gate_report.json",
+        "output/intermediate/run_integrity_report.json",
+        "experiment/080/*_scorecard.json",
+    ],
+    "forbidden_direct_edits": [
+        "output/intermediate/workflow_state.json",
+        "output/intermediate/artifact_registry.json",
+        "output/intermediate/runtime_manifest.json",
+        "output/intermediate/event_log.jsonl",
+        "output/intermediate/gates/*_quality_gate_report.json",
+        "output/intermediate/quality_gate_report.json",
+        "output/intermediate/run_integrity_report.json",
+        "experiment/080/*_scorecard.json",
+    ],
+}
 
 
 @dataclass
@@ -214,6 +307,7 @@ class AgentHandoff:
     report_template_conformance_projection: dict[str, Any] = field(default_factory=dict)
     report_template_render_plan_projection: dict[str, Any] = field(default_factory=dict)
     runtime_capabilities: dict[str, Any] = field(default_factory=dict)
+    artifact_ownership: dict[str, Any] = field(default_factory=dict)
     legacy_runtime_alias: str | None = None
     notes: list[str] = field(default_factory=list)
 
@@ -522,6 +616,10 @@ def _operator_runtime_capabilities(legacy_alias: str | None = None) -> dict[str,
     }
 
 
+def _operator_artifact_ownership() -> dict[str, Any]:
+    return deepcopy(OPERATOR_ARTIFACT_OWNERSHIP)
+
+
 def _operator_handoff(
     workspace: Path,
     repo: Path,
@@ -601,6 +699,7 @@ def _operator_handoff(
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         runtime_capabilities=_operator_runtime_capabilities(legacy_alias=legacy_alias),
+        artifact_ownership=_operator_artifact_ownership(),
         legacy_runtime_alias=legacy_alias,
         notes=[
             "Operator runtime is host-agnostic: it does not assume subagents ran.",
@@ -1183,6 +1282,36 @@ def _protocol_paths(items: list[dict[str, Any]]) -> str:
     return ", ".join(paths) if paths else "none"
 
 
+def _append_artifact_ownership_markdown(md_content: list[str], ownership: dict[str, Any]) -> None:
+    if not ownership:
+        return
+    md_content.extend([
+        "## Artifact Ownership",
+        "",
+        f"- Schema: `{ownership.get('schema_version', '')}`",
+        f"- Boundary: {ownership.get('boundary', '')}",
+        "",
+        "### Agent-Owned Drafts",
+        "",
+    ])
+    for item in ownership.get("agent_owned_drafts") or []:
+        if isinstance(item, dict):
+            md_content.append(
+                f"- `{item.get('path')}`: owner=`{item.get('owner')}`; {item.get('write_rule')}"
+            )
+    md_content.extend(["", "### CLI-Owned Outputs", ""])
+    for item in ownership.get("cli_owned_outputs") or []:
+        if isinstance(item, dict):
+            md_content.append(f"- `{item.get('path')}` via `{item.get('command')}`")
+    md_content.extend(["", "### Read-Only Diagnostics", ""])
+    for path in ownership.get("read_only_diagnostics") or []:
+        md_content.append(f"- `{path}`")
+    md_content.extend(["", "### Forbidden Direct Edits", ""])
+    for path in ownership.get("forbidden_direct_edits") or []:
+        md_content.append(f"- `{path}`")
+    md_content.append("")
+
+
 def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
     summary = require_fast_rerun_handoff_ready(workspace)
     imported_stages = ", ".join(
@@ -1379,6 +1508,7 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             rendered = "null" if value is None else str(value)
             md_content.append(f"- `{key}`: `{rendered}`")
         md_content.append("")
+    _append_artifact_ownership_markdown(md_content, handoff.artifact_ownership)
     if handoff.assessment_target_manifest:
         md_content.extend([
             "## Assessment Target",

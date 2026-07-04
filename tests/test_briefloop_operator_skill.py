@@ -143,6 +143,8 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
     assert "briefloop quality summarize --workspace <workspace>" in runtime
     assert "multi-agent-brief run --workspace <workspace> --runtime operator" in runtime
     assert "Legacy `--runtime manual` remains a compatibility alias only." in runtime
+    assert "`agent_owned_drafts`, `cli_owned_outputs`, `read_only_diagnostics`" in runtime
+    assert "`forbidden_direct_edits`" in runtime
     assert "not a gate runner" in runtime
     assert "Approval ledger records must be scoped to the current run" in status
     assert "branding_context" in status
