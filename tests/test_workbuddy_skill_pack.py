@@ -199,7 +199,7 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "WorkBuddy Skill source bundle" in text
         assert "Experimental" in text
         assert "source-clone-only" in text.lower()
-        assert "multi-agent-brief workbuddy pack-skill --output dist/workbuddy" in text
+        assert "briefloop workbuddy pack-skill --output dist/workbuddy" in text
         assert "WorkBuddy Assistant trigger" in text
         assert "--runtime operator" in text
         assert "not a WorkBuddy delegated runtime" in text or "不是 WorkBuddy delegated runtime" in text
@@ -233,11 +233,11 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "WorkBuddy Integration Smoke Checklist",
         "experimental integration smoke",
         "not runtime proof",
-        "multi-agent-brief workbuddy pack-skill --output dist/workbuddy",
-        "multi-agent-brief run --workspace <workspace> --runtime operator",
-        "multi-agent-brief status --workspace <workspace>",
-        "multi-agent-brief state check --workspace <workspace>",
-        "multi-agent-brief quality summarize --workspace <workspace>",
+        "briefloop workbuddy pack-skill --output dist/workbuddy",
+        "briefloop run --workspace <workspace> --runtime operator",
+        "briefloop status --workspace <workspace>",
+        "briefloop state check --workspace <workspace>",
+        "briefloop quality summarize --workspace <workspace>",
         "must not auto-deliver",
         "not evidence that WorkBuddy is a supported delegated runtime",
     ]:
