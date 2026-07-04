@@ -293,7 +293,7 @@ def test_claude_install_briefloop_command_is_self_contained(tmp_path, capsys):
     assert "## `feedback <workspace> [text-or-file]`" in text
     assert "## `deliver <workspace>`" in text
     assert "status is strictly read-only" in text
-    assert "multi-agent-brief deliver --workspace <workspace> --target local" in text
+    assert "briefloop deliver --workspace <workspace> --target local" in text
     assert "do not send audit/control records" in text
 
 
