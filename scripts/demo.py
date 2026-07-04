@@ -11,6 +11,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from multi_agent_brief.product.quality_panel import (  # noqa: E402
+    QualityPanelError,
+    write_quality_panel,
+    write_quality_panel_html,
+    write_quality_summary,
+)
+
 REFERENCE_DIR = ROOT / "examples" / "reference-workspaces" / "industry-weekly-demo"
 ARTIFACTS_DIR = REFERENCE_DIR / "artifacts"
 
@@ -94,10 +105,6 @@ deterministic demo of artifact traceability, not a live source run.
             / "auditor_quality_gate_report.json",
         ),
         (
-            ARTIFACTS_DIR / "quality_summary.md",
-            workspace / "output" / "intermediate" / "quality_summary.md",
-        ),
-        (
             ARTIFACTS_DIR / "source_appendix.md",
             workspace / "output" / "source_appendix.md",
         ),
@@ -108,6 +115,13 @@ deterministic demo of artifact traceability, not a live source run.
     ]
     for source, target in copies:
         shutil.copyfile(source, target)
+
+    try:
+        panel = write_quality_panel(workspace=workspace)
+        write_quality_summary(workspace=workspace, panel_payload=panel)
+        write_quality_panel_html(workspace=workspace, panel_payload=panel)
+    except QualityPanelError as exc:
+        raise RuntimeError(f"could not generate demo Quality Panel artifacts: {exc}") from exc
 
     _write_text(
         workspace / "output" / "audit" / "README.md",
@@ -130,14 +144,18 @@ Workspace:
 
 Open:
 - {workspace / "output" / "delivery" / "brief.md"}
+- {workspace / "output" / "intermediate" / "quality_panel.html"}
 - {workspace / "output" / "intermediate" / "claim_ledger.json"}
+- {workspace / "output" / "intermediate" / "quality_panel.json"}
 - {workspace / "output" / "intermediate" / "quality_summary.md"}
 - {workspace / "output" / "source_appendix.md"}
 - {workspace / "output" / "intermediate" / "event_log_excerpt.jsonl"}
 
 This demo is deterministic and does not call an LLM, fetch sources, or require
 API keys. It shows traceability and process accountability, not semantic proof
-or output-quality improvement proof."""
+or output-quality improvement proof.
+
+Quality Panel is a static audit/operator attachment. It is not correctness proof, delivery approval, or release authorization."""
     )
 
 

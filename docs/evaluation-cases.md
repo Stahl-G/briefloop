@@ -73,8 +73,9 @@ bash scripts/demo-deep-dive.sh
 ```
 
 `scripts/demo.sh` creates a temporary reference workspace from the public-safe
-golden example and prints the final brief, Claim Ledger, Quality Summary, source
-appendix, and event-log excerpt paths. `scripts/demo-deep-dive.sh` creates a
+golden example and prints the final brief, Claim Ledger, Quality Panel HTML,
+Quality Summary, source appendix, and event-log excerpt paths.
+`scripts/demo-deep-dive.sh` creates a
 temporary workspace, records and approves synthetic audience guidance, rebuilds
 `improvement/memory.md`, runs handoff preparation, and prints the
 `runtime_manifest.json.improvement` block.
