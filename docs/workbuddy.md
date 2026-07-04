@@ -120,3 +120,15 @@ Use it only as a remote trigger into a local WorkBuddy session that has the
 BriefLoop Skill installed. It is not a cloud BriefLoop runtime and it must not
 finalize, deliver, approve, or publish without a human-owned command and current
 gate status.
+
+## Manual Smoke Checklist
+
+Use the manual smoke checklist when dogfooding WorkBuddy:
+
+```text
+docs/workbuddy-smoke-checklist.md
+```
+
+The checklist is an experimental integration smoke path. It is not runtime
+proof, delegated-agent proof, output-quality proof, semantic proof, delivery
+approval, or release approval.
