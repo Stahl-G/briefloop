@@ -10,6 +10,7 @@ Detailed schema drafts, private evaluation examples, prompt notes, failure taxon
 
 - [v0.5.9 Orchestrator Contract Preparation](v0.5.9-orchestrator-prep.md)
 - [v0.6.0 Explicit Orchestrator Contract](v0.6.0-explicit-orchestrator-contract.md)
+- [Draft-Promote Ownership Matrix](draft-promote-ownership-matrix.md)
 
 ## How To Use
 
