@@ -41,6 +41,7 @@ from multi_agent_brief.cli import (
     secrets_commands,
     approval_commands,
     release_commands,
+    workbuddy_commands,
 )
 
 
@@ -133,6 +134,9 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Hermes runtime
     hermes_commands.register(subparsers)
+
+    # WorkBuddy source-clone Skill packaging
+    workbuddy_commands.register(subparsers)
 
     # Meta
     subparsers.add_parser("version", help="Print package version.")
@@ -260,6 +264,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "claude":
         return claude_commands.handle(args)
+
+    if cmd == "workbuddy":
+        return workbuddy_commands.handle(args)
 
     return 1
 

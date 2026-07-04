@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
+import sys
+import zipfile
 from pathlib import Path
+
+from multi_agent_brief.workbuddy.skill_pack import (
+    EMBEDDED_MANIFEST,
+    MANIFEST_SCHEMA_VERSION,
+    WorkBuddySkillPackError,
+    package_workbuddy_skill,
+    validate_workbuddy_skill_pack,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -121,3 +134,92 @@ def test_workbuddy_skill_declares_source_clone_distribution_boundary() -> None:
     text = _all_skill_text()
     assert "source-clone-only" in text
     assert "wheel/sdist package installs do not include" in text
+
+
+def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -> None:
+    result = package_workbuddy_skill(output_dir=tmp_path, repo_workdir=ROOT)
+    assert result.zip_path.exists()
+    assert result.manifest_path.exists()
+    assert validate_workbuddy_skill_pack(
+        zip_path=result.zip_path,
+        manifest_path=result.manifest_path,
+    ) == []
+
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
+    assert manifest["runtime_effect"] == "packaging_only"
+    assert manifest["zip_sha256"] == result.zip_sha256
+    assert manifest["distribution_boundary"] == (
+        "local_workbuddy_skill_zip_not_marketplace_ready_not_python_package_data"
+    )
+    names = [item["path"] for item in manifest["included_files"]]
+    assert f"briefloop/SKILL.md" in names
+    assert "briefloop/references/quickstart.md" in names
+    assert EMBEDDED_MANIFEST in names
+    assert all("private_planning" not in name for name in names)
+    assert all("/output/" not in f"/{name}/" for name in names)
+    assert all(not Path(name).is_absolute() for name in names)
+
+    with zipfile.ZipFile(result.zip_path) as archive:
+        assert sorted(archive.namelist()) == sorted(names)
+        skill_text = archive.read("briefloop/SKILL.md").decode("utf-8")
+    assert "--runtime operator" in skill_text
+    assert "semantic proof" in skill_text
+
+
+def test_workbuddy_skill_pack_is_reproducible(tmp_path: Path) -> None:
+    first = package_workbuddy_skill(output_dir=tmp_path / "a", repo_workdir=ROOT)
+    second = package_workbuddy_skill(output_dir=tmp_path / "b", repo_workdir=ROOT)
+    assert first.zip_sha256 == second.zip_sha256
+    assert first.zip_path.read_bytes() == second.zip_path.read_bytes()
+
+
+def test_workbuddy_pack_skill_cli_json(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    src = str(ROOT / "src")
+    env["PYTHONPATH"] = src if not env.get("PYTHONPATH") else f"{src}{os.pathsep}{env['PYTHONPATH']}"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "multi_agent_brief.cli.main",
+            "workbuddy",
+            "pack-skill",
+            "--output",
+            str(tmp_path),
+            "--repo-workdir",
+            str(ROOT),
+            "--json",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["runtime_effect"] == "packaging_only"
+    assert Path(payload["zip_path"]).exists()
+    assert Path(payload["manifest_path"]).exists()
+
+
+def test_workbuddy_skill_pack_rejects_symlinked_source_file(tmp_path: Path) -> None:
+    source = tmp_path / "repo" / "integrations" / "workbuddy" / "briefloop"
+    (source / "references").mkdir(parents=True)
+    for rel in ["SKILL.md", *REFERENCE_NAMES]:
+        target = source / (Path("references") / rel if rel != "SKILL.md" else Path(rel))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("ok\n", encoding="utf-8")
+    (tmp_path / "repo" / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("private\n", encoding="utf-8")
+    (source / "references" / "local.md").symlink_to(outside)
+
+    try:
+        package_workbuddy_skill(output_dir=tmp_path / "out", repo_workdir=tmp_path / "repo")
+    except WorkBuddySkillPackError as exc:
+        assert "symlink" in str(exc)
+    else:  # pragma: no cover - clearer failure than pytest.raises message here
+        raise AssertionError("expected symlink rejection")

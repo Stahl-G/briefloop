@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   BriefLoop CLI transactions only. It is not shipped as Python wheel/sdist
   package data yet and does not add WorkBuddy runtime authority, gate authority,
   delivery approval, release approval, or semantic proof claims.
+- Added `briefloop workbuddy pack-skill` /
+  `multi-agent-brief workbuddy pack-skill` to build a deterministic local
+  WorkBuddy Skill zip and sidecar manifest from source-clone files. The package
+  is a local Skill archive, not a WorkBuddy Marketplace publication, Python
+  package-data surface, runtime authority layer, gate authority, delivery
+  approval, release approval, or semantic proof claim.
 - Added `operator` runtime as the host-agnostic compact operation path for
   environments without a dedicated BriefLoop runtime adapter. `manual` remains
   a legacy CLI alias that resolves to `operator`; generated handoff artifacts
