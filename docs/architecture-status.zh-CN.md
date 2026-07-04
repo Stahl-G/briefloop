@@ -184,7 +184,9 @@ Python package/module 路径、artifact 名称、workspace 格式和实验 ID。
   semantic support assessor、不判断行业合规、不验证 internet rumors、不绕过 gates、
   不批准 delivery、不提供税务或投资建议，也不授权发布。
 - Python 命令负责 setup、source tooling、validation、audit support 和 rendering。
-- Hermes、Claude Code、Codex、OpenCode 和 manual fallback 都是 agent runtime surfaces。
+- Hermes、Claude Code、Codex、OpenCode 和 operator fallback 都是 agent runtime surfaces。
+  operator runtime 是适用于没有专用 runtime adapter 宿主的操作者模式；
+  legacy `manual` 只保留为 CLI 兼容别名，不是 Python brief-generation path。
 - Input governance 可以先用 MinerU 把受支持的非文本输入抽取为 Markdown，再区分 evidence、feedback、instructions 和 background context。
 - 旧 Python-pipeline 叙事不再是标准 workflow。
 

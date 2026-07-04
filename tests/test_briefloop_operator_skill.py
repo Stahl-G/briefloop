@@ -48,6 +48,8 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "Shell CLI alias: `briefloop`" in text
     assert "Claude writer command: `/briefloop`" in text
     assert "/mabw" in text
+    assert "`--runtime operator`: host-agnostic compact operator workflow" in text
+    assert "`--runtime manual`: legacy compatibility alias resolved to `operator`" in text
     assert "BriefLoop skill is an agent protocol surface" in text
     assert "not the `/briefloop` slash" in text
     assert "auditable_brief" in text
@@ -134,6 +136,8 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
         assert "release_readiness_report.json" in text
 
     assert "briefloop quality summarize --workspace <workspace>" in runtime
+    assert "multi-agent-brief run --workspace <workspace> --runtime operator" in runtime
+    assert "Legacy `--runtime manual` remains a compatibility alias only." in runtime
     assert "not a gate runner" in runtime
     assert "Approval ledger records must be scoped to the current run" in status
     assert "branding_context" in status

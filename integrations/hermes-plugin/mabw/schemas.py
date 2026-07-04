@@ -100,8 +100,8 @@ MABW_RUN_HANDOFF = {
             },
             "runtime": {
                 "type": "string",
-                "description": "Optional runtime target. Defaults to hermes.",
-                "enum": ["auto", "hermes", "claude", "opencode", "codex", "manual"],
+                "description": "Optional runtime target. Defaults to hermes. manual is a legacy alias for operator.",
+                "enum": ["auto", "hermes", "claude", "opencode", "codex", "operator", "manual"],
             },
         },
         "required": ["workspace"],

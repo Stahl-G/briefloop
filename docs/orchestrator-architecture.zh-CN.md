@@ -4,7 +4,7 @@
 
 ## 核心模型
 
-司乐师（Orchestrator）是 runtime main agent。它可以是 Hermes parent agent、Claude Code command context、Codex main agent、OpenCode primary agent，或 manual fallback 操作者。
+司乐师（Orchestrator）是 runtime main agent。它可以是 Hermes parent agent、Claude Code command context、Codex main agent、OpenCode primary agent，或 operator fallback。legacy `manual` runtime 值只保留为 `operator` 的 CLI 兼容别名。
 
 Python 保持工具层定位，负责 workspace setup、source handling、deterministic checks、validation helpers、audit support 和 final rendering。Python 不是标准完整 brief-generation runtime。
 

@@ -64,9 +64,19 @@ RUNTIME_HERMES = "hermes"
 RUNTIME_CLAUDE = "claude"
 RUNTIME_OPENCODE = "opencode"
 RUNTIME_CODEX = "codex"
+RUNTIME_OPERATOR = "operator"
 RUNTIME_MANUAL = "manual"
-VALID_RUNTIMES = (RUNTIME_AUTO, RUNTIME_HERMES, RUNTIME_CLAUDE, RUNTIME_OPENCODE, RUNTIME_CODEX, RUNTIME_MANUAL)
+VALID_RUNTIMES = (
+    RUNTIME_AUTO,
+    RUNTIME_HERMES,
+    RUNTIME_CLAUDE,
+    RUNTIME_OPENCODE,
+    RUNTIME_CODEX,
+    RUNTIME_OPERATOR,
+    RUNTIME_MANUAL,
+)
 RUNTIME_RESOLVED = {RUNTIME_AUTO: RUNTIME_HERMES}  # auto resolves to hermes in v0.5.5
+LEGACY_RUNTIME_ALIASES = {RUNTIME_MANUAL: RUNTIME_OPERATOR}
 RUNTIME_RECIPE_FULL = "full"
 RUNTIME_RECIPE_FAST_RERUN = "fast-rerun"
 VALID_RUNTIME_RECIPES = (RUNTIME_RECIPE_FULL, RUNTIME_RECIPE_FAST_RERUN)
@@ -203,6 +213,8 @@ class AgentHandoff:
     report_template_projection: dict[str, Any] = field(default_factory=dict)
     report_template_conformance_projection: dict[str, Any] = field(default_factory=dict)
     report_template_render_plan_projection: dict[str, Any] = field(default_factory=dict)
+    runtime_capabilities: dict[str, Any] = field(default_factory=dict)
+    legacy_runtime_alias: str | None = None
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -223,6 +235,25 @@ def _find_venv_activate(repo: Path) -> str:
         return str(cand) if cand.exists() else str(cand)
     cand = repo / ".venv" / "bin" / "activate"
     return str(cand) if cand.exists() else str(cand)
+
+
+def normalize_runtime(runtime: str) -> tuple[str, str | None]:
+    """Resolve legacy runtime aliases without writing alias names to handoff."""
+    value = str(runtime or "").strip().lower()
+    alias_target = LEGACY_RUNTIME_ALIASES.get(value)
+    if alias_target:
+        return alias_target, value
+    return value, None
+
+
+def legacy_runtime_alias_warning(runtime: str) -> str | None:
+    resolved, alias = normalize_runtime(runtime)
+    if not alias:
+        return None
+    return (
+        f'runtime "{alias}" is a legacy alias for "{resolved}". '
+        f"Use --runtime {resolved} for host-agnostic compact workflow."
+    )
 
 
 def _run_doctor(workspace: Path) -> tuple[int, str]:
@@ -479,22 +510,52 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
     )
 
 
-def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
+def _operator_runtime_capabilities(legacy_alias: str | None = None) -> dict[str, Any]:
+    return {
+        "runtime": RUNTIME_OPERATOR,
+        "legacy_runtime_alias": legacy_alias,
+        "delegation_assumed": False,
+        "compact_workflow_allowed": True,
+        "host_specific_adapter": False,
+        "must_not_claim_subagents_ran": True,
+        "fallback_if_no_delegation": "compact_operator_workflow_or_stop",
+    }
+
+
+def _operator_handoff(
+    workspace: Path,
+    repo: Path,
+    venv: str,
+    *,
+    legacy_alias: str | None = None,
+) -> AgentHandoff:
     ws_path = str(workspace.resolve())
+    legacy_note = (
+        f'\nLegacy alias: runtime "{legacy_alias}" was resolved to "operator".'
+        if legacy_alias
+        else ""
+    )
     return AgentHandoff(
-        runtime=RUNTIME_MANUAL,
+        runtime=RUNTIME_OPERATOR,
         recipe=RUNTIME_RECIPE_FULL,
         workspace=ws_path,
         repo_workdir=str(repo.resolve()),
         venv_activate=venv,
         next_steps=(
-            "Use the manual fallback as the Orchestrator main agent. After all artifacts are ready, "
+            "Use the operator runtime as a host-agnostic compact workflow. After all artifacts are ready, "
             f"run: multi-agent-brief finalize --config {ws_path}/config.yaml"
         ),
         prompt=(
-            f"Manual workflow for workspace: {ws_path}\n"
+            f"Operator runtime for workspace: {ws_path}\n"
             f"Repository: {repo.resolve()}\n"
             f"Activate venv: source {venv}\n\n"
+            "The operator is the Orchestrator main agent for this compact workflow. "
+            "This is a host-agnostic compact operator workflow. It does not assume "
+            "subagent/delegate capability. If your host provides a real child-agent "
+            "or delegate tool, you may delegate the named role. If not, one operator "
+            "may perform one role at a time as operator-authored artifact work, but "
+            "must not claim subagents ran.\n"
+            f"{legacy_note}\n\n"
             "Read contract references before delegation:\n"
             "- configs/orchestrator_contract.yaml\n"
             "- configs/stage_specs.yaml\n"
@@ -522,14 +583,14 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "   If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.\n"
             f"3. multi-agent-brief inputs extract --config {ws_path}/config.yaml  (if PDF/DOCX/image inputs exist)\n"
             f"4. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
-            "5. Use the 'scout' subagent. Runtime may split Scout work internally, but chunk outputs are scratch only; write the deterministic joined output/intermediate/candidate_claims.json once. Default topology: also write output/intermediate/screened_candidates.json from the joined candidate universe, then stage-complete scout. Strict topology: write only candidate_claims.json.\n"
-            "6. Default topology: do not delegate Screener and do not call state stage-complete --stage screener; topology satisfaction records Screener after Scout completes. Strict topology only: use the 'screener' subagent to write output/intermediate/screened_candidates.json.\n"
-            "7. Use the 'claim-ledger' subagent to write output/intermediate/claim_drafts.json, then run "
+            "5. Delegate the Scout role only if your host provides real delegation. Otherwise perform Scout as operator-authored artifact work. Runtime may split Scout work internally, but chunk outputs are scratch only; write the deterministic joined output/intermediate/candidate_claims.json once. Default topology: also write output/intermediate/screened_candidates.json from the joined candidate universe, then stage-complete scout. Strict topology: write only candidate_claims.json.\n"
+            "6. Default topology: do not delegate Screener and do not call state stage-complete --stage screener; topology satisfaction records Screener after Scout completes. Strict topology only: delegate the Screener role only if your host provides real delegation, otherwise perform Screener as operator-authored artifact work to write output/intermediate/screened_candidates.json.\n"
+            "7. Delegate the Claim Ledger role only if your host provides real delegation. Otherwise perform Claim Ledger as operator-authored artifact work to write output/intermediate/claim_drafts.json, then run "
             f"multi-agent-brief state freeze-claim-ledger --workspace {ws_path} to create output/intermediate/claim_ledger.json, "
             f"then run multi-agent-brief state stage-complete --workspace {ws_path} --stage claim-ledger --reason \"Claim Ledger was frozen from claim drafts.\"\n"
-            "8. Use the 'analyst' subagent to read frozen output/intermediate/claim_ledger.json only, never claim_drafts.json, and write output/intermediate/audited_brief.md as a working draft. If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; it is not source evidence or proof of support. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph. Analyst stage-complete freezes output/intermediate/analyst_draft_snapshot.md\n"
-            "9. Use the 'editor' / Delivery Editor subagent to own and polish the final output/intermediate/audited_brief.md without adding facts. If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; if absent or invalid, do not repair it. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph\n"
-            "10. Use the 'auditor' subagent to audit against frozen output/intermediate/claim_ledger.json, including overstatement and support-strength calibration, and write output/intermediate/audit_report.json\n"
+            "8. Delegate the Analyst role only if your host provides real delegation. Otherwise perform Analyst as operator-authored artifact work. Read frozen output/intermediate/claim_ledger.json only, never claim_drafts.json, and write output/intermediate/audited_brief.md as a working draft. If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; it is not source evidence or proof of support. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph. Analyst stage-complete freezes output/intermediate/analyst_draft_snapshot.md\n"
+            "9. Delegate the Editor / Delivery Editor role only if your host provides real delegation. Otherwise perform Editor as operator-authored artifact work to own and polish the final output/intermediate/audited_brief.md without adding facts. If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; if absent or invalid, do not repair it. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph\n"
+            "10. Delegate the Auditor role only if your host provides real delegation. Otherwise perform Auditor as operator-authored artifact work to audit against frozen output/intermediate/claim_ledger.json, including overstatement and support-strength calibration, and write output/intermediate/audit_report.json\n"
             f"11. multi-agent-brief gates check --workspace {ws_path} --stage auditor\n"
             f"12. multi-agent-brief state check --workspace {ws_path} --strict\n"
             f"13. multi-agent-brief state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
@@ -539,8 +600,12 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"16. multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
+        runtime_capabilities=_operator_runtime_capabilities(legacy_alias=legacy_alias),
+        legacy_runtime_alias=legacy_alias,
         notes=[
-            "Each subagent step must complete before the next begins.",
+            "Operator runtime is host-agnostic: it does not assume subagents ran.",
+            "Delegate named roles only if the host provides real delegation; otherwise one operator performs one role at a time.",
+            "Each role step must complete before the next begins.",
             "Verify each artifact exists and is non-empty before continuing.",
             "Use inputs extract to convert PDF/DOCX/image inputs into .mineru.md before Scout reads evidence files.",
             INPUT_DIRECTORY_ROLE_NOTE,
@@ -552,11 +617,16 @@ def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
     )
 
 
+def _manual_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
+    return _operator_handoff(workspace, repo, venv, legacy_alias=RUNTIME_MANUAL)
+
+
 _HANDOFF_BUILDERS = {
     RUNTIME_HERMES: _hermes_handoff,
     RUNTIME_CLAUDE: _claude_handoff,
     RUNTIME_OPENCODE: _opencode_handoff,
     RUNTIME_CODEX: _codex_handoff,
+    RUNTIME_OPERATOR: _operator_handoff,
     RUNTIME_MANUAL: _manual_handoff,
 }
 
@@ -574,8 +644,10 @@ def build_handoff(
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     venv_activate = venv or _find_venv_activate(repo)
 
+    normalized_runtime, legacy_alias = normalize_runtime(runtime)
+
     # resolve auto -> hermes in v0.5.5
-    resolved = RUNTIME_RESOLVED.get(runtime, runtime)
+    resolved = RUNTIME_RESOLVED.get(normalized_runtime, normalized_runtime)
 
     if resolved not in _HANDOFF_BUILDERS:
         raise ValueError(f"Unknown runtime '{runtime}'. Valid: {', '.join(VALID_RUNTIMES)}")
@@ -583,7 +655,10 @@ def build_handoff(
         raise ValueError(f"Unknown runtime recipe '{recipe}'. Valid: {', '.join(VALID_RUNTIME_RECIPES)}")
 
     builder = _HANDOFF_BUILDERS[resolved]
-    handoff = builder(ws, repo, venv_activate)
+    if resolved == RUNTIME_OPERATOR:
+        handoff = _operator_handoff(ws, repo, venv_activate, legacy_alias=legacy_alias)
+    else:
+        handoff = builder(ws, repo, venv_activate)
     handoff.recipe = recipe
     if recipe == RUNTIME_RECIPE_FAST_RERUN:
         _apply_fast_rerun_recipe(handoff, ws)
@@ -1261,6 +1336,9 @@ def render_handoff_cli(handoff: AgentHandoff) -> str:
         for n in handoff.notes:
             lines.append(f"  - {n}")
         lines.append("")
+    if handoff.legacy_runtime_alias:
+        lines.append(f"Legacy runtime alias: {handoff.legacy_runtime_alias}")
+        lines.append("")
     if handoff.assessment_target_manifest:
         lines.append(f"Assessment target: {handoff.assessment_target_manifest.get('assessment_target')}")
         lines.append("")
@@ -1287,6 +1365,20 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
         handoff.next_steps,
         "",
     ]
+    if handoff.legacy_runtime_alias:
+        md_content.extend([
+            f"- Legacy runtime alias: `{handoff.legacy_runtime_alias}`",
+            "",
+        ])
+    if handoff.runtime_capabilities:
+        md_content.extend([
+            "## Runtime Capabilities",
+            "",
+        ])
+        for key, value in handoff.runtime_capabilities.items():
+            rendered = "null" if value is None else str(value)
+            md_content.append(f"- `{key}`: `{rendered}`")
+        md_content.append("")
     if handoff.assessment_target_manifest:
         md_content.extend([
             "## Assessment Target",

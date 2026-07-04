@@ -10,6 +10,7 @@ import yaml
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.start_commands import (
     CONTRACT_REFERENCES,
+    RUNTIME_OPERATOR,
     VALID_RUNTIMES,
     build_handoff,
     render_handoff_cli,
@@ -506,6 +507,9 @@ def test_start_help_shows_runtime_options(capsys):
     assert "--recipe" in output
     assert "hermes" in output
     assert "claude" in output
+    assert "operator" in output
+    assert "manual" in output
+    assert "legacy alias for operator" in output
     assert "--workspace" in output
 
 
@@ -1246,7 +1250,37 @@ def test_build_handoff_fast_rerun_requires_import_manifest(tmp_path):
         assert "E_FAST_RERUN_IMPORT_REQUIRED" in str(exc)
 
 
-def test_start_manual_handoff_contains_artifact_contract(tmp_path):
+def test_start_operator_handoff_contains_compact_runtime_contract(tmp_path):
+    ws = _write_workspace(tmp_path)
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--runtime", "operator",
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    text = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    assert data["runtime"] == RUNTIME_OPERATOR
+    assert data["legacy_runtime_alias"] is None
+    assert data["runtime_capabilities"]["runtime"] == RUNTIME_OPERATOR
+    assert data["runtime_capabilities"]["delegation_assumed"] is False
+    assert data["runtime_capabilities"]["compact_workflow_allowed"] is True
+    assert data["runtime_capabilities"]["host_specific_adapter"] is False
+    assert data["runtime_capabilities"]["must_not_claim_subagents_ran"] is True
+    assert data["runtime_capabilities"]["fallback_if_no_delegation"] == "compact_operator_workflow_or_stop"
+    assert "host-agnostic compact operator workflow" in data["prompt"]
+    assert "must not claim subagents ran" in data["prompt"]
+    assert "Delegate the Scout role only if your host provides real delegation" in data["prompt"]
+    assert "Use the 'scout' subagent" not in data["prompt"]
+    assert "## Runtime Capabilities" in text
+    assert "candidate_claims.json" in data["prompt"]
+    assert "multi-agent-brief finalize" in data["prompt"]
+    _assert_orchestrator_contract_handoff(data)
+
+
+def test_start_manual_alias_resolves_to_operator_and_warns(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     rc = main([
         "start",
@@ -1256,7 +1290,13 @@ def test_start_manual_handoff_contains_artifact_contract(tmp_path):
         "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
     ])
     assert rc == 0
+    captured = capsys.readouterr()
+    assert 'runtime "manual" is a legacy alias for "operator"' in captured.err
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    assert data["runtime"] == RUNTIME_OPERATOR
+    assert data["legacy_runtime_alias"] == "manual"
+    assert data["runtime_capabilities"]["runtime"] == RUNTIME_OPERATOR
+    assert data["runtime_capabilities"]["legacy_runtime_alias"] == "manual"
     assert "candidate_claims.json" in data["prompt"]
     assert "multi-agent-brief finalize" in data["prompt"]
     _assert_orchestrator_contract_handoff(data)
@@ -1399,6 +1439,9 @@ def test_build_handoff_all_runtimes_valid(tmp_path):
         # auto resolves to hermes in v0.5.5
         if runtime == "auto":
             assert handoff.runtime == "hermes"
+        elif runtime == "manual":
+            assert handoff.runtime == RUNTIME_OPERATOR
+            assert handoff.legacy_runtime_alias == "manual"
         else:
             assert handoff.runtime == runtime
         assert len(handoff.expected_artifacts) >= 2

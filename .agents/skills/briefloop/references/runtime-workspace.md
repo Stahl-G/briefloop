@@ -13,6 +13,11 @@ Read this when operating a real BriefLoop/MABW workspace.
 - Inspect state with `multi-agent-brief status --workspace <workspace>`,
   `state show`, or `state check`.
 - Launch handoff with `multi-agent-brief run --workspace <workspace>`.
+- Use `multi-agent-brief run --workspace <workspace> --runtime operator` when
+  the host has no dedicated BriefLoop runtime adapter. Operator runtime is a
+  host-agnostic compact workflow: it does not assume subagents ran, and it must
+  still use deterministic transactions, artifacts, gates, and human-triggered
+  delivery. Legacy `--runtime manual` remains a compatibility alias only.
 - Advance stages only with deterministic completion transactions.
 - Use owner-stage repair transactions for frozen artifact repair.
 - Trigger delivery only when the operator explicitly asks and gates allow it.

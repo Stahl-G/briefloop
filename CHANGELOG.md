@@ -5,6 +5,17 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `operator` runtime as the host-agnostic compact operation path for
+  environments without a dedicated BriefLoop runtime adapter. `manual` remains
+  a legacy CLI alias that resolves to `operator`; generated handoff artifacts
+  now record the operator runtime and its non-delegation assumptions without
+  changing stage order, artifact contracts, gates, delivery, or release
+  authority.
+
 ## [0.11.9] — 2026-07-04
 
 ### Added
