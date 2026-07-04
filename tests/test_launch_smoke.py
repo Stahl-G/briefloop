@@ -46,6 +46,10 @@ def test_launch_smoke_json_runs_demo_handoff_path():
     )
     assert not by_id["handoff_artifacts"]["missing"]
     assert not by_id["deterministic_demo_artifacts"]["missing"]
+    demo_stdout = by_id["deterministic_demo_script"]["stdout_tail"]
+    assert "quality_panel.html" in demo_stdout
+    assert "static audit/operator attachment" in demo_stdout
+    assert "not correctness proof, delivery approval, or release authorization" in demo_stdout
 
 
 def test_launch_smoke_rejects_cli_version_drift():

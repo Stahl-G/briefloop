@@ -171,7 +171,8 @@ bash scripts/demo.sh
 ```
 
 `scripts/demo.sh` creates an API-free reference workspace with a final brief,
-Claim Ledger, Quality Summary, source appendix, and event-log excerpt.
+Claim Ledger, Quality Panel HTML, Quality Summary, source appendix, and
+event-log excerpt.
 
 Package-index installs are not the launch path yet. `pipx` / PyPI packaging is
 tracked in [pipx And PyPI Packaging Prep](docs/packaging-pipx.md); do not use
