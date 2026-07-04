@@ -1,2 +1,1 @@
 """WorkBuddy integration helpers."""
-

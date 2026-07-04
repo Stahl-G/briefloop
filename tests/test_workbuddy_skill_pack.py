@@ -205,6 +205,39 @@ def test_workbuddy_pack_skill_cli_json(tmp_path: Path) -> None:
     assert Path(payload["manifest_path"]).exists()
 
 
+def test_workbuddy_skill_pack_rejects_output_inside_source_tree() -> None:
+    output = WORKBUDDY_SKILL / "dist"
+    try:
+        package_workbuddy_skill(output_dir=output, repo_workdir=ROOT)
+    except WorkBuddySkillPackError as exc:
+        assert "must not be inside the skill source tree" in str(exc)
+    else:  # pragma: no cover - clearer failure than pytest.raises message here
+        raise AssertionError("expected output directory rejection")
+
+
+def test_validate_workbuddy_skill_pack_reports_malformed_included_files(tmp_path: Path) -> None:
+    zip_path = tmp_path / "briefloop-workbuddy-skill.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("briefloop/SKILL.md", "ok\n")
+    manifest_path = tmp_path / "briefloop-workbuddy-skill.manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "runtime_effect": "packaging_only",
+                "zip_sha256": "0" * 64,
+                "included_files": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_workbuddy_skill_pack(zip_path=zip_path, manifest_path=manifest_path)
+
+    assert "manifest included_files must be a list" in errors
+    assert "zip sha256 mismatch" in errors
+
+
 def test_workbuddy_skill_pack_rejects_symlinked_source_file(tmp_path: Path) -> None:
     source = tmp_path / "repo" / "integrations" / "workbuddy" / "briefloop"
     (source / "references").mkdir(parents=True)

@@ -79,4 +79,3 @@ def handle(args: argparse.Namespace) -> int:
             )
         return 0
     return 1
-

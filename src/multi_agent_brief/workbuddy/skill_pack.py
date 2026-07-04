@@ -60,6 +60,7 @@ def package_workbuddy_skill(
     _validate_source(source)
 
     output = Path(output_dir).expanduser().resolve()
+    _validate_output_dir(output=output, source=source)
     output.mkdir(parents=True, exist_ok=True)
     version = __version__
     zip_path = output / f"briefloop-workbuddy-skill-v{version}.zip"
@@ -134,16 +135,23 @@ def validate_workbuddy_skill_pack(
     actual_zip_sha = _sha256_file(zip_file)
     if expected_zip_sha != actual_zip_sha:
         errors.append("zip sha256 mismatch")
+    included_files = manifest.get("included_files")
+    if not isinstance(included_files, list):
+        errors.append("manifest included_files must be a list")
+        included_files = []
 
     try:
         with zipfile.ZipFile(zip_file) as archive:
             names = sorted(archive.namelist())
             expected_names = sorted(
-                item.get("path", "") for item in manifest.get("included_files", [])
+                item.get("path", "") if isinstance(item, dict) else "" for item in included_files
             )
             if names != expected_names:
                 errors.append("zip file list does not match manifest")
-            for item in manifest.get("included_files", []):
+            for item in included_files:
+                if not isinstance(item, dict):
+                    errors.append("manifest included_files contains non-object item")
+                    continue
                 rel = item.get("path")
                 if not isinstance(rel, str) or not rel:
                     errors.append("manifest contains invalid path")
@@ -188,6 +196,16 @@ def _validate_source(source: Path) -> None:
     missing = [rel for rel in REQUIRED_SKILL_FILES if not (source / rel).is_file()]
     if missing:
         raise WorkBuddySkillPackError(f"missing required WorkBuddy Skill files: {missing}")
+
+
+def _validate_output_dir(*, output: Path, source: Path) -> None:
+    try:
+        output.relative_to(source.resolve())
+    except ValueError:
+        return
+    raise WorkBuddySkillPackError(
+        "WorkBuddy Skill output directory must not be inside the skill source tree."
+    )
 
 
 def _skill_source_entries(source: Path) -> list[dict]:
