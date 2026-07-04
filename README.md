@@ -302,6 +302,7 @@ Current main entrypoints:
 - shell alias: `briefloop`
 - Claude command: `/briefloop`
 - compatibility alias: `/mabw`
+- experimental WorkBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 
 v0.11.9 releases the accumulated v0.11 product-baseline, reader-quality,
 topology, launch-readiness, and issue-closure hardening line, including:

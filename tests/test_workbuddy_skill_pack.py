@@ -19,6 +19,13 @@ from multi_agent_brief.workbuddy.skill_pack import (
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKBUDDY_SKILL = ROOT / "integrations" / "workbuddy" / "briefloop"
+WORKBUDDY_ASSISTANT_PROMPT = (
+    ROOT / "integrations" / "workbuddy" / "assistant" / "briefloop-assistant-prompt.md"
+)
+WORKBUDDY_DOCS = (
+    ROOT / "docs" / "workbuddy.md",
+    ROOT / "docs" / "workbuddy.zh-CN.md",
+)
 REFERENCE_NAMES = {
     "quickstart.md",
     "workspace-workflow.md",
@@ -183,6 +190,38 @@ def test_workbuddy_skill_declares_source_clone_distribution_boundary() -> None:
     text = _all_skill_text()
     assert "source-clone-only" in text
     assert "wheel/sdist package installs do not include" in text
+
+
+def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> None:
+    for path in WORKBUDDY_DOCS:
+        text = _read(path)
+        assert "WorkBuddy Skill source bundle" in text
+        assert "Experimental" in text
+        assert "source-clone-only" in text.lower()
+        assert "multi-agent-brief workbuddy pack-skill --output dist/workbuddy" in text
+        assert "WorkBuddy Assistant trigger" in text
+        assert "--runtime operator" in text
+        assert "not a WorkBuddy delegated runtime" in text or "不是 WorkBuddy delegated runtime" in text
+        assert "semantic proof" in text or "semantic truth" in text or "语义证明" in text
+        assert "approve delivery" in text or "不批准交付" in text
+        assert "authorize release" in text or "不授权 release" in text
+        assert "WorkBuddy Marketplace" in text
+
+
+def test_workbuddy_assistant_prompt_is_trigger_only() -> None:
+    text = _read(WORKBUDDY_ASSISTANT_PROMPT)
+    for phrase in [
+        "remote trigger into a local WorkBuddy session",
+        "BriefLoop Skill installed",
+        "You are not a BriefLoop runtime",
+        "Use `--runtime operator`",
+        "Do not hand-author control files",
+        "Do not finalize, deliver, publish, approve release",
+        "Do not say role subagents ran unless WorkBuddy explicitly delegated",
+        "Do not treat traceability as semantic proof",
+        "Do not claim hallucination elimination, output-quality improvement, or",
+    ]:
+        assert phrase in text
 
 
 def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -> None:
