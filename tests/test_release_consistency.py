@@ -285,9 +285,52 @@ def test_bump_version_does_not_rewrite_ruff_target_version(tmp_path, monkeypatch
     assert readme_en == README_EN_POINTER
     assert "Current version:" not in readme_en
     formula_text = formula.read_text(encoding="utf-8")
-    assert "refs/tags/v1.2.3.tar.gz" in formula_text
-    assert 'sha256 "0000000000000000000000000000000000000000000000000000000000000000"' in formula_text
+    assert "refs/tags/v0.0.1.tar.gz" in formula_text
+    assert 'sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' in formula_text
     assert 'sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in formula_text
+
+
+def test_check_version_consistency_accepts_previous_formula_before_tag(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("check_version_consistency_test", VERSION_SCRIPT)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    root = tmp_path
+    (root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
+    (root / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    (root / "README.md").write_text("Current version: **v1.2.3**\n", encoding="utf-8")
+    (root / "README_en.md").write_text(README_EN_POINTER, encoding="utf-8")
+    (root / "README.zh-CN.md").write_text("当前版本：**v1.2.3**\n", encoding="utf-8")
+    (root / "CHANGELOG.md").write_text("## [1.2.3]\n", encoding="utf-8")
+
+    package_dir = root / "src" / "multi_agent_brief"
+    package_dir.mkdir(parents=True)
+    (package_dir / "__init__.py").write_text(
+        'from importlib.metadata import version\n__version__ = version("multi-agent-brief-workflow")\n',
+        encoding="utf-8",
+    )
+    hermes_dir = package_dir / "hermes"
+    hermes_dir.mkdir()
+    (hermes_dir / "adapter.py").write_text('version="v1.2.3"\nversion: 1.2.3\n', encoding="utf-8")
+
+    skill_dir = root / ".agents" / "hermes-skills" / "multi-agent-brief-hermes"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("version: 1.2.3\n", encoding="utf-8")
+    formula = root / "Formula" / "multi-agent-brief.rb"
+    formula.parent.mkdir()
+    formula.write_text(
+        'url "https://example.invalid/refs/tags/v1.2.2.tar.gz"\n'
+        'sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(module, "ROOT", root)
+    monkeypatch.setattr(module, "VERSION_FILE", root / "VERSION")
+    monkeypatch.setattr(module, "_local_git_tag_exists", lambda tag: False)
+    monkeypatch.setattr(module, "_remote_git_tag_exists", lambda tag: False)
+
+    assert module.main() == 0
 
 
 def test_check_version_consistency_rejects_current_formula_before_tag(tmp_path, monkeypatch):
@@ -327,6 +370,8 @@ def test_check_version_consistency_rejects_current_formula_before_tag(tmp_path, 
 
     monkeypatch.setattr(module, "ROOT", root)
     monkeypatch.setattr(module, "VERSION_FILE", root / "VERSION")
+    monkeypatch.setattr(module, "_local_git_tag_exists", lambda tag: False)
+    monkeypatch.setattr(module, "_remote_git_tag_exists", lambda tag: False)
 
     assert module.main() == 1
 
