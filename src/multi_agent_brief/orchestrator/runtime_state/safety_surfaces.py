@@ -40,7 +40,7 @@ SAFETY_SURFACES: dict[str, SafetySurface] = {
                 "require_persistable",
             ),
             (
-                "multi_agent_brief.orchestrator.runtime_state.operations",
+                "multi_agent_brief.orchestrator.runtime_state.lifecycle",
                 "workflow_with_persistable_run_integrity",
             ),
             (
