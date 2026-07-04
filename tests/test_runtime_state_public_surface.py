@@ -62,6 +62,7 @@ def test_operations_compatibility_surface_is_preserved() -> None:
         "start_repair_transaction",
         "EVENT_LOG_SCHEMA",
         "E_ILLEGAL_TRANSITION",
+        "E_FACT_LAYER_IMPORT_INVALID",
         "E_READER_FINAL_GATE_FAILED",
         "E_REPAIR_TRANSACTION_REQUIRED",
         "E_RUN_ARCHIVE_CONFLICT",
@@ -76,6 +77,32 @@ def test_operations_compatibility_surface_is_preserved() -> None:
     ]
     missing = [name for name in compat_names if not hasattr(runtime_state.operations, name)]
     assert not missing, f"operations compatibility surface lost: {missing}"
+
+
+def test_operations_all_exports_are_defined() -> None:
+    runtime_state = importlib.import_module(RUNTIME_STATE_MODULE)
+
+    missing = [name for name in runtime_state.operations.__all__ if not hasattr(runtime_state.operations, name)]
+
+    assert missing == []
+
+
+def test_runtime_state_lifecycle_does_not_import_fact_layer() -> None:
+    lifecycle_path = REPO_ROOT / "src" / "multi_agent_brief" / "orchestrator" / "runtime_state" / "lifecycle.py"
+    tree = ast.parse(lifecycle_path.read_text(encoding="utf-8"), filename=str(lifecycle_path))
+
+    forbidden_modules = {
+        "multi_agent_brief.orchestrator.runtime_state.fact_layer",
+        "multi_agent_brief.orchestrator.runtime_state.operations",
+    }
+    imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in forbidden_modules:
+            imports.append(str(node.module))
+        elif isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names if alias.name in forbidden_modules)
+
+    assert imports == []
 
 
 def test_core_manifest_has_no_live_consumers():
