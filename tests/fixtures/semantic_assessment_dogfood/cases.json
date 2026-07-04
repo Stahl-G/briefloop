@@ -201,6 +201,356 @@
       }
     },
     {
+      "case_id": "supported_claim_pass",
+      "description": "A human-authored proposal that a source span directly supports an observed claim atom; this remains a proposal, not accepted support truth.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-001",
+            "assessment_method": "human",
+            "label": "Human reviewer"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-01",
+            "evidence_span_id": "ESP-001-01",
+            "proposed_support_label": "direct_support",
+            "confidence": 0.94,
+            "uncertainty": "low",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "human",
+            "assessor_id": "ASR-001",
+            "rationale": "The span directly states the demo facility timing."
+          }
+        ],
+        "metadata": {
+          "fixture": "supported_claim_pass"
+        }
+      },
+      "expected": {
+        "artifact_status": "valid",
+        "validation_result": "experimental_semantic_assessment_report_schema",
+        "projection_status": "valid",
+        "summary_counts": {
+          "proposal_row_count": 1,
+          "single_span_proposal_count": 1,
+          "candidate_span_proposal_count": 0,
+          "requires_human_adjudication_count": 0,
+          "llm_only_count": 0,
+          "high_uncertainty_count": 0,
+          "high_disagreement_count": 0,
+          "calibration_label_counts": {}
+        }
+      }
+    },
+    {
+      "case_id": "unsupported_claim_proposal",
+      "description": "A proposal that a profitability atom is unsupported because the source explicitly lacks profitability guidance.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-001",
+            "assessment_method": "human",
+            "label": "Human reviewer"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-04",
+            "candidate_evidence_span_ids": [
+              "ESP-001-04"
+            ],
+            "proposed_support_label": "unsupported",
+            "confidence": 0.21,
+            "uncertainty": "high",
+            "disagreement": "high",
+            "requires_human_adjudication": true,
+            "assessment_method": "human",
+            "assessor_id": "ASR-001",
+            "rationale": "The candidate span says profitability guidance was not provided.",
+            "metadata": {
+              "calibration_label": "unsupported_claim"
+            }
+          }
+        ],
+        "metadata": {
+          "fixture": "unsupported_claim_proposal"
+        }
+      },
+      "expected": {
+        "artifact_status": "valid",
+        "validation_result": "experimental_semantic_assessment_report_schema",
+        "projection_status": "valid",
+        "summary_counts": {
+          "proposal_row_count": 1,
+          "single_span_proposal_count": 0,
+          "candidate_span_proposal_count": 1,
+          "requires_human_adjudication_count": 1,
+          "llm_only_count": 0,
+          "high_uncertainty_count": 1,
+          "high_disagreement_count": 1,
+          "calibration_label_counts": {
+            "unsupported_claim": 1
+          }
+        }
+      }
+    },
+    {
+      "case_id": "overstated_claim_proposal",
+      "description": "A proposal that acceleration wording is overstated relative to the shipment and limitation spans.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-002",
+            "assessment_method": "llm_assisted_human",
+            "label": "Assisted reviewer"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-03",
+            "candidate_evidence_span_ids": [
+              "ESP-001-02",
+              "ESP-001-03"
+            ],
+            "proposed_support_label": "weak_support",
+            "confidence": 0.42,
+            "uncertainty": "high",
+            "disagreement": "high",
+            "requires_human_adjudication": true,
+            "assessment_method": "llm_assisted_human",
+            "assessor_id": "ASR-002",
+            "rationale": "The spans show a pilot shipment figure and an explicit limitation, not year-over-year acceleration.",
+            "metadata": {
+              "calibration_label": "overstated_claim"
+            }
+          }
+        ],
+        "metadata": {
+          "fixture": "overstated_claim_proposal"
+        }
+      },
+      "expected": {
+        "artifact_status": "valid",
+        "validation_result": "experimental_semantic_assessment_report_schema",
+        "projection_status": "valid",
+        "summary_counts": {
+          "proposal_row_count": 1,
+          "single_span_proposal_count": 0,
+          "candidate_span_proposal_count": 1,
+          "requires_human_adjudication_count": 1,
+          "llm_only_count": 0,
+          "high_uncertainty_count": 1,
+          "high_disagreement_count": 1,
+          "calibration_label_counts": {
+            "overstated_claim": 1
+          }
+        }
+      }
+    },
+    {
+      "case_id": "missing_limitation_proposal",
+      "description": "A proposal that a forward-looking profitability atom needs a limitation because the source has no profitability guidance.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-002",
+            "assessment_method": "llm_assisted_human",
+            "label": "Assisted reviewer"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-04",
+            "candidate_evidence_span_ids": [
+              "ESP-001-04"
+            ],
+            "proposed_support_label": "insufficient_evidence",
+            "confidence": 0.28,
+            "uncertainty": "high",
+            "disagreement": "medium",
+            "requires_human_adjudication": true,
+            "assessment_method": "llm_assisted_human",
+            "assessor_id": "ASR-002",
+            "rationale": "The source lacks profitability guidance, so a reader-facing statement would need a limitation or removal.",
+            "metadata": {
+              "calibration_label": "missing_limitation"
+            }
+          }
+        ],
+        "metadata": {
+          "fixture": "missing_limitation_proposal"
+        }
+      },
+      "expected": {
+        "artifact_status": "valid",
+        "validation_result": "experimental_semantic_assessment_report_schema",
+        "projection_status": "valid",
+        "summary_counts": {
+          "proposal_row_count": 1,
+          "single_span_proposal_count": 0,
+          "candidate_span_proposal_count": 1,
+          "requires_human_adjudication_count": 1,
+          "llm_only_count": 0,
+          "high_uncertainty_count": 1,
+          "high_disagreement_count": 0,
+          "calibration_label_counts": {
+            "missing_limitation": 1
+          }
+        }
+      }
+    },
+    {
+      "case_id": "external_knowledge_attempt_invalid",
+      "description": "An attempted external-knowledge assessment method is rejected before projection; Semantic Support Auditor rows must bind to recorded artifacts.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-EXT",
+            "assessment_method": "external_knowledge",
+            "label": "External knowledge attempt"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-03",
+            "evidence_span_id": "ESP-001-02",
+            "proposed_support_label": "direct_support",
+            "confidence": 0.9,
+            "uncertainty": "low",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "external_knowledge",
+            "assessor_id": "ASR-EXT",
+            "rationale": "This row intentionally attempts to rely on outside knowledge rather than the recorded spans.",
+            "metadata": {
+              "calibration_label": "external_knowledge_used"
+            }
+          }
+        ],
+        "metadata": {
+          "fixture": "external_knowledge_attempt_invalid"
+        }
+      },
+      "expected": {
+        "schema_valid": false,
+        "artifact_status": "invalid",
+        "validation_result": "semantic_assessment_report_schema_error:assessors[0].assessment_method",
+        "projection_status": "invalid_report",
+        "projection_reason": "semantic_assessment_report_schema_error:assessors[0].assessment_method"
+      }
+    },
+    {
+      "case_id": "free_text_non_json_invalid",
+      "description": "Free-text auditor notes are not a valid Semantic Assessment Report artifact.",
+      "semantic_assessment_report_text": "Semantic note: the acceleration claim looks overstated. This is not JSON and must not be accepted as a Semantic Assessment Report.\n",
+      "expected": {
+        "schema_valid": false,
+        "artifact_status": "invalid",
+        "validation_result": "parse_error",
+        "projection_status": "invalid_report",
+        "projection_reason_prefix": "semantic_assessment_report_unreadable:"
+      }
+    },
+    {
+      "case_id": "none_string_not_pass",
+      "description": "The string \"None\" in a support-label field is not a no-op pass path.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-001",
+            "assessment_method": "human",
+            "label": "Human reviewer"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-01",
+            "evidence_span_id": "ESP-001-01",
+            "proposed_support_label": "None",
+            "confidence": 0.5,
+            "uncertainty": "unknown",
+            "disagreement": "unknown",
+            "requires_human_adjudication": true,
+            "assessment_method": "human",
+            "assessor_id": "ASR-001",
+            "rationale": "This row intentionally uses the string None and must not pass as an empty finding."
+          }
+        ],
+        "metadata": {
+          "fixture": "none_string_not_pass"
+        }
+      },
+      "expected": {
+        "schema_valid": false,
+        "artifact_status": "invalid",
+        "validation_result": "semantic_assessment_report_schema_error:rows[0].proposed_support_label",
+        "projection_status": "invalid_report",
+        "projection_reason": "semantic_assessment_report_schema_error:rows[0].proposed_support_label"
+      }
+    },
+    {
+      "case_id": "llm_only_high_materiality_requires_adjudication",
+      "description": "A high-materiality llm_only proposal with unresolved uncertainty must require human adjudication.",
+      "semantic_assessment_report": {
+        "schema_version": "mabw.semantic_assessment_report.v1",
+        "assessors": [
+          {
+            "assessor_id": "ASR-003",
+            "assessment_method": "llm_only",
+            "label": "Synthetic model proposal"
+          }
+        ],
+        "rows": [
+          {
+            "row_id": "SAR-0001",
+            "claim_id": "CL-0001",
+            "atom_id": "AC-0001-03",
+            "candidate_evidence_span_ids": [
+              "ESP-001-02",
+              "ESP-001-03"
+            ],
+            "proposed_support_label": "weak_support",
+            "confidence": 0.41,
+            "uncertainty": "unknown",
+            "disagreement": "none",
+            "requires_human_adjudication": false,
+            "assessment_method": "llm_only",
+            "assessor_id": "ASR-003",
+            "rationale": "This row intentionally leaves unresolved llm_only uncertainty without the adjudication flag."
+          }
+        ],
+        "metadata": {
+          "fixture": "llm_only_high_materiality_requires_adjudication"
+        }
+      },
+      "expected": {
+        "artifact_status": "invalid",
+        "validation_result": "semantic_assessment_report_validation_error:llm_only_high_materiality_requires_human_adjudication:SAR-0001",
+        "projection_status": "invalid_report"
+      }
+    },
+    {
       "case_id": "unknown_atom_invalid",
       "description": "Schema-valid report row that references an atom absent from the Atomic Claim Graph.",
       "semantic_assessment_report": {

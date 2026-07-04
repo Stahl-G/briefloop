@@ -12,6 +12,8 @@ from multi_agent_brief.orchestrator.runtime_state import check_runtime_state, in
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     project_semantic_assessment_report_from_workspace,
 )
+from multi_agent_brief.product.quality_panel import build_quality_panel, validate_quality_panel_payload
+from multi_agent_brief.status import build_workspace_status
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,11 +61,18 @@ input:
         "claim_ledger.json": base["claim_ledger"],
         "atomic_claim_graph.json": base["atomic_claim_graph"],
         "evidence_span_registry.json": base["evidence_span_registry"],
-        "semantic_assessment_report.json": case["semantic_assessment_report"],
     }
     for name, payload in artifacts.items():
         (intermediate / name).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    report_path = intermediate / "semantic_assessment_report.json"
+    if "semantic_assessment_report_text" in case:
+        report_path.write_text(str(case["semantic_assessment_report_text"]), encoding="utf-8")
+    else:
+        report_path.write_text(
+            json.dumps(case["semantic_assessment_report"], ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
     return ws
@@ -79,11 +88,36 @@ def test_semantic_assessment_dogfood_fixture_bundle_is_public_safe_and_bounded()
     assert "semantic proof" in bundle["metadata"]["boundary"]
 
 
-@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda case: case["case_id"])
-def test_semantic_assessment_dogfood_reports_are_schema_valid(case: dict[str, Any]) -> None:
-    report = deepcopy(case["semantic_assessment_report"])
+def test_semantic_assessment_dogfood_fixture_cases_cover_pr5_scenarios() -> None:
+    case_ids = {case["case_id"] for case in _fixture_cases()}
 
-    assert SemanticAssessmentReportContract.validate(report) == []
+    assert {
+        "supported_claim_pass",
+        "unsupported_claim_proposal",
+        "overstated_claim_proposal",
+        "missing_limitation_proposal",
+        "external_knowledge_attempt_invalid",
+        "free_text_non_json_invalid",
+        "none_string_not_pass",
+        "llm_only_high_materiality_requires_adjudication",
+    }.issubset(case_ids)
+
+
+@pytest.mark.parametrize("case", _fixture_cases(), ids=lambda case: case["case_id"])
+def test_semantic_assessment_dogfood_reports_match_schema_expectation(case: dict[str, Any]) -> None:
+    expected = case["expected"]
+    if "semantic_assessment_report_text" in case:
+        assert expected["artifact_status"] == "invalid"
+        assert expected.get("schema_valid") is False
+        return
+
+    report = deepcopy(case["semantic_assessment_report"])
+    violations = SemanticAssessmentReportContract.validate(report)
+
+    if expected.get("schema_valid", True):
+        assert violations == []
+    else:
+        assert violations != []
 
 
 @pytest.mark.parametrize("case", _fixture_cases(), ids=lambda case: case["case_id"])
@@ -128,5 +162,46 @@ def test_semantic_assessment_dogfood_fixtures_project_expected_status(
             for row in projection["proposed_claim_support_rows"]
         )
     else:
-        assert projection["reason"] == expected["validation_result"]
+        if "projection_reason_prefix" in expected:
+            assert projection["reason"].startswith(expected["projection_reason_prefix"])
+        else:
+            assert projection["reason"] == expected.get("projection_reason", expected["validation_result"])
         assert projection["proposed_claim_support_rows"] == []
+
+
+def test_semantic_assessment_dogfood_status_and_quality_panel_surface_proposal_counts(
+    tmp_path: Path,
+) -> None:
+    case = next(case for case in _fixture_cases() if case["case_id"] == "mixed_valid_proposals")
+    ws = _write_fixture_workspace(tmp_path, case)
+
+    status = build_workspace_status(ws)
+    panel = build_quality_panel(ws)
+
+    status_counts = status["semantic_assessment_report"]["summary_counts"]
+    semantic = panel["semantic_support"]
+    assert status_counts["proposal_row_count"] == 4
+    assert status_counts["requires_human_adjudication_count"] == 2
+    assert semantic["status"] == "valid"
+    assert semantic["proposal_count"] == 4
+    assert semantic["requires_human_adjudication_count"] == 2
+    assert semantic["recommended_human_review"] is True
+    assert {
+        "action": "request_human_review",
+        "reason": "semantic_support_human_adjudication_required",
+    } in panel["recommended_actions"]
+    forbidden_actions = {"approve_delivery", "auto_repair", "deliver", "release"}
+    assert not forbidden_actions.intersection(
+        str(item.get("action") or "") for item in panel["recommended_actions"]
+    )
+    for key in (
+        "accepted_support_truth",
+        "delivery_authority",
+        "gate_decision",
+        "release_authority",
+        "repair_execution",
+        "state_transition",
+        "writes_claim_support_matrix",
+    ):
+        assert key not in semantic
+    assert validate_quality_panel_payload(panel) is None
