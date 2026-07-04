@@ -120,4 +120,3 @@ Use it only as a remote trigger into a local WorkBuddy session that has the
 BriefLoop Skill installed. It is not a cloud BriefLoop runtime and it must not
 finalize, deliver, approve, or publish without a human-owned command and current
 gate status.
-

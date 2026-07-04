@@ -48,4 +48,3 @@ Examples:
   ready-to-send delivery.
 - Do not use the Assistant's fixed folder as a BriefLoop workspace unless the
   user explicitly creates a workspace there.
-
