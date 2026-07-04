@@ -845,6 +845,30 @@ def test_quality_panel_surfaces_invalid_semantic_support_report_as_warning_only(
     assert validate_quality_panel_payload(panel) is None
 
 
+def test_quality_panel_validator_rejects_forged_semantic_support_authority(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    panel = build_quality_panel(ws)
+    assert validate_quality_panel_payload(panel) is None
+
+    for key in (
+        "accepted_support_truth",
+        "delivery_approval",
+        "delivery_authority",
+        "gate_decision",
+        "release_authority",
+        "repair_execution",
+        "runtime_effect",
+        "state_transition",
+        "writes_claim_support_matrix",
+    ):
+        forged = json.loads(json.dumps(panel))
+        forged["semantic_support"][key] = True
+
+        assert validate_quality_panel_payload(forged) == (
+            f"quality_panel_schema_error:semantic_support:semantic_support_schema_error:{key}"
+        )
+
+
 def test_quality_panel_semantic_support_survives_corrupt_reader_target(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_source_evidence_pack(ws)

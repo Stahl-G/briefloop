@@ -1462,6 +1462,22 @@ def _semantic_support_warning_count(semantic_support: Mapping[str, Any]) -> int:
 def _validate_semantic_support_payload(payload: Mapping[str, Any]) -> str | None:
     if payload.get("boundary") != "proposal_only_not_a_gate_not_release_authority":
         return "semantic_support_schema_error:boundary"
+    forbidden_authority_keys = {
+        "accepted_support_truth",
+        "auto_repair",
+        "delivery_approval",
+        "delivery_authority",
+        "gate_authority",
+        "gate_decision",
+        "release_authority",
+        "repair_execution",
+        "runtime_effect",
+        "state_transition",
+        "writes_claim_support_matrix",
+    }
+    for key in sorted(forbidden_authority_keys):
+        if key in payload:
+            return f"semantic_support_schema_error:{key}"
     status = _text(payload.get("status"))
     if status not in {"not_available", "valid", "invalid_report"}:
         return "semantic_support_schema_error:status"
