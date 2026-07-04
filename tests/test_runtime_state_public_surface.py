@@ -87,6 +87,15 @@ def test_operations_all_exports_are_defined() -> None:
     assert missing == []
 
 
+def test_operations_is_compatibility_facade_only() -> None:
+    operations_path = REPO_ROOT / "src" / "multi_agent_brief" / "orchestrator" / "runtime_state" / "operations.py"
+    tree = ast.parse(operations_path.read_text(encoding="utf-8"), filename=str(operations_path))
+
+    definitions = [node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))]
+
+    assert definitions == []
+
+
 def test_runtime_state_lifecycle_does_not_import_fact_layer() -> None:
     lifecycle_path = REPO_ROOT / "src" / "multi_agent_brief" / "orchestrator" / "runtime_state" / "lifecycle.py"
     tree = ast.parse(lifecycle_path.read_text(encoding="utf-8"), filename=str(lifecycle_path))
@@ -124,6 +133,25 @@ def test_core_manifest_has_no_live_consumers():
         text = path.read_text(encoding="utf-8")
         if "multi_agent_brief.core.manifest" in text:
             consumers.append(str(path.relative_to(REPO_ROOT)))
+
+    assert consumers == []
+
+
+def test_production_code_does_not_import_operations_facade():
+    consumers: list[str] = []
+    for path in REPO_ROOT.joinpath("src").rglob("*.py"):
+        if path.name == "operations.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == f"{RUNTIME_STATE_MODULE}.operations":
+                consumers.append(str(path.relative_to(REPO_ROOT)))
+            elif isinstance(node, ast.Import):
+                consumers.extend(
+                    str(path.relative_to(REPO_ROOT))
+                    for alias in node.names
+                    if alias.name == f"{RUNTIME_STATE_MODULE}.operations"
+                )
 
     assert consumers == []
 

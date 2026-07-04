@@ -94,11 +94,27 @@ SAFETY_SURFACES: dict[str, SafetySurface] = {
         write_adapter="require_frozen_artifact_integrity_pass",
         required_runtime_refs=(
             (
-                "multi_agent_brief.orchestrator.runtime_state.operations",
+                "multi_agent_brief.orchestrator.runtime_state.lifecycle",
                 "interpret_frozen_artifact_integrity",
             ),
             (
-                "multi_agent_brief.orchestrator.runtime_state.operations",
+                "multi_agent_brief.orchestrator.runtime_state.lifecycle",
+                "require_frozen_artifact_integrity_pass",
+            ),
+            (
+                "multi_agent_brief.orchestrator.runtime_state.stage_completion",
+                "interpret_frozen_artifact_integrity",
+            ),
+            (
+                "multi_agent_brief.orchestrator.runtime_state.stage_completion",
+                "require_frozen_artifact_integrity_pass",
+            ),
+            (
+                "multi_agent_brief.orchestrator.runtime_state.repair",
+                "interpret_frozen_artifact_integrity",
+            ),
+            (
+                "multi_agent_brief.orchestrator.runtime_state.repair",
                 "require_frozen_artifact_integrity_pass",
             ),
         ),
