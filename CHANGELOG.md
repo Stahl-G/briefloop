@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now record the operator runtime and its non-delegation assumptions without
   changing stage order, artifact contracts, gates, delivery, or release
   authority.
+- Added `semantic-support adjudicate` to record human accept/reject decisions
+  for valid Semantic Assessment Report proposal rows in
+  `semantic_support_acceptance_ledger.json` with event-log linkage. These
+  records do not write Claim-Support Matrix rows, route repair, run gates,
+  approve delivery, authorize release, or prove semantic truth.
 
 ## [0.11.9] — 2026-07-04
 

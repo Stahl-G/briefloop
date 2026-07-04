@@ -299,6 +299,22 @@ def test_semantic_support_auditor_is_proposal_only():
         assert "must not" in lowered and "audit_report.json" in text, (
             f"authoritative-write prohibition missing in {path}"
         )
+        assert "records adjudication only" in lowered, (
+            f"human adjudication boundary missing in {path}"
+        )
+        assert "does not create support truth" in lowered, (
+            f"support-truth boundary missing in {path}"
+        )
+        forbidden = [
+            "until a human accepts",
+            "unless a human accepts",
+            "becomes authoritative",
+            "become authoritative",
+            "human accept makes",
+            "human acceptance makes",
+        ]
+        for phrase in forbidden:
+            assert phrase not in lowered, f"semantic support authority leak in {path}: {phrase}"
 
 
 def test_claude_generate_brief_requires_source_discovery_transaction_for_all_profiles():

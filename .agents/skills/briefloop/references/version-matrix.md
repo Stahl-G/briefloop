@@ -44,6 +44,12 @@ Historical implementation name: MABW
     - schema and reference validation
     - proposal-only Claim-Support Matrix delta projection
     - read-only status visibility
+  - Semantic support human adjudication ledger:
+    `semantic_support_acceptance_ledger.json`
+    - written only by `semantic-support adjudicate`
+    - records human accept/reject decisions for proposal rows
+    - does not write Claim-Support Matrix rows, gates, repair routes, delivery,
+      release state, or semantic truth
 - Quality-gate surfaces:
   - `coverage_omission` detects selected high-priority screened candidates that
     do not carry into Claim Ledger metadata or, for auditable briefs, cited

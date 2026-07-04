@@ -42,6 +42,7 @@ from multi_agent_brief.cli import (
     approval_commands,
     release_commands,
     workbuddy_commands,
+    semantic_support_commands,
 )
 
 
@@ -137,6 +138,9 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # WorkBuddy source-clone Skill packaging
     workbuddy_commands.register(subparsers)
+
+    # Human adjudication for semantic support proposals
+    semantic_support_commands.register(subparsers)
 
     # Meta
     subparsers.add_parser("version", help="Print package version.")
@@ -267,6 +271,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "workbuddy":
         return workbuddy_commands.handle(args)
+
+    if cmd == "semantic-support":
+        return semantic_support_commands.handle(args)
 
     return 1
 

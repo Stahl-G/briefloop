@@ -69,6 +69,14 @@ Treat these as operator review diagnostics, not proof. It does not judge claim
 truth, generate or accept support rows, run gates, block delivery, approve
 release, create repair authority, or create a quality score.
 
+Semantic support proposal adjudication is human-owned and event-recorded. Use
+`semantic-support adjudicate --workspace <workspace> --proposal-id <id>` to
+record an explicit human accept/reject decision for a valid
+`semantic_assessment_report.json` proposal row. This writes
+`semantic_support_acceptance_ledger.json` and an event-log record only. It does
+not write Claim-Support Matrix rows, route repair, run gates, block or approve
+delivery, authorize release, or prove truth.
+
 ## Gates
 
 `gates check` writes stage-scoped gate reports. It is not a read-only helper.

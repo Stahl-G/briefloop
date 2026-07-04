@@ -40,7 +40,7 @@ validation unless that is stated separately.
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
 | Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
-| Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, and status visibility) | Experimental |
+| Semantic Assessment Report (`semantic_assessment_report.json` schema, reference validation, proposal projection, status visibility, and optional human adjudication records in `semantic_support_acceptance_ledger.json`) | Experimental |
 | v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
 | ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
 | Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Guidance Manifestation diagnostic projection, Materiality Selection diagnostic projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
@@ -146,9 +146,11 @@ Claim Ledger / Atomic Claim Graph / Evidence Span Registry references, and
 high-materiality `llm_only` adjudication flags. Present valid reports can
 project proposal-only Claim-Support Matrix delta candidates and read-only status
 counts. Missing reports remain non-blocking, and invalid reports are not
-projected. This does not create support truth, write the Claim-Support Matrix,
-create adjudication queue items, gate delivery, decide release eligibility, or
-prove truth.
+projected. Humans may record accept/reject adjudication decisions for proposal
+rows through `semantic-support adjudicate`, which writes
+`semantic_support_acceptance_ledger.json` and an event-log record. These records
+do not by themselves create support truth, write the Claim-Support Matrix, route
+repair, gate delivery, decide release eligibility, or prove truth.
 
 ReportSpec / ReportPack baseline support is stable for the v0.11.0 product
 baseline target when used through the product-facing entries
