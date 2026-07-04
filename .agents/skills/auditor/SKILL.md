@@ -75,8 +75,11 @@ Use after editor has completed audited_brief.md.
   issues such as overstatement, missing limitations, or unsupported numbers.
 - Judge claims only against frozen Claim Ledger evidence. Do not use external
   knowledge or infer missing sources.
-- Write only `output/intermediate/semantic_assessment_report.json`. Its rows are
-  proposals, not audit findings, gate results, or release decisions.
+- Write only `output/intermediate/semantic_assessment_report.json`. Its raw rows
+  are proposals, not authoritative `audit_report.json` findings, gate results,
+  or release decisions. Python may render them as advisory, non-blocking
+  `AuditFinding` surfaces, but they stay non-authoritative and non-repairable
+  until a human accepts them.
 - Do not edit frozen artifacts, and do not write `audit_report.json`,
   `auditor_quality_gate_report.json`, `claim_support_matrix.json`,
   `workflow_state.json`, or `event_log.jsonl`.

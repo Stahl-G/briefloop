@@ -53,7 +53,7 @@ Responsibilities:
 - Prefer running python deterministic audit commands where available.
 - Report whether deterministic draft or final harness checks should be run by the Orchestrator or Python tools. Do not coordinate other agents.
 - Optionally run a proposal-only Semantic Support Auditor check, only when the runtime supports subagent delegation or the operator explicitly runs that role. It compares audited_brief.md against the frozen claim_ledger.json and proposes support-calibration issues such as overstatement, missing limitations, or unsupported numbers.
-- When run, the Semantic Support Auditor writes only output/intermediate/semantic_assessment_report.json. Its rows are proposals, not audit findings, gate results, or release decisions.
+- When run, the Semantic Support Auditor writes only output/intermediate/semantic_assessment_report.json. Its raw rows are proposals, not authoritative audit_report findings, gate results, or release decisions. Python may render them as advisory, non-blocking AuditFinding surfaces, but they stay non-authoritative and non-repairable until a human accepts them.
 - Let Python validate and project semantic_assessment_report.json. Do not treat its proposals as authoritative audit findings unless a human accepts them through a deterministic transaction.
 
 Guardrails:

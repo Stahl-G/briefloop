@@ -206,6 +206,50 @@ class TestSemanticSupportProposalFindingAdapter:
         assert SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL not in finding.description
 
 
+class TestProposalFindingsDoNotAffectAuditStatus:
+    def test_recompute_ignores_semantic_support_proposals(self):
+        from multi_agent_brief.audit.interfaces import recompute_report_status
+        from multi_agent_brief.core.schemas import AuditFinding, AuditReport
+
+        proposals = [
+            semantic_support_proposal_finding(_projected_row(proposal_id=f"SAR-000{i}"))
+            for i in range(1, 4)
+        ]
+        report = AuditReport(
+            audit_status="pass",
+            audit_score=0,
+            findings=list(proposals),
+            metadata={},
+        )
+        recompute_report_status(report)
+        # No real findings -> proposals must not deduct score or change status.
+        assert report.audit_status == "pass"
+        assert report.audit_score == 100
+
+    def test_recompute_still_fails_on_real_high_finding_alongside_proposals(self):
+        from multi_agent_brief.audit.interfaces import recompute_report_status
+        from multi_agent_brief.core.schemas import AuditFinding, AuditReport
+
+        report = AuditReport(
+            audit_status="pass",
+            audit_score=0,
+            findings=[
+                semantic_support_proposal_finding(_projected_row()),
+                AuditFinding(
+                    finding_id="AUDIT_001",
+                    severity="high",
+                    finding_type="unsupported_claim",
+                    description="real blocking finding",
+                ),
+            ],
+            metadata={},
+        )
+        recompute_report_status(report)
+        assert report.audit_status == "fail"
+        # Score reflects only the real high finding (100 - 25), proposal excluded.
+        assert report.audit_score == 75
+
+
 class TestPromptBuilderProviderLess:
     def test_no_provider_calls_in_module_source(self):
         import multi_agent_brief.audit.semantic as semantic_module

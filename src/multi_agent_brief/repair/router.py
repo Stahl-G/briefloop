@@ -390,6 +390,13 @@ def _stage_is_complete(workflow: dict[str, Any], stage_id: str) -> bool:
 
 
 def _route_for_finding(finding: dict[str, Any]) -> dict[str, Any] | None:
+    # Semantic support proposals are advisory-only. They must never become a
+    # repair route, even if they carry a repair_owner: they are model proposals,
+    # not authoritative audit findings, and only a human-acceptance transaction
+    # can turn one into a workflow signal.
+    if _is_semantic_support_proposal(finding):
+        return None
+
     if _is_input_limitation_finding(finding):
         return _input_limitation_route(finding)
 
@@ -506,6 +513,11 @@ def _is_claim_ledger_issue(text: str, finding_type: str, artifact_id: str) -> bo
     if "claim_ledger" not in text and "claim ledger" not in text:
         return False
     return any(token in text or token in finding_type for token in ("schema", "support", "invalid", "missing support"))
+
+
+def _is_semantic_support_proposal(finding: dict[str, Any]) -> bool:
+    finding_type = str(finding.get("finding_type") or finding.get("category") or "").strip().lower()
+    return finding_type == "semantic_support_proposal"
 
 
 def _is_input_limitation_finding(finding: dict[str, Any]) -> bool:

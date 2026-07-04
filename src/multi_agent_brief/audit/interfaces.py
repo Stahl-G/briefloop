@@ -73,13 +73,21 @@ class CompositeAuditAgent(AuditAgentInterface):
 
 
 def recompute_report_status(report: AuditReport) -> AuditReport:
-    high = sum(1 for finding in report.findings if finding.severity == "high")
-    medium = sum(1 for finding in report.findings if finding.severity == "medium")
+    # Advisory semantic-support proposals never affect audit status or score.
+    # They are model proposals, not authoritative audit findings; only a
+    # human-acceptance transaction can turn one into a workflow signal.
+    scored = [
+        finding
+        for finding in report.findings
+        if finding.finding_type != "semantic_support_proposal"
+    ]
+    high = sum(1 for finding in scored if finding.severity == "high")
+    medium = sum(1 for finding in scored if finding.severity == "medium")
     if high:
         report.audit_status = "fail"
     elif medium:
         report.audit_status = "warning"
     else:
         report.audit_status = "pass"
-    report.audit_score = max(0, 100 - high * 25 - medium * 10 - (len(report.findings) - high - medium) * 3)
+    report.audit_score = max(0, 100 - high * 25 - medium * 10 - (len(scored) - high - medium) * 3)
     return report

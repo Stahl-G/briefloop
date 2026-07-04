@@ -233,7 +233,11 @@ def semantic_support_proposal_finding(proposal_row: Mapping[str, Any]) -> AuditF
         related_claim_id=claim_id,
         description=description,
         recommendation=recommendation,
-        evidence=_proposal_evidence(proposal_row, calibration_label=calibration_label),
+        evidence=_proposal_evidence(
+            proposal_row,
+            calibration_label=calibration_label,
+            effective_requires_adjudication=requires_adjudication,
+        ),
         blocking_level="editor_fixable",
         repair_owner="editor",
     )
@@ -263,7 +267,12 @@ def _calibration_label(proposal_row: Mapping[str, Any]) -> str:
     return raw
 
 
-def _proposal_evidence(proposal_row: Mapping[str, Any], *, calibration_label: str) -> str:
+def _proposal_evidence(
+    proposal_row: Mapping[str, Any],
+    *,
+    calibration_label: str,
+    effective_requires_adjudication: bool,
+) -> str:
     span = _text(proposal_row.get("evidence_span_id"))
     if not span:
         candidates = proposal_row.get("candidate_evidence_span_ids")
@@ -275,7 +284,10 @@ def _proposal_evidence(proposal_row: Mapping[str, Any], *, calibration_label: st
         f"confidence={_confidence_text(proposal_row.get('confidence'))}",
         f"uncertainty={_text(proposal_row.get('uncertainty')) or '<none>'}",
         f"disagreement={_text(proposal_row.get('disagreement')) or '<none>'}",
-        f"requires_human_adjudication={proposal_row.get('requires_human_adjudication') is True}",
+        # Report both the row's own flag and the effective flag the adapter
+        # enforces, so recommendation and evidence never disagree.
+        f"row_requires_human_adjudication={proposal_row.get('requires_human_adjudication') is True}",
+        f"effective_requires_human_adjudication={effective_requires_adjudication}",
         f"proposed_support_label={_text(proposal_row.get('proposed_support_label')) or '<none>'}",
         f"calibration_label={calibration_label or '<none>'}",
         f"evidence_span={span or '<unmatched>'}",
