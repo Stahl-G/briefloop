@@ -4,7 +4,7 @@ This page describes the public v0.6 Orchestrator architecture at a high level.
 
 ## Core Model
 
-The Orchestrator is the runtime main agent. It may run as the Hermes parent agent, Claude Code command context, Codex main agent, OpenCode primary agent, or manual fallback operator.
+The Orchestrator is the runtime main agent. It may run as the Hermes parent agent, Claude Code command context, Codex main agent, OpenCode primary agent, or operator fallback. The legacy `manual` runtime value is only a CLI compatibility alias for `operator`.
 
 Python remains the tool layer. It provides workspace setup, source handling, deterministic checks, validation helpers, audit support, and final rendering. It is not the standard full brief-generation runtime.
 

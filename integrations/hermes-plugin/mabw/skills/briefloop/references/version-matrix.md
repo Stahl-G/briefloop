@@ -11,6 +11,10 @@ Historical implementation name: MABW
 - Shell CLI alias: `briefloop`
 - Claude writer command: `/briefloop`
 - Compatibility Claude command: `/mabw`
+- Runtime handoff surfaces:
+  - `--runtime operator`: host-agnostic compact operator workflow for hosts
+    without a dedicated runtime adapter; it does not assume subagents ran
+  - `--runtime manual`: legacy compatibility alias resolved to `operator`
 - BriefLoop skill is an agent protocol surface, not the `/briefloop` slash
   command implementation.
 - Python package/module path: `multi_agent_brief`

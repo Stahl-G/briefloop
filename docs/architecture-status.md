@@ -206,7 +206,10 @@ breaking rename.
   bypass gates, approve delivery, provide tax or investment advice, or
   authorize publication.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
-- Hermes, Claude Code, Codex, OpenCode, and manual fallback are treated as agent runtime surfaces.
+- Hermes, Claude Code, Codex, OpenCode, and operator fallback are treated as agent runtime surfaces.
+  The operator runtime is a host-agnostic compact workflow for environments
+  without a dedicated runtime adapter; legacy `manual` remains a CLI
+  compatibility alias and is not a Python brief-generation path.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.
 - Old Python-pipeline framing is deprecated for the standard workflow.
 

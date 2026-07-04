@@ -45,18 +45,21 @@ Expected runtime roles:
 Python remains the tool, validator, audit, control, and rendering layer. The
 runtime Orchestrator decides when to delegate roles and when to run CLI tools.
 
-## Compact Human-Assisted Workflow
+## Operator Runtime Compact Workflow
 
-Use when a user has one runtime agent, weak-model assistance, or a human in the
-loop.
+Use `--runtime operator` when the host does not have a dedicated BriefLoop
+runtime adapter such as Hermes, Claude Code, Codex, or OpenCode. This is a
+host-agnostic compact operator workflow. It does not assume subagent or delegate
+capability. The legacy `--runtime manual` value remains a compatibility alias
+for `operator`.
 
 The compact workflow compresses role assignment:
 
 ```text
 run handoff
-→ one runtime agent or human-assisted agent prepares candidate/screened claims
-→ same agent or human-assisted pass creates claim_ledger.json
-→ same agent drafts/edits audited_brief.md with [src:<claim_id>]
+→ one operator prepares candidate/screened claims
+→ same operator creates claim_ledger.json through the deterministic freeze transaction
+→ same operator drafts/edits audited_brief.md with [src:<claim_id>]
 → audit/gates/state review
 → finalize
 ```
@@ -82,8 +85,10 @@ output/source_appendix.md as an audit/control copy when configured
 
 Allowed compression:
 
-- One runtime agent may perform scout + screener + claim-ledger preparation.
-- One runtime agent may perform analyst + editor drafting.
+- One operator may perform scout + screener + claim-ledger preparation.
+- One operator may perform analyst + editor drafting.
+- If the host provides a real child-agent/delegate tool, the operator may
+  delegate the named role.
 - A human may assist with extracting claims or editing the audited brief.
 - Python may validate, audit, gate-check, and finalize.
 
@@ -96,6 +101,7 @@ Not allowed:
 - Do not treat `audience_profile.md` as source evidence.
 - Do not finalize without audit, gates, and state review.
 - Do not let Python execute scout, analyst, or editor behavior.
+- Do not claim subagents ran unless the host actually provided delegation.
 - Do not claim compact workflow is quality-equivalent to full specialist
   delegation.
 

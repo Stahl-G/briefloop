@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from multi_agent_brief.orchestrator.handoff import (
@@ -10,6 +11,7 @@ from multi_agent_brief.orchestrator.handoff import (
     VALID_RUNTIMES,
     VALID_RUNTIME_RECIPES,
     build_handoff,
+    legacy_runtime_alias_warning,
     render_handoff_cli,
     write_handoff_and_state,
 )
@@ -35,7 +37,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--runtime",
         default="auto",
         choices=list(VALID_RUNTIMES),
-        help="Target runtime for handoff (default: auto, resolves to hermes).",
+        help="Target runtime for handoff (default: auto, resolves to hermes; manual is a legacy alias for operator).",
     )
     run_parser.add_argument(
         "--recipe",
@@ -74,7 +76,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--runtime",
         default="auto",
         choices=list(VALID_RUNTIMES),
-        help="Target runtime for handoff (default: auto, resolves to hermes).",
+        help="Target runtime for handoff (default: auto, resolves to hermes; manual is a legacy alias for operator).",
     )
     start_parser.add_argument(
         "--recipe",
@@ -103,7 +105,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--runtime",
         default="auto",
         choices=list(VALID_RUNTIMES),
-        help="Target runtime for handoff (default: auto, resolves to hermes).",
+        help="Target runtime for handoff (default: auto, resolves to hermes; manual is a legacy alias for operator).",
     )
     handoff_parser.add_argument(
         "--recipe",
@@ -205,6 +207,7 @@ def _run_launcher(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"{prefix} {exc}")
         return 1
+    _print_runtime_alias_warning(prefix, getattr(args, "runtime", ""))
 
     written = write_handoff_and_state(
         handoff=handoff,
@@ -266,6 +269,7 @@ def _run_handoff(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"[handoff] {exc}")
         return 1
+    _print_runtime_alias_warning("[handoff]", getattr(args, "runtime", ""))
 
     written = write_handoff_and_state(
         handoff=handoff,
@@ -280,3 +284,9 @@ def _run_handoff(args: argparse.Namespace) -> int:
     print(f"[handoff] Written: {md_path}")
     print(f"[handoff] JSON:   {json_path}")
     return 0
+
+
+def _print_runtime_alias_warning(prefix: str, runtime: str) -> None:
+    warning = legacy_runtime_alias_warning(runtime)
+    if warning:
+        print(f"{prefix} WARNING: {warning}", file=sys.stderr)

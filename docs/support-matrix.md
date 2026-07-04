@@ -333,14 +333,16 @@ correctness, and generalization claims remain out of scope.
 | Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` compatibility; installable with `multi-agent-brief claude install`) | Supported |
 | OpenCode (subagent workflow) | Supported |
 | Codex (custom-agent workflow via `runtime install`) | Experimental |
-| Manual (print workflow steps) | Supported |
+| Operator (host-agnostic compact workflow; `manual` is a legacy CLI alias) | Supported |
 
 Claude Code is the first-class writer / five-verb path (`new`, `run`, `status`,
 `feedback`, `deliver`). Hermes remains a supported delegated/scheduled runtime
 path. Codex custom-agent assets are installable into a workspace, but Codex
 remains Experimental until a real Codex control-trace smoke validates the
 end-to-end specialist workflow. Other runtimes keep their existing workflow
-entrypoints.
+entrypoints. The operator runtime does not assume subagent/delegate capability;
+it is a compact operator workflow that still requires deterministic
+transactions, artifacts, gates, and human-triggered delivery.
 
 Runtime source assets under `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
 and `integrations/hermes-plugin/` are source-clone assets. Package-only installs
