@@ -18,6 +18,10 @@ Read this when operating a real BriefLoop/MABW workspace.
   host-agnostic compact workflow: it does not assume subagents ran, and it must
   still use deterministic transactions, artifacts, gates, and human-triggered
   delivery. Legacy `--runtime manual` remains a compatibility alias only.
+  The generated operator handoff includes artifact ownership buckets:
+  `agent_owned_drafts`, `cli_owned_outputs`, `read_only_diagnostics`, and
+  `forbidden_direct_edits`; use these buckets instead of treating control JSON
+  paths as writable instructions.
 - Advance stages only with deterministic completion transactions.
 - Use owner-stage repair transactions for frozen artifact repair.
 - Trigger delivery only when the operator explicitly asks and gates allow it.

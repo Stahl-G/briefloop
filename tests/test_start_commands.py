@@ -1270,11 +1270,25 @@ def test_start_operator_handoff_contains_compact_runtime_contract(tmp_path):
     assert data["runtime_capabilities"]["host_specific_adapter"] is False
     assert data["runtime_capabilities"]["must_not_claim_subagents_ran"] is True
     assert data["runtime_capabilities"]["fallback_if_no_delegation"] == "compact_operator_workflow_or_stop"
+    ownership = data["artifact_ownership"]
+    assert ownership["schema_version"] == "briefloop.operator_artifact_ownership.v1"
+    assert any(item["path"] == "output/intermediate/candidate_claims.json" for item in ownership["agent_owned_drafts"])
+    assert any(item["path"] == "output/intermediate/claim_ledger.json" for item in ownership["cli_owned_outputs"])
+    assert "output/intermediate/artifact_registry.json" in ownership["read_only_diagnostics"]
+    assert "output/intermediate/workflow_state.json" in ownership["forbidden_direct_edits"]
+    assert "output/intermediate/gates/*_quality_gate_report.json" in ownership["forbidden_direct_edits"]
     assert "host-agnostic compact operator workflow" in data["prompt"]
     assert "must not claim subagents ran" in data["prompt"]
     assert "Delegate the Scout role only if your host provides real delegation" in data["prompt"]
     assert "Use the 'scout' subagent" not in data["prompt"]
     assert "## Runtime Capabilities" in text
+    assert "## Artifact Ownership" in text
+    assert "### Agent-Owned Drafts" in text
+    assert "### CLI-Owned Outputs" in text
+    assert "### Read-Only Diagnostics" in text
+    assert "### Forbidden Direct Edits" in text
+    assert "`output/intermediate/workflow_state.json`" in text
+    assert "`output/intermediate/gates/*_quality_gate_report.json`" in text
     assert "candidate_claims.json" in data["prompt"]
     assert "multi-agent-brief finalize" in data["prompt"]
     _assert_orchestrator_contract_handoff(data)
@@ -1297,6 +1311,7 @@ def test_start_manual_alias_resolves_to_operator_and_warns(tmp_path, capsys):
     assert data["legacy_runtime_alias"] == "manual"
     assert data["runtime_capabilities"]["runtime"] == RUNTIME_OPERATOR
     assert data["runtime_capabilities"]["legacy_runtime_alias"] == "manual"
+    assert data["artifact_ownership"]["schema_version"] == "briefloop.operator_artifact_ownership.v1"
     assert "candidate_claims.json" in data["prompt"]
     assert "multi-agent-brief finalize" in data["prompt"]
     _assert_orchestrator_contract_handoff(data)
