@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.audit.proposal_boundary import is_advisory_semantic_support_proposal
 from multi_agent_brief.feedback.feedback_contract import (
     FEEDBACK_STATE_FILES,
     FEEDBACK_ISSUES_SCHEMA,
@@ -429,7 +430,16 @@ def ingest_feedback(
             )
         ]
     else:
-        findings = _extract_audit_findings(raw)
+        findings = [
+            finding
+            for finding in _extract_audit_findings(raw)
+            # Advisory semantic-support proposals are not authoritative audit
+            # findings and must not become editor-owned feedback issues.
+            if not is_advisory_semantic_support_proposal(
+                finding.get("finding_type") or finding.get("category") or finding.get("type"),
+                finding.get("severity"),
+            )
+        ]
         candidate_issues = [
             _audit_issue(
                 workspace=ws,

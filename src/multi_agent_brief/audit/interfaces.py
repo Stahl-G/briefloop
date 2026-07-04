@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from multi_agent_brief.audit.proposal_boundary import is_advisory_semantic_support_proposal
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AuditReport, PipelineContext
 
@@ -76,10 +77,12 @@ def recompute_report_status(report: AuditReport) -> AuditReport:
     # Advisory semantic-support proposals never affect audit status or score.
     # They are model proposals, not authoritative audit findings; only a
     # human-acceptance transaction can turn one into a workflow signal.
+    # Excluded by severity-aware rule: a proposal-typed finding that is NOT low
+    # severity is malformed/spoofed and fails closed (still scored).
     scored = [
         finding
         for finding in report.findings
-        if finding.finding_type != "semantic_support_proposal"
+        if not is_advisory_semantic_support_proposal(finding.finding_type, finding.severity)
     ]
     high = sum(1 for finding in scored if finding.severity == "high")
     medium = sum(1 for finding in scored if finding.severity == "medium")

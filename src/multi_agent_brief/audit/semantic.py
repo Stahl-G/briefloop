@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from multi_agent_brief.audit.interfaces import AuditAgentInterface
+from multi_agent_brief.audit.proposal_boundary import SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE
 from multi_agent_brief.contracts.schemas.claim_support_matrix import VALID_SUPPORT_LABELS
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_REPORT_SCHEMA_VERSION,
@@ -47,7 +48,9 @@ SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL = "<invalid_calibration_label>"
 # AuditFinding.finding_type for advisory semantic-support proposals. A distinct
 # type keeps these findings recognizable as proposal-only: they never gate,
 # deliver, or authorize release, and no deterministic gate reads them.
-SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE = "semantic_support_proposal"
+# Defined in audit.proposal_boundary (a leaf module) and re-exported here so
+# consumers that must avoid an import cycle can share the same constant/rule.
+# (SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE imported above.)
 
 
 class NoOpSemanticAuditAgent(AuditAgentInterface):
@@ -367,16 +370,27 @@ def _truncate(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
-def _calibration_label(proposal_row: Mapping[str, Any]) -> str:
-    metadata = proposal_row.get("metadata")
-    if not isinstance(metadata, Mapping):
-        return ""
-    raw = _text(metadata.get(SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY))
+def normalize_calibration_label(value: Any) -> str:
+    """Normalize a raw calibration label to the vocabulary or a sentinel.
+
+    Empty/absent -> "". A known label passes through. Any other non-empty value
+    is out-of-vocabulary and normalized to SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL
+    so consumers never trust an unvalidated label.
+    """
+
+    raw = value.strip() if isinstance(value, str) else ""
     if not raw:
         return ""
     if raw not in SEMANTIC_SUPPORT_PROPOSAL_LABELS:
         return SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL
     return raw
+
+
+def _calibration_label(proposal_row: Mapping[str, Any]) -> str:
+    metadata = proposal_row.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return ""
+    return normalize_calibration_label(metadata.get(SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY))
 
 
 def _proposal_evidence(

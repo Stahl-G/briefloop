@@ -96,6 +96,7 @@ def test_semantic_assessment_projection_maps_rows_stably_without_accepting_truth
         "assessment_method": "llm_assisted_human",
         "accepted_support_truth": False,
         "writes_claim_support_matrix": False,
+        "calibration_label": "",
         "metadata": {},
     }
     assert rows[1]["evidence_span_id"] is None
@@ -116,7 +117,25 @@ def test_semantic_assessment_projection_counts_adjudication_and_uncertainty_sign
         "llm_only_count": 1,
         "high_uncertainty_count": 1,
         "high_disagreement_count": 1,
+        "calibration_label_counts": {},
     }
+
+
+def test_semantic_assessment_projection_counts_calibration_labels() -> None:
+    report = _valid_report()
+    report["rows"][0].setdefault("metadata", {})["calibration_label"] = "overstated_claim"
+    report["rows"][1].setdefault("metadata", {})["calibration_label"] = "not_a_real_label"
+
+    projection = project_semantic_assessment_proposals(report)
+
+    # Known label counted verbatim; unknown label normalized to the sentinel.
+    assert projection["summary_counts"]["calibration_label_counts"] == {
+        "<invalid_calibration_label>": 1,
+        "overstated_claim": 1,
+    }
+    labels = {row["proposal_id"]: row["calibration_label"] for row in projection["proposed_claim_support_rows"]}
+    # rows[0] is SAR-0002, rows[1] is SAR-0001 in _valid_report().
+    assert labels == {"SAR-0002": "overstated_claim", "SAR-0001": "<invalid_calibration_label>"}
 
 
 def test_semantic_assessment_projection_does_not_mutate_report_payload() -> None:

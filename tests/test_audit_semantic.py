@@ -320,6 +320,29 @@ class TestProposalFindingsDoNotAffectAuditStatus:
         # Score reflects only the real high finding (100 - 25), proposal excluded.
         assert report.audit_score == 75
 
+    def test_recompute_does_not_exempt_spoofed_high_severity_proposal(self):
+        # A proposal-typed finding that is NOT low severity is malformed/spoofed
+        # and must fail closed (still scored and able to fail the audit).
+        from multi_agent_brief.audit.interfaces import recompute_report_status
+        from multi_agent_brief.core.schemas import AuditFinding, AuditReport
+
+        report = AuditReport(
+            audit_status="pass",
+            audit_score=100,
+            findings=[
+                AuditFinding(
+                    finding_id="SAR-SPOOF",
+                    severity="high",
+                    finding_type="semantic_support_proposal",
+                    description="spoofed high-severity proposal",
+                )
+            ],
+            metadata={},
+        )
+        recompute_report_status(report)
+        assert report.audit_status == "fail"
+        assert report.audit_score == 75
+
 
 class TestPromptBuilderProviderLess:
     def test_no_provider_calls_in_module_source(self):

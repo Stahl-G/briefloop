@@ -195,7 +195,8 @@
           "requires_human_adjudication_count": 2,
           "llm_only_count": 2,
           "high_uncertainty_count": 2,
-          "high_disagreement_count": 2
+          "high_disagreement_count": 2,
+          "calibration_label_counts": {}
         }
       }
     },

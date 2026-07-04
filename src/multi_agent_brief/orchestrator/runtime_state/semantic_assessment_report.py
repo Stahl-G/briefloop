@@ -7,7 +7,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from multi_agent_brief.audit.semantic import findings_from_semantic_proposal_rows
+from multi_agent_brief.audit.semantic import (
+    SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY,
+    findings_from_semantic_proposal_rows,
+    normalize_calibration_label,
+)
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     _read_json_mapping,
@@ -325,11 +329,25 @@ def _project_report_row(
         "assessment_method": assessment_method,
         "accepted_support_truth": False,
         "writes_claim_support_matrix": False,
+        "calibration_label": normalize_calibration_label(
+            row.get("metadata", {}).get(SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY)
+            if isinstance(row.get("metadata"), Mapping)
+            else None
+        ),
         "metadata": deepcopy(row.get("metadata")) if isinstance(row.get("metadata"), Mapping) else {},
     }
 
 
-def _proposal_summary_counts(rows: list[Mapping[str, Any]]) -> dict[str, int]:
+def _calibration_label_counts(rows: list[Mapping[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        label = row.get("calibration_label")
+        if isinstance(label, str) and label:
+            counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _proposal_summary_counts(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
     return {
         "proposal_row_count": len(rows),
         "single_span_proposal_count": sum(1 for row in rows if row.get("relation_status") == "single_span"),
@@ -338,6 +356,7 @@ def _proposal_summary_counts(rows: list[Mapping[str, Any]]) -> dict[str, int]:
         "llm_only_count": sum(1 for row in rows if row.get("assessment_method") == "llm_only"),
         "high_uncertainty_count": sum(1 for row in rows if row.get("uncertainty") == "high"),
         "high_disagreement_count": sum(1 for row in rows if row.get("disagreement") == "high"),
+        "calibration_label_counts": _calibration_label_counts(rows),
     }
 
 
