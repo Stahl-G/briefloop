@@ -58,15 +58,26 @@ from multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment impo
 )
 from multi_agent_brief.orchestrator.runtime_state.decisions import record_decision  # noqa: F401
 from multi_agent_brief.orchestrator.runtime_state.errors import (  # noqa: F401
+    E_ACTIVE_REPAIR_OPEN,
+    E_ARTIFACT_INVALID,
+    E_ASSESSMENT_TARGET_COMPLETE,
+    E_CLAIM_DRAFT_CONTRACT_INVALID,
+    E_COMPLETION_TRANSACTION_REQUIRED,
     E_FACT_LAYER_IMPORT_INVALID,
     E_ILLEGAL_TRANSITION,
+    E_QUALITY_GATE_REQUIRED,
     E_READER_FINAL_GATE_FAILED,
+    E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN,
+    E_REPAIR_NO_LEGAL_ROUTE,
     E_REPAIR_TRANSACTION_REQUIRED,
+    E_REQUIRED_ARTIFACT_MISSING,
     E_RUNTIME_STATE_NOT_INITIALIZED,
+    E_STAGE_ALREADY_COMPLETED,
     E_STAGE_MISMATCH,
     E_TRANSACTION_INTEGRITY,
     E_TRANSACTION_PARTIAL_WRITE,
     RuntimeStateError,
+    _wrap_archive_error,
 )
 from multi_agent_brief.orchestrator.runtime_state.event_log import (  # noqa: F401
     EVENT_LOG_SCHEMA,
@@ -172,9 +183,24 @@ from multi_agent_brief.orchestrator.runtime_state.trajectory import (  # noqa: F
 
 
 __all__ = [
+    "E_ACTIVE_REPAIR_OPEN",
+    "E_ARTIFACT_INVALID",
+    "E_ASSESSMENT_TARGET_COMPLETE",
+    "E_CLAIM_DRAFT_CONTRACT_INVALID",
+    "E_COMPLETION_TRANSACTION_REQUIRED",
     "E_FACT_LAYER_IMPORT_INVALID",
+    "E_ILLEGAL_TRANSITION",
+    "E_QUALITY_GATE_REQUIRED",
+    "E_READER_FINAL_GATE_FAILED",
+    "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN",
+    "E_REPAIR_NO_LEGAL_ROUTE",
+    "E_REPAIR_TRANSACTION_REQUIRED",
+    "E_REQUIRED_ARTIFACT_MISSING",
     "E_RUNTIME_STATE_NOT_INITIALIZED",
+    "E_STAGE_ALREADY_COMPLETED",
     "E_STAGE_MISMATCH",
+    "E_TRANSACTION_INTEGRITY",
+    "E_TRANSACTION_PARTIAL_WRITE",
     "RUNTIME_MANIFEST_SCHEMA",
     "RUNTIME_STATE_FILES",
     "RuntimeStateError",

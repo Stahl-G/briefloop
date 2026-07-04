@@ -61,11 +61,22 @@ def test_operations_compatibility_surface_is_preserved() -> None:
         "show_runtime_state",
         "start_repair_transaction",
         "EVENT_LOG_SCHEMA",
+        "E_ACTIVE_REPAIR_OPEN",
+        "E_ARTIFACT_INVALID",
+        "E_ASSESSMENT_TARGET_COMPLETE",
+        "E_CLAIM_DRAFT_CONTRACT_INVALID",
+        "E_COMPLETION_TRANSACTION_REQUIRED",
         "E_ILLEGAL_TRANSITION",
         "E_FACT_LAYER_IMPORT_INVALID",
+        "E_QUALITY_GATE_REQUIRED",
         "E_READER_FINAL_GATE_FAILED",
+        "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN",
+        "E_REPAIR_NO_LEGAL_ROUTE",
         "E_REPAIR_TRANSACTION_REQUIRED",
+        "E_REQUIRED_ARTIFACT_MISSING",
         "E_RUN_ARCHIVE_CONFLICT",
+        "E_STAGE_ALREADY_COMPLETED",
+        "E_STAGE_MISMATCH",
         "E_TRANSACTION_INTEGRITY",
         "E_TRANSACTION_PARTIAL_WRITE",
         "FACT_LAYER_IMPORT_SCHEMA",
@@ -77,6 +88,33 @@ def test_operations_compatibility_surface_is_preserved() -> None:
     ]
     missing = [name for name in compat_names if not hasattr(runtime_state.operations, name)]
     assert not missing, f"operations compatibility surface lost: {missing}"
+
+
+def test_operations_all_preserves_legacy_error_code_exports() -> None:
+    runtime_state = importlib.import_module(RUNTIME_STATE_MODULE)
+
+    legacy_error_exports = {
+        "E_ACTIVE_REPAIR_OPEN",
+        "E_ARTIFACT_INVALID",
+        "E_ASSESSMENT_TARGET_COMPLETE",
+        "E_CLAIM_DRAFT_CONTRACT_INVALID",
+        "E_COMPLETION_TRANSACTION_REQUIRED",
+        "E_FACT_LAYER_IMPORT_INVALID",
+        "E_ILLEGAL_TRANSITION",
+        "E_QUALITY_GATE_REQUIRED",
+        "E_READER_FINAL_GATE_FAILED",
+        "E_REPAIR_IMPORTED_FACT_LAYER_FORBIDDEN",
+        "E_REPAIR_NO_LEGAL_ROUTE",
+        "E_REPAIR_TRANSACTION_REQUIRED",
+        "E_REQUIRED_ARTIFACT_MISSING",
+        "E_RUNTIME_STATE_NOT_INITIALIZED",
+        "E_STAGE_ALREADY_COMPLETED",
+        "E_STAGE_MISMATCH",
+        "E_TRANSACTION_INTEGRITY",
+        "E_TRANSACTION_PARTIAL_WRITE",
+    }
+
+    assert legacy_error_exports <= set(runtime_state.operations.__all__)
 
 
 def test_operations_all_exports_are_defined() -> None:
