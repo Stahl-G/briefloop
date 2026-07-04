@@ -83,14 +83,17 @@ Use after editor has completed audited_brief.md.
 - Write only `output/intermediate/semantic_assessment_report.json`. Its raw rows
   are proposals, not authoritative `audit_report.json` findings, gate results,
   or release decisions. Python may render them as advisory, non-blocking
-  `AuditFinding` surfaces, but they stay non-authoritative and non-repairable
-  until a human accepts them.
+  `AuditFinding` surfaces. They remain proposal records even after human
+  adjudication; a human accept/reject records an adjudication entry but does not
+  create support truth, authoritative `audit_report.json` findings, gate
+  results, repair routes, delivery approval, or release authority.
 - Do not edit frozen artifacts, and do not write `audit_report.json`,
   `auditor_quality_gate_report.json`, `claim_support_matrix.json`,
   `workflow_state.json`, or `event_log.jsonl`.
 - Semantic support proposals do not gate finalize, delivery, or release by
-  themselves. Python validates and projects the proposal artifact; a human must
-  accept a proposal before it becomes authoritative.
+  themselves. Python validates and projects the proposal artifact; human
+  acceptance records adjudication only and does not create support truth or
+  authoritative audit findings.
 
 ## Handoff
 

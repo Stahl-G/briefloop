@@ -484,11 +484,14 @@ roles:
       output/intermediate/semantic_assessment_report.json. Its raw rows are
       proposals, not authoritative audit_report findings, gate results, or
       release decisions. Python may render them as advisory, non-blocking
-      AuditFinding surfaces, but they stay non-authoritative and non-repairable
-      until a human accepts them.
+      AuditFinding surfaces. They remain proposal records even after human
+      adjudication; a human accept/reject records an adjudication entry but
+      does not create support truth, authoritative audit_report findings, gate
+      results, repair routes, delivery approval, or release authority.
     - Let Python validate and project semantic_assessment_report.json. Do not
-      treat its proposals as authoritative audit findings unless a human
-      accepts them through a deterministic transaction.
+      treat its proposals or human acceptance records as authoritative audit
+      findings. Human acceptance records adjudication only; they do not write
+      audit or control artifacts.
     hard_rules:
     - Preserve audit gates while fixing failures.
     - Semantic support proposals are proposal-only. They do not gate finalize,

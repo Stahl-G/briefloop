@@ -237,6 +237,21 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
+  - artifact_id: semantic_support_acceptance_ledger
+    path: output/intermediate/semantic_support_acceptance_ledger.json
+    format: json
+    required: false
+    producer_kind: control_tool
+    producer_stage: auditor
+    producer_role: python_tool
+    consumer_stages: []
+    validation_result: experimental_semantic_support_acceptance_ledger
+    blocking_reason: ""
+    allowed_decisions:
+      - continue
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review
   - artifact_id: human_approval_ledger
     path: output/intermediate/human_approval_ledger.json
     format: json

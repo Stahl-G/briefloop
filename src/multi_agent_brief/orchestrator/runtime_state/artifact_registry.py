@@ -44,6 +44,9 @@ from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report imp
     SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX,
     validate_semantic_assessment_report_against_artifacts,
 )
+from multi_agent_brief.orchestrator.runtime_state.semantic_support_acceptance import (
+    validate_semantic_support_acceptance_ledger_for_workspace,
+)
 from multi_agent_brief.orchestrator.runtime_state.source_evidence_pack import (
     SOURCE_EVIDENCE_PACK_VALIDATION_PREFIX,
     validate_source_evidence_pack_manifest,
@@ -189,6 +192,8 @@ def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str
                 return _validate_claim_support_matrix_payload(payload, artifact_path=path)
             if artifact_id == "semantic_assessment_report":
                 return _validate_semantic_assessment_report_payload(payload, artifact_path=path)
+            if artifact_id == "semantic_support_acceptance_ledger":
+                return _validate_semantic_support_acceptance_ledger_payload(payload, artifact_path=path)
             if artifact_id == "audit_report":
                 return _validate_audit_report_payload(payload)
             if artifact_id == "candidate_claims":
@@ -1389,6 +1394,13 @@ def _validate_semantic_assessment_report_payload(payload: Any, *, artifact_path:
     if reason:
         return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
     return ARTIFACT_VALID, "experimental_semantic_assessment_report_schema"
+
+
+def _validate_semantic_support_acceptance_ledger_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
+    reason = validate_semantic_support_acceptance_ledger_for_workspace(payload, artifact_path=artifact_path)
+    if reason:
+        return ARTIFACT_INVALID, f"semantic_support_acceptance_ledger_schema_error:{reason}"
+    return ARTIFACT_VALID, "experimental_semantic_support_acceptance_ledger"
 
 
 def _claim_support_matrix_ledger_claims(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:

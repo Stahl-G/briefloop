@@ -17,6 +17,7 @@ Do not edit directly:
 - `output/intermediate/improvement_memory_snapshot.md`
 - `output/intermediate/human_approval_ledger.json`
 - `output/intermediate/release_readiness_report.json`
+- `output/intermediate/semantic_support_acceptance_ledger.json`
 - `output/intermediate/quality_panel.json`
 - `output/intermediate/quality_summary.md`
 - `output/intermediate/quality_panel.html`
@@ -40,6 +41,12 @@ Owning commands for recent control-tool projections:
   writes a fresh `release_readiness_report.json` with event-log linkage and
   configured `branding_context` metadata. Do not treat a readiness report as
   refreshed merely because an approval was recorded.
+- `multi-agent-brief semantic-support adjudicate` writes
+  `semantic_support_acceptance_ledger.json` with event-log linkage for human
+  accept/reject decisions on valid Semantic Assessment Report proposal rows.
+  It records adjudication only; it does not write Claim-Support Matrix rows,
+  gate reports, workflow state, repair routes, delivery state, or release
+  state.
 - `multi-agent-brief finalize` writes `finalize_report.json` fields for the
   resolved citation profile (`executive`, `analyst`, or `audit`). These fields
   describe reader/audit citation surfaces only; do not patch them by hand and

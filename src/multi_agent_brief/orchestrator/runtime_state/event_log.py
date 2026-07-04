@@ -76,6 +76,7 @@ EVENT_TYPES = {
     "run_blocked",
     "run_integrity_contaminated",
     "run_reset",
+    "semantic_support_finding_adjudicated",
 }
 
 ACTORS = {"cli", "orchestrator", "runtime", "system"}
