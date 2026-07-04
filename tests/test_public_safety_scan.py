@@ -178,6 +178,102 @@ def test_public_safety_scan_allows_sha256_hex_lines(tmp_path):
     assert findings == []
 
 
+def test_public_safety_scan_allows_json_sha256_hex_fields(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "manifest.json"
+    sample.write_text(
+        '{"sha256": "f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540"}\n',
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert findings == []
+
+
+def test_public_safety_scan_allows_suffix_sha256_hex_fields(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "artifact_registry.yaml"
+    sample.write_text(
+        "claim_ledger_sha256: f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert findings == []
+
+
+def test_public_safety_scan_allows_json_suffix_sha256_hex_fields(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "manifest.json"
+    sample.write_text(
+        '{"source_archive_manifest_sha256": "f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540"}\n',
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert findings == []
+
+
+def test_public_safety_scan_suffix_sha256_does_not_hide_nearby_token(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "mixed.yaml"
+    sample.write_text(
+        "claim_ledger_sha256: f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540 near oc_1234567890abcdef\n",  # PUBLIC_SAFETY_TEST_FIXTURE
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert len(findings) == 1
+    assert findings[0].kind == "lark_token"
+    assert findings[0].sample == (
+        "claim_ledger_sha256: f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540 near oc_1234567890abcdef"  # PUBLIC_SAFETY_TEST_FIXTURE
+    )
+
+
+def test_public_safety_scan_catches_lark_tokens_near_sha256_text(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "candidate_release_pack.md"
+    sample.write_text(
+        "\n".join(
+            [
+                "sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa near oc_1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+                "mixed sha256 and real token ou_1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+                "recipient oc_1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert [finding.kind for finding in findings] == ["lark_token", "lark_token", "lark_token"]
+    assert [finding.sample for finding in findings] == [
+        "sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa near oc_1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+        "mixed sha256 and real token ou_1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+        "recipient oc_1234567890abcdef",  # PUBLIC_SAFETY_TEST_FIXTURE
+    ]
+
+
+def test_public_safety_scan_allows_placeholder_lark_tokens_without_hiding_real_tokens(tmp_path):
+    module = _load_module()
+    placeholder = tmp_path / "placeholder.md"
+    placeholder.write_text("recipient oc_xxx\n", encoding="utf-8")
+    mixed = tmp_path / "mixed.md"
+    mixed.write_text("recipient oc_xxx fallback oc_1234567890abcdef\n", encoding="utf-8")  # PUBLIC_SAFETY_TEST_FIXTURE
+
+    assert module.scan([placeholder], banned_terms=[]) == []
+    findings = module.scan([mixed], banned_terms=[])
+
+    assert len(findings) == 1
+    assert findings[0].kind == "lark_token"
+    assert findings[0].sample == "recipient oc_xxx fallback oc_1234567890abcdef"  # PUBLIC_SAFETY_TEST_FIXTURE
+
+
 def test_public_safety_scan_does_not_broadly_allow_tests_directory(tmp_path):
     module = _load_module()
     module.ROOT = tmp_path

@@ -35,6 +35,11 @@ API_SECRET_RE = re.compile(
     r"\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{16,}"
 )
 COMMON_SECRET_RE = re.compile(r"\b(?:sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b")
+SHA256_VALUE_RE = re.compile(
+    r"(?<![A-Za-z0-9_])['\"]?(?:sha256|[A-Za-z0-9_]+_sha256)['\"]?"
+    r"\s*[:=]\s*['\"]?(?P<hash>[0-9a-fA-F]{64})['\"]?",
+    re.IGNORECASE,
+)
 
 TEXT_SUFFIXES = {
     ".cfg",
@@ -152,7 +157,7 @@ def _portable_path(path: Path | str) -> str:
     return str(path).replace("\\", "/")
 
 
-def _allowed_fixture(path: Path, line: str, kind: str) -> bool:
+def _allowed_fixture(path: Path, line: str, kind: str, needle: str = "") -> bool:
     rel = _portable_path(_relative(path))
     if rel == "scripts/check_public_safety.py":
         return True
@@ -186,9 +191,9 @@ def _allowed_fixture(path: Path, line: str, kind: str) -> bool:
         )
     ):
         return True
-    if kind == "lark_token" and re.search(r"\b(?:oc|ou|on|om)_x+\b", line):
+    if kind == "lark_token" and re.fullmatch(r"(?:oc|ou|on|om)_x+", needle):
         return True
-    if kind == "lark_token" and re.search(r"\bsha256\b", line, re.IGNORECASE):
+    if kind == "lark_token" and _is_sha256_value(needle, line):
         return True
     return False
 
@@ -205,6 +210,12 @@ def _sample(line: str, needle: str) -> str:
     start = max(0, index - 50)
     end = min(len(text), index + len(needle) + 70)
     return text[start:end]
+
+
+def _is_sha256_value(value: str, line: str) -> bool:
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
+        return False
+    return any(match.group("hash") == value for match in SHA256_VALUE_RE.finditer(line))
 
 
 _LARK_TOKEN_CONTEXT_RE = re.compile(
@@ -264,7 +275,7 @@ def scan(paths: list[Path] | None = None, *, banned_terms: list[str] | None = No
                     checks.append((kind, match.group(0)))
 
             for kind, needle in checks:
-                if _allowed_fixture(path, line, kind):
+                if _allowed_fixture(path, line, kind, needle):
                     continue
                 findings.append(
                     Finding(
