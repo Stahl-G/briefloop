@@ -435,7 +435,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | curl installer (`install.sh`) | Experimental CLI-only installer asset |
 | PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
 | Hermes plugin (`integrations/hermes-plugin/`) | Supported |
-| WorkBuddy Skill source bundle (`integrations/workbuddy/briefloop/`) | Experimental; source-clone-only and not included in wheel/sdist package data |
+| WorkBuddy Skill source bundle (`integrations/workbuddy/briefloop/`) and local zip packaging (`workbuddy pack-skill`) | Experimental; source-clone-only input, generated local Skill zip, not WorkBuddy Marketplace publication or wheel/sdist package data |
 
 | Runtime asset | Source clone | Wheel / sdist / PyPI package |
 |---|---|---|
@@ -447,7 +447,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | `.opencode/agents/**` and `.opencode/commands/**` | Supported | Source-clone-only |
 | `.codex/config.toml` and `.codex/agents/**` | Experimental | Source-clone-only; installable into a workspace with `runtime install --runtime codex` |
 | `integrations/hermes-plugin/**` | Supported | Source-clone-only |
-| `integrations/workbuddy/briefloop/**` | Experimental | Source-clone-only; package/zip generation is not shipped yet |
+| `integrations/workbuddy/briefloop/**` | Experimental | Source-clone-only; `workbuddy pack-skill` can generate a local Skill zip from these files, but wheel/sdist installs still do not include them |
 | `scripts/install.sh`, `scripts/install.ps1`, `Formula/` | Supported | Source-clone-only |
 
 ## Legacy / Deprecated

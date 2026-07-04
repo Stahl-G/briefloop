@@ -53,6 +53,8 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "WorkBuddy Skill source bundle" in text
     assert "integrations/workbuddy/briefloop/" in text
     assert "source-clone-only" in text
+    assert "workbuddy pack-skill" in text
+    assert "not a WorkBuddy Marketplace publication" in text
     assert "BriefLoop skill is an agent protocol surface" in text
     assert "not the `/briefloop` slash" in text
     assert "auditable_brief" in text

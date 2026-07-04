@@ -14,6 +14,7 @@ Checks:
   10. BriefLoop operator skill freshness guard passes
   11. Minimal comparative evaluation packet guard passes
   12. Launch/demo smoke guard passes
+  13. WorkBuddy Skill pack guard passes
 
 Usage:
   python scripts/check_release_consistency.py [--strict] [--no-tag]
@@ -293,6 +294,37 @@ def check_launch_smoke() -> bool:
     return True
 
 
+def check_workbuddy_skill_pack() -> bool:
+    """Run WorkBuddy Skill pack shape guard and return True if it passes."""
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "check_workbuddy_skill_pack.py"), "--json"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    payload_ok = False
+    if result.returncode == 0 and stdout:
+        try:
+            payload = json.loads(stdout)
+            payload_ok = payload.get("ok") is True
+        except json.JSONDecodeError:
+            payload_ok = False
+    if result.returncode != 0 or not payload_ok:
+        print("  [FAIL] WorkBuddy Skill pack check failed:")
+        if stdout:
+            print("         stdout:")
+            for line in stdout.splitlines():
+                print(f"           {line}")
+        if stderr:
+            print("         stderr:")
+            for line in stderr.splitlines():
+                print(f"           {line}")
+        if not stdout and not stderr:
+            print("         no stdout/stderr captured")
+        return False
+    return True
+
+
 def main(strict: bool = False, check_tag: bool = True) -> int:
     print("Release Consistency Check")
     print("=" * 40)
@@ -377,6 +409,12 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("Launch demo smoke passes", launch_smoke_ok)
     except Exception as exc:
         check("Launch demo smoke passes", False, str(exc))
+
+    try:
+        workbuddy_pack_ok = check_workbuddy_skill_pack()
+        check("WorkBuddy Skill pack passes", workbuddy_pack_ok)
+    except Exception as exc:
+        check("WorkBuddy Skill pack passes", False, str(exc))
 
     print()
     if ERRORS:

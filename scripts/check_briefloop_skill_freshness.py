@@ -71,6 +71,10 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "integrations/workbuddy/briefloop/",
         "source-clone-only",
         "--runtime operator",
+        "workbuddy pack-skill",
+        "deterministic local",
+        "Skill zip",
+        "not a WorkBuddy Marketplace publication",
     ],
     "references/status-and-gates.md": [
         "Coverage/omission findings",

@@ -27,6 +27,7 @@ REQUIRED_SOURCE_ASSETS = [
     "integrations/workbuddy/briefloop/references/status-and-gates.md",
     "integrations/workbuddy/briefloop/references/repair-protocol.md",
     "integrations/workbuddy/briefloop/references/workbuddy-safety.md",
+    "scripts/check_workbuddy_skill_pack.py",
     "scripts/install.sh",
     "scripts/install.ps1",
     "Formula/multi-agent-brief.rb",

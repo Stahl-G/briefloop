@@ -19,7 +19,11 @@ Historical implementation name: MABW
   - path: `integrations/workbuddy/briefloop/`
   - status: experimental; source-clone-only
   - uses `--runtime operator` and deterministic BriefLoop CLI transactions
-  - not included in wheel/sdist package data until a packaging command ships
+  - `briefloop workbuddy pack-skill` /
+    `multi-agent-brief workbuddy pack-skill` generates a deterministic local
+    Skill zip and sidecar manifest from the source-clone Skill files
+  - not included in wheel/sdist package data
+  - generated zip is not a WorkBuddy Marketplace publication
   - must not claim WorkBuddy subagents ran unless WorkBuddy explicitly
     delegated and recorded those roles
 - BriefLoop skill is an agent protocol surface, not the `/briefloop` slash

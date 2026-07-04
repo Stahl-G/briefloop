@@ -31,7 +31,8 @@ new workflow contract.
 | `.opencode/commands/**` | Hand-maintained source asset | Source-clone-only | Source-repo commands. Use `runtime install` for workspace-local copies. |
 | `docs/agents/**` | Generated source/docs asset | Source-clone-only | Adapter documentation generated from role source. |
 | `integrations/hermes-plugin/**` | Hermes plugin source asset | Source-clone-only | Plugin source tree; package-only installs should not assume it exists. |
-| `integrations/workbuddy/briefloop/**` | WorkBuddy Skill source asset | Source-clone-only | Local WorkBuddy Skill source bundle; package-only installs should not assume it exists until a WorkBuddy pack command ships. |
+| `integrations/workbuddy/briefloop/**` | WorkBuddy Skill source asset | Source-clone-only | Local WorkBuddy Skill source bundle; `workbuddy pack-skill` can generate a local Skill zip from source-clone files. Package-only installs should not assume the source tree exists. |
+| `scripts/check_workbuddy_skill_pack.py` | WorkBuddy package readiness check | Source-clone-only | Builds and validates the local WorkBuddy Skill zip shape without publishing to WorkBuddy Marketplace. |
 | `scripts/install.sh` | Installer asset | Source-clone-only | curl/archive install helper. |
 | `scripts/install.ps1` | Installer asset | Source-clone-only | PowerShell install helper. |
 | `Formula/multi-agent-brief.rb` | Installer asset | Source-clone-only | Homebrew formula source. |
@@ -46,7 +47,7 @@ new workflow contract.
 | curl / PowerShell installer | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
 | Homebrew formula source | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
 | Hermes plugin source install | Supported from source clone | Uses CLI/package contracts | Source plugin tree required | Plugin installation remains source-clone-driven unless plugin assets are packaged separately. |
-| WorkBuddy Skill source bundle | Experimental from source clone | Uses CLI/package contracts | Source Skill tree required | WorkBuddy packaging remains source-clone-driven unless a generated Skill package is created separately. |
+| WorkBuddy Skill source bundle | Experimental from source clone | Uses CLI/package contracts | Source Skill tree required | `workbuddy pack-skill` generates a local Skill zip; this is not Marketplace publication or Python package data. |
 
 ## Workspace Runtime Kit
 
