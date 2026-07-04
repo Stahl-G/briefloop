@@ -7,7 +7,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[功能地图](docs/features.zh-CN.md) · [黄金路径](docs/golden-path.zh-CN.md) · [架构状态](docs/architecture-status.zh-CN.md) · [路线图](docs/roadmap.zh-CN.md)
+[15 分钟试用](docs/15-minute-pilot.zh-CN.md) · [功能地图](docs/features.zh-CN.md) · [黄金路径](docs/golden-path.zh-CN.md) · [架构状态](docs/architecture-status.zh-CN.md) · [路线图](docs/roadmap.zh-CN.md)
 
 写作入口：Claude Code 里用 `/briefloop`（`/mabw` 仍是兼容别名）；命令行里用 `briefloop` 或 `multi-agent-brief`。
 
@@ -162,6 +162,9 @@ cd briefloop
 bash scripts/setup.sh
 source .venv/bin/activate
 ```
+
+如果只是想先看一个 API-free demo，走
+[15 分钟试用](docs/15-minute-pilot.zh-CN.md)。
 
 Package-index 安装还不是当前 launch 路径。`pipx` / PyPI 打包准备记录在
 [pipx And PyPI Packaging Prep](docs/packaging-pipx.md)；除非 release notes 明确说明
