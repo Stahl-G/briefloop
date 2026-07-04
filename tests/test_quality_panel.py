@@ -740,6 +740,21 @@ def test_quality_panel_html_renders_static_audit_attachment_without_external_ass
     assert validate_quality_panel_html(html) is None
 
 
+def test_quality_panel_html_marks_unavailable_states_as_missing_badges(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    panel = write_quality_panel(workspace=ws)
+
+    html = render_quality_panel_html(panel, quality_panel_sha256=_sha256_file(quality_panel_path(ws)))
+
+    assert '<span class="badge badge-missing" title="not_ready">' in html
+    assert '<span class="badge badge-missing" title="not_available">' in html
+    assert '<span class="badge badge-info" title="not_ready">' not in html
+    assert '<span class="badge badge-info" title="not_available">' not in html
+    assert '<span class="lang-zh" lang="zh-CN">未就绪</span>' in html
+    assert '<span class="lang-zh" lang="zh-CN">不可用</span>' in html
+    assert validate_quality_panel_html(html) is None
+
+
 def test_quality_panel_html_rendering_does_not_mutate_json_payload(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     panel = write_quality_panel(workspace=ws)
