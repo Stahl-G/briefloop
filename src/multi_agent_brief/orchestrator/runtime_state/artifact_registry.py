@@ -386,7 +386,6 @@ def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str
     total_candidates, total_error = _screened_candidates_total(payload, screening_policy)
     if total_error:
         return ARTIFACT_INVALID, f"screened_candidates_schema_error:{total_error}"
-    requires_discard_audit = total_candidates is not None
 
     has_discard_bucket = False
     for bucket in ("excluded", "deprioritized"):
@@ -399,13 +398,10 @@ def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str
         for idx, candidate in enumerate(entries):
             if not _valid_screened_candidate_entry(candidate):
                 return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}]"
-            if requires_discard_audit or _screened_candidate_declares_discard_audit(candidate):
-                if not _screened_candidate_reason_code(candidate):
-                    return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].reason_code"
-                if not _screened_candidate_has_short_explanation(candidate):
-                    return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].explanation"
-            elif not _screened_candidate_has_reason(candidate):
-                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].reason"
+            if not _screened_candidate_reason_code(candidate):
+                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].reason_code"
+            if not _screened_candidate_has_short_explanation(candidate):
+                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].explanation"
     if not has_discard_bucket:
         return ARTIFACT_INVALID, "screened_candidates_schema_error:excluded_or_deprioritized"
 
@@ -455,36 +451,12 @@ def _valid_screened_candidate_entry(candidate: Any) -> bool:
     return any(_non_empty_string(candidate.get(field)) for field in ("candidate_id", "statement", "claim"))
 
 
-def _screened_candidate_has_reason(candidate: dict[str, Any]) -> bool:
-    return any(
-        _non_empty_string(candidate.get(field))
-        for field in ("reason", "screening_reason", "excluded_reason", "deprioritized_reason")
-    )
-
-
-def _screened_candidate_declares_discard_audit(candidate: dict[str, Any]) -> bool:
-    return any(
-        _non_empty_string(candidate.get(field))
-        for field in (
-            "reason_code",
-            "screening_reason_code",
-            "excluded_reason_code",
-            "deprioritized_reason_code",
-            "explanation",
-            "short_explanation",
-            "screening_explanation",
-            "reason_explanation",
-        )
-    )
-
-
 def _screened_candidate_reason_code(candidate: dict[str, Any]) -> str:
     for field in (
         "reason_code",
         "screening_reason_code",
         "excluded_reason_code",
         "deprioritized_reason_code",
-        "reason",
     ):
         code = _normalize_screening_reason_code(candidate.get(field))
         if code:
