@@ -2304,7 +2304,7 @@ def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
     assert record["validation_result"] == "valid_screened_candidates_schema"
 
 
-def test_state_check_accepts_legacy_object_screened_candidates_reason_only(tmp_path):
+def test_state_check_rejects_object_screened_candidates_reason_only_discard_audit(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _write_json_artifact(
@@ -2336,8 +2336,8 @@ def test_state_check_accepts_legacy_object_screened_candidates_reason_only(tmp_p
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     record = state["artifact_registry"]["artifacts"]["screened_candidates"]
 
-    assert record["status"] == "valid"
-    assert record["validation_result"] == "valid_screened_candidates_schema"
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "screened_candidates_schema_error:excluded[0].reason_code"
 
 
 def test_state_check_accepts_object_screened_candidates_with_source_url_identity(tmp_path):
@@ -2513,7 +2513,7 @@ def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path)
     record = state["artifact_registry"]["artifacts"]["screened_candidates"]
 
     assert record["status"] == "invalid"
-    assert record["validation_result"] == "screened_candidates_schema_error:excluded[0].reason"
+    assert record["validation_result"] == "screened_candidates_schema_error:excluded[0].reason_code"
 
 
 def test_state_check_rejects_screened_candidates_missing_discard_audit(tmp_path):
@@ -2569,7 +2569,7 @@ def test_state_check_accepts_screened_candidates_reason_code_without_legacy_reas
                         "explanation": "Dropped because it duplicates a stronger selected candidate.",
                     }
                 ],
-                "screening_policy": {"total_candidates": 2, "max_items": 8},
+                "screening_policy": {"max_items": 8},
             }
         )
         + "\n",
