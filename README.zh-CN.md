@@ -278,7 +278,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.11.9**
+当前版本：**v0.11.12**
 
 当前主要入口：
 
@@ -288,8 +288,8 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 - 兼容 alias：`/mabw`
 - 实验性 WorkBuddy 指南：[docs/workbuddy.zh-CN.md](docs/workbuddy.zh-CN.md)
 
-v0.11.9 发布的是累计的 v0.11 产品基线、reader-quality、role topology、
-launch readiness 和 issue-closure hardening line，包括：
+v0.11.12 发布的是累计的 v0.11 产品基线、WorkBuddy adapter、
+operator runtime 和 semantic-support auditor hardening line，包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract
 - workspace skeleton 和确定性的 PolicyProfile 解析
@@ -304,7 +304,13 @@ launch readiness 和 issue-closure hardening line，包括：
 - reader-quality warning / projection surface：template conformance、
   materiality selection、support-calibrated wording、citation profile、
   coverage/omission 和 scoped final-abstract diagnostics
-- 针对重复 retry / repair / blocker loop 的 trajectory-regulation decision narrowing
+- repeated retry / repair / blocker loop 的 trajectory-regulation decision
+  narrowing
+- 实验性的 source-clone WorkBuddy Skill packaging 和 first-use routing
+- 用于 host-agnostic compact operation 的 `operator` runtime；`manual` 保留为
+  legacy alias
+- proposal-only Semantic Support Auditor surface 和 human adjudication record；
+  这些记录不创建 support truth、gate、delivery approval 或 release authority
 - 公开安全的 reference、synthetic regression、minimal comparative evaluation、
   launch smoke 和 release checklist guardrail
 

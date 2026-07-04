@@ -175,29 +175,31 @@ def main() -> int:
         if not formula_tag:
             _error("Homebrew formula URL tag missing")
             errors.append("Formula/multi-agent-brief.rb")
-        elif formula_tag != tag:
-            _error(f"Homebrew formula URL points at {formula_tag}, expected {tag}")
-            errors.append("Formula/multi-agent-brief.rb")
         elif not formula_sha:
             _error("Homebrew formula sha256 missing")
             errors.append("Formula/multi-agent-brief.rb")
-        elif _git_tag_exists(tag):
-            if formula_sha == PENDING_FORMULA_SHA256:
-                _error(
-                    "Homebrew formula checksum is still pending after the git tag exists; "
-                    "recompute the release archive sha256."
-                )
-                errors.append("Formula/multi-agent-brief.rb")
-            else:
-                _ok("Homebrew formula tag and checksum")
         else:
-            if formula_sha == PENDING_FORMULA_SHA256:
-                _ok("Homebrew formula staged for current tag; checksum pending until tag exists")
+            tag_exists = _git_tag_exists(tag)
+            if formula_tag != tag:
+                if tag_exists:
+                    _error(f"Homebrew formula URL points at {formula_tag}, expected {tag}")
+                    errors.append("Formula/multi-agent-brief.rb")
+                else:
+                    _ok("Homebrew formula remains on last published archive until current tag exists")
+            elif tag_exists:
+                if formula_sha == PENDING_FORMULA_SHA256:
+                    _error(
+                        "Homebrew formula checksum is pending after the git tag exists; "
+                        "recompute the release archive sha256."
+                    )
+                    errors.append("Formula/multi-agent-brief.rb")
+                else:
+                    _ok("Homebrew formula tag and checksum")
             else:
                 _error(
-                    "Homebrew formula points at current VERSION before the git tag exists "
-                    "with a non-pending checksum; use the pending checksum marker until "
-                    "the release archive can be hashed."
+                    "Homebrew formula points at the unpublished current VERSION; "
+                    "keep the formula on the last published archive until the release "
+                    "archive can be hashed."
                 )
                 errors.append("Formula/multi-agent-brief.rb")
 

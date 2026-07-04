@@ -294,7 +294,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.11.9**
+Current version: **v0.11.12**
 
 Current main entrypoints:
 
@@ -304,8 +304,8 @@ Current main entrypoints:
 - compatibility alias: `/mabw`
 - experimental WorkBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 
-v0.11.9 releases the accumulated v0.11 product-baseline, reader-quality,
-topology, launch-readiness, and issue-closure hardening line, including:
+v0.11.12 releases the accumulated v0.11 product-baseline, WorkBuddy adapter,
+operator-runtime, and semantic-support auditor hardening line, including:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
 - workspace skeletons and deterministic PolicyProfile resolution
@@ -323,6 +323,12 @@ topology, launch-readiness, and issue-closure hardening line, including:
   coverage/omission, and scoped final-abstract diagnostics
 - trajectory-regulation decision narrowing for repeated retry/repair/blocker
   loops
+- experimental source-clone WorkBuddy Skill packaging and first-use routing
+- `operator` runtime for host-agnostic compact operation, with `manual` kept as
+  a legacy alias
+- proposal-only Semantic Support Auditor surfaces and human adjudication records
+  that do not create support truth, gates, delivery approval, or release
+  authority
 - public-safe reference, synthetic regression, minimal comparative evaluation,
   launch smoke, and release checklist guardrails
 

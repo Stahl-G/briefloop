@@ -29,11 +29,17 @@ expected to change together:
 - `README_en.md` compatibility pointer shape
 - `CHANGELOG.md`
 - Hermes skill metadata and runtime asset parity when applicable
-- `Formula/multi-agent-brief.rb` when Homebrew/formula metadata is part of the
-  release
+- `Formula/multi-agent-brief.rb` when Homebrew/formula metadata is published
+  for this release
 
 If a branch claims a released version, the corresponding tag and GitHub release
 must exist before the release is called published.
+
+Release-prep commits may leave `Formula/multi-agent-brief.rb` on the last
+published archive until the new tag exists. Do not point the formula at an
+unpublished tag or a placeholder checksum. After the tag/archive exists, update
+the formula in the same release flow or in a post-tag packaging PR with the real
+archive checksum.
 
 ## 2. Required Release Guards
 
@@ -116,15 +122,16 @@ If the release uses package/archive metadata, verify those surfaces too:
 
 - GitHub release exists and points at the intended tag.
 - Source archive URL references the same tag.
-- Homebrew formula URL references the same tag when applicable.
-- Formula checksum matches the published archive when applicable.
+- Homebrew formula URL references the same tag when formula metadata is
+  published for this release.
+- Formula checksum matches the published archive when formula metadata is
+  published for this release.
 - PyPI / pipx install instructions only appear after the package-index artifact
   exists and has passed a published-artifact smoke.
 - Any package-index or install instructions point at a real published artifact,
   not a local branch or private path.
 
-Do not update formula/package metadata ahead of the tag or release unless the
-release notes explicitly mark it as staged and unpublished.
+Do not update formula/package metadata ahead of the tag or release archive.
 
 For pipx / PyPI prep, follow
 [`docs/packaging-pipx.md`](packaging-pipx.md). The short version:

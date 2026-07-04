@@ -31,8 +31,8 @@ multi-agent-brief workbuddy pack-skill --output dist/workbuddy
 这会写出本地 Skill zip 和 manifest，例如：
 
 ```text
-dist/workbuddy/briefloop-workbuddy-skill-v0.11.9.zip
-dist/workbuddy/briefloop-workbuddy-skill-v0.11.9.manifest.json
+dist/workbuddy/briefloop-workbuddy-skill-v0.11.12.zip
+dist/workbuddy/briefloop-workbuddy-skill-v0.11.12.manifest.json
 ```
 
 这个 zip 是确定性、public-safe 的本地包。它不是 Python package data，也不是

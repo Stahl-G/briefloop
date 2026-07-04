@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.12] — 2026-07-04
+
 ### Added
 
+- Added fifteen-minute pilot documentation and deterministic first-run demo
+  Quality Panel surfacing. The demo remains API-free, source-clone oriented,
+  synthetic, and not an output-quality proof.
 - Added WorkBuddy install documentation, Chinese WorkBuddy documentation, and a
   trigger-only WorkBuddy Assistant prompt template. These docs keep the
   WorkBuddy Skill as the local capability surface, describe Assistant as a
@@ -39,6 +44,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `semantic_support_acceptance_ledger.json` with event-log linkage. These
   records do not write Claim-Support Matrix rows, route repair, run gates,
   approve delivery, authorize release, or prove semantic truth.
+
+### Changed
+
+- Declared `operator` in the orchestrator runtime contract and narrowed
+  operator handoff internals for host-agnostic compact operation.
+- Documented the draft-promote ownership matrix for agent-authored drafts,
+  Python validation/promotion, and authoritative artifacts.
+
+### Fixed
+
+- Hardened public-safety sha256 scanning so checksum fields are allowed by
+  span, while token-like values near checksum text are still scanned.
+- Required screened-candidate discard reason codes and aligned Hermes-facing
+  prompts with that contract.
+- Classified unavailable Quality Panel states as missing instead of neutral
+  informational badges.
+- Froze deterministic demo Quality Panel timestamps and surfaced Quality Panel
+  artifacts in the first-run demo path.
+- Blocked delivery when refreshed run-integrity state is invalid.
+- Hardened post-merge control projections and added semantic support auditor
+  dogfood fixtures for proposal-only coverage.
+- Clarified Semantic Support Auditor role wording so human accept/reject
+  records adjudication only and does not create support truth or authoritative
+  audit findings.
 
 ## [0.11.9] — 2026-07-04
 

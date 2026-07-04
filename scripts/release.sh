@@ -7,7 +7,7 @@
 # Usage:
 #   echo "0.5.9" > VERSION
 #   python3 scripts/bump_version.py
-#   git add VERSION README.md README.zh-CN.md CHANGELOG.md pyproject.toml src/ .agents/ Formula/
+#   git add VERSION README.md README.zh-CN.md CHANGELOG.md pyproject.toml src/ .agents/
 #   git commit -m "chore(release): v0.5.9"
 #   bash scripts/release.sh
 set -euo pipefail
@@ -98,3 +98,5 @@ git push origin "$TAG"
 
 echo ""
 echo "=== Released $TAG ==="
+echo "If Homebrew formula metadata is published for this release, update Formula/ with the"
+echo "new tag archive checksum after the GitHub tag/archive is available."

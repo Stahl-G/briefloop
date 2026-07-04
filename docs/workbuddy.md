@@ -34,8 +34,8 @@ multi-agent-brief workbuddy pack-skill --output dist/workbuddy
 This writes a local Skill zip and manifest, for example:
 
 ```text
-dist/workbuddy/briefloop-workbuddy-skill-v0.11.9.zip
-dist/workbuddy/briefloop-workbuddy-skill-v0.11.9.manifest.json
+dist/workbuddy/briefloop-workbuddy-skill-v0.11.12.zip
+dist/workbuddy/briefloop-workbuddy-skill-v0.11.12.manifest.json
 ```
 
 The zip is deterministic and public-safe. It is not Python package data, and it
