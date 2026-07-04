@@ -79,6 +79,8 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["packs_unknown_cli.internal_pack_ids"]["status"] == "pass"
     assert checks["no_force_deliver_cli"]["status"] == "pass"
     assert checks["docs.public_claims.no_forbidden_positive_claims"]["status"] == "pass"
+    assert checks["first_user_docs.docs/15-minute-pilot.md"]["status"] == "pass"
+    assert checks["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/getting-started.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.README.md.unix_venv_activation"]["status"] == "pass"
@@ -124,6 +126,7 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
             text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
+        "[15-Minute Pilot](docs/15-minute-pilot.md) · "
         "[Getting Started](docs/getting-started.md) · "
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
@@ -138,6 +141,8 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     module._check_first_user_docs_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
+    assert checks_by_id["first_user_docs.docs/15-minute-pilot.md"]["status"] == "pass"
+    assert checks_by_id["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"] == "pass"
     assert checks_by_id["first_user_docs.docs/getting-started.md"]["status"] == "pass"
     assert checks_by_id["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks_by_id["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
@@ -156,6 +161,7 @@ def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_pat
             text += "\nbash scripts/setup.sh\nmulti-agent-brief version\nsource .venv/bin/activate\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
+        "[15-Minute Pilot](docs/15-minute-pilot.md) · "
         "[Getting Started](docs/getting-started.md) · "
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
@@ -184,6 +190,7 @@ def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_p
             text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
+        "[15-Minute Pilot](docs/15-minute-pilot.md) · "
         "[Getting Started](docs/getting-started.md) · "
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
@@ -213,6 +220,7 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
             text += "\n```bash\npipx install briefloop\n```\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
+        "[15-Minute Pilot](docs/15-minute-pilot.md) · "
         "[Getting Started](docs/getting-started.md) · "
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
