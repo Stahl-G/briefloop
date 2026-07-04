@@ -152,6 +152,30 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "does not prove semantic truth",
         "does not approve delivery",
     ],
+    "docs/workbuddy.md": [
+        "WorkBuddy Skill source bundle",
+        "Experimental",
+        "source-clone-only",
+        "not WorkBuddy Marketplace publication",
+        "WorkBuddy Assistant trigger",
+        "not a WorkBuddy delegated runtime",
+        "Use `--runtime operator`",
+        "does not prove semantic truth",
+        "approve delivery",
+        "authorize release",
+    ],
+    "docs/workbuddy.zh-CN.md": [
+        "WorkBuddy Skill source bundle",
+        "Experimental",
+        "source-clone-only",
+        "不是 WorkBuddy Marketplace 发布",
+        "WorkBuddy Assistant trigger",
+        "不是 WorkBuddy delegated runtime",
+        "使用 `--runtime operator`",
+        "不证明语义真实性",
+        "不批准交付",
+        "不授权 release",
+    ],
 }
 REQUIRED_FIRST_USER_DOC_PHRASES = {
     "docs/15-minute-pilot.md": [

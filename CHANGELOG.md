@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added WorkBuddy install documentation, Chinese WorkBuddy documentation, and a
+  trigger-only WorkBuddy Assistant prompt template. These docs keep the
+  WorkBuddy Skill as the local capability surface, describe Assistant as a
+  remote trigger into a local Skill-enabled WorkBuddy session, and do not add
+  WorkBuddy delegated runtime support, gate authority, delivery approval,
+  release approval, or semantic proof claims.
 - Added a source-clone WorkBuddy Skill bundle under
   `integrations/workbuddy/briefloop/`, with WorkBuddy-facing quickstart,
   workspace workflow, artifact-boundary, status/gate, repair, and safety
