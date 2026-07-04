@@ -37,6 +37,10 @@ def _all_skill_text() -> str:
     return "\n".join(_read(path) for path in sorted(WORKBUDDY_SKILL.rglob("*.md")))
 
 
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", " ", text)
+
+
 def test_workbuddy_skill_bundle_has_required_files() -> None:
     assert (WORKBUDDY_SKILL / "SKILL.md").exists()
     for name in REFERENCE_NAMES:
@@ -103,7 +107,7 @@ def test_workbuddy_skill_preserves_control_boundaries() -> None:
     for phrase in [
         "Do not directly edit",
         "must not hand-edit control files",
-        "re-open the relevant step in\n`output/intermediate/agent_handoff.md`",
+        "Before each stage or role-owned artifact action",
         "re-read the relevant handoff step before continuing",
         "Do not claim Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or\nFormatter subagents ran",
         "follow the English operator handoff literally",
@@ -111,6 +115,48 @@ def test_workbuddy_skill_preserves_control_boundaries() -> None:
         "not gates, release approval, or\ndelivery approval",
     ]:
         assert phrase in text
+
+
+def test_workbuddy_skill_hardens_first_use_routing_and_progress_feedback() -> None:
+    text = _all_skill_text()
+    compact = _compact(text)
+    for phrase in [
+        'If no workspace path is provided, do not ask only "where is the workspace?"',
+        "existing workspace: ask for the folder path",
+        "first-time run: offer to create one",
+    ]:
+        assert phrase in text
+    for phrase in [
+        "a BriefLoop workspace is the local folder for this report project",
+        "ask for explicit confirmation of the target path",
+        "Suggest a safe local folder, for example `~/BriefLoop/<topic-slug>`",
+        "Suggest only; do not create the folder or workspace silently",
+        "周报, 行业, or 竞品 -> `industry-weekly`",
+        "管理月报, or 月报 -> `management-monthly`",
+        "文件, PDF, or 审阅 -> `document-review`",
+    ]:
+        assert phrase in compact
+
+
+def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progress() -> None:
+    text = _all_skill_text()
+    compact = _compact(text)
+    for phrase in [
+        "Before each stage or role-owned artifact action",
+        "`agent_handoff.md` / `agent_handoff.json` step",
+        "After each deterministic CLI transaction, summarize progress to the user",
+        "已创建工作区。",
+        "已生成 operator handoff。",
+        "当前状态：等待 source/scout artifact。",
+        "Quality Panel 已生成。",
+    ]:
+        assert phrase in text
+    for phrase in [
+        "visible in `status`, `workflow_state.json`, `event_log.jsonl`, or generated artifacts",
+        "Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching",
+        "Preserve command names, artifact names, and handoff obligations exactly",
+    ]:
+        assert phrase in compact
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
@@ -124,6 +170,9 @@ def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
         "automatic truth checker",
         "ready to send automatically",
         "manual runtime",
+        "automatically create",
+        "automatic workspace creation",
+        "run the full workflow silently",
     ]
     lowered = text.lower()
     for phrase in forbidden:
