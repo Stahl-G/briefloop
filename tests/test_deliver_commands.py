@@ -148,26 +148,28 @@ def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Pa
     assert _delivery_events(ws) == []
 
 
-def test_deliver_local_allows_contaminated_run_but_reports_integrity(tmp_path: Path, capsys) -> None:
+def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     _mark_run_contaminated(ws)
 
     rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
-    assert rc == 0
+    assert rc == 1
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is True
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
     assert payload["run_integrity"]["status"] == "contaminated"
     assert payload["run_integrity"]["reference_eligible"] is False
+    assert "run integrity is not clean" in payload["message"]
+    assert _delivery_events(ws) == []
 
     rc = main(["deliver", "--workspace", str(ws), "--target", "local"])
 
-    assert rc == 0
+    assert rc == 1
     captured = capsys.readouterr()
-    assert "Delivery bundle ready" in captured.out
-    assert "Run integrity: contaminated" in captured.err
-    assert "Reference eligible: no" in captured.err
+    assert "Delivery bundle ready" not in captured.out
+    assert "run integrity is not clean" in captured.err
 
 
 def test_deliver_json_returns_typed_error_for_corrupt_workflow_state(tmp_path: Path, capsys) -> None:
@@ -184,7 +186,7 @@ def test_deliver_json_returns_typed_error_for_corrupt_workflow_state(tmp_path: P
     assert "workflow_state.json is unreadable" in payload["message"]
 
 
-def test_deliver_json_reports_malformed_run_integrity_as_unknown(tmp_path: Path, capsys) -> None:
+def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     paths = runtime_state_paths(ws)
@@ -194,11 +196,13 @@ def test_deliver_json_reports_malformed_run_integrity_as_unknown(tmp_path: Path,
 
     rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
-    assert rc == 0
+    assert rc == 1
     payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
     assert payload["run_integrity"]["status"] == "unknown"
     assert payload["run_integrity"]["reference_eligible"] is False
     assert payload["run_integrity"]["reasons"][0]["reason_code"] == "run_integrity_malformed"
+    assert _delivery_events(ws) == []
 
 
 def test_deliver_missing_bundle_returns_typed_error(tmp_path: Path, capsys) -> None:
