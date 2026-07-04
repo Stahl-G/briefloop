@@ -41,6 +41,10 @@ QUALITY_PANEL_HTML_BOUNDARY = (
     "not a truth proof, not a gate report replacement, not a release authorization, "
     "and not an interactive frontend"
 )
+QUALITY_PANEL_HTML_BOUNDARY_ZH = (
+    "仅为 quality_panel.json 的静态确定性投影；不是质量评分，不是真实性证明，"
+    "不能替代门禁报告，不构成发布授权，也不是交互式前端"
+)
 
 _INTERMEDIATE = Path("output") / "intermediate"
 _BLOCKING_SUPPORT_LABELS = {"unsupported", "contradicted", "insufficient_evidence"}
@@ -137,6 +141,115 @@ _QUALITY_PANEL_HTML_LABELS = {
         "No recommended action reported by quality_panel.json.",
         "quality_panel.json 未报告建议动作。",
     ),
+    "color_legend": ("Color legend", "颜色图例"),
+    "legend_pass": ("pass / clean", "通过 / 正常"),
+    "legend_warning": ("warning", "警告"),
+    "legend_block": ("blocking", "阻断"),
+    "legend_missing": ("missing / incomplete", "缺失 / 未完成"),
+    "legend_info": ("neutral / informational", "中性 / 信息"),
+}
+
+# Status-value semantics: machine value -> color level. Values not listed
+# render as level "missing" when falsy-ish and "info" otherwise via
+# _status_level. Levels: pass, warning, block, missing, info.
+_QUALITY_PANEL_STATUS_LEVELS = {
+    "pass": "pass",
+    "clean": "pass",
+    "checked": "pass",
+    "generated": "pass",
+    "complete": "pass",
+    "ok": "pass",
+    "true": "pass",
+    "warning": "warning",
+    "degraded": "warning",
+    "stale": "warning",
+    "false": "warning",
+    "expected": "warning",
+    "block": "block",
+    "blocked": "block",
+    "fail": "block",
+    "failed": "block",
+    "error": "block",
+    "invalid": "block",
+    "contaminated": "block",
+    "missing": "missing",
+    "incomplete": "missing",
+    "unknown": "missing",
+    "none": "missing",
+    "projection_only": "info",
+    "excluded": "info",
+    "included_when_present_and_valid": "info",
+    "not_applicable": "info",
+    "skipped": "info",
+}
+
+# Machine status value -> zh display text. The en side always shows the raw
+# machine value so the audit attachment stays greppable against control files.
+_QUALITY_PANEL_HTML_VALUES_ZH = {
+    "pass": "通过",
+    "clean": "无污染",
+    "checked": "已检查",
+    "generated": "已生成",
+    "complete": "已完成",
+    "ok": "正常",
+    "true": "是",
+    "warning": "警告",
+    "degraded": "已降级",
+    "stale": "已过期",
+    "false": "否",
+    "expected": "待生成",
+    "block": "阻断",
+    "blocked": "已阻断",
+    "fail": "失败",
+    "failed": "失败",
+    "error": "错误",
+    "invalid": "无效",
+    "contaminated": "已污染",
+    "missing": "缺失",
+    "incomplete": "未完成",
+    "unknown": "未知",
+    "none": "无",
+    "projection_only": "仅投影，不改运行状态",
+    "excluded": "已排除",
+    "included_when_present_and_valid": "存在且有效时包含",
+    "not_applicable": "不适用",
+    "skipped": "已跳过",
+}
+
+# Recommended-action machine names -> zh display text (en shows the raw name).
+_QUALITY_PANEL_HTML_ACTIONS_ZH = {
+    "inspect_workflow_blocker": "检查工作流阻断项",
+    "materialize_durable_source_evidence": "落地持久来源证据",
+    "repair_source_evidence_pack_manifest": "修复来源证据包清单",
+    "resolve_quality_gate_blockers": "解决质量门禁阻断项",
+    "regenerate_scoped_gate_reports": "重新生成阶段门禁报告",
+    "complete_finalize_delivery_hygiene": "完成定稿交付卫生检查",
+    "review_claim_support_records": "复核声明支持记录",
+    "repair_reader_final_residue": "修复读者终稿残留",
+    "inspect_run_integrity": "检查运行完整性",
+    "request_human_review": "请求人工审阅",
+    "block_run": "阻断本次运行",
+    "review_materiality_exclusions": "复核重要性排除项",
+    "review_reader_template_conformance": "复核读者模板一致性",
+    "review_support_wording_warnings": "复核支持措辞警告",
+}
+
+# Recommended-action reason codes -> zh display text (en shows the raw code).
+_QUALITY_PANEL_HTML_REASONS_ZH = {
+    "blocking_gate_findings": "存在门禁阻断发现",
+    "finalize_or_reader_clean_missing": "定稿或读者清洁检查缺失",
+    "materiality_or_focus_candidate_deprioritized": "重要性/焦点候选被降级",
+    "materiality_or_focus_candidate_excluded_by_capacity_or_scope": "重要性/焦点候选因容量或范围被排除",
+    "quality_gate_status_failed": "质量门禁状态为失败",
+    "reader_clean_failed": "读者清洁检查失败",
+    "reader_template_conformance_warning_only": "读者模板一致性仅为警告",
+    "run_integrity_not_clean": "运行完整性不干净",
+    "scoped_quality_gate_reports_missing": "阶段门禁报告缺失",
+    "source_evidence_pack_invalid": "来源证据包无效",
+    "source_evidence_pack_missing": "来源证据包缺失",
+    "support_calibrated_wording_warning_only": "支持措辞校准仅为警告",
+    "unsupported_claim_present_in_reader_text": "读者文本存在未支持声明",
+    "unsupported_claim_support_rows": "存在未支持的声明支持行",
 }
 
 
@@ -512,78 +625,108 @@ def render_quality_panel_html(
                 "control-integrity",
                 "control_integrity",
                 [
-                    ("run_integrity", _text(control.get("run_integrity")) or "unknown"),
-                    ("reference_eligible", str(bool(control.get("reference_eligible"))).lower()),
-                    ("fact_layer", _text(control.get("fact_layer_status")) or "unknown"),
-                    ("runtime_effect", _text(panel_payload.get("runtime_effect")) or "unknown"),
+                    ("run_integrity", _text(control.get("run_integrity")) or "unknown", "status"),
+                    (
+                        "reference_eligible",
+                        str(bool(control.get("reference_eligible"))).lower(),
+                        "status",
+                    ),
+                    ("fact_layer", _text(control.get("fact_layer_status")) or "unknown", "status"),
+                    (
+                        "runtime_effect",
+                        _text(panel_payload.get("runtime_effect")) or "unknown",
+                        "status",
+                    ),
                 ],
             ),
             _html_section(
                 "source-evidence",
                 "source_evidence",
                 [
-                    ("source_pack", _text(source.get("source_pack_status")) or "unknown"),
-                    ("durable_sources", str(_intish(source.get("source_count")))),
-                    ("missing_titles", str(_intish(source.get("missing_title_count")))),
+                    ("source_pack", _text(source.get("source_pack_status")) or "unknown", "status"),
+                    ("durable_sources", _intish(source.get("source_count")), "count_neutral"),
+                    ("missing_titles", _intish(source.get("missing_title_count")), "count_warning"),
                     (
                         "missing_publishers",
-                        str(_intish(source.get("missing_publisher_count"))),
+                        _intish(source.get("missing_publisher_count")),
+                        "count_warning",
                     ),
-                    ("retrieval_source_mix", _inline_mapping(source.get("retrieval_source_mix"))),
-                    ("underlying_evidence_mix", _inline_mapping(source.get("underlying_evidence_mix"))),
+                    (
+                        "retrieval_source_mix",
+                        _inline_mapping(source.get("retrieval_source_mix")),
+                        "text",
+                    ),
+                    (
+                        "underlying_evidence_mix",
+                        _inline_mapping(source.get("underlying_evidence_mix")),
+                        "text",
+                    ),
                 ],
             ),
             _html_section(
                 "gate-findings",
                 "gate_findings",
                 [
-                    ("auditor_gate", _text(gates.get("auditor_status")) or "unknown"),
-                    ("finalize_gate", _text(gates.get("finalize_status")) or "unknown"),
+                    ("auditor_gate", _text(gates.get("auditor_status")) or "unknown", "status"),
+                    ("finalize_gate", _text(gates.get("finalize_status")) or "unknown", "status"),
                     (
                         "legacy_latest_gate",
                         _text(gates.get("legacy_quality_gate_status")) or "missing",
+                        "status",
                     ),
-                    ("blocking_findings", str(_intish(gates.get("blocking_count")))),
-                    ("warning_findings", str(_intish(gates.get("warning_count")))),
+                    ("blocking_findings", _intish(gates.get("blocking_count")), "count_block"),
+                    ("warning_findings", _intish(gates.get("warning_count")), "count_warning"),
                 ],
             ),
             _html_section(
                 "claim-support-risk",
                 "claim_support_risk",
                 [
-                    ("claim_count", str(_intish(claims.get("claim_count")))),
+                    ("claim_count", _intish(claims.get("claim_count")), "count_neutral"),
                     (
                         "claim_support_matrix",
                         _text(claims.get("claim_support_matrix_status")) or "unknown",
+                        "status",
                     ),
                     (
                         "unsupported_rows",
-                        str(_intish(claims.get("unsupported_count"))),
+                        _intish(claims.get("unsupported_count")),
+                        "count_block",
                     ),
-                    ("weak_support_atoms", str(_intish(claims.get("weak_support_count")))),
+                    (
+                        "weak_support_atoms",
+                        _intish(claims.get("weak_support_count")),
+                        "count_warning",
+                    ),
                     (
                         "materiality_selection",
                         _text(materiality.get("status")) or "unknown",
+                        "status",
                     ),
                     (
                         "materiality_exclusions",
-                        str(_materiality_selection_warning_count(materiality)),
+                        _materiality_selection_warning_count(materiality),
+                        "count_warning",
                     ),
                     (
                         "reader_template_conformance",
                         _text(template_conformance.get("status")) or "unknown",
+                        "status",
                     ),
                     (
                         "reader_template_warnings",
-                        str(_template_conformance_warning_count(template_conformance)),
+                        _template_conformance_warning_count(template_conformance),
+                        "count_warning",
                     ),
                     (
                         "support_wording",
                         _text(support_wording.get("status")) or "unknown",
+                        "status",
                     ),
                     (
                         "support_wording_warnings",
-                        str(_support_wording_warning_count(support_wording)),
+                        _support_wording_warning_count(support_wording),
+                        "count_warning",
                     ),
                 ],
             ),
@@ -591,14 +734,20 @@ def render_quality_panel_html(
                 "reader-clean-citation-hygiene",
                 "reader_clean_citation",
                 [
-                    ("reader_clean_status", _text(delivery.get("reader_clean_status")) or "unknown"),
+                    (
+                        "reader_clean_status",
+                        _text(delivery.get("reader_clean_status")) or "unknown",
+                        "status",
+                    ),
                     (
                         "duplicate_citation_count",
-                        str(_intish(delivery.get("duplicate_citation_count"))),
+                        _intish(delivery.get("duplicate_citation_count")),
+                        "count_warning",
                     ),
                     (
                         "source_appendix_warnings",
-                        str(_intish(delivery.get("source_appendix_warning_count"))),
+                        _intish(delivery.get("source_appendix_warning_count")),
+                        "count_warning",
                     ),
                 ],
             ),
@@ -606,10 +755,10 @@ def render_quality_panel_html(
                 "quality-closeout-bundle-separation",
                 "quality_closeout_bundle",
                 [
-                    ("closeout_status", _text(closeout.get("status")) or "unknown"),
-                    ("closeout_command", _text(closeout.get("command")) or "unknown"),
-                    ("audit_bundle", _text(closeout.get("audit_bundle")) or "unknown"),
-                    ("delivery_bundle", _text(closeout.get("delivery_bundle")) or "unknown"),
+                    ("closeout_status", _text(closeout.get("status")) or "unknown", "status"),
+                    ("closeout_command", _text(closeout.get("command")) or "unknown", "code"),
+                    ("audit_bundle", _text(closeout.get("audit_bundle")) or "unknown", "status"),
+                    ("delivery_bundle", _text(closeout.get("delivery_bundle")) or "unknown", "status"),
                 ],
             ),
             _html_actions(actions),
@@ -1372,7 +1521,7 @@ def _quality_panel_incomplete_count(
 
 
 def _html_header_card(panel_payload: Mapping[str, Any], *, overall_status: str) -> str:
-    status_class = _html_status_class(overall_status)
+    level = _status_level(overall_status)
     run_id = _text(panel_payload.get("run_id")) or "unknown"
     generated_at = _text(panel_payload.get("generated_at")) or "unknown"
     return (
@@ -1381,40 +1530,56 @@ def _html_header_card(panel_payload: Mapping[str, Any], *, overall_status: str) 
         f"    <p class=\"eyebrow\">{_html_label('audit_attachment')}</p>\n"
         f"    <h1>{_html_label('quality_panel')}</h1>\n"
         "    <p class=\"boundary\">"
-        f"{_html(QUALITY_PANEL_HTML_BOUNDARY)}"
+        f"<span class=\"lang-en\" lang=\"en\">{_html(QUALITY_PANEL_HTML_BOUNDARY)}</span>"
+        f"<span class=\"lang-zh\" lang=\"zh-CN\">{_html(QUALITY_PANEL_HTML_BOUNDARY_ZH)}</span>"
         "</p>\n"
         "  </div>\n"
-        f"  <div class=\"status-pill {status_class}\"><span>{_html_label('overall_status')}</span>"
-        f"<strong>{_html(overall_status)}</strong></div>\n"
+        f"  <div class=\"status-pill level-{level}\"><span>{_html_label('overall_status')}</span>"
+        f"<strong>{_html_bilingual_value(overall_status)}</strong></div>\n"
         f"  <dl class=\"hero-meta\"><dt>{_html_label('run_id')}</dt><dd>{_html(run_id)}</dd>"
         f"<dt>{_html_label('generated')}</dt><dd>{_html(generated_at)}</dd></dl>\n"
         "</header>"
     )
 
 
+_METRIC_KIND_LEVELS = {
+    "block": "block",
+    "warning": "warning",
+    "incomplete": "missing",
+    "action": "info",
+}
+
+
 def _html_metrics_grid(metrics: list[tuple[str, int, str]]) -> str:
     cards = []
     for label_key, value, kind in metrics:
+        level = _METRIC_KIND_LEVELS.get(kind, "info") if value > 0 else "zero"
         cards.append(
             "  <div class=\"metric-card\">"
             f"<span>{_html_label(label_key)}</span>"
-            f"<strong class=\"metric-{_html_status_class(kind)}\">{value}</strong>"
+            f"<strong class=\"metric level-{level}\">{value}</strong>"
             "</div>"
         )
+    legend = "".join(
+        f"<span class=\"badge badge-{level}\">{_html_label(f'legend_{level}')}</span>"
+        for level in ("pass", "warning", "block", "missing", "info")
+    )
     return (
         "<section class=\"metric-grid\" data-section=\"metrics\" aria-label=\"Quality metrics\">\n"
         + "\n".join(cards)
-        + "\n</section>"
+        + "\n</section>\n"
+        "<p class=\"color-legend\" data-section=\"color-legend\">"
+        f"<span class=\"legend-title\">{_html_label('color_legend')}</span>{legend}</p>"
     )
 
 
-def _html_section(section_id: str, title_key: str, rows: list[tuple[str, str]]) -> str:
+def _html_section(section_id: str, title_key: str, rows: list[tuple[str, Any, str]]) -> str:
     items = []
-    for label_key, value in rows:
+    for label_key, value, kind in rows:
         items.append(
             "      <tr>"
             f"<th scope=\"row\">{_html_label(label_key)}</th>"
-            f"<td>{_html_inline_value(value)}</td>"
+            f"<td>{_html_typed_value(value, kind)}</td>"
             "</tr>"
         )
     return (
@@ -1437,10 +1602,18 @@ def _html_actions(actions: list[Any]) -> str:
             continue
         action_name = _text(action.get("action")) or "unknown_action"
         reason = _text(action.get("reason")) or "unspecified"
+        action_zh = _QUALITY_PANEL_HTML_ACTIONS_ZH.get(action_name, action_name)
+        reason_zh = _QUALITY_PANEL_HTML_REASONS_ZH.get(reason, reason)
         items.append(
             "<li>"
-            f"<strong>{_html(action_name)}</strong>"
-            f"<span>{_html(reason)}</span>"
+            "<strong>"
+            f"<span class=\"lang-en\" lang=\"en\">{_html(action_name)}</span>"
+            f"<span class=\"lang-zh\" lang=\"zh-CN\">{_html(action_zh)}</span>"
+            "</strong>"
+            "<span>"
+            f"<span class=\"lang-en\" lang=\"en\">{_html(reason)}</span>"
+            f"<span class=\"lang-zh\" lang=\"zh-CN\">{_html(reason_zh)}</span>"
+            "</span>"
             "</li>"
         )
     if not items:
@@ -1454,6 +1627,51 @@ def _html_actions(actions: list[Any]) -> str:
         "  </ul>\n"
         "</section>"
     )
+
+
+_COUNT_KIND_LEVELS = {
+    "count_block": "block",
+    "count_warning": "warning",
+    "count_neutral": None,
+}
+
+
+def _html_typed_value(value: Any, kind: str) -> str:
+    if kind == "status":
+        return _html_status_badge(value)
+    if kind in _COUNT_KIND_LEVELS:
+        count = _intish(value)
+        level = _COUNT_KIND_LEVELS[kind]
+        if level is None or count == 0:
+            return f"<span class=\"count-zero\">{count}</span>" if count == 0 else str(count)
+        return f"<span class=\"badge badge-{level}\">{count}</span>"
+    if kind == "code":
+        return f"<code>{_html(_text(value))}</code>"
+    return _html_inline_value(_text(value))
+
+
+def _html_status_badge(value: Any) -> str:
+    raw = _text(value) or "unknown"
+    level = _status_level(raw)
+    return (
+        f"<span class=\"badge badge-{level}\" title=\"{_html(raw)}\">"
+        f"{_html_bilingual_value(raw)}"
+        "</span>"
+    )
+
+
+def _html_bilingual_value(value: Any) -> str:
+    raw = _text(value) or "unknown"
+    zh = _QUALITY_PANEL_HTML_VALUES_ZH.get(raw, raw)
+    return (
+        f"<span class=\"lang-en\" lang=\"en\">{_html(raw)}</span>"
+        f"<span class=\"lang-zh\" lang=\"zh-CN\">{_html(zh)}</span>"
+    )
+
+
+def _status_level(value: Any) -> str:
+    raw = _text(value).lower()
+    return _QUALITY_PANEL_STATUS_LEVELS.get(raw, "info")
 
 
 def _html_inline_value(value: str) -> str:
@@ -1475,12 +1693,6 @@ def _html_label(key: str) -> str:
     )
 
 
-def _html_status_class(value: Any) -> str:
-    raw = _text(value).lower().replace("_", "-")
-    safe = "".join(ch for ch in raw if ch.isalnum() or ch == "-").strip("-")
-    return safe or "unknown"
-
-
 def _quality_panel_css() -> str:
     return """    :root {
       color-scheme: light;
@@ -1489,10 +1701,21 @@ def _quality_panel_css() -> str:
       --line: #d0d5dd;
       --panel: #ffffff;
       --bg: #f6f7f9;
-      --pass: #067647;
-      --warning: #b54708;
-      --block: #b42318;
-      --incomplete: #475467;
+      --pass-fg: #067647;
+      --pass-bg: #ecfdf3;
+      --pass-line: #abefc6;
+      --warning-fg: #b54708;
+      --warning-bg: #fffaeb;
+      --warning-line: #fedf89;
+      --block-fg: #b42318;
+      --block-bg: #fef3f2;
+      --block-line: #fecdca;
+      --missing-fg: #475467;
+      --missing-bg: #f2f4f7;
+      --missing-line: #d0d5dd;
+      --info-fg: #175cd3;
+      --info-bg: #eff8ff;
+      --info-line: #b2ddff;
     }
     * { box-sizing: border-box; }
     body {
@@ -1500,7 +1723,8 @@ def _quality_panel_css() -> str:
       padding: 32px;
       background: var(--bg);
       color: var(--ink);
-      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
     }
     .language-radio {
       position: fixed;
@@ -1566,19 +1790,58 @@ def _quality_panel_css() -> str:
     .status-pill {
       align-self: start;
       min-width: 112px;
-      padding: 8px 12px;
+      padding: 8px 14px;
       border-radius: 999px;
       text-align: center;
       font-weight: 700;
       color: #fff;
-      background: var(--incomplete);
+      background: var(--missing-fg);
     }
     .status-pill span { display: block; font-size: 11px; opacity: .85; }
     .status-pill strong { display: block; margin-top: 2px; }
-    .status-pill.pass, .metric-pass { background: var(--pass); color: #fff; }
-    .status-pill.warning, .metric-warning { background: var(--warning); color: #fff; }
-    .status-pill.block, .metric-block { background: var(--block); color: #fff; }
-    .status-pill.incomplete, .metric-incomplete { background: var(--incomplete); color: #fff; }
+    .status-pill.level-pass { background: var(--pass-fg); }
+    .status-pill.level-warning { background: var(--warning-fg); }
+    .status-pill.level-block { background: var(--block-fg); }
+    .status-pill.level-missing { background: var(--missing-fg); }
+    .status-pill.level-info { background: var(--info-fg); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--missing-line);
+      background: var(--missing-bg);
+      color: var(--missing-fg);
+      font-weight: 600;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .badge::before {
+      content: "";
+      flex: none;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .badge-pass { background: var(--pass-bg); color: var(--pass-fg); border-color: var(--pass-line); }
+    .badge-warning { background: var(--warning-bg); color: var(--warning-fg); border-color: var(--warning-line); }
+    .badge-block { background: var(--block-bg); color: var(--block-fg); border-color: var(--block-line); }
+    .badge-missing { background: var(--missing-bg); color: var(--missing-fg); border-color: var(--missing-line); }
+    .badge-info { background: var(--info-bg); color: var(--info-fg); border-color: var(--info-line); }
+    .count-zero { color: var(--muted); }
+    .color-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .color-legend .legend-title { font-weight: 700; margin-right: 4px; }
+    .color-legend .badge { font-size: 12px; }
     .hero-meta {
       grid-column: 1 / -1;
       display: grid;
@@ -1609,7 +1872,14 @@ def _quality_panel_css() -> str:
       font-size: 22px;
       color: var(--ink);
       background: #eef2f6;
+      border: 1px solid transparent;
     }
+    .metric.level-pass { background: var(--pass-bg); color: var(--pass-fg); border-color: var(--pass-line); }
+    .metric.level-warning { background: var(--warning-bg); color: var(--warning-fg); border-color: var(--warning-line); }
+    .metric.level-block { background: var(--block-bg); color: var(--block-fg); border-color: var(--block-line); }
+    .metric.level-missing { background: var(--missing-bg); color: var(--missing-fg); border-color: var(--missing-line); }
+    .metric.level-info { background: var(--info-bg); color: var(--info-fg); border-color: var(--info-line); }
+    .metric.level-zero { background: #eef2f6; color: var(--muted); }
     .panel-section { padding: 20px; margin-bottom: 16px; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 10px 0; border-top: 1px solid #eaecf0; text-align: left; vertical-align: top; }
