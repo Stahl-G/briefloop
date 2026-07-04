@@ -157,7 +157,15 @@ def _portable_path(path: Path | str) -> str:
     return str(path).replace("\\", "/")
 
 
-def _allowed_fixture(path: Path, line: str, kind: str, needle: str = "") -> bool:
+def _allowed_fixture(
+    path: Path,
+    line: str,
+    kind: str,
+    needle: str = "",
+    *,
+    start: int | None = None,
+    end: int | None = None,
+) -> bool:
     rel = _portable_path(_relative(path))
     if rel == "scripts/check_public_safety.py":
         return True
@@ -193,7 +201,7 @@ def _allowed_fixture(path: Path, line: str, kind: str, needle: str = "") -> bool
         return True
     if kind == "lark_token" and re.fullmatch(r"(?:oc|ou|on|om)_x+", needle):
         return True
-    if kind == "lark_token" and _is_sha256_value(needle, line):
+    if kind == "lark_token" and _is_sha256_value(needle, line, start=start, end=end):
         return True
     return False
 
@@ -212,10 +220,12 @@ def _sample(line: str, needle: str) -> str:
     return text[start:end]
 
 
-def _is_sha256_value(value: str, line: str) -> bool:
+def _is_sha256_value(value: str, line: str, *, start: int | None = None, end: int | None = None) -> bool:
     if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
         return False
-    return any(match.group("hash") == value for match in SHA256_VALUE_RE.finditer(line))
+    if start is None or end is None:
+        return False
+    return any(match.span("hash") == (start, end) for match in SHA256_VALUE_RE.finditer(line))
 
 
 _LARK_TOKEN_CONTEXT_RE = re.compile(
@@ -256,14 +266,15 @@ def scan(paths: list[Path] | None = None, *, banned_terms: list[str] | None = No
             continue
 
         for lineno, line in enumerate(text.splitlines(), start=1):
-            checks: list[tuple[str, str]] = []
+            checks: list[tuple[str, str, int | None, int | None]] = []
             for term in banned:
                 if term in line:
-                    checks.append(("banned_term", term))
+                    start = line.find(term)
+                    checks.append(("banned_term", term, start, start + len(term)))
             for match in LARK_TOKEN_CANDIDATE_RE.finditer(line):
                 token = match.group(0)
                 if _looks_like_lark_token(token, line, match.start()):
-                    checks.append(("lark_token", token))
+                    checks.append(("lark_token", token, match.start(), match.end()))
             for kind, regex in (
                 ("user_path", USER_PATH_RE),
                 ("file_url", FILE_URL_RE),
@@ -272,10 +283,10 @@ def scan(paths: list[Path] | None = None, *, banned_terms: list[str] | None = No
                 ("common_secret", COMMON_SECRET_RE),
             ):
                 for match in regex.finditer(line):
-                    checks.append((kind, match.group(0)))
+                    checks.append((kind, match.group(0), match.start(), match.end()))
 
-            for kind, needle in checks:
-                if _allowed_fixture(path, line, kind, needle):
+            for kind, needle, start, end in checks:
+                if _allowed_fixture(path, line, kind, needle, start=start, end=end):
                     continue
                 findings.append(
                     Finding(

@@ -234,6 +234,22 @@ def test_public_safety_scan_suffix_sha256_does_not_hide_nearby_token(tmp_path):
     )
 
 
+def test_public_safety_scan_sha256_allowance_is_span_specific(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "mixed.yaml"
+    token_like_hash = "f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540"  # PUBLIC_SAFETY_TEST_FIXTURE
+    sample.write_text(
+        f"sha256: {token_like_hash} leaked file token {token_like_hash}\n",  # PUBLIC_SAFETY_TEST_FIXTURE
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert len(findings) == 1
+    assert findings[0].kind == "lark_token"
+    assert findings[0].sample == f"sha256: {token_like_hash} leaked file token {token_like_hash}"
+
+
 def test_public_safety_scan_catches_lark_tokens_near_sha256_text(tmp_path):
     module = _load_module()
     sample = tmp_path / "candidate_release_pack.md"
