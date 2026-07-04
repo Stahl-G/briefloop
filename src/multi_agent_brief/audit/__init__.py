@@ -6,6 +6,7 @@ from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.audit.interfaces import AuditAgentInterface, CompositeAuditAgent
 from multi_agent_brief.audit.semantic import (
     SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY,
+    SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL,
     SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE,
     SEMANTIC_SUPPORT_PROPOSAL_LABELS,
     NoOpSemanticAuditAgent,
@@ -16,6 +17,7 @@ from multi_agent_brief.audit.semantic import (
 
 __all__ = [
     "SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY",
+    "SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL",
     "SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE",
     "SEMANTIC_SUPPORT_PROPOSAL_LABELS",
     "AuditAgentInterface",

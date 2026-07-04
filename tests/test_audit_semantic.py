@@ -16,6 +16,7 @@ import inspect
 
 from multi_agent_brief.audit.semantic import (
     SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY,
+    SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL,
     SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE,
     SEMANTIC_SUPPORT_PROPOSAL_LABELS,
     NoOpSemanticAuditAgent,
@@ -71,11 +72,14 @@ class TestSemanticAuditPromptContract:
         for term in ("uncertainty", "limitation", "scope", "date", "source strength"):
             assert term in prompt, f"prompt must ask to preserve {term!r}"
 
-    def test_prompt_binds_findings_to_claim_atom_or_span(self):
+    def test_prompt_binds_findings_to_existing_artifacts_without_inventing_ids(self):
         prompt = _prompt().lower()
         assert "claim" in prompt and "atom" in prompt and "span" in prompt
-        # Explicit unmatched-text fallback when no artifact id matches.
-        assert "unmatched" in prompt
+        assert "do not invent ids" in prompt
+        # The SAR schema cannot yet hold an unbound row, so the prompt must not
+        # promise an unmatched-text fallback. Unbound material is out of scope.
+        assert "unmatched draft text" not in prompt
+        assert "out of scope" in prompt
 
     def test_prompt_declares_response_shape_contract(self):
         prompt = _prompt()
@@ -179,6 +183,27 @@ class TestSemanticSupportProposalFindingAdapter:
     def test_rows_adapter_skips_non_mapping_rows(self):
         findings = findings_from_semantic_proposal_rows([_projected_row(), "junk", None])
         assert len(findings) == 1
+
+    def test_out_of_vocabulary_calibration_label_is_normalized_and_adjudicated(self):
+        finding = semantic_support_proposal_finding(
+            _projected_row(
+                requires_human_adjudication=False,
+                metadata={SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY: "random_label"},
+            )
+        )
+        blob = f"{finding.description}\n{finding.evidence}"
+        # The unknown label is replaced by the sentinel, never trusted verbatim.
+        assert SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL in blob
+        assert "random_label" not in blob
+        # An untrustworthy label forces human adjudication even if the row didn't ask.
+        assert "adjudication" in finding.recommendation.lower()
+
+    def test_known_calibration_label_is_preserved(self):
+        finding = semantic_support_proposal_finding(
+            _projected_row(metadata={SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY: "overstated_claim"})
+        )
+        assert "overstated_claim" in finding.description
+        assert SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL not in finding.description
 
 
 class TestPromptBuilderProviderLess:

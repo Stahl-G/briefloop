@@ -15,12 +15,18 @@ from multi_agent_brief.core.schemas import AuditFinding, AuditReport, PipelineCo
 # overreach its frozen evidence. They are proposal labels only: not gate IDs,
 # not release decisions. Runtime auditors record the chosen label in each
 # semantic_assessment_report row's metadata; Python never maps them to gates.
+#
+# Every label here describes a calibration issue on a claim that binds to an
+# existing frozen claim/atom/evidence span. Labels for material with no
+# corresponding frozen claim (e.g. an uncited new material claim) are
+# intentionally excluded until the SAR schema gains an unmatched-text binding:
+# such material is caught by the deterministic auditor's citation and
+# missing-source checks, not by this proposal artifact.
 SEMANTIC_SUPPORT_PROPOSAL_LABELS: tuple[str, ...] = (
     "unsupported_claim",
     "overstated_claim",
     "missing_limitation",
     "source_scope_mismatch",
-    "uncited_material_claim",
     "unsupported_number",
     "stale_current_framing",
     "causal_overreach",
@@ -30,6 +36,13 @@ SEMANTIC_SUPPORT_PROPOSAL_LABELS: tuple[str, ...] = (
 
 # Metadata key a runtime auditor uses to record the calibration label on a row.
 SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY = "calibration_label"
+
+# Sentinel the adapter substitutes when a row's calibration_label is present but
+# outside SEMANTIC_SUPPORT_PROPOSAL_LABELS. The SAR contract leaves metadata
+# open, so this deterministic normalization is where an out-of-vocabulary label
+# is caught: the finding keeps the invalid marker and is forced to human
+# adjudication instead of silently trusting an unknown label.
+SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL = "<invalid_calibration_label>"
 
 # AuditFinding.finding_type for advisory semantic-support proposals. A distinct
 # type keeps these findings recognizable as proposal-only: they never gate,
@@ -144,12 +157,15 @@ class SemanticAuditPromptBuilder:
             "Record the support-calibration label in row metadata under "
             f'"{SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY}" using one of: '
             f"{proposal_labels}.\n"
-            "Every row must bind to a related claim_id, atom_id, or evidence "
-            "span. When no artifact id matches, state the unmatched draft text "
-            "location explicitly in the rationale instead of inventing an id.\n"
-            "If you would rely on external knowledge to judge a claim, do not "
-            "emit a supported row; flag it as external_knowledge_used and set "
-            "requires_human_adjudication to true."
+            "Every row must reference an existing claim_id, atom_id, and "
+            "evidence span from the frozen artifacts. Do not invent ids. If "
+            "draft material cannot be bound to a frozen claim, atom, or evidence "
+            "span, do not emit a semantic-support row for it: unbound or uncited "
+            "material is out of scope for this report and is handled by the "
+            "deterministic auditor's citation and missing-source checks.\n"
+            "If you would rely on external knowledge to judge a bound claim, do "
+            "not emit a supported row; flag it as external_knowledge_used and "
+            "set requires_human_adjudication to true."
         )
 
 
@@ -189,7 +205,12 @@ def semantic_support_proposal_finding(proposal_row: Mapping[str, Any]) -> AuditF
     atom_id = _text(proposal_row.get("atom_id"))
     support_label = _text(proposal_row.get("proposed_support_label"))
     calibration_label = _calibration_label(proposal_row)
-    requires_adjudication = proposal_row.get("requires_human_adjudication") is True
+    # An out-of-vocabulary calibration label cannot be trusted, so force human
+    # adjudication in addition to any adjudication the row already requested.
+    requires_adjudication = (
+        proposal_row.get("requires_human_adjudication") is True
+        or calibration_label == SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL
+    )
 
     description = (
         f"Semantic support proposal for {claim_id or '<unmatched-claim>'}"
@@ -234,7 +255,12 @@ def _calibration_label(proposal_row: Mapping[str, Any]) -> str:
     metadata = proposal_row.get("metadata")
     if not isinstance(metadata, Mapping):
         return ""
-    return _text(metadata.get(SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY))
+    raw = _text(metadata.get(SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY))
+    if not raw:
+        return ""
+    if raw not in SEMANTIC_SUPPORT_PROPOSAL_LABELS:
+        return SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL
+    return raw
 
 
 def _proposal_evidence(proposal_row: Mapping[str, Any], *, calibration_label: str) -> str:

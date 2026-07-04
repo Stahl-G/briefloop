@@ -139,15 +139,24 @@ def project_semantic_assessment_proposals(report_payload: Mapping[str, Any]) -> 
     }
 
 
-def semantic_support_findings_from_report(report_payload: Any) -> list[Any]:
-    """Adapt a valid Semantic Assessment Report into advisory audit findings.
+def semantic_support_findings_from_schema_valid_report(report_payload: Any) -> list[Any]:
+    """Adapt a schema-valid Semantic Assessment Report into advisory findings.
 
     Returns ``list[AuditFinding]`` with ``finding_type="semantic_support_proposal"``.
     An invalid or non-mapping report yields no findings, keeping its invalid
-    status visible through the existing registry/status path. This is pure
-    conversion: it never writes ``audit_report.json``, the Claim-Support Matrix,
-    workflow state, gate reports, or delivery files, and the findings carry no
-    gate or release authority.
+    status visible through the existing registry/status path.
+
+    This validates report SHAPE only (``SemanticAssessmentReportContract``). It
+    does NOT validate cross-artifact bindings: a schema-valid report that
+    references a claim_id/atom_id/evidence_span that does not exist in the
+    workspace artifacts still produces findings here. Callers that need binding
+    validation must use ``project_semantic_assessment_report_from_workspace``,
+    which reads the Claim Ledger / Atomic Claim Graph / Evidence Span Registry
+    and rejects unknown references before projecting.
+
+    This is pure conversion: it never writes ``audit_report.json``, the
+    Claim-Support Matrix, workflow state, gate reports, or delivery files, and
+    the findings carry no gate or release authority.
     """
 
     if not isinstance(report_payload, Mapping):

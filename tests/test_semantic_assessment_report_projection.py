@@ -6,7 +6,7 @@ from multi_agent_brief.audit.semantic import SEMANTIC_SUPPORT_PROPOSAL_FINDING_T
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_PROPOSAL_PROJECTION_SCHEMA_VERSION,
     project_semantic_assessment_proposals,
-    semantic_support_findings_from_report,
+    semantic_support_findings_from_schema_valid_report,
 )
 
 
@@ -132,7 +132,7 @@ def test_semantic_assessment_projection_does_not_mutate_report_payload() -> None
 def test_semantic_support_findings_from_valid_report() -> None:
     report = _valid_report()
 
-    findings = semantic_support_findings_from_report(report)
+    findings = semantic_support_findings_from_schema_valid_report(report)
 
     assert {f.finding_id for f in findings} == {"SAR-0001", "SAR-0002"}
     assert all(f.finding_type == SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE for f in findings)
@@ -145,19 +145,34 @@ def test_semantic_support_findings_from_invalid_report_are_empty() -> None:
     report = _valid_report()
     report["rows"][0]["row_id"] = "not-a-sar-id"  # contract violation
 
-    assert semantic_support_findings_from_report(report) == []
+    assert semantic_support_findings_from_schema_valid_report(report) == []
 
 
 def test_semantic_support_findings_from_non_mapping_are_empty() -> None:
-    assert semantic_support_findings_from_report("junk") == []
-    assert semantic_support_findings_from_report(None) == []
+    assert semantic_support_findings_from_schema_valid_report("junk") == []
+    assert semantic_support_findings_from_schema_valid_report(None) == []
+
+
+def test_semantic_support_findings_do_not_validate_artifact_bindings() -> None:
+    # This entrypoint checks report SHAPE only. A schema-valid report that
+    # references a claim/atom/span absent from the workspace still produces
+    # findings here; binding validation is the workspace projection's job.
+    report = _valid_report()
+    report["rows"][0]["claim_id"] = "CL-9999"
+    report["rows"][0]["atom_id"] = "AC-9999-02"  # still schema-valid (AC matches CL digits)
+
+    findings = semantic_support_findings_from_schema_valid_report(report)
+
+    assert any(f.finding_id == "SAR-0002" for f in findings)
+    # These advisory findings never claim accepted support or authority.
+    assert all(f.severity == "low" for f in findings)
 
 
 def test_semantic_support_findings_do_not_mutate_report() -> None:
     report = _valid_report()
     original = deepcopy(report)
 
-    semantic_support_findings_from_report(report)
+    semantic_support_findings_from_schema_valid_report(report)
 
     assert report == original
 
