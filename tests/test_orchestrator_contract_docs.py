@@ -6,6 +6,11 @@ from pathlib import Path
 
 import yaml
 
+from multi_agent_brief.orchestrator.handoff import RUNTIME_AUTO
+from multi_agent_brief.orchestrator.handoff import RUNTIME_MANUAL
+from multi_agent_brief.orchestrator.handoff import RUNTIME_OPERATOR
+from multi_agent_brief.orchestrator.handoff import VALID_RUNTIMES
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -126,6 +131,15 @@ def test_orchestrator_contract_defines_main_agent_and_decisions():
     refs = contract["orchestrator"]["contract_references"]
     for rel_path in refs.values():
         assert (ROOT / rel_path).exists(), f"missing contract reference: {rel_path}"
+
+
+def test_orchestrator_contract_runtime_surfaces_match_handoff_contract():
+    contract = _load_yaml(ORCHESTRATOR_CONTRACT)
+    runtime_surfaces = contract["runtime_surfaces"]
+
+    assert RUNTIME_OPERATOR in runtime_surfaces
+    assert RUNTIME_MANUAL in runtime_surfaces
+    assert set(runtime_surfaces) == set(VALID_RUNTIMES) - {RUNTIME_AUTO}
 
 
 def test_stage_specs_use_shared_decision_vocabulary_and_order():
