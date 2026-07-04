@@ -26,13 +26,15 @@ Before operating a workspace:
 1. Locate the active BriefLoop command:
 
    ```bash
-   BRIEFLOOP_CLI="$(command -v briefloop || command -v multi-agent-brief)"
+   BRIEFLOOP_CLI="$(command -v briefloop)"
    test -n "$BRIEFLOOP_CLI"
    "$BRIEFLOOP_CLI" version
    ```
 
 2. Report the resolved binary path and version to the user.
-3. If no workspace path is provided, do not ask only "where is the workspace?"
+3. If `briefloop` is not available, ask the user to activate the source-clone
+   virtual environment or finish setup before continuing.
+4. If no workspace path is provided, do not ask only "where is the workspace?"
    First classify:
    - existing workspace: ask for the folder path;
    - first-time run: offer to create one.
@@ -55,7 +57,7 @@ Before operating a workspace:
 Run existing workspaces through the operator runtime:
 
 ```bash
-multi-agent-brief run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime operator
 ```
 
 Operator runtime means a host-agnostic compact operator workflow. It does not

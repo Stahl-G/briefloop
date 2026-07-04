@@ -31,5 +31,5 @@ cli_commands:
       - "onboarding.json"
 
 readme_command_snippets:
-  - "multi-agent-brief sources decide"
-  - "multi-agent-brief init --from-onboarding"
+  - "briefloop sources decide"
+  - "briefloop init --from-onboarding"

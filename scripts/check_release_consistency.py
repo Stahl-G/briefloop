@@ -15,6 +15,7 @@ Checks:
   11. Minimal comparative evaluation packet guard passes
   12. Launch/demo smoke guard passes
   13. WorkBuddy Skill pack guard passes
+  14. Public product rename guard passes
 
 Usage:
   python scripts/check_release_consistency.py [--strict] [--no-tag]
@@ -325,6 +326,30 @@ def check_workbuddy_skill_pack() -> bool:
     return True
 
 
+def check_public_product_rename() -> bool:
+    """Run public product rename guard and return True if it passes."""
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "check_public_product_rename.py")],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    if result.returncode != 0:
+        print("  [FAIL] Public product rename guard failed:")
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        if stdout:
+            print("         stdout:")
+            for line in stdout.splitlines():
+                print(f"           {line}")
+        if stderr:
+            print("         stderr:")
+            for line in stderr.splitlines():
+                print(f"           {line}")
+        if not stdout and not stderr:
+            print("         no stdout/stderr captured")
+        return False
+    return True
+
+
 def main(strict: bool = False, check_tag: bool = True) -> int:
     print("Release Consistency Check")
     print("=" * 40)
@@ -415,6 +440,12 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("WorkBuddy Skill pack passes", workbuddy_pack_ok)
     except Exception as exc:
         check("WorkBuddy Skill pack passes", False, str(exc))
+
+    try:
+        public_product_rename_ok = check_public_product_rename()
+        check("Public product rename guard passes", public_product_rename_ok)
+    except Exception as exc:
+        check("Public product rename guard passes", False, str(exc))
 
     print()
     if ERRORS:

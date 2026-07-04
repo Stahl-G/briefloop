@@ -125,7 +125,7 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/getting-started.md":
-            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
+            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nbriefloop version\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
         "[15-Minute Pilot](docs/15-minute-pilot.md) · "
@@ -134,7 +134,7 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
         "[Troubleshooting](docs/troubleshooting.md) · "
         "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
         "[Architecture Status](docs/architecture-status.md)\n"
-        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief onboard\n",
+        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nbriefloop onboard\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(module, "ROOT", tmp_path)
@@ -160,7 +160,7 @@ def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_pat
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/getting-started.md":
-            text += "\nbash scripts/setup.sh\nmulti-agent-brief version\nsource .venv/bin/activate\n"
+            text += "\nbash scripts/setup.sh\nbriefloop version\nsource .venv/bin/activate\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
         "[15-Minute Pilot](docs/15-minute-pilot.md) · "
@@ -168,7 +168,7 @@ def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_pat
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
         "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
-        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief onboard\n",
+        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nbriefloop onboard\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(module, "ROOT", tmp_path)
@@ -189,7 +189,7 @@ def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_p
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/getting-started.md":
-            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
+            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nbriefloop version\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
         "[15-Minute Pilot](docs/15-minute-pilot.md) · "
@@ -197,7 +197,7 @@ def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_p
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
         "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
-        "\nbash scripts/setup.sh\nmulti-agent-brief onboard\nsource .venv/bin/activate\n",
+        "\nbash scripts/setup.sh\nbriefloop onboard\nsource .venv/bin/activate\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(module, "ROOT", tmp_path)
@@ -218,7 +218,7 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/getting-started.md":
-            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief version\n"
+            text += "\nbash scripts/setup.sh\nsource .venv/bin/activate\nbriefloop version\n"
             text += "\n```bash\npipx install briefloop\n```\n"
         path.write_text(text, encoding="utf-8")
     (tmp_path / "README.md").write_text(
@@ -227,7 +227,7 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
         "[Weekly Loop](docs/weekly-loop.md) · "
         "[Troubleshooting](docs/troubleshooting.md) · "
         "[Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
-        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nmulti-agent-brief onboard\n"
+        "\nbash scripts/setup.sh\nsource .venv/bin/activate\nbriefloop onboard\n"
         "\nDo not use `pipx install briefloop` until release notes say it is published.\n",
         encoding="utf-8",
     )

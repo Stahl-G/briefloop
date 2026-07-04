@@ -55,6 +55,7 @@ class TestCheckReleaseConsistency:
         assert "BriefLoop skill freshness passes" in result.stdout
         assert "Minimal comparative evaluation packet passes" in result.stdout
         assert "Launch demo smoke passes" in result.stdout
+        assert "Public product rename guard passes" in result.stdout
         assert "ALL CHECKS PASSED" in result.stdout
 
     def test_strict_mode_runs(self):

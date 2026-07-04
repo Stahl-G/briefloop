@@ -549,10 +549,13 @@ def test_claude_mabw_command_is_five_verb_writer_surface():
 def test_claude_briefloop_command_is_five_verb_writer_surface():
     text = _read(".claude/commands/briefloop.md")
     assert "BriefLoop writer command" in text
-    assert "`/briefloop` and `/mabw` are compatibility aliases" in text
-    assert "self-contained after `multi-agent-brief claude" in text
+    assert "`/briefloop` is the public five-verb writer surface" in text
+    assert "self-contained after `briefloop claude" in text
     assert "Do not mirror this five-verb command into Hermes, OpenCode, Codex" in text
     assert ".claude/commands/mabw.md" not in text
+    assert "/mabw" not in text
+    assert "multi-agent-brief" not in text
+    assert "MABW" not in text
 
     first_screen = text.split("## First-Screen Writer Help", 1)[1].split(
         "Do not put", 1
@@ -575,7 +578,7 @@ def test_claude_briefloop_command_is_five_verb_writer_surface():
     assert "## `feedback <workspace> [text-or-file]`" in text
     assert "## `deliver <workspace>`" in text
     assert "status is strictly read-only" in text
-    assert "multi-agent-brief deliver --workspace <workspace> --target local" in text
+    assert "briefloop deliver --workspace <workspace> --target local" in text
     assert "do not send audit/control records" in text
 
 
@@ -593,7 +596,9 @@ def test_readme_first_screen_uses_briefloop_as_writer_command():
         text = _read(path)
         first_screen = "\n".join(text.splitlines()[:32])
         assert "/briefloop" in first_screen
-        assert "/mabw" in first_screen
+        assert "/mabw" not in first_screen
+        assert "multi-agent-brief" not in first_screen
+        assert "MABW" not in first_screen
         assert "BriefLoop" in first_screen
         assert "/generate-brief" not in first_screen
 
