@@ -826,6 +826,35 @@ def test_quality_panel_surfaces_semantic_support_proposals_without_authority(tmp
     assert validate_quality_panel_html(html) is None
 
 
+def test_quality_panel_requests_review_for_invalid_semantic_calibration_label(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_semantic_support_artifacts(ws)
+    report_path = ws / "output" / "intermediate" / "semantic_assessment_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["assessors"][0]["assessment_method"] = "human"
+    report["rows"][0]["requires_human_adjudication"] = False
+    report["rows"][0]["assessment_method"] = "human"
+    report["rows"][0]["metadata"]["calibration_label"] = "not_a_known_label"
+    report_path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    panel = write_quality_panel(workspace=ws)
+    semantic = panel["semantic_support"]
+
+    assert semantic["status"] == "valid"
+    assert semantic["calibration_label_counts"] == {"<invalid_calibration_label>": 1}
+    assert semantic["requires_human_adjudication_count"] == 1
+    assert semantic["recommended_human_review"] is True
+    assert {
+        "action": "request_human_review",
+        "reason": "semantic_support_human_adjudication_required",
+    } in panel["recommended_actions"]
+    assert validate_quality_panel_payload(panel) is None
+
+
 def test_quality_panel_surfaces_invalid_semantic_support_report_as_warning_only(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_semantic_support_artifacts(ws, atom_id="AC-0001-99")

@@ -9,6 +9,7 @@ from typing import Any
 
 from multi_agent_brief.audit.semantic import (
     SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY,
+    SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL,
     findings_from_semantic_proposal_rows,
     normalize_calibration_label,
 )
@@ -352,7 +353,12 @@ def _proposal_summary_counts(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         "proposal_row_count": len(rows),
         "single_span_proposal_count": sum(1 for row in rows if row.get("relation_status") == "single_span"),
         "candidate_span_proposal_count": sum(1 for row in rows if row.get("relation_status") == "candidate_spans"),
-        "requires_human_adjudication_count": sum(1 for row in rows if row.get("requires_human_adjudication") is True),
+        "requires_human_adjudication_count": sum(
+            1
+            for row in rows
+            if row.get("requires_human_adjudication") is True
+            or row.get("calibration_label") == SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL
+        ),
         "llm_only_count": sum(1 for row in rows if row.get("assessment_method") == "llm_only"),
         "high_uncertainty_count": sum(1 for row in rows if row.get("uncertainty") == "high"),
         "high_disagreement_count": sum(1 for row in rows if row.get("disagreement") == "high"),

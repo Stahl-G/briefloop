@@ -18,6 +18,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     E_RUNTIME_STATE_NOT_INITIALIZED,
     RuntimeStateError,
     append_event,
+    check_runtime_state,
     raise_if_active_repair_open,
     read_event_log_records_strict,
     runtime_state_paths,
@@ -174,6 +175,7 @@ def deliver_workspace(
     _verify_current_delivery_artifacts(bundle)
     _preflight_delivery_event_surface(ws)
     _preflight_no_active_repair(ws, target=target, channel=channel)
+    _refresh_runtime_state_before_delivery(ws, target=target, channel=channel)
     run_integrity = _delivery_run_integrity(ws)
     _preflight_run_integrity_for_delivery(
         run_integrity,
@@ -547,6 +549,32 @@ def _preflight_no_active_repair(workspace: Path, *, target: str, channel: str) -
     except (OSError, json.JSONDecodeError) as exc:
         raise DeliverCommandError(
             f"workflow_state.json is unreadable before delivery: {exc}",
+            error_code=E_DELIVERY_EVENT_FAILED,
+            target=target,
+            channel=channel,
+        ) from exc
+
+
+def _refresh_runtime_state_before_delivery(workspace: Path, *, target: str, channel: str) -> None:
+    paths = runtime_state_paths(workspace)
+    if not paths["runtime_manifest"].exists() or not paths["workflow_state"].exists():
+        return
+    try:
+        check_runtime_state(workspace=workspace, actor="cli")
+    except RuntimeStateError as exc:
+        raise DeliverCommandError(
+            f"Delivery blocked because runtime state integrity could not be refreshed: {exc}",
+            error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
+            target=target,
+            channel=channel,
+            extra={
+                "runtime_error_code": exc.error_code or E_DELIVERY_RUN_INTEGRITY_BLOCKED,
+                "run_integrity": _delivery_run_integrity(workspace),
+            },
+        ) from exc
+    except Exception as exc:
+        raise DeliverCommandError(
+            f"Delivery blocked because runtime state integrity could not be refreshed: {exc}",
             error_code=E_DELIVERY_EVENT_FAILED,
             target=target,
             channel=channel,

@@ -133,6 +133,7 @@ def test_semantic_assessment_projection_counts_calibration_labels() -> None:
         "<invalid_calibration_label>": 1,
         "overstated_claim": 1,
     }
+    assert projection["summary_counts"]["requires_human_adjudication_count"] == 2
     labels = {row["proposal_id"]: row["calibration_label"] for row in projection["proposed_claim_support_rows"]}
     # rows[0] is SAR-0002, rows[1] is SAR-0001 in _valid_report().
     assert labels == {"SAR-0002": "overstated_claim", "SAR-0001": "<invalid_calibration_label>"}
