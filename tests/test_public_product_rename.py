@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from multi_agent_brief.cli.main import main
+
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "check_public_product_rename.py"
@@ -64,3 +66,21 @@ def test_public_product_rename_scan_is_limited_to_requested_paths(tmp_path) -> N
     assert module.scan(paths=[]) == []
     findings = module.scan(paths=[compatibility_doc])
     assert len(findings) == 2
+
+
+def test_installed_briefloop_command_passes_public_rename_guard(tmp_path, capsys) -> None:
+    module = _load_module()
+    target = tmp_path / "claude"
+
+    rc = main(["claude", "install", "--repo-workdir", str(ROOT), "--target", str(target)])
+
+    assert rc == 0
+    capsys.readouterr()
+    installed_briefloop = target / "commands" / "briefloop.md"
+    installed_mabw = target / "commands" / "mabw.md"
+    assert installed_briefloop.exists()
+    assert installed_mabw.exists()
+    findings = module.scan(paths=[installed_briefloop])
+    assert findings == [], "\n".join(finding.format(ROOT) for finding in findings)
+    first_screen = installed_briefloop.read_text(encoding="utf-8").split("## Routing", maxsplit=1)[0]
+    assert "/mabw" not in first_screen
