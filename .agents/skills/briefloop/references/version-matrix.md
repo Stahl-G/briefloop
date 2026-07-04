@@ -15,6 +15,13 @@ Historical implementation name: MABW
   - `--runtime operator`: host-agnostic compact operator workflow for hosts
     without a dedicated runtime adapter; it does not assume subagents ran
   - `--runtime manual`: legacy compatibility alias resolved to `operator`
+- WorkBuddy Skill source bundle:
+  - path: `integrations/workbuddy/briefloop/`
+  - status: experimental; source-clone-only
+  - uses `--runtime operator` and deterministic BriefLoop CLI transactions
+  - not included in wheel/sdist package data until a packaging command ships
+  - must not claim WorkBuddy subagents ran unless WorkBuddy explicitly
+    delegated and recorded those roles
 - BriefLoop skill is an agent protocol surface, not the `/briefloop` slash
   command implementation.
 - Python package/module path: `multi_agent_brief`

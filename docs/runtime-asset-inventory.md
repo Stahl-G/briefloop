@@ -31,6 +31,7 @@ new workflow contract.
 | `.opencode/commands/**` | Hand-maintained source asset | Source-clone-only | Source-repo commands. Use `runtime install` for workspace-local copies. |
 | `docs/agents/**` | Generated source/docs asset | Source-clone-only | Adapter documentation generated from role source. |
 | `integrations/hermes-plugin/**` | Hermes plugin source asset | Source-clone-only | Plugin source tree; package-only installs should not assume it exists. |
+| `integrations/workbuddy/briefloop/**` | WorkBuddy Skill source asset | Source-clone-only | Local WorkBuddy Skill source bundle; package-only installs should not assume it exists until a WorkBuddy pack command ships. |
 | `scripts/install.sh` | Installer asset | Source-clone-only | curl/archive install helper. |
 | `scripts/install.ps1` | Installer asset | Source-clone-only | PowerShell install helper. |
 | `Formula/multi-agent-brief.rb` | Installer asset | Source-clone-only | Homebrew formula source. |
@@ -45,6 +46,7 @@ new workflow contract.
 | curl / PowerShell installer | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
 | Homebrew formula source | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
 | Hermes plugin source install | Supported from source clone | Uses CLI/package contracts | Source plugin tree required | Plugin installation remains source-clone-driven unless plugin assets are packaged separately. |
+| WorkBuddy Skill source bundle | Experimental from source clone | Uses CLI/package contracts | Source Skill tree required | WorkBuddy packaging remains source-clone-driven unless a generated Skill package is created separately. |
 
 ## Workspace Runtime Kit
 

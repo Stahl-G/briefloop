@@ -67,6 +67,10 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "README_en.md",
         "compatibility-pointer shape",
         "v0.11.0 product-baseline readiness",
+        "WorkBuddy Skill source bundle",
+        "integrations/workbuddy/briefloop/",
+        "source-clone-only",
+        "--runtime operator",
     ],
     "references/status-and-gates.md": [
         "Coverage/omission findings",

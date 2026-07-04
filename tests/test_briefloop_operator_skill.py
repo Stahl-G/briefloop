@@ -50,6 +50,9 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "/mabw" in text
     assert "`--runtime operator`: host-agnostic compact operator workflow" in text
     assert "`--runtime manual`: legacy compatibility alias resolved to `operator`" in text
+    assert "WorkBuddy Skill source bundle" in text
+    assert "integrations/workbuddy/briefloop/" in text
+    assert "source-clone-only" in text
     assert "BriefLoop skill is an agent protocol surface" in text
     assert "not the `/briefloop` slash" in text
     assert "auditable_brief" in text
