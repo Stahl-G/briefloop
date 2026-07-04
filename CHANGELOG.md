@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Bilingual Quality Panel HTML toggle**: `quality_panel.html` now embeds a
+  static CSS-only English / Chinese label toggle for the human-readable panel
+  view while keeping `quality_panel.json` as the single untranslated machine
+  facts source. The HTML remains script-free, dependency-free, SHA-bound to the
+  sibling JSON projection, and does not add quality judgments, gate authority,
+  delivery approval, or release authority.
 - **pipx / PyPI packaging prep**: added future package-index readiness
   documentation, neutral PyPI project metadata, and release-checklist guardrails
   for a later `pipx` path while keeping source-clone setup as the current

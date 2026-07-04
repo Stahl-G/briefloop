@@ -705,14 +705,22 @@ def test_quality_panel_html_renders_static_audit_attachment_without_external_ass
     assert html.startswith("<!doctype html>\n")
     assert QUALITY_PANEL_HTML_BOUNDARY in html
     assert f"Quality-Panel-SHA256: sha256:{_sha256_file(quality_panel_path(ws))}" in html
-    assert "<h1>Quality Panel</h1>" in html
-    assert "<h2>Control Integrity</h2>" in html
-    assert "<h2>Source Evidence</h2>" in html
-    assert "<h2>Gate Findings</h2>" in html
-    assert "<h2>Claim And Support Risk</h2>" in html
-    assert "<h2>Reader Clean And Citation Hygiene</h2>" in html
-    assert "<h2>Quality Closeout And Bundle Separation</h2>" in html
-    assert "<h2>Recommended Next Actions</h2>" in html
+    assert 'id="lang-en"' in html
+    assert 'id="lang-zh"' in html
+    assert 'for="lang-en">English</label>' in html
+    assert 'for="lang-zh">中文</label>' in html
+    assert '<span class="lang-en" lang="en">Quality Panel</span>' in html
+    assert '<span class="lang-zh" lang="zh-CN">质量面板</span>' in html
+    assert '<span class="lang-zh" lang="zh-CN">控制完整性</span>' in html
+    assert '<span class="lang-zh" lang="zh-CN">来源证据</span>' in html
+    assert '<span class="lang-zh" lang="zh-CN">建议下一步</span>' in html
+    assert 'data-section="control-integrity"' in html
+    assert 'data-section="source-evidence"' in html
+    assert 'data-section="gate-findings"' in html
+    assert 'data-section="claim-support-risk"' in html
+    assert 'data-section="reader-clean-citation-hygiene"' in html
+    assert 'data-section="quality-closeout-bundle-separation"' in html
+    assert 'data-section="recommended-next-actions"' in html
     lower = html.lower()
     assert "<script" not in lower
     assert "<link" not in lower
@@ -723,6 +731,31 @@ def test_quality_panel_html_renders_static_audit_attachment_without_external_ass
     assert "truth proven" not in lower
     assert "release authorized" not in lower
     assert validate_quality_panel_html(html) is None
+
+
+def test_quality_panel_html_rendering_does_not_mutate_json_payload(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    panel = write_quality_panel(workspace=ws)
+    before = json.loads(quality_panel_path(ws).read_text(encoding="utf-8"))
+
+    render_quality_panel_html(panel, quality_panel_sha256=_sha256_file(quality_panel_path(ws)))
+    after = json.loads(quality_panel_path(ws).read_text(encoding="utf-8"))
+
+    assert after == before
+    assert "质量面板" not in json.dumps(after, ensure_ascii=False)
+
+
+def test_quality_panel_html_validator_rejects_active_or_external_content(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    panel = write_quality_panel(workspace=ws)
+    html = render_quality_panel_html(panel, quality_panel_sha256=_sha256_file(quality_panel_path(ws)))
+
+    assert validate_quality_panel_html(html.replace("</main>", "<script>alert(1)</script></main>")).startswith(
+        "quality_panel_html_schema_error:external_or_active_content:script"
+    )
+    assert validate_quality_panel_html(html.replace("</head>", '<link rel="stylesheet" href="x.css"></head>')).startswith(
+        "quality_panel_html_schema_error:external_or_active_content:link"
+    )
 
 
 def test_quality_panel_html_write_reads_existing_panel_and_registers_artifact(tmp_path: Path) -> None:

@@ -78,6 +78,66 @@ _QUALITY_PANEL_RECOMMENDED_ACTIONS = {
     "review_reader_template_conformance",
     "review_support_wording_warnings",
 }
+_QUALITY_PANEL_HTML_LABELS = {
+    "audit_attachment": ("BriefLoop audit attachment", "BriefLoop 审计附件"),
+    "quality_panel": ("Quality Panel", "质量面板"),
+    "overall_status": ("Overall status", "总体状态"),
+    "run_id": ("Run ID", "运行 ID"),
+    "generated": ("Generated", "生成时间"),
+    "gate_blockers": ("Gate blockers", "门禁阻断项"),
+    "gate_warnings": ("Gate warnings", "门禁警告"),
+    "missing_incomplete": ("Missing/incomplete", "缺失/未完成"),
+    "materiality_findings": ("Materiality findings", "重要性发现"),
+    "template_warnings": ("Template warnings", "模板警告"),
+    "support_wording": ("Support wording", "支持措辞"),
+    "recommended_actions": ("Recommended actions", "建议动作"),
+    "recommended_next_actions": ("Recommended Next Actions", "建议下一步"),
+    "control_integrity": ("Control Integrity", "控制完整性"),
+    "run_integrity": ("Run integrity", "运行完整性"),
+    "reference_eligible": ("Reference eligible", "可作为参考"),
+    "fact_layer": ("Fact layer", "事实层"),
+    "runtime_effect": ("Runtime effect", "运行影响"),
+    "source_evidence": ("Source Evidence", "来源证据"),
+    "source_pack": ("Source pack", "来源包"),
+    "durable_sources": ("Durable sources", "持久来源"),
+    "missing_titles": ("Missing titles", "缺失标题"),
+    "missing_publishers": ("Missing publishers/institutions", "缺失发布方/机构"),
+    "retrieval_source_mix": ("Retrieval source mix", "检索来源构成"),
+    "underlying_evidence_mix": ("Underlying evidence mix", "底层证据构成"),
+    "gate_findings": ("Gate Findings", "门禁发现"),
+    "auditor_gate": ("Auditor gate", "审计门禁"),
+    "finalize_gate": ("Finalize gate", "定稿门禁"),
+    "legacy_latest_gate": ("Legacy/latest gate", "旧版/最新门禁"),
+    "blocking_findings": ("Blocking findings", "阻断发现"),
+    "warning_findings": ("Warning findings", "警告发现"),
+    "claim_support_risk": ("Claim And Support Risk", "声明与支持风险"),
+    "claim_count": ("Claim count", "声明数量"),
+    "claim_support_matrix": ("Claim-Support Matrix", "声明支持矩阵"),
+    "unsupported_rows": (
+        "Unsupported / contradicted / insufficient rows",
+        "不支持 / 矛盾 / 证据不足行",
+    ),
+    "weak_support_atoms": ("Weak-support atoms", "弱支持原子"),
+    "materiality_selection": ("Materiality selection", "重要性筛选"),
+    "materiality_exclusions": ("Materiality/focus exclusions", "重要性/焦点排除"),
+    "reader_template_conformance": ("Reader template conformance", "读者模板一致性"),
+    "reader_template_warnings": ("Reader template warnings", "读者模板警告"),
+    "support_wording_warnings": ("Support wording warnings", "支持措辞警告"),
+    "reader_clean_citation": ("Reader Clean And Citation Hygiene", "读者清洁与引用卫生"),
+    "reader_clean_status": ("Reader-clean status", "读者清洁状态"),
+    "duplicate_citation_count": ("Duplicate citation count", "重复引用数量"),
+    "source_appendix_warnings": ("Source appendix warnings", "来源附录警告"),
+    "quality_closeout_bundle": ("Quality Closeout And Bundle Separation", "质量收口与包分离"),
+    "closeout_status": ("Closeout status", "收口状态"),
+    "closeout_command": ("Closeout command", "收口命令"),
+    "audit_bundle": ("Audit bundle", "审计包"),
+    "delivery_bundle": ("Delivery bundle", "交付包"),
+    "none": ("none", "无"),
+    "no_recommended_action": (
+        "No recommended action reported by quality_panel.json.",
+        "quality_panel.json 未报告建议动作。",
+    ),
+}
 
 
 class QualityPanelError(ValueError):
@@ -423,127 +483,133 @@ def render_quality_panel_html(
             _html_header_card(panel_payload, overall_status=overall_status),
             _html_metrics_grid(
                 [
-                    ("Gate blockers", _intish(gates.get("blocking_count")), "block"),
-                    ("Gate warnings", _intish(gates.get("warning_count")), "warning"),
+                    ("gate_blockers", _intish(gates.get("blocking_count")), "block"),
+                    ("gate_warnings", _intish(gates.get("warning_count")), "warning"),
                     (
-                        "Missing/incomplete",
+                        "missing_incomplete",
                         _quality_panel_incomplete_count(control, source, gates, delivery),
                         "incomplete",
                     ),
                     (
-                        "Materiality findings",
+                        "materiality_findings",
                         _materiality_selection_warning_count(materiality),
                         "warning",
                     ),
                     (
-                        "Template warnings",
+                        "template_warnings",
                         _template_conformance_warning_count(template_conformance),
                         "warning",
                     ),
                     (
-                        "Support wording",
+                        "support_wording",
                         _support_wording_warning_count(support_wording),
                         "warning",
                     ),
-                    ("Recommended actions", len(actions), "action"),
+                    ("recommended_actions", len(actions), "action"),
                 ]
             ),
             _html_section(
-                "Control Integrity",
+                "control-integrity",
+                "control_integrity",
                 [
-                    ("Run integrity", _text(control.get("run_integrity")) or "unknown"),
-                    ("Reference eligible", str(bool(control.get("reference_eligible"))).lower()),
-                    ("Fact layer", _text(control.get("fact_layer_status")) or "unknown"),
-                    ("Runtime effect", _text(panel_payload.get("runtime_effect")) or "unknown"),
+                    ("run_integrity", _text(control.get("run_integrity")) or "unknown"),
+                    ("reference_eligible", str(bool(control.get("reference_eligible"))).lower()),
+                    ("fact_layer", _text(control.get("fact_layer_status")) or "unknown"),
+                    ("runtime_effect", _text(panel_payload.get("runtime_effect")) or "unknown"),
                 ],
             ),
             _html_section(
-                "Source Evidence",
+                "source-evidence",
+                "source_evidence",
                 [
-                    ("Source pack", _text(source.get("source_pack_status")) or "unknown"),
-                    ("Durable sources", str(_intish(source.get("source_count")))),
-                    ("Missing titles", str(_intish(source.get("missing_title_count")))),
+                    ("source_pack", _text(source.get("source_pack_status")) or "unknown"),
+                    ("durable_sources", str(_intish(source.get("source_count")))),
+                    ("missing_titles", str(_intish(source.get("missing_title_count")))),
                     (
-                        "Missing publishers/institutions",
+                        "missing_publishers",
                         str(_intish(source.get("missing_publisher_count"))),
                     ),
-                    ("Retrieval source mix", _inline_mapping(source.get("retrieval_source_mix"))),
-                    ("Underlying evidence mix", _inline_mapping(source.get("underlying_evidence_mix"))),
+                    ("retrieval_source_mix", _inline_mapping(source.get("retrieval_source_mix"))),
+                    ("underlying_evidence_mix", _inline_mapping(source.get("underlying_evidence_mix"))),
                 ],
             ),
             _html_section(
-                "Gate Findings",
+                "gate-findings",
+                "gate_findings",
                 [
-                    ("Auditor gate", _text(gates.get("auditor_status")) or "unknown"),
-                    ("Finalize gate", _text(gates.get("finalize_status")) or "unknown"),
+                    ("auditor_gate", _text(gates.get("auditor_status")) or "unknown"),
+                    ("finalize_gate", _text(gates.get("finalize_status")) or "unknown"),
                     (
-                        "Legacy/latest gate",
+                        "legacy_latest_gate",
                         _text(gates.get("legacy_quality_gate_status")) or "missing",
                     ),
-                    ("Blocking findings", str(_intish(gates.get("blocking_count")))),
-                    ("Warning findings", str(_intish(gates.get("warning_count")))),
+                    ("blocking_findings", str(_intish(gates.get("blocking_count")))),
+                    ("warning_findings", str(_intish(gates.get("warning_count")))),
                 ],
             ),
             _html_section(
-                "Claim And Support Risk",
+                "claim-support-risk",
+                "claim_support_risk",
                 [
-                    ("Claim count", str(_intish(claims.get("claim_count")))),
+                    ("claim_count", str(_intish(claims.get("claim_count")))),
                     (
-                        "Claim-Support Matrix",
+                        "claim_support_matrix",
                         _text(claims.get("claim_support_matrix_status")) or "unknown",
                     ),
                     (
-                        "Unsupported / contradicted / insufficient rows",
+                        "unsupported_rows",
                         str(_intish(claims.get("unsupported_count"))),
                     ),
-                    ("Weak-support atoms", str(_intish(claims.get("weak_support_count")))),
+                    ("weak_support_atoms", str(_intish(claims.get("weak_support_count")))),
                     (
-                        "Materiality selection",
+                        "materiality_selection",
                         _text(materiality.get("status")) or "unknown",
                     ),
                     (
-                        "Materiality/focus exclusions",
+                        "materiality_exclusions",
                         str(_materiality_selection_warning_count(materiality)),
                     ),
                     (
-                        "Reader template conformance",
+                        "reader_template_conformance",
                         _text(template_conformance.get("status")) or "unknown",
                     ),
                     (
-                        "Reader template warnings",
+                        "reader_template_warnings",
                         str(_template_conformance_warning_count(template_conformance)),
                     ),
                     (
-                        "Support wording",
+                        "support_wording",
                         _text(support_wording.get("status")) or "unknown",
                     ),
                     (
-                        "Support wording warnings",
+                        "support_wording_warnings",
                         str(_support_wording_warning_count(support_wording)),
                     ),
                 ],
             ),
             _html_section(
-                "Reader Clean And Citation Hygiene",
+                "reader-clean-citation-hygiene",
+                "reader_clean_citation",
                 [
-                    ("Reader-clean status", _text(delivery.get("reader_clean_status")) or "unknown"),
+                    ("reader_clean_status", _text(delivery.get("reader_clean_status")) or "unknown"),
                     (
-                        "Duplicate citation count",
+                        "duplicate_citation_count",
                         str(_intish(delivery.get("duplicate_citation_count"))),
                     ),
                     (
-                        "Source appendix warnings",
+                        "source_appendix_warnings",
                         str(_intish(delivery.get("source_appendix_warning_count"))),
                     ),
                 ],
             ),
             _html_section(
-                "Quality Closeout And Bundle Separation",
+                "quality-closeout-bundle-separation",
+                "quality_closeout_bundle",
                 [
-                    ("Closeout status", _text(closeout.get("status")) or "unknown"),
-                    ("Closeout command", _text(closeout.get("command")) or "unknown"),
-                    ("Audit bundle", _text(closeout.get("audit_bundle")) or "unknown"),
-                    ("Delivery bundle", _text(closeout.get("delivery_bundle")) or "unknown"),
+                    ("closeout_status", _text(closeout.get("status")) or "unknown"),
+                    ("closeout_command", _text(closeout.get("command")) or "unknown"),
+                    ("audit_bundle", _text(closeout.get("audit_bundle")) or "unknown"),
+                    ("delivery_bundle", _text(closeout.get("delivery_bundle")) or "unknown"),
                 ],
             ),
             _html_actions(actions),
@@ -565,7 +631,15 @@ def render_quality_panel_html(
         "<body>\n"
         f"<!-- {_QUALITY_PANEL_SHA_PREFIX}{panel_sha256} -->\n"
         f"<!-- Boundary: {_html(QUALITY_PANEL_HTML_BOUNDARY)} -->\n"
+        "<input class=\"language-radio\" id=\"lang-en\" name=\"qp-lang\" type=\"radio\" checked>\n"
+        "<input class=\"language-radio\" id=\"lang-zh\" name=\"qp-lang\" type=\"radio\">\n"
+        "<div class=\"language-toggle\" aria-label=\"Language\">\n"
+        "  <label for=\"lang-en\">English</label>\n"
+        "  <label for=\"lang-zh\">中文</label>\n"
+        "</div>\n"
+        "<main class=\"quality-panel\">\n"
         f"{body}\n"
+        "</main>\n"
         "</body>\n"
         "</html>\n"
     )
@@ -730,14 +804,25 @@ def validate_quality_panel_html(text: Any) -> str | None:
     for marker in _QUALITY_PANEL_HTML_FORBIDDEN_MARKERS:
         if marker in lower:
             return f"quality_panel_html_schema_error:external_or_active_content:{marker.strip('<>= ')}"
+    required_language_toggle = (
+        'id="lang-en"',
+        'id="lang-zh"',
+        'for="lang-en">English</label>',
+        'for="lang-zh">中文</label>',
+        'class="lang-en"',
+        'class="lang-zh"',
+    )
+    for fragment in required_language_toggle:
+        if fragment not in text:
+            return f"quality_panel_html_schema_error:missing_language_toggle:{fragment}"
     required_sections = (
-        "<h1>Quality Panel</h1>",
-        "<h2>Control Integrity</h2>",
-        "<h2>Source Evidence</h2>",
-        "<h2>Gate Findings</h2>",
-        "<h2>Claim And Support Risk</h2>",
-        "<h2>Reader Clean And Citation Hygiene</h2>",
-        "<h2>Recommended Next Actions</h2>",
+        'data-section="control-integrity"',
+        'data-section="source-evidence"',
+        'data-section="gate-findings"',
+        'data-section="claim-support-risk"',
+        'data-section="reader-clean-citation-hygiene"',
+        'data-section="quality-closeout-bundle-separation"',
+        'data-section="recommended-next-actions"',
     )
     for section in required_sections:
         if section not in text:
@@ -1291,45 +1376,50 @@ def _html_header_card(panel_payload: Mapping[str, Any], *, overall_status: str) 
     run_id = _text(panel_payload.get("run_id")) or "unknown"
     generated_at = _text(panel_payload.get("generated_at")) or "unknown"
     return (
-        "<header class=\"panel-hero\">\n"
+        "<header class=\"panel-hero\" data-section=\"panel-header\">\n"
         "  <div>\n"
-        "    <p class=\"eyebrow\">BriefLoop audit attachment</p>\n"
-        "    <h1>Quality Panel</h1>\n"
+        f"    <p class=\"eyebrow\">{_html_label('audit_attachment')}</p>\n"
+        f"    <h1>{_html_label('quality_panel')}</h1>\n"
         "    <p class=\"boundary\">"
         f"{_html(QUALITY_PANEL_HTML_BOUNDARY)}"
         "</p>\n"
         "  </div>\n"
-        f"  <div class=\"status-pill {status_class}\">{_html(overall_status)}</div>\n"
-        f"  <dl class=\"hero-meta\"><dt>Run ID</dt><dd>{_html(run_id)}</dd>"
-        f"<dt>Generated</dt><dd>{_html(generated_at)}</dd></dl>\n"
+        f"  <div class=\"status-pill {status_class}\"><span>{_html_label('overall_status')}</span>"
+        f"<strong>{_html(overall_status)}</strong></div>\n"
+        f"  <dl class=\"hero-meta\"><dt>{_html_label('run_id')}</dt><dd>{_html(run_id)}</dd>"
+        f"<dt>{_html_label('generated')}</dt><dd>{_html(generated_at)}</dd></dl>\n"
         "</header>"
     )
 
 
 def _html_metrics_grid(metrics: list[tuple[str, int, str]]) -> str:
     cards = []
-    for label, value, kind in metrics:
+    for label_key, value, kind in metrics:
         cards.append(
             "  <div class=\"metric-card\">"
-            f"<span>{_html(label)}</span>"
+            f"<span>{_html_label(label_key)}</span>"
             f"<strong class=\"metric-{_html_status_class(kind)}\">{value}</strong>"
             "</div>"
         )
-    return "<section class=\"metric-grid\" aria-label=\"Quality metrics\">\n" + "\n".join(cards) + "\n</section>"
+    return (
+        "<section class=\"metric-grid\" data-section=\"metrics\" aria-label=\"Quality metrics\">\n"
+        + "\n".join(cards)
+        + "\n</section>"
+    )
 
 
-def _html_section(title: str, rows: list[tuple[str, str]]) -> str:
+def _html_section(section_id: str, title_key: str, rows: list[tuple[str, str]]) -> str:
     items = []
-    for label, value in rows:
+    for label_key, value in rows:
         items.append(
             "      <tr>"
-            f"<th scope=\"row\">{_html(label)}</th>"
+            f"<th scope=\"row\">{_html_label(label_key)}</th>"
             f"<td>{_html_inline_value(value)}</td>"
             "</tr>"
         )
     return (
-        "<section class=\"panel-section\">\n"
-        f"  <h2>{_html(title)}</h2>\n"
+        f"<section class=\"panel-section\" data-section=\"{_html(section_id)}\">\n"
+        f"  <h2>{_html_label(title_key)}</h2>\n"
         "  <table>\n"
         "    <tbody>\n"
         + "\n".join(items)
@@ -1354,10 +1444,10 @@ def _html_actions(actions: list[Any]) -> str:
             "</li>"
         )
     if not items:
-        items.append("<li><strong>none</strong><span>No recommended action reported by quality_panel.json.</span></li>")
+        items.append(f"<li><strong>{_html_label('none')}</strong><span>{_html_label('no_recommended_action')}</span></li>")
     return (
-        "<section class=\"panel-section actions\">\n"
-        "  <h2>Recommended Next Actions</h2>\n"
+        "<section class=\"panel-section actions\" data-section=\"recommended-next-actions\">\n"
+        f"  <h2>{_html_label('recommended_next_actions')}</h2>\n"
         "  <ul>\n"
         + "\n".join(f"    {item}" for item in items)
         + "\n"
@@ -1375,6 +1465,14 @@ def _html_inline_value(value: str) -> str:
 
 def _html(value: Any) -> str:
     return _html_escape(str(value), quote=True)
+
+
+def _html_label(key: str) -> str:
+    en, zh = _QUALITY_PANEL_HTML_LABELS.get(key, (key, key))
+    return (
+        f"<span class=\"lang-en\" lang=\"en\">{_html(en)}</span>"
+        f"<span class=\"lang-zh\" lang=\"zh-CN\">{_html(zh)}</span>"
+    )
 
 
 def _html_status_class(value: Any) -> str:
@@ -1404,6 +1502,43 @@ def _quality_panel_css() -> str:
       color: var(--ink);
       font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
+    .language-radio {
+      position: fixed;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .language-toggle {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 2;
+      display: inline-flex;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 2px 8px rgba(16, 24, 40, .08);
+    }
+    .language-toggle label {
+      cursor: pointer;
+      padding: 7px 10px;
+      color: var(--muted);
+      font-weight: 700;
+      line-height: 1;
+      border-left: 1px solid var(--line);
+      user-select: none;
+    }
+    .language-toggle label:first-child { border-left: 0; }
+    #lang-en:checked ~ .language-toggle label[for="lang-en"],
+    #lang-zh:checked ~ .language-toggle label[for="lang-zh"] {
+      background: var(--ink);
+      color: #fff;
+    }
+    .lang-zh { display: none; }
+    #lang-zh:checked ~ main .lang-en { display: none; }
+    #lang-zh:checked ~ main .lang-zh { display: inline; }
+    #lang-en:checked ~ main .lang-en { display: inline; }
+    #lang-en:checked ~ main .lang-zh { display: none; }
     .panel-hero, .panel-section, .metric-card {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -1438,6 +1573,8 @@ def _quality_panel_css() -> str:
       color: #fff;
       background: var(--incomplete);
     }
+    .status-pill span { display: block; font-size: 11px; opacity: .85; }
+    .status-pill strong { display: block; margin-top: 2px; }
     .status-pill.pass, .metric-pass { background: var(--pass); color: #fff; }
     .status-pill.warning, .metric-warning { background: var(--warning); color: #fff; }
     .status-pill.block, .metric-block { background: var(--block); color: #fff; }
@@ -1494,6 +1631,7 @@ def _quality_panel_css() -> str:
     .actions span { color: var(--muted); }
     @media (max-width: 720px) {
       body { padding: 16px; }
+      .language-toggle { position: static; margin-bottom: 12px; }
       .panel-hero { grid-template-columns: 1fr; }
       .actions li { grid-template-columns: 1fr; }
       th, td { display: block; width: 100%; }
