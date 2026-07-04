@@ -185,6 +185,54 @@ def _write_valid_claim_ledger(ws: Path, statement: str = "ExampleCo opened a dem
     )
 
 
+def test_repair_route_ignores_semantic_support_proposal_findings(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    (_intermediate(ws) / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "audit_status": "pass",
+                "audit_score": 100,
+                "findings": [
+                    {
+                        "finding_id": "SAR-0001",
+                        "finding_type": "semantic_support_proposal",
+                        "severity": "low",
+                        "related_claim_id": "CL-0001",
+                        "description": "Advisory: draft may overstate CL-0001.",
+                        "recommendation": "Advisory proposal only.",
+                        # A repair_owner is present but must NOT create a route.
+                        "repair_owner": "editor",
+                    },
+                    {
+                        "finding_id": "AUDIT_001",
+                        "finding_type": "unsupported_claim",
+                        "severity": "high",
+                        "artifact_id": "audited_brief",
+                        "description": "Claim in audited brief is unsupported by the ledger.",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = route_repair(workspace=ws)
+
+    assert result["ok"] is True
+    # Both findings are collected, but only the real one produces a route.
+    assert result["finding_count"] == 2
+    assert len(result["routes"]) == 1
+    assert result["routes"][0]["source"]["finding_id"] == "AUDIT_001"
+    assert all(
+        route["source"].get("finding_type") != "semantic_support_proposal"
+        for route in result["routes"]
+    )
+
+
 def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)

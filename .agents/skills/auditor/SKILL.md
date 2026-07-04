@@ -66,6 +66,32 @@ Use after editor has completed audited_brief.md.
 - Report audit readiness only. Formatter, finalize, and deterministic gates
   decide delivery completion.
 
+## Optional Semantic Support Auditor
+
+- Run this proposal-only check only when the runtime supports subagent
+  delegation or the operator explicitly runs the semantic support auditor role.
+- It compares `output/intermediate/audited_brief.md` against the frozen
+  `output/intermediate/claim_ledger.json` and proposes support-calibration
+  issues such as overstatement, missing limitations, or unsupported numbers.
+- Read frozen `output/intermediate/atomic_claim_graph.json` and
+  `output/intermediate/evidence_span_registry.json` (read-only) to obtain the
+  atom (`AC-####-##`) and evidence span (`ESP-###-##`) ids that each
+  `semantic_assessment_report.json` row must bind to. If those frozen artifacts
+  are absent, skip the check and report it skipped; never invent atom or span ids.
+- Judge claims only against frozen Claim Ledger evidence. Do not use external
+  knowledge or infer missing sources.
+- Write only `output/intermediate/semantic_assessment_report.json`. Its raw rows
+  are proposals, not authoritative `audit_report.json` findings, gate results,
+  or release decisions. Python may render them as advisory, non-blocking
+  `AuditFinding` surfaces, but they stay non-authoritative and non-repairable
+  until a human accepts them.
+- Do not edit frozen artifacts, and do not write `audit_report.json`,
+  `auditor_quality_gate_report.json`, `claim_support_matrix.json`,
+  `workflow_state.json`, or `event_log.jsonl`.
+- Semantic support proposals do not gate finalize, delivery, or release by
+  themselves. Python validates and projects the proposal artifact; a human must
+  accept a proposal before it becomes authoritative.
+
 ## Handoff
 
 Pass audit status to formatter/finalize.
