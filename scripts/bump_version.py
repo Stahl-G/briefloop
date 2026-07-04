@@ -102,17 +102,25 @@ def main() -> int:
         r'sha256\s+"[0-9a-fA-F]{64}"',
         f'sha256 "{PENDING_FORMULA_SHA256}"',
         "Homebrew formula pending checksum",
+        count=1,
     )
 
     print(f"[bump] Synced {version} across {changed} location(s)")
     return 0
 
 
-def _replace_in_file(path: Path, pattern: str, replacement: str, label: str) -> int:
+def _replace_in_file(
+    path: Path,
+    pattern: str,
+    replacement: str,
+    label: str,
+    *,
+    count: int = 0,
+) -> int:
     import re
 
     text = path.read_text(encoding="utf-8")
-    new_text, n = re.subn(pattern, replacement, text)
+    new_text, n = re.subn(pattern, replacement, text, count=count)
     if n == 0:
         print(f"  [{label}] no match for version pattern — skip", file=sys.stderr)
         return 0

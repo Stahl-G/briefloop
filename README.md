@@ -290,7 +290,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.11.6**
+Current version: **v0.11.9**
 
 Current main entrypoints:
 
@@ -299,7 +299,7 @@ Current main entrypoints:
 - Claude command: `/briefloop`
 - compatibility alias: `/mabw`
 
-v0.11.6 releases the accumulated v0.11 product-baseline, reader-quality,
+v0.11.9 releases the accumulated v0.11 product-baseline, reader-quality,
 topology, launch-readiness, and issue-closure hardening line, including:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts

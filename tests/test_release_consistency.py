@@ -265,7 +265,11 @@ def test_bump_version_does_not_rewrite_ruff_target_version(tmp_path, monkeypatch
     formula.parent.mkdir()
     formula.write_text(
         'url "https://example.invalid/refs/tags/v0.0.1.tar.gz"\n'
-        'sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n',
+        'sha256 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"\n'
+        'resource "pyyaml" do\n'
+        '  url "https://example.invalid/pyyaml.tar.gz"\n'
+        '  sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n'
+        "end\n",
         encoding="utf-8",
     )
 
@@ -283,6 +287,7 @@ def test_bump_version_does_not_rewrite_ruff_target_version(tmp_path, monkeypatch
     formula_text = formula.read_text(encoding="utf-8")
     assert "refs/tags/v1.2.3.tar.gz" in formula_text
     assert 'sha256 "0000000000000000000000000000000000000000000000000000000000000000"' in formula_text
+    assert 'sha256 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' in formula_text
 
 
 def test_check_version_consistency_rejects_current_formula_before_tag(tmp_path, monkeypatch):
