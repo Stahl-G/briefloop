@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
-import json
 import os
-import re
 import shlex
 import uuid
 from pathlib import Path
@@ -20,16 +18,6 @@ from multi_agent_brief.contracts.target_contract import (
 from multi_agent_brief.feedback.feedback_contract import (
     current_stage_feedback_blocking_reasons,
 )
-from multi_agent_brief.contracts.schemas.claim_draft import (
-    ClaimDraftContract,
-    claim_draft_diagnostics,
-)
-from multi_agent_brief.contracts.source_metadata import (
-    normalize_retrieval_source_type,
-    normalize_source_category,
-    normalize_underlying_evidence_type,
-)
-from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.quality_gates.contract import (
     current_stage_quality_gate_blocking_reasons,
 )
@@ -86,8 +74,6 @@ from multi_agent_brief.orchestrator.runtime_state.errors import (
     _wrap_archive_error,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
-    ARTIFACT_VALID,
-    CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE,
     _artifact_registry_path,
     _artifact_registry_sha,
     _build_artifact_registry,
@@ -119,14 +105,11 @@ from multi_agent_brief.orchestrator.runtime_state.paths import (
 )
 from multi_agent_brief.orchestrator.runtime_state._transactions import (  # noqa: F401
     _archive_finalized_state_if_needed,
-    _current_run_start_event_exists,
     _load_manifest_and_workflow,
     _persist_run_contamination,
     _preflight_transaction_files,
     _restore_file_paths,
-    _sha256_bytes,
     _snapshot_file_paths,
-    _write_bytes_atomic,
 )
 from multi_agent_brief.orchestrator.runtime_state.trajectory import (  # noqa: F401
     TRAJECTORY_DECISION_NARROWING_STATUS,
