@@ -277,6 +277,30 @@ def test_auditor_prompts_check_overstatement_and_support_calibration():
         )
 
 
+def test_semantic_support_auditor_is_proposal_only():
+    prompt_paths = [
+        "configs/agent_roles.yaml",
+        ".agents/skills/auditor/SKILL.md",
+        ".claude/agents/auditor.md",
+        ".codex/agents/auditor.toml",
+        ".opencode/agents/brief-auditor.md",
+    ]
+    for path in prompt_paths:
+        text = _read(path)
+        lowered = text.lower()
+        assert "semantic support auditor" in lowered, f"semantic support auditor missing in {path}"
+        assert "semantic_assessment_report.json" in text, (
+            f"semantic proposal artifact missing in {path}"
+        )
+        assert "proposal" in lowered, f"proposal-only framing missing in {path}"
+        # Proposals must never be described as gating finalize/delivery/release.
+        assert "do not gate finalize" in lowered, f"gate boundary missing in {path}"
+        # The semantic auditor must not be told to write authoritative control files.
+        assert "must not" in lowered and "audit_report.json" in text, (
+            f"authoritative-write prohibition missing in {path}"
+        )
+
+
 def test_claude_generate_brief_requires_source_discovery_transaction_for_all_profiles():
     text = _read(".claude/commands/generate-brief.md")
     source_section = text.split("**Source discovery transaction (all source profiles):**", 1)[1].split(
