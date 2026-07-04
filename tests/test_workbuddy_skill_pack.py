@@ -26,6 +26,7 @@ WORKBUDDY_DOCS = (
     ROOT / "docs" / "workbuddy.md",
     ROOT / "docs" / "workbuddy.zh-CN.md",
 )
+WORKBUDDY_SMOKE_CHECKLIST = ROOT / "docs" / "workbuddy-smoke-checklist.md"
 REFERENCE_NAMES = {
     "quickstart.md",
     "workspace-workflow.md",
@@ -206,6 +207,7 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "approve delivery" in text or "不批准交付" in text
         assert "authorize release" in text or "不授权 release" in text
         assert "WorkBuddy Marketplace" in text
+        assert "docs/workbuddy-smoke-checklist.md" in text
 
 
 def test_workbuddy_assistant_prompt_is_trigger_only() -> None:
@@ -222,6 +224,30 @@ def test_workbuddy_assistant_prompt_is_trigger_only() -> None:
         "Do not claim hallucination elimination, output-quality improvement, or",
     ]:
         assert phrase in text
+
+
+def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
+    text = _read(WORKBUDDY_SMOKE_CHECKLIST)
+    compact = _compact(text)
+    for phrase in [
+        "WorkBuddy Integration Smoke Checklist",
+        "experimental integration smoke",
+        "not runtime proof",
+        "multi-agent-brief workbuddy pack-skill --output dist/workbuddy",
+        "multi-agent-brief run --workspace <workspace> --runtime operator",
+        "multi-agent-brief status --workspace <workspace>",
+        "multi-agent-brief state check --workspace <workspace>",
+        "multi-agent-brief quality summarize --workspace <workspace>",
+        "must not auto-deliver",
+        "not evidence that WorkBuddy is a supported delegated runtime",
+    ]:
+        assert phrase in text
+    for phrase in [
+        "not runtime proof, delegated-agent proof, output-quality proof, semantic proof",
+        "WorkBuddy did not hand-edit Python-owned control files or frozen artifacts",
+        "WorkBuddy did not claim delegated role execution without actual WorkBuddy delegation",
+    ]:
+        assert phrase in compact
 
 
 def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -> None:

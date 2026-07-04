@@ -176,6 +176,19 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "不批准交付",
         "不授权 release",
     ],
+    "docs/workbuddy-smoke-checklist.md": [
+        "WorkBuddy Integration Smoke Checklist",
+        "experimental integration smoke",
+        "not runtime proof",
+        "not runtime proof, delegated-agent proof, output-quality proof, semantic proof",
+        "multi-agent-brief workbuddy pack-skill --output dist/workbuddy",
+        "multi-agent-brief run --workspace <workspace> --runtime operator",
+        "multi-agent-brief status --workspace <workspace>",
+        "multi-agent-brief state check --workspace <workspace>",
+        "multi-agent-brief quality summarize --workspace <workspace>",
+        "must not auto-deliver",
+        "not evidence that WorkBuddy is a supported delegated runtime",
+    ],
 }
 REQUIRED_FIRST_USER_DOC_PHRASES = {
     "docs/15-minute-pilot.md": [

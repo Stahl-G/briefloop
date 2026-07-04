@@ -110,3 +110,14 @@ integrations/workbuddy/assistant/briefloop-assistant-prompt.md
 它只能作为远程 trigger，把用户请求转入已经安装 BriefLoop Skill 的本地
 WorkBuddy session。它不是云端 BriefLoop runtime；没有人工命令和当前 gate status
 时，不能 finalize、deliver、approve 或 publish。
+
+## Manual Smoke Checklist
+
+WorkBuddy dogfood 时使用这个手动 smoke checklist：
+
+```text
+docs/workbuddy-smoke-checklist.md
+```
+
+这个 checklist 是实验性 integration smoke 路径。它不是 runtime proof、delegated-agent
+proof、输出质量证明、语义证明、交付批准或 release 批准。
