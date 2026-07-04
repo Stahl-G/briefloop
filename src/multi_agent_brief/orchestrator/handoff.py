@@ -1382,6 +1382,7 @@ def _apply_experiment_080_assessment_target(handoff: AgentHandoff, workspace: Pa
     handoff.expected_artifacts = [
         artifact for artifact in handoff.expected_artifacts if artifact != "output/delivery/brief.md"
     ]
+    handoff.artifact_ownership = _without_auditable_delivery_artifact_ownership(handoff.artifact_ownership)
     handoff.next_steps = (
         "080 auditable_brief target: stop after auditor stage-complete; next allowed commands are "
         "experiments 080 register-run and score-run."
@@ -1446,6 +1447,32 @@ def _without_auditable_delivery_protocol(protocol: dict[str, Any]) -> dict[str, 
         if "finalize" not in str(rule).lower() and "reader delivery" not in str(rule).lower()
     ]
     return rewritten
+
+
+def _without_auditable_delivery_artifact_ownership(ownership: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(ownership, dict):
+        return ownership
+    rewritten = deepcopy(ownership)
+    rewritten["cli_owned_outputs"] = [
+        item
+        for item in rewritten.get("cli_owned_outputs", [])
+        if not _is_auditable_delivery_owned_output(item)
+    ]
+    return rewritten
+
+
+def _is_auditable_delivery_owned_output(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    path = str(item.get("path") or "").lower()
+    command = str(item.get("command") or "").lower()
+    return (
+        "finalize" in path
+        or path.startswith("output/delivery/")
+        or "multi-agent-brief finalize" in command
+        or "--stage finalize" in command
+        or "state finalize-complete" in command
+    )
 
 
 def render_handoff_cli(handoff: AgentHandoff) -> str:

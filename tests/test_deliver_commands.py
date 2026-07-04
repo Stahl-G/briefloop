@@ -172,6 +172,31 @@ def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, ca
     assert "run integrity is not clean" in captured.err
 
 
+def test_deliver_refreshes_run_integrity_before_recording_events(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    capsys.readouterr()
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["stage_statuses"]["claim-ledger"]["status"] = "complete"
+    workflow["stage_statuses"]["claim-ledger"]["reason"] = "claim ledger frozen"
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    ledger = ws / "output" / "intermediate" / "claim_ledger.json"
+    ledger.write_text('[{"claim_id":"CL-TAMPERED"}]\n', encoding="utf-8")
+
+    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
+    assert payload["runtime_error_code"] == "E_TRANSACTION_INTEGRITY"
+    assert payload["run_integrity"]["status"] == "contaminated"
+    assert payload["run_integrity"]["reference_eligible"] is False
+    assert payload["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
+    assert _delivery_events(ws) == []
+
+
 def test_deliver_json_returns_typed_error_for_corrupt_workflow_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)

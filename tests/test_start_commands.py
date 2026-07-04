@@ -995,6 +995,11 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     assert data["assessment_target_manifest"]["audit_binding_status"] == "required_python_owned"
     assert "output/delivery/brief.md" not in data["expected_artifacts"]
     assert "finalize" not in {stage["stage_id"] for stage in data["stage_completion_protocol"]["stages"]}
+    ownership_outputs = data["artifact_ownership"]["cli_owned_outputs"]
+    assert all("finalize" not in str(item.get("path", "")).lower() for item in ownership_outputs)
+    assert all("output/delivery/" not in str(item.get("path", "")).lower() for item in ownership_outputs)
+    assert all("multi-agent-brief finalize" not in str(item.get("command", "")).lower() for item in ownership_outputs)
+    assert all("--stage finalize" not in str(item.get("command", "")).lower() for item in ownership_outputs)
     assert "TARGET COMPLETE: auditable_brief" in text
     assert "auditor quality gates must have status pass before auditor stage-complete" in text
     assert "warning is not enough even when there are 0 blocking findings" in text
