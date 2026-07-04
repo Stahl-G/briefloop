@@ -275,7 +275,11 @@ def quality_panel_html_path(workspace: str | Path) -> Path:
     return Path(workspace).expanduser().resolve() / _INTERMEDIATE / "quality_panel.html"
 
 
-def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
+def build_quality_panel(
+    workspace: str | Path,
+    *,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
     """Build a read-only machine-readable quality projection."""
 
     from multi_agent_brief.status import build_workspace_status
@@ -359,7 +363,7 @@ def build_quality_panel(workspace: str | Path) -> dict[str, Any]:
         "schema_version": QUALITY_PANEL_SCHEMA_VERSION,
         "workspace": ".",
         "run_id": _text(runtime.get("run_id")) or "unknown",
-        "generated_at": _utc_now(),
+        "generated_at": _text(generated_at) or _utc_now(),
         "read_only": True,
         "runtime_effect": QUALITY_PANEL_RUNTIME_EFFECT,
         "boundary": QUALITY_PANEL_BOUNDARY,
@@ -391,6 +395,7 @@ def write_quality_panel(
     *,
     workspace: str | Path,
     output_path: str | Path | None = None,
+    generated_at: str | None = None,
 ) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
     target = Path(output_path).expanduser() if output_path else quality_panel_path(ws)
@@ -401,7 +406,7 @@ def write_quality_panel(
         target.relative_to(ws)
     except ValueError as exc:
         raise ValueError("quality_panel output must stay inside the workspace.") from exc
-    payload = build_quality_panel(ws)
+    payload = build_quality_panel(ws, generated_at=generated_at)
     _write_json_atomic(target, payload)
     return payload
 
