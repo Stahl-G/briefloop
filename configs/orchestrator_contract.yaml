@@ -63,6 +63,7 @@ runtime_surfaces:
   - claude
   - codex
   - opencode
+  - operator
   - manual
 v060_boundaries:
   implements:
