@@ -1,6 +1,6 @@
 ---
 name: market-competitor-planner
-description: Recommends competitor candidates for a workspace based on user.md context (company, industry, market_scope, focus_areas). Use during workspace setup or when the user runs 'multi-agent-brief competitors propose'. Read user.md and recommend competitors for competitor_candidates.yaml.
+description: Recommends competitor candidates for a workspace based on user.md context (company, industry, market_scope, focus_areas). Use during workspace setup or when the user runs 'briefloop competitors propose'. Read user.md and recommend competitors for competitor_candidates.yaml.
 tools: Read, Grep, Glob, Bash
 model: inherit
 ---
@@ -15,7 +15,7 @@ Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Audit
 ```
 
 When to use:
-Use during workspace setup or when the user runs 'multi-agent-brief competitors propose'. Read user.md and recommend competitors for competitor_candidates.yaml.
+Use during workspace setup or when the user runs 'briefloop competitors propose'. Read user.md and recommend competitors for competitor_candidates.yaml.
 
 Responsibilities:
 - Read user.md (company, industry, market_scope, focus_areas) for context.

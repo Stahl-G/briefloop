@@ -28,6 +28,8 @@ TARGET_FILES = [
     "docs/workbuddy.md",
     "docs/workbuddy.zh-CN.md",
     "docs/workbuddy-smoke-checklist.md",
+    "docs/windows-powershell.md",
+    "docs/windows-powershell.zh-CN.md",
     "scripts/setup.sh",
     "scripts/setup.ps1",
     "integrations/workbuddy/briefloop/SKILL.md",

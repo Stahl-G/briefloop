@@ -1,4 +1,4 @@
-"""Tests for multi-agent-brief start / handoff launcher."""
+"""Tests for briefloop start / handoff launcher."""
 from __future__ import annotations
 
 import json
@@ -415,12 +415,12 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "finalize_quality_gate_report.json" in text
     assert "quality_gate_report.json" in text
     assert "provenance_graph.json" in text
-    assert "multi-agent-brief state stage-complete --workspace <workspace>" in text
-    assert "multi-agent-brief state finalize-complete --workspace <workspace>" in text
+    assert "briefloop state stage-complete --workspace <workspace>" in text
+    assert "briefloop state finalize-complete --workspace <workspace>" in text
     assert "state decide" in text
-    assert "multi-agent-brief repair route --workspace <workspace>" in text
-    assert "multi-agent-brief repair start --workspace <workspace>" in text
-    assert "multi-agent-brief repair complete --workspace <workspace>" in text
+    assert "briefloop repair route --workspace <workspace>" in text
+    assert "briefloop repair start --workspace <workspace>" in text
+    assert "briefloop repair complete --workspace <workspace>" in text
     assert "next_allowed_decisions" in text
     assert "Stage completion protocol" in text
     assert "MUST produce" in text
@@ -433,7 +433,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "role MUST produce freeze input: audited_brief at output/intermediate/audited_brief.md" in text
     assert (
         "control transaction before stage-complete: "
-        "multi-agent-brief state stage-complete --workspace <workspace> --stage analyst "
+        "briefloop state stage-complete --workspace <workspace> --stage analyst "
         "(reads audited_brief at output/intermediate/audited_brief.md; "
         "writes analyst_draft_snapshot at output/intermediate/analyst_draft_snapshot.md)"
     ) in text
@@ -451,9 +451,9 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "must not rewrite them in place" in text
     assert "route repair back to the owner stage" in text
     assert "REFERENCE_RUN_ORCHESTRATOR_PROTOCOL.md" in text
-    assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in text
-    assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in text
-    assert "multi-agent-brief state check --workspace <workspace> --strict" in text
+    assert "briefloop gates check --workspace <workspace> --stage auditor" in text
+    assert "briefloop gates check --workspace <workspace> --stage finalize" in text
+    assert "briefloop state check --workspace <workspace> --strict" in text
     assert "Did 0 searches" in text
     assert "every query returns an empty result set" in text
     assert "Do not switch to source-planner" in text
@@ -998,7 +998,7 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     ownership_outputs = data["artifact_ownership"]["cli_owned_outputs"]
     assert all("finalize" not in str(item.get("path", "")).lower() for item in ownership_outputs)
     assert all("output/delivery/" not in str(item.get("path", "")).lower() for item in ownership_outputs)
-    assert all("multi-agent-brief finalize" not in str(item.get("command", "")).lower() for item in ownership_outputs)
+    assert all("briefloop finalize" not in str(item.get("command", "")).lower() for item in ownership_outputs)
     assert all("--stage finalize" not in str(item.get("command", "")).lower() for item in ownership_outputs)
     assert "TARGET COMPLETE: auditable_brief" in text
     assert "auditor quality gates must have status pass before auditor stage-complete" in text
@@ -1006,7 +1006,7 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     assert "register-run" in text
     assert "score-run" in text
     assert "Do not run finalize" in text
-    assert "multi-agent-brief finalize" not in text
+    assert "briefloop finalize" not in text
     assert "state finalize-complete" not in text
     assert "--stage finalize" not in text
     assert "docx_pdf_delivery_quality" in text
@@ -1057,12 +1057,12 @@ def test_start_hermes_handoff_contains_delegate_task(tmp_path):
     assert "delegate_task" in data["prompt"]
     assert "scout" in data["prompt"]
     assert "auditor" in data["prompt"]
-    assert "multi-agent-brief finalize" in data["prompt"]
+    assert "briefloop finalize" in data["prompt"]
     _assert_orchestrator_contract_handoff(data)
 
 
-def test_start_hermes_output_no_generate_brief(tmp_path, capsys):
-    """start --runtime hermes must not mention /generate-brief in CLI output or handoff."""
+def test_start_hermes_output_no_legacy_generate_brief(tmp_path, capsys):
+    """start --runtime hermes must not mention legacy /generate-brief in CLI output or handoff."""
     ws = _write_workspace(tmp_path)
     rc = main([
         "start",
@@ -1080,8 +1080,8 @@ def test_start_hermes_output_no_generate_brief(tmp_path, capsys):
     assert "/generate-brief" not in data["prompt"]
 
 
-def test_start_claude_output_contains_generate_brief(tmp_path, capsys):
-    """start --runtime claude must mention /generate-brief."""
+def test_start_claude_output_contains_briefloop_command(tmp_path, capsys):
+    """start --runtime claude must mention the public /briefloop command."""
     ws = _write_workspace(tmp_path)
     rc = main([
         "start",
@@ -1092,7 +1092,8 @@ def test_start_claude_output_contains_generate_brief(tmp_path, capsys):
     ])
     assert rc == 0
     captured = capsys.readouterr()
-    assert "/generate-brief" in captured.out
+    assert "/briefloop run" in captured.out
+    assert "/generate-brief" not in captured.out
 
 
 def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
@@ -1160,7 +1161,7 @@ def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path, capsys):
     assert rc == 1
     out = capsys.readouterr().out
     assert "E_FAST_RERUN_IMPORT_REQUIRED" in out
-    assert "multi-agent-brief state import-fact-layer" in out
+    assert "briefloop state import-fact-layer" in out
     assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
 
 
@@ -1295,7 +1296,7 @@ def test_start_operator_handoff_contains_compact_runtime_contract(tmp_path):
     assert "`output/intermediate/workflow_state.json`" in text
     assert "`output/intermediate/gates/*_quality_gate_report.json`" in text
     assert "candidate_claims.json" in data["prompt"]
-    assert "multi-agent-brief finalize" in data["prompt"]
+    assert "briefloop finalize" in data["prompt"]
     _assert_orchestrator_contract_handoff(data)
 
 
@@ -1318,7 +1319,7 @@ def test_start_manual_alias_resolves_to_operator_and_warns(tmp_path, capsys):
     assert data["runtime_capabilities"]["legacy_runtime_alias"] == "manual"
     assert data["artifact_ownership"]["schema_version"] == "briefloop.operator_artifact_ownership.v1"
     assert "candidate_claims.json" in data["prompt"]
-    assert "multi-agent-brief finalize" in data["prompt"]
+    assert "briefloop finalize" in data["prompt"]
     _assert_orchestrator_contract_handoff(data)
 
 
@@ -1381,7 +1382,7 @@ def test_build_handoff_hermes_has_delegate_task(tmp_path):
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
 
-def test_build_handoff_claude_has_generate_brief(tmp_path):
+def test_build_handoff_claude_has_briefloop_command(tmp_path):
     ws = _write_workspace(tmp_path)
     handoff = build_handoff(
         workspace=ws,
@@ -1390,7 +1391,8 @@ def test_build_handoff_claude_has_generate_brief(tmp_path):
         venv="/tmp/.venv/bin/activate",
         run_doctor=False,
     )
-    assert "/generate-brief" in handoff.prompt
+    assert "/briefloop run" in handoff.prompt
+    assert "/generate-brief" not in handoff.prompt
     assert "With role_topology=default, Scout performs discovery and screening in one role" in handoff.prompt
     assert "do not call `state stage-complete --stage screener` in default topology" in handoff.prompt
     assert "strict: scout → screener" in handoff.prompt
@@ -1564,8 +1566,8 @@ def test_run_default_auto_resolves_to_hermes(tmp_path):
     assert manifest["improvement"]["materialized_entry_ids"] == []
 
 
-def test_run_claude_contains_generate_brief(tmp_path):
-    """run --runtime claude must contain /generate-brief."""
+def test_run_claude_contains_briefloop_command(tmp_path):
+    """run --runtime claude must contain the public /briefloop command."""
     ws = _write_workspace(tmp_path)
     rc = main([
         "run",
@@ -1576,7 +1578,8 @@ def test_run_claude_contains_generate_brief(tmp_path):
     ])
     assert rc == 0
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
-    assert "/generate-brief" in data["prompt"]
+    assert "/briefloop run" in data["prompt"]
+    assert "/generate-brief" not in data["prompt"]
 
 
 def test_run_does_not_generate_brief(tmp_path):

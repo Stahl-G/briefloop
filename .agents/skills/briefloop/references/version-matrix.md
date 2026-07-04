@@ -20,7 +20,7 @@ Historical implementation name: MABW
   - status: experimental; source-clone-only
   - uses `--runtime operator` and deterministic BriefLoop CLI transactions
   - `briefloop workbuddy pack-skill` /
-    `multi-agent-brief workbuddy pack-skill` generates a deterministic local
+    `briefloop workbuddy pack-skill` generates a deterministic local
     Skill zip and sidecar manifest from the source-clone Skill files
   - not included in wheel/sdist package data
   - generated zip is not a WorkBuddy Marketplace publication
@@ -64,21 +64,21 @@ Historical implementation name: MABW
     support proof, prose-quality scoring, release authority, or
     source-discovery completeness
 - Experimental product-layer contracts:
-  - `multi-agent-brief packs list`
-  - `multi-agent-brief packs show <pack_id>`
-  - `multi-agent-brief packs templates`
-  - `multi-agent-brief packs bundle --workspace <workspace>`
-  - `multi-agent-brief validate-report-spec <report_spec.yaml>`
-  - `multi-agent-brief extract --workspace <workspace> --scope <text>
+  - `briefloop packs list`
+  - `briefloop packs show <pack_id>`
+  - `briefloop packs templates`
+  - `briefloop packs bundle --workspace <workspace>`
+  - `briefloop validate-report-spec <report_spec.yaml>`
+  - `briefloop extract --workspace <workspace> --scope <text>
     --source <file>` for `evidence_extract` source/scope registration and
     deterministic source-lock / logical-page seed / text-span seed registry
     generation for copied source files and UTF-8 text sources; PDF/binary
     sources can use already-present adjacent MinerU-derived `.mineru.md` text
     representations, with original source bytes still bound in source lock
-  - `multi-agent-brief sources add-file <path>`
-  - `multi-agent-brief sources add-rss <url>`
-  - `multi-agent-brief sources add-web-search --query <text>`
-  - `multi-agent-brief new <pack> <workspace>` / `briefloop new <pack> <workspace>`
+  - `briefloop sources add-file <path>`
+  - `briefloop sources add-rss <url>`
+  - `briefloop sources add-web-search --query <text>`
+  - `briefloop new <pack> <workspace>` / `briefloop new <pack> <workspace>`
     for conservative local-first workspace skeletons
   - product-facing ReportPack entries:
     - `industry-weekly` -> canonical ReportPack `market_weekly`
@@ -94,7 +94,7 @@ Historical implementation name: MABW
     `finance_default`, `internet_default`
   - ReportPack default policy profile binding and optional ReportSpec
     `policy_profile` override validation
-  - `briefloop new` / `multi-agent-brief new` deterministic `--industry`
+  - `briefloop new` / `briefloop new` deterministic `--industry`
     resolver that writes the selected profile and resolution source into
     `report_spec.yaml`, with explicit `--policy-profile` override
   - resolved PolicyProfile projection in `validate-report-spec`, read-only
@@ -128,9 +128,9 @@ Historical implementation name: MABW
   - SourceHub Lite setup for local text files, RSS feed registration, and
     runtime web-search handoff tasks
   - internal release-mode approval records:
-    - `multi-agent-brief approval init`
-    - `multi-agent-brief approval record`
-    - `multi-agent-brief release check`
+    - `briefloop approval init`
+    - `briefloop approval record`
+    - `briefloop release check`
     - artifacts: `human_approval_ledger.json`,
       `release_readiness_report.json`
     - event-log linkage is required before approval records are trusted
@@ -152,7 +152,7 @@ Historical implementation name: MABW
     - projection only; no gate execution, quality score, repair, delivery
       approval, or release authority
   - Trajectory Regulation read-only projection:
-    - surfaced through `multi-agent-brief status --workspace <workspace>
+    - surfaced through `briefloop status --workspace <workspace>
       --json` and Quality Panel recommended actions
     - reads existing `workflow_state.json` and `event_log.jsonl`
     - summarizes retry-stage events, repair starts/completions, repeated
@@ -163,7 +163,7 @@ Historical implementation name: MABW
       score
   - Guidance Manifestation diagnostic projection:
     - artifact: `guidance_manifestation_report.json`
-    - surfaced through `multi-agent-brief status --workspace <workspace>
+    - surfaced through `briefloop status --workspace <workspace>
       --json` and Quality Panel
     - allowed labels: `explicitly_reflected`, `partially_reflected`,
       `contradicted`, `not_observable`
@@ -173,7 +173,7 @@ Historical implementation name: MABW
       mutate Improvement Memory, approve guidance, run gates, approve delivery,
       decide release readiness, or claim output-quality improvement
   - Materiality Selection diagnostic projection:
-    - surfaced through `multi-agent-brief status --workspace <workspace>
+    - surfaced through `briefloop status --workspace <workspace>
       --json` and Quality Panel
     - reads valid `screened_candidates.json`, resolved PolicyProfile
       `materiality_terms`, and workspace focus terms
@@ -186,7 +186,7 @@ Historical implementation name: MABW
       authority, delivery approval, release readiness decision, or quality
       score
   - Support-Calibrated Wording warning projection:
-    - surfaced through `multi-agent-brief status --workspace <workspace>
+    - surfaced through `briefloop status --workspace <workspace>
       --json` and Quality Panel as `support_wording`
     - reads existing reader Markdown, Claim Ledger metadata, source taxonomy,
       and valid Claim-Support Matrix policy signals when present
@@ -229,7 +229,7 @@ Historical implementation name: MABW
 - Do not describe deferred semantic-governance surfaces or v0.10 Product OS
   roadmap goals as completed unless the support matrix and current CLI expose
   the exact surface.
-- BriefLoop-090 is a future readiness/fresh-rerun label, not a current CLI namespace or supported command surface. Current experiment commands remain under `multi-agent-brief experiments 080`.
+- BriefLoop-090 is a future readiness/fresh-rerun label, not a current CLI namespace or supported command surface. Current experiment commands remain under `briefloop experiments 080`.
 - If runtime behavior conflicts with this skill, prefer:
   - `docs/architecture-status.md`
   - `docs/support-matrix.md`

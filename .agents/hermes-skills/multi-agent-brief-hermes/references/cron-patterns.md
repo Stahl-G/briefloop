@@ -4,7 +4,7 @@ Use cron jobs for durable scheduling. Use `delegate_task` only inside a single r
 
 ## Daily Source Cache Prompt
 
-Run daily source cache collection for this MABW workspace.
+Run daily source cache collection for this BriefLoop workspace.
 
 Workspace: `<workspace>`  
 Cache directory: `<workspace>/input/hermes_cache`
@@ -13,7 +13,7 @@ Collect source signals, write `YYYY-MM-DD.json`, then report saved item count an
 
 ## Weekly Or Monthly Brief Prompt
 
-Run a Hermes-native delegated MABW brief workflow.
+Run a Hermes-native delegated BriefLoop brief workflow.
 
 Workspace: `<workspace>`  
 Repository workdir: `<repo>`

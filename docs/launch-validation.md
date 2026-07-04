@@ -26,12 +26,12 @@ First confirm the global CLI and Claude Code command point at the current
 checkout, not an older install:
 
 ```bash
-which multi-agent-brief
-multi-agent-brief version
-multi-agent-brief claude install --repo-workdir .
+which briefloop
+briefloop version
+briefloop claude install --repo-workdir .
 ```
 
-If `multi-agent-brief version` is not the current repository version, repair
+If `briefloop version` is not the current repository version, repair
 the install path before starting the self-test.
 
 Create a test directory:
@@ -74,7 +74,6 @@ Then follow the golden path:
 ```text
 /briefloop new
 /briefloop run <workspace>
-/generate-brief <workspace>
 /briefloop status <workspace>
 /briefloop feedback <workspace> "..."
 /briefloop deliver <workspace>
@@ -85,8 +84,8 @@ Every moment of "what button or command comes next?" goes into `Confusions`.
 ### Pass Criteria
 
 - A run can be completed without private planning.
-- The operator can explain the difference between `/briefloop run` and
-  `/generate-brief`.
+- The operator can explain that `/briefloop run` creates or refreshes the
+  handoff and does not itself mark stages complete.
 - `status` does not write state.
 - `deliver` goes through gates, reader-final gate, and `finalize-complete`.
 - The final reader output has no internal claim IDs, workflow residue, local
@@ -132,11 +131,11 @@ git clone https://github.com/Stahl-G/briefloop.git
 cd briefloop
 bash scripts/setup.sh
 source .venv/bin/activate
-which multi-agent-brief
-multi-agent-brief version
+which briefloop
+briefloop version
 python3 -m pytest -q tests/test_runtime_assets.py tests/test_subagent_first_contract.py tests/test_status_commands.py
-multi-agent-brief init /tmp/briefloop-demo --demo --force
-multi-agent-brief claude install --repo-workdir .
+briefloop init /tmp/briefloop-demo --demo --force
+briefloop claude install --repo-workdir .
 ```
 
 Then, in Claude Code:
@@ -144,15 +143,14 @@ Then, in Claude Code:
 ```text
 /briefloop run /tmp/briefloop-demo
 /briefloop status /tmp/briefloop-demo
-/generate-brief /tmp/briefloop-demo
 /briefloop deliver /tmp/briefloop-demo
 ```
 
 If Claude Code is not available, test the CLI demo handoff:
 
 ```bash
-multi-agent-brief doctor --config /tmp/briefloop-demo/config.yaml
-multi-agent-brief run --workspace /tmp/briefloop-demo --skip-doctor
+briefloop doctor --config /tmp/briefloop-demo/config.yaml
+briefloop run --workspace /tmp/briefloop-demo --skip-doctor
 ```
 
 ### What To Ask For

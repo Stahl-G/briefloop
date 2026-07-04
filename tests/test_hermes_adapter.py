@@ -96,18 +96,18 @@ def test_build_hermes_cron_plan_has_daily_weekly_monthly(tmp_path: Path):
     assert "retry_stage" in weekly.prompt
     assert "scout" in weekly.prompt
     assert "auditor" in weekly.prompt
-    assert "multi-agent-brief gates check" in weekly.prompt
+    assert "briefloop gates check" in weekly.prompt
     assert "orchestrator_control_switchboard.json" in weekly.prompt
-    assert "multi-agent-brief controls select" in weekly.prompt
+    assert "briefloop controls select" in weekly.prompt
     assert "Selection is not execution" in weekly.prompt
-    assert "multi-agent-brief state check" in weekly.prompt
-    assert "multi-agent-brief state stage-complete" in weekly.prompt
-    assert "multi-agent-brief state finalize-complete" in weekly.prompt
-    assert "multi-agent-brief provenance build" in weekly.prompt
+    assert "briefloop state check" in weekly.prompt
+    assert "briefloop state stage-complete" in weekly.prompt
+    assert "briefloop state finalize-complete" in weekly.prompt
+    assert "briefloop provenance build" in weekly.prompt
     assert "not semantic proof" in weekly.prompt
     assert "finalize" in weekly.prompt
-    assert weekly.prompt.index("multi-agent-brief controls select") < weekly.prompt.index("multi-agent-brief gates check")
-    assert weekly.prompt.index("multi-agent-brief gates check") < weekly.prompt.index("multi-agent-brief finalize")
+    assert weekly.prompt.index("briefloop controls select") < weekly.prompt.index("briefloop gates check")
+    assert weekly.prompt.index("briefloop gates check") < weekly.prompt.index("briefloop finalize")
     assert "/generate-brief" not in weekly.prompt
 
     # Monthly job
@@ -155,16 +155,16 @@ def test_hermes_skill_uses_delegate_task_runtime():
     assert "Selection is not execution" in skill
     assert "Audit warnings, overstatement findings, support-calibration findings" in skill
     assert "do not authorize direct edits to frozen artifacts" in skill
-    assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in skill
-    assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in skill
-    assert "multi-agent-brief state check --workspace <workspace> --strict" in skill
-    assert "multi-agent-brief state freeze-claim-ledger --workspace <workspace>" in skill
-    assert "multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger" in skill
-    assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in skill
-    assert "multi-agent-brief state finalize-complete --workspace <workspace>" in skill
+    assert "briefloop gates check --workspace <workspace> --stage auditor" in skill
+    assert "briefloop gates check --workspace <workspace> --stage finalize" in skill
+    assert "briefloop state check --workspace <workspace> --strict" in skill
+    assert "briefloop state freeze-claim-ledger --workspace <workspace>" in skill
+    assert "briefloop state stage-complete --workspace <workspace> --stage claim-ledger" in skill
+    assert "briefloop state stage-complete --workspace <workspace> --stage auditor" in skill
+    assert "briefloop state finalize-complete --workspace <workspace>" in skill
     assert (
-        skill.index("multi-agent-brief state freeze-claim-ledger --workspace <workspace>")
-        < skill.index("multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger")
+        skill.index("briefloop state freeze-claim-ledger --workspace <workspace>")
+        < skill.index("briefloop state stage-complete --workspace <workspace> --stage claim-ledger")
         < skill.index("#### 4. Analyst child")
     )
     assert "Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input" in skill
@@ -180,14 +180,14 @@ def test_hermes_skill_uses_delegate_task_runtime():
     assert "analyst" in skill
     assert "editor" in skill
     assert "auditor" in skill
-    assert "multi-agent-brief finalize" in skill
+    assert "briefloop finalize" in skill
 
 
 def test_hermes_skill_keeps_users_inside_hermes():
     skill = render_hermes_skill()
     assert "/generate-brief" not in skill
     assert "Claude Code" not in skill
-    assert "multi-agent-brief prepare" not in skill
+    assert "briefloop prepare" not in skill
 
 
 def test_hermes_skill_has_setup_workflow():
@@ -234,7 +234,7 @@ def test_hermes_skill_contains_atomic_graph_boundary():
 
 def test_hermes_skill_no_prepare_reference():
     skill = render_hermes_skill()
-    assert "multi-agent-brief prepare" not in skill
+    assert "briefloop prepare" not in skill
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +265,7 @@ def test_hermes_prompt_contains_atomic_graph_boundary():
     assert "retry_stage" in prompt
     assert "request_human_review" in prompt
     assert "block_run" in prompt
-    assert "multi-agent-brief feedback ingest" in prompt
+    assert "briefloop feedback ingest" in prompt
     assert "feedback show" in prompt
     assert "auditor_quality_gate_report.json" in prompt
     assert "finalize_quality_gate_report.json" in prompt
@@ -273,31 +273,31 @@ def test_hermes_prompt_contains_atomic_graph_boundary():
     assert "provenance_graph.json" in prompt
     assert "orchestrator_control_switchboard.json" in prompt
     assert "control_selections.json" in prompt
-    assert "multi-agent-brief controls select" in prompt
+    assert "briefloop controls select" in prompt
     assert "Selection is not execution" in prompt
     resolved_ws = str(Path("/tmp/test-ws").resolve())
-    assert f"multi-agent-brief controls select --workspace {resolved_ws}" in prompt
-    assert f"multi-agent-brief gates check --workspace {resolved_ws} --stage auditor" in prompt
-    assert f"multi-agent-brief gates check --workspace {resolved_ws} --stage finalize" in prompt
-    assert f"multi-agent-brief state check --workspace {resolved_ws} --strict" in prompt
-    claim_ledger_freeze = f"multi-agent-brief state freeze-claim-ledger --workspace {resolved_ws}"
-    claim_ledger_complete = f"multi-agent-brief state stage-complete --workspace {resolved_ws} --stage claim-ledger"
+    assert f"briefloop controls select --workspace {resolved_ws}" in prompt
+    assert f"briefloop gates check --workspace {resolved_ws} --stage auditor" in prompt
+    assert f"briefloop gates check --workspace {resolved_ws} --stage finalize" in prompt
+    assert f"briefloop state check --workspace {resolved_ws} --strict" in prompt
+    claim_ledger_freeze = f"briefloop state freeze-claim-ledger --workspace {resolved_ws}"
+    claim_ledger_complete = f"briefloop state stage-complete --workspace {resolved_ws} --stage claim-ledger"
     assert claim_ledger_freeze in prompt
     assert claim_ledger_complete in prompt
     assert prompt.index(claim_ledger_freeze) < prompt.index(claim_ledger_complete)
-    assert prompt.index(claim_ledger_complete) < prompt.index('Goal: "Draft the audited MABW brief"')
-    assert f"multi-agent-brief state stage-complete --workspace {resolved_ws} --stage auditor" in prompt
-    assert f"multi-agent-brief state finalize-complete --workspace {resolved_ws}" in prompt
-    assert f"multi-agent-brief repair route --workspace {resolved_ws}" in prompt
-    assert f"multi-agent-brief repair start --workspace {resolved_ws}" in prompt
-    assert f"multi-agent-brief repair complete --workspace {resolved_ws}" in prompt
+    assert prompt.index(claim_ledger_complete) < prompt.index('Goal: "Draft the audited BriefLoop brief"')
+    assert f"briefloop state stage-complete --workspace {resolved_ws} --stage auditor" in prompt
+    assert f"briefloop state finalize-complete --workspace {resolved_ws}" in prompt
+    assert f"briefloop repair route --workspace {resolved_ws}" in prompt
+    assert f"briefloop repair start --workspace {resolved_ws}" in prompt
+    assert f"briefloop repair complete --workspace {resolved_ws}" in prompt
     assert "Audit warnings, overstatement findings, support-calibration findings" in prompt
     assert "do not authorize direct edits to frozen artifacts" in prompt
-    assert f"multi-agent-brief provenance build --workspace {resolved_ws}" in prompt
-    assert f"multi-agent-brief provenance validate --workspace {resolved_ws}" in prompt
-    assert prompt.index("multi-agent-brief controls select") < prompt.index("multi-agent-brief gates check")
-    assert prompt.index("multi-agent-brief gates check") < prompt.index("multi-agent-brief finalize")
-    assert prompt.index("multi-agent-brief finalize") < prompt.index("multi-agent-brief provenance build")
+    assert f"briefloop provenance build --workspace {resolved_ws}" in prompt
+    assert f"briefloop provenance validate --workspace {resolved_ws}" in prompt
+    assert prompt.index("briefloop controls select") < prompt.index("briefloop gates check")
+    assert prompt.index("briefloop gates check") < prompt.index("briefloop finalize")
+    assert prompt.index("briefloop finalize") < prompt.index("briefloop provenance build")
     assert "feedback_issues.json" in prompt
     assert "scout" in prompt
     assert "screener" in prompt
@@ -305,7 +305,7 @@ def test_hermes_prompt_contains_atomic_graph_boundary():
     assert "analyst" in prompt
     assert "editor" in prompt
     assert "auditor" in prompt
-    assert "multi-agent-brief finalize" in prompt
+    assert "briefloop finalize" in prompt
     assert "/generate-brief" not in prompt
     assert "Claude Code" not in prompt
 
@@ -318,8 +318,8 @@ def test_hermes_setup_next_step_is_hermes_native():
         version=f"v{SOURCE_VERSION}",
         doctor_status="passed",
     )
-    assert "multi-agent-brief hermes prompt" in text
-    assert "multi-agent-brief hermes install-skill" in text
+    assert "briefloop hermes prompt" in text
+    assert "briefloop hermes install-skill" in text
     assert "Orchestrator main agent" in text
     assert "delegate" in text.lower()
     assert "/generate-brief" not in text
@@ -366,9 +366,9 @@ def test_hermes_prompt_contains_doctor_and_sources():
         repo_workdir="/tmp/test-repo",
         venv_path="/tmp/test-repo/.venv/bin/activate",
     )
-    assert "multi-agent-brief doctor" in prompt
-    assert "multi-agent-brief sources decide" in prompt
-    assert "multi-agent-brief inputs classify" in prompt
+    assert "briefloop doctor" in prompt
+    assert "briefloop sources decide" in prompt
+    assert "briefloop inputs classify" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -466,21 +466,21 @@ def test_cli_hermes_prompt_output_contains_workflow_steps(capsys, tmp_path: Path
     _assert_atomic_graph_boundary(output)
     assert "retry_stage" in output
     assert "scout" in output
-    assert "multi-agent-brief gates check" in output
-    assert "multi-agent-brief state check" in output
-    assert "multi-agent-brief state stage-complete" in output
-    assert "multi-agent-brief state finalize-complete" in output
+    assert "briefloop gates check" in output
+    assert "briefloop state check" in output
+    assert "briefloop state stage-complete" in output
+    assert "briefloop state finalize-complete" in output
     assert "audience_profile_snapshot.md" in output
-    assert "multi-agent-brief provenance build" in output
-    assert output.index("multi-agent-brief gates check") < output.index("multi-agent-brief finalize")
-    assert output.index("multi-agent-brief finalize") < output.index("multi-agent-brief provenance build")
-    assert "multi-agent-brief finalize" in output
+    assert "briefloop provenance build" in output
+    assert output.index("briefloop gates check") < output.index("briefloop finalize")
+    assert output.index("briefloop finalize") < output.index("briefloop provenance build")
+    assert "briefloop finalize" in output
     assert "/generate-brief" not in output
     # Onboarding workflow path
     assert "chat-to-JSON onboarding" in output
     assert "Collect brief profile in chat" in output
-    assert "multi-agent-brief init <workspace> --from-onboarding onboarding.json" in output
-    assert "multi-agent-brief run --workspace <workspace>" in output
+    assert "briefloop init <workspace> --from-onboarding onboarding.json" in output
+    assert "briefloop run --workspace <workspace>" in output
     # Plugin preferred path
     assert "Preferred" in output
     assert "Hermes Plugin" in output
@@ -502,9 +502,9 @@ def test_hermes_skill_contains_onboarding_workflow():
     assert "Fallback" in content
     assert "chat-to-JSON" in content
     assert "Collect brief profile in chat" in content
-    assert "multi-agent-brief init <workspace> --from-onboarding onboarding.json" in content
-    assert "multi-agent-brief run --workspace <workspace>" in content
-    assert "Do not call `multi-agent-brief run` again mid-pipeline" in content
+    assert "briefloop init <workspace> --from-onboarding onboarding.json" in content
+    assert "briefloop run --workspace <workspace>" in content
+    assert "Do not call `briefloop run` again mid-pipeline" in content
     assert "delegate_task" in content
     assert "gates check + state check + state stage-complete" in content
     assert "state finalize-complete" in content

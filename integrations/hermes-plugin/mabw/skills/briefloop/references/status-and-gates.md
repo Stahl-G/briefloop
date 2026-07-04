@@ -4,7 +4,7 @@ Read this before interpreting `status`, running gates, finalizing, or delivering
 
 ## Status
 
-`multi-agent-brief status --workspace <workspace>` is read-only. Use it first
+`briefloop status --workspace <workspace>` is read-only. Use it first
 when the user asks "where is this run?" or "what should happen next?"
 
 Status can show:

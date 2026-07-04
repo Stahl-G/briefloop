@@ -37,7 +37,7 @@ Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Audit
 
         ## Roles
 
-        - **orchestrator** (coordination): Acts as the runtime main agent that controls delegated MABW stages, contract references, decisions, and artifact handoffs.
+        - **orchestrator** (coordination): Acts as the runtime main agent that controls delegated BriefLoop stages, contract references, decisions, and artifact handoffs.
 - **source-provider** (coordination): Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
 - **source-planner** (coordination): Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
 - **scout** (pipeline): Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.

@@ -1,4 +1,4 @@
-# MABW 发布验证清单
+# BriefLoop 发布验证清单
 
 这份清单用于正式推广前的最后两类人工验证：
 
@@ -23,12 +23,12 @@
 先确认全局命令入口和 Claude Code 命令已经指向当前 checkout，而不是旧安装：
 
 ```bash
-which multi-agent-brief
-multi-agent-brief version
-multi-agent-brief claude install --repo-workdir .
+which briefloop
+briefloop version
+briefloop claude install --repo-workdir .
 ```
 
-如果 `multi-agent-brief version` 不是当前仓库版本，先修安装入口，再开始自测。不要在旧 CLI 上继续跑黄金路径。
+如果 `briefloop version` 不是当前仓库版本，先修安装入口，再开始自测。不要在旧 CLI 上继续跑黄金路径。
 
 记录一个新的测试目录：
 
@@ -70,7 +70,6 @@ EOF
 ```text
 /briefloop new
 /briefloop run <workspace>
-/generate-brief <workspace>
 /briefloop status <workspace>
 /briefloop feedback <workspace> "..."
 /briefloop deliver <workspace>
@@ -81,7 +80,7 @@ EOF
 ### 通过标准
 
 - 能不靠私有计划完成一次 run。
-- 能解释 `/briefloop run` 与 `/generate-brief` 的区别。
+- 能解释 `/briefloop run` 只是创建或刷新 handoff，本身不完成 stage。
 - `status` 没有写状态。
 - `deliver` 经过 gates、reader-final gate 和 `finalize-complete`。
 - 最终 reader output 没有内部 claim ID、流程词、本地路径或空 source 行。
@@ -121,11 +120,11 @@ git clone https://github.com/Stahl-G/briefloop.git
 cd briefloop
 bash scripts/setup.sh
 source .venv/bin/activate
-which multi-agent-brief
-multi-agent-brief version
+which briefloop
+briefloop version
 python3 -m pytest -q tests/test_runtime_assets.py tests/test_subagent_first_contract.py tests/test_status_commands.py
-multi-agent-brief init /tmp/briefloop-demo --demo --force
-multi-agent-brief claude install --repo-workdir .
+briefloop init /tmp/briefloop-demo --demo --force
+briefloop claude install --repo-workdir .
 ```
 
 然后在 Claude Code 中尝试：
@@ -133,15 +132,14 @@ multi-agent-brief claude install --repo-workdir .
 ```text
 /briefloop run /tmp/briefloop-demo
 /briefloop status /tmp/briefloop-demo
-/generate-brief /tmp/briefloop-demo
 /briefloop deliver /tmp/briefloop-demo
 ```
 
 如果没有 Claude Code 环境，则只测 CLI demo：
 
 ```bash
-multi-agent-brief doctor --config /tmp/briefloop-demo/config.yaml
-multi-agent-brief run --workspace /tmp/briefloop-demo --skip-doctor
+briefloop doctor --config /tmp/briefloop-demo/config.yaml
+briefloop run --workspace /tmp/briefloop-demo --skip-doctor
 ```
 
 ### 需要她反馈什么

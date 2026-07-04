@@ -156,7 +156,7 @@ def print_tavily_guidance() -> None:
     print("  Keys should be stored in environment variables only.")
     print()
     print(
-        "  Check configuration: multi-agent-brief doctor"
+        "  Check configuration: briefloop doctor"
         " --config <workspace>/config.yaml"
     )
 
@@ -181,7 +181,7 @@ def print_search_backend_guidance(profile) -> None:
             " provides a web-search tool."
         )
         print(
-            "  Check configuration: multi-agent-brief doctor"
+            "  Check configuration: briefloop doctor"
             " --config <workspace>/config.yaml"
         )
         return
@@ -215,7 +215,7 @@ def print_search_backend_guidance(profile) -> None:
             " GitHub."
         )
         print(
-            "  Check configuration: multi-agent-brief doctor"
+            "  Check configuration: briefloop doctor"
             " --config <workspace>/config.yaml"
         )
 

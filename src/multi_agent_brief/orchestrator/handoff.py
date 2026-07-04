@@ -96,16 +96,16 @@ REPAIR_GUIDANCE_NOTE = (
     "narrow the scope before delegating or request human review. "
     "Audit warnings, overstatement findings, support-calibration findings, and quality-gate "
     "findings do not authorize direct edits to frozen artifacts. "
-    "For owner-stage artifact repair, first run `multi-agent-brief repair route --workspace "
-    "<workspace>` and `multi-agent-brief repair start --workspace <workspace>`, then delegate "
+    "For owner-stage artifact repair, first run `briefloop repair route --workspace "
+    "<workspace>` and `briefloop repair start --workspace <workspace>`, then delegate "
     "only the repair_owner role and allow edits only to allowed_artifacts. After the owner "
-    "edits, run `multi-agent-brief repair complete --workspace <workspace> --reason \"<reason>\"` "
+    "edits, run `briefloop repair complete --workspace <workspace> --reason \"<reason>\"` "
     "and rerun downstream stages from must_rerun_from."
 )
 DECISION_RECORDING_NOTE = (
     "Record every successful stage completion before moving on: run "
-    "`multi-agent-brief state stage-complete --workspace <workspace> --stage <stage_id> "
-    "--reason \"<reason>\"`. Use low-level `multi-agent-brief state decide` only for "
+    "`briefloop state stage-complete --workspace <workspace> --stage <stage_id> "
+    "--reason \"<reason>\"`. Use low-level `briefloop state decide` only for "
     "retry_stage, request_human_review, or block_run decisions. "
     "`delegate_repair` requires the repair route/start transaction and cannot be executed "
     "through `state decide`. "
@@ -114,19 +114,19 @@ DECISION_RECORDING_NOTE = (
 )
 FINALIZE_GATE_NOTE = (
     "Before finalize, after the auditor stage completes, run "
-    "`multi-agent-brief gates check --workspace <workspace> --stage auditor` and "
-    "`multi-agent-brief state check --workspace <workspace> --strict`; this "
+    "`briefloop gates check --workspace <workspace> --stage auditor` and "
+    "`briefloop state check --workspace <workspace> --strict`; this "
     "creates or refreshes `output/intermediate/gates/auditor_quality_gate_report.json` "
     "and a legacy latest projection at `output/intermediate/quality_gate_report.json`. If "
     "there are blocking findings, do not finalize. Use feedback records plus "
-    "`multi-agent-brief repair route` / `multi-agent-brief repair start`, "
+    "`briefloop repair route` / `briefloop repair start`, "
     "request_human_review, or block_run. Complete auditor with "
-    "`multi-agent-brief state stage-complete --workspace <workspace> --stage auditor "
+    "`briefloop state stage-complete --workspace <workspace> --stage auditor "
     "--reason \"Audit and quality gates passed.\"` only when audit readiness and "
     "quality gates pass. After the finalize tool writes delivery artifacts under "
-    "`output/delivery/`, run `multi-agent-brief gates check --workspace <workspace> "
+    "`output/delivery/`, run `briefloop gates check --workspace <workspace> "
     "--stage finalize --brief <workspace>/output/brief.md`, then run "
-    "`multi-agent-brief state finalize-complete --workspace <workspace> --reason "
+    "`briefloop state finalize-complete --workspace <workspace> --reason "
     "\"Reader artifacts finalized and clean.\"`. Finalize/formatter reads "
     "`output/intermediate/audited_brief.md` as frozen input and must not edit it; "
     "if reader-clean requires wording changes in the audited brief, stop and "
@@ -166,14 +166,14 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "source_candidates.yaml is a source plan only, not source evidence; Scout must extract candidates from actual source content or materialized source files.",
     "Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet.",
     "After state stage-complete succeeds, that stage's output artifacts are frozen for downstream stages; later stages must not rewrite them in place.",
-    "Never edit workflow_state.json, artifact_registry.json, runtime_manifest.json, or event_log.jsonl directly; only deterministic multi-agent-brief transactions may write runtime control files.",
+    "Never edit workflow_state.json, artifact_registry.json, runtime_manifest.json, or event_log.jsonl directly; only deterministic briefloop transactions may write runtime control files.",
     "If state stage-complete, repair complete, or finalize-complete fails, stop and report the exact CLI error instead of patching control files or advancing state manually.",
     "If a downstream stage finds schema mismatch or invalid frozen upstream artifacts, route repair back to the owner stage instead of editing the artifact directly.",
     "Formatter/finalize may only write reader delivery artifacts and finalize control records; it must not patch output/intermediate/audited_brief.md.",
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
     "Scout chunk outputs are scratch material only; if Scout work is split across chunks or child agents, join chunks deterministically before writing candidate_claims.json.",
-    "Record successful stage transitions with multi-agent-brief state stage-complete only after artifact-level completion evidence is available.",
-    "Record finalize completion with multi-agent-brief state finalize-complete after delivery artifacts and finalize_report.json are clean.",
+    "Record successful stage transitions with briefloop state stage-complete only after artifact-level completion evidence is available.",
+    "Record finalize completion with briefloop state finalize-complete after delivery artifacts and finalize_report.json are clean.",
 ]
 DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not claim stage completion based on prose acknowledgement alone.",
@@ -196,7 +196,7 @@ OPERATOR_ARTIFACT_OWNERSHIP = {
         {
             "path": "output/intermediate/candidate_claims.json",
             "owner": "scout",
-            "write_rule": "Scout/operator-authored draft artifact; complete through `multi-agent-brief state stage-complete --stage scout`.",
+            "write_rule": "Scout/operator-authored draft artifact; complete through `briefloop state stage-complete --stage scout`.",
         },
         {
             "path": "output/intermediate/screened_candidates.json",
@@ -222,39 +222,39 @@ OPERATOR_ARTIFACT_OWNERSHIP = {
     "cli_owned_outputs": [
         {
             "path": "output/intermediate/claim_ledger.json",
-            "command": "multi-agent-brief state freeze-claim-ledger --workspace <workspace>",
+            "command": "briefloop state freeze-claim-ledger --workspace <workspace>",
         },
         {
             "path": "output/intermediate/analyst_draft_snapshot.md",
-            "command": "multi-agent-brief state stage-complete --workspace <workspace> --stage analyst --reason \"<reason>\"",
+            "command": "briefloop state stage-complete --workspace <workspace> --stage analyst --reason \"<reason>\"",
         },
         {
             "path": "output/intermediate/gates/auditor_quality_gate_report.json",
-            "command": "multi-agent-brief gates check --workspace <workspace> --stage auditor",
+            "command": "briefloop gates check --workspace <workspace> --stage auditor",
         },
         {
             "path": "output/intermediate/gates/finalize_quality_gate_report.json",
-            "command": "multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <brief>",
+            "command": "briefloop gates check --workspace <workspace> --stage finalize --brief <brief>",
         },
         {
             "path": "output/intermediate/finalize_report.json",
-            "command": "multi-agent-brief finalize --config <workspace>/config.yaml",
+            "command": "briefloop finalize --config <workspace>/config.yaml",
         },
         {
             "path": "output/delivery/brief.md",
-            "command": "multi-agent-brief finalize --config <workspace>/config.yaml",
+            "command": "briefloop finalize --config <workspace>/config.yaml",
         },
         {
             "path": "output/intermediate/quality_panel.json",
-            "command": "multi-agent-brief quality summarize --workspace <workspace>",
+            "command": "briefloop quality summarize --workspace <workspace>",
         },
         {
             "path": "output/intermediate/quality_summary.md",
-            "command": "multi-agent-brief quality summarize --workspace <workspace>",
+            "command": "briefloop quality summarize --workspace <workspace>",
         },
         {
             "path": "output/intermediate/quality_panel.html",
-            "command": "multi-agent-brief quality summarize --workspace <workspace>",
+            "command": "briefloop quality summarize --workspace <workspace>",
         },
     ],
     "read_only_diagnostics": [
@@ -395,8 +395,8 @@ def _hermes_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         prompt=prompt,
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
-            "Install the MABW Hermes plugin: cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw && hermes plugins enable mabw",
-            "Then in Hermes: /mabw <workspace> → mabw_create_onboarding → mabw_init_workspace → mabw_run_handoff → read agent_handoff.md → continue delegated workflow.",
+            "Install the BriefLoop Hermes plugin: cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw && hermes plugins enable mabw",
+            "Then in Hermes, use the BriefLoop plugin tools: /mabw <workspace> → mabw_create_onboarding → mabw_init_workspace → mabw_run_handoff → read agent_handoff.md → continue delegated workflow. The /mabw tool name is a compatibility surface.",
             "Read configs/orchestrator_contract.yaml, configs/stage_specs.yaml, configs/artifact_contracts.yaml, and configs/policy_packs/default.yaml before delegation.",
             "Read output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, and event_log.jsonl before selecting the next stage.",
             "Read output/intermediate/audience_profile_snapshot.md at run start for reader taste context; do not treat audience_profile.md as source evidence.",
@@ -420,9 +420,9 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         workspace=ws_path,
         repo_workdir=str(repo.resolve()),
         venv_activate=venv,
-        next_steps=f"In Claude Code, run: /generate-brief {ws_path}. The command context is the Orchestrator main agent.",
+        next_steps=f"In Claude Code, run: /briefloop run {ws_path}. The command context is the Orchestrator main agent.",
         prompt=(
-            f"Use /generate-brief {ws_path} as the Orchestrator main-agent entrypoint.\n"
+            f"Use /briefloop run {ws_path} as the Orchestrator main-agent entrypoint.\n"
             "Read contract references before delegation:\n"
             "- configs/orchestrator_contract.yaml\n"
             "- configs/stage_specs.yaml\n"
@@ -443,7 +443,7 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}\n\n"
@@ -454,7 +454,7 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
             "Claude Code must be opened from the repository root.",
-            "The /generate-brief command handles the Orchestrator-led delegated workflow.",
+            "The /briefloop command handles the Orchestrator-led delegated workflow.",
         ],
     )
 
@@ -467,12 +467,12 @@ def _opencode_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         workspace=ws_path,
         repo_workdir=str(repo.resolve()),
         venv_activate=venv,
-        next_steps=f"In OpenCode, use the generate-brief command for {ws_path}. brief-orchestrator is the primary Orchestrator main agent.",
+        next_steps=f"In OpenCode, use the BriefLoop command for {ws_path}. brief-orchestrator is the primary Orchestrator main agent.",
         prompt=(
             f"Workspace: {ws_path}\n"
             f"Repository: {repo.resolve()}\n"
             f"Activate venv: source {venv}\n\n"
-            "Run the OpenCode generate-brief command through brief-orchestrator.\n"
+            "Run the OpenCode BriefLoop command through brief-orchestrator.\n"
             "Read contract references before delegation:\n"
             "- configs/orchestrator_contract.yaml\n"
             "- configs/stage_specs.yaml\n"
@@ -493,7 +493,7 @@ def _opencode_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}"
@@ -520,13 +520,13 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
     writer_flow_protocol = (
         "Codex writer flow protocol:\n"
         "- When the user asks to inspect a folder, produce a Workspace Card before taking action: "
-        "workspace path, MABW config found/missing, Codex runtime kit installed/not installed, "
+        "workspace path, BriefLoop config found/missing, Codex runtime kit installed/not installed, "
         "trust status, input source count, demo-looking sources yes/no, existing output/control state, "
         "current workflow_state, and recommended next action.\n"
         "- Trust status is one Workspace Card line, not the main answer.\n"
         "- Do not launch the interactive terminal onboarding wizard inside Codex chat.\n"
         "- For workspace creation, collect onboarding fields in one batch, write onboarding.json, "
-        "show the values to be written, then run multi-agent-brief init --from-onboarding.\n"
+        "show the values to be written, then run briefloop init --from-onboarding.\n"
         "- Before initializing into an existing directory, check output/intermediate/runtime_manifest.json, "
         "workflow_state.json, artifact_registry.json, event_log.jsonl, and output/runs/. If present, ask whether "
         "to create a new workspace, overwrite config only while keeping old output, or reset old output/control state "
@@ -577,8 +577,8 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n\n"
             f"{ROLE_TOPOLOGY_HANDOFF_NOTE}\n\n"
             f"{role_mapping}\n"
-            "Do not call the next specialist until `multi-agent-brief state stage-complete` succeeds for the current stage.\n"
-            "Finalize is a Python delivery/rendering tool. After finalize writes delivery artifacts, record completion with `multi-agent-brief state finalize-complete`.\n\n"
+            "Do not call the next specialist until `briefloop state stage-complete` succeeds for the current stage.\n"
+            "Finalize is a Python delivery/rendering tool. After finalize writes delivery artifacts, record completion with `briefloop state finalize-complete`.\n\n"
             "Read runtime state files before selecting the next stage:\n"
             "- output/intermediate/runtime_manifest.json\n"
             "- output/intermediate/workflow_state.json\n"
@@ -589,7 +589,7 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}"
@@ -599,7 +599,7 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Codex agent configs are in .codex/agents/.",
             "Codex must trust the workspace before project .codex/config.toml and custom agents load.",
             "The root Codex session is the Orchestrator main agent; spawn specialist custom agents directly.",
-            "If Codex cannot see custom agents, run `multi-agent-brief runtime install --workspace <workspace> --runtime codex --repo-workdir <repo>` from a source clone.",
+            "If Codex cannot see custom agents, run `briefloop runtime install --workspace <workspace> --runtime codex --repo-workdir <repo>` from a source clone.",
         ],
     )
 
@@ -641,7 +641,7 @@ def _operator_handoff(
         venv_activate=venv,
         next_steps=(
             "Use the operator runtime as a host-agnostic compact workflow. After all artifacts are ready, "
-            f"run: multi-agent-brief finalize --config {ws_path}/config.yaml"
+            f"run: briefloop finalize --config {ws_path}/config.yaml"
         ),
         prompt=(
             f"Operator runtime for workspace: {ws_path}\n"
@@ -671,31 +671,31 @@ def _operator_handoff(
             "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
             "Read the Orchestrator control switchboard:\n"
             "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with multi-agent-brief controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}\n\n"
             "Run each step in order, verifying each artifact before continuing:\n\n"
-            f"1. multi-agent-brief doctor --config {ws_path}/config.yaml\n"
-            f"2. multi-agent-brief sources decide --config {ws_path}/config.yaml  (if configured)\n"
+            f"1. briefloop doctor --config {ws_path}/config.yaml\n"
+            f"2. briefloop sources decide --config {ws_path}/config.yaml  (if configured)\n"
             "   If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.\n"
-            f"3. multi-agent-brief inputs extract --config {ws_path}/config.yaml  (if PDF/DOCX/image inputs exist)\n"
-            f"4. multi-agent-brief inputs classify --config {ws_path}/config.yaml\n"
+            f"3. briefloop inputs extract --config {ws_path}/config.yaml  (if PDF/DOCX/image inputs exist)\n"
+            f"4. briefloop inputs classify --config {ws_path}/config.yaml\n"
             "5. Delegate the Scout role only if your host provides real delegation. Otherwise perform Scout as operator-authored artifact work. Runtime may split Scout work internally, but chunk outputs are scratch only; write the deterministic joined output/intermediate/candidate_claims.json once. Default topology: also write output/intermediate/screened_candidates.json from the joined candidate universe, then stage-complete scout. Strict topology: write only candidate_claims.json.\n"
             "6. Default topology: do not delegate Screener and do not call state stage-complete --stage screener; topology satisfaction records Screener after Scout completes. Strict topology only: delegate the Screener role only if your host provides real delegation, otherwise perform Screener as operator-authored artifact work to write output/intermediate/screened_candidates.json.\n"
             "7. Delegate the Claim Ledger role only if your host provides real delegation. Otherwise perform Claim Ledger as operator-authored artifact work to write output/intermediate/claim_drafts.json, then run "
-            f"multi-agent-brief state freeze-claim-ledger --workspace {ws_path} to create output/intermediate/claim_ledger.json, "
-            f"then run multi-agent-brief state stage-complete --workspace {ws_path} --stage claim-ledger --reason \"Claim Ledger was frozen from claim drafts.\"\n"
+            f"briefloop state freeze-claim-ledger --workspace {ws_path} to create output/intermediate/claim_ledger.json, "
+            f"then run briefloop state stage-complete --workspace {ws_path} --stage claim-ledger --reason \"Claim Ledger was frozen from claim drafts.\"\n"
             "8. Delegate the Analyst role only if your host provides real delegation. Otherwise perform Analyst as operator-authored artifact work. Read frozen output/intermediate/claim_ledger.json only, never claim_drafts.json, and write output/intermediate/audited_brief.md as a working draft. If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; it is not source evidence or proof of support. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph. Analyst stage-complete freezes output/intermediate/analyst_draft_snapshot.md\n"
             "9. Delegate the Editor / Delivery Editor role only if your host provides real delegation. Otherwise perform Editor as operator-authored artifact work to own and polish the final output/intermediate/audited_brief.md without adding facts. If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; if absent or invalid, do not repair it. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph\n"
             "10. Delegate the Auditor role only if your host provides real delegation. Otherwise perform Auditor as operator-authored artifact work to audit against frozen output/intermediate/claim_ledger.json, including overstatement and support-strength calibration, and write output/intermediate/audit_report.json\n"
-            f"11. multi-agent-brief gates check --workspace {ws_path} --stage auditor\n"
-            f"12. multi-agent-brief state check --workspace {ws_path} --strict\n"
-            f"13. multi-agent-brief state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
-            f"14. multi-agent-brief finalize --config {ws_path}/config.yaml "
+            f"11. briefloop gates check --workspace {ws_path} --stage auditor\n"
+            f"12. briefloop state check --workspace {ws_path} --strict\n"
+            f"13. briefloop state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
+            f"14. briefloop finalize --config {ws_path}/config.yaml "
             "(read audited_brief.md as frozen input; do not edit it during finalize)\n"
-            f"15. multi-agent-brief gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
-            f"16. multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
+            f"15. briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
+            f"16. briefloop state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         runtime_capabilities=_operator_runtime_capabilities(legacy_alias=legacy_alias),
@@ -781,13 +781,13 @@ def build_handoff(
 
     handoff.notes.append(RUNTIME_WEBSEARCH_ZERO_RESULT_NOTE)
     handoff.notes.append(
-        "Feedback loop controls are optional: feedback_issues.json and repair_plan.json are created only by multi-agent-brief feedback ingest/plan/resolve."
+        "Feedback loop controls are optional: feedback_issues.json and repair_plan.json are created only by briefloop feedback ingest/plan/resolve."
     )
     handoff.notes.append(
-        "output/intermediate/gates/auditor_quality_gate_report.json and output/intermediate/gates/finalize_quality_gate_report.json are created only by multi-agent-brief gates check; output/intermediate/quality_gate_report.json is a legacy/latest projection, not an authoritative completion artifact."
+        "output/intermediate/gates/auditor_quality_gate_report.json and output/intermediate/gates/finalize_quality_gate_report.json are created only by briefloop gates check; output/intermediate/quality_gate_report.json is a legacy/latest projection, not an authoritative completion artifact."
     )
     handoff.notes.append(
-        "Provenance projection is optional: provenance_graph.json is created only by multi-agent-brief provenance build and is an audit/debug view, not semantic proof."
+        "Provenance projection is optional: provenance_graph.json is created only by briefloop provenance build and is an audit/debug view, not semantic proof."
     )
     handoff.notes.append(
         "Audience memory is runtime context: audience_profile_snapshot.md is frozen per run and exposed through handoff; it is not source evidence or an artifact gate."
@@ -1062,7 +1062,7 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
             freeze_input_artifacts.append(claim_drafts_ref)
             pre_completion_transactions.append({
                 "transaction": "freeze_claim_ledger",
-                "command": "multi-agent-brief state freeze-claim-ledger --workspace <workspace>",
+                "command": "briefloop state freeze-claim-ledger --workspace <workspace>",
                 "reads": [claim_drafts_ref],
                 "writes": [claim_ledger_ref],
                 "must_run_before": "state stage-complete --stage claim-ledger",
@@ -1076,7 +1076,7 @@ def _build_stage_completion_protocol(repo: Path) -> dict[str, Any]:
             freeze_input_artifacts.append(audited_brief_ref)
             pre_completion_transactions.append({
                 "transaction": "snapshot_analyst_draft",
-                "command": "multi-agent-brief state stage-complete --workspace <workspace> --stage analyst",
+                "command": "briefloop state stage-complete --workspace <workspace> --stage analyst",
                 "reads": [audited_brief_ref],
                 "writes": [snapshot_ref],
                 "must_run_before": "delegate editor",
@@ -1338,7 +1338,7 @@ def _apply_fast_rerun_recipe(handoff: AgentHandoff, workspace: Path) -> None:
         "Timing comparability is downstream_only: upstream fact-layer stages were "
         "satisfied by import and must not be compared directly with full runs.",
         "If runtime_manifest.fact_layer_import is missing or invalid, stop and run "
-        "`multi-agent-brief state import-fact-layer` first; do not silently fall back to a full run.",
+        "`briefloop state import-fact-layer` first; do not silently fall back to a full run.",
         "This recipe is Experimental/internal in v0.8.1 and is not quality-equivalent to a full workflow.",
     ]
     text = "\n".join(guidance)
@@ -1373,7 +1373,7 @@ def _apply_experiment_080_assessment_target(handoff: AgentHandoff, workspace: Pa
         "For this target, auditor quality gates must have status pass before auditor stage-complete; "
         "warning is not enough even when there are 0 blocking findings. Repair warnings before completing auditor.\n"
         "After auditor stage-complete succeeds, stop the runtime workflow and register/score the run with "
-        "`multi-agent-brief experiments 080 register-run` and `multi-agent-brief experiments 080 score-run`.\n"
+        "`briefloop experiments 080 register-run` and `briefloop experiments 080 score-run`.\n"
         "Do not run finalize, finalize-complete, deliver, DOCX/PDF rendering, reader-clean delivery checks, "
         "or delivery archive for this target unless the operator explicitly starts a delivery_brief run."
     )
@@ -1399,7 +1399,7 @@ def _without_auditable_delivery_steps(text: str) -> str:
     for old, new in replacements.items():
         text = text.replace(old, new)
     blocked_fragments = (
-        "multi-agent-brief finalize",
+        "briefloop finalize",
         "state finalize-complete",
         "--stage finalize",
         "formatter/finalize ->",
@@ -1469,7 +1469,7 @@ def _is_auditable_delivery_owned_output(item: Any) -> bool:
     return (
         "finalize" in path
         or path.startswith("output/delivery/")
-        or "multi-agent-brief finalize" in command
+        or "briefloop finalize" in command
         or "--stage finalize" in command
         or "state finalize-complete" in command
     )
@@ -1832,7 +1832,7 @@ def write_handoff_artifacts(handoff: AgentHandoff, workspace: Path) -> tuple[Pat
             f"- Owner: `{stage.get('owner')}`",
             f"- Context inputs: {', '.join(stage.get('context_inputs') or []) or 'none'}",
             f"- Completion condition: {stage.get('completion_condition')}",
-            f"- Stage completion transaction: `multi-agent-brief state stage-complete --stage {stage.get('stage_id')} --workspace <workspace> --reason \"<reason>\"`",
+            f"- Stage completion transaction: `briefloop state stage-complete --stage {stage.get('stage_id')} --workspace <workspace> --reason \"<reason>\"`",
             "- Required input artifacts:",
         ])
         inputs = stage.get("required_input_artifacts") or []

@@ -34,7 +34,7 @@ git clone https://github.com/Stahl-G/briefloop.git
 cd briefloop
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
-multi-agent-brief version
+briefloop version
 ```
 
 `scripts/setup.ps1` 会：
@@ -44,7 +44,7 @@ multi-agent-brief version
 - 创建 `.venv`
 - 安装 `.[dev]`
 - 验证 `python -m multi_agent_brief.cli.main version`
-- 验证 `.venv\Scripts\multi-agent-brief.exe version`
+- 验证 `.venv\Scripts\briefloop.exe version`
 
 如果 PowerShell 执行策略拦截脚本，也可以只对 setup 脚本临时绕过：
 
@@ -57,9 +57,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 真实使用路径不是 demo，而是先收集需求、创建工作区，再生成 runtime handoff：
 
 ```powershell
-multi-agent-brief onboard
-multi-agent-brief init .\mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace .\mabw-workspace
+briefloop onboard
+briefloop init .\briefloop-workspace --from-onboarding onboarding.json
+briefloop run --workspace .\briefloop-workspace
 ```
 
 ## Optional: Inspect The Demo
@@ -67,28 +67,24 @@ multi-agent-brief run --workspace .\mabw-workspace
 demo 用于查看合成材料上的控制面和证据链，不是使用产品前的必经步骤。
 
 ```powershell
-multi-agent-brief init --demo
-# Optional: install /generate-brief for Claude Desktop Code tab discovery
-multi-agent-brief claude install --repo-workdir .
-# Then use /generate-brief inside Claude Code CLI/Desktop Code tab
-# with this repository loaded, or use:
-# multi-agent-brief run --workspace <workspace>
+briefloop init .\briefloop-demo --demo --force
+briefloop run --workspace .\briefloop-demo
 ```
 
-或直接运行示例输入：
+如果你从 source clone 使用 Claude Code，可以安装 writer command：
 
 ```powershell
-# Use /generate-brief only inside Claude Code with this repository loaded.
-# Generic chat clients should use multi-agent-brief run --workspace <workspace>.
+briefloop claude install --repo-workdir .
+# 然后在 Claude Code 里使用 /briefloop run <workspace>
 ```
 
 ## Init Workspace Directly
 
 ```powershell
-multi-agent-brief init my-workspace
+briefloop init my-workspace
 ```
 
-Answer the interactive onboarding questions. For non-interactive agent runs, generate `onboarding.json` first and use `multi-agent-brief init my-workspace --from-onboarding onboarding.json`.
+Answer the interactive onboarding questions. For non-interactive agent runs, generate `onboarding.json` first and use `briefloop init my-workspace --from-onboarding onboarding.json`.
 
 ## Advanced: Experimental Installer
 

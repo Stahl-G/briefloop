@@ -95,7 +95,7 @@ def _competitors_init(args: argparse.Namespace) -> int:
     print(
         "[competitors] Add candidate competitors to this file, then run:"
     )
-    print(f"  multi-agent-brief competitors merge --config {args.config}")
+    print(f"  briefloop competitors merge --config {args.config}")
     print(
         "[hint] For LLM-assisted discovery, use /propose-competitors"
         " <workspace> in Claude Code."
@@ -162,7 +162,7 @@ def _competitors_merge(args: argparse.Namespace) -> int:
             f" {universe_path}"
         )
         print(
-            "[hint] Re-run 'multi-agent-brief init' to regenerate workspace"
+            "[hint] Re-run 'briefloop init' to regenerate workspace"
             " files."
         )
         return 1

@@ -7,7 +7,7 @@ not add new artifact contracts.
 Every recipe starts after:
 
 ```bash
-multi-agent-brief run --workspace <workspace>
+briefloop run --workspace <workspace>
 ```
 
 The run command creates the runtime handoff, state files, audience snapshot, and
@@ -120,7 +120,7 @@ same frozen evidence, new writing -- verified by hash
 Import first:
 
 ```bash
-multi-agent-brief state import-fact-layer \
+briefloop state import-fact-layer \
   --workspace <new_workspace> \
   --archive <source_workspace>/output/runs/<run_id>/manifest.json
 ```
@@ -128,7 +128,7 @@ multi-agent-brief state import-fact-layer \
 Create handoff:
 
 ```bash
-multi-agent-brief run --workspace <new_workspace> --recipe fast-rerun
+briefloop run --workspace <new_workspace> --recipe fast-rerun
 ```
 
 This recipe is handoff guidance only. It does not import the fact layer by

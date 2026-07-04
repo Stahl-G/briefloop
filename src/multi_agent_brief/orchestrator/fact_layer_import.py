@@ -335,7 +335,7 @@ def _format_import_required_message(summary: dict[str, Any]) -> str:
     )
     return (
         f"{FAST_RERUN_IMPORT_REQUIRED_ERROR}: run --recipe fast-rerun requires an existing valid "
-        f"runtime_manifest.fact_layer_import. First run `multi-agent-brief state import-fact-layer "
+        f"runtime_manifest.fact_layer_import. First run `briefloop state import-fact-layer "
         f"--workspace <workspace> --archive <output/runs/run_id>`; reason: {reasons}"
     )
 

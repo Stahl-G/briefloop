@@ -59,8 +59,8 @@ folder. If the workspace cannot be found and the verb is not `new`, ask for an
 absolute workspace path before proceeding.
 
 Use existing deterministic BriefLoop commands. Do not run specialist stages
-unless the user explicitly switches to the advanced full
-`/generate-brief <workspace>` workflow.
+from this writer command; read the generated handoff and ask for explicit
+operator confirmation before continuing role-owned artifact work.
 
 When executing deterministic CLI commands, use `briefloop`. Keep all gate,
 repair, status, finalize, delivery, and human-approval boundaries unchanged.
@@ -114,10 +114,10 @@ Before writing onboarding.json, show a short "values I will write" summary:
 If any value was inferred rather than explicitly provided, stop and ask.
 
 After successful setup, tell the writer that the workspace handoff has already
-been created. The next writer command to produce the brief is:
+been created. The next writer command is:
 
 ```text
-/generate-brief <workspace>
+/briefloop status <workspace>
 ```
 
 If they only want to inspect or refresh the handoff later, use
@@ -145,11 +145,13 @@ Do not execute the full pipeline. Do not invoke specialist agents. Do not mark
 stages complete. Do not use `state decide --decision continue` or
 `state decide --decision finalize`.
 
-If the writer explicitly wants the full delegated workflow after handoff, point
-them to the advanced/debug command:
+If the writer explicitly wants to continue after handoff, read
+`agent_handoff.md` and explain the next operator action before any role-owned
+artifact work. Do not claim a specialist or subagent ran unless the runtime
+actually delegated that role.
 
 ```text
-/generate-brief <workspace>
+/briefloop status <workspace>
 ```
 
 ## `status <workspace>`

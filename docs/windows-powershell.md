@@ -1,6 +1,6 @@
 # Windows PowerShell Guide
 
-MABW supports a native Windows PowerShell path. Windows users do not need WSL
+BriefLoop supports a native Windows PowerShell path. Windows users do not need WSL
 or Git Bash to install and run the CLI.
 
 ## Supported Environment
@@ -37,7 +37,7 @@ git clone https://github.com/Stahl-G/briefloop.git
 cd briefloop
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
-multi-agent-brief version
+briefloop version
 ```
 
 `scripts/setup.ps1` will:
@@ -47,7 +47,7 @@ multi-agent-brief version
 - create `.venv`;
 - install `.[dev]`;
 - verify `python -m multi_agent_brief.cli.main version`;
-- verify `.venv\Scripts\multi-agent-brief.exe version`.
+- verify `.venv\Scripts\briefloop.exe version`.
 
 If PowerShell blocks script execution, bypass the policy only for this setup
 script:
@@ -61,9 +61,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 The real user path is onboarding, workspace initialization, and runtime handoff:
 
 ```powershell
-multi-agent-brief onboard
-multi-agent-brief init .\mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace .\mabw-workspace
+briefloop onboard
+briefloop init .\briefloop-workspace --from-onboarding onboarding.json
+briefloop run --workspace .\briefloop-workspace
 ```
 
 `run` creates the runtime handoff. It does not make Python write a full brief.
@@ -71,30 +71,30 @@ multi-agent-brief run --workspace .\mabw-workspace
 ## Optional: Inspect The Demo
 
 The demo is for inspecting the control surfaces and evidence chain on synthetic
-materials. It is not a required step before using MABW.
+materials. It is not a required step before using BriefLoop.
 
 ```powershell
-multi-agent-brief init .\mabw-demo --demo --force
-multi-agent-brief run --workspace .\mabw-demo
+briefloop init .\briefloop-demo --demo --force
+briefloop run --workspace .\briefloop-demo
 ```
 
 If you use Claude Code from a source clone, you can also install the Claude
 writer command:
 
 ```powershell
-multi-agent-brief claude install --repo-workdir .
+briefloop claude install --repo-workdir .
 ```
 
 ## Initialize A Workspace Directly
 
 ```powershell
-multi-agent-brief init my-workspace
+briefloop init my-workspace
 ```
 
 For non-interactive runs, create `onboarding.json` first and use:
 
 ```powershell
-multi-agent-brief init my-workspace --from-onboarding onboarding.json
+briefloop init my-workspace --from-onboarding onboarding.json
 ```
 
 ## Advanced: Experimental Installer
@@ -211,7 +211,7 @@ python scripts/generate_agent_configs.py --check
 ### WSL Is Optional
 
 WSL and Git Bash can run the macOS/Linux Bash commands, but Windows users do
-not need WSL to use MABW.
+not need WSL to use BriefLoop.
 
 ### Git Hook Is Optional
 

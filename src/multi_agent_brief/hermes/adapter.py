@@ -19,9 +19,9 @@ REPAIR_GUIDANCE_NOTE = (
     "narrow the scope before delegating or request human review. Audit warnings, "
     "overstatement findings, support-calibration findings, and quality-gate findings "
     "do not authorize direct edits to frozen artifacts. For owner-stage artifact "
-    "repair, run `multi-agent-brief repair route --workspace <workspace>` and "
-    "`multi-agent-brief repair start --workspace <workspace>` before delegation; after "
-    "the owner edits only allowed_artifacts, run `multi-agent-brief repair complete "
+    "repair, run `briefloop repair route --workspace <workspace>` and "
+    "`briefloop repair start --workspace <workspace>` before delegation; after "
+    "the owner edits only allowed_artifacts, run `briefloop repair complete "
     "--workspace <workspace> --reason \"<reason>\"` and rerun downstream stages from "
     "must_rerun_from."
 )
@@ -78,7 +78,7 @@ def _project_summary(config: dict[str, Any]) -> dict[str, str]:
     report = config.get("report", {}) or {}
     language = config.get("language", {}) or {}
     return {
-        "name": str(project.get("name") or project.get("title") or "MABW Brief"),
+        "name": str(project.get("name") or project.get("title") or "BriefLoop Brief"),
         "company": str(project.get("company") or ""),
         "industry": str(project.get("industry") or ""),
         "audience": str(project.get("audience") or "management"),
@@ -136,14 +136,14 @@ def build_hermes_cron_plan(
 
     jobs: list[HermesCronJob] = []
     daily_job = HermesCronJob(
-        name=f"MABW daily cache - {summary['name']}",
+        name=f"BriefLoop daily cache - {summary['name']}",
         schedule=daily_schedule,
         workdir=str(repo_path),
         profile=profile,
         deliver=deliver,
         purpose="Collect daily source signals into the workspace cache for later weekly/monthly synthesis.",
         prompt=(
-            "Run a Hermes daily source cache collection for this MABW workspace.\n\n"
+            "Run a Hermes daily source cache collection for this BriefLoop workspace.\n\n"
             f"{prompt_context}\n\n"
             "Use the multi-agent-brief-hermes skill.\n"
             "Collect source signals and write YYYY-MM-DD.json.\n"
@@ -154,7 +154,7 @@ def build_hermes_cron_plan(
 
     if "weekly" in resolved_cadences:
         jobs.append(HermesCronJob(
-            name=f"MABW weekly brief - {summary['name']}",
+            name=f"BriefLoop weekly brief - {summary['name']}",
             schedule=weekly_schedule,
             workdir=str(repo_path),
             profile=profile,
@@ -162,7 +162,7 @@ def build_hermes_cron_plan(
             context_from=[daily_job.name],
             purpose="Run the audited weekly brief workflow using Hermes delegate_task children.",
             prompt=(
-                "Run a Hermes-native delegated MABW brief workflow as the Orchestrator main agent.\n\n"
+                "Run a Hermes-native delegated BriefLoop brief workflow as the Orchestrator main agent.\n\n"
                 f"{prompt_context}\n\n"
                 "Use the multi-agent-brief-hermes skill.\n"
                 "Read contract references before delegation:\n"
@@ -177,7 +177,7 @@ def build_hermes_cron_plan(
                 "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
                 "Read the Orchestrator control switchboard:\n"
                 "- output/intermediate/orchestrator_control_switchboard.json\n"
-                "Record control selections with multi-agent-brief controls select. Selection is not execution.\n\n"
+                "Record control selections with briefloop controls select. Selection is not execution.\n\n"
                 f"{REPAIR_GUIDANCE_NOTE}\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
@@ -194,20 +194,20 @@ def build_hermes_cron_plan(
                 "default topology: scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
                 "strict topology: scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
-                f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
-                f"multi-agent-brief gates check --workspace {workspace_path} --stage auditor\n"
-                f"multi-agent-brief state check --workspace {workspace_path} --strict\n"
-                f"multi-agent-brief state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
-                f"Then run multi-agent-brief finalize --config {workspace_path}/config.yaml.\n"
-                f"After finalize writes reader-facing artifacts, run multi-agent-brief gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run multi-agent-brief state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+                f"briefloop controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
+                f"briefloop gates check --workspace {workspace_path} --stage auditor\n"
+                f"briefloop state check --workspace {workspace_path} --strict\n"
+                f"briefloop state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
+                f"Then run briefloop finalize --config {workspace_path}/config.yaml.\n"
+                f"After finalize writes reader-facing artifacts, run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
                 "finalize is not a quality-gate executor.\n"
-                "Optionally run multi-agent-brief provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
+                "Optionally run briefloop provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
         ))
 
     if "monthly" in resolved_cadences:
         jobs.append(HermesCronJob(
-            name=f"MABW monthly brief - {summary['name']}",
+            name=f"BriefLoop monthly brief - {summary['name']}",
             schedule=monthly_schedule,
             workdir=str(repo_path),
             profile=profile,
@@ -215,7 +215,7 @@ def build_hermes_cron_plan(
             context_from=[daily_job.name],
             purpose="Run the audited monthly brief workflow using Hermes delegate_task children.",
             prompt=(
-                "Run a Hermes-native delegated MABW brief workflow as the Orchestrator main agent.\n\n"
+                "Run a Hermes-native delegated BriefLoop brief workflow as the Orchestrator main agent.\n\n"
                 f"{prompt_context}\n\n"
                 "Use the multi-agent-brief-hermes skill.\n"
                 "Read contract references before delegation:\n"
@@ -230,7 +230,7 @@ def build_hermes_cron_plan(
                 "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
                 "Read the Orchestrator control switchboard:\n"
                 "- output/intermediate/orchestrator_control_switchboard.json\n"
-                "Record control selections with multi-agent-brief controls select. Selection is not execution.\n\n"
+                "Record control selections with briefloop controls select. Selection is not execution.\n\n"
                 f"{REPAIR_GUIDANCE_NOTE}\n\n"
                 "Optional feedback state files are created only by feedback commands:\n"
                 "- output/intermediate/feedback_issues.json\n"
@@ -248,19 +248,19 @@ def build_hermes_cron_plan(
                 "default topology: scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
                 "strict topology: scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor.\n"
                 "After audit_report.json exists, run:\n"
-                f"multi-agent-brief controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
-                f"multi-agent-brief gates check --workspace {workspace_path} --stage auditor\n"
-                f"multi-agent-brief state check --workspace {workspace_path} --strict\n"
-                f"multi-agent-brief state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
-                f"Then run multi-agent-brief finalize --config {workspace_path}/config.yaml.\n"
-                f"After finalize writes reader-facing artifacts, run multi-agent-brief gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run multi-agent-brief state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+                f"briefloop controls select --workspace {workspace_path} --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"\n"
+                f"briefloop gates check --workspace {workspace_path} --stage auditor\n"
+                f"briefloop state check --workspace {workspace_path} --strict\n"
+                f"briefloop state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
+                f"Then run briefloop finalize --config {workspace_path}/config.yaml.\n"
+                f"After finalize writes reader-facing artifacts, run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
                 "finalize is not a quality-gate executor.\n"
-                "Optionally run multi-agent-brief provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
+                "Optionally run briefloop provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
         ))
 
     notes = [
-        "Hermes cron sessions are fresh sessions; every job attaches the MABW skill and sets an absolute workdir.",
+        "Hermes cron sessions are fresh sessions; every job attaches the BriefLoop skill and sets an absolute workdir.",
         "The daily job is intentionally source-only so weekly/monthly jobs can synthesize from a stable cache.",
         "For low-cost frequent polling, convert the daily job to a wakeAgent/script gate in Hermes after the source pattern stabilizes.",
     ]
@@ -340,7 +340,7 @@ def render_hermes_cron_markdown(plan: HermesCronPlan) -> str:
 # render as clean Python without backslash escapes.
 _SKILL_MD_TEMPLATE = '''---
 name: multi-agent-brief-hermes
-description: Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
+description: Use this skill to run BriefLoop workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
 version: 0.11.12
 author: multi-agent-brief-workflow
 license: MIT
@@ -357,13 +357,13 @@ tags:
   - delegate_task
 ---
 
-# Multi-Agent Brief Workflow for Hermes
+# BriefLoop for Hermes
 
-Use this skill to run Multi-Agent Brief Workflow workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
+Use this skill to run BriefLoop workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
 
 ## Operating Model
 
-Hermes is a native MABW runtime. The Hermes parent agent is the Orchestrator main agent: it reads shared contract references and runtime state files, manages artifact handoff, checks expected artifacts, and selects the next workflow decision. Hermes `delegate_task` children run scout, screener, claim-ledger, analyst, editor, and auditor tasks as isolated subagents. Python CLI tools handle init, doctor, sources decide, input extraction/classification, state checks, feedback ingest/plan/resolve/show/validate, gates check/show/validate, provenance build/show/validate, audit, finalize, and rendering support. Cron jobs provide durable scheduling; `delegate_task` provides child task dispatch within each run.
+Hermes is a native BriefLoop runtime. The Hermes parent agent is the Orchestrator main agent: it reads shared contract references and runtime state files, manages artifact handoff, checks expected artifacts, and selects the next workflow decision. Hermes `delegate_task` children run scout, screener, claim-ledger, analyst, editor, and auditor tasks as isolated subagents. Python CLI tools handle init, doctor, sources decide, input extraction/classification, state checks, feedback ingest/plan/resolve/show/validate, gates check/show/validate, provenance build/show/validate, audit, finalize, and rendering support. Cron jobs provide durable scheduling; `delegate_task` provides child task dispatch within each run.
 
 Contract references:
 
@@ -384,14 +384,14 @@ Audience memory files:
 - `audience_profile.md`
 - `output/intermediate/audience_profile_snapshot.md`
 
-Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Mid-run profile edits apply to the next run.
+Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Do not treat `audience_profile.md` as evidence. Mid-run profile edits apply to the next run.
 
 Control switchboard files:
 
 - `output/intermediate/orchestrator_control_switchboard.json`
 - `output/intermediate/control_selections.json`
 
-Read the switchboard after handoff, record enable/defer/reject choices with `multi-agent-brief controls select`, and then explicitly run the selected CLI/subagent/human action. Selection is not execution.
+Read the switchboard after handoff, record enable/defer/reject choices with `briefloop controls select`, and then explicitly run the selected CLI/subagent/human action. Selection is not execution.
 
 Optional feedback state files:
 
@@ -415,18 +415,20 @@ Orchestrator control loop:
 Read workspace context -> read contract references -> identify the next stage -> delegate a specialist or Python tool -> check the expected artifact -> decide continue / retry_stage / delegate_repair / request_human_review / block_run / finalize.
 ```
 
-Brief generation follows the MABW subagent workflow:
+Brief generation follows the BriefLoop subagent workflow:
 
 ```text
 default: scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize
 strict: scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize
 ```
 
+Success path after `audit_report.json`: gates check + state check + state stage-complete, then finalize and finalize-complete.
+
 ## Setup Workflow
 
 ### Preferred Path: Hermes Plugin
 
-Use the MABW Hermes plugin when it is installed:
+Use the BriefLoop Hermes plugin when it is installed:
 
 ```text
 /mabw <workspace>
@@ -446,16 +448,16 @@ hermes plugins enable mabw
 
 ### Fallback: chat-to-JSON onboarding
 
-If the plugin is unavailable, use fallback onboarding: Collect brief profile in chat. Write `onboarding.json`, validate it with `multi-agent-brief onboard --validate onboarding.json`, initialize with `multi-agent-brief init <workspace> --from-onboarding onboarding.json`, then create the handoff with `multi-agent-brief run --workspace <workspace>`.
+If the plugin is unavailable, use fallback onboarding: Collect brief profile in chat. Write `onboarding.json`, validate it with `briefloop onboard --validate onboarding.json`, initialize with `briefloop init <workspace> --from-onboarding onboarding.json`, then create the handoff with `briefloop run --workspace <workspace>`. Do not call `briefloop run` again mid-pipeline to refresh handoff or state; use status, state, gates, and repair commands instead.
 
 1. Clone or open the repository.
 2. Create and activate the Python virtual environment.
-3. Install MABW.
+3. Install BriefLoop.
 4. Initialize the requested workspace.
 5. Run doctor:
 
 ```bash
-multi-agent-brief doctor --config <workspace>/config.yaml
+briefloop doctor --config <workspace>/config.yaml
 ```
 
 6. Report the repo path, venv path, workspace path, version, and doctor status.
@@ -527,18 +529,18 @@ The Hermes parent agent is the Orchestrator main agent for the full pipeline:
 
 3. Summarize relevant taste guidance from `output/intermediate/audience_profile_snapshot.md` for delegated roles. Do not treat the profile as source evidence.
 
-4. Read the Orchestrator control switchboard and record control selections with `multi-agent-brief controls select`. Selection is not execution.
+4. Read the Orchestrator control switchboard and record control selections with `briefloop controls select`. Selection is not execution.
 
 5. Run doctor:
 
 ```bash
-multi-agent-brief doctor --config <workspace>/config.yaml
+briefloop doctor --config <workspace>/config.yaml
 ```
 
 6. If source discovery is configured:
 
 ```bash
-multi-agent-brief sources decide --config <workspace>/config.yaml
+briefloop sources decide --config <workspace>/config.yaml
 ```
 
 Review and merge according to workspace policy.
@@ -547,7 +549,7 @@ If runtime WebSearch reports `Did 0 searches`, or every query returns an empty r
 6. Extract non-text input files when present:
 
 ```bash
-multi-agent-brief inputs extract --config <workspace>/config.yaml
+briefloop inputs extract --config <workspace>/config.yaml
 ```
 
 This converts PDF/DOCX/image inputs to adjacent `.mineru.md` files before classification. Directory role still controls claim eligibility: eligible evidence files under `input/sources/` count as evidence; binary inputs require extracted Markdown before use. Extracted files under `input/context/`, `input/instructions/`, and `input/feedback/` are not evidence.
@@ -555,7 +557,7 @@ This converts PDF/DOCX/image inputs to adjacent `.mineru.md` files before classi
 7. Classify input files:
 
 ```bash
-multi-agent-brief inputs classify --config <workspace>/config.yaml
+briefloop inputs classify --config <workspace>/config.yaml
 ```
 
 8. Create `output/intermediate/` if it does not exist.
@@ -564,44 +566,44 @@ multi-agent-brief inputs classify --config <workspace>/config.yaml
 
 10. After each child returns, verify the expected artifact exists and is non-empty before selecting the next decision.
 
-11. If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
+11. If audit findings or human feedback exist, use `briefloop feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
 
 12. Repair guidance is bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 
 13. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage auditor
-multi-agent-brief state check --workspace <workspace> --strict
+briefloop gates check --workspace <workspace> --stage auditor
+briefloop state check --workspace <workspace> --strict
 ```
 
 14. If state is not blocked, record the auditor decision:
 
 ```bash
-multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
-If state is blocked by owner-stage artifact repair, run `multi-agent-brief repair route --workspace <workspace>` and `multi-agent-brief repair start --workspace <workspace>`; otherwise choose `request_human_review` or `block_run`. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
+If state is blocked by owner-stage artifact repair, run `briefloop repair route --workspace <workspace>` and `briefloop repair start --workspace <workspace>`; otherwise choose `request_human_review` or `block_run`. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
 
 15. Run finalize only after the gates/state completion path passes. `finalize` is not a quality-gate executor:
 
 ```bash
-multi-agent-brief finalize --config <workspace>/config.yaml
+briefloop finalize --config <workspace>/config.yaml
 ```
 
 16. After finalize writes reader-facing artifacts, verify completion:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 
 17. Optional audit/debug provenance projection after runtime state exists:
 
 ```bash
-multi-agent-brief provenance build --workspace <workspace>
-multi-agent-brief provenance show --workspace <workspace> --json
-multi-agent-brief provenance validate --workspace <workspace>
+briefloop provenance build --workspace <workspace>
+briefloop provenance show --workspace <workspace> --json
+briefloop provenance validate --workspace <workspace>
 ```
 
 Provenance projection is not semantic proof and is not required before finalize.
@@ -618,7 +620,7 @@ the same Scout child also screens those candidates and writes
 
 ```python
 delegate_task(
-    goal="Extract candidate reportable items for a MABW brief",
+    goal="Extract candidate reportable items for a BriefLoop brief",
     context="""
 Workspace: <workspace>
 Read approved evidence inputs, cached source packages, local source files, and source config.
@@ -655,7 +657,7 @@ and the Screener stage is satisfied by topology after Scout completion.
 
 ```python
 delegate_task(
-    goal="Screen and rank MABW candidate claims",
+    goal="Screen and rank BriefLoop candidate claims",
     context="""
 Workspace: <workspace>
 Input: output/intermediate/candidate_claims.json
@@ -673,7 +675,7 @@ Return included count, excluded count, and main exclusion categories.
 
 ```python
 delegate_task(
-    goal="Build the MABW Claim Ledger",
+    goal="Build the BriefLoop Claim Ledger",
     context="""
 Workspace: <workspace>
 Input: output/intermediate/screened_candidates.json
@@ -692,15 +694,15 @@ After `claim_drafts.json` exists, freeze the Claim Ledger and record the
 Claim Ledger stage completion before delegating Analyst:
 
 ```bash
-multi-agent-brief state freeze-claim-ledger --workspace <workspace>
-multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
+briefloop state freeze-claim-ledger --workspace <workspace>
+briefloop state stage-complete --workspace <workspace> --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
 ```
 
 #### 4. Analyst child
 
 ```python
 delegate_task(
-    goal="Draft the audited MABW brief",
+    goal="Draft the audited BriefLoop brief",
     context="""
 Workspace: <workspace>
 Inputs:
@@ -729,7 +731,7 @@ Do not write analyst_draft_snapshot.md; Python freezes that control artifact dur
 
 ```python
 delegate_task(
-    goal="Polish the audited MABW brief",
+    goal="Polish the audited BriefLoop brief",
     context="""
 Workspace: <workspace>
 Inputs:
@@ -754,7 +756,7 @@ Return edits made and any unresolved issues.
 
 ```python
 delegate_task(
-    goal="Audit the MABW brief against the Claim Ledger",
+    goal="Audit the BriefLoop brief against the Claim Ledger",
     context="""
 Workspace: <workspace>
 Inputs:
@@ -776,7 +778,7 @@ Return audit status, blocking findings, and recommended fixes.
 Parent runs:
 
 ```bash
-multi-agent-brief finalize --config <workspace>/config.yaml
+briefloop finalize --config <workspace>/config.yaml
 ```
 
 Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input.
@@ -800,7 +802,7 @@ Internal audit/control records remain available:
 
 ## Source Cache Contract
 
-The MABW `cached_package` provider can read JSON, Markdown, and text files from the configured cache directory. Prefer JSON arrays or objects with an `items` array. Each item should preserve URL, publication date, source name, and reliability where available.
+The BriefLoop `cached_package` provider can read JSON, Markdown, and text files from the configured cache directory. Prefer JSON arrays or objects with an `items` array. Each item should preserve URL, publication date, source name, and reliability where available.
 
 ## Hermes Cron Notes
 
@@ -833,8 +835,8 @@ Doctor: {doctor_status}
 
 I can continue generating the brief inside Hermes with the Orchestrator main agent. Recommended next steps:
 
-  multi-agent-brief hermes install-skill
-  multi-agent-brief hermes prompt --config {workspace}/config.yaml
+  briefloop hermes install-skill
+  briefloop hermes prompt --config {workspace}/config.yaml
 
 Then use the generated prompt in Hermes to run the delegated brief workflow.
 """
@@ -876,7 +878,7 @@ Control switchboard files:
 - output/intermediate/orchestrator_control_switchboard.json
 - output/intermediate/control_selections.json
 
-Read the switchboard after handoff and record enable/defer/reject choices with multi-agent-brief controls select. Selection is not execution; explicitly run selected controls afterward.
+Read the switchboard after handoff and record enable/defer/reject choices with briefloop controls select. Selection is not execution; explicitly run selected controls afterward.
 
 Optional feedback state files:
 - output/intermediate/feedback_issues.json
@@ -895,7 +897,7 @@ Orchestrator loop: {ORCHESTRATOR_LOOP}
 
 ## Preferred: Hermes Plugin
 
-If the MABW Hermes plugin is installed and enabled, use the plugin path:
+If the BriefLoop Hermes plugin is installed and enabled, use the plugin path:
 
 ```text
 /mabw {workspace}
@@ -906,7 +908,7 @@ If the MABW Hermes plugin is installed and enabled, use the plugin path:
 → continue delegated workflow
 ```
 
-Install from the MABW repo:
+Install from the BriefLoop repo:
 
 ```bash
 cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw
@@ -919,9 +921,9 @@ If the plugin is not available and this workspace does not yet have config.yaml:
 
 1. Collect brief profile in chat — ask for company, industry, task objective, audience, language, cadence, source style, output style, must-watch topics, excluded sources, and source/search mode. Accept natural-language answers and confirm defaults.
 2. Write onboarding.json from the collected answers.
-3. Validate with: multi-agent-brief onboard --validate onboarding.json
-4. Create the workspace: multi-agent-brief init <workspace> --from-onboarding onboarding.json
-5. Create runtime handoff: multi-agent-brief run --workspace <workspace>
+3. Validate with: briefloop onboard --validate onboarding.json
+4. Create the workspace: briefloop init <workspace> --from-onboarding onboarding.json
+5. Create runtime handoff: briefloop run --workspace <workspace>
 6. Read agent_handoff.md and continue with the delegated workflow below.
 
 ## Existing workspace: delegated brief run
@@ -946,35 +948,35 @@ As the Hermes Orchestrator main agent, execute:
 
 4. Read the Orchestrator control switchboard:
    - output/intermediate/orchestrator_control_switchboard.json
-   Record control choices with multi-agent-brief controls select. Selection is not execution.
+   Record control choices with briefloop controls select. Selection is not execution.
 
 5. Run doctor:
-   multi-agent-brief doctor --config {workspace}/config.yaml
+   briefloop doctor --config {workspace}/config.yaml
 
 6. If source discovery is configured:
-   multi-agent-brief sources decide --config {workspace}/config.yaml
+   briefloop sources decide --config {workspace}/config.yaml
    If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 
 7. If non-text input files are present:
-   multi-agent-brief inputs extract --config {workspace}/config.yaml
+   briefloop inputs extract --config {workspace}/config.yaml
 
 8. If input governance is available:
-   multi-agent-brief inputs classify --config {workspace}/config.yaml
+   briefloop inputs classify --config {workspace}/config.yaml
 
 9. Refresh runtime state without running stages:
-   multi-agent-brief state check --workspace {workspace}
+   briefloop state check --workspace {workspace}
 
 10. If audit findings or human feedback exist, structure them without running repair:
-   multi-agent-brief feedback ingest --workspace {workspace} --feedback <path> --source human|audit
-   multi-agent-brief feedback plan --workspace {workspace}
-   multi-agent-brief feedback resolve --workspace {workspace} --issue-id <id> --repair-plan-id <id> --reason <reason>
-   multi-agent-brief feedback show --workspace {workspace} --json
-   multi-agent-brief feedback validate --workspace {workspace}
+   briefloop feedback ingest --workspace {workspace} --feedback <path> --source human|audit
+   briefloop feedback plan --workspace {workspace}
+   briefloop feedback resolve --workspace {workspace} --issue-id <id> --repair-plan-id <id> --reason <reason>
+   briefloop feedback show --workspace {workspace} --json
+   briefloop feedback validate --workspace {workspace}
 
 11. Repair guidance is bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 
 12. Delegate scout child via delegate_task:
-   Goal: "Extract candidate reportable items for a MABW brief; in default topology, screen them in the same Scout stage"
+   Goal: "Extract candidate reportable items for a BriefLoop brief; in default topology, screen them in the same Scout stage"
    Write: output/intermediate/candidate_claims.json
    Default topology also writes: output/intermediate/screened_candidates.json
    Source identity: source_url is only for HTTP(S) URLs; use source_path for local/package sources. Preserve source_title/source_name, publisher, source_category, source_type, source dates, and evidence text.
@@ -982,63 +984,63 @@ As the Hermes Orchestrator main agent, execute:
 
 13. If role_topology is `strict`, after candidate_claims.json exists and is non-empty, delegate screener child. If role_topology is `default`, Scout must already have written screened_candidates.json and the screener stage is satisfied by topology:
    Do not delegate Screener and do not call `state stage-complete --stage screener` in default topology.
-   Goal: "Screen and rank MABW candidate claims"
+   Goal: "Screen and rank BriefLoop candidate claims"
    Input: output/intermediate/candidate_claims.json
    Write: output/intermediate/screened_candidates.json
    toolsets: ["file", "terminal"]
 
 14. After screened_candidates.json exists, delegate claim-ledger child:
-   Goal: "Build the MABW Claim Ledger"
+   Goal: "Build the BriefLoop Claim Ledger"
    Input: output/intermediate/screened_candidates.json
    Write: output/intermediate/claim_drafts.json
    Preserve source_url/source_path, source_title/source_name, publisher, source_category, source_type, published_at/retrieved_at, and evidence text. Never put titles, source names, source IDs, search queries, or local paths in source_url.
    toolsets: ["file", "terminal"]
 
 15. After claim_drafts.json exists, freeze the Claim Ledger, confirm claim_ledger.json exists, and record claim-ledger completion before delegating Analyst:
-   multi-agent-brief state freeze-claim-ledger --workspace {workspace}
-   multi-agent-brief state stage-complete --workspace {workspace} --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
+   briefloop state freeze-claim-ledger --workspace {workspace}
+   briefloop state stage-complete --workspace {workspace} --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
 
 16. Then delegate analyst child:
-   Goal: "Draft the audited MABW brief"
+   Goal: "Draft the audited BriefLoop brief"
    Inputs: user.md and output/intermediate/claim_ledger.json
    Write: output/intermediate/audited_brief.md as the Analyst working draft
    Optional atomic graph boundary: if output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid for frozen Claim Ledger claims; it is not source evidence or proof of support. Do not cite atom IDs, create/edit/repair/extend the graph, or introduce material atoms absent from the frozen Claim Ledger and valid graph.
    toolsets: ["file", "terminal"]
 
 17. After analyst stage-complete freezes analyst_draft_snapshot.md, delegate editor / Delivery Editor child:
-   Goal: "Polish the audited MABW brief without adding facts"
+   Goal: "Polish the audited BriefLoop brief without adding facts"
    Inputs: output/intermediate/analyst_draft_snapshot.md and output/intermediate/audited_brief.md
    Write: output/intermediate/audited_brief.md as the Editor-owned final auditable brief
    Optional atomic graph boundary: if output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; if it is absent or invalid, do not repair it. Do not create/edit/repair/extend the graph, cite atom IDs, or introduce material atoms absent from the frozen Claim Ledger and valid graph.
    toolsets: ["file", "terminal"]
 
 18. After editor completes, delegate auditor child:
-    Goal: "Audit the MABW brief against the Claim Ledger"
+    Goal: "Audit the BriefLoop brief against the Claim Ledger"
     Inputs: output/intermediate/audited_brief.md and output/intermediate/claim_ledger.json
     Write: output/intermediate/audit_report.json
     toolsets: ["file", "terminal"]
 
 19. After audit_report.json exists, select and run deterministic quality gates, then refresh runtime state:
-    multi-agent-brief controls select --workspace {workspace} --control quality_gates --selection enable --reason "Use quality gates before finalize."
-    multi-agent-brief gates check --workspace {workspace} --stage auditor
-    multi-agent-brief state check --workspace {workspace} --strict
+    briefloop controls select --workspace {workspace} --control quality_gates --selection enable --reason "Use quality gates before finalize."
+    briefloop gates check --workspace {workspace} --stage auditor
+    briefloop state check --workspace {workspace} --strict
 
 20. If state is not blocked, record the auditor completion:
-    multi-agent-brief state stage-complete --workspace {workspace} --stage auditor --reason "Audit and quality gates passed."
+    briefloop state stage-complete --workspace {workspace} --stage auditor --reason "Audit and quality gates passed."
 
-21. If state is blocked by owner-stage artifact repair, run `multi-agent-brief repair route --workspace {workspace}` and `multi-agent-brief repair start --workspace {workspace}`. Delegate only the repair_owner role and allow edits only to allowed_artifacts, then run `multi-agent-brief repair complete --workspace {workspace} --reason "<reason>"` and rerun downstream stages from must_rerun_from. Otherwise choose request_human_review or block_run. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
+21. If state is blocked by owner-stage artifact repair, run `briefloop repair route --workspace {workspace}` and `briefloop repair start --workspace {workspace}`. Delegate only the repair_owner role and allow edits only to allowed_artifacts, then run `briefloop repair complete --workspace {workspace} --reason "<reason>"` and rerun downstream stages from must_rerun_from. Otherwise choose request_human_review or block_run. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
 
 22. Run finalize only after the gates/state completion path passes. finalize is not a quality-gate executor:
-    multi-agent-brief finalize --config {workspace}/config.yaml
+    briefloop finalize --config {workspace}/config.yaml
 
 23. After finalize writes delivery artifacts under output/delivery/, verify completion:
-    multi-agent-brief gates check --workspace {workspace} --stage finalize --brief {workspace}/output/brief.md
-    multi-agent-brief state finalize-complete --workspace {workspace} --reason "Reader-facing artifacts passed finalize checks."
+    briefloop gates check --workspace {workspace} --stage finalize --brief {workspace}/output/brief.md
+    briefloop state finalize-complete --workspace {workspace} --reason "Reader-facing artifacts passed finalize checks."
 
 24. Optional audit/debug projection after runtime state exists:
-    multi-agent-brief provenance build --workspace {workspace}
-    multi-agent-brief provenance show --workspace {workspace} --json
-    multi-agent-brief provenance validate --workspace {workspace}
+    briefloop provenance build --workspace {workspace}
+    briefloop provenance show --workspace {workspace} --json
+    briefloop provenance validate --workspace {workspace}
     Provenance projection is not semantic proof and is not required to finalize.
 
 25. Report artifact paths, audit status, quality gate status, switchboard selections, and optional provenance_graph.json when created.

@@ -8,13 +8,13 @@ BriefLoop-090 is a future experiment/readiness label. It is not the semver relea
 ## Current Command Loop
 
 ```bash
-multi-agent-brief experiments 080 validate-case <case_dir>
-multi-agent-brief experiments 080 scaffold-condition --case <case_dir> --condition <baseline|memory|prompt_only> --workspace <workspace> --archive <archive>
-multi-agent-brief experiments 080 register-run --case <case_dir> --workspace <workspace> --condition <condition> --output <run_record.json>
-multi-agent-brief experiments 080 score-run --case <case_dir> --run-record <run_record.json> --output <scorecard.json>
-multi-agent-brief experiments 080 export-blind-pack --case <case_dir> --scorecard <baseline_scorecard.json> --scorecard <memory_scorecard.json> --scorecard <prompt_only_scorecard.json> --output <blind_pack_dir>
-multi-agent-brief experiments 080 import-assessment --assessment <blind_assessment.json> --blind-pack <blind_pack_dir>/blind_pack.json --reveal-mapping <blind_pack_dir>/reveal_mapping.json --output <assessed_scorecard.json>
-multi-agent-brief experiments 080 summarize --case <case_dir> --scorecard <assessed_scorecard.json> --output <summary.json>
+briefloop experiments 080 validate-case <case_dir>
+briefloop experiments 080 scaffold-condition --case <case_dir> --condition <baseline|memory|prompt_only> --workspace <workspace> --archive <archive>
+briefloop experiments 080 register-run --case <case_dir> --workspace <workspace> --condition <condition> --output <run_record.json>
+briefloop experiments 080 score-run --case <case_dir> --run-record <run_record.json> --output <scorecard.json>
+briefloop experiments 080 export-blind-pack --case <case_dir> --scorecard <baseline_scorecard.json> --scorecard <memory_scorecard.json> --scorecard <prompt_only_scorecard.json> --output <blind_pack_dir>
+briefloop experiments 080 import-assessment --assessment <blind_assessment.json> --blind-pack <blind_pack_dir>/blind_pack.json --reveal-mapping <blind_pack_dir>/reveal_mapping.json --output <assessed_scorecard.json>
+briefloop experiments 080 summarize --case <case_dir> --scorecard <assessed_scorecard.json> --output <summary.json>
 ```
 
 ## Assessment Targets

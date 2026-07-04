@@ -1,36 +1,73 @@
 ---
 name: multi-agent-brief-hermes
-description: Runs Multi-Agent Brief Workflow workspaces inside Hermes using delegate_task child agents, source cache, cron scheduling, and final rendering. Use when the user asks Hermes to generate, schedule, continue, or inspect a MABW brief from a workspace.
+description: Use this skill to run BriefLoop workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
+version: 0.11.12
+author: multi-agent-brief-workflow
 license: MIT
-compatibility: Requires Hermes with delegate_task support plus terminal and file access to a workspace with the multi-agent-brief CLI installed.
-metadata:
-  author: multi-agent-brief-workflow
-  version: 0.11.12
-  tags:
-    - hermes
-    - cron
-    - brief
-    - research
-    - delegate-task
+platforms:
+  - linux
+  - macos
+  - windows
+tags:
+  - hermes
+  - cron
+  - brief
+  - research
+  - workflow
+  - delegate_task
 ---
 
-# Multi-Agent Brief Workflow for Hermes
+# BriefLoop for Hermes
 
-## Scope
+Use this skill to run BriefLoop workspaces inside Hermes using Hermes delegate_task subagents, source cache, cron scheduling, and final rendering tools.
 
-This skill is the Hermes runtime contract for MABW. It applies when Hermes is asked to set up, schedule, or run a MABW workspace.
+## Operating Model
 
-The Hermes parent agent is the Orchestrator main agent. It reads shared contract references and runtime state files, controls delegated stages, checks expected artifacts, and selects the next workflow decision.
+Hermes is a native BriefLoop runtime. The Hermes parent agent is the Orchestrator main agent: it reads shared contract references and runtime state files, manages artifact handoff, checks expected artifacts, and selects the next workflow decision. Hermes `delegate_task` children run scout, screener, claim-ledger, analyst, editor, and auditor tasks as isolated subagents. Python CLI tools handle init, doctor, sources decide, input extraction/classification, state checks, feedback ingest/plan/resolve/show/validate, gates check/show/validate, provenance build/show/validate, audit, finalize, and rendering support. Cron jobs provide durable scheduling; `delegate_task` provides child task dispatch within each run.
 
-Contract references: `configs/orchestrator_contract.yaml`, `configs/stage_specs.yaml`, `configs/artifact_contracts.yaml`, and `configs/policy_packs/default.yaml`.
+Contract references:
 
-Runtime state files: `output/intermediate/runtime_manifest.json`, `output/intermediate/workflow_state.json`, `output/intermediate/artifact_registry.json`, and `output/intermediate/event_log.jsonl`.
+- `configs/orchestrator_contract.yaml`
+- `configs/stage_specs.yaml`
+- `configs/artifact_contracts.yaml`
+- `configs/policy_packs/default.yaml`
 
-Audience memory files: `audience_profile.md` and `output/intermediate/audience_profile_snapshot.md`. Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Mid-run profile edits apply to the next run.
+Runtime state files:
 
-Control switchboard files: `output/intermediate/orchestrator_control_switchboard.json` lists available/recommended controls, and `output/intermediate/control_selections.json` records Orchestrator enable/defer/reject choices. Selection is not execution.
+- `output/intermediate/runtime_manifest.json`
+- `output/intermediate/workflow_state.json`
+- `output/intermediate/artifact_registry.json`
+- `output/intermediate/event_log.jsonl`
 
-Control files are produced by explicit commands: feedback uses `output/intermediate/feedback_issues.json`, `output/intermediate/repair_plan.json`, and `output/intermediate/delta_audit_report.json`; gates check creates stage-scoped reports under `output/intermediate/gates/` and also refreshes `output/intermediate/quality_gate_report.json` as a legacy/latest projection; provenance build creates `output/intermediate/provenance_graph.json` as an audit/debug projection, not semantic proof. Before finalize, `gates check --stage auditor` is required; after finalize, `gates check --stage finalize --brief <workspace>/output/brief.md` is required before `finalize-complete`.
+Audience memory files:
+
+- `audience_profile.md`
+- `output/intermediate/audience_profile_snapshot.md`
+
+Read the snapshot at run start, summarize relevant taste guidance for delegated roles, and do not treat `audience_profile.md` as source evidence or a correctness contract. Do not treat `audience_profile.md` as evidence. Mid-run profile edits apply to the next run.
+
+Control switchboard files:
+
+- `output/intermediate/orchestrator_control_switchboard.json`
+- `output/intermediate/control_selections.json`
+
+Read the switchboard after handoff, record enable/defer/reject choices with `briefloop controls select`, and then explicitly run the selected CLI/subagent/human action. Selection is not execution.
+
+Optional feedback state files:
+
+- `output/intermediate/feedback_issues.json`
+- `output/intermediate/repair_plan.json`
+- `output/intermediate/delta_audit_report.json`
+
+Optional quality gate state files:
+
+- `output/intermediate/gates/auditor_quality_gate_report.json`
+- `output/intermediate/gates/finalize_quality_gate_report.json`
+- `output/intermediate/quality_gate_report.json` (legacy/latest projection)
+
+Optional provenance projection files:
+
+- `output/intermediate/provenance_graph.json`
 
 Orchestrator control loop:
 
@@ -38,103 +75,398 @@ Orchestrator control loop:
 Read workspace context -> read contract references -> identify the next stage -> delegate a specialist or Python tool -> check the expected artifact -> decide continue / retry_stage / delegate_repair / request_human_review / block_run / finalize.
 ```
 
-## Use When
+Brief generation follows the BriefLoop subagent workflow:
 
-Use this skill when the user asks Hermes to create or continue a MABW workspace, generate a management/market/policy/competitor/research brief, or schedule source cache and brief generation.
+```text
+default: scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize
+strict: scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize
+```
 
-## Preferred Path: Hermes Plugin
+Success path after `audit_report.json`: gates check + state check + state stage-complete, then finalize and finalize-complete.
 
-Install and enable the MABW Hermes plugin, then use the plugin tools in Hermes:
+## Setup Workflow
+
+### Preferred Path: Hermes Plugin
+
+Use the BriefLoop Hermes plugin when it is installed:
 
 ```text
 /mabw <workspace>
-→ mabw_create_onboarding
+→ mabw_create_onboarding (if workspace is new)
 → mabw_init_workspace
 → mabw_run_handoff
 → read agent_handoff.md
 → continue delegated workflow
 ```
 
-Install:
+Install from the repository:
 
 ```bash
 cp -R integrations/hermes-plugin/mabw ~/.hermes/plugins/mabw
 hermes plugins enable mabw
 ```
 
-The plugin's `references/onboarding-json.md` has the detailed JSON shape and field notes.
+### Fallback: chat-to-JSON onboarding
 
-## Fallback Path: chat-to-JSON Onboarding
+If the plugin is unavailable, use fallback onboarding: Collect brief profile in chat. Write `onboarding.json`, validate it with `briefloop onboard --validate onboarding.json`, initialize with `briefloop init <workspace> --from-onboarding onboarding.json`, then create the handoff with `briefloop run --workspace <workspace>`. Do not call `briefloop run` again mid-pipeline to refresh handoff or state; use status, state, gates, and repair commands instead.
 
-When the plugin is not available, run onboarding as a chat-to-JSON workflow:
-
-1. Collect brief profile in chat — ask for company, industry, task objective, audience, language, cadence, source style, output style, must-watch topics, excluded sources, and source/search mode. Accept natural-language answers and confirm defaults.
-2. Write `onboarding.json` from the collected answers.
-3. Validate: `multi-agent-brief onboard --validate onboarding.json`
-4. Create the workspace: `multi-agent-brief init <workspace> --from-onboarding onboarding.json`
-5. Create runtime handoff: `multi-agent-brief run --workspace <workspace>`
-6. Read `agent_handoff.md`, `workflow_state.json`, `artifact_registry.json`, and optional feedback state references, then continue with the delegated workflow below. Do not call `multi-agent-brief run` again mid-pipeline to refresh handoff or state; use `multi-agent-brief status`, `state show`, `gates check`, `state check`, and repair commands instead.
-
-## Existing Workspace Path
-
-For a workspace that already has `config.yaml`:
+1. Clone or open the repository.
+2. Create and activate the Python virtual environment.
+3. Install BriefLoop.
+4. Initialize the requested workspace.
+5. Run doctor:
 
 ```bash
-multi-agent-brief doctor --config <workspace>/config.yaml
-multi-agent-brief hermes prompt --config <workspace>/config.yaml
+briefloop doctor --config <workspace>/config.yaml
 ```
 
-## Delegated Brief Run
+6. Report the repo path, venv path, workspace path, version, and doctor status.
+7. Offer to continue with a Hermes-native delegated brief run.
 
-```text
-doctor → source discovery → input governance
-→ scout (default: discovery+screening; strict: discovery only)
-→ screener (strict or repair/review only) → claim-ledger → analyst
-→ editor / Delivery Editor → auditor
-→ gates check + state check + state stage-complete → finalize → finalize-complete
+After a successful setup, present the result like this:
+
+```
+Project is cloned and ready.
+
+Repository: <repo>
+Virtual environment: <venv>
+Workspace: <workspace>
+Version: <version>
+Doctor: passed
+
+I can continue generating the brief inside Hermes. The next step uses the Hermes Orchestrator main agent with delegate_task children for:
+default topology uses scout(discovery+screening) -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize.
+strict topology uses scout -> screener -> claim-ledger -> analyst -> editor/Delivery Editor -> auditor -> finalize.
 ```
 
-Read `configs/policy_packs/default.yaml` before delegating. Default topology:
-Scout writes `candidate_claims.json` and `screened_candidates.json`, then `stage-complete --stage scout` satisfies Screener. Do not delegate Screener and do not call `state stage-complete --stage screener` in default topology. Strict topology: Scout writes only `candidate_claims.json`; independent Screener writes `screened_candidates.json`.
-If the Hermes parent splits Scout across chunks/children, child outputs are scratch/intermediate runtime material, not workflow artifacts; join chunks deterministically before writing `candidate_claims.json`, using source identity, source path or URL, source date, topic, and evidence text rather than child completion order.
-Scout and Claim Ledger must preserve source metadata: `source_url` only for HTTP(S) URLs, `source_path` for local/package sources, source title/name, publisher when known, `source_category`, provider `source_type`, dates, and evidence text. Do not put titles, search queries, source IDs, or local paths in `source_url`.
-Do not append to `candidate_claims.json` from chunk workers, and do not silently drop chunk-level duplicates or near-duplicates.
+## Daily Source Cache Workflow
 
+1. Read workspace `config.yaml`, `sources.yaml`, and `user.md`.
+2. Collect public, citable source signals.
+3. Write JSON cache to `input/hermes_cache/YYYY-MM-DD.json`.
+4. Use this item shape when possible:
+
+```json
+{
+  "source_id": "HERMES_YYYYMMDD_001",
+  "source_name": "Source name",
+  "source_type": "hermes_daily_cache",
+  "title": "Short source title",
+  "content": "Concise factual summary with enough context for claim extraction.",
+  "url": "https://example.com/source",
+  "published_at": "YYYY-MM-DD",
+  "reliability": "high",
+  "metadata": {
+    "collected_by": "hermes",
+    "collection_cadence": "daily"
+  }
+}
+```
+
+5. Report saved item count, source gaps, and cache file path.
+6. Daily cache mode ends after source cache reporting.
+
+## Hermes-native Delegated Brief Workflow
+
+### Parent Orchestration
+
+The Hermes parent agent is the Orchestrator main agent for the full pipeline:
+
+1. Read contract references:
+   - `configs/orchestrator_contract.yaml`
+   - `configs/stage_specs.yaml`
+   - `configs/artifact_contracts.yaml`
+   - `configs/policy_packs/default.yaml`
+
+2. Read workspace files:
+   - `config.yaml`
+   - `sources.yaml`
+   - `user.md`
+   - `output/intermediate/audience_profile_snapshot.md`
+   - `output/intermediate/orchestrator_control_switchboard.json`
+   - `input/`
+   - `input/hermes_cache/` when present
+
+3. Summarize relevant taste guidance from `output/intermediate/audience_profile_snapshot.md` for delegated roles. Do not treat the profile as source evidence.
+
+4. Read the Orchestrator control switchboard and record control selections with `briefloop controls select`. Selection is not execution.
+
+5. Run doctor:
+
+```bash
+briefloop doctor --config <workspace>/config.yaml
+```
+
+6. If source discovery is configured:
+
+```bash
+briefloop sources decide --config <workspace>/config.yaml
+```
+
+Review and merge according to workspace policy.
 If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 
-Before finalize, run this explicit success path:
+6. Extract non-text input files when present:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage auditor
-multi-agent-brief state check --workspace <workspace> --strict
-multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
-multi-agent-brief finalize --config <workspace>/config.yaml
-multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop inputs extract --config <workspace>/config.yaml
 ```
-`finalize` is not a quality-gate executor. Blocking gate findings must route to feedback plus deterministic repair, `request_human_review`, or `block_run`; do not finalize through a blocking gate. Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input and may write reader delivery artifacts and finalize control records only; if reader-clean needs audited-brief wording changes, route repair to Editor and do not patch `audited_brief.md`, `audit_report.json`, artifact registry, or workflow state.
-At run start, read `output/intermediate/audience_profile_snapshot.md` for taste context and pass a concise summary to delegated roles. Do not treat `audience_profile.md` as evidence.
-Read `output/intermediate/orchestrator_control_switchboard.json`, then use `multi-agent-brief controls select` to record selected controls before explicitly running their CLI/subagent/human action. Selection is not execution.
-Use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` only when audit findings or human feedback exist. These commands structure and record issues but do not execute repair.
-For owner-stage artifact repair, run `multi-agent-brief repair route --workspace <workspace>` and `multi-agent-brief repair start --workspace <workspace>`. Delegate only the repair_owner role and allow edits only to allowed_artifacts. After the owner edits, run `multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"`, then rerun downstream stages from must_rerun_from. Do not use `state decide delegate_repair` to authorize artifact edits.
-Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Use the repair route/start transaction before owner-stage edits, or choose `request_human_review` / `block_run` when no deterministic route exists.
-Repair guidance is bounded runtime guidance: repeated retry/repair budgets are enforced by `workflow_state.json.next_allowed_decisions` after `state check` or `state decide`; when trajectory regulation narrows decisions, use only `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
-Use `multi-agent-brief provenance build`, `provenance show --json`, and `provenance validate` only as optional audit/debug projection commands after runtime state exists. Provenance projection does not prove semantic support, execute repair, or gate finalize by default.
 
-Read `references/delegate-task-sequence.md` before creating child tasks.
+This converts PDF/DOCX/image inputs to adjacent `.mineru.md` files before classification. Directory role still controls claim eligibility: eligible evidence files under `input/sources/` count as evidence; binary inputs require extracted Markdown before use. Extracted files under `input/context/`, `input/instructions/`, and `input/feedback/` are not evidence.
 
-## Daily Source Cache
+7. Classify input files:
 
-Daily cache mode collects source signals and writes cache files without drafting a final brief.
+```bash
+briefloop inputs classify --config <workspace>/config.yaml
+```
 
-Read `references/source-cache-contract.md` before writing cache files.
+8. Create `output/intermediate/` if it does not exist.
 
-## Cron Scheduling
+9. Delegate child tasks with complete context and explicit artifact paths. Use `delegate_task` for each step.
 
-Use cron for durable scheduling and `delegate_task` for per-run child work.
+10. After each child returns, verify the expected artifact exists and is non-empty before selecting the next decision.
 
-Read `references/cron-patterns.md` before creating or editing Hermes cron jobs.
+11. If audit findings or human feedback exist, use `briefloop feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate`; these commands structure and record issues but do not execute repair.
 
-## Reporting
+12. Repair guidance is bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
 
-After a delegated run, report delivery files from `output/delivery/` (`brief.md` and the configured DOCX when present). When source appendix output is configured, it is already appended inside those delivery files. Treat `output/intermediate/audited_brief.md`, `output/intermediate/claim_ledger.json`, `output/intermediate/audit_report.json`, the standalone `output/source_appendix.md` audit/control copy, and `output/intermediate/audience_profile_snapshot.md` as runtime/audit/control records, not user delivery files.
+13. After `audit_report.json` exists, run deterministic quality gates and refresh runtime state:
+
+```bash
+briefloop gates check --workspace <workspace> --stage auditor
+briefloop state check --workspace <workspace> --strict
+```
+
+14. If state is not blocked, record the auditor decision:
+
+```bash
+briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+```
+
+If state is blocked by owner-stage artifact repair, run `briefloop repair route --workspace <workspace>` and `briefloop repair start --workspace <workspace>`; otherwise choose `request_human_review` or `block_run`. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
+
+15. Run finalize only after the gates/state completion path passes. `finalize` is not a quality-gate executor:
+
+```bash
+briefloop finalize --config <workspace>/config.yaml
+```
+
+16. After finalize writes reader-facing artifacts, verify completion:
+
+```bash
+briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+```
+
+17. Optional audit/debug provenance projection after runtime state exists:
+
+```bash
+briefloop provenance build --workspace <workspace>
+briefloop provenance show --workspace <workspace> --json
+briefloop provenance validate --workspace <workspace>
+```
+
+Provenance projection is not semantic proof and is not required before finalize.
+
+15. Report artifact paths, audit status, quality gate status, and optional provenance graph path when created.
+
+### Delegation Sequence
+
+#### 1. Scout child
+
+Use `delegate_task` to extract candidate reportable items. In default topology,
+the same Scout child also screens those candidates and writes
+`screened_candidates.json`; in strict topology, Scout stops after discovery.
+
+```python
+delegate_task(
+    goal="Extract candidate reportable items for a BriefLoop brief",
+    context="""
+Workspace: <workspace>
+Read approved evidence inputs, cached source packages, local source files, and source config.
+Write:
+- <workspace>/output/intermediate/candidate_claims.json
+- default topology only: <workspace>/output/intermediate/screened_candidates.json
+
+Discovery output must capture the found universe before screening.
+Each item should preserve source identity, source date if available, evidence text, topic, claim type, and confidence.
+Use source_url only for HTTP(S) URLs. Use source_path for local/package sources.
+Preserve source_title/source_name, publisher when known, source_category, and provider source_type.
+In default topology, also rank, dedupe, freshness-check, capacity-cap, and write selected/excluded candidates with reasons plus a screening_policy snapshot.
+Return a summary with candidate count, selected count, excluded count, and source gaps.
+""",
+    toolsets=["file", "terminal", "web"]
+)
+```
+
+For independent source clusters, the parent may use batch delegation with up to
+3 scout children. Those child outputs are scratch/intermediate runtime material,
+not workflow artifacts. The parent must join chunk outputs deterministically
+before writing `candidate_claims.json`: stable ordering must use source identity,
+source path or URL, source date, topic, and evidence text, not child completion
+order. Duplicates or near-duplicates must be represented or excluded with
+reasons; do not silently drop chunk-level outputs. Only the final joined
+`candidate_claims.json` and, in default topology, `screened_candidates.json`
+count for stage completion.
+
+#### 2. Screener child (strict topology or explicit repair/review)
+
+In default topology, do not delegate Screener and do not call
+`state stage-complete --stage screener`; Scout writes `screened_candidates.json`
+and the Screener stage is satisfied by topology after Scout completion.
+
+```python
+delegate_task(
+    goal="Screen and rank BriefLoop candidate claims",
+    context="""
+Workspace: <workspace>
+Input: output/intermediate/candidate_claims.json
+Write: output/intermediate/screened_candidates.json
+
+Rank, dedupe, freshness-check, and capacity-cap candidate items.
+Preserve source identity and evidence fields.
+Return included count, excluded count, and main exclusion categories.
+""",
+    toolsets=["file", "terminal"]
+)
+```
+
+#### 3. Claim-ledger child
+
+```python
+delegate_task(
+    goal="Build the BriefLoop Claim Ledger",
+    context="""
+Workspace: <workspace>
+Input: output/intermediate/screened_candidates.json
+Write: output/intermediate/claim_drafts.json
+
+Create source-grounded claim drafts without claim_id fields.
+Preserve evidence text, source URL/path, source title/name, publisher, source_category, provider source_type, publication date, retrieved date, topic, claim type, and confidence.
+source_url is only for HTTP(S) URLs; never put titles, source names, source IDs, search queries, or local paths in source_url.
+Return claim count and schema issues found.
+""",
+    toolsets=["file", "terminal"]
+)
+```
+
+After `claim_drafts.json` exists, freeze the Claim Ledger and record the
+Claim Ledger stage completion before delegating Analyst:
+
+```bash
+briefloop state freeze-claim-ledger --workspace <workspace>
+briefloop state stage-complete --workspace <workspace> --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
+```
+
+#### 4. Analyst child
+
+```python
+delegate_task(
+    goal="Draft the audited BriefLoop brief",
+    context="""
+Workspace: <workspace>
+Inputs:
+- user.md
+- output/intermediate/claim_ledger.json
+
+Write:
+- output/intermediate/audited_brief.md as the Analyst working draft
+
+Write a management-ready brief in the workspace language.
+Use Claim Ledger evidence for factual statements.
+If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid for frozen Claim Ledger claims; it is not source evidence or proof of support.
+Preserve valid [src:<claim_id>] citations that use real Claim Ledger IDs.
+Do not cite atom IDs in reader-facing prose.
+Do not introduce material atoms absent from the frozen Claim Ledger and, when present and valid, atomic_claim_graph.json.
+Do not create, edit, rewrite, repair, or extend atomic_claim_graph.json; if it is absent or invalid, do not repair it.
+Include source dates where useful.
+Return a section summary and any source limitations.
+Do not write analyst_draft_snapshot.md; Python freezes that control artifact during analyst stage-complete.
+""",
+    toolsets=["file", "terminal"]
+)
+```
+
+#### 5. Editor child
+
+```python
+delegate_task(
+    goal="Polish the audited BriefLoop brief",
+    context="""
+Workspace: <workspace>
+Inputs:
+- output/intermediate/analyst_draft_snapshot.md
+- output/intermediate/audited_brief.md
+Write:
+- output/intermediate/audited_brief.md as the Editor-owned final auditable brief
+
+Improve readability, structure, and executive tone.
+Preserve factual scope, uncertainty, and valid [src:<claim_id>] citations that use real Claim Ledger IDs.
+If output/intermediate/atomic_claim_graph.json is present and valid, use it only as an optional experimental structural decomposition aid; if it is absent or invalid, do not repair it.
+Do not create, edit, rewrite, repair, or extend atomic_claim_graph.json.
+Do not introduce material atoms absent from the frozen Claim Ledger and, when present and valid, atomic_claim_graph.json.
+Do not cite atom IDs in reader-facing prose.
+Return edits made and any unresolved issues.
+""",
+    toolsets=["file", "terminal"]
+)
+```
+
+#### 6. Auditor child
+
+```python
+delegate_task(
+    goal="Audit the BriefLoop brief against the Claim Ledger",
+    context="""
+Workspace: <workspace>
+Inputs:
+- output/intermediate/audited_brief.md
+- output/intermediate/claim_ledger.json
+
+Write:
+- output/intermediate/audit_report.json
+
+Check source support, orphan citations, unsupported numbers, missing dates, stale framing, process residue, and delivery readiness.
+Return audit status, blocking findings, and recommended fixes.
+""",
+    toolsets=["file", "terminal"]
+)
+```
+
+#### 7. Finalize
+
+Parent runs:
+
+```bash
+briefloop finalize --config <workspace>/config.yaml
+```
+
+Formatter/finalize reads `output/intermediate/audited_brief.md` as frozen input.
+It may write reader delivery artifacts and finalize control records only. If
+reader-clean requires wording changes in the audited brief, route repair to Editor;
+do not patch `audited_brief.md`, `audit_report.json`, artifact registry, or
+workflow state.
+
+Then reports delivery artifacts:
+
+- `output/delivery/brief.md`
+- `output/delivery/<named>.docx` if configured
+
+Internal audit/control records remain available:
+
+- `output/intermediate/audited_brief.md`
+- `output/intermediate/claim_ledger.json`
+- `output/intermediate/audit_report.json`
+- `output/intermediate/finalize_report.json`
+- `output/source_appendix.md` when configured
+
+## Source Cache Contract
+
+The BriefLoop `cached_package` provider can read JSON, Markdown, and text files from the configured cache directory. Prefer JSON arrays or objects with an `items` array. Each item should preserve URL, publication date, source name, and reliability where available.
+
+## Hermes Cron Notes
+
+- Attach this skill to each cron job with `--skill multi-agent-brief-hermes`.
+- Use `--workdir <repo-root>` so Hermes loads repository instructions and runs commands from the project.
+- Pin `--profile <name>` when the Hermes profile already exists.
+- Hermes delivers the final response through the configured cron destination.

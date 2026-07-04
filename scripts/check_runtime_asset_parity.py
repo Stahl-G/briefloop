@@ -16,6 +16,7 @@ REQUIRED_SOURCE_ASSETS = [
     ".claude/commands/mabw.md",
     ".claude/commands/generate-brief.md",
     ".claude/agents/orchestrator.md",
+    ".opencode/commands/briefloop.md",
     ".opencode/commands/generate-brief.md",
     ".opencode/agents/brief-orchestrator.md",
     "integrations/hermes-plugin/README.md",
