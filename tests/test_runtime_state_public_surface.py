@@ -105,6 +105,17 @@ def test_runtime_state_lifecycle_does_not_import_fact_layer() -> None:
     assert imports == []
 
 
+def test_claim_ledger_split_has_no_reverse_runtime_state_imports() -> None:
+    runtime_state_root = REPO_ROOT / "src" / "multi_agent_brief" / "orchestrator" / "runtime_state"
+
+    freeze_imports = _module_imports(runtime_state_root / "claim_ledger_freeze.py")
+    assert "multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment" not in freeze_imports
+    assert "multi_agent_brief.orchestrator.runtime_state.operations" not in freeze_imports
+
+    enrichment_imports = _module_imports(runtime_state_root / "claim_metadata_enrichment.py")
+    assert "multi_agent_brief.orchestrator.runtime_state.operations" not in enrichment_imports
+
+
 def test_core_manifest_has_no_live_consumers():
     consumers: list[str] = []
     for path in _python_files():
@@ -131,3 +142,14 @@ def _runtime_state_from_imports() -> set[str]:
 
 def _python_files() -> list[Path]:
     return sorted([*REPO_ROOT.joinpath("src").rglob("*.py"), *REPO_ROOT.joinpath("tests").rglob("*.py")])
+
+
+def _module_imports(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imports: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module)
+        elif isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+    return imports
