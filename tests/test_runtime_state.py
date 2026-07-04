@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
+import multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment as claim_metadata_enrichment
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
@@ -4427,7 +4428,7 @@ def test_enrich_claim_metadata_rolls_back_when_state_write_fails(tmp_path, monke
     before_workflow = _state_file(ws, "workflow_state").read_bytes()
     before_events = _state_file(ws, "event_log").read_bytes()
     before_ledger = (_intermediate(ws) / "claim_ledger.json").read_bytes()
-    original_write_json_atomic = runtime_state.operations._write_json_atomic
+    original_write_json_atomic = claim_metadata_enrichment._write_json_atomic
 
     def fail_artifact_registry_write(path: Path, payload: dict) -> None:
         if path.name == "artifact_registry.json":
@@ -4437,7 +4438,7 @@ def test_enrich_claim_metadata_rolls_back_when_state_write_fails(tmp_path, monke
             )
         original_write_json_atomic(path, payload)
 
-    monkeypatch.setattr(runtime_state.operations, "_write_json_atomic", fail_artifact_registry_write)
+    monkeypatch.setattr(claim_metadata_enrichment, "_write_json_atomic", fail_artifact_registry_write)
 
     with pytest.raises(RuntimeStateError) as excinfo:
         enrich_claim_metadata_transaction(workspace=ws, repo_workdir=ROOT)
