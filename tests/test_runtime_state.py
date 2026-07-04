@@ -13,6 +13,7 @@ import pytest
 import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment as claim_metadata_enrichment
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
+import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import interpret_frozen_artifact_integrity
@@ -6892,7 +6893,7 @@ def test_analyst_snapshot_rolls_back_when_stage_completion_fails_after_snapshot(
             error_code=runtime_state.operations.E_TRANSACTION_INTEGRITY,
         )
 
-    monkeypatch.setattr(runtime_state.operations, "_build_artifact_registry", fail_registry_build)
+    monkeypatch.setattr(runtime_stage_completion, "_build_artifact_registry", fail_registry_build)
 
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_stage_transaction(
@@ -6923,7 +6924,7 @@ def test_analyst_snapshot_rolls_back_when_state_write_fails_after_snapshot(tmp_p
         if _state_file(ws, "artifact_registry").exists()
         else None
     )
-    original_write_json_atomic = runtime_state.operations._write_json_atomic
+    original_write_json_atomic = runtime_stage_completion._write_json_atomic
 
     def fail_artifact_registry_write(path: Path, payload: dict) -> None:
         if path.name == "artifact_registry.json":
@@ -6933,7 +6934,7 @@ def test_analyst_snapshot_rolls_back_when_state_write_fails_after_snapshot(tmp_p
             )
         original_write_json_atomic(path, payload)
 
-    monkeypatch.setattr(runtime_state.operations, "_write_json_atomic", fail_artifact_registry_write)
+    monkeypatch.setattr(runtime_stage_completion, "_write_json_atomic", fail_artifact_registry_write)
 
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_stage_transaction(

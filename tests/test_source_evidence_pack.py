@@ -9,10 +9,12 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.orchestrator.runtime_state.operations import (
+from multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment import (
+    _source_evidence_metadata_from_file,
+)
+from multi_agent_brief.orchestrator.runtime_state.lifecycle import (
     check_runtime_state,
     initialize_runtime_state,
-    _source_evidence_metadata_from_file,
 )
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -15,22 +15,26 @@ from .errors import (
 from .event_log import append_event, read_event_log_records_strict, record_handoff_written
 from .identity import new_run_id, utc_now
 from .manifest import RUNTIME_MANIFEST_SCHEMA
-from .operations import (
+from .claim_ledger_freeze import freeze_claim_ledger_transaction
+from .claim_metadata_enrichment import enrich_claim_metadata_transaction
+from .decisions import record_decision
+from .fact_layer import import_fact_layer_transaction
+from .lifecycle import (
     check_runtime_state,
-    complete_finalize_transaction,
-    complete_repair_transaction,
-    complete_stage_transaction,
-    enrich_claim_metadata_transaction,
-    freeze_claim_ledger_transaction,
-    import_fact_layer_transaction,
     initialize_runtime_state,
-    record_decision,
-    raise_if_auditable_target_complete_blocks_downstream,
-    raise_if_active_repair_open,
     show_runtime_state,
-    start_repair_transaction,
 )
 from .paths import RUNTIME_STATE_FILES, runtime_state_paths
+from .repair import (
+    complete_repair_transaction,
+    raise_if_active_repair_open,
+    start_repair_transaction,
+)
+from .stage_completion import (
+    complete_finalize_transaction,
+    complete_stage_transaction,
+    raise_if_auditable_target_complete_blocks_downstream,
+)
 
 
 __all__ = sorted([
