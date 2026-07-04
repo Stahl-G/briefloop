@@ -67,7 +67,11 @@ Supported runtimes:
 - `claude`: Claude Code uses the repository command workflow.
 - `opencode`: OpenCode uses the repository command and agent files.
 - `codex`: Codex uses repository agent instructions and generated configs.
-- `manual`: prints the artifact workflow.
+- `operator`: host-agnostic compact operator workflow for environments without
+  a dedicated runtime adapter.
+
+`manual` remains a legacy CLI alias for `operator`; new handoffs should use and
+display `operator`.
 
 Canonical workflow:
 
