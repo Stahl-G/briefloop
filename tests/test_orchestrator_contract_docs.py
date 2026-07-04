@@ -19,6 +19,7 @@ STAGE_SPECS = ROOT / "configs" / "stage_specs.yaml"
 ARTIFACT_CONTRACTS = ROOT / "configs" / "artifact_contracts.yaml"
 DEFAULT_POLICY_PACK = ROOT / "configs" / "policy_packs" / "default.yaml"
 PACKAGE_CONTRACT_BASE = ROOT / "src" / "multi_agent_brief"
+DRAFT_PROMOTE_MATRIX = ROOT / "docs" / "implementation" / "draft-promote-ownership-matrix.md"
 
 EXPECTED_DECISIONS = {
     "continue",
@@ -258,6 +259,30 @@ def test_evaluation_and_onboarding_modules_do_not_import_cli_layer():
                             violations.append(f"{rel}:{node.lineno}")
 
     assert violations == []
+
+
+def test_draft_promote_ownership_matrix_stays_non_authoritative_docs() -> None:
+    text = DRAFT_PROMOTE_MATRIX.read_text(encoding="utf-8")
+
+    for phrase in [
+        "agent-owned draft -> deterministic Python validation/promotion -> authoritative artifact",
+        "`agent_owned_draft`",
+        "`python_promoted_authoritative`",
+        "`python_only_control`",
+        "`human_approval_record`",
+        "`projection_only`",
+        "`reader_delivery`",
+        "`claim_drafts.json`",
+        "`claim_ledger.json`",
+        "`workflow_state.json`",
+        "`event_log.jsonl`",
+        "`quality_panel.json`",
+        "`output/delivery/brief.md`",
+        "does not add a runtime, stage, artifact schema, validator, gate, delivery approval",
+        "make WorkBuddy, operator runtime, or any unadapted host a delegated runtime",
+        "claim output-quality improvement or semantic correctness",
+    ]:
+        assert phrase in text
 
 
 def test_v060_public_overview_uses_precise_boundary():
