@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added a source-clone WorkBuddy Skill bundle under
+  `integrations/workbuddy/briefloop/`, with WorkBuddy-facing quickstart,
+  workspace workflow, artifact-boundary, status/gate, repair, and safety
+  references. The bundle uses the `operator` runtime path and deterministic
+  BriefLoop CLI transactions only. It is not shipped as Python wheel/sdist
+  package data yet and does not add WorkBuddy runtime authority, gate authority,
+  delivery approval, release approval, or semantic proof claims.
 - Added `operator` runtime as the host-agnostic compact operation path for
   environments without a dedicated BriefLoop runtime adapter. `manual` remains
   a legacy CLI alias that resolves to `operator`; generated handoff artifacts

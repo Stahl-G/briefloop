@@ -435,6 +435,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | curl installer (`install.sh`) | Experimental CLI-only installer asset |
 | PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
 | Hermes plugin (`integrations/hermes-plugin/`) | Supported |
+| WorkBuddy Skill source bundle (`integrations/workbuddy/briefloop/`) | Experimental; source-clone-only and not included in wheel/sdist package data |
 
 | Runtime asset | Source clone | Wheel / sdist / PyPI package |
 |---|---|---|
@@ -446,6 +447,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | `.opencode/agents/**` and `.opencode/commands/**` | Supported | Source-clone-only |
 | `.codex/config.toml` and `.codex/agents/**` | Experimental | Source-clone-only; installable into a workspace with `runtime install --runtime codex` |
 | `integrations/hermes-plugin/**` | Supported | Source-clone-only |
+| `integrations/workbuddy/briefloop/**` | Experimental | Source-clone-only; package/zip generation is not shipped yet |
 | `scripts/install.sh`, `scripts/install.ps1`, `Formula/` | Supported | Source-clone-only |
 
 ## Legacy / Deprecated
