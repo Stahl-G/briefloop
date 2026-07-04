@@ -370,16 +370,27 @@ def _truncate(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
-def _calibration_label(proposal_row: Mapping[str, Any]) -> str:
-    metadata = proposal_row.get("metadata")
-    if not isinstance(metadata, Mapping):
-        return ""
-    raw = _text(metadata.get(SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY))
+def normalize_calibration_label(value: Any) -> str:
+    """Normalize a raw calibration label to the vocabulary or a sentinel.
+
+    Empty/absent -> "". A known label passes through. Any other non-empty value
+    is out-of-vocabulary and normalized to SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL
+    so consumers never trust an unvalidated label.
+    """
+
+    raw = value.strip() if isinstance(value, str) else ""
     if not raw:
         return ""
     if raw not in SEMANTIC_SUPPORT_PROPOSAL_LABELS:
         return SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL
     return raw
+
+
+def _calibration_label(proposal_row: Mapping[str, Any]) -> str:
+    metadata = proposal_row.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return ""
+    return normalize_calibration_label(metadata.get(SEMANTIC_SUPPORT_CALIBRATION_METADATA_KEY))
 
 
 def _proposal_evidence(

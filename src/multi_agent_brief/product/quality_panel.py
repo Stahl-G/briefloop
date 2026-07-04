@@ -94,6 +94,8 @@ _QUALITY_PANEL_HTML_LABELS = {
     "materiality_findings": ("Materiality findings", "重要性发现"),
     "template_warnings": ("Template warnings", "模板警告"),
     "support_wording": ("Support wording", "支持措辞"),
+    "semantic_support": ("Semantic support proposals", "语义支持提案"),
+    "semantic_support_proposals": ("Semantic support proposals", "语义支持提案"),
     "recommended_actions": ("Recommended actions", "建议动作"),
     "recommended_next_actions": ("Recommended Next Actions", "建议下一步"),
     "control_integrity": ("Control Integrity", "控制完整性"),
@@ -127,6 +129,13 @@ _QUALITY_PANEL_HTML_LABELS = {
     "reader_template_conformance": ("Reader template conformance", "读者模板一致性"),
     "reader_template_warnings": ("Reader template warnings", "读者模板警告"),
     "support_wording_warnings": ("Support wording warnings", "支持措辞警告"),
+    "semantic_support_status": ("Semantic support status", "语义支持状态"),
+    "semantic_support_boundary": ("Semantic support boundary", "语义支持边界"),
+    "calibration_labels": ("Calibration labels", "校准标签"),
+    "llm_only_proposals": ("LLM-only proposals", "仅 LLM 提案"),
+    "high_uncertainty": ("High uncertainty", "高不确定性"),
+    "high_disagreement": ("High disagreement", "高分歧"),
+    "human_adjudication_required": ("Human adjudication required", "需要人工裁决"),
     "reader_clean_citation": ("Reader Clean And Citation Hygiene", "读者清洁与引用卫生"),
     "reader_clean_status": ("Reader-clean status", "读者清洁状态"),
     "duplicate_citation_count": ("Duplicate citation count", "重复引用数量"),
@@ -220,6 +229,8 @@ _QUALITY_PANEL_HTML_VALUES_ZH = {
     "included_when_present_and_valid": "存在且有效时包含",
     "not_applicable": "不适用",
     "skipped": "已跳过",
+    "invalid_report": "报告无效",
+    "proposal_only_not_a_gate_not_release_authority": "仅提案，不是门禁或发布授权",
 }
 
 # Recommended-action machine names -> zh display text (en shows the raw name).
@@ -253,6 +264,7 @@ _QUALITY_PANEL_HTML_REASONS_ZH = {
     "scoped_quality_gate_reports_missing": "阶段门禁报告缺失",
     "source_evidence_pack_invalid": "来源证据包无效",
     "source_evidence_pack_missing": "来源证据包缺失",
+    "semantic_support_human_adjudication_required": "语义支持提案需要人工裁决",
     "support_calibrated_wording_warning_only": "支持措辞校准仅为警告",
     "unsupported_claim_present_in_reader_text": "读者文本存在未支持声明",
     "unsupported_claim_support_rows": "存在未支持的声明支持行",
@@ -322,6 +334,7 @@ def build_quality_panel(
         if isinstance(workspace_status.get("support_wording"), dict)
         else {}
     )
+    semantic_support = _semantic_support_summary(workspace_status)
     finalize_report = _read_json_mapping(ws / _INTERMEDIATE / "finalize_report.json") or {}
     closeout = quality_panel_closeout_projection(
         workspace=ws,
@@ -345,6 +358,7 @@ def build_quality_panel(
         materiality_selection=materiality_selection,
         report_template_conformance=report_template_conformance,
         support_wording=support_wording,
+        semantic_support=semantic_support,
     )
     overall_status = _overall_status(
         workspace_status=workspace_status,
@@ -357,6 +371,7 @@ def build_quality_panel(
         materiality_selection=materiality_selection,
         report_template_conformance=report_template_conformance,
         support_wording=support_wording,
+        semantic_support=semantic_support,
     )
 
     return {
@@ -378,6 +393,7 @@ def build_quality_panel(
         "materiality_selection": materiality_selection,
         "report_template_conformance": report_template_conformance,
         "support_wording": support_wording,
+        "semantic_support": semantic_support,
         "quality_panel_closeout": closeout,
         "recommended_actions": recommended_actions,
         "non_goals": [
@@ -441,6 +457,8 @@ def render_quality_summary(
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
     support_wording = panel_payload.get("support_wording")
     support_wording = support_wording if isinstance(support_wording, Mapping) else {}
+    semantic_support = panel_payload.get("semantic_support")
+    semantic_support = semantic_support if isinstance(semantic_support, Mapping) else {}
     closeout = panel_payload.get("quality_panel_closeout")
     closeout = closeout if isinstance(closeout, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
@@ -477,6 +495,7 @@ def render_quality_summary(
             materiality,
             template_conformance,
             support_wording,
+            semantic_support,
         ),
     )
     lines.extend(["", "## Missing Or Incomplete Surfaces", ""])
@@ -516,6 +535,15 @@ def render_quality_summary(
         f"`{_template_conformance_warning_count(template_conformance)}`",
         f"- Support wording status: `{_text(support_wording.get('status')) or 'unknown'}`",
         f"- Support wording warnings: `{_support_wording_warning_count(support_wording)}`",
+        "- Semantic support status: "
+        f"`{_text(semantic_support.get('status')) or 'unknown'}` "
+        "(`proposal-only`, not a gate, not release authority)",
+        "- Semantic support proposals: "
+        f"`{_intish(semantic_support.get('proposal_count'))}`",
+        "- Semantic support calibration labels: "
+        f"{_inline_mapping(semantic_support.get('calibration_label_counts'))}",
+        "- Semantic support human adjudication required: "
+        f"`{_intish(semantic_support.get('requires_human_adjudication_count'))}`",
         "",
         "## Quality Closeout And Bundle Separation",
         "",
@@ -596,6 +624,8 @@ def render_quality_panel_html(
     template_conformance = template_conformance if isinstance(template_conformance, Mapping) else {}
     support_wording = panel_payload.get("support_wording")
     support_wording = support_wording if isinstance(support_wording, Mapping) else {}
+    semantic_support = panel_payload.get("semantic_support")
+    semantic_support = semantic_support if isinstance(semantic_support, Mapping) else {}
     closeout = panel_payload.get("quality_panel_closeout")
     closeout = closeout if isinstance(closeout, Mapping) else {}
     actions = panel_payload.get("recommended_actions")
@@ -627,6 +657,11 @@ def render_quality_panel_html(
                     (
                         "support_wording",
                         _support_wording_warning_count(support_wording),
+                        "warning",
+                    ),
+                    (
+                        "semantic_support_proposals",
+                        _intish(semantic_support.get("proposal_count")),
                         "warning",
                     ),
                     ("recommended_actions", len(actions), "action"),
@@ -737,6 +772,46 @@ def render_quality_panel_html(
                     (
                         "support_wording_warnings",
                         _support_wording_warning_count(support_wording),
+                        "count_warning",
+                    ),
+                    (
+                        "semantic_support_status",
+                        _text(semantic_support.get("status")) or "not_available",
+                        "status",
+                    ),
+                    (
+                        "semantic_support_boundary",
+                        _text(semantic_support.get("boundary")) or "unknown",
+                        "status",
+                    ),
+                    (
+                        "semantic_support_proposals",
+                        _intish(semantic_support.get("proposal_count")),
+                        "count_warning",
+                    ),
+                    (
+                        "calibration_labels",
+                        _inline_mapping(semantic_support.get("calibration_label_counts")),
+                        "text",
+                    ),
+                    (
+                        "llm_only_proposals",
+                        _intish(semantic_support.get("llm_only_count")),
+                        "count_warning",
+                    ),
+                    (
+                        "high_uncertainty",
+                        _intish(semantic_support.get("high_uncertainty_count")),
+                        "count_warning",
+                    ),
+                    (
+                        "high_disagreement",
+                        _intish(semantic_support.get("high_disagreement_count")),
+                        "count_warning",
+                    ),
+                    (
+                        "human_adjudication_required",
+                        _intish(semantic_support.get("requires_human_adjudication_count")),
                         "count_warning",
                     ),
                 ],
@@ -893,6 +968,13 @@ def validate_quality_panel_payload(payload: Any) -> str | None:
         support_wording_error = validate_support_wording_payload(support_wording)
         if support_wording_error:
             return f"quality_panel_schema_error:support_wording:{support_wording_error}"
+    semantic_support = payload.get("semantic_support")
+    if semantic_support is not None:
+        if not isinstance(semantic_support, dict):
+            return "quality_panel_schema_error:semantic_support"
+        semantic_support_error = _validate_semantic_support_payload(semantic_support)
+        if semantic_support_error:
+            return f"quality_panel_schema_error:semantic_support:{semantic_support_error}"
     closeout = payload.get("quality_panel_closeout")
     if closeout is not None:
         if not isinstance(closeout, dict):
@@ -1127,6 +1209,33 @@ def _claim_summary(
     }
 
 
+def _semantic_support_summary(workspace_status: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the optional Semantic Support Auditor proposals for the panel.
+
+    Read-only and proposal-only: this surfaces counts and a human-review hint,
+    but it is not a gate, not a repair route, and not a release authority.
+    """
+
+    semantic = workspace_status.get("semantic_assessment_report")
+    semantic = semantic if isinstance(semantic, Mapping) else {}
+    counts = semantic.get("summary_counts")
+    counts = counts if isinstance(counts, Mapping) else {}
+    label_counts = counts.get("calibration_label_counts")
+    label_counts = label_counts if isinstance(label_counts, Mapping) else {}
+    adjudication = int(counts.get("requires_human_adjudication_count") or 0)
+    return {
+        "status": _text(semantic.get("status")) or "not_available",
+        "boundary": "proposal_only_not_a_gate_not_release_authority",
+        "proposal_count": int(counts.get("proposal_row_count") or 0),
+        "calibration_label_counts": dict(label_counts),
+        "llm_only_count": int(counts.get("llm_only_count") or 0),
+        "high_uncertainty_count": int(counts.get("high_uncertainty_count") or 0),
+        "high_disagreement_count": int(counts.get("high_disagreement_count") or 0),
+        "requires_human_adjudication_count": adjudication,
+        "recommended_human_review": adjudication > 0,
+    }
+
+
 def _delivery_summary(workspace: Path, workspace_status: Mapping[str, Any]) -> dict[str, Any]:
     reader = workspace_status.get("reader_clean")
     reader = reader if isinstance(reader, dict) else {}
@@ -1156,6 +1265,7 @@ def _overall_status(
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
     support_wording: Mapping[str, Any],
+    semantic_support: Mapping[str, Any],
 ) -> str:
     if not workspace_status.get("ok"):
         return "incomplete"
@@ -1191,6 +1301,7 @@ def _overall_status(
         or _materiality_selection_warning_count(materiality_selection) > 0
         or _template_conformance_warning_count(report_template_conformance) > 0
         or _support_wording_warning_count(support_wording) > 0
+        or _semantic_support_warning_count(semantic_support) > 0
     ):
         return "warning"
     return "pass"
@@ -1208,6 +1319,7 @@ def _recommended_actions(
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
     support_wording: Mapping[str, Any],
+    semantic_support: Mapping[str, Any],
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
     if workflow.get("blocked"):
@@ -1290,6 +1402,11 @@ def _recommended_actions(
             "action": "review_support_wording_warnings",
             "reason": "support_calibrated_wording_warning_only",
         })
+    if int(semantic_support.get("requires_human_adjudication_count") or 0) > 0:
+        actions.append({
+            "action": "request_human_review",
+            "reason": "semantic_support_human_adjudication_required",
+        })
     for item in trajectory.get("recommended_actions") or []:
         if not isinstance(item, Mapping):
             continue
@@ -1334,6 +1451,39 @@ def _support_wording_warning_count(support_wording: Mapping[str, Any]) -> int:
         else {}
     )
     return int(counts.get("finding_count") or 0)
+
+
+def _semantic_support_warning_count(semantic_support: Mapping[str, Any]) -> int:
+    if _text(semantic_support.get("status")) == "invalid_report":
+        return 1
+    return int(semantic_support.get("proposal_count") or 0)
+
+
+def _validate_semantic_support_payload(payload: Mapping[str, Any]) -> str | None:
+    if payload.get("boundary") != "proposal_only_not_a_gate_not_release_authority":
+        return "semantic_support_schema_error:boundary"
+    status = _text(payload.get("status"))
+    if status not in {"not_available", "valid", "invalid_report"}:
+        return "semantic_support_schema_error:status"
+    for field in (
+        "proposal_count",
+        "llm_only_count",
+        "high_uncertainty_count",
+        "high_disagreement_count",
+        "requires_human_adjudication_count",
+    ):
+        value = payload.get(field)
+        if not isinstance(value, int) or value < 0:
+            return f"semantic_support_schema_error:{field}"
+    labels = payload.get("calibration_label_counts")
+    if not isinstance(labels, dict):
+        return "semantic_support_schema_error:calibration_label_counts"
+    for label, count in labels.items():
+        if not isinstance(label, str) or not isinstance(count, int) or count < 0:
+            return "semantic_support_schema_error:calibration_label_counts"
+    if not isinstance(payload.get("recommended_human_review"), bool):
+        return "semantic_support_schema_error:recommended_human_review"
+    return None
 
 
 def _fact_layer_status(artifacts: Mapping[str, Any], source_evidence: Mapping[str, Any]) -> str:
@@ -1435,6 +1585,7 @@ def _quality_summary_warning_items(
     materiality_selection: Mapping[str, Any],
     report_template_conformance: Mapping[str, Any],
     support_wording: Mapping[str, Any],
+    semantic_support: Mapping[str, Any],
 ) -> list[str]:
     items: list[str] = []
     if _text(source.get("source_pack_status")) == "invalid":
@@ -1468,6 +1619,14 @@ def _quality_summary_warning_items(
         items.append(
             "Support-calibrated wording projection found "
             f"`{_support_wording_warning_count(support_wording)}` reader wording warning(s)."
+        )
+    if _text(semantic_support.get("status")) == "invalid_report":
+        items.append("Semantic support proposal report is invalid and is not interpreted as authority.")
+    elif _semantic_support_warning_count(semantic_support) > 0:
+        items.append(
+            "Semantic support auditor surfaced "
+            f"`{_semantic_support_warning_count(semantic_support)}` proposal(s) "
+            "(`proposal-only`, not a gate, not release authority)."
         )
     return items
 

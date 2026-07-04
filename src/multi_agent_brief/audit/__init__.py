@@ -12,6 +12,7 @@ from multi_agent_brief.audit.semantic import (
     NoOpSemanticAuditAgent,
     SemanticAuditPromptBuilder,
     findings_from_semantic_proposal_rows,
+    normalize_calibration_label,
     semantic_support_proposal_finding,
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL",
     "SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE",
     "SEMANTIC_SUPPORT_PROPOSAL_LABELS",
+    "normalize_calibration_label",
     "AuditAgentInterface",
     "CompositeAuditAgent",
     "DeterministicAuditAgent",

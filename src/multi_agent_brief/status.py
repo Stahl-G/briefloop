@@ -308,11 +308,19 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     if semantic_assessment_report.get("status") not in {None, "not_available"}:
         counts = semantic_assessment_report.get("summary_counts")
         counts = counts if isinstance(counts, dict) else {}
+        label_counts = counts.get("calibration_label_counts")
+        label_counts = label_counts if isinstance(label_counts, dict) else {}
+        labels_render = (
+            ",".join(f"{label}:{count}" for label, count in label_counts.items())
+            if label_counts
+            else "none"
+        )
         lines.append(
             "[status] semantic_assessment_report: "
             f"{semantic_assessment_report.get('status')} "
-            "boundary=proposal_only "
+            "boundary=proposal_only not_a_gate not_release_authority "
             f"proposals={counts.get('proposal_row_count', 0)} "
+            f"labels={labels_render} "
             f"llm_only={counts.get('llm_only_count', 0)} "
             f"high_uncertainty={counts.get('high_uncertainty_count', 0)} "
             f"high_disagreement={counts.get('high_disagreement_count', 0)} "

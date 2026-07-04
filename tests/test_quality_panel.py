@@ -259,6 +259,110 @@ def _write_claim_ledger(ws: Path) -> None:
     )
 
 
+def _write_semantic_support_artifacts(ws: Path, *, atom_id: str = "AC-0001-01") -> None:
+    intermediate = ws / "output" / "intermediate"
+    source_dir = ws / "input" / "sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    raw_excerpt = "ExampleCo reported weekly production growth."
+    source_text = f"Intro.\n{raw_excerpt}\nOutro.\n"
+    source_path = source_dir / "semantic-source.md"
+    source_path.write_text(source_text, encoding="utf-8")
+    start = source_text.index(raw_excerpt)
+    _write_claim_ledger(ws)
+    (intermediate / "atomic_claim_graph.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.atomic_claim_graph.v1",
+                "claims": [
+                    {
+                        "claim_id": "CL-0001",
+                        "atoms": [
+                            {
+                                "atom_id": "AC-0001-01",
+                                "text": raw_excerpt,
+                                "claim_role": "observed_fact",
+                                "materiality": "high",
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (intermediate / "evidence_span_registry.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.evidence_span_registry.v1",
+                "sources": [
+                    {
+                        "source_id": "SRC-001",
+                        "source_type": "company_release",
+                        "source_path": "input/sources/semantic-source.md",
+                        "published_at": "2026-06-01",
+                        "source_tier": "company_official",
+                        "spans": [
+                            {
+                                "span_id": "ESP-001-01",
+                                "raw_excerpt": raw_excerpt,
+                                "hash": "sha256:" + hashlib.sha256(raw_excerpt.encode("utf-8")).hexdigest(),
+                                "span_role": "direct_statement",
+                                "char_start": start,
+                                "char_end": start + len(raw_excerpt),
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (intermediate / "semantic_assessment_report.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.semantic_assessment_report.v1",
+                "assessors": [
+                    {
+                        "assessor_id": "ASR-001",
+                        "assessment_method": "llm_only",
+                        "label": "Model review",
+                    }
+                ],
+                "rows": [
+                    {
+                        "row_id": "SAR-0001",
+                        "claim_id": "CL-0001",
+                        "atom_id": atom_id,
+                        "evidence_span_id": "ESP-001-01",
+                        "proposed_support_label": "partial_support",
+                        "confidence": 0.51,
+                        "uncertainty": "high",
+                        "disagreement": "high",
+                        "requires_human_adjudication": True,
+                        "assessment_method": "llm_only",
+                        "assessor_id": "ASR-001",
+                        "rationale": "The span supports activity, but not the stronger interpretation.",
+                        "metadata": {"calibration_label": "overstated_claim"},
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_gate_report(
     ws: Path,
     *,
@@ -672,6 +776,96 @@ def test_quality_panel_surfaces_final_abstract_quality_warnings(tmp_path: Path) 
     assert panel["gates"]["blocking_count"] == 0
     assert "Quality gates report `1` warning finding(s)." in markdown
     assert "approved for release" not in markdown.lower()
+
+
+def test_quality_panel_surfaces_semantic_support_proposals_without_authority(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_semantic_support_artifacts(ws)
+    _write_gate_report(ws)
+    _write_gate_report(ws, stage="finalize")
+    _write_finalize_report(ws)
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+    _set_workflow_unblocked(ws)
+
+    panel = write_quality_panel(workspace=ws)
+    panel_sha = _sha256_file(quality_panel_path(ws))
+    markdown = render_quality_summary(panel, quality_panel_sha256=panel_sha)
+    html = render_quality_panel_html(panel, quality_panel_sha256=panel_sha)
+
+    semantic = panel["semantic_support"]
+    assert panel["overall_status"] == "warning"
+    assert semantic == {
+        "status": "valid",
+        "boundary": "proposal_only_not_a_gate_not_release_authority",
+        "proposal_count": 1,
+        "calibration_label_counts": {"overstated_claim": 1},
+        "llm_only_count": 1,
+        "high_uncertainty_count": 1,
+        "high_disagreement_count": 1,
+        "requires_human_adjudication_count": 1,
+        "recommended_human_review": True,
+    }
+    assert {
+        "action": "request_human_review",
+        "reason": "semantic_support_human_adjudication_required",
+    } in panel["recommended_actions"]
+    forbidden_actions = {"approve_delivery", "deliver", "block_release", "auto_repair"}
+    assert not forbidden_actions.intersection(
+        str(item.get("action") or "") for item in panel["recommended_actions"]
+    )
+    assert "Semantic support proposals: `1`" in markdown
+    assert "not a gate, not release authority" in markdown
+    assert "ready to publish" not in markdown.lower()
+    assert 'data-section="claim-support-risk"' in html
+    assert "Semantic support boundary" in html
+    assert "proposal_only_not_a_gate_not_release_authority" in html
+    assert "语义支持提案" in html
+    assert validate_quality_panel_payload(panel) is None
+    assert validate_quality_summary_markdown(markdown) is None
+    assert validate_quality_panel_html(html) is None
+
+
+def test_quality_panel_surfaces_invalid_semantic_support_report_as_warning_only(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_semantic_support_artifacts(ws, atom_id="AC-0001-99")
+
+    panel = build_quality_panel(ws)
+    semantic = panel["semantic_support"]
+
+    assert semantic["status"] == "invalid_report"
+    assert semantic["proposal_count"] == 0
+    assert semantic["calibration_label_counts"] == {}
+    assert semantic["recommended_human_review"] is False
+    assert panel["overall_status"] == "incomplete"
+    assert not any(
+        str(item.get("reason") or "") == "semantic_support_human_adjudication_required"
+        for item in panel["recommended_actions"]
+    )
+    assert validate_quality_panel_payload(panel) is None
+
+
+def test_quality_panel_semantic_support_survives_corrupt_reader_target(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_source_evidence_pack(ws)
+    _write_semantic_support_artifacts(ws)
+    _write_gate_report(ws)
+    _write_gate_report(ws, stage="finalize")
+    _write_finalize_report(ws)
+    output = ws / "output"
+    output.mkdir(exist_ok=True)
+    (output / "brief.md").write_bytes(b"\xff\xfe")
+    assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
+
+    status = build_workspace_status(ws)
+    panel = build_quality_panel(ws)
+
+    assert status["support_wording"]["status"] == "not_available"
+    assert status["support_wording"]["reason"] == "reader_targets_unreadable"
+    assert panel["support_wording"]["status"] == "not_available"
+    assert panel["semantic_support"]["status"] == "valid"
+    assert panel["semantic_support"]["proposal_count"] == 1
+    assert validate_quality_panel_payload(panel) is None
 
 
 def test_quality_summary_write_reads_existing_panel_and_registers_artifact(tmp_path: Path) -> None:
