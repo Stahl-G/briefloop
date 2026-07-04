@@ -99,6 +99,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "README.zh-CN.md",
     ],
     "README.zh-CN.md": [
+        "15 分钟试用",
+        "docs/15-minute-pilot.zh-CN.md",
         "写作入口",
         "v0.11 支持的产品基线 surface",
         "实验性能力",

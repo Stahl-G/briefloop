@@ -114,6 +114,8 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["reference_run_surface_count"]["status"] == "pass"
     readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
     assert "English README has moved to [README.md](README.md)." in readme_en
+    readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+    assert "[15 分钟试用](docs/15-minute-pilot.zh-CN.md)" in readme_zh
 
 
 def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path, monkeypatch) -> None:
