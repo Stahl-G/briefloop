@@ -36,7 +36,8 @@ API_SECRET_RE = re.compile(
 )
 COMMON_SECRET_RE = re.compile(r"\b(?:sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b")
 SHA256_VALUE_RE = re.compile(
-    r"['\"]?\bsha256\b['\"]?\s*[:=]\s*['\"]?(?P<hash>[0-9a-fA-F]{64})['\"]?",
+    r"(?<![A-Za-z0-9_])['\"]?(?:sha256|[A-Za-z0-9_]+_sha256)['\"]?"
+    r"\s*[:=]\s*['\"]?(?P<hash>[0-9a-fA-F]{64})['\"]?",
     re.IGNORECASE,
 )
 

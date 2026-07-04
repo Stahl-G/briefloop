@@ -191,6 +191,49 @@ def test_public_safety_scan_allows_json_sha256_hex_fields(tmp_path):
     assert findings == []
 
 
+def test_public_safety_scan_allows_suffix_sha256_hex_fields(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "artifact_registry.yaml"
+    sample.write_text(
+        "claim_ledger_sha256: f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert findings == []
+
+
+def test_public_safety_scan_allows_json_suffix_sha256_hex_fields(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "manifest.json"
+    sample.write_text(
+        '{"source_archive_manifest_sha256": "f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540"}\n',
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert findings == []
+
+
+def test_public_safety_scan_suffix_sha256_does_not_hide_nearby_token(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "mixed.yaml"
+    sample.write_text(
+        "claim_ledger_sha256: f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540 near oc_1234567890abcdef\n",  # PUBLIC_SAFETY_TEST_FIXTURE
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert len(findings) == 1
+    assert findings[0].kind == "lark_token"
+    assert findings[0].sample == (
+        "claim_ledger_sha256: f613f8fed53e5a414d29fef819018ffc4e2bebf0ddd145ddbabda3c295e4b540 near oc_1234567890abcdef"  # PUBLIC_SAFETY_TEST_FIXTURE
+    )
+
+
 def test_public_safety_scan_catches_lark_tokens_near_sha256_text(tmp_path):
     module = _load_module()
     sample = tmp_path / "candidate_release_pack.md"
