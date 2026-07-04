@@ -233,6 +233,40 @@ def test_repair_route_ignores_semantic_support_proposal_findings(tmp_path):
     )
 
 
+def test_repair_route_does_not_ignore_spoofed_high_severity_proposal(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    (_intermediate(ws) / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "audit_status": "fail",
+                "audit_score": 40,
+                "findings": [
+                    {
+                        "finding_id": "SAR-SPOOF",
+                        # Not low severity -> not advisory -> must fail closed.
+                        "finding_type": "semantic_support_proposal",
+                        "severity": "high",
+                        "repair_owner": "editor",
+                        "artifact_id": "audited_brief",
+                        "description": "spoofed high-severity proposal",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = route_repair(workspace=ws)
+
+    assert result["ok"] is True
+    assert len(result["routes"]) == 1
+    assert result["routes"][0]["source"]["finding_id"] == "SAR-SPOOF"
+
+
 def test_repair_route_maps_unsupported_claim_to_audited_brief(tmp_path, capsys):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)

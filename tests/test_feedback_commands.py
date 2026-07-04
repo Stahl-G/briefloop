@@ -212,6 +212,57 @@ def test_audit_feedback_ingest_preserves_audit_finding_fields(tmp_path, capsys):
     assert issue["metadata"]["source_finding_id"] == "AUDIT_001"
 
 
+def test_audit_feedback_ingest_ignores_semantic_support_proposals(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    audit = tmp_path / "audit_report.json"
+    audit.write_text(
+        json.dumps({
+            "findings": [
+                {
+                    "finding_id": "SAR-0001",
+                    "finding_type": "semantic_support_proposal",
+                    "severity": "low",
+                    # Present but advisory: must NOT become an editor feedback issue.
+                    "repair_owner": "editor",
+                    "artifact_id": "audited_brief",
+                    "summary": "Advisory: draft may overstate CL-0001.",
+                },
+                {
+                    "finding_id": "AUDIT_001",
+                    "blocking_level": "blocking",
+                    "repair_owner": "editor",
+                    "finding_type": "unsupported_claim",
+                    "artifact_id": "audited_brief",
+                    "summary": "Revenue claim is not supported by the ledger.",
+                },
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    rc = main([
+        "feedback",
+        "ingest",
+        "--workspace",
+        str(ws),
+        "--feedback",
+        str(audit),
+        "--source",
+        "audit",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    issues = json.loads(capsys.readouterr().out)["feedback_issues"]["issues"]
+    # Only the real finding is ingested; the advisory proposal is dropped.
+    assert [issue["metadata"]["source_finding_id"] for issue in issues] == ["AUDIT_001"]
+    assert all(
+        issue["metadata"].get("finding_type") != "semantic_support_proposal" for issue in issues
+    )
+
+
 def test_feedback_plan_creates_plan_and_marks_open_issues_planned(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     feedback = tmp_path / "feedback.txt"

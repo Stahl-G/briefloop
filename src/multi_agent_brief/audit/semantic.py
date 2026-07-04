@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from multi_agent_brief.audit.interfaces import AuditAgentInterface
+from multi_agent_brief.audit.proposal_boundary import SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE
 from multi_agent_brief.contracts.schemas.claim_support_matrix import VALID_SUPPORT_LABELS
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_REPORT_SCHEMA_VERSION,
@@ -47,7 +48,9 @@ SEMANTIC_SUPPORT_INVALID_CALIBRATION_LABEL = "<invalid_calibration_label>"
 # AuditFinding.finding_type for advisory semantic-support proposals. A distinct
 # type keeps these findings recognizable as proposal-only: they never gate,
 # deliver, or authorize release, and no deterministic gate reads them.
-SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE = "semantic_support_proposal"
+# Defined in audit.proposal_boundary (a leaf module) and re-exported here so
+# consumers that must avoid an import cycle can share the same constant/rule.
+# (SEMANTIC_SUPPORT_PROPOSAL_FINDING_TYPE imported above.)
 
 
 class NoOpSemanticAuditAgent(AuditAgentInterface):
