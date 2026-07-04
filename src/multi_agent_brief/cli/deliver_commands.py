@@ -45,6 +45,7 @@ E_DELIVERY_EVENT_FAILED = "E_DELIVERY_EVENT_FAILED"
 E_DELIVERY_RUNTIME_MISSING = "E_DELIVERY_RUNTIME_MISSING"
 E_DELIVERY_TARGET_INVALID = "E_DELIVERY_TARGET_INVALID"
 E_DELIVERY_ARTIFACT_MISMATCH = "E_DELIVERY_ARTIFACT_MISMATCH"
+E_DELIVERY_RUN_INTEGRITY_BLOCKED = "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
 
 _RECIPIENT_ID_RE = re.compile(r"\b(?:oc|ou|on|om|cli|fld|f)[A-Za-z0-9_-]{8,}\b")
 _LONG_TOKEN_RE = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9_-]{23,}\b")
@@ -174,6 +175,11 @@ def deliver_workspace(
     _preflight_delivery_event_surface(ws)
     _preflight_no_active_repair(ws, target=target, channel=channel)
     run_integrity = _delivery_run_integrity(ws)
+    _preflight_run_integrity_for_delivery(
+        run_integrity,
+        target=target,
+        channel=channel,
+    )
 
     if target == "local":
         artifact = bundle.markdown or bundle.artifacts[0]
@@ -599,6 +605,27 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
             workflow.get("run_integrity"),
             field_present="run_integrity" in workflow,
         )
+    )
+
+
+def _preflight_run_integrity_for_delivery(
+    run_integrity: dict[str, Any],
+    *,
+    target: str,
+    channel: str,
+) -> None:
+    if run_integrity.get("status") == "clean" and run_integrity.get("reference_eligible") is True:
+        return
+    reasons = run_integrity.get("reasons") if isinstance(run_integrity.get("reasons"), list) else []
+    first_reason = reasons[0] if reasons and isinstance(reasons[0], dict) else {}
+    message = first_reason.get("message") or first_reason.get("reason_code") or "run integrity is not clean"
+    raise DeliverCommandError(
+        "Delivery blocked because run integrity is not clean. "
+        f"Run `multi-agent-brief status --workspace <workspace>` and resolve: {message}",
+        error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
+        target=target,
+        channel=channel,
+        extra={"run_integrity": run_integrity},
     )
 
 

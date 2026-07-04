@@ -728,7 +728,7 @@ def test_finalize_cli_replays_sticky_contamination_before_auditable_target_block
     assert refreshed["run_integrity"]["reference_eligible"] is False
 
 
-def test_finalize_cli_allows_contaminated_delivery_run_to_render_local_outputs(
+def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
     tmp_path: Path,
     capsys,
 ):
@@ -784,12 +784,12 @@ def test_finalize_cli_allows_contaminated_delivery_run_to_render_local_outputs(
             + "\n"
         )
 
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 0
+    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
     captured = capsys.readouterr()
 
-    assert "run integrity is not clean before finalize" not in captured.err
-    assert (output_dir / "delivery" / "brief.md").exists()
-    assert (intermediate / "finalize_report.json").exists()
+    assert "run integrity is not clean before finalize" in captured.err
+    assert not (output_dir / "delivery").exists()
+    assert not (intermediate / "finalize_report.json").exists()
     refreshed = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     assert refreshed["run_integrity"]["status"] == "contaminated"
     assert refreshed["run_integrity"]["reference_eligible"] is False
