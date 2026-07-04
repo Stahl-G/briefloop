@@ -7,7 +7,7 @@ The public project name is now **BriefLoop**; MABW remains as the implementation
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
+[15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
 
 Writer entry: use `/briefloop` in Claude Code (`/mabw` remains a compatibility alias), or `briefloop` / `multi-agent-brief` in a shell.
 
@@ -173,6 +173,9 @@ bash scripts/demo.sh
 `scripts/demo.sh` creates an API-free reference workspace with a final brief,
 Claim Ledger, Quality Panel HTML, Quality Summary, source appendix, and
 event-log excerpt.
+
+For the shortest walkthrough, use the
+[15-Minute Pilot](docs/15-minute-pilot.md).
 
 Package-index installs are not the launch path yet. `pipx` / PyPI packaging is
 tracked in [pipx And PyPI Packaging Prep](docs/packaging-pipx.md); do not use

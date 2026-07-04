@@ -152,6 +152,33 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
 }
 REQUIRED_FIRST_USER_DOC_PHRASES = {
+    "docs/15-minute-pilot.md": [
+        "Fifteen-Minute Pilot",
+        "BriefLoop helps you produce briefing packages",
+        "traceability and process accountability",
+        "not semantic proof",
+        "bash scripts/demo.sh",
+        "python scripts/demo.py",
+        "output/intermediate/quality_panel.html",
+        "output/intermediate/quality_summary.md",
+        "output/intermediate/claim_ledger.json",
+        "does not call an LLM",
+        "not a semantic proof engine",
+        "not authority to publish",
+    ],
+    "docs/15-minute-pilot.zh-CN.md": [
+        "15 分钟试用",
+        "BriefLoop 帮你生成",
+        "可追溯性和过程问责",
+        "不是语义证明",
+        "bash scripts/demo.sh",
+        "python scripts/demo.py",
+        "output/intermediate/quality_panel.html",
+        "output/intermediate/quality_summary.md",
+        "output/intermediate/claim_ledger.json",
+        "不会调用 LLM",
+        "不是发布权限",
+    ],
     "docs/getting-started.md": [
         "BriefLoop helps you produce briefing packages",
         "traceability and process accountability",
@@ -192,6 +219,7 @@ REQUIRED_FIRST_USER_DOC_PHRASES = {
     ],
 }
 README_FIRST_SCREEN_REQUIRED_LINKS = [
+    "docs/15-minute-pilot.md",
     "docs/getting-started.md",
     "docs/weekly-loop.md",
     "docs/troubleshooting.md",

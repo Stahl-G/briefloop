@@ -14,6 +14,7 @@ tree is fully bilingual.
 | Topic | English | Chinese |
 |---|---|---|
 | README | [README.md](../README.md) | [README.zh-CN.md](../README.zh-CN.md) |
+| Fifteen-minute pilot | [15-minute-pilot.md](15-minute-pilot.md) | [15-minute-pilot.zh-CN.md](15-minute-pilot.zh-CN.md) |
 | Getting started | [getting-started.md](getting-started.md) | English-first |
 | Weekly loop | [weekly-loop.md](weekly-loop.md) | English-first |
 | Troubleshooting | [troubleshooting.md](troubleshooting.md) | English-first |
@@ -39,6 +40,7 @@ tree is fully bilingual.
 ## English-First Reference Docs
 
 - [Getting started](getting-started.md)
+- [Fifteen-minute pilot](15-minute-pilot.md)
 - [Weekly loop](weekly-loop.md)
 - [Troubleshooting](troubleshooting.md)
 - [Claude Code quickstart](claude-code-quickstart.md)

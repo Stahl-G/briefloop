@@ -52,7 +52,9 @@ BriefLoop demo complete.
 
 Open:
 - output/delivery/brief.md
+- output/intermediate/quality_panel.html
 - output/intermediate/claim_ledger.json
+- output/intermediate/quality_panel.json
 - output/intermediate/quality_summary.md
 - output/source_appendix.md
 - output/intermediate/event_log_excerpt.jsonl
@@ -68,6 +70,7 @@ Open these first:
 | File | What it shows |
 |---|---|
 | `output/delivery/brief.md` | the reader-facing final brief |
+| `output/intermediate/quality_panel.html` | the static audit/operator view of checks, warnings, and next actions |
 | `output/intermediate/claim_ledger.json` | the registered claims and source metadata |
 | `output/intermediate/quality_summary.md` | a human-readable summary of checks and warnings |
 | `output/source_appendix.md` | source labels and source context |
