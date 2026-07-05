@@ -78,6 +78,10 @@ def main() -> int:
 
     if ".agents/skills/briefloop/SKILL.md" not in wrapper_text:
         errors.append(_error("Claude wrapper does not point to canonical skill"))
+    if "future 090 readiness" in wrapper_text:
+        errors.append(_error("Claude wrapper routes operators to future 090 readiness framing"))
+    if "archived MABW-080 / BriefLoop-090 experiment tooling" not in wrapper_text:
+        errors.append(_error("Claude wrapper does not describe MABW-080 / BriefLoop-090 as archived tooling"))
     errors.extend(_check_projection(CANONICAL, HERMES_PLUGIN_PROJECTION, label="Hermes plugin briefloop skill"))
 
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()

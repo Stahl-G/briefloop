@@ -37,6 +37,8 @@ def test_claude_projection_is_thin_wrapper() -> None:
     text = _read(CLAUDE_WRAPPER)
     assert ".agents/skills/briefloop/SKILL.md" in text
     assert "canonical" in text.lower()
+    assert "archived MABW-080 / BriefLoop-090 experiment tooling" in text
+    assert "future 090 readiness" not in text
     assert len(text.splitlines()) <= 24
 
 
