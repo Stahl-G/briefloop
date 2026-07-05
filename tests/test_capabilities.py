@@ -410,7 +410,7 @@ class TestInitIntegration:
         out = capsys.readouterr().out
         assert "Recommended capabilities" in out
         assert "market_competitor" in out
-        assert "multi-agent-brief setup" in out
+        assert "briefloop setup" in out
 
     def test_init_focus_areas_trigger_recommendations(self, tmp_path, capsys):
         from multi_agent_brief.cli.main import main
