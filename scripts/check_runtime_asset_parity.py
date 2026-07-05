@@ -29,6 +29,7 @@ REQUIRED_SOURCE_ASSETS = [
     ".agents/skills/briefloop-workbuddy/references/repair-protocol.md",
     ".agents/skills/briefloop-workbuddy/references/workbuddy-safety.md",
     ".codebuddy/agents/briefloop-scout.md",
+    ".codebuddy/agents/briefloop-screener.md",
     ".codebuddy/agents/briefloop-claim-ledger.md",
     ".codebuddy/agents/briefloop-analyst.md",
     ".codebuddy/agents/briefloop-editor.md",

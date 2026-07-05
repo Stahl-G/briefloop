@@ -103,8 +103,8 @@ Brave、Firecrawl 或 Serper。
 ## 操作规则
 
 普通 WorkBuddy 操作使用 `--runtime operator`。operator runtime 是 host-agnostic
-compact operator workflow。它不假设 WorkBuddy 已经 delegated Scout、Claim
-Ledger、Analyst、Editor、Auditor、Formatter 或任何其他角色。
+compact operator workflow。它不假设 WorkBuddy 已经 delegated Scout、Screener、
+Claim Ledger、Analyst、Editor、Auditor、Formatter 或任何其他角色。
 
 只有在 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets 时，
 才使用 `--runtime codebuddy`：
@@ -121,6 +121,7 @@ release 或 semantic-proof authority。
 
 ```text
 briefloop-scout
+briefloop-screener
 briefloop-claim-ledger
 briefloop-analyst
 briefloop-editor

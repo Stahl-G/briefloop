@@ -64,9 +64,9 @@ or any issue/PR comment that reports the result.
    Expected:
    - `output/intermediate/agent_handoff.md` exists.
    - `output/intermediate/agent_handoff.json` exists.
-   - WorkBuddy does not claim Scout, Claim Ledger, Analyst, Editor, Auditor,
-     Formatter, or any other role subagent ran unless WorkBuddy actually
-     delegated and recorded that role.
+   - WorkBuddy does not claim Scout, Screener, Claim Ledger, Analyst, Editor,
+     Auditor, Formatter, or any other role subagent ran unless WorkBuddy
+     actually delegated and recorded that role.
 
    If CodeBuddy project Skill and role agents are used, run the CodeBuddy
    handoff instead:
@@ -79,6 +79,7 @@ or any issue/PR comment that reports the result.
 
    ```text
    briefloop-scout
+   briefloop-screener
    briefloop-claim-ledger
    briefloop-analyst
    briefloop-editor
