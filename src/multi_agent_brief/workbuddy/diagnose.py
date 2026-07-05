@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -56,6 +57,11 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
     )
     secret_risk = _secret_risk_payload(ws)
     run_integrity = _run_integrity_projection(workflow, workflow_status)
+    finalize_projection = _finalize_delivery_projection(
+        workspace=ws,
+        finalize_path=finalize_path,
+        delivery_dir=delivery_dir,
+    )
     active_repair = workflow.get("active_repair") if isinstance(workflow, Mapping) else None
     blocked = bool(workflow.get("blocked")) if isinstance(workflow, Mapping) else False
     blocking_reason = _clean_text(workflow.get("blocking_reason")) if isinstance(workflow, Mapping) else ""
@@ -81,6 +87,12 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "latest_gate_status": latest_gate_status,
         "finalize_report": "present" if finalize_path.exists() else "missing",
         "delivery_dir": "present" if delivery_dir.is_dir() else "missing",
+        "finalize_status": finalize_projection["finalize_status"],
+        "reader_clean_status": finalize_projection["reader_clean_status"],
+        "delivery_valid": finalize_projection["delivery_valid"],
+        "delivery_promotion": finalize_projection["delivery_promotion"],
+        "delivery_paths_current": finalize_projection["delivery_paths_current"],
+        "run_integrity_status": _run_integrity_status(run_integrity),
         "finalize_event": "present" if finalize_event else "missing",
         "delivery_event": "present" if delivery_event else "missing",
         "share_workspace_zip_allowed": False,
@@ -95,6 +107,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
             invalid_or_stale_artifacts=artifact_payload["invalid_or_stale"],
             finalize_report_exists=finalize_path.exists(),
             delivery_dir_exists=delivery_dir.is_dir(),
+            finalize_projection=finalize_projection,
             finalize_event_exists=finalize_event,
             delivery_event_exists=delivery_event,
             secret_risk=secret_risk,
@@ -131,11 +144,15 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
             "path": "output/intermediate/finalize_report.json",
             "exists": finalize_path.exists(),
             "event_present": finalize_event,
+            **finalize_projection,
         },
         "delivery": {
             "path": "output/delivery",
             "exists": delivery_dir.is_dir(),
             "event_present": delivery_event,
+            "valid": finalize_projection["delivery_valid"],
+            "paths_current": finalize_projection["delivery_paths_current"],
+            "path_findings": finalize_projection["delivery_path_findings"],
         },
         "secret_risk": secret_risk,
         "boundary": (
@@ -159,12 +176,28 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
         "latest_gate_status",
         "finalize_report",
         "delivery_dir",
+        "finalize_status",
+        "reader_clean_status",
+        "delivery_valid",
+        "delivery_promotion",
+        "delivery_paths_current",
+        "run_integrity_status",
         "finalize_event",
         "delivery_event",
         "share_workspace_zip_allowed",
         "next_allowed_action",
     ):
         lines.append(f"  {field}: {run_card.get(field, 'unknown')}")
+    if (
+        run_card.get("finalize_status") == "fail"
+        or run_card.get("reader_clean_status") == "fail"
+        or run_card.get("delivery_valid") is False
+        and run_card.get("finalize_report") == "present"
+    ):
+        lines.extend([
+            "",
+            "Draft/audit completed, finalize failed, no valid delivery.",
+        ])
     doctor = payload.get("doctor") if isinstance(payload.get("doctor"), Mapping) else {}
     lines.extend([
         "",
@@ -238,6 +271,96 @@ def _artifact_payload(registry: Any) -> dict[str, Any]:
         "invalid_or_stale": invalid_or_stale,
         "expected": expected,
     }
+
+
+def _finalize_delivery_projection(
+    *,
+    workspace: Path,
+    finalize_path: Path,
+    delivery_dir: Path,
+) -> dict[str, Any]:
+    payload, status = _read_json(finalize_path)
+    if status == "missing":
+        return {
+            "finalize_report_status": status,
+            "finalize_status": "missing",
+            "reader_clean_status": "unknown",
+            "delivery_promotion": "none",
+            "delivery_valid": False,
+            "delivery_paths_current": False,
+            "delivery_path_findings": ["finalize_report_missing"],
+        }
+    if status != "present" or not isinstance(payload, Mapping):
+        return {
+            "finalize_report_status": status,
+            "finalize_status": "invalid_report",
+            "reader_clean_status": "unknown",
+            "delivery_promotion": "none",
+            "delivery_valid": False,
+            "delivery_paths_current": False,
+            "delivery_path_findings": [f"finalize_report_{status}"],
+        }
+
+    finalize_status = _clean_text(payload.get("status")) or "unknown"
+    reader_clean = payload.get("reader_clean") if isinstance(payload.get("reader_clean"), Mapping) else {}
+    reader_clean_status = _clean_text(reader_clean.get("status")) or "missing"
+    delivery_promotion = _clean_text(payload.get("delivery_promotion")) or "legacy_unrecorded"
+    delivery_artifacts = payload.get("delivery_artifacts")
+    artifacts = [str(item) for item in delivery_artifacts] if isinstance(delivery_artifacts, list) else []
+    artifact_hashes = (
+        payload.get("delivery_artifact_sha256")
+        if isinstance(payload.get("delivery_artifact_sha256"), Mapping)
+        else {}
+    )
+    findings: list[str] = []
+    if not delivery_dir.is_dir():
+        findings.append("delivery_dir_missing")
+    if not artifacts:
+        findings.append("delivery_artifacts_missing")
+    for artifact in artifacts:
+        artifact_path = _workspace_path(workspace, artifact)
+        if not artifact_path.exists():
+            findings.append(f"delivery_artifact_missing:{artifact}")
+            continue
+        expected_sha = _clean_text(artifact_hashes.get(artifact) or artifact_hashes.get(str(artifact_path)))
+        if expected_sha and _sha256_file(artifact_path) != expected_sha:
+            findings.append(f"delivery_artifact_hash_mismatch:{artifact}")
+
+    delivery_paths_current = not findings
+    delivery_valid = (
+        finalize_status == "pass"
+        and reader_clean_status in {"pass", "not_applicable"}
+        and delivery_promotion not in {
+            "none",
+            "pending_reader_clean",
+            "skipped_reader_clean_failed",
+            "skipped_audit_binding_failed",
+            "skipped_audit_input_integrity_failed",
+        }
+        and delivery_paths_current
+    )
+    return {
+        "finalize_report_status": status,
+        "finalize_status": finalize_status,
+        "reader_clean_status": reader_clean_status,
+        "delivery_promotion": delivery_promotion,
+        "delivery_valid": delivery_valid,
+        "delivery_paths_current": delivery_paths_current,
+        "delivery_path_findings": findings,
+    }
+
+
+def _workspace_path(workspace: Path, value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else workspace / path
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _secret_risk_payload(workspace: Path) -> dict[str, Any]:
@@ -460,6 +583,7 @@ def _next_safe_action(
     invalid_or_stale_artifacts: list[Mapping[str, str]],
     finalize_report_exists: bool,
     delivery_dir_exists: bool,
+    finalize_projection: Mapping[str, Any],
     finalize_event_exists: bool,
     delivery_event_exists: bool,
     secret_risk: Mapping[str, Any],
@@ -478,11 +602,15 @@ def _next_safe_action(
         return "stop_complete_or_inspect_active_repair"
     integrity = _run_integrity_status(run_integrity)
     if integrity not in {"clean", "pass", "ok"}:
-        return "stop_run_integrity_not_clean"
+        return "stop_human_review_or_fresh_workspace"
     if int(latest_gate.get("blocking_count") or 0) > 0 or _clean_text(latest_gate.get("gate_status")) == "fail":
         return "stop_resolve_blocking_gate_report"
     if invalid_or_stale_artifacts:
         return "inspect_invalid_or_stale_artifacts"
+    if _clean_text(finalize_projection.get("reader_clean_status")) == "fail":
+        return "do_not_edit_audited_brief_rerun_finalize_or_repair"
+    if _clean_text(finalize_projection.get("finalize_status")) == "fail":
+        return "stop_finalize_failed_no_valid_delivery"
     if assessment_target.get("status") == "invalid_condition":
         return "inspect_invalid_experiment_condition"
     if assessment_target.get("assessment_target") == "auditable_brief":
@@ -495,10 +623,14 @@ def _next_safe_action(
         if _clean_text(current_stage) not in {"finalize", "delivery", "delivered"}:
             return "continue_current_stage_or_handoff_workflow"
         return "draft_only_run_finalize_when_allowed"
+    if finalize_projection.get("delivery_valid") is False:
+        return "stop_finalize_failed_no_valid_delivery"
     if not finalize_event_exists or not delivery_event_exists:
         return "inspect_finalize_delivery_event_gap"
     if secret_risk.get("nonempty_env_keys") or secret_risk.get("env_present"):
         return "do_not_share_workspace_zip_secret_risk"
+    if finalize_projection.get("delivery_valid") is True:
+        return "delivery_ready_for_human_review"
     return "inspect_status_before_delivery_or_quality"
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -113,6 +114,32 @@ def _gate_report(
     }
 
 
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_valid_delivery_finalize_report(workspace: Path) -> None:
+    delivery = workspace / "output" / "delivery"
+    delivery.mkdir(parents=True, exist_ok=True)
+    brief = delivery / "brief.md"
+    brief.write_text("# Brief\n\nReader-safe delivery.\n", encoding="utf-8")
+    intermediate = workspace / "output" / "intermediate"
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "reader_clean": {"status": "pass"},
+                "delivery_promotion": "promoted",
+                "delivery_artifacts": ["output/delivery/brief.md"],
+                "delivery_artifact_sha256": {
+                    "output/delivery/brief.md": _sha256_file(brief),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_workbuddy_diagnose_json_reports_run_card_and_secret_risk(
     tmp_path: Path,
     capsys,
@@ -163,10 +190,16 @@ def test_workbuddy_diagnose_json_reports_run_card_and_secret_risk(
         "latest_gate_status": "unknown",
         "finalize_report": "missing",
         "delivery_dir": "missing",
+        "finalize_status": "missing",
+        "reader_clean_status": "unknown",
+        "delivery_valid": False,
+        "delivery_promotion": "none",
+        "delivery_paths_current": False,
+        "run_integrity_status": "contaminated",
         "finalize_event": "missing",
         "delivery_event": "missing",
         "share_workspace_zip_allowed": False,
-        "next_allowed_action": "stop_run_integrity_not_clean",
+        "next_allowed_action": "stop_human_review_or_fresh_workspace",
     }
     assert payload["secret_risk"]["env_present"] is True
     assert payload["secret_risk"]["nonempty_env_keys"] == ["TAVILY_API_KEY"]
@@ -207,6 +240,12 @@ def test_workbuddy_diagnose_text_prints_run_card_without_delivery_claim(
         "latest_gate_status:",
         "finalize_report:",
         "delivery_dir:",
+        "finalize_status:",
+        "reader_clean_status:",
+        "delivery_valid:",
+        "delivery_promotion:",
+        "delivery_paths_current:",
+        "run_integrity_status:",
         "finalize_event:",
         "delivery_event:",
         "share_workspace_zip_allowed:",
@@ -215,6 +254,78 @@ def test_workbuddy_diagnose_text_prints_run_card_without_delivery_claim(
         assert field in output
     assert "delivery complete" not in output.lower()
     assert "delivered" not in output.lower()
+
+
+def test_workbuddy_diagnose_failed_finalize_reports_no_valid_delivery(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    _write_manifest(intermediate)
+    _write_workflow(intermediate, current_stage="finalize", run_integrity={"status": "clean"})
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    staging = intermediate / "finalize_staging"
+    staging.mkdir()
+    (staging / "brief.md").write_text("# Brief\n\nBad [CL-0001].\n", encoding="utf-8")
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps(
+            {
+                "status": "fail",
+                "reader_clean": {"status": "fail"},
+                "delivery_promotion": "skipped_reader_clean_failed",
+                "staging_reader_brief": "output/intermediate/finalize_staging/brief.md",
+                "delivery_artifacts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    run_card = payload["run_card"]
+    assert run_card["finalize_status"] == "fail"
+    assert run_card["reader_clean_status"] == "fail"
+    assert run_card["delivery_valid"] is False
+    assert run_card["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert run_card["delivery_paths_current"] is False
+    assert run_card["next_allowed_action"] == "do_not_edit_audited_brief_rerun_finalize_or_repair"
+    assert payload["delivery"]["valid"] is False
+
+
+def test_workbuddy_diagnose_text_reports_failed_finalize_without_final_claim(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    _write_manifest(intermediate)
+    _write_workflow(intermediate, current_stage="finalize", run_integrity={"status": "clean"})
+    (intermediate / "artifact_registry.json").write_text(json.dumps({"artifacts": {}}), encoding="utf-8")
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps(
+            {
+                "status": "fail",
+                "reader_clean": {"status": "fail"},
+                "delivery_promotion": "skipped_reader_clean_failed",
+                "delivery_artifacts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws)])
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "Draft/audit completed, finalize failed, no valid delivery." in output
+    assert "Final brief generated" not in output
+    assert "Delivery complete" not in output
     assert "read_only_workbuddy_run_card_not_gate_delivery_release_or_semantic_proof" in output
     assert "Doctor: not_run_read_only" in output
     assert "Output directory writable" not in output
@@ -244,17 +355,13 @@ def test_workbuddy_diagnose_secret_risk_controls_next_action_for_finalized_works
     ws = _workspace(tmp_path)
     intermediate = ws / "output" / "intermediate"
     (ws / ".env").write_text("TAVILY_API_KEY=secret-value\n", encoding="utf-8")
-    (ws / "output" / "delivery").mkdir(parents=True)
     _write_manifest(intermediate)
     _write_workflow(intermediate, current_stage="finalize", run_integrity={"status": "clean"})
     (intermediate / "artifact_registry.json").write_text(
         json.dumps({"artifacts": {}}),
         encoding="utf-8",
     )
-    (intermediate / "finalize_report.json").write_text(
-        json.dumps({"status": "pass"}),
-        encoding="utf-8",
-    )
+    _write_valid_delivery_finalize_report(ws)
     (intermediate / "event_log.jsonl").write_text(
         json.dumps(_event("decision_recorded", decision="finalize", stage_id="finalize")) + "\n"
         + json.dumps(_event("delivery_succeeded")) + "\n",
@@ -269,6 +376,11 @@ def test_workbuddy_diagnose_secret_risk_controls_next_action_for_finalized_works
     payload = json.loads(raw)
     assert payload["run_card"]["finalize_report"] == "present"
     assert payload["run_card"]["delivery_dir"] == "present"
+    assert payload["run_card"]["finalize_status"] == "pass"
+    assert payload["run_card"]["reader_clean_status"] == "pass"
+    assert payload["run_card"]["delivery_promotion"] == "promoted"
+    assert payload["run_card"]["delivery_paths_current"] is True
+    assert payload["run_card"]["delivery_valid"] is True
     assert payload["run_card"]["finalize_event"] == "present"
     assert payload["run_card"]["delivery_event"] == "present"
     assert payload["run_card"]["share_workspace_zip_allowed"] is False
@@ -281,17 +393,13 @@ def test_workbuddy_diagnose_flags_finalize_delivery_file_event_gap(
 ) -> None:
     ws = _workspace(tmp_path)
     intermediate = ws / "output" / "intermediate"
-    (ws / "output" / "delivery").mkdir(parents=True)
     _write_manifest(intermediate)
     _write_workflow(intermediate, current_stage="finalize", run_integrity={"status": "clean"})
     (intermediate / "artifact_registry.json").write_text(
         json.dumps({"artifacts": {}}),
         encoding="utf-8",
     )
-    (intermediate / "finalize_report.json").write_text(
-        json.dumps({"status": "pass"}),
-        encoding="utf-8",
-    )
+    _write_valid_delivery_finalize_report(ws)
 
     rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
 
@@ -299,6 +407,8 @@ def test_workbuddy_diagnose_flags_finalize_delivery_file_event_gap(
     payload = json.loads(capsys.readouterr().out)
     assert payload["run_card"]["finalize_report"] == "present"
     assert payload["run_card"]["delivery_dir"] == "present"
+    assert payload["run_card"]["delivery_valid"] is True
+    assert payload["run_card"]["delivery_paths_current"] is True
     assert payload["run_card"]["finalize_event"] == "missing"
     assert payload["run_card"]["delivery_event"] == "missing"
     assert payload["run_card"]["next_allowed_action"] == "inspect_finalize_delivery_event_gap"
@@ -436,17 +546,13 @@ def test_workbuddy_diagnose_recognizes_finalize_decision_event(
 ) -> None:
     ws = _workspace(tmp_path)
     intermediate = ws / "output" / "intermediate"
-    (ws / "output" / "delivery").mkdir(parents=True)
     _write_manifest(intermediate)
     _write_workflow(intermediate, current_stage="finalize", run_integrity={"status": "clean"})
     (intermediate / "artifact_registry.json").write_text(
         json.dumps({"artifacts": {}}),
         encoding="utf-8",
     )
-    (intermediate / "finalize_report.json").write_text(
-        json.dumps({"status": "pass"}),
-        encoding="utf-8",
-    )
+    _write_valid_delivery_finalize_report(ws)
     (intermediate / "event_log.jsonl").write_text(
         json.dumps(
             _event(
@@ -467,7 +573,8 @@ def test_workbuddy_diagnose_recognizes_finalize_decision_event(
     payload = json.loads(capsys.readouterr().out)
     assert payload["run_card"]["finalize_event"] == "present"
     assert payload["run_card"]["delivery_event"] == "present"
-    assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+    assert payload["run_card"]["delivery_valid"] is True
+    assert payload["run_card"]["next_allowed_action"] == "delivery_ready_for_human_review"
 
 
 def test_workbuddy_diagnose_uses_shared_run_integrity_interpreter(
@@ -503,7 +610,7 @@ def test_workbuddy_diagnose_uses_shared_run_integrity_interpreter(
             "message": "workflow_state.run_integrity clean runs must be reference eligible.",
         }
     ]
-    assert payload["run_card"]["next_allowed_action"] == "stop_run_integrity_not_clean"
+    assert payload["run_card"]["next_allowed_action"] == "stop_human_review_or_fresh_workspace"
 
 
 def test_workbuddy_diagnose_stops_on_blocked_workflow_state(
