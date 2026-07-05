@@ -200,9 +200,14 @@ def run_doctor(
 
 
 def _add_output_directory_check(results: list[CheckResult], output_dir: Path) -> None:
+    created_output_dir = False
     if not output_dir.exists():
-        results.append(CheckResult("OK", "Output directory does not exist yet (will be created)"))
-        return
+        try:
+            output_dir.mkdir()
+            created_output_dir = True
+        except (PermissionError, OSError) as exc:
+            results.append(CheckResult("ERROR", f"Output directory cannot be created: {exc}"))
+            return
     if not output_dir.is_dir():
         results.append(CheckResult("ERROR", "Output path exists but is not a directory"))
         return
@@ -219,6 +224,7 @@ def _add_output_directory_check(results: list[CheckResult], output_dir: Path) ->
         return
 
     cleanup_error = _try_remove_write_test(test_file)
+    created_dir_cleanup_error = _try_remove_created_output_dir(output_dir) if created_output_dir else ""
     if cleanup_error:
         results.append(CheckResult(
             "WARN",
@@ -226,13 +232,31 @@ def _add_output_directory_check(results: list[CheckResult], output_dir: Path) ->
             f"({cleanup_error}). Remove {test_file.name} manually if it remains.",
         ))
         return
+    if created_dir_cleanup_error:
+        results.append(CheckResult(
+            "WARN",
+            "Output directory can be created and written, but cleanup failed "
+            f"({created_dir_cleanup_error}). Remove {output_dir.name} manually if it remains.",
+        ))
+        return
 
-    results.append(CheckResult("OK", "Output directory writable"))
+    if created_output_dir:
+        results.append(CheckResult("OK", "Output directory can be created and written"))
+    else:
+        results.append(CheckResult("OK", "Output directory writable"))
 
 
 def _try_remove_write_test(path: Path) -> str:
     try:
         path.unlink(missing_ok=True)
+    except (PermissionError, OSError) as exc:
+        return str(exc)
+    return ""
+
+
+def _try_remove_created_output_dir(path: Path) -> str:
+    try:
+        path.rmdir()
     except (PermissionError, OSError) as exc:
         return str(exc)
     return ""
