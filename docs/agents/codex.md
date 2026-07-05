@@ -6,7 +6,7 @@
 
         Located in `.codex/agents/`:
 
-        - `orchestrator.toml` — Acts as the runtime main agent that controls delegated MABW stages, contract references, decisions, and artifact handoffs.
+        - `orchestrator.toml` — Acts as the runtime main agent that controls delegated BriefLoop stages, contract references, decisions, and artifact handoffs.
 - `source-provider.toml` — Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
 - `source-planner.toml` — Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
 - `scout.toml` — Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.

@@ -982,6 +982,9 @@ def test_quality_panel_html_renders_static_audit_attachment_without_external_ass
     assert " src=" not in lower
     assert "http://" not in lower
     assert "https://" not in lower
+    assert "multi-agent-brief" not in lower
+    assert "/generate-brief" not in lower
+    assert "/mabw" not in lower
     assert "ready to publish" not in lower
     assert "truth proven" not in lower
     assert "release authorized" not in lower

@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Acts as the runtime main agent that controls delegated MABW stages, contract references, decisions, and artifact handoffs. Use for brief-workspace runtime handoff and workflow-control changes. Use for repo-development contract or generated adapter changes only when the user explicitly asks for repo work.
+description: Acts as the runtime main agent that controls delegated BriefLoop stages, contract references, decisions, and artifact handoffs. Use for brief-workspace runtime handoff and workflow-control changes. Use for repo-development contract or generated adapter changes only when the user explicitly asks for repo work.
 tools: Read, Grep, Glob, Bash, Edit, MultiEdit, Write
 model: inherit
 ---
@@ -28,7 +28,7 @@ Responsibilities:
 - Check expected artifacts after each delegated stage, then record the required completion transaction before continuing.
 - Make stage decisions using completion transactions for successful progress, state decide for retry_stage/request_human_review/block_run, and the repair route/start/complete transaction for delegate_repair.
 - Stage completion is transaction-defined, not artifact-defined.
-- You are not allowed to call the next specialist agent or tool until `multi-agent-brief state stage-complete` for the current stage has succeeded.
+- You are not allowed to call the next specialist agent or tool until `briefloop state stage-complete` for the current stage has succeeded.
 - If the expected artifact exists but `state stage-complete` has not succeeded, the stage is still incomplete.
 - If `state stage-complete` fails, stop and report the failure. Do not continue the pipeline and do not backfill later.
 - Once `state stage-complete` succeeds, that stage's output artifacts are frozen for downstream stages. Later stages must not rewrite them in place.
@@ -41,9 +41,9 @@ Responsibilities:
 - If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner and continue with stale or old sources.
 - Treat source_candidates.yaml as a source plan, not source evidence. Scout must extract candidate claims from actual source content or materialized source files.
 - Runtime WebSearch results must be materialized before source-discovery completion as durable source files with URL, source title/name, published date or retrieved_at, and raw excerpt/snippet. Summary-only notes are discovery hints, not evidence.
-- Use state decide only for retry_stage, request_human_review, or block_run. For owner-stage artifact repair, use `multi-agent-brief repair route --workspace <workspace>`, then `multi-agent-brief repair start --workspace <workspace>`, delegate only the repair_owner role, and finish with `multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"`; if any command rejects the decision, completion, or repair, stop and correct the stage state.
+- Use state decide only for retry_stage, request_human_review, or block_run. For owner-stage artifact repair, use `briefloop repair route --workspace <workspace>`, then `briefloop repair start --workspace <workspace>`, delegate only the repair_owner role, and finish with `briefloop repair complete --workspace <workspace> --reason "<reason>"`; if any command rejects the decision, completion, or repair, stop and correct the stage state.
 - Before finalize, after Auditor completes, run gates check with `--stage auditor` and strict state check. If blocking findings exist, do not finalize; use feedback plus the deterministic repair transaction, request_human_review, or block_run. Record auditor completion with state stage-complete only when audit readiness and quality gates pass.
-- After finalize writes reader-facing artifacts, verify completion with `multi-agent-brief gates check --stage finalize --brief <workspace>/output/brief.md` and then multi-agent-brief state finalize-complete before reporting the run complete.
+- After finalize writes reader-facing artifacts, verify completion with `briefloop gates check --stage finalize --brief <workspace>/output/brief.md` and then briefloop state finalize-complete before reporting the run complete.
 - Treat repair guidance as bounded runtime guidance, not an automatic trajectory regulator. If the same stage has already needed roughly three retry/repair rounds, prefer request_human_review or block_run. If a repair would touch more than two sections, narrow the scope before delegating or request human review.
 - Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Route owner-stage repair with repair route/start, or choose request_human_review or block_run when no deterministic route exists.
 - Keep Python positioned as tools, validators, and renderers rather than the full brief-generation runtime.
@@ -61,7 +61,7 @@ Guardrails:
 - Public examples remain synthetic or public-safe.
 
 Repository rules:
-- Keep `multi-agent-brief run` as a handoff launcher.
+- Keep `briefloop run` as a handoff launcher.
 - Keep Python as tools, validators, and renderers.
 - Keep public examples synthetic or public-safe.
 - Run `python -m pytest -q` after behavior changes.

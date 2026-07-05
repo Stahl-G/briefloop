@@ -42,10 +42,10 @@ ORCHESTRATOR_LOOP_TEXT = (
     "delegate_repair / request_human_review / block_run / finalize"
 )
 CODEX_WRITER_FLOW_PROTOCOL = """Codex writer flow protocol:
-        - When the user asks to inspect a folder, produce a Workspace Card before taking action: workspace path, MABW config found/missing, Codex runtime kit installed/not installed, trust status, input source count, demo-looking sources yes/no, existing output/control state, current workflow_state, and recommended next action.
+        - When the user asks to inspect a folder, produce a Workspace Card before taking action: workspace path, BriefLoop config found/missing, Codex runtime kit installed/not installed, trust status, input source count, demo-looking sources yes/no, existing output/control state, current workflow_state, and recommended next action.
         - Trust status is one Workspace Card line, not the main answer.
         - Do not launch the interactive terminal onboarding wizard inside Codex chat.
-        - For workspace creation, collect onboarding fields in one batch, write onboarding.json, show the values to be written, then run multi-agent-brief init --from-onboarding.
+        - For workspace creation, collect onboarding fields in one batch, write onboarding.json, show the values to be written, then run briefloop init --from-onboarding.
         - Before initializing into an existing directory, check output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, event_log.jsonl, and output/runs/. If present, ask whether to create a new workspace, overwrite config only while keeping old output, or reset old output/control state before running.
         - After init or config inspection, show a Source Mode Card: manual local files enabled/disabled, runtime WebSearch enabled/disabled, external API search enabled/disabled, existing source files count, and demo-looking source files yes/no.
         - If using Codex/runtime WebSearch, write collected public sources into input/sources/ as durable source files.
@@ -196,7 +196,7 @@ def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
         workflow_title = "Orchestrator control loop:"
         workflow_text = ORCHESTRATOR_LOOP_TEXT
         repository_rules = (
-            "        - Keep multi-agent-brief run as a handoff launcher.\n"
+            "        - Keep briefloop run as a handoff launcher.\n"
             "        - Keep Python as tools, validators, and renderers.\n"
             "        - Keep public examples synthetic or public-safe.\n"
             "        - Run python -m pytest -q after behavior changes.\n"
@@ -263,7 +263,7 @@ def render_claude_agent(role_name: str, role: dict, manifest: dict) -> str:
         workflow_title = "Orchestrator control loop:"
         workflow_text = ORCHESTRATOR_LOOP_TEXT
         repository_rules = (
-            "- Keep `multi-agent-brief run` as a handoff launcher.\n"
+            "- Keep `briefloop run` as a handoff launcher.\n"
             "- Keep Python as tools, validators, and renderers.\n"
             "- Keep public examples synthetic or public-safe.\n"
             "- Run `python -m pytest -q` after behavior changes.\n"
@@ -474,7 +474,8 @@ def render_docs(manifest: dict) -> dict[str, str]:
 
         ## Command
 
-        `/generate-brief` is defined in `.opencode/commands/generate-brief.md`.
+        The BriefLoop command is defined in `.opencode/commands/briefloop.md`.
+        `.opencode/commands/generate-brief.md` remains a compatibility copy.
 
         ## Generation
 
@@ -792,7 +793,7 @@ def render_opencode_agents(manifest: dict) -> dict[str, str]:
 
 
 def render_opencode_command_generate_brief(manifest: dict) -> str:
-    """Render the /generate-brief command for OpenCode."""
+    """Render the BriefLoop command for OpenCode."""
     _ = manifest  # used for future workflow extraction
     return (
         "---\n"
@@ -803,7 +804,7 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "\n"
         "You are the Orchestrator main agent generating a real user-facing brief for workspace: $ARGUMENTS\n"
         "\n"
-        "MABW uses an Orchestrator-led external subagent workflow. Python CLI commands provide setup,\n"
+        "BriefLoop uses an Orchestrator-led external subagent workflow. Python CLI commands provide setup,\n"
         "source discovery, input governance, audit checks, validation helpers, and final rendering tools.\n"
         "\n"
         "Read contract references before delegation:\n"
@@ -824,30 +825,30 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "Stage sequence:\n"
         "\n"
         "1. Initialize runtime handoff/control context:\n"
-        "   - Run: `multi-agent-brief run --workspace $ARGUMENTS --runtime opencode --skip-doctor`\n"
+        "   - Run: `briefloop run --workspace $ARGUMENTS --runtime opencode --skip-doctor`\n"
         "   - Read `$ARGUMENTS/output/intermediate/agent_handoff.md`.\n"
         "   - Read `$ARGUMENTS/output/intermediate/audience_profile_snapshot.md`.\n"
         "   - Read `$ARGUMENTS/output/intermediate/orchestrator_control_switchboard.json`.\n"
         "   - Summarize relevant taste guidance for delegated roles.\n"
         "   - Do not treat `audience_profile.md` as source evidence; mid-run profile edits apply to the next run.\n"
-        "   - Record control choices with `multi-agent-brief controls select`; selection is not execution.\n"
-        "   - Do not call `multi-agent-brief run` again mid-pipeline to refresh handoff or state. Use `multi-agent-brief status`, `state show`, `gates check`, `state check`, and repair commands instead.\n"
+        "   - Record control choices with `briefloop controls select`; selection is not execution.\n"
+        "   - Do not call `briefloop run` again mid-pipeline to refresh handoff or state. Use `briefloop status`, `state show`, `gates check`, `state check`, and repair commands instead.\n"
         "\n"
         "2. Read `$ARGUMENTS/config.yaml`, `$ARGUMENTS/sources.yaml`, `$ARGUMENTS/user.md`, and workspace inputs.\n"
         "\n"
         "3. **Source discovery gate (llm_decide only):**\n"
         "   If `sources.yaml` has `source.mode: llm_decide` and `source_candidates.yaml` "
         "does not exist or has not been merged:\n"
-        "   - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml`\n"
+        "   - Run: `briefloop sources decide --config $ARGUMENTS/config.yaml`\n"
         "   - Review `$ARGUMENTS/source_candidates.yaml`.\n"
-        "   - Run: `multi-agent-brief sources decide --config $ARGUMENTS/config.yaml --merge`\n"
+        "   - Run: `briefloop sources decide --config $ARGUMENTS/config.yaml --merge`\n"
         "\n"
         "4. **Doctor gate:**\n"
-        "   - Run: `multi-agent-brief doctor --config $ARGUMENTS/config.yaml`\n"
+        "   - Run: `briefloop doctor --config $ARGUMENTS/config.yaml`\n"
         "   - Fix any issues before proceeding.\n"
         "\n"
         "5. **Input governance gate:**\n"
-        "   - Run: `multi-agent-brief inputs classify --config $ARGUMENTS/config.yaml`\n"
+        "   - Run: `briefloop inputs classify --config $ARGUMENTS/config.yaml`\n"
         "   - Pass only evidence inputs to the scout subagent.\n"
         "\n"
         "6. Read `configs/policy_packs/default.yaml` and apply role topology:\n"
@@ -877,7 +878,7 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "   - Preserve source URL/path, source title/name, publisher, source_category, provider source_type, published/retrieved dates, topic, claim type, confidence, and evidence text.\n"
         "   - Never put titles, source names, source IDs, search queries, or local paths in `source_url`.\n"
         "   - Write `$ARGUMENTS/output/intermediate/claim_drafts.json`.\n"
-        "   - Run: `multi-agent-brief state freeze-claim-ledger --workspace $ARGUMENTS`.\n"
+        "   - Run: `briefloop state freeze-claim-ledger --workspace $ARGUMENTS`.\n"
         "   - Confirm freeze produced `$ARGUMENTS/output/intermediate/claim_ledger.json` before `stage-complete --stage claim-ledger`.\n"
         "\n"
         "10. Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.\n"
@@ -909,28 +910,28 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "`$ARGUMENTS/output/intermediate/claim_ledger.json`.\n"
         "\n"
         "14. Check `audit_report.json`, then run quality gates and refresh runtime state before finalize:\n"
-        "    - Confirm quality gate selection in `control_selections.json`, or record it with `multi-agent-brief controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"`\n"
-        "    - Run: `multi-agent-brief gates check --workspace $ARGUMENTS --stage auditor`\n"
-        "    - Run: `multi-agent-brief state check --workspace $ARGUMENTS --strict`\n"
-        "    - If state is not blocked, run: `multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage auditor --reason \"Audit and quality gates passed.\"`\n"
+        "    - Confirm quality gate selection in `control_selections.json`, or record it with `briefloop controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"`\n"
+        "    - Run: `briefloop gates check --workspace $ARGUMENTS --stage auditor`\n"
+        "    - Run: `briefloop state check --workspace $ARGUMENTS --strict`\n"
+        "    - If state is not blocked, run: `briefloop state stage-complete --workspace $ARGUMENTS --stage auditor --reason \"Audit and quality gates passed.\"`\n"
         "    - If state is blocked, do not edit artifacts directly and do not finalize.\n"
         "    - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.\n"
-        "    - First run: `multi-agent-brief repair route --workspace $ARGUMENTS --json`\n"
+        "    - First run: `briefloop repair route --workspace $ARGUMENTS --json`\n"
         "    - If the route is ok:\n"
-        "      1. Run: `multi-agent-brief repair start --workspace $ARGUMENTS --json`\n"
+        "      1. Run: `briefloop repair start --workspace $ARGUMENTS --json`\n"
         "      2. Delegate only the reported repair_owner role.\n"
         "      3. Allow edits only to the reported allowed_artifacts.\n"
         "      4. Do not edit blocked_direct_edits or any frozen artifact outside allowed_artifacts.\n"
-        "      5. After the owner role finishes, run: `multi-agent-brief repair complete --workspace $ARGUMENTS --reason \"<reason>\" --json`\n"
+        "      5. After the owner role finishes, run: `briefloop repair complete --workspace $ARGUMENTS --reason \"<reason>\" --json`\n"
         "      6. Resume from must_rerun_from. If must_rerun_from is auditor, rerun Auditor and then gates/state check.\n"
         "    - If repair route is not ok, choose request_human_review or block_run.\n"
         "    - Never use state decide delegate_repair to authorize artifact edits.\n"
         "    - Never manually update artifact_registry.json or frozen hashes.\n"
         "\n"
         "15. Finalize only after the gates/state completion path passes:\n"
-        "    - Run: `multi-agent-brief finalize --config $ARGUMENTS/config.yaml`\n"
-        "    - After finalize writes delivery artifacts, run: `multi-agent-brief gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.\n"
-        "    - Then run: `multi-agent-brief state finalize-complete --workspace $ARGUMENTS --reason \"Reader-facing artifacts passed finalize checks.\"`\n"
+        "    - Run: `briefloop finalize --config $ARGUMENTS/config.yaml`\n"
+        "    - After finalize writes delivery artifacts, run: `briefloop gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.\n"
+        "    - Then run: `briefloop state finalize-complete --workspace $ARGUMENTS --reason \"Reader-facing artifacts passed finalize checks.\"`\n"
         "    - Confirm `output/delivery/brief.md` strips [src:<claim_id>].\n"
         "    - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.\n"
         "    - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.\n"
@@ -938,9 +939,9 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "    - Remember: finalize is not a quality-gate executor.\n"
         "\n"
         "16. Optional audit/debug provenance projection after runtime state exists:\n"
-        "    - Run: `multi-agent-brief provenance build --workspace $ARGUMENTS`\n"
-        "    - Run: `multi-agent-brief provenance show --workspace $ARGUMENTS --json`\n"
-        "    - Run: `multi-agent-brief provenance validate --workspace $ARGUMENTS`\n"
+        "    - Run: `briefloop provenance build --workspace $ARGUMENTS`\n"
+        "    - Run: `briefloop provenance show --workspace $ARGUMENTS --json`\n"
+        "    - Run: `briefloop provenance validate --workspace $ARGUMENTS`\n"
         "    - Treat provenance as citation/control projection, not semantic proof.\n"
         "\n"
         "16. **Final response:**\n"
@@ -1039,10 +1040,11 @@ def generate_all(manifest: dict, check: bool = False, target: str | None = None)
             if not write_or_check(path, content, check):
                 ok = False
 
-        cmd_path = ROOT / ".opencode" / "commands" / "generate-brief.md"
         cmd_content = render_opencode_command_generate_brief(manifest)
-        if not write_or_check(cmd_path, cmd_content, check):
-            ok = False
+        for command_name in ("briefloop.md", "generate-brief.md"):
+            cmd_path = ROOT / ".opencode" / "commands" / command_name
+            if not write_or_check(cmd_path, cmd_content, check):
+                ok = False
 
         jsonc_path = ROOT / "opencode.jsonc"
         jsonc_content = render_opencode_jsonc()

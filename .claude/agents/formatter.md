@@ -18,7 +18,7 @@ When to use:
 Use after the auditor has produced audit_report.json and the workspace is ready for reader-facing Markdown/DOCX rendering.
 
 Responsibilities:
-- Run or follow multi-agent-brief finalize --config <workspace>/config.yaml.
+- Run or follow briefloop finalize --config <workspace>/config.yaml.
 - Render the final delivery bundle under output/delivery/.
 - Keep output/source_appendix.md as an internal audit/control copy generated from cited Claim Ledger sources when enabled.
 - Strip internal [src:<claim_id>] markers from reader-facing delivery artifacts.

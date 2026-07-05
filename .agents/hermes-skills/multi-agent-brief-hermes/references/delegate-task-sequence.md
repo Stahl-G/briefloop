@@ -19,7 +19,7 @@ Read workspace context -> read contract references -> identify the next stage ->
 
 1. Read `config.yaml`, `sources.yaml`, `user.md`, `input/`, and `input/hermes_cache/` when present.
 2. Read `output/intermediate/audience_profile_snapshot.md` and summarize relevant taste guidance for delegated roles. Do not treat `audience_profile.md` as source evidence.
-3. Run `multi-agent-brief doctor --config <workspace>/config.yaml`.
+3. Run `briefloop doctor --config <workspace>/config.yaml`.
 4. Run source discovery when configured.
    If runtime WebSearch reports `Did 0 searches`, or every query returns an empty result set, stop and request human review. Do not switch to source-planner or continue with stale sources.
 5. Run input governance when available.
@@ -28,15 +28,15 @@ Read workspace context -> read contract references -> identify the next stage ->
 8. Verify each expected artifact exists and is non-empty before selecting the next decision.
 9. Decide `retry_stage`, `request_human_review`, or `block_run` with `state decide`; for `delegate_repair`, use the deterministic repair route/start/complete transaction. Use completion transactions for success paths.
 10. Run quality gates, strict state check, and `state stage-complete` before finalize.
-11. Run `multi-agent-brief finalize --config <workspace>/config.yaml` after audit readiness and gate readiness. Finalize reads `output/intermediate/audited_brief.md` as frozen input and must not patch it.
+11. Run `briefloop finalize --config <workspace>/config.yaml` after audit readiness and gate readiness. Finalize reads `output/intermediate/audited_brief.md` as frozen input and must not patch it.
 12. Run `state finalize-complete` after finalize writes reader-facing artifacts.
-13. Optionally run `multi-agent-brief provenance build/show/validate` for audit/debug projection after runtime state exists.
+13. Optionally run `briefloop provenance build/show/validate` for audit/debug projection after runtime state exists.
 
 ## Child Task Templates
 
 ### Scout
 
-Goal: Extract candidate reportable items for a MABW brief. In default topology, screen them in the same Scout stage.
+Goal: Extract candidate reportable items for a BriefLoop brief. In default topology, screen them in the same Scout stage.
 
 Context should include:
 
@@ -65,7 +65,7 @@ Toolsets: `file`, `terminal`, `web` when source access is enabled.
 
 ### Screener (strict topology or explicit repair/review)
 
-Goal: Screen and rank MABW candidate claims.
+Goal: Screen and rank BriefLoop candidate claims.
 
 Input: `output/intermediate/candidate_claims.json`
 Write: `output/intermediate/screened_candidates.json`
@@ -75,7 +75,7 @@ Do not use this role to replay default-topology Screener after Scout completion.
 
 ### Claim Ledger
 
-Goal: Build MABW claim drafts for deterministic Python freezing.
+Goal: Build BriefLoop claim drafts for deterministic Python freezing.
 
 Input: `output/intermediate/screened_candidates.json`
 Write: `output/intermediate/claim_drafts.json`
@@ -83,13 +83,13 @@ Write: `output/intermediate/claim_drafts.json`
 Write source-grounded claim drafts without `claim_id` fields. Preserve evidence text, source URL/path, source title/name, publisher, `source_category`, provider `source_type`, publication date, retrieved date, topic, claim type, and confidence. `source_url` is only for HTTP(S) URLs; never put titles, source names, source IDs, search queries, or local paths in `source_url`. Do not write `output/intermediate/claim_ledger.json`; after the child returns, run:
 
 ```bash
-multi-agent-brief state freeze-claim-ledger --workspace <workspace>
-multi-agent-brief state stage-complete --workspace <workspace> --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
+briefloop state freeze-claim-ledger --workspace <workspace>
+briefloop state stage-complete --workspace <workspace> --stage claim-ledger --reason "Claim Ledger frozen from claim drafts."
 ```
 
 ### Analyst
 
-Goal: Draft the audited MABW brief.
+Goal: Draft the audited BriefLoop brief.
 
 Inputs: `user.md`, `config.yaml`, frozen `output/intermediate/claim_ledger.json`
 Write: `output/intermediate/audited_brief.md` as the Analyst working draft
@@ -98,7 +98,7 @@ Write a management-ready brief in the workspace language with valid `[src:<claim
 
 ### Editor / Delivery Editor
 
-Goal: Polish the audited MABW brief without adding facts.
+Goal: Polish the audited BriefLoop brief without adding facts.
 
 Inputs: `output/intermediate/analyst_draft_snapshot.md`, `output/intermediate/audited_brief.md`
 Write: `output/intermediate/audited_brief.md` as the Editor-owned final auditable brief
@@ -107,7 +107,7 @@ Improve readability, structure, and executive tone while preserving factual scop
 
 ### Auditor
 
-Goal: Audit the MABW brief against the Claim Ledger.
+Goal: Audit the BriefLoop brief against the Claim Ledger.
 
 Inputs: `output/intermediate/audited_brief.md`, frozen `output/intermediate/claim_ledger.json`
 Write: `output/intermediate/audit_report.json`
@@ -119,24 +119,24 @@ Check source support, overstatement, support-strength calibration, confidence mi
 After `audit_report.json` exists:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage auditor
-multi-agent-brief state check --workspace <workspace> --strict
-multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+briefloop gates check --workspace <workspace> --stage auditor
+briefloop state check --workspace <workspace> --strict
+briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
-Do not call `multi-agent-brief run` again mid-pipeline to refresh handoff or state. Use `multi-agent-brief status`, `state show`, `gates check`, `state check`, and repair commands instead.
+Do not call `briefloop run` again mid-pipeline to refresh handoff or state. Use `briefloop status`, `state show`, `gates check`, `state check`, and repair commands instead.
 
 If state is blocked by owner-stage artifact repair, do not use `state decide delegate_repair`. Run:
 
 ```bash
-multi-agent-brief repair route --workspace <workspace>
-multi-agent-brief repair start --workspace <workspace>
+briefloop repair route --workspace <workspace>
+briefloop repair start --workspace <workspace>
 ```
 
 Delegate only the repair_owner role, allow edits only to allowed_artifacts, then run:
 
 ```bash
-multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"
+briefloop repair complete --workspace <workspace> --reason "<reason>"
 ```
 
 Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Use the repair route/start transaction before owner-stage edits, or choose `request_human_review` / `block_run` when no deterministic route exists.
@@ -146,8 +146,8 @@ After repair-complete, rerun downstream stages from must_rerun_from. For non-rep
 After finalize writes reader-facing artifacts, run:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 
 Repair best practice: repeated retry/repair budgets are enforced by `workflow_state.json.next_allowed_decisions` after `state check` or `state decide`; when trajectory regulation narrows decisions, use only `request_human_review` or `block_run`. If a repair would touch more than two sections, narrow the scope before delegating repair or request human review. Trajectory regulation narrows operator decisions only; it does not execute repair, run gates, approve delivery, or perform agent work.
@@ -155,9 +155,9 @@ Repair best practice: repeated retry/repair budgets are enforced by `workflow_st
 Optional provenance projection after runtime state exists:
 
 ```bash
-multi-agent-brief provenance build --workspace <workspace>
-multi-agent-brief provenance show --workspace <workspace> --json
-multi-agent-brief provenance validate --workspace <workspace>
+briefloop provenance build --workspace <workspace>
+briefloop provenance show --workspace <workspace> --json
+briefloop provenance validate --workspace <workspace>
 ```
 
 Provenance projection is not semantic proof and is not required before finalize.

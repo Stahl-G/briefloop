@@ -1,22 +1,27 @@
 ---
 name: briefloop
-description: BriefLoop/MABW operator protocol router. Use when a task involves operating a BriefLoop workspace, MABW-080 experiment tooling, future BriefLoop-090 readiness work, repair/gates/status/finalize/delivery decisions, repo-development contract changes, naming compatibility, or public claims about BriefLoop.
+description: BriefLoop operator protocol router. Use when a task involves operating a BriefLoop workspace, MABW-080 experiment tooling, future BriefLoop-090 readiness work, repair/gates/status/finalize/delivery decisions, repo-development contract changes, naming compatibility, or public claims about BriefLoop.
 ---
 
 # BriefLoop Operator Protocol
 
 ## Scope
 
-This skill is the canonical repo-local operator protocol for BriefLoop, formerly
-MABW. It routes agents to the right public docs, runtime commands, and safety
-boundaries when operating workspaces, running MABW-080 experiment tooling for
-080 cases or future 090 readiness work, changing the repo, or writing public
-claims.
+This skill is the canonical repo-local operator protocol for BriefLoop. It
+routes agents to the right public docs, runtime commands, and safety boundaries
+when operating workspaces, running MABW-080 experiment tooling for 080 cases or
+future 090 readiness work, changing the repo, or writing public claims.
 
 This skill is not the runtime handoff for a specific workspace and is not a
 complete CLI manual. Prefer the generated handoff for a run, current CLI help,
 `docs/architecture-status.md`, and `docs/support-matrix.md` when they conflict
 with this skill.
+
+This skill is also not the WorkBuddy first-user adapter. WorkBuddy users should
+install and use the BriefLoop WorkBuddy Skill from
+`.agents/skills/briefloop-workbuddy/` or the local zip produced by
+`briefloop workbuddy pack-skill`. Do not point WorkBuddy users at this repo
+operator protocol skill as their primary entrypoint.
 
 ## Purpose
 
@@ -32,15 +37,14 @@ Keep BriefLoop operation aligned with the control-plane architecture:
 
 Use this skill when the user asks about any of these surfaces:
 
-- workspace operation, `/briefloop`, `/mabw`, `briefloop`,
-  `multi-agent-brief run`, status, gates, repair, finalize, delivery, or
-  runtime handoff behavior
+- workspace operation, `/briefloop`, `briefloop`, status, gates, repair,
+  finalize, delivery, or runtime handoff behavior
 - MABW-080 experiment setup, registration, scorecards, blind packs, assessment
   import, summaries, or future BriefLoop-090 readiness/fresh-rerun work that
   still uses the shipped `experiments 080` command namespace
 - repo-development changes that affect agent operation, control contracts,
   generated runtime assets, public docs, or release claims
-- BriefLoop/MABW naming, compatibility, or public support status
+- BriefLoop naming, compatibility, or public support status
 
 Do not use this skill for unrelated business drafting or source analysis unless
 the user explicitly wants that work operated through a BriefLoop workspace.

@@ -360,7 +360,7 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     assert payload["artifacts"]["expected_count"] == 1
     assert payload["events"]["event_count"] == before_event_count
     assert "stage-complete" not in payload["suggested_next_command"]
-    assert payload["suggested_next_command"] == f"/generate-brief {ws}"
+    assert payload["suggested_next_command"] == f"/briefloop run {ws}"
 
     for path in watched:
         assert path.read_bytes() == before_bytes[path]
@@ -439,7 +439,7 @@ def test_status_command_reports_fact_layer_import_summary(tmp_path, capsys):
     assert summary["fact_layer_sha256"] == "a" * 64
     assert summary["next_stage"] == "analyst"
     assert all(stage["display_status"] == "complete via import" for stage in summary["imported_stages"])
-    assert payload["suggested_next_command"] == f"multi-agent-brief run --workspace {ws} --recipe fast-rerun --skip-doctor"
+    assert payload["suggested_next_command"] == f"briefloop run --workspace {ws} --recipe fast-rerun --skip-doctor"
 
 
 def test_status_command_reports_invalid_fact_layer_import_when_file_missing(tmp_path, capsys):
@@ -455,7 +455,7 @@ def test_status_command_reports_invalid_fact_layer_import_when_file_missing(tmp_
     summary = payload["fact_layer_import"]
     assert summary["status"] == "invalid"
     assert "Imported fact-layer file is missing: output/intermediate/claim_ledger.json." in summary["errors"]
-    assert payload["suggested_next_command"] != f"multi-agent-brief run --workspace {ws} --recipe fast-rerun --skip-doctor"
+    assert payload["suggested_next_command"] != f"briefloop run --workspace {ws} --recipe fast-rerun --skip-doctor"
 
 
 def test_status_command_human_output_reports_fact_layer_import(tmp_path, capsys):
@@ -751,8 +751,9 @@ def test_status_command_rejects_auditable_target_with_unbound_repair_event(tmp_p
     assert experiment["target_complete"] is False
     assert "audit binding relevant_repair_transaction_ids does not match event_log" in experiment["reasons"]
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
-    assert payload["suggested_next_command"] == f"multi-agent-brief status --workspace {ws} --json"
+    assert payload["suggested_next_command"] == f"briefloop status --workspace {ws} --json"
     assert "/mabw deliver" not in payload["suggested_next_command"]
+    assert "/generate-brief" not in payload["suggested_next_command"]
 
     rc = main(["status", "--workspace", str(ws)])
 

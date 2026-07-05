@@ -20,17 +20,19 @@ or any issue/PR comment that reports the result.
 - A local WorkBuddy Skill zip has been generated:
 
   ```bash
-  multi-agent-brief workbuddy pack-skill --output dist/workbuddy
+  briefloop workbuddy pack-skill --output dist/workbuddy
   ```
 
 - The generated Skill zip or the source Skill folder has been installed into
-  WorkBuddy through WorkBuddy's local Skill import flow.
+  WorkBuddy through WorkBuddy's local Skill import flow. If installing from a
+  folder, use `.agents/skills/briefloop-workbuddy/`, not the repo operator
+  protocol skill at `.agents/skills/briefloop/`.
 
 ## Smoke Path
 
 1. Ask WorkBuddy to locate the active BriefLoop CLI.
    - Expected: WorkBuddy reports the resolved command path and version.
-   - Do not continue if no `briefloop` or `multi-agent-brief` command is found.
+   - Do not continue if no `briefloop` command is found.
 
 2. Ask WorkBuddy to create or open a public-safe workspace.
    - Existing workspace: WorkBuddy asks for the folder path.
@@ -46,7 +48,7 @@ or any issue/PR comment that reports the result.
 3. Ask WorkBuddy to run the operator handoff.
 
    ```bash
-   multi-agent-brief run --workspace <workspace> --runtime operator
+   briefloop run --workspace <workspace> --runtime operator
    ```
 
    Expected:
@@ -59,8 +61,8 @@ or any issue/PR comment that reports the result.
 4. Ask WorkBuddy to inspect status and state.
 
    ```bash
-   multi-agent-brief status --workspace <workspace>
-   multi-agent-brief state check --workspace <workspace>
+   briefloop status --workspace <workspace>
+   briefloop state check --workspace <workspace>
    ```
 
    Expected:
@@ -72,7 +74,7 @@ or any issue/PR comment that reports the result.
 5. Ask WorkBuddy to generate the Quality Panel when enough artifacts exist.
 
    ```bash
-   multi-agent-brief quality summarize --workspace <workspace>
+   briefloop quality summarize --workspace <workspace>
    ```
 
    Expected:

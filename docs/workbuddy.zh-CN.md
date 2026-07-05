@@ -11,8 +11,8 @@ release，不发布报告，也不声称 WorkBuddy subagent 已经运行。
 
 | Surface | 状态 | 边界 |
 |---|---|---|
-| WorkBuddy Skill source bundle | Experimental | 位于 `integrations/workbuddy/briefloop/` 的 source-clone-only 文件 |
-| 本地 WorkBuddy Skill zip | Experimental | 由 `multi-agent-brief workbuddy pack-skill` 生成；不是 WorkBuddy Marketplace 发布 |
+| WorkBuddy Skill source bundle | Experimental | 位于 `.agents/skills/briefloop-workbuddy/` 的 source-clone-only 文件 |
+| 本地 WorkBuddy Skill zip | Experimental | 由 `briefloop workbuddy pack-skill` 生成；不是 WorkBuddy Marketplace 发布 |
 | WorkBuddy Assistant trigger | Experimental template | 远程提示模板，应转入已安装 Skill 的本地 WorkBuddy session |
 | WorkBuddy delegated runtime | Not supported | 使用 `--runtime operator`；除非 WorkBuddy 真实提供并记录 delegation，否则不能声称 role delegation 发生过 |
 
@@ -25,7 +25,7 @@ release 批准都不是当前支持声明；这不授权 release。
 
 ```bash
 python3 scripts/check_workbuddy_skill_pack.py
-multi-agent-brief workbuddy pack-skill --output dist/workbuddy
+briefloop workbuddy pack-skill --output dist/workbuddy
 ```
 
 这会写出本地 Skill zip 和 manifest，例如：
@@ -42,8 +42,13 @@ WorkBuddy Marketplace release。
 导入文件夹而不是 zip，使用仓库里的 source folder：
 
 ```text
-integrations/workbuddy/briefloop/
+.agents/skills/briefloop-workbuddy/
 ```
+
+WorkBuddy 用户应安装或打开 BriefLoop WorkBuddy Skill。不要把第一次使用
+WorkBuddy 的用户指向 `.agents/skills/briefloop/`；那是给 coding agent 和
+BriefLoop 维护者看的 repo operator protocol，不是 WorkBuddy first-user
+adapter。
 
 ## 第一次使用
 
@@ -65,7 +70,7 @@ integrations/workbuddy/briefloop/
 
 ```bash
 briefloop new industry-weekly <workspace>
-multi-agent-brief run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime operator
 ```
 
 `solar-periodic` 仍是实验性入口，使用前必须说明它是 experimental。

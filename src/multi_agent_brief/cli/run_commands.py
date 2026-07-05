@@ -57,7 +57,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     prepare_parser = subparsers.add_parser(
         "prepare",
-        help="[legacy] Replaced by 'multi-agent-brief run'.",
+        help="[legacy] Replaced by 'briefloop run'.",
     )
     prepare_parser.add_argument(
         "--config", required=True, help="Path to config.yaml in the workspace."
@@ -171,11 +171,11 @@ def _run_launcher(args: argparse.Namespace) -> int:
         print(f"{prefix} No workspace found.")
         print()
         print("For a real workspace:")
-        print("  multi-agent-brief onboard")
-        print("  multi-agent-brief init <workspace> --from-onboarding onboarding.json")
+        print("  briefloop onboard")
+        print("  briefloop init <workspace> --from-onboarding onboarding.json")
         print()
         print("For a demo only:")
-        print("  multi-agent-brief init <workspace> --demo")
+        print("  briefloop init <workspace> --demo")
         return 1
 
     try:
@@ -228,7 +228,7 @@ def _run_prepare(args: argparse.Namespace) -> int:
     """[legacy] prepare — replaced by the runtime handoff launcher."""
     print(
         "[legacy] prepare has been replaced by:"
-        " multi-agent-brief run --workspace <workspace>"
+        " briefloop run --workspace <workspace>"
     )
     return 1
 

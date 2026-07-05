@@ -28,5 +28,5 @@ Follow this sequence:
    - How many candidates were added.
    - Which entities were recommended and why (briefly).
    - Remind user to review candidates, set `approved: true` on confirmed ones,
-     then run `multi-agent-brief competitors merge --config $ARGUMENTS/config.yaml`.
+     then run `briefloop competitors merge --config $ARGUMENTS/config.yaml`.
    - Do not auto-approve or merge candidates.

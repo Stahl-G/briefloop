@@ -1,6 +1,6 @@
 # Runtime Workspace Protocol
 
-Read this when operating a real BriefLoop/MABW workspace.
+Read this when operating a real BriefLoop workspace.
 
 ## Authority
 
@@ -10,10 +10,10 @@ Read this when operating a real BriefLoop/MABW workspace.
 
 ## Allowed Actions
 
-- Inspect state with `multi-agent-brief status --workspace <workspace>`,
+- Inspect state with `briefloop status --workspace <workspace>`,
   `state show`, or `state check`.
-- Launch handoff with `multi-agent-brief run --workspace <workspace>`.
-- Use `multi-agent-brief run --workspace <workspace> --runtime operator` when
+- Launch handoff with `briefloop run --workspace <workspace>`.
+- Use `briefloop run --workspace <workspace> --runtime operator` when
   the host has no dedicated BriefLoop runtime adapter. Operator runtime is a
   host-agnostic compact workflow: it does not assume subagents ran, and it must
   still use deterministic transactions, artifacts, gates, and human-triggered
@@ -42,8 +42,8 @@ Read this when operating a real BriefLoop/MABW workspace.
   BriefLoop itself, rendered-page visual inspection, table/figure extraction,
   semantic support assessment, Claim-Support Matrix generation, citation
   gating, or legal / disclosure review.
-- Use `multi-agent-brief approval init`, `multi-agent-brief approval record`,
-  and `multi-agent-brief release check` only for internal release-mode approval
+- Use `briefloop approval init`, `briefloop approval record`,
+  and `briefloop release check` only for internal release-mode approval
   records. These commands write event-linked control records; they do not
   authorize public release or bypass gates.
 

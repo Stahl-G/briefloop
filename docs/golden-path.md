@@ -95,11 +95,11 @@ In Claude Code, the writer command equivalent is:
 /briefloop run ./weekly-brief
 ```
 
-Then follow the generated handoff. In the Claude writer path, the delegated
-workflow is normally launched with:
+Then follow the generated handoff. In the Claude writer path, keep using
+`/briefloop status` and the generated handoff to choose the next safe action:
 
 ```text
-/generate-brief ./weekly-brief
+/briefloop status ./weekly-brief
 ```
 
 `run` is a handoff launcher. It does not mark stages complete by itself and does

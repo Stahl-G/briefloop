@@ -80,7 +80,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     }
     if not payload["ok"]:
         payload["error"] = f"Workspace directory not found: {ws}"
-        payload["suggested_next_command"] = "multi-agent-brief init <workspace> --demo"
+        payload["suggested_next_command"] = "briefloop init <workspace> --demo"
         return payload
 
     manifest = _read_json(ws / INTERMEDIATE_DIR / "runtime_manifest.json")
@@ -828,31 +828,31 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     fact_layer_import = status.get("fact_layer_import") or {}
     experiment_080 = status.get("experiment_080") or {}
     if not (status.get("runtime") or {}).get("present"):
-        return f"multi-agent-brief run --workspace {workspace} --runtime claude"
+        return f"briefloop run --workspace {workspace} --runtime claude"
     if workflow.get("blocked"):
-        return f"multi-agent-brief state show --workspace {workspace} --json"
+        return f"briefloop state show --workspace {workspace} --json"
     if (
         experiment_080.get("assessment_target") == "auditable_brief"
         and experiment_080.get("target_complete") is True
     ):
         condition = experiment_080.get("condition") or "<condition>"
         return (
-            "multi-agent-brief experiments 080 register-run "
+            "briefloop experiments 080 register-run "
             f"--case <case_dir> --condition {condition} --workspace {workspace} "
             "--output <run_record.json>"
         )
     if experiment_080.get("assessment_target") == "auditable_brief":
-        return f"multi-agent-brief status --workspace {workspace} --json"
+        return f"briefloop status --workspace {workspace} --json"
     current_stage = workflow.get("current_stage")
     if fact_layer_import.get("status") == "valid" and current_stage == "analyst":
-        return f"multi-agent-brief run --workspace {workspace} --recipe fast-rerun --skip-doctor"
+        return f"briefloop run --workspace {workspace} --recipe fast-rerun --skip-doctor"
     if current_stage == "finalize":
-        return f"/mabw deliver {workspace}"
+        return f"/briefloop deliver {workspace}"
     quality_closeout = status.get("quality_panel_closeout") or {}
     if quality_closeout.get("status") in {"recommended", "stale_or_invalid"}:
         return f"briefloop quality summarize --workspace {workspace}"
     if current_stage == "auditor" and gate.get("status") != "pass":
-        return f"multi-agent-brief gates check --workspace {workspace} --stage auditor"
+        return f"briefloop gates check --workspace {workspace} --stage auditor"
     if current_stage:
-        return f"/generate-brief {workspace}"
-    return f"multi-agent-brief run --workspace {workspace} --runtime claude --skip-doctor"
+        return f"/briefloop run {workspace}"
+    return f"briefloop run --workspace {workspace} --runtime claude --skip-doctor"

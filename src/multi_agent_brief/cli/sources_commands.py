@@ -231,7 +231,7 @@ def _sources_decide(args: argparse.Namespace) -> int:
     if not sources_path.exists():
         print(f"[error] sources.yaml not found: {sources_path}")
         print(
-            "[hint] Run `multi-agent-brief init` first to create the"
+            "[hint] Run `briefloop init` first to create the"
             " workspace."
         )
         return 1
@@ -496,7 +496,7 @@ def _sources_decide(args: argparse.Namespace) -> int:
         "[sources] Review and enable/disable sources, then run:"
     )
     print(
-        f"  multi-agent-brief sources decide --config {args.config}"
+        f"  briefloop sources decide --config {args.config}"
         " --merge"
     )
     return 0

@@ -11,20 +11,21 @@ Open-source loop engineering for auditable business briefings.
 ## Legacy implementation name
 
 MABW remains the implementation lineage and compatibility surface during the
-v0.9 compatibility period.
+v1.0 public-product rename period.
 
 ## Compatibility rule
 
-PR0 does not break existing commands, package names, runtime artifacts,
-workspace formats, experiment IDs, reference-run paths, or archived run IDs.
+The public rename does not break existing commands, package names, runtime
+artifacts, workspace formats, experiment IDs, reference-run paths, or archived
+run IDs.
 
 The current compatibility surfaces remain:
 
 - `https://github.com/Stahl-G/briefloop` public repository URL
-- `multi-agent-brief` CLI
-- `briefloop` shell CLI alias for `multi-agent-brief`
+- `briefloop` public CLI
+- `multi-agent-brief` CLI retained for compatibility
 - `/briefloop` Claude writer command
-- `/mabw` Claude command retained for compatibility
+- `/mabw` Claude command retained as a deprecated compatibility command
 - `multi_agent_brief` Python package/module path
 - `multi-agent-brief-workflow` distribution package name
 - existing artifact names and workspace formats
@@ -34,6 +35,52 @@ GitHub redirects from the historical
 `https://github.com/Stahl-G/multi-agent-brief-workflow` URL are expected to
 remain available during the compatibility period, but new public documentation
 should use `https://github.com/Stahl-G/briefloop`.
+
+## Deep rename deferral
+
+v1.0 completion means product-facing rename completion, not grep-zero removal
+of every historical or implementation name.
+
+These deep renames are explicitly not v1.0 blockers:
+
+- renaming the Python module path `multi_agent_brief` to `briefloop`;
+- changing the PyPI/distribution/package name
+  `multi-agent-brief-workflow`;
+- globally rewriting `mabw.*` schema ids or historical
+  `multi-agent-brief-*` schema ids;
+- changing historical run IDs, archived reference runs, old release notes, or
+  existing workspace contents;
+- deleting `/mabw` or `multi-agent-brief` compatibility entrypoints in the same
+  release;
+- moving old Hermes plugin or integration directory names where that would
+  break source-clone or installed-plugin paths.
+
+Post-v1 deep rename or shim migration may be considered only if user friction
+or packaging evidence justifies it. Such a migration must preserve old
+workspace compatibility, keep package-index install paths clear, and include
+source-clone plus non-editable install smoke coverage. It must not rewrite
+frozen archives or schema ids in place.
+
+## Compatibility quarantine
+
+Remaining MABW and `multi-agent-brief` references are compatibility records,
+not the public product identity. Keep them in explicit compatibility,
+history, schema, packaging, or test surfaces. Do not use them as first-user
+instructions, launch claims, or recommended writer paths.
+
+| Compatibility surface | Status | Allowed placement | Not allowed |
+|---|---|---|---|
+| `/mabw` | Deprecated Claude compatibility alias | `.claude/commands/mabw.md`, compatibility docs, tests | README first screen, launch path, new-user examples |
+| `multi-agent-brief` | Compatibility CLI and script entrypoint | CLI compatibility notes, package tests, existing automation docs | Primary shell examples for new users |
+| `multi_agent_brief` | Python module compatibility surface | Python imports, packaging metadata, source tests | User-facing product name |
+| `multi-agent-brief-workflow` | Distribution/package compatibility surface | `pyproject.toml`, Homebrew formula, installer compatibility notes | Setup banners or first-run product copy |
+| `MABW-080` | Historical experiment namespace | Experiment docs, scorecards, release archives, tests | Product workspace guidance |
+| `mabw.*` schema ids | Old-workspace compatibility ids | Validators, schema fixtures, migration notes | New public product messaging |
+| Old release notes and tech reports | Historical archive | `CHANGELOG.md`, `docs/mabw-*`, release references | Current capability claims |
+
+Compatibility surfaces must never imply that BriefLoop is a truth proof,
+delivery approval system, autonomous agent runtime, or output-quality
+improvement proof.
 
 ## Naming layers
 
@@ -48,14 +95,17 @@ should use `https://github.com/Stahl-G/briefloop`.
 | Layer | Entrypoint | Audience |
 |---|---|---|
 | Public product name | BriefLoop | Docs, releases, repository identity |
+| Public shell command | `briefloop` | Users, docs, first-run examples |
+| Compatibility shell command | `multi-agent-brief` | Scripts and existing users during compatibility period |
 | Writer command | `/briefloop` | Claude Code writers |
-| Compatibility writer command | `/mabw` | Claude Code writers during compatibility period |
+| Compatibility writer command | `/mabw` | Existing Claude Code users during compatibility period |
 | Agent protocol | BriefLoop skill | Runtime/coding agents reading operation rules |
-| Deterministic control plane | `multi-agent-brief`, `briefloop` | CLI transactions, validators, tests, scripts |
-| Full delegated workflow | `/generate-brief <workspace>` | Advanced/debug direct subagent execution |
+| Deterministic control plane | `briefloop`, `multi-agent-brief` | CLI transactions, validators, tests, scripts |
+| Legacy delegated command | `/generate-brief <workspace>` | Compatibility/debug only; not a first-user path |
 
-`/briefloop` is the Claude writer command. The BriefLoop skill is an agent
-operator protocol surface, not the slash-command implementation.
+`/briefloop` is the only recommended Claude writer command for new users. The
+BriefLoop skill is an agent operator protocol surface, not the slash-command
+implementation.
 
 ## Allowed language
 
@@ -64,7 +114,7 @@ operator protocol surface, not the slash-command implementation.
 - BriefLoop is open-source loop engineering for auditable business briefings
 - BriefLoop turns briefing failures into findings, repairs, regression cases,
   and release decisions
-- MABW remains a CLI/runtime compatibility surface
+- MABW remains an implementation-lineage and compatibility surface
 
 ## Forbidden language
 
@@ -77,5 +127,5 @@ operator protocol surface, not the slash-command implementation.
 
 ## Name-risk note
 
-BriefLoop is the open-source project-facing name during the v0.9 compatibility
-period. This is not a trademark clearance statement.
+BriefLoop is the open-source project-facing name during the v1.0 public-product
+rename period. This is not a trademark clearance statement.

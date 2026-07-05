@@ -68,6 +68,8 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "compatibility-pointer shape",
         "v0.11.0 product-baseline readiness",
         "WorkBuddy Skill source bundle",
+        ".agents/skills/briefloop-workbuddy/",
+        "legacy mirror",
         "integrations/workbuddy/briefloop/",
         "source-clone-only",
         "--runtime operator",

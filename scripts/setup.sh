@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "=== multi-agent-brief-workflow setup ==="
+echo "=== BriefLoop setup ==="
 
 # Find Python 3.9+: try python3, python
 PYTHON=""
@@ -41,7 +41,7 @@ fi
 # 2. Activate
 source .venv/bin/activate
 VENV_PYTHON=".venv/bin/python"
-VENV_CLI=".venv/bin/multi-agent-brief"
+VENV_CLI=".venv/bin/briefloop"
 
 # 3. Install package — try editable first, fall back to standard install
 echo "[3/4] Installing package..."
@@ -82,9 +82,9 @@ echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
 echo "  source .venv/bin/activate"
-echo "  multi-agent-brief init my-workspace"
+echo "  briefloop init my-workspace"
 echo "  # Add source files to my-workspace/input/"
-echo "  multi-agent-brief doctor --config my-workspace/config.yaml"
-echo "  # Optional: make /generate-brief visible in Claude Desktop Code tab"
-echo "  multi-agent-brief claude install --repo-workdir ."
-echo "  Then use /generate-brief my-workspace in Claude Code"
+echo "  briefloop doctor --config my-workspace/config.yaml"
+echo "  # Optional: make /briefloop visible in Claude Desktop Code tab"
+echo "  briefloop claude install --repo-workdir ."
+echo "  Then use /briefloop run my-workspace in Claude Code"

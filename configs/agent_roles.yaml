@@ -68,7 +68,7 @@ roles:
   orchestrator:
     stage: coordination
     tool_profile: edit_safe
-    description: Acts as the runtime main agent that controls delegated MABW stages,
+    description: Acts as the runtime main agent that controls delegated BriefLoop stages,
       contract references, decisions, and artifact handoffs.
     trigger: Use for brief-workspace runtime handoff and workflow-control changes.
       Use for repo-development contract or generated adapter changes only when the
@@ -102,7 +102,7 @@ roles:
       route/start/complete transaction for delegate_repair.
     - Stage completion is transaction-defined, not artifact-defined.
     - You are not allowed to call the next specialist agent or tool until
-      `multi-agent-brief state stage-complete` for the current stage has
+      `briefloop state stage-complete` for the current stage has
       succeeded.
     - If the expected artifact exists but `state stage-complete` has not
       succeeded, the stage is still incomplete.
@@ -132,10 +132,10 @@ roles:
       date or retrieved_at, and raw excerpt/snippet. Summary-only notes are
       discovery hints, not evidence.
     - Use state decide only for retry_stage, request_human_review, or block_run.
-      For owner-stage artifact repair, use `multi-agent-brief repair route
-      --workspace <workspace>`, then `multi-agent-brief repair start --workspace
+      For owner-stage artifact repair, use `briefloop repair route
+      --workspace <workspace>`, then `briefloop repair start --workspace
       <workspace>`, delegate only the repair_owner role, and finish with
-      `multi-agent-brief repair complete --workspace <workspace> --reason
+      `briefloop repair complete --workspace <workspace> --reason
       "<reason>"`; if any command rejects the decision, completion, or repair,
       stop and correct the stage state.
     - Before finalize, after Auditor completes, run gates check with
@@ -145,8 +145,8 @@ roles:
       Record auditor completion with state stage-complete only when audit
       readiness and quality gates pass.
     - After finalize writes reader-facing artifacts, verify completion with
-      `multi-agent-brief gates check --stage finalize --brief <workspace>/output/brief.md`
-      and then multi-agent-brief state finalize-complete before reporting the
+      `briefloop gates check --stage finalize --brief <workspace>/output/brief.md`
+      and then briefloop state finalize-complete before reporting the
       run complete.
     - Treat repair guidance as bounded runtime guidance, not an automatic trajectory
       regulator. If the same stage has already needed roughly three retry/repair
@@ -566,7 +566,7 @@ roles:
     trigger: Use after the auditor has produced audit_report.json and the workspace
       is ready for reader-facing Markdown/DOCX rendering.
     responsibilities:
-    - Run or follow multi-agent-brief finalize --config <workspace>/config.yaml.
+    - Run or follow briefloop finalize --config <workspace>/config.yaml.
     - Render the final delivery bundle under output/delivery/.
     - Keep output/source_appendix.md as an internal audit/control copy generated
       from cited Claim Ledger sources when enabled.
@@ -653,7 +653,7 @@ roles:
     tool_profile: read_only
     description: Recommends competitor candidates for a workspace based on user.md
       context (company, industry, market_scope, focus_areas).
-    trigger: Use during workspace setup or when the user runs 'multi-agent-brief competitors
+    trigger: Use during workspace setup or when the user runs 'briefloop competitors
       propose'. Read user.md and recommend competitors for competitor_candidates.yaml.
     responsibilities:
     - Read user.md (company, industry, market_scope, focus_areas) for context.
@@ -722,6 +722,6 @@ onboarding_rules:
   - Only proceed with workspace creation when the user explicitly confirms all required
     fields (company, industry, title).
   - Convert the answers into `onboarding.json`.
-  - 'Run: `multi-agent-brief init --from-onboarding onboarding.json`'
+  - 'Run: `briefloop init --from-onboarding onboarding.json`'
   - Explain the final setup in business language.
   - Explain setup in business language unless the user asks as a developer.

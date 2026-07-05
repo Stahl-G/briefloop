@@ -5,12 +5,9 @@ argument-hint: "new | run <workspace> | status <workspace> | feedback <workspace
 
 You are the Claude Code first-class BriefLoop writer command.
 
-`/briefloop` and `/mabw` are compatibility aliases for the same five-verb
-writer surface. This command is self-contained after `multi-agent-brief claude
-install`; do not depend on a sibling compatibility command file being present
-in the user's current project. When showing writer examples from this command,
-prefer `/briefloop`; when explaining compatibility, mention that `/mabw`
-remains supported.
+`/briefloop` is the public five-verb writer surface. This command is
+self-contained after `briefloop claude install`; do not depend on any sibling
+command file being present in the user's current project.
 
 This command is the product-facing route for writer intent. It is not a second
 workflow engine. Python remains the deterministic setup, validation, control,
@@ -61,12 +58,11 @@ For relative workspace paths, resolve from the current Claude Code project
 folder. If the workspace cannot be found and the verb is not `new`, ask for an
 absolute workspace path before proceeding.
 
-Use existing deterministic BriefLoop/MABW commands. Do not run specialist stages
-unless the user explicitly switches to the advanced full
-`/generate-brief <workspace>` workflow.
+Use existing deterministic BriefLoop commands. Do not run specialist stages
+from this writer command; read the generated handoff and ask for explicit
+operator confirmation before continuing role-owned artifact work.
 
-When executing deterministic CLI commands, use `multi-agent-brief` or its shell
-alias `briefloop`; both invoke the same Python entrypoint. Keep all gate,
+When executing deterministic CLI commands, use `briefloop`. Keep all gate,
 repair, status, finalize, delivery, and human-approval boundaries unchanged.
 
 ## `new`
@@ -75,11 +71,11 @@ Purpose: create a new brief workspace.
 
 Allowed:
 
-- check whether `multi-agent-brief` is available;
+- check whether `briefloop` is available;
 - collect onboarding fields in plain language;
 - create `onboarding.json`;
-- run `multi-agent-brief init <workspace> --from-onboarding <onboarding.json>`;
-- run `multi-agent-brief run --workspace <workspace> --runtime claude --skip-doctor`;
+- run `briefloop init <workspace> --from-onboarding <onboarding.json>`;
+- run `briefloop run --workspace <workspace> --runtime claude --skip-doctor`;
 - report the workspace path and handoff path.
 
 Rules:
@@ -118,10 +114,10 @@ Before writing onboarding.json, show a short "values I will write" summary:
 If any value was inferred rather than explicitly provided, stop and ask.
 
 After successful setup, tell the writer that the workspace handoff has already
-been created. The next writer command to produce the brief is:
+been created. The next writer command is:
 
 ```text
-/generate-brief <workspace>
+/briefloop status <workspace>
 ```
 
 If they only want to inspect or refresh the handoff later, use
@@ -135,7 +131,7 @@ Purpose: create or refresh runtime handoff for an existing workspace.
 Run:
 
 ```bash
-multi-agent-brief run --workspace <workspace> --runtime claude --skip-doctor
+briefloop run --workspace <workspace> --runtime claude --skip-doctor
 ```
 
 Then report:
@@ -149,11 +145,13 @@ Do not execute the full pipeline. Do not invoke specialist agents. Do not mark
 stages complete. Do not use `state decide --decision continue` or
 `state decide --decision finalize`.
 
-If the writer explicitly wants the full delegated workflow after handoff, point
-them to the advanced/debug command:
+If the writer explicitly wants to continue after handoff, read
+`agent_handoff.md` and explain the next operator action before any role-owned
+artifact work. Do not claim a specialist or subagent ran unless the runtime
+actually delegated that role.
 
 ```text
-/generate-brief <workspace>
+/briefloop status <workspace>
 ```
 
 ## `status <workspace>`
@@ -163,7 +161,7 @@ Purpose: read-only operator dashboard.
 Run exactly this read-only helper:
 
 ```bash
-multi-agent-brief status --workspace <workspace> --json
+briefloop status --workspace <workspace> --json
 ```
 
 Hard rule:
@@ -187,8 +185,8 @@ Summarize the helper output. Report:
 Forbidden:
 
 - do not manually inspect workspace control files when this helper is available;
-- do not run `multi-agent-brief state check`;
-- do not run `multi-agent-brief run`;
+- do not run `briefloop state check`;
+- do not run `briefloop run`;
 - do not initialize runtime state;
 - do not refresh artifact registry;
 - do not refresh control switchboard;
@@ -199,7 +197,7 @@ Forbidden:
 If state may be stale, say:
 
 ```text
-artifact_registry may be stale; run `multi-agent-brief state check --workspace <workspace> --strict` only when you intend to refresh control records.
+artifact_registry may be stale; run `briefloop state check --workspace <workspace> --strict` only when you intend to refresh control records.
 ```
 
 ## `feedback <workspace> [text-or-file]`
@@ -209,7 +207,7 @@ Purpose: record and triage user feedback without executing repair.
 If a feedback file path is provided, run:
 
 ```bash
-multi-agent-brief feedback ingest --workspace <workspace> --feedback <file> --source human --json
+briefloop feedback ingest --workspace <workspace> --feedback <file> --source human --json
 ```
 
 If inline feedback text is provided, write it to a uniquely named
@@ -225,10 +223,10 @@ After recording, show:
 
 Downstream actions require explicit user confirmation before execution:
 
-- `multi-agent-brief feedback plan`;
-- `multi-agent-brief feedback resolve`;
-- `multi-agent-brief improve propose`;
-- `multi-agent-brief improve approve/reject/revert`.
+- `briefloop feedback plan`;
+- `briefloop feedback resolve`;
+- `briefloop improve propose`;
+- `briefloop improve approve/reject/revert`.
 
 Forbidden:
 
@@ -246,8 +244,8 @@ Purpose: check gates/finalize status, then deliver the reader delivery bundle.
 Run the delivery sequence explicitly:
 
 ```bash
-multi-agent-brief gates check --workspace <workspace> --stage auditor
-multi-agent-brief state check --workspace <workspace> --strict
+briefloop gates check --workspace <workspace> --stage auditor
+briefloop state check --workspace <workspace> --strict
 ```
 
 Interpret `current_stage: None` / `null` as terminal completion, not as
@@ -260,7 +258,7 @@ If the current stage is `auditor` and state is not blocked, record audit/gate
 completion:
 
 ```bash
-multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
 If state is blocked, stop. Use feedback/repair, human review, or `block_run`.
@@ -269,9 +267,9 @@ Do not finalize.
 Once the current stage is `finalize`, run:
 
 ```bash
-multi-agent-brief finalize --config <workspace>/config.yaml
-multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop finalize --config <workspace>/config.yaml
+briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 Finalize reads `output/intermediate/audited_brief.md` as frozen input. Do not
 edit `audited_brief.md`, `audit_report.json`, artifact registry, or workflow
@@ -281,14 +279,14 @@ brief, stop and route repair to Editor before rerunning downstream stages.
 If no delivery target is specified, run:
 
 ```bash
-multi-agent-brief deliver --workspace <workspace> --target local
+briefloop deliver --workspace <workspace> --target local
 ```
 
 If the user asks to send to Feishu, ask for the missing channel and recipient
 first:
 
 ```bash
-multi-agent-brief deliver --workspace <workspace> --target feishu --channel doc|drive|chat --recipient <folder-or-chat-id>
+briefloop deliver --workspace <workspace> --target feishu --channel doc|drive|chat --recipient <folder-or-chat-id>
 ```
 
 The delivery command may send only files listed in
@@ -318,7 +316,7 @@ If `new`, `run`, or `status` finds a setup problem, surface the relevant
 diagnostic and suggest:
 
 ```bash
-multi-agent-brief doctor --config <workspace>/config.yaml
+briefloop doctor --config <workspace>/config.yaml
 ```
 
 Agent/operator commands include `state stage-complete`, `state

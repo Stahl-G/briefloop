@@ -2,14 +2,11 @@
 
 **AI-assisted business briefings you can question later.**
 
-Formerly **MABW — Multi-Agent Brief Workflow**.
-The public project name is now **BriefLoop**; MABW remains as the implementation lineage and compatibility surface.
-
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
 
-Writer entry: use `/briefloop` in Claude Code (`/mabw` remains a compatibility alias), or `briefloop` / `multi-agent-brief` in a shell.
+Writer entry: use `/briefloop` in Claude Code, or `briefloop` in a shell.
 
 ---
 
@@ -186,16 +183,16 @@ When you are ready to use your own materials, create your first briefing
 workspace:
 
 ```bash
-multi-agent-brief onboard
-multi-agent-brief init ~/mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace ~/mabw-workspace
+briefloop onboard
+briefloop init ~/briefloop-workspace --from-onboarding onboarding.json
+briefloop run --workspace ~/briefloop-workspace
 ```
 
 Common setup helpers:
 
 ```bash
-multi-agent-brief init --from-onboarding onboarding.json <workspace>
-multi-agent-brief sources decide --config <workspace>/config.yaml
+briefloop init --from-onboarding onboarding.json <workspace>
+briefloop sources decide --config <workspace>/config.yaml
 ```
 
 `sources decide` is the explicit source-discovery helper for workspaces that use
@@ -214,7 +211,7 @@ cd briefloop
 .\scripts\setup.ps1
 .\.venv\Scripts\Activate.ps1
 
-multi-agent-brief version
+briefloop version
 ```
 
 If PowerShell blocks script execution:
@@ -231,7 +228,7 @@ If you use Claude Code, install the writer entrypoint:
 
 ```bash
 source .venv/bin/activate
-multi-agent-brief claude install --repo-workdir .
+briefloop claude install --repo-workdir .
 ```
 
 Then use the five main writer commands:
@@ -243,8 +240,6 @@ Then use the five main writer commands:
 /briefloop feedback <workspace> [text-or-file]
 /briefloop deliver <workspace>
 ```
-
-`/mabw` remains available as a compatibility alias.
 
 Good next reads:
 
@@ -298,10 +293,8 @@ Current version: **v0.11.12**
 
 Current main entrypoints:
 
-- CLI: `multi-agent-brief`
-- shell alias: `briefloop`
+- CLI: `briefloop`
 - Claude command: `/briefloop`
-- compatibility alias: `/mabw`
 - experimental WorkBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 
 v0.11.12 releases the accumulated v0.11 product-baseline, WorkBuddy adapter,

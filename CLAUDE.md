@@ -2,60 +2,60 @@
 
 ## Claude Code Role
 
-This file is for developing and running Multi-Agent Brief Workflow inside Claude Code.
+This file is for developing and running BriefLoop inside Claude Code.
 
 For runtime-neutral instructions, see `AGENTS.md`. For Claude Code execution, use the repository slash command and subagents.
 
 ## First Response In Claude Code
 
-If the user greets you, asks what to do next, or asks how to use MABW from
+If the user greets you, asks what to do next, or asks how to use BriefLoop from
 Claude Code, point them to the five writer verbs first:
 
 ```text
-/mabw new
-/mabw run <workspace>
-/mabw status <workspace>
-/mabw feedback <workspace> [text-or-file]
-/mabw deliver <workspace>
+/briefloop new
+/briefloop run <workspace>
+/briefloop status <workspace>
+/briefloop feedback <workspace> [text-or-file]
+/briefloop deliver <workspace>
 ```
 
 Do not present `/generate-brief` as the first-screen entrypoint. It remains the
-compatibility command for the full delegated subagent workflow after `/mabw run`
-has created or refreshed the runtime handoff.
+compatibility command for the full delegated subagent workflow after
+`/briefloop run` has created or refreshed the runtime handoff.
 
 ## Standard Claude Code Path
 
 For a real brief workspace:
 
 ```text
-/mabw new
-/mabw run ../mabw-workspace
+/briefloop new
+/briefloop run ../briefloop-workspace
 ```
 
 Then, if the user wants to execute the full delegated subagent workflow, run in
 Claude Code:
 
 ```text
-/generate-brief ../mabw-workspace
+/generate-brief ../briefloop-workspace
 ```
 
 For a demo workspace:
 
 ```bash
-multi-agent-brief init ../mabw-demo --demo
+briefloop init ../briefloop-demo --demo
 ```
 
 Then run the writer-facing path:
 
 ```text
-/mabw run ../mabw-demo
-/mabw status ../mabw-demo
+/briefloop run ../briefloop-demo
+/briefloop status ../briefloop-demo
 ```
 
 To execute the full delegated subagent workflow:
 
 ```text
-/generate-brief ../mabw-demo
+/generate-brief ../briefloop-demo
 ```
 
 ## Repository Development Setup
@@ -77,14 +77,14 @@ python -m pytest -q
 ## Useful Commands
 
 ```bash
-multi-agent-brief version
-multi-agent-brief onboard
-multi-agent-brief init ../mabw-workspace --from-onboarding onboarding.json
-multi-agent-brief run --workspace ../mabw-workspace --runtime claude
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
-multi-agent-brief finalize --config ../mabw-workspace/config.yaml
+briefloop version
+briefloop onboard
+briefloop init ../briefloop-workspace --from-onboarding onboarding.json
+briefloop run --workspace ../briefloop-workspace --runtime claude
+briefloop doctor --config ../briefloop-workspace/config.yaml
+briefloop sources decide --config ../briefloop-workspace/config.yaml
+briefloop sources decide --config ../briefloop-workspace/config.yaml --merge
+briefloop finalize --config ../briefloop-workspace/config.yaml
 python scripts/generate_agent_configs.py --check
 ```
 

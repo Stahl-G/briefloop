@@ -154,6 +154,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/workbuddy.md": [
         "WorkBuddy Skill source bundle",
+        ".agents/skills/briefloop-workbuddy/",
         "Experimental",
         "source-clone-only",
         "not WorkBuddy Marketplace publication",
@@ -166,6 +167,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/workbuddy.zh-CN.md": [
         "WorkBuddy Skill source bundle",
+        ".agents/skills/briefloop-workbuddy/",
         "Experimental",
         "source-clone-only",
         "不是 WorkBuddy Marketplace 发布",
@@ -181,11 +183,12 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "experimental integration smoke",
         "not runtime proof",
         "not runtime proof, delegated-agent proof, output-quality proof, semantic proof",
-        "multi-agent-brief workbuddy pack-skill --output dist/workbuddy",
-        "multi-agent-brief run --workspace <workspace> --runtime operator",
-        "multi-agent-brief status --workspace <workspace>",
-        "multi-agent-brief state check --workspace <workspace>",
-        "multi-agent-brief quality summarize --workspace <workspace>",
+        ".agents/skills/briefloop-workbuddy/",
+        "briefloop workbuddy pack-skill --output dist/workbuddy",
+        "briefloop run --workspace <workspace> --runtime operator",
+        "briefloop status --workspace <workspace>",
+        "briefloop state check --workspace <workspace>",
+        "briefloop quality summarize --workspace <workspace>",
         "must not auto-deliver",
         "not evidence that WorkBuddy is a supported delegated runtime",
     ],
@@ -784,7 +787,7 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
     getting_started = (ROOT / "docs" / "getting-started.md").read_text(encoding="utf-8")
     activation_reason = _unix_source_clone_activation_reason(
         getting_started,
-        cli_markers=("multi-agent-brief version",),
+        cli_markers=("briefloop version",),
     )
     _append_check(
         checks,
@@ -825,10 +828,9 @@ def _unix_source_clone_activation_reason(
     text: str,
     *,
     cli_markers: tuple[str, ...] = (
-        "multi-agent-brief version",
-        "multi-agent-brief onboard",
-        "multi-agent-brief init",
-        "multi-agent-brief run",
+        "briefloop version",
+        "briefloop onboard",
+        "briefloop init",
         "briefloop new",
         "briefloop run",
     ),

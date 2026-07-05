@@ -6,7 +6,7 @@
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "=== multi-agent-brief-workflow setup ===" -ForegroundColor Cyan
+Write-Host "=== BriefLoop setup ===" -ForegroundColor Cyan
 
 function Test-PythonCandidate {
     param(
@@ -114,7 +114,7 @@ Write-Host "[1/4] Found Python $($pythonInfo.Version): $($python.Label)" -Foregr
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $venvDir = Join-Path $projectRoot ".venv"
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
-$venvCli = Join-Path $venvDir "Scripts\multi-agent-brief.exe"
+$venvCli = Join-Path $venvDir "Scripts\briefloop.exe"
 
 if (-not (Test-Path $venvDir)) {
     Write-Host "[2/4] Creating virtual environment..." -ForegroundColor Yellow
@@ -167,13 +167,13 @@ Write-Host ""
 Write-Host "Next steps:"
 Write-Host "  cd `"$projectRoot`""
 Write-Host "  .\.venv\Scripts\Activate.ps1"
-Write-Host "  multi-agent-brief version"
-Write-Host "  multi-agent-brief init my-workspace"
+Write-Host "  briefloop version"
+Write-Host "  briefloop init my-workspace"
 Write-Host "  # Add source files to my-workspace/input/"
-Write-Host "  multi-agent-brief doctor --config my-workspace/config.yaml"
-Write-Host "  # Optional: make /generate-brief visible in Claude Desktop Code tab"
-Write-Host "  multi-agent-brief claude install --repo-workdir ."
-Write-Host "  Then use /generate-brief my-workspace in Claude Code"
+Write-Host "  briefloop doctor --config my-workspace/config.yaml"
+Write-Host "  # Optional: make /briefloop visible in Claude Desktop Code tab"
+Write-Host "  briefloop claude install --repo-workdir ."
+Write-Host "  Then use /briefloop run my-workspace in Claude Code"
 Write-Host ""
 Write-Host "If Activate.ps1 is blocked, run this once for your user account:" -ForegroundColor Yellow
 Write-Host "  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor White

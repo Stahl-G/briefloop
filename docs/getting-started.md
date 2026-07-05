@@ -30,7 +30,7 @@ cd briefloop
 Check that the command is available:
 
 ```bash
-multi-agent-brief version
+briefloop version
 ```
 
 ## 2. Run The API-Free Demo

@@ -247,7 +247,7 @@ def test_runtime_install_refuses_non_mabw_existing_file(tmp_path: Path, capsys) 
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "Refusing to overwrite existing non-MABW file without --force" in out
+    assert "Refusing to overwrite existing non-generated file without --force" in out
     assert (ws / "AGENTS.md").read_text(encoding="utf-8") == "User-owned agent notes.\n"
 
 
@@ -270,7 +270,7 @@ def test_runtime_install_codex_refuses_non_mabw_agent_file(tmp_path: Path, capsy
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "Refusing to overwrite existing non-MABW file without --force" in out
+    assert "Refusing to overwrite existing non-generated file without --force" in out
     assert target.read_text(encoding="utf-8") == "name = \"user-owned\"\n"
 
 

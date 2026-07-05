@@ -1,6 +1,6 @@
 # Initialize Brief Workspace
 
-Initialize a multi-agent-brief workspace using conversational onboarding.
+Initialize a briefloop workspace using conversational onboarding.
 
 Rules:
 
@@ -13,7 +13,7 @@ Rules:
 7. Run:
 
 ```bash
-multi-agent-brief init <workspace-path> --from-onboarding onboarding.json
+briefloop init <workspace-path> --from-onboarding onboarding.json
 ```
 
 Show only:

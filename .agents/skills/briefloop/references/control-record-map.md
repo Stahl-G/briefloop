@@ -35,23 +35,23 @@ Owning commands for recent control-tool projections:
   `quality_panel.html`. `finalize_report.json` and `status --json` may
   recommend this post-finalize closeout, but they do not write these artifacts
   automatically.
-- `multi-agent-brief approval init` and `multi-agent-brief approval record`
+- `briefloop approval init` and `briefloop approval record`
   write `human_approval_ledger.json` with event-log linkage.
-- `multi-agent-brief release check` reads `human_approval_ledger.json` and
+- `briefloop release check` reads `human_approval_ledger.json` and
   writes a fresh `release_readiness_report.json` with event-log linkage and
   configured `branding_context` metadata. Do not treat a readiness report as
   refreshed merely because an approval was recorded.
-- `multi-agent-brief semantic-support adjudicate` writes
+- `briefloop semantic-support adjudicate` writes
   `semantic_support_acceptance_ledger.json` with event-log linkage for human
   accept/reject decisions on valid Semantic Assessment Report proposal rows.
   It records adjudication only; it does not write Claim-Support Matrix rows,
   gate reports, workflow state, repair routes, delivery state, or release
   state.
-- `multi-agent-brief finalize` writes `finalize_report.json` fields for the
+- `briefloop finalize` writes `finalize_report.json` fields for the
   resolved citation profile (`executive`, `analyst`, or `audit`). These fields
   describe reader/audit citation surfaces only; do not patch them by hand and
   do not treat them as support, gate, delivery, or release authority.
-- `briefloop extract` / `multi-agent-brief extract` writes
+- `briefloop extract` / `briefloop extract` writes
   `evidence_extract_source_lock.json`, `evidence_extract_page_inventory.json`,
   and audit copies for `document-review` / `evidence_extract` workspaces. The
   lock binds registered `input/sources/evidence_extract/` files to file size

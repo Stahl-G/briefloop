@@ -12,9 +12,8 @@ compatibility alias during the BriefLoop transition. The verbs are:
 /briefloop deliver <workspace>
 ```
 
-`/briefloop` is the BriefLoop writer command. `/generate-brief` remains an
-advanced/legacy command for the full delegated subagent workflow; it is not the
-first path for new writers.
+`/briefloop` is the BriefLoop writer command. Legacy project commands may still
+exist for compatibility, but they are not the first path for new writers.
 
 For writer-facing operation notes, see:
 
@@ -66,30 +65,31 @@ tab with this repository selected as the project folder, so
 ```
 
 If Claude Code returns `Unknown command: /briefloop`, the current session
-has not discovered this project command. Confirm the project folder is the MABW
+has not discovered this project command. Confirm the project folder is the BriefLoop
 repository root, type `/` to inspect available commands, or install the command
 for user-level discovery:
 
 ```bash
-multi-agent-brief claude install --repo-workdir .
+briefloop claude install --repo-workdir .
 ```
 
 You can also use the standard CLI handoff instead:
 
 ```bash
-multi-agent-brief run --workspace ../mabw-workspace
+briefloop run --workspace ../briefloop-workspace
 ```
 
-## Advanced: Direct Full Delegated Workflow
+## Advanced: Continue From The Handoff
 
-Most writers should stay on `/briefloop`. To execute the full delegated workflow from
-Claude Code after handoff for debugging or direct subagent execution, use:
+Most writers should stay on `/briefloop`. After `/briefloop run`, inspect:
 
 ```text
-/generate-brief ../mabw-workspace
+output/intermediate/agent_handoff.md
+output/intermediate/agent_handoff.json
 ```
 
-The delegated workflow follows this sequence:
+Continue only by following the generated handoff, stage artifacts, and
+deterministic transactions. The delegated workflow follows this sequence:
 
 ```text
 source discovery -> doctor -> scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> finalize
@@ -130,7 +130,7 @@ delivery standard, not softened into memory.
 
 Use this wording when the requested behavior is already enforced:
 
-> This is already enforced: before each delivery, MABW checks the reader-final
+> This is already enforced: before each delivery, BriefLoop checks the reader-final
 > output for internal IDs, source residue, local paths, and delivery gate
 > failures. If the check fails, delivery is not marked complete. You can see the
 > result in `output/intermediate/finalize_report.json`.
@@ -140,29 +140,29 @@ Use this wording when the requested behavior is already enforced:
 When the workspace uses `llm_decide`, resolve sources before Scout:
 
 ```bash
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml
-cat ../mabw-workspace/source_candidates.yaml
-multi-agent-brief sources decide --config ../mabw-workspace/config.yaml --merge
+briefloop sources decide --config ../briefloop-workspace/config.yaml
+cat ../briefloop-workspace/source_candidates.yaml
+briefloop sources decide --config ../briefloop-workspace/config.yaml --merge
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief sources decide --config ..\mabw-workspace\config.yaml
-Get-Content ..\mabw-workspace\source_candidates.yaml
-multi-agent-brief sources decide --config ..\mabw-workspace\config.yaml --merge
+briefloop sources decide --config ..\briefloop-workspace\config.yaml
+Get-Content ..\briefloop-workspace\source_candidates.yaml
+briefloop sources decide --config ..\briefloop-workspace\config.yaml --merge
 ```
 
 ## 4. Doctor Check
 
 ```bash
-multi-agent-brief doctor --config ../mabw-workspace/config.yaml
+briefloop doctor --config ../briefloop-workspace/config.yaml
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief doctor --config ..\mabw-workspace\config.yaml
+briefloop doctor --config ..\briefloop-workspace\config.yaml
 ```
 
 ## 5. Subagent Handoff
@@ -184,7 +184,7 @@ After `audited_brief.md` exists and the auditor/quality gates are ready, use
 the writer-facing delivery verb:
 
 ```text
-/briefloop deliver ../mabw-workspace
+/briefloop deliver ../briefloop-workspace
 ```
 
 It runs the deterministic finalize path, verifies completion with
@@ -192,13 +192,13 @@ It runs the deterministic finalize path, verifies completion with
 generation command is still available:
 
 ```bash
-multi-agent-brief finalize --config ../mabw-workspace/config.yaml
+briefloop finalize --config ../briefloop-workspace/config.yaml
 ```
 
 PowerShell:
 
 ```powershell
-multi-agent-brief finalize --config ..\mabw-workspace\config.yaml
+briefloop finalize --config ..\briefloop-workspace\config.yaml
 ```
 
 This produces reader-facing output such as:
@@ -214,13 +214,13 @@ standalone audit/control copy to the reader as an extra artifact.
 To show the finalized local delivery bundle directly:
 
 ```bash
-multi-agent-brief deliver --workspace ../mabw-workspace --target local
+briefloop deliver --workspace ../briefloop-workspace --target local
 ```
 
 To send the bundle to Feishu, choose a channel and recipient explicitly:
 
 ```bash
-multi-agent-brief deliver --workspace ../mabw-workspace --target feishu --channel doc --recipient <folder_token>
+briefloop deliver --workspace ../briefloop-workspace --target feishu --channel doc --recipient <folder_token>
 ```
 
 ## Complete Workflow Example
@@ -231,7 +231,7 @@ User: I need to create a weekly brief for my solar manufacturing company.
 Claude Code:
   1. Uses source-planner to resolve source discovery.
   2. Runs /briefloop run to create handoff/control files.
-  3. If direct full workflow execution is needed, runs /generate-brief inside Claude Code.
+  3. Reads agent_handoff.md and follows the next safe action.
   4. Runs /briefloop deliver after audit and gates pass.
   5. Uses status and auditor findings to report artifact status and limitations.
 ```
@@ -256,5 +256,5 @@ Claude Code:
 - Use CLI tools for deterministic setup, validation, audit, and rendering.
 - Use subagents for source extraction, screening, analysis, editing, and final review.
 - Check `output/intermediate/audit_report.json` before distributing a brief.
-- `/briefloop status` calls `multi-agent-brief status --workspace <workspace> --json`;
+- `/briefloop status` calls `briefloop status --workspace <workspace> --json`;
   it reports stale control files instead of refreshing them.

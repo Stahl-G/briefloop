@@ -89,11 +89,11 @@ Claude Code 里的 writer 命令是：
 /briefloop run ./weekly-brief
 ```
 
-然后按照生成的 handoff 执行。Claude writer 路径里，完整 delegated workflow
-通常用：
+然后按照生成的 handoff 执行。Claude writer 路径里，继续使用
+`/briefloop status` 和生成的 handoff 来选择下一步安全动作：
 
 ```text
-/generate-brief ./weekly-brief
+/briefloop status ./weekly-brief
 ```
 
 `run` 是 handoff launcher。它本身不完成 stage，也不会绕过确定性 transaction。

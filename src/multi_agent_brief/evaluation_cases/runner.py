@@ -1510,7 +1510,16 @@ def _check_hermes_no_skip_finalize(*, repo_workdir: Path) -> dict[str, Any]:
         gates_idx = text.find("gates check")
         state_idx = text.find("state check", max(gates_idx, 0))
         stage_complete_idx = text.find("state stage-complete", max(state_idx, 0))
-        finalize_idx = text.find("multi-agent-brief finalize", max(stage_complete_idx, 0))
+        finalize_start = max(stage_complete_idx, 0)
+        finalize_candidates = [
+            idx
+            for idx in (
+                text.find("briefloop finalize", finalize_start),
+                text.find("multi-agent-brief finalize", finalize_start),
+            )
+            if idx != -1
+        ]
+        finalize_idx = min(finalize_candidates) if finalize_candidates else -1
         finalize_complete_idx = text.find("state finalize-complete", max(finalize_idx, 0))
         if (
             gates_idx == -1

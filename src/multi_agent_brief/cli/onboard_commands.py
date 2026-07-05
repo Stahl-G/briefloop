@@ -1,9 +1,9 @@
 """onboard — interactive and non-interactive onboarding commands.
 
 Two paths:
-  Human terminal:  multi-agent-brief onboard
+  Human terminal:  briefloop onboard
   Agent runtime:   collect answers in chat → write onboarding.json →
-                   multi-agent-brief init <workspace> --from-onboarding onboarding.json
+                   briefloop init <workspace> --from-onboarding onboarding.json
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     onboard_parser = subparsers.add_parser(
         "onboard",
         help="Start conversational onboarding: answer questions and generate onboarding.json. "
-        "Human terminal: run 'multi-agent-brief onboard'. "
+        "Human terminal: run 'briefloop onboard'. "
         "Agent runtime: create onboarding.json from chat answers, "
-        "then run 'multi-agent-brief init <workspace> --from-onboarding onboarding.json'.",
+        "then run 'briefloop init <workspace> --from-onboarding onboarding.json'.",
     )
     onboard_parser.add_argument(
         "--output",
@@ -66,11 +66,11 @@ def _onboard_template(args: argparse.Namespace) -> int:
     print(f"[onboard] Template written to: {output_path}")
     print()
     print("Fill in the fields, then validate:")
-    print(f"  multi-agent-brief onboard --validate {output_path}")
+    print(f"  briefloop onboard --validate {output_path}")
     print()
     print("Then create the workspace:")
-    print(f"  multi-agent-brief init <workspace> --from-onboarding {output_path}")
-    print(f"  multi-agent-brief run --workspace <workspace>")
+    print(f"  briefloop init <workspace> --from-onboarding {output_path}")
+    print(f"  briefloop run --workspace <workspace>")
     return 0
 
 
@@ -143,14 +143,14 @@ def _onboard_interactive(args: argparse.Namespace) -> int:
     if not sys.stdin.isatty():
         print("[error] onboard requires an interactive terminal.")
         print("        Agent runtime path: create onboarding.json from chat answers.")
-        print("        Then run: multi-agent-brief init <workspace> --from-onboarding onboarding.json")
+        print("        Then run: briefloop init <workspace> --from-onboarding onboarding.json")
         print("        Non-interactive helpers:")
-        print("          multi-agent-brief onboard --template")
-        print("          multi-agent-brief onboard --validate onboarding.json")
+        print("          briefloop onboard --template")
+        print("          briefloop onboard --validate onboarding.json")
         return 1
 
     print()
-    print("=== MABW Conversational Onboarding ===")
+    print("=== BriefLoop Conversational Onboarding ===")
     print("Answer a few questions to define your brief workspace.")
     print("Press Ctrl-C to cancel at any time.")
     print()
@@ -186,8 +186,8 @@ def _onboard_interactive(args: argparse.Namespace) -> int:
     print()
     print(f"[onboard] Onboarding complete. Saved to: {output_path}")
     print(
-        f"Next: multi-agent-brief init <workspace> --from-onboarding"
+        f"Next: briefloop init <workspace> --from-onboarding"
         f" {output_path}"
     )
-    print(f"Then: multi-agent-brief run --workspace <workspace>")
+    print(f"Then: briefloop run --workspace <workspace>")
     return 0

@@ -6,15 +6,15 @@ run needs repair.
 ## Legal Path
 
 ```bash
-multi-agent-brief repair route --workspace <workspace> --json
-multi-agent-brief repair start --workspace <workspace> --json
+briefloop repair route --workspace <workspace> --json
+briefloop repair start --workspace <workspace> --json
 ```
 
 Delegate only the reported `repair_owner` role. The owner may edit only
 `allowed_artifacts`. Then run:
 
 ```bash
-multi-agent-brief repair complete --workspace <workspace> --reason "<reason>" --json
+briefloop repair complete --workspace <workspace> --reason "<reason>" --json
 ```
 
 Rerun downstream stages from `must_rerun_from`.
