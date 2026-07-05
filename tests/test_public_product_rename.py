@@ -113,6 +113,45 @@ def test_public_product_rename_scan_is_limited_to_requested_paths(tmp_path) -> N
     assert len(findings) == 2
 
 
+def test_public_product_rename_default_scan_reports_missing_target(tmp_path, monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "TARGET_FILES", ["missing-first-user-doc.md"])
+    monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
+
+    findings = module.scan(root=tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].kind == "missing_target"
+    assert findings[0].path == tmp_path / "missing-first-user-doc.md"
+
+
+def test_public_product_rename_default_scan_reports_missing_cli_help(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(module, "TARGET_FILES", [])
+    monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [("removed", "command")])
+    monkeypatch.setattr(module, "_briefloop_help_text", lambda args: "")
+
+    findings = module.scan()
+
+    assert len(findings) == 1
+    assert findings[0].kind == "missing_cli_help"
+    assert str(findings[0].path) == "<briefloop removed command --help>"
+
+
+def test_public_product_rename_path_help_is_replacement_only() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    compact = " ".join(result.stdout.split())
+    assert "Replacement path to scan instead of the default first-user surfaces" in compact
+    assert "Additional or replacement" not in result.stdout
+
+
 def test_installed_briefloop_command_passes_public_rename_guard(tmp_path, capsys) -> None:
     module = _load_module()
     target = tmp_path / "claude"
@@ -141,6 +180,19 @@ def test_public_product_rename_guard_scans_briefloop_cli_help() -> None:
     ]
 
     assert findings == [], "\n".join(finding.format(ROOT) for finding in findings)
+
+
+def test_claude_first_response_uses_briefloop_writer_command() -> None:
+    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    first_response = text.split("## Standard Claude Code Path", maxsplit=1)[0]
+
+    assert "/briefloop new" in first_response
+    assert "/briefloop run <workspace>" in first_response
+    assert "/briefloop status <workspace>" in first_response
+    assert "/briefloop feedback <workspace>" in first_response
+    assert "/briefloop deliver <workspace>" in first_response
+    assert "/mabw" not in first_response
+    assert "MABW" not in first_response
 
 
 def test_compatibility_quarantine_classifies_remaining_legacy_names() -> None:

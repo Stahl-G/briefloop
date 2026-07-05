@@ -30,6 +30,7 @@ TARGET_FILES = [
     "docs/workbuddy-smoke-checklist.md",
     "docs/windows-powershell.md",
     "docs/windows-powershell.zh-CN.md",
+    "CLAUDE.md",
     "scripts/setup.sh",
     "scripts/setup.ps1",
     ".agents/skills/briefloop-workbuddy/SKILL.md",
@@ -114,7 +115,14 @@ def scan_file(path: Path) -> list[Finding]:
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return []
+        return [
+            Finding(
+                path=path,
+                line=1,
+                kind="missing_target",
+                sample="configured public rename target file is missing",
+            )
+        ]
     findings: list[Finding] = []
     for line_no, line in enumerate(text.splitlines(), start=1):
         findings.extend(_line_findings(path, line_no, line))
@@ -143,7 +151,18 @@ def _briefloop_cli_help_findings() -> list[Finding]:
     for args in CLI_HELP_COMMANDS:
         label = " ".join(("briefloop", *args, "--help"))
         path = Path(f"<{label}>")
-        for line_no, line in enumerate(_briefloop_help_text(args).splitlines(), start=1):
+        help_lines = _briefloop_help_text(args).splitlines()
+        if not help_lines:
+            findings.append(
+                Finding(
+                    path=path,
+                    line=1,
+                    kind="missing_cli_help",
+                    sample="configured CLI help target produced no stdout",
+                )
+            )
+            continue
+        for line_no, line in enumerate(help_lines, start=1):
             findings.extend(_line_findings(path, line_no, line))
     return findings
 
@@ -164,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         "--path",
         action="append",
         default=None,
-        help="Additional or replacement path to scan. May be repeated.",
+        help="Replacement path to scan instead of the default first-user surfaces. May be repeated.",
     )
     args = parser.parse_args(argv)
 
