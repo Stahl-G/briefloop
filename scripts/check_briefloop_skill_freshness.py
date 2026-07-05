@@ -77,6 +77,13 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "deterministic local",
         "Skill zip",
         "not a WorkBuddy Marketplace publication",
+        "CodeBuddy project Skill adapter",
+        ".codebuddy/skills/briefloop/",
+        "must not use `context: fork`",
+        "CodeBuddy project role agents",
+        ".codebuddy/agents/briefloop-*.md",
+        "must not run `briefloop` or `multi-agent-brief` CLI commands",
+        "main CodeBuddy session remains responsible for deterministic transactions",
     ],
     "references/status-and-gates.md": [
         "Coverage/omission findings",

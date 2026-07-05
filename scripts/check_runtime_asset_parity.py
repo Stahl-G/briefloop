@@ -33,6 +33,7 @@ REQUIRED_SOURCE_ASSETS = [
     ".codebuddy/agents/briefloop-editor.md",
     ".codebuddy/agents/briefloop-auditor.md",
     ".codebuddy/agents/briefloop-formatter.md",
+    ".codebuddy/skills/briefloop/SKILL.md",
     "scripts/check_workbuddy_skill_pack.py",
     "scripts/install.sh",
     "scripts/install.ps1",

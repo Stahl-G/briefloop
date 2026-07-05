@@ -30,6 +30,7 @@ WORKBUDDY_DOCS = (
 )
 WORKBUDDY_SMOKE_CHECKLIST = ROOT / "docs" / "workbuddy-smoke-checklist.md"
 CODEBUDDY_AGENT_ROOT = ROOT / ".codebuddy" / "agents"
+CODEBUDDY_SKILL = ROOT / ".codebuddy" / "skills" / "briefloop" / "SKILL.md"
 CODEBUDDY_ROLE_AGENTS = {
     "briefloop-scout.md": {
         "tools": "tools: Read, Write, Grep, Glob",
@@ -108,6 +109,39 @@ def test_codebuddy_role_agents_are_project_level_assets() -> None:
         assert "ask the main CodeBuddy session to run deterministic validation" in compact
         for output in spec["outputs"]:
             assert output in text
+
+
+def test_codebuddy_skill_adapter_is_main_session_orchestrator() -> None:
+    text = _read(CODEBUDDY_SKILL)
+    compact = _compact(text)
+    frontmatter = text.split("---", 2)[1]
+
+    assert "name: briefloop" in text
+    assert "main CodeBuddy session" in text
+    assert "not a forked" in text
+    assert "context:" not in frontmatter
+    assert "Do not add `context: fork`" in text
+    assert ".agents/skills/briefloop-workbuddy/SKILL.md" in text
+    assert ".agents/skills/briefloop-workbuddy/references/" in text
+    assert ".codebuddy/skills/briefloop/SKILL.md" in text
+    assert "Do not perform Scout, Analyst, Editor, Auditor, or Formatter work in the main" in text
+    for role_name in [
+        "briefloop-scout",
+        "briefloop-analyst",
+        "briefloop-editor",
+        "briefloop-auditor",
+        "briefloop-formatter",
+    ]:
+        assert role_name in text
+        assert f".codebuddy/agents/{role_name}.md" in text
+    for phrase in [
+        "Role sub-agents may draft only handoff-assigned role artifacts",
+        "They must not run `briefloop` or `multi-agent-brief` CLI commands",
+        "The main CodeBuddy session owns deterministic CLI transactions",
+        "Before every role delegation and after every deterministic CLI transaction",
+        "Do not let a role sub-agent spawn another sub-agent",
+    ]:
+        assert phrase in compact
 
 
 def test_codebuddy_role_agents_refuse_control_authority() -> None:
@@ -315,6 +349,8 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         compact = _compact(text)
         assert "WorkBuddy Skill source bundle" in text
         assert ".agents/skills/briefloop-workbuddy/" in text
+        assert ".codebuddy/skills/briefloop/" in text
+        assert ".codebuddy/agents/briefloop-*.md" in text
         assert "Experimental" in text
         assert "source-clone-only" in text.lower()
         assert "briefloop workbuddy pack-skill --output dist/workbuddy" in text
@@ -366,6 +402,8 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "briefloop status --workspace <workspace>",
         "briefloop state check --workspace <workspace>",
         "briefloop quality summarize --workspace <workspace>",
+        ".codebuddy/skills/briefloop/",
+        ".codebuddy/agents/briefloop-*.md",
         "must not auto-deliver",
         "not evidence that WorkBuddy is a supported delegated runtime",
     ]:

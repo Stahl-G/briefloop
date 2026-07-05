@@ -27,6 +27,19 @@ Historical implementation name: MABW
   - generated zip is not a WorkBuddy Marketplace publication
   - must not claim WorkBuddy subagents ran unless WorkBuddy explicitly
     delegated and recorded those roles
+- CodeBuddy project Skill adapter:
+  - path: `.codebuddy/skills/briefloop/`
+  - status: experimental; source-clone-only
+  - stays in the main CodeBuddy session and must not use `context: fork`
+  - invokes CodeBuddy project role agents only when explicitly delegated
+  - does not add CodeBuddy runtime support, gate authority, delivery approval,
+    release authority, or semantic proof
+- CodeBuddy project role agents:
+  - path: `.codebuddy/agents/briefloop-*.md`
+  - status: experimental; source-clone-only
+  - role agents draft handoff-assigned artifacts only
+  - role agents must not run `briefloop` or `multi-agent-brief` CLI commands
+  - main CodeBuddy session remains responsible for deterministic transactions
 - BriefLoop skill is an agent protocol surface, not the `/briefloop` slash
   command implementation.
 - Python package/module path: `multi_agent_brief`

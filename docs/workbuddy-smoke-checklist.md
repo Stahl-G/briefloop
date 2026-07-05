@@ -27,6 +27,16 @@ or any issue/PR comment that reports the result.
   WorkBuddy through WorkBuddy's local Skill import flow. If installing from a
   folder, use `.agents/skills/briefloop-workbuddy/`, not the repo operator
   protocol skill at `.agents/skills/briefloop/`.
+- For CodeBuddy project-level discovery, the source checkout exposes the
+  project Skill and role-agent assets:
+
+  ```text
+  .codebuddy/skills/briefloop/
+  .codebuddy/agents/briefloop-*.md
+  ```
+
+  The CodeBuddy Skill must run in the main session. It must not use
+  `context: fork`.
 
 ## Smoke Path
 
@@ -57,6 +67,23 @@ or any issue/PR comment that reports the result.
    - WorkBuddy does not claim Scout, Analyst, Editor, Auditor, Formatter, or any
      other role subagent ran unless WorkBuddy actually delegated and recorded
      that role.
+
+   If CodeBuddy project role agents are used, role delegation must be explicit
+   and use the checked-in project sub-agents:
+
+   ```text
+   briefloop-scout
+   briefloop-analyst
+   briefloop-editor
+   briefloop-auditor
+   briefloop-formatter
+   ```
+
+   Expected:
+   - role agents draft only handoff-assigned artifacts;
+   - role agents do not run BriefLoop CLI commands;
+   - the main CodeBuddy session runs deterministic validation, stage, gate,
+     finalize, delivery, and quality commands when allowed.
 
 4. Ask WorkBuddy to inspect status and state.
 
@@ -107,6 +134,8 @@ The smoke passes only if all of these are true:
 - WorkBuddy did not hand-edit Python-owned control files or frozen artifacts.
 - WorkBuddy did not claim delegated role execution without actual WorkBuddy
   delegation.
+- CodeBuddy project role agents, when used, did not run CLI transactions or
+  edit Python-owned control files.
 - WorkBuddy did not describe traceability as semantic proof, output-quality
   improvement proof, delivery approval, release approval, or publication
   authority.

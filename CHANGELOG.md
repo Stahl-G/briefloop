@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added an experimental CodeBuddy project Skill adapter under
+  `.codebuddy/skills/briefloop/`. The adapter keeps orchestration in the main
+  CodeBuddy session, points to the WorkBuddy/CodeBuddy canonical Skill
+  references, and can invoke project role agents explicitly. It does not add a
+  `codebuddy` runtime, gate authority, delivery approval, release authority, or
+  semantic proof.
 - Added experimental CodeBuddy project role sub-agent source assets for
   BriefLoop Scout, Analyst, Editor, Auditor, and Formatter. These are
   source-clone-only drafting adapters and do not add CodeBuddy runtime support,
