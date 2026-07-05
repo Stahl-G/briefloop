@@ -57,6 +57,30 @@ def test_public_product_rename_guard_reports_line_and_suggestion(tmp_path) -> No
     assert "prefer `briefloop`" in result.stdout
 
 
+def test_public_product_rename_guard_rejects_legacy_names_before_sentence_punctuation(tmp_path) -> None:
+    target = tmp_path / "getting-started.md"
+    target.write_text(
+        "Use multi-agent-brief.\n"
+        "Formerly MABW.\n"
+        "Still not /mabw.\n"
+        "Do not flag multi-agent-brief-workflow or MABW-080 compatibility ids here.\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--path", str(target)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert f"{target}:1" in result.stdout
+    assert f"{target}:2" in result.stdout
+    assert f"{target}:3" in result.stdout
+    assert f"{target}:4" not in result.stdout
+
+
 def test_public_product_rename_guard_rejects_old_setup_banner(tmp_path) -> None:
     target = tmp_path / "scripts" / "setup.sh"
     target.parent.mkdir()

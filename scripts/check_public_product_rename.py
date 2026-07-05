@@ -56,8 +56,8 @@ CLI_HELP_COMMANDS = [
 
 FORBIDDEN_PATTERNS = [
     ("slash_mabw", re.compile(r"(?<![\w.-])/mabw\b", re.IGNORECASE)),
-    ("multi_agent_brief_cli", re.compile(r"(?<![\w.-])multi-agent-brief(?![\w.-])")),
-    ("mabw_name", re.compile(r"(?<![\w./-])mabw(?![\w.-])", re.IGNORECASE)),
+    ("multi_agent_brief_cli", re.compile(r"(?<![\w.-])multi-agent-brief(?![\w-])")),
+    ("mabw_name", re.compile(r"(?<![\w./-])mabw(?![\w-])", re.IGNORECASE)),
 ]
 
 FORBIDDEN_SETUP_OUTPUT_PATTERNS = [
