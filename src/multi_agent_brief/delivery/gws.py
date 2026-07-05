@@ -108,13 +108,13 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
         if result is None:
             return "gmail: unable to check gws auth. Run: gws auth setup; gws auth login"
         if result.returncode != 0:
-            if _has_env_auth():
+            if _has_external_auth_signal():
                 return None
             return "gmail: gws is not authenticated. Run: gws auth setup; gws auth login"
         payload = _json_object_from_output(result.stdout)
         if payload is None:
             return None
-        if isinstance(payload, dict) and payload.get("auth_method") == "none" and not _has_env_auth():
+        if isinstance(payload, dict) and payload.get("auth_method") == "none" and not _has_external_auth_signal():
             return "gmail: gws is not authenticated. Run: gws auth setup; gws auth login"
         return None
 
@@ -149,14 +149,29 @@ def _metadata_list(value: Any) -> list[str]:
     return [str(item) for item in value if str(item).strip()]
 
 
-def _has_env_auth() -> bool:
-    return any(
+def _has_external_auth_signal() -> bool:
+    if any(
         os.environ.get(name)
         for name in (
             "GOOGLE_WORKSPACE_CLI_TOKEN",
             "GWS_TOKEN",
+            "GOOGLE_APPLICATION_CREDENTIALS",
         )
-    )
+    ):
+        return True
+    return any(path.exists() for path in _well_known_adc_paths())
+
+
+def _well_known_adc_paths() -> list[Path]:
+    paths: list[Path] = []
+    cloudsdk_config = os.environ.get("CLOUDSDK_CONFIG")
+    if cloudsdk_config:
+        paths.append(Path(cloudsdk_config).expanduser() / "application_default_credentials.json")
+    paths.append(Path.home() / ".config" / "gcloud" / "application_default_credentials.json")
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        paths.append(Path(appdata).expanduser() / "gcloud" / "application_default_credentials.json")
+    return paths
 
 
 def _json_object_from_output(stdout: str) -> dict[str, Any] | None:
