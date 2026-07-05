@@ -88,6 +88,8 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
+    assert checks["first_user_docs.README.md.three_page_block"]["status"] == "pass"
+    assert checks["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
     assert checks["first_user_route.README.md"]["status"] == "pass"
     assert checks["first_user_route.README.zh-CN.md"]["status"] == "pass"
     assert checks["first_user_route.docs/getting-started.md"]["status"] == "pass"
@@ -155,6 +157,40 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     readme_check = checks_by_id["first_user_docs.README.md.first_screen_links"]
     assert readme_check["status"] == "fail"
     assert "docs/architecture-status.md" in readme_check["detail"]
+
+
+def test_first_user_docs_guard_rejects_extra_links_in_readme_user_block(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    (tmp_path / "README.md").write_text(
+        "First-user path:\n"
+        "- [Getting Started](docs/getting-started.md)\n"
+        "- [Weekly Loop](docs/weekly-loop.md)\n"
+        "- [Troubleshooting](docs/troubleshooting.md)\n"
+        "- [Golden reference workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
+        "- [Architecture Status](docs/architecture-status.md)\n"
+        "Architecture reference and contributor docs:\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "README.zh-CN.md").write_text(
+        "## 🗂️ 文档入口\n"
+        "新用户先看：\n"
+        "- [Getting Started](docs/getting-started.md)\n"
+        "- [Weekly Loop](docs/weekly-loop.md)\n"
+        "- [Troubleshooting](docs/troubleshooting.md)\n"
+        "- [Golden reference workspace](examples/reference-workspaces/industry-weekly-demo/README.md)\n"
+        "架构参考和贡献者文档：\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_readme_first_user_doc_blocks(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    readme_check = checks_by_id["first_user_docs.README.md.three_page_block"]
+    assert readme_check["status"] == "fail"
+    assert "docs/architecture-status.md" in readme_check["detail"]
+    assert checks_by_id["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
 
 
 def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path, monkeypatch) -> None:

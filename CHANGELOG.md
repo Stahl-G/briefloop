@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Hardened the first-user documentation guard so README and Chinese README keep
+  the user-facing document block focused on Getting Started, Weekly Loop,
+  Troubleshooting, and the golden reference workspace.
 - Added a read-only `briefloop status` progress projection with user-language
   work labels such as `prepare sources`, `select claims`, `audit brief`, and
   `build quality package`. When post-finalize Quality Panel closeout is

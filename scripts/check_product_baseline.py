@@ -273,6 +273,35 @@ README_FIRST_SCREEN_FORBIDDEN_LINKS = [
     "docs/architecture-status.md",
     "docs/roadmap.md",
 ]
+README_FIRST_USER_DOC_BLOCKS = {
+    "README.md": ("First-user path:", "Architecture reference and contributor docs:"),
+    "README.zh-CN.md": ("## 🗂️ 文档入口", "架构参考和贡献者文档："),
+}
+README_FIRST_USER_DOC_BLOCK_LINKS = [
+    "docs/getting-started.md",
+    "docs/weekly-loop.md",
+    "docs/troubleshooting.md",
+    "examples/reference-workspaces/industry-weekly-demo/README.md",
+]
+README_FIRST_USER_DOC_BLOCK_FORBIDDEN_LINKS = [
+    "docs/15-minute-pilot.md",
+    "docs/15-minute-pilot.zh-CN.md",
+    "docs/features.md",
+    "docs/features.zh-CN.md",
+    "docs/golden-path.md",
+    "docs/golden-path.zh-CN.md",
+    "docs/workbuddy.md",
+    "docs/workbuddy.zh-CN.md",
+    "docs/weekly-use.md",
+    "docs/weekly-use.zh-CN.md",
+    "docs/architecture-status.md",
+    "docs/architecture-status.zh-CN.md",
+    "docs/roadmap.md",
+    "docs/roadmap.zh-CN.md",
+    "docs/briefloop-naming.md",
+    "docs/red-lines-and-anti-patterns.md",
+    "docs/support-matrix.md",
+]
 FIRST_USER_ROUTE_SURFACES = {
     "README.md": ("## 🧪 Three ways to try it", "## 🧭 Current status"),
     "README.zh-CN.md": ("## 🧪 三条上手路径", "## 🧭 当前状态"),
@@ -865,6 +894,8 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         f"missing_links={missing_links} forbidden_links={forbidden_links}",
     )
 
+    _check_readme_first_user_doc_blocks(checks)
+
 
 def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
     for rel_path, (start_marker, end_marker) in FIRST_USER_ROUTE_SURFACES.items():
@@ -891,6 +922,35 @@ def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
             bool(route_text) and not missing_entries and not forbidden_terms,
             "missing_entries="
             f"{missing_entries} forbidden_internal_or_control_terms={forbidden_terms}",
+        )
+
+
+def _check_readme_first_user_doc_blocks(checks: list[dict[str, str]]) -> None:
+    link_re = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+    allowed = set(README_FIRST_USER_DOC_BLOCK_LINKS)
+    for rel_path, (start_marker, end_marker) in README_FIRST_USER_DOC_BLOCKS.items():
+        path = ROOT / rel_path
+        if not path.exists():
+            _append_check(
+                checks,
+                f"first_user_docs.{rel_path}.three_page_block",
+                False,
+                f"missing README doc block surface: {rel_path}",
+            )
+            continue
+        block = _section_between(path.read_text(encoding="utf-8"), start_marker, end_marker)
+        links = [match.group(1) for match in link_re.finditer(block)]
+        missing_links = [link for link in README_FIRST_USER_DOC_BLOCK_LINKS if link not in links]
+        forbidden_links = [
+            link for link in README_FIRST_USER_DOC_BLOCK_FORBIDDEN_LINKS if link in links
+        ]
+        extra_links = sorted(set(links) - allowed)
+        _append_check(
+            checks,
+            f"first_user_docs.{rel_path}.three_page_block",
+            bool(block) and not missing_links and not forbidden_links and not extra_links,
+            "missing_links="
+            f"{missing_links} forbidden_links={forbidden_links} extra_links={extra_links}",
         )
 
 
