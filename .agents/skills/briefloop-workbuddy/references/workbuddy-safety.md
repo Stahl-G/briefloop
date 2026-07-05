@@ -67,5 +67,7 @@ blockers, or claim subagents ran because of translation.
 
 If a user asks to share results, use only BriefLoop-generated delivery or audit
 bundles when present. If the workspace has no `output/delivery/` or
-`finalize_report.json`, say there is only a draft. If any package candidate
-contains `.env`, stop and recommend key rotation before sharing anything.
+`finalize_report.json`, say there is only a draft when
+`output/intermediate/audited_brief.md` or `output/brief.md` exists; otherwise
+say no draft or delivery exists yet. If any package candidate contains `.env`,
+stop and recommend key rotation before sharing anything.
