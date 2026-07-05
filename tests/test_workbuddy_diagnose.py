@@ -81,6 +81,9 @@ def test_workbuddy_diagnose_json_reports_run_card_and_secret_risk(
         "latest_gate_status": "unknown",
         "finalize_report": "missing",
         "delivery_dir": "missing",
+        "finalize_event": "missing",
+        "delivery_event": "missing",
+        "share_workspace_zip_allowed": False,
         "next_allowed_action": "stop_run_integrity_not_clean",
     }
     assert payload["secret_risk"]["env_present"] is True
@@ -96,6 +99,10 @@ def test_workbuddy_diagnose_json_reports_run_card_and_secret_risk(
     ]
     assert payload["finalize"]["exists"] is False
     assert payload["delivery"]["exists"] is False
+    assert payload["control_files"]["workflow_state"] == "present"
+    assert payload["control_files"]["runtime_manifest"] == "present"
+    assert payload["control_files"]["artifact_registry"] == "present"
+    assert payload["control_files"]["event_log"] == "missing"
 
 
 def test_workbuddy_diagnose_text_prints_run_card_without_delivery_claim(
@@ -116,9 +123,107 @@ def test_workbuddy_diagnose_text_prints_run_card_without_delivery_claim(
         "latest_gate_status:",
         "finalize_report:",
         "delivery_dir:",
+        "finalize_event:",
+        "delivery_event:",
+        "share_workspace_zip_allowed:",
         "next_allowed_action:",
     ):
         assert field in output
     assert "delivery complete" not in output.lower()
     assert "delivered" not in output.lower()
     assert "read_only_workbuddy_run_card_not_gate_delivery_release_or_semantic_proof" in output
+
+
+def test_workbuddy_diagnose_json_fails_soft_on_corrupt_utf8_control_json(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    (ws / "output" / "intermediate" / "workflow_state.json").write_bytes(b"\xff\xfe\x00")
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["workflow"]["workflow_state_status"] == "unreadable_utf8"
+    assert payload["control_files"]["workflow_state"] == "unreadable_utf8"
+    assert payload["run_card"]["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
+
+
+def test_workbuddy_diagnose_secret_risk_controls_next_action_for_finalized_workspace(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (ws / ".env").write_text("TAVILY_API_KEY=secret-value\n", encoding="utf-8")
+    (ws / "output" / "delivery").mkdir(parents=True)
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "finalize", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps({"status": "pass"}),
+        encoding="utf-8",
+    )
+    (intermediate / "event_log.jsonl").write_text(
+        json.dumps({"event_type": "finalize_completed"}) + "\n"
+        + json.dumps({"event_type": "delivery_succeeded"}) + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    raw = capsys.readouterr().out
+    assert "secret-value" not in raw
+    payload = json.loads(raw)
+    assert payload["run_card"]["finalize_report"] == "present"
+    assert payload["run_card"]["delivery_dir"] == "present"
+    assert payload["run_card"]["finalize_event"] == "present"
+    assert payload["run_card"]["delivery_event"] == "present"
+    assert payload["run_card"]["share_workspace_zip_allowed"] is False
+    assert payload["run_card"]["next_allowed_action"] == "do_not_share_workspace_zip_secret_risk"
+
+
+def test_workbuddy_diagnose_flags_finalize_delivery_file_event_gap(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (ws / "output" / "delivery").mkdir(parents=True)
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "finalize", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps({"status": "pass"}),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_card"]["finalize_report"] == "present"
+    assert payload["run_card"]["delivery_dir"] == "present"
+    assert payload["run_card"]["finalize_event"] == "missing"
+    assert payload["run_card"]["delivery_event"] == "missing"
+    assert payload["run_card"]["next_allowed_action"] == "inspect_finalize_delivery_event_gap"
