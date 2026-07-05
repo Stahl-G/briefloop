@@ -38,6 +38,19 @@ from multi_agent_brief.product.trajectory_regulation import project_workspace_tr
 
 INTERMEDIATE_DIR = Path("output/intermediate")
 
+_STAGE_PROGRESS_LABELS = {
+    "doctor": "prepare sources",
+    "source-discovery": "prepare sources",
+    "input-governance": "prepare sources",
+    "scout": "select claims",
+    "screener": "select claims",
+    "claim-ledger": "select claims",
+    "analyst": "draft brief",
+    "editor": "edit brief",
+    "auditor": "audit brief",
+    "finalize": "finalize delivery",
+}
+
 
 def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     """Return a read-only status summary without refreshing runtime state.
@@ -74,6 +87,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "materiality_selection": {},
         "support_wording": {},
         "quality_panel_closeout": {},
+        "progress": {},
         "timing": {},
         "stale_or_unknown": [],
         "suggested_next_command": None,
@@ -81,6 +95,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     if not payload["ok"]:
         payload["error"] = f"Workspace directory not found: {ws}"
         payload["suggested_next_command"] = "briefloop init <workspace> --demo"
+        payload["progress"] = _progress_summary(payload)
         return payload
 
     manifest = _read_json(ws / INTERMEDIATE_DIR / "runtime_manifest.json")
@@ -194,6 +209,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         stale.append(f"quality_gate_report schema warning: {warning}")
 
     payload["suggested_next_command"] = _suggested_next_command(ws, payload)
+    payload["progress"] = _progress_summary(payload)
     return payload
 
 
@@ -231,6 +247,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     support_wording = status.get("support_wording") or {}
     quality_panel_closeout = status.get("quality_panel_closeout") or {}
     events = status.get("events") or {}
+    progress = status.get("progress") or {}
     timing = status.get("timing") or {}
     run_integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
 
@@ -247,6 +264,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
                 f"{run_integrity.get('status') or 'unknown'} "
                 f"reference_eligible={run_integrity.get('reference_eligible')}"
             ),
+            _format_progress_line(progress),
             _format_trajectory_decision_narrowing_line(workflow),
             (
                 "[status] artifacts: "
@@ -490,6 +508,16 @@ def _format_timing_line(timing: dict[str, Any]) -> str:
     return f"[status] timing: {status}"
 
 
+def _format_progress_line(progress: dict[str, Any]) -> str:
+    return (
+        "[status] progress: "
+        f"{progress.get('status') or 'unknown'} "
+        f"current_work=\"{progress.get('current_work') or 'check workspace'}\" "
+        f"message=\"{progress.get('message') or ''}\" "
+        f"next=\"{progress.get('next_command') or ''}\""
+    )
+
+
 def _format_fact_layer_import_line(summary: dict[str, Any]) -> str:
     if summary.get("status") == "valid":
         freshness = summary.get("freshness_at_import") if isinstance(summary.get("freshness_at_import"), dict) else {}
@@ -660,7 +688,7 @@ def _event_summary(path: Path) -> dict[str, Any]:
         return {"present": False, "event_count": 0, "corrupt_count": 0, "recent_events": []}
     try:
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         return {
             "present": True,
             "event_count": 0,
@@ -699,7 +727,7 @@ def _event_records_best_effort(path: Path) -> list[dict[str, Any]]:
         return []
     try:
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return []
     records: list[dict[str, Any]] = []
     for line in lines:
@@ -846,13 +874,93 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     current_stage = workflow.get("current_stage")
     if fact_layer_import.get("status") == "valid" and current_stage == "analyst":
         return f"briefloop run --workspace {workspace} --recipe fast-rerun --skip-doctor"
-    if current_stage == "finalize":
-        return f"/briefloop deliver {workspace}"
     quality_closeout = status.get("quality_panel_closeout") or {}
     if quality_closeout.get("status") in {"recommended", "stale_or_invalid"}:
         return f"briefloop quality summarize --workspace {workspace}"
+    if current_stage == "finalize":
+        return f"/briefloop deliver {workspace}"
     if current_stage == "auditor" and gate.get("status") != "pass":
         return f"briefloop gates check --workspace {workspace} --stage auditor"
     if current_stage:
         return f"/briefloop run {workspace}"
     return f"briefloop run --workspace {workspace} --runtime claude --skip-doctor"
+
+
+def _progress_summary(status: dict[str, Any]) -> dict[str, Any]:
+    workflow = status.get("workflow") if isinstance(status.get("workflow"), dict) else {}
+    runtime = status.get("runtime") if isinstance(status.get("runtime"), dict) else {}
+    events = status.get("events") if isinstance(status.get("events"), dict) else {}
+    quality_closeout = (
+        status.get("quality_panel_closeout") if isinstance(status.get("quality_panel_closeout"), dict) else {}
+    )
+    suggested_next = str(status.get("suggested_next_command") or "")
+    current_stage = _text(workflow.get("current_stage"))
+    current_work = _stage_progress_label(current_stage)
+    base = {
+        "schema_version": "briefloop.status_progress.v1",
+        "runtime_effect": "read_only",
+        "source": "workspace_status_projection",
+        "current_stage": current_stage or None,
+        "current_work": current_work,
+        "next_command": suggested_next,
+    }
+    if not status.get("ok"):
+        return {
+            **base,
+            "status": "workspace_missing",
+            "current_work": "create workspace",
+            "message": "Workspace folder was not found; create or choose a workspace before running BriefLoop.",
+        }
+    if int(events.get("corrupt_count") or 0) > 0:
+        return {
+            **base,
+            "status": "needs_operator_action",
+            "current_work": "check run record",
+            "message": "The event log has unreadable records; inspect JSON status or state before continuing.",
+        }
+    if not runtime.get("present"):
+        return {
+            **base,
+            "status": "not_started",
+            "current_work": "create handoff",
+            "message": "Create or refresh the BriefLoop handoff before stage work.",
+        }
+    narrowing = workflow.get("trajectory_regulation") if isinstance(workflow.get("trajectory_regulation"), dict) else {}
+    if narrowing.get("status") == "decision_narrowed":
+        return {
+            **base,
+            "status": "human_review_needed",
+            "message": "Retry or repair budget is exhausted; request human review or block the run.",
+        }
+    if workflow.get("blocked"):
+        return {
+            **base,
+            "status": "blocked",
+            "message": "The run is blocked; inspect state and repair guidance before continuing.",
+        }
+    if quality_closeout.get("status") in {"recommended", "stale_or_invalid"}:
+        return {
+            **base,
+            "status": "needs_quality_package",
+            "current_work": "build quality package",
+            "message": "Generate or refresh the Quality Panel and summary before closeout.",
+        }
+    if current_stage:
+        return {
+            **base,
+            "status": "ready_for_operator",
+            "message": f"Continue the {current_work} step through the suggested command or handoff.",
+        }
+    return {
+        **base,
+        "status": "unknown",
+        "message": "Runtime state is incomplete; inspect status JSON or create a handoff before continuing.",
+    }
+
+
+def _stage_progress_label(stage_id: str) -> str:
+    return _STAGE_PROGRESS_LABELS.get(stage_id, "check workspace")
+
+
+def _text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
