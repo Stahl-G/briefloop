@@ -215,7 +215,9 @@ def _ensure_checked_inputs_for_adjudication(
     if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "missing_checked_inputs":
         return projection
     report = _read_json_if_exists(report_path)
-    if not isinstance(report, dict) or "checked_inputs" in report:
+    if not isinstance(report, dict):
+        return projection
+    if "checked_inputs" in report and report.get("checked_inputs") is not None:
         return projection
     try:
         report["checked_inputs"] = build_semantic_assessment_checked_inputs(workspace)
@@ -436,7 +438,9 @@ def _event_link_error(record: Mapping[str, Any], event_index: Mapping[str, Mappi
         if _clean_text(metadata.get(field)) != _clean_text(record.get(field)):
             return f"event_metadata_mismatch:{field}"
     for field in ("semantic_assessment_report_sha256", "checked_inputs_digest"):
-        if _clean_text(record.get(field)) and _clean_text(metadata.get(field)) != _clean_text(record.get(field)):
+        record_value = _clean_text(record.get(field))
+        metadata_value = _clean_text(metadata.get(field))
+        if (record_value or metadata_value) and metadata_value != record_value:
             return f"event_metadata_mismatch:{field}"
     return None
 
