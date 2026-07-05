@@ -93,8 +93,11 @@ def main() -> int:
         errors.append(_error("version matrix does not separate planned controls"))
     if "MABW-080 / BriefLoop-090 experiment operations" in matrix_text:
         errors.append(_error("version matrix lists BriefLoop-090 as a current experiment operation surface"))
-    if "BriefLoop-090 is a future readiness/fresh-rerun label" not in matrix_text:
-        errors.append(_error("version matrix does not explain BriefLoop-090 is not a current CLI namespace"))
+    if (
+        "BriefLoop-090 is an archived experiment/readiness label" not in matrix_text
+        or "not a current CLI namespace" not in matrix_text
+    ):
+        errors.append(_error("version matrix does not explain BriefLoop-090 is archived and not a current CLI namespace"))
 
     forbidden_positive_claims = [
         "BriefLoop proves truth.",

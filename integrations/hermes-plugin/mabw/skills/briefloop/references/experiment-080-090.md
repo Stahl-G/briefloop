@@ -3,7 +3,15 @@
 Read this for experiment cases, condition workspaces, scorecards, blind packs,
 assessments, and summaries.
 
-BriefLoop-090 is a future experiment/readiness label. It is not the semver release number and not a current CLI namespace. MABW-080 remains the shipped experiment command namespace.
+MABW-080 and BriefLoop-090 are experiment-line labels, not semver release
+numbers and not product workspace paths. MABW-080 remains the shipped experiment
+command namespace. BriefLoop-090 is the archived/readiness label for the
+public-safe controlled pilot, not a separate CLI namespace.
+
+Use this reference only for explicit experiment work, scorecard audit,
+reference-run reproduction, or public-claim boundary checks. Do not route
+normal workspace onboarding, WorkBuddy first-user tasks, or product golden paths
+through `experiments 080`.
 
 ## Current Command Loop
 
@@ -16,6 +24,9 @@ briefloop experiments 080 export-blind-pack --case <case_dir> --scorecard <basel
 briefloop experiments 080 import-assessment --assessment <blind_assessment.json> --blind-pack <blind_pack_dir>/blind_pack.json --reveal-mapping <blind_pack_dir>/reveal_mapping.json --output <assessed_scorecard.json>
 briefloop experiments 080 summarize --case <case_dir> --scorecard <assessed_scorecard.json> --output <summary.json>
 ```
+
+These commands are archived experimental tooling. They remain callable for
+reproducibility and auditability, but they are not ordinary brief-delivery commands.
 
 ## Assessment Targets
 
@@ -46,6 +57,13 @@ Formal summaries require condition-blind, hash-bound assessment artifacts. A
 scorecard carrying copied or hand-edited blind metadata is not enough. Use the
 export/import commands so blind item IDs, audited-brief hashes, scorecard
 hashes, condition identity, run IDs, and guidance entry IDs are bound.
+
+## Closeout Boundary
+
+The current public closeout record is
+`docs/reference-runs/briefloop-090-experiment-closeout.md`. The closeout keeps
+the harness available for archived evidence and explicit future research work,
+but it removes MABW-080 / BriefLoop-090 from first-user product surfaces.
 
 ## Public Claim Boundary
 

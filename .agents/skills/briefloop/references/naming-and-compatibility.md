@@ -39,7 +39,7 @@ notes, or compatibility claims.
   stages.
 - Keep README canonicalization intact. `README_en.md` should remain a pointer,
   not a third long-form README body.
-- BriefLoop-090 can be a future experiment/readiness label; v0.9.0 is a semver
+- BriefLoop-090 is an archived experiment/readiness label; v0.9.0 is a semver
   release. `experiments 090` is not a current CLI namespace. Do not conflate
   them.
 

@@ -336,11 +336,35 @@ FIRST_USER_ROUTE_FORBIDDEN_TERMS = (
     "Product OS",
     "Quality Panel",
     "SourceHub Lite",
+    "MABW-080",
+    "BriefLoop-090",
+    "experiments 080",
+    "A-controlled",
+    "manifestation score",
     "release approval",
     "support matrix",
     "surface",
     "高级 Product OS",
     "内部 release approval",
+)
+ARCHIVED_EXPERIMENT_FIRST_USER_FORBIDDEN_TERMS = (
+    "MABW-080",
+    "BriefLoop-090",
+    "experiments 080",
+    "A-controlled",
+    "manifestation score",
+)
+ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
+    "docs/15-minute-pilot.md",
+    "docs/15-minute-pilot.zh-CN.md",
+    "docs/getting-started.md",
+    "docs/weekly-loop.md",
+    "docs/troubleshooting.md",
+    "docs/workbuddy.md",
+    "docs/workbuddy.zh-CN.md",
+    "docs/workbuddy-smoke-checklist.md",
+    ".agents/skills/briefloop-workbuddy/SKILL.md",
+    "integrations/workbuddy/briefloop/SKILL.md",
 )
 PIPX_CURRENT_INSTALL_DOCS = [
     "README.md",
@@ -854,6 +878,7 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         )
 
     _check_first_user_route_surfaces(checks)
+    _check_archived_experiment_namespace_quarantine(checks)
 
     getting_started = (ROOT / "docs" / "getting-started.md").read_text(encoding="utf-8")
     activation_reason = _unix_source_clone_activation_reason(
@@ -923,6 +948,24 @@ def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
             "missing_entries="
             f"{missing_entries} forbidden_internal_or_control_terms={forbidden_terms}",
         )
+
+
+def _check_archived_experiment_namespace_quarantine(checks: list[dict[str, str]]) -> None:
+    findings: list[str] = []
+    for rel_path in ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES:
+        path = ROOT / rel_path
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        for term in ARCHIVED_EXPERIMENT_FIRST_USER_FORBIDDEN_TERMS:
+            if term.lower() in text:
+                findings.append(f"{rel_path}:{term}")
+    _append_check(
+        checks,
+        "first_user_docs.no_archived_experiment_namespace",
+        not findings,
+        f"archived experiment namespace in first-user surfaces={findings}",
+    )
 
 
 def _check_readme_first_user_doc_blocks(checks: list[dict[str, str]]) -> None:

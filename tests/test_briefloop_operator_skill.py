@@ -91,9 +91,9 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "`industry-weekly` -> canonical ReportPack `market_weekly`" in text
     assert "`document-review` -> canonical ReportPack `evidence_extract`" in text
     assert "scripts/check_product_baseline.py" in text
-    assert "MABW-080 experiment operations" in text
+    assert "Archived MABW-080 experiment operations" in text
     assert "MABW-080 / BriefLoop-090 experiment operations" not in text
-    assert "BriefLoop-090 is a future readiness/fresh-rerun label" in text
+    assert "BriefLoop-090 is an archived experiment/readiness label" in text
     assert "not a current CLI namespace" in text
     assert "no stage execution from Product OS commands" in text
 
@@ -104,8 +104,10 @@ def test_experiment_reference_separates_targets_and_stops_finalize() -> None:
     assert "delivery_brief" in text
     assert "do not run finalize or delivery" in text
     assert "not management-ready delivery" in text
-    assert "BriefLoop-090 is a future experiment/readiness label" in text
-    assert "MABW-080 remains the shipped experiment command namespace" in text
+    assert "BriefLoop-090 is the archived/readiness label" in text
+    assert "MABW-080 remains the shipped experiment" in text
+    assert "command namespace" in text
+    assert "not ordinary brief-delivery commands" in text
 
 
 def test_experiment_reference_uses_formal_blind_command_loop() -> None:

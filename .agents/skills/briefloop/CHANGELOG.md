@@ -1,5 +1,13 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.1.12 — 2026-07-05
+
+- Reclassified MABW-080 / BriefLoop-090 as archived experimental measurement
+  surfaces for reference-run reproduction, scorecard audit, and explicit
+  experiment work only.
+- Clarified that `experiments 080` must not be used as a normal product
+  workspace path, WorkBuddy first-user flow, or launch claim.
+
 ## briefloop-operator-skill-v0.1.11 — 2026-07-03
 
 - Clarified the Evidence Extract MinerU-derived Markdown bridge:

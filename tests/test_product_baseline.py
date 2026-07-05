@@ -85,6 +85,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.README.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.no_current_pipx_install"]["status"] == "pass"
+    assert checks["first_user_docs.no_archived_experiment_namespace"]["status"] == "pass"
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
@@ -203,6 +204,7 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
             "briefloop new document-review ./document-review\n"
             "Internal report_spec.yaml uses market_weekly YAML.\n"
             "Advanced Product OS surfaces include Quality Panel and SourceHub Lite.\n"
+            "Do not send first users to MABW-080 or BriefLoop-090 A-controlled experiments.\n"
             "Check the support matrix before release approval.\n"
             "## 🧭 Current status\n"
         ),
@@ -245,6 +247,9 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
     assert "Product OS" in readme_check["detail"]
     assert "Quality Panel" in readme_check["detail"]
     assert "SourceHub Lite" in readme_check["detail"]
+    assert "MABW-080" in readme_check["detail"]
+    assert "BriefLoop-090" in readme_check["detail"]
+    assert "A-controlled" in readme_check["detail"]
     assert "support matrix" in readme_check["detail"]
     assert "release approval" in readme_check["detail"]
 
@@ -349,6 +354,34 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
     assert "docs/getting-started.md" in pipx_check["detail"]
     assert "README.zh-CN.md" in pipx_check["detail"]
     assert "README.md" not in pipx_check["detail"]
+
+
+def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path in module.ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES:
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("BriefLoop first-user setup.\n", encoding="utf-8")
+    (tmp_path / "docs" / "workbuddy.md").write_text(
+        "BriefLoop first-user setup should use MABW-080 experiments 080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "SKILL.md").write_text(
+        "Do not route new WorkBuddy users to BriefLoop-090 A-controlled runs.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_archived_experiment_namespace_quarantine(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    quarantine_check = checks_by_id["first_user_docs.no_archived_experiment_namespace"]
+    assert quarantine_check["status"] == "fail"
+    assert "docs/workbuddy.md:MABW-080" in quarantine_check["detail"]
+    assert "docs/workbuddy.md:experiments 080" in quarantine_check["detail"]
+    assert ".agents/skills/briefloop-workbuddy/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
+    assert ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled" in quarantine_check["detail"]
 
 
 def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:

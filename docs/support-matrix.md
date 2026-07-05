@@ -1,6 +1,6 @@
 # Support Matrix
 
-BriefLoop is the public project name during the v0.9 compatibility period.
+BriefLoop is the public project name during the public-product compatibility period.
 MABW remains the implementation lineage and compatibility surface. This matrix
 continues to list supported CLI/runtime surfaces by their current compatible
 names such as `multi-agent-brief`, `briefloop`, `/briefloop`, `/mabw`, and
@@ -12,6 +12,7 @@ Each capability has one of the following statuses:
 |---|---|
 | **Supported** | Actively tested, documented, and considered stable for the v0.11.0 product baseline. |
 | **Experimental** | Functional but may change without notice. Not guaranteed for production. |
+| **Archived Experimental** | Retained for explicit research, reference-run reproduction, and scorecard audit. Not a product onboarding or delivery surface. |
 | **Interface Only** | Abstract interface exists; no concrete implementation shipped. |
 | **CLI-only** | Installs and exposes deterministic CLI commands, but does not include source-clone runtime asset trees. |
 | **Source-clone-only** | Requires repository files that are not shipped as Python package data. |
@@ -54,6 +55,7 @@ validation unless that is stated separately.
 | `multi-agent-brief status --workspace <path>` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target local` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
+| `multi-agent-brief deliver --workspace <path> --target gmail --channel draft` | Experimental |
 | `multi-agent-brief state init/check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete` | Supported |
 | `multi-agent-brief state import-fact-layer` | Experimental |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
@@ -63,12 +65,12 @@ validation unless that is stated separately.
 | `multi-agent-brief provenance build/show/validate` | Supported |
 | `multi-agent-brief improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Supported |
 | `multi-agent-brief eval-cases list/validate/run` | Supported |
-| `multi-agent-brief experiments 080 validate-case` | Experimental |
-| `multi-agent-brief experiments 080 register-run` | Experimental |
-| `multi-agent-brief experiments 080 score-run` | Experimental |
-| `multi-agent-brief experiments 080 import-assessment` | Experimental |
-| `multi-agent-brief experiments 080 summarize` | Experimental |
-| `multi-agent-brief experiments 080 scaffold-condition` | Experimental |
+| `multi-agent-brief experiments 080 validate-case` | Archived Experimental |
+| `multi-agent-brief experiments 080 register-run` | Archived Experimental |
+| `multi-agent-brief experiments 080 score-run` | Archived Experimental |
+| `multi-agent-brief experiments 080 import-assessment` | Archived Experimental |
+| `multi-agent-brief experiments 080 summarize` | Archived Experimental |
+| `multi-agent-brief experiments 080 scaffold-condition` | Archived Experimental |
 | `multi-agent-brief init --from-onboarding` | Supported |
 | `multi-agent-brief onboard` | Supported |
 | `multi-agent-brief doctor` | Supported |
@@ -284,9 +286,13 @@ output quality, summarize experiments, or prove semantic truth.
 Analyst onward and must not synthesize upstream source-discovery, Scout,
 Screener, or Claim Ledger execution history.
 
-MABW-080 run registration is experimental experiment metadata tooling. It
+MABW-080 is an archived experimental measurement namespace, not a product
+workspace path. Its commands remain available for explicit controlled
+experiment work, archived scorecard audit, and reference-run reproduction.
+
+MABW-080 run registration is archived experimental experiment metadata tooling. It
 registers completed workspace runs into an existing 080 case as `run_record.json`.
-MABW-080 scorecard building is experimental deterministic metadata tooling. It
+MABW-080 scorecard building is archived experimental deterministic metadata tooling. It
 can build a scorecard draft from an existing `run_record.json`, archive/control
 projections, target artifacts, and the case definition. The default
 `delivery_brief` target keeps the full finalize, reader-clean, and archive
@@ -298,14 +304,14 @@ timing, and coverage-delta status when inputs are available. It does not score g
 manifestation, summarize experiments, scaffold conditions, run workflow stages,
 judge prose quality, or prove output quality.
 
-MABW-080 assessment import is experimental experiment metadata tooling. It
+MABW-080 assessment import is archived experimental experiment metadata tooling. It
 validates externally supplied guidance-manifestation scores, merges them into a
 scorecard, and derives the resulting validity class from deterministic control
 fields plus the imported assessment method. Python does not judge whether
 guidance manifested, whether prose improved, or whether a semantic regression
 occurred.
 
-MABW-080 case summarization is experimental experiment metadata tooling. It
+MABW-080 case summarization is archived experimental experiment metadata tooling. It
 aggregates existing scorecards into A/B/invalid counts, condition groups,
 manifestation-score counts, reader-clean rates, coverage-delta status, timing
 status, and invalid reasons. It discovers scorecards under the case directory
@@ -313,7 +319,7 @@ and can include explicit `--scorecard` paths for scorecards written elsewhere.
 It does not judge output quality, run workflow stages, scaffold conditions, or
 include invalid runs in A-grade denominators.
 
-MABW-080 condition scaffolding is experimental experiment setup tooling. It
+MABW-080 condition scaffolding is archived experimental experiment setup tooling. It
 requires an initialized condition workspace, imports the frozen fact layer
 through the deterministic fast-rerun transaction, writes condition metadata and
 operator instructions, and leaves the run at Analyst. It does not create generic
@@ -326,6 +332,8 @@ v0.9.1 includes one completed public-safe synthetic `auditable_brief` pilot with
 condition-blind, hash-bound assessment. This supports only the documented
 single-case observation; broader quality, delivery-readiness, factual
 correctness, and generalization claims remain out of scope.
+For the v1.0 product boundary, see the
+[BriefLoop-090 experiment closeout](reference-runs/briefloop-090-experiment-closeout.md).
 
 ## Runtimes
 
@@ -403,12 +411,12 @@ approval, release authority, semantic proof, or output-quality proof.
 | Tool | Status |
 |---|---|
 | Packaged public-safe evaluation cases (`eval-cases`) | Supported |
-| MABW-080 experiment case validator (`experiments 080 validate-case`) | Experimental |
-| MABW-080 run registration (`experiments 080 register-run`) | Experimental |
-| MABW-080 scorecard builder (`experiments 080 score-run`) | Experimental |
-| MABW-080 assessment import (`experiments 080 import-assessment`) | Experimental |
-| MABW-080 case summary builder (`experiments 080 summarize`) | Experimental |
-| MABW-080 condition scaffold (`experiments 080 scaffold-condition`) | Experimental |
+| MABW-080 experiment case validator (`experiments 080 validate-case`) | Archived Experimental |
+| MABW-080 run registration (`experiments 080 register-run`) | Archived Experimental |
+| MABW-080 scorecard builder (`experiments 080 score-run`) | Archived Experimental |
+| MABW-080 assessment import (`experiments 080 import-assessment`) | Archived Experimental |
+| MABW-080 case summary builder (`experiments 080 summarize`) | Archived Experimental |
+| MABW-080 condition scaffold (`experiments 080 scaffold-condition`) | Archived Experimental |
 | Workspace provenance projection (`provenance`) | Supported |
 | Runtime asset parity check (`scripts/check_runtime_asset_parity.py`) | Source-clone-only |
 | Private/commercial benchmark cases | Not shipped |
@@ -424,8 +432,9 @@ approval, release authority, semantic proof, or output-quality proof.
 | Named output copies | Supported |
 | PDF | Experimental |
 | Feishu delivery | Experimental |
+| Gmail draft delivery through optional `gws` CLI | Experimental |
 | Slack delivery | Not shipped |
-| Email delivery | Not shipped |
+| Direct email send | Not shipped |
 
 ## Analysis Tooling
 

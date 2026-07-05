@@ -207,7 +207,8 @@ def test_compatibility_quarantine_classifies_remaining_legacy_names() -> None:
         "| `multi-agent-brief` | Compatibility CLI and script entrypoint |",
         "| `multi_agent_brief` | Python module compatibility surface |",
         "| `multi-agent-brief-workflow` | Distribution/package compatibility surface |",
-        "| `MABW-080` | Historical experiment namespace |",
+        "| `MABW-080` | Archived experiment namespace |",
+        "| `BriefLoop-090` | Archived experiment/readiness label |",
         "| `mabw.*` schema ids | Old-workspace compatibility ids |",
         "| Old release notes and tech reports | Historical archive |",
     ]

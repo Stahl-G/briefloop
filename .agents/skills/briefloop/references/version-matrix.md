@@ -234,7 +234,7 @@ Historical implementation name: MABW
   - no binary/PDF span extraction from `extract`, no stage execution from Product OS commands, publication approval,
     web-search execution, section-conformance gate, gate bypass, semantic support
     assessment, semantic truth proof, or second gate engine
-- MABW-080 experiment operations:
+- Archived MABW-080 experiment operations:
   - `validate-case`
   - `scaffold-condition`
   - `register-run`
@@ -252,7 +252,9 @@ Historical implementation name: MABW
 - Do not describe deferred semantic-governance surfaces or v0.10 Product OS
   roadmap goals as completed unless the support matrix and current CLI expose
   the exact surface.
-- BriefLoop-090 is a future readiness/fresh-rerun label, not a current CLI namespace or supported command surface. Current experiment commands remain under `briefloop experiments 080`.
+- BriefLoop-090 is an archived experiment/readiness label, not a current CLI namespace
+  or supported product command surface. Current experiment
+  reproduction commands remain under `briefloop experiments 080`.
 - If runtime behavior conflicts with this skill, prefer:
   - `docs/architecture-status.md`
   - `docs/support-matrix.md`

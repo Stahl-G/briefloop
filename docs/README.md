@@ -2,8 +2,8 @@
 
 BriefLoop is the public project name. MABW remains the implementation lineage
 and compatibility surface for CLI commands, runtime commands, package/module
-paths, artifact names, workspace formats, and experiment IDs during the v0.9
-compatibility period.
+paths, artifact names, workspace formats, and archived experiment IDs during
+the public-product compatibility period.
 
 This index separates the current English documentation path from Chinese
 operator notes and legacy/memo documents. It does not claim the whole `docs/`
@@ -35,7 +35,7 @@ tree is fully bilingual.
 | Brief-loop engineering | [brief-loop-engineering.md](brief-loop-engineering.md) | English-first |
 | Migration notes | [MIGRATION.md](MIGRATION.md) | [MIGRATION.zh-CN.md](MIGRATION.zh-CN.md) |
 | What MABW tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
-| MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | English-first |
+| Archived MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | English-first |
 
 `README_en.md` is retained only as a compatibility pointer to `README.md`.
 
@@ -47,13 +47,14 @@ tree is fully bilingual.
 - [Weekly loop](weekly-loop.md)
 - [Troubleshooting](troubleshooting.md)
 - [Claude Code quickstart](claude-code-quickstart.md)
+- [Gmail draft delivery](gmail-delivery.md)
 - [Function map](features.md)
 - [Runtime agent contract](agent-contract.md)
 - [BriefLoop naming policy](briefloop-naming.md)
 - [Brief-loop engineering](brief-loop-engineering.md)
 - [Evidence Span Registry](evidence-span-registry.md)
 - [Claim-Support Matrix](claim-support-matrix.md)
-- [MABW-080 experiment guide](experiments-080.md)
+- [Archived MABW-080 experiment guide](experiments-080.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)
 - [Runtime recipes](runtime-recipes.md)
@@ -65,6 +66,7 @@ tree is fully bilingual.
 - [Pre-release v0.11.4 minimal comparative evaluation packet](evaluation-results/v0.11.4-minimal-comparative-evaluation/README.md)
 - [Pre-release v0.11.1 synthetic regression pack](reference-runs/v0.11.1-synthetic-regression-pack.md)
 - [v0.7.4 organoid-industry failure study](reference-runs/v0.7.4-organoid-failure-study.md)
+- [BriefLoop-090 experiment closeout](reference-runs/briefloop-090-experiment-closeout.md)
 - [BriefLoop-090 A-controlled auditable-brief pilot](reference-runs/briefloop-090-a-controlled-pilot.md)
 - [Security](security.md)
 - [Release notes v0.11.12](releases/v0.11.12.md)
