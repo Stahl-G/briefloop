@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from multi_agent_brief.contracts.target_contract import EXPERIMENT_080_CONDITION_PATH, project_assessment_target_status
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
@@ -58,10 +59,19 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
     runtime = _clean_text(manifest.get("runtime")) if isinstance(manifest, Mapping) else "unknown"
     latest_gate = _latest_gate_projection(intermediate, current_stage=current_stage)
     latest_gate_status = latest_gate["status_text"]
+    assessment_target = _assessment_target_projection(
+        workspace=ws,
+        workflow=workflow,
+        registry=registry,
+        event_records=event_records,
+        intermediate=intermediate,
+    )
 
     run_card = {
         "runtime": runtime or "unknown",
         "current_stage": current_stage or "unknown",
+        "assessment_target": _clean_text(assessment_target.get("assessment_target")) or "not_applicable",
+        "assessment_target_status": _clean_text(assessment_target.get("status")) or "not_applicable",
         "run_integrity": _run_integrity_status(run_integrity),
         "blocked": blocked,
         "latest_gate_status": latest_gate_status,
@@ -84,6 +94,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
             finalize_event_exists=finalize_event,
             delivery_event_exists=delivery_event,
             secret_risk=secret_risk,
+            assessment_target=assessment_target,
         ),
     }
 
@@ -100,6 +111,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
             "manifest_status": manifest_status,
             "runtime_capabilities": manifest.get("runtime_capabilities") if isinstance(manifest, Mapping) else None,
         },
+        "assessment_target": assessment_target,
         "workflow": {
             "workflow_state_present": isinstance(workflow, Mapping),
             "workflow_state_status": workflow_status,
@@ -136,6 +148,8 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
     for field in (
         "runtime",
         "current_stage",
+        "assessment_target",
+        "assessment_target_status",
         "run_integrity",
         "blocked",
         "latest_gate_status",
@@ -387,6 +401,38 @@ def _diagnose_gate_validation_artifacts() -> list[dict[str, Any]]:
     ]
 
 
+def _assessment_target_projection(
+    *,
+    workspace: Path,
+    workflow: Any,
+    registry: Any,
+    event_records: list[Mapping[str, Any]],
+    intermediate: Path,
+) -> dict[str, Any]:
+    condition, condition_status = _read_json(workspace / EXPERIMENT_080_CONDITION_PATH)
+    if condition_status == "missing":
+        return {"present": False, "status": "not_applicable"}
+    if condition_status != "present" or not isinstance(condition, dict):
+        return {
+            "present": True,
+            "status": "invalid_condition",
+            "condition_status": condition_status,
+        }
+    auditor_gate, auditor_gate_status = _read_json(
+        intermediate / "gates" / "auditor_quality_gate_report.json"
+    )
+    projection = project_assessment_target_status(
+        condition_metadata=condition,
+        workflow_state=dict(workflow) if isinstance(workflow, Mapping) else None,
+        artifact_registry=dict(registry) if isinstance(registry, Mapping) else None,
+        auditor_gate_report=dict(auditor_gate) if isinstance(auditor_gate, Mapping) else None,
+        event_records=[dict(record) for record in event_records if isinstance(record, Mapping)],
+    )
+    projection["condition_status"] = condition_status
+    projection["auditor_gate_status"] = auditor_gate_status
+    return projection
+
+
 def _next_safe_action(
     *,
     doctor: Mapping[str, Any],
@@ -402,11 +448,12 @@ def _next_safe_action(
     finalize_event_exists: bool,
     delivery_event_exists: bool,
     secret_risk: Mapping[str, Any],
+    assessment_target: Mapping[str, Any],
 ) -> str:
     if doctor.get("status") == "error":
         return "stop_show_full_doctor_output"
     if any(
-        status in {"unreadable_utf8", "invalid_json", "invalid_schema", "unreadable"}
+        status in {"unreadable_utf8", "invalid_json", "invalid_json_shape", "invalid_schema", "unreadable"}
         for status in control_file_status.values()
     ):
         return "inspect_unreadable_or_missing_control_files"
@@ -421,6 +468,12 @@ def _next_safe_action(
         return "stop_resolve_blocking_gate_report"
     if invalid_or_stale_artifacts:
         return "inspect_invalid_or_stale_artifacts"
+    if assessment_target.get("status") == "invalid_condition":
+        return "inspect_invalid_experiment_condition"
+    if assessment_target.get("assessment_target") == "auditable_brief":
+        if assessment_target.get("target_complete") is True:
+            return "register_auditable_brief_run"
+        return "inspect_auditable_brief_target_status"
     if not finalize_report_exists or not delivery_dir_exists:
         if _clean_text(current_stage) not in {"finalize", "delivery", "delivered"}:
             return "continue_current_stage_or_handoff_workflow"
@@ -436,13 +489,16 @@ def _read_json(path: Path) -> tuple[Any, str]:
     if not path.exists():
         return None, "missing"
     try:
-        return json.loads(path.read_text(encoding="utf-8")), "present"
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except UnicodeDecodeError:
         return None, "unreadable_utf8"
     except json.JSONDecodeError:
         return None, "invalid_json"
     except OSError:
         return None, "unreadable"
+    if not isinstance(payload, Mapping):
+        return payload, "invalid_json_shape"
+    return payload, "present"
 
 
 def _read_json_with_schema(path: Path, *, expected_schema: str) -> tuple[Any, str]:
