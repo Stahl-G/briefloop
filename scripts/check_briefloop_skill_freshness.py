@@ -102,6 +102,9 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "post-finalize closeout",
     ],
     "references/repo-development.md": [
+        ".codebuddy/agents/briefloop-*.md",
+        "CodeBuddy project role agents",
+        "source-clone-only",
         "check_product_baseline.py",
         "check_skill_contract.py",
         "check_briefloop_skill_freshness.py",
