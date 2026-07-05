@@ -255,9 +255,8 @@ briefloop new document-review ./document-review
 
 `document-review` 是文档证据审阅工作区入口，不代表自动法律、合规或披露判断。
 
-这三个入口是 v0.11 支持的产品基线 surface。`solar-periodic`、Quality
-Panel、SourceHub Lite 和内部 release approval 等高级 Product OS surface 仍是
-实验性能力，除非 support matrix 另有明确说明。
+新用户先从上面三个支持入口开始。其他实验性入口在后文说明，适合已经理解
+基本循环的用户。
 
 | 路径 | 适合谁 | 怎么做 |
 |---|---|---|

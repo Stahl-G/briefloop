@@ -166,6 +166,8 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
             "briefloop new management-monthly ./monthly-review\n"
             "briefloop new document-review ./document-review\n"
             "Internal report_spec.yaml uses market_weekly YAML.\n"
+            "Advanced Product OS surfaces include Quality Panel and SourceHub Lite.\n"
+            "Check the support matrix before release approval.\n"
             "## 🧭 Current status\n"
         ),
         "README.zh-CN.md": (
@@ -204,6 +206,11 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
     assert "market_weekly" in readme_check["detail"]
     assert "report_spec.yaml" in readme_check["detail"]
     assert "YAML" in readme_check["detail"]
+    assert "Product OS" in readme_check["detail"]
+    assert "Quality Panel" in readme_check["detail"]
+    assert "SourceHub Lite" in readme_check["detail"]
+    assert "support matrix" in readme_check["detail"]
+    assert "release approval" in readme_check["detail"]
 
     weekly_check = checks_by_id["first_user_route.docs/weekly-loop.md"]
     assert weekly_check["status"] == "fail"

@@ -269,10 +269,8 @@ briefloop new document-review ./document-review
 `document-review` prepares a document evidence review workspace. It does not
 make legal, compliance, or disclosure judgments.
 
-These three entries are the supported v0.11 product-baseline surface. Advanced
-Product OS surfaces such as `solar-periodic`, Quality Panel, SourceHub Lite,
-and internal release approvals remain experimental unless the support matrix
-states otherwise.
+Start with the three supported entries above. Other experimental entries are
+documented later for users who already understand the basic loop.
 
 | Path | Best for | What to do |
 |---|---|---|
