@@ -614,6 +614,8 @@ CODEBUDDY_ROLE_AGENTS = [
     "briefloop-auditor",
     "briefloop-formatter",
 ]
+CODEBUDDY_SKILL_PATH = Path(".codebuddy") / "skills" / "briefloop" / "SKILL.md"
+CODEBUDDY_AGENT_ROOT = Path(".codebuddy") / "agents"
 
 
 def _codebuddy_runtime_capabilities() -> dict[str, Any]:
@@ -631,7 +633,27 @@ def _codebuddy_runtime_capabilities() -> dict[str, Any]:
     }
 
 
+def _require_codebuddy_source_assets(repo: Path) -> None:
+    missing: list[str] = []
+    skill_path = repo / CODEBUDDY_SKILL_PATH
+    if not skill_path.is_file():
+        missing.append(CODEBUDDY_SKILL_PATH.as_posix())
+    for role in CODEBUDDY_ROLE_AGENTS:
+        rel_path = CODEBUDDY_AGENT_ROOT / f"{role}.md"
+        if not (repo / rel_path).is_file():
+            missing.append(rel_path.as_posix())
+    if missing:
+        missing_list = ", ".join(missing)
+        raise ValueError(
+            "CodeBuddy runtime is source-clone-only and requires local CodeBuddy "
+            f"assets under repo_workdir. Missing: {missing_list}. "
+            "Use --runtime operator or pass --repo-workdir pointing to a BriefLoop "
+            "source checkout with .codebuddy assets."
+        )
+
+
 def _codebuddy_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
+    _require_codebuddy_source_assets(repo)
     ws_path = str(workspace.resolve())
     role_agents = "\n".join(f"- {name}" for name in CODEBUDDY_ROLE_AGENTS)
     role_sequence = "\n".join(

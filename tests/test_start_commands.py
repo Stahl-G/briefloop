@@ -1349,6 +1349,27 @@ def test_start_codebuddy_handoff_contains_project_skill_and_role_agent_contract(
     _assert_orchestrator_contract_handoff(data)
 
 
+def test_start_codebuddy_handoff_fails_without_source_clone_assets(tmp_path, capsys):
+    ws = _write_workspace(tmp_path)
+    package_base = _write_packaged_contract_base(tmp_path)
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--runtime", "codebuddy",
+        "--repo-workdir", str(package_base),
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+
+    assert rc == 1
+    output = capsys.readouterr().out
+    assert "CodeBuddy runtime is source-clone-only" in output
+    assert ".codebuddy/skills/briefloop/SKILL.md" in output
+    assert ".codebuddy/agents/briefloop-scout.md" in output
+    assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
+
+
 def test_start_manual_alias_resolves_to_operator_and_warns(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     rc = main([
@@ -1509,6 +1530,25 @@ def test_build_handoff_codebuddy_uses_project_skill_and_role_agents(tmp_path):
     assert "CodeBuddy sub-agents cannot spawn other sub-agents" in handoff.prompt
     assert "This runtime handoff does not add gate authority" in " ".join(handoff.notes)
     _assert_orchestrator_contract_handoff(handoff.to_dict())
+
+
+def test_build_handoff_codebuddy_requires_source_clone_assets(tmp_path):
+    ws = _write_workspace(tmp_path)
+    package_base = _write_packaged_contract_base(tmp_path)
+    try:
+        build_handoff(
+            workspace=ws,
+            repo_workdir=package_base,
+            runtime="codebuddy",
+            venv="/tmp/.venv/bin/activate",
+            run_doctor=False,
+        )
+        assert False, "Should have rejected missing CodeBuddy source assets"
+    except ValueError as exc:
+        message = str(exc)
+    assert "CodeBuddy runtime is source-clone-only" in message
+    assert ".codebuddy/skills/briefloop/SKILL.md" in message
+    assert ".codebuddy/agents/briefloop-formatter.md" in message
 
 
 def test_build_handoff_unknown_runtime_raises(tmp_path):
