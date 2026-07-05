@@ -77,6 +77,7 @@ EVENT_TYPES = {
     "run_blocked",
     "run_integrity_contaminated",
     "run_reset",
+    "semantic_assessment_checked_inputs_bound",
     "semantic_support_finding_adjudicated",
 }
 

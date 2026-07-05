@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicitly sends the message. Both paths record redacted delivery events and
   do not attach audit/control files, approve delivery, authorize release, or
   prove semantic truth.
+- Bound experimental Semantic Assessment Reports to checked input artifacts
+  (`audited_brief`, Claim Ledger, Atomic Claim Graph, and Evidence Span
+  Registry) with relative paths, hashes, sizes, freshness projection, and
+  human-adjudication record linkage. Legacy unbound reports remain readable as
+  advisory projections, and this does not add Claim-Support Matrix writes, gate
+  authority, delivery approval, release authority, or semantic proof.
 - Added a deterministic CodeBuddy adapter smoke guard that validates
   source-clone `.codebuddy` Skill/agent assets and a fresh `--runtime codebuddy`
   handoff. The smoke is release-readiness coverage only; it does not launch

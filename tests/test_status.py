@@ -6,6 +6,9 @@ from pathlib import Path
 
 import yaml
 
+from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    build_semantic_assessment_checked_inputs,
+)
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
 
 
@@ -117,6 +120,17 @@ def _semantic_assessment_report_payload(*, atom_id: str = "AC-0001-01") -> dict:
             }
         ],
     }
+
+
+def _write_bound_semantic_assessment_report(intermediate: Path, ws: Path, *, atom_id: str = "AC-0001-01") -> dict:
+    (intermediate / "audited_brief.md").write_text("# Audited Brief\n\nTargetCo opened a demo facility.\n", encoding="utf-8")
+    payload = _semantic_assessment_report_payload(atom_id=atom_id)
+    payload["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
+    (intermediate / "semantic_assessment_report.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return payload
 
 
 def _market_report_spec(*, policy_profile: str | None = "finance_default") -> dict:
@@ -920,6 +934,7 @@ def test_status_derives_semantic_assessment_report_projection_without_writes(tmp
     counts = projection["summary_counts"]
     assert status["read_only"] is True
     assert projection["status"] == "valid"
+    assert projection["checked_inputs_status"] == "missing_checked_inputs"
     assert projection["semantic_boundary"] == "proposal_projection_only_not_accepted_support_truth"
     assert counts["proposal_row_count"] == 1
     assert counts["llm_only_count"] == 1
@@ -935,6 +950,75 @@ def test_status_derives_semantic_assessment_report_projection_without_writes(tmp
         "high_uncertainty=1 high_disagreement=1 adjudication=1"
     ) in formatted
     assert not (intermediate / "quality_gate_report.json").exists()
+    assert not (intermediate / "event_log.jsonl").exists()
+
+
+def test_status_reports_fresh_bound_semantic_assessment_report_without_writes(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
+    _write_bound_semantic_assessment_report(intermediate, ws)
+
+    status = build_workspace_status(ws)
+
+    projection = status["semantic_assessment_report"]
+    assert status["read_only"] is True
+    assert projection["status"] == "valid"
+    assert projection["checked_inputs_status"] == "fresh"
+    assert projection["checked_inputs_digest"]
+    assert projection["report_sha256"]
+    assert projection["summary_counts"]["proposal_row_count"] == 1
+    assert not (intermediate / "event_log.jsonl").exists()
+
+
+def test_status_reports_stale_bound_semantic_assessment_report_without_writes(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
+    _write_bound_semantic_assessment_report(intermediate, ws)
+    (intermediate / "audited_brief.md").write_text("# Edited after assessment\n", encoding="utf-8")
+
+    status = build_workspace_status(ws)
+
+    projection = status["semantic_assessment_report"]
+    assert status["read_only"] is True
+    assert projection["status"] == "stale"
+    assert projection["checked_inputs_status"] == "stale"
+    assert projection["reason"] == "checked_input_stale:audited_brief"
+    assert projection["summary_counts"]["proposal_row_count"] == 1
+    assert not (intermediate / "event_log.jsonl").exists()
+
+
+def test_status_treats_null_checked_inputs_as_unbound_without_writes(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
+    _write_bound_semantic_assessment_report(intermediate, ws)
+    report_path = intermediate / "semantic_assessment_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["checked_inputs"] = None
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    status = build_workspace_status(ws)
+
+    projection = status["semantic_assessment_report"]
+    assert projection["status"] == "valid"
+    assert projection["checked_inputs_status"] == "missing_checked_inputs"
+    assert projection["reason"] is None
+    assert not (intermediate / "event_log.jsonl").exists()
+
+
+def test_status_reports_non_file_checked_input_without_crashing(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    intermediate, _raw_excerpt, _start = _write_semantic_support_base(ws)
+    _write_bound_semantic_assessment_report(intermediate, ws)
+    brief_path = intermediate / "audited_brief.md"
+    brief_path.unlink()
+    brief_path.mkdir()
+
+    status = build_workspace_status(ws)
+
+    projection = status["semantic_assessment_report"]
+    assert projection["status"] == "missing_input"
+    assert projection["checked_inputs_status"] == "missing_input"
+    assert projection["reason"] == "checked_input_not_file:audited_brief"
     assert not (intermediate / "event_log.jsonl").exists()
 
 

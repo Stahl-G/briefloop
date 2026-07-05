@@ -28,6 +28,7 @@ from multi_agent_brief.product.quality_closeout import (
 from multi_agent_brief.product.support_wording import validate_support_wording_payload
 from multi_agent_brief.product.template_conformance import validate_report_template_conformance_payload
 from multi_agent_brief.product.trajectory_regulation import validate_trajectory_regulation_payload
+from multi_agent_brief.contracts.semantic_assessment_status import SEMANTIC_ASSESSMENT_REPORT_STATUSES
 
 QUALITY_PANEL_SCHEMA_VERSION = "briefloop.quality_panel.v1"
 QUALITY_PANEL_BOUNDARY = "product_quality_panel_projection_only_not_gate_or_release_authority"
@@ -184,6 +185,7 @@ _QUALITY_PANEL_STATUS_LEVELS = {
     "missing": "missing",
     "incomplete": "missing",
     "not_available": "missing",
+    "missing_input": "missing",
     "not_ready": "missing",
     "unavailable": "missing",
     "unknown": "missing",
@@ -220,6 +222,7 @@ _QUALITY_PANEL_HTML_VALUES_ZH = {
     "missing": "缺失",
     "incomplete": "未完成",
     "not_available": "不可用",
+    "missing_input": "缺少输入",
     "not_ready": "未就绪",
     "unavailable": "不可用",
     "unknown": "未知",
@@ -1454,7 +1457,7 @@ def _support_wording_warning_count(support_wording: Mapping[str, Any]) -> int:
 
 
 def _semantic_support_warning_count(semantic_support: Mapping[str, Any]) -> int:
-    if _text(semantic_support.get("status")) == "invalid_report":
+    if _text(semantic_support.get("status")) in {"invalid_report", "missing_input", "stale"}:
         return 1
     return int(semantic_support.get("proposal_count") or 0)
 
@@ -1479,7 +1482,7 @@ def _validate_semantic_support_payload(payload: Mapping[str, Any]) -> str | None
         if key in payload:
             return f"semantic_support_schema_error:{key}"
     status = _text(payload.get("status"))
-    if status not in {"not_available", "valid", "invalid_report"}:
+    if status not in SEMANTIC_ASSESSMENT_REPORT_STATUSES:
         return "semantic_support_schema_error:status"
     for field in (
         "proposal_count",

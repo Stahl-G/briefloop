@@ -23,6 +23,7 @@ from multi_agent_brief.orchestrator.runtime_state.identity import _validate_runt
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    build_semantic_assessment_checked_inputs,
     project_semantic_assessment_report_from_workspace,
 )
 
@@ -57,6 +58,94 @@ def semantic_support_acceptance_ledger_path(workspace: str | Path) -> Path:
     )
 
 
+def bind_semantic_assessment_checked_inputs_transaction(*, workspace: str | Path) -> dict[str, Any]:
+    """Seal a Semantic Assessment Report's checked inputs exactly once.
+
+    The Semantic Support Auditor writes proposal rows. This deterministic
+    transaction binds that report to the workspace inputs that were present at
+    seal time. Human adjudication later reads the binding but never writes it.
+    """
+
+    ws = Path(workspace).expanduser().resolve()
+    run_id = _current_run_id(ws)
+    paths = runtime_state_paths(ws)
+    report_path = ws / "output" / "intermediate" / "semantic_assessment_report.json"
+    snapshots = {
+        report_path: _read_state_bytes(report_path),
+        paths["event_log"]: _read_state_bytes(paths["event_log"]),
+    }
+    try:
+        _validated_event_log_for_current_run(ws, run_id=run_id)
+        report = _read_json_if_exists(report_path)
+        if not isinstance(report, dict):
+            raise RuntimeStateError(
+                "semantic_assessment_report.json is missing or not an object; nothing to bind.",
+                details={"path": str(report_path)},
+                error_code=E_ARTIFACT_INVALID,
+            )
+        existing = report.get("checked_inputs")
+        if isinstance(existing, dict) and existing:
+            projection = project_semantic_assessment_report_from_workspace(ws)
+            if projection.get("status") == "valid" and projection.get("checked_inputs_status") == "fresh":
+                return _bind_result(
+                    bound=False,
+                    reason="already_bound",
+                    projection=projection,
+                    event_id="",
+                )
+            raise RuntimeStateError(
+                "semantic_assessment_report.json already declares checked_inputs that are not fresh; rerun the Semantic Support Auditor instead of rebinding.",
+                details={
+                    "status": projection.get("status"),
+                    "reason": projection.get("reason"),
+                    "checked_inputs_status": projection.get("checked_inputs_status"),
+                },
+                error_code=E_ARTIFACT_INVALID,
+            )
+        try:
+            report["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
+        except (FileNotFoundError, OSError) as exc:
+            raise RuntimeStateError(
+                "semantic_assessment_report.json cannot be bound to checked inputs because a required input is missing or unreadable.",
+                details={"reason": str(exc)},
+                error_code=E_ARTIFACT_INVALID,
+            ) from exc
+        _write_json_atomic(report_path, report)
+        projection = project_semantic_assessment_report_from_workspace(ws)
+        if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "fresh":
+            raise RuntimeStateError(
+                "semantic_assessment_report.json did not project as fresh after checked_inputs binding.",
+                details={
+                    "status": projection.get("status"),
+                    "reason": projection.get("reason"),
+                    "checked_inputs_status": projection.get("checked_inputs_status"),
+                },
+                error_code=E_ARTIFACT_INVALID,
+            )
+        event = append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="semantic_assessment_checked_inputs_bound",
+            actor="cli",
+            artifact_id="semantic_assessment_report",
+            reason="Bound semantic_assessment_report.json checked_inputs for human adjudication.",
+            metadata={
+                "semantic_assessment_report_sha256": _clean_text(projection.get("report_sha256")),
+                "checked_inputs_digest": _clean_text(projection.get("checked_inputs_digest")),
+                "boundary": "checked_input_binding_only_not_support_truth",
+            },
+        )
+        return _bind_result(
+            bound=True,
+            reason="sealed",
+            projection=projection,
+            event_id=_clean_text(event.get("event_id")),
+        )
+    except Exception:
+        _restore_paths(snapshots)
+        raise
+
+
 def record_semantic_support_adjudication(
     *,
     workspace: str | Path,
@@ -79,7 +168,7 @@ def record_semantic_support_adjudication(
     clean_decision = _require_decision(decision)
     clean_reason = _require_text(reason, field="reason")
     clean_actor = _clean_text(actor_id) or "human"
-    proposal = _proposal_for_workspace(ws, clean_proposal_id)
+    projection = project_semantic_assessment_report_from_workspace(ws)
     ledger_path = semantic_support_acceptance_ledger_path(ws)
     paths = runtime_state_paths(ws)
     snapshots = {
@@ -87,65 +176,105 @@ def record_semantic_support_adjudication(
         paths["event_log"]: _read_state_bytes(paths["event_log"]),
     }
     try:
-        _validated_event_log_for_current_run(ws, run_id=run_id)
-        ledger = _load_or_new_ledger(ledger_path)
-        validation_reason = validate_semantic_support_acceptance_ledger_for_workspace(ledger, artifact_path=ledger_path)
-        if validation_reason:
-            raise RuntimeStateError(
-                f"semantic_support_acceptance_ledger invalid: {validation_reason}",
-                details={"path": str(ledger_path), "reason": validation_reason},
-                error_code=E_ARTIFACT_INVALID,
-            )
-        now = utc_now()
-        acceptance_id = f"SSA-{uuid.uuid4().hex[:12]}"
-        event = append_event(
-            workspace=ws,
+        result = _record_semantic_support_adjudication_with_projection(
+            ws=ws,
             run_id=run_id,
-            event_type="semantic_support_finding_adjudicated",
-            actor="cli",
-            artifact_id="semantic_support_acceptance_ledger",
-            decision=clean_decision,
-            reason=f"Recorded human {clean_decision} decision for semantic proposal {clean_proposal_id}.",
-            metadata={
-                "acceptance_id": acceptance_id,
-                "proposal_id": clean_proposal_id,
-                "source_row_id": _clean_text(proposal.get("source_row_id")),
-                "claim_id": _clean_text(proposal.get("claim_id")),
-                "atom_id": _clean_text(proposal.get("atom_id")),
-                "calibration_label": _clean_text(proposal.get("calibration_label")),
-                "actor_id_present": bool(clean_actor),
-                "reason_present": bool(clean_reason),
-                "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
-            },
-        )
-        record = _acceptance_record(
-            acceptance_id=acceptance_id,
-            run_id=run_id,
-            proposal=proposal,
+            projection=projection,
+            proposal_id=clean_proposal_id,
             decision=clean_decision,
             reason=clean_reason,
             actor_id=clean_actor,
-            recorded_at=now,
-            event_id=str(event["event_id"]),
+            ledger_path=ledger_path,
         )
-        ledger.setdefault("records", []).append(record)
-        ledger["updated_at"] = now
-        _write_json_atomic(ledger_path, ledger)
-        return {
-            "ok": True,
-            "schema_version": "briefloop.semantic_support_adjudication_result.v1",
-            "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
-            "ledger_path": "output/intermediate/semantic_support_acceptance_ledger.json",
-            "acceptance_id": acceptance_id,
-            "proposal_id": clean_proposal_id,
-            "decision": clean_decision,
-            "event_id": event["event_id"],
-            "authority_effects": _no_authority_effects(),
-        }
+        return result
     except Exception:
         _restore_paths(snapshots)
         raise
 
+
+def _record_semantic_support_adjudication_with_projection(
+    *,
+    ws: Path,
+    run_id: str,
+    projection: Mapping[str, Any],
+    proposal_id: str,
+    decision: str,
+    reason: str,
+    actor_id: str,
+    ledger_path: Path,
+) -> dict[str, Any]:
+    if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "fresh":
+        raise RuntimeStateError(
+            "semantic_assessment_report.json must be present, valid, and checked-input fresh before human adjudication. Run `briefloop semantic-support bind --workspace <workspace>` after the auditor writes the report.",
+            details={
+                "status": projection.get("status"),
+                "reason": projection.get("reason"),
+                "checked_inputs_status": projection.get("checked_inputs_status"),
+            },
+            error_code=E_ARTIFACT_INVALID,
+        )
+    proposal = _proposal_from_projection(projection, proposal_id)
+    report_sha256 = _require_text(projection.get("report_sha256"), field="semantic_assessment_report_sha256")
+    checked_inputs_digest = _require_text(projection.get("checked_inputs_digest"), field="checked_inputs_digest")
+    _validated_event_log_for_current_run(ws, run_id=run_id)
+    ledger = _load_or_new_ledger(ledger_path)
+    validation_reason = validate_semantic_support_acceptance_ledger_for_workspace(ledger, artifact_path=ledger_path)
+    if validation_reason:
+        raise RuntimeStateError(
+            f"semantic_support_acceptance_ledger invalid: {validation_reason}",
+            details={"path": str(ledger_path), "reason": validation_reason},
+            error_code=E_ARTIFACT_INVALID,
+        )
+    now = utc_now()
+    acceptance_id = f"SSA-{uuid.uuid4().hex[:12]}"
+    event = append_event(
+        workspace=ws,
+        run_id=run_id,
+        event_type="semantic_support_finding_adjudicated",
+        actor="cli",
+        artifact_id="semantic_support_acceptance_ledger",
+        decision=decision,
+        reason=f"Recorded human {decision} decision for semantic proposal {proposal_id}.",
+        metadata={
+            "acceptance_id": acceptance_id,
+            "proposal_id": proposal_id,
+            "source_row_id": _clean_text(proposal.get("source_row_id")),
+            "claim_id": _clean_text(proposal.get("claim_id")),
+            "atom_id": _clean_text(proposal.get("atom_id")),
+            "calibration_label": _clean_text(proposal.get("calibration_label")),
+            "actor_id_present": bool(actor_id),
+            "reason_present": bool(reason),
+            "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
+            "semantic_assessment_report_sha256": report_sha256,
+            "checked_inputs_digest": checked_inputs_digest,
+        },
+    )
+    record = _acceptance_record(
+        acceptance_id=acceptance_id,
+        run_id=run_id,
+        proposal=proposal,
+        semantic_assessment_report_sha256=report_sha256,
+        checked_inputs_digest=checked_inputs_digest,
+        decision=decision,
+        reason=reason,
+        actor_id=actor_id,
+        recorded_at=now,
+        event_id=str(event["event_id"]),
+    )
+    ledger.setdefault("records", []).append(record)
+    ledger["updated_at"] = now
+    _write_json_atomic(ledger_path, ledger)
+    return {
+        "ok": True,
+        "schema_version": "briefloop.semantic_support_adjudication_result.v1",
+        "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
+        "ledger_path": "output/intermediate/semantic_support_acceptance_ledger.json",
+        "acceptance_id": acceptance_id,
+        "proposal_id": proposal_id,
+        "decision": decision,
+        "event_id": event["event_id"],
+        "authority_effects": _no_authority_effects(),
+    }
 
 def validate_semantic_support_acceptance_ledger_payload(payload: Any) -> str | None:
     if not isinstance(payload, Mapping):
@@ -168,6 +297,29 @@ def validate_semantic_support_acceptance_ledger_payload(payload: Any) -> str | N
         if reason:
             return f"records[{idx}].{reason}"
     return None
+
+
+def _bind_result(
+    *,
+    bound: bool,
+    reason: str,
+    projection: Mapping[str, Any],
+    event_id: str,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "schema_version": "briefloop.semantic_assessment_checked_inputs_bind_result.v1",
+        "boundary": "checked_input_binding_only_not_support_truth",
+        "path": "output/intermediate/semantic_assessment_report.json",
+        "bound": bound,
+        "reason": reason,
+        "event_id": event_id,
+        "status": projection.get("status"),
+        "checked_inputs_status": projection.get("checked_inputs_status"),
+        "semantic_assessment_report_sha256": _clean_text(projection.get("report_sha256")),
+        "checked_inputs_digest": _clean_text(projection.get("checked_inputs_digest")),
+        "authority_effects": _no_authority_effects(),
+    }
 
 
 def validate_semantic_support_acceptance_ledger_for_workspace(
@@ -203,7 +355,57 @@ def validate_semantic_support_acceptance_ledger_for_workspace(
         reason = _event_link_error(record, event_index)
         if reason:
             return f"records[{idx}].{reason}"
+        if _record_has_current_linkage(record):
+            effectiveness = semantic_support_acceptance_record_current_effectiveness(record, workspace=workspace)
+            if not effectiveness.get("current_effective"):
+                reason = _clean_text(effectiveness.get("reason")) or "semantic_assessment_report_not_current"
+                return f"records[{idx}].current_effectiveness:{reason}"
     return None
+
+
+def semantic_support_acceptance_record_current_effectiveness(
+    record: Mapping[str, Any],
+    *,
+    workspace: str | Path,
+) -> dict[str, Any]:
+    """Return whether a historical adjudication still matches current SAR inputs."""
+
+    ws = Path(workspace).expanduser().resolve()
+    projection = project_semantic_assessment_report_from_workspace(ws)
+    if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "fresh":
+        return {
+            "current_effective": False,
+            "reason": _clean_text(projection.get("reason"))
+            or _clean_text(projection.get("checked_inputs_status"))
+            or _clean_text(projection.get("status"))
+            or "semantic_assessment_report_not_current",
+        }
+    record_report_sha = _clean_text(record.get("semantic_assessment_report_sha256"))
+    if not record_report_sha:
+        return {"current_effective": False, "reason": "record_missing_semantic_assessment_report_sha256"}
+    if record_report_sha != _clean_text(projection.get("report_sha256")):
+        return {"current_effective": False, "reason": "semantic_assessment_report_sha256_changed"}
+    record_digest = _clean_text(record.get("checked_inputs_digest"))
+    if not record_digest:
+        return {"current_effective": False, "reason": "record_missing_checked_inputs_digest"}
+    if record_digest != _clean_text(projection.get("checked_inputs_digest")):
+        return {"current_effective": False, "reason": "checked_inputs_digest_changed"}
+    proposals = projection.get("proposed_claim_support_rows")
+    proposal_ids: set[str] = set()
+    for proposal in proposals if isinstance(proposals, list) else []:
+        if isinstance(proposal, Mapping):
+            proposal_ids.add(_clean_text(proposal.get("proposal_id")))
+    proposal_id = _clean_text(record.get("proposal_id"))
+    if proposal_id not in proposal_ids:
+        return {"current_effective": False, "reason": f"proposal_missing:{proposal_id}"}
+    return {"current_effective": True, "reason": None}
+
+
+def _record_has_current_linkage(record: Mapping[str, Any]) -> bool:
+    return any(
+        _clean_text(record.get(field))
+        for field in ("semantic_assessment_report_sha256", "checked_inputs_digest")
+    )
 
 
 def _validate_acceptance_record(record: Any) -> str | None:
@@ -223,6 +425,9 @@ def _validate_acceptance_record(record: Any) -> str | None:
         "event_id",
     ):
         if not _clean_text(record.get(field)):
+            return field
+    for field in ("semantic_assessment_report_sha256", "checked_inputs_digest"):
+        if field in record and not _clean_text(record.get(field)):
             return field
     if record.get("decision") not in SEMANTIC_SUPPORT_ACCEPTANCE_DECISIONS:
         return "decision"
@@ -281,7 +486,7 @@ def _workspace_from_ledger_path(path: Path) -> Path:
 
 def _workspace_proposal_ids(workspace: Path) -> tuple[set[str], str | None]:
     projection = project_semantic_assessment_report_from_workspace(workspace)
-    if projection.get("status") != "valid":
+    if projection.get("status") in {"not_available", "invalid_report"}:
         reason = _clean_text(projection.get("reason")) or _clean_text(projection.get("status")) or "invalid_report"
         return set(), f"semantic_assessment_report_invalid:{reason}"
     proposals = projection.get("proposed_claim_support_rows")
@@ -311,6 +516,11 @@ def _event_link_error(record: Mapping[str, Any], event_index: Mapping[str, Mappi
     metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
     for field in ("acceptance_id", "proposal_id", "boundary"):
         if _clean_text(metadata.get(field)) != _clean_text(record.get(field)):
+            return f"event_metadata_mismatch:{field}"
+    for field in ("semantic_assessment_report_sha256", "checked_inputs_digest"):
+        record_value = _clean_text(record.get(field))
+        metadata_value = _clean_text(metadata.get(field))
+        if (record_value or metadata_value) and metadata_value != record_value:
             return f"event_metadata_mismatch:{field}"
     return None
 
@@ -352,6 +562,10 @@ def _proposal_for_workspace(workspace: Path, proposal_id: str) -> Mapping[str, A
             },
             error_code=E_ARTIFACT_INVALID,
         )
+    return _proposal_from_projection(projection, proposal_id)
+
+
+def _proposal_from_projection(projection: Mapping[str, Any], proposal_id: str) -> Mapping[str, Any]:
     proposals = projection.get("proposed_claim_support_rows")
     for proposal in proposals if isinstance(proposals, list) else []:
         if isinstance(proposal, Mapping) and _clean_text(proposal.get("proposal_id")) == proposal_id:
@@ -387,6 +601,8 @@ def _acceptance_record(
     acceptance_id: str,
     run_id: str,
     proposal: Mapping[str, Any],
+    semantic_assessment_report_sha256: str,
+    checked_inputs_digest: str,
     decision: str,
     reason: str,
     actor_id: str,
@@ -403,6 +619,8 @@ def _acceptance_record(
         "evidence_span_id": _clean_text(proposal.get("evidence_span_id")),
         "calibration_label": _clean_text(proposal.get("calibration_label")),
         "proposed_support_label": _clean_text(proposal.get("proposed_support_label")),
+        "semantic_assessment_report_sha256": semantic_assessment_report_sha256,
+        "checked_inputs_digest": checked_inputs_digest,
         "decision": decision,
         "reason": reason,
         "actor_id": actor_id,
@@ -433,7 +651,7 @@ def _restore_paths(snapshots: Mapping[Path, bytes | None]) -> None:
             rollback_errors.append({"path": str(path), "reason": str(exc)})
     if rollback_errors:
         raise RuntimeStateError(
-            "Semantic support adjudication rollback failed after partial write.",
+            "Semantic support transaction rollback failed after partial write.",
             details={"rollback_errors": rollback_errors},
             error_code=E_TRANSACTION_INTEGRITY,
         )

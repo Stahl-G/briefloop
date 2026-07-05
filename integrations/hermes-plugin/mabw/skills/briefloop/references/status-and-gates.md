@@ -69,13 +69,18 @@ Treat these as operator review diagnostics, not proof. It does not judge claim
 truth, generate or accept support rows, run gates, block delivery, approve
 release, create repair authority, or create a quality score.
 
-Semantic support proposal adjudication is human-owned and event-recorded. Use
+Semantic support proposal adjudication is human-owned and event-recorded. After
+the auditor writes `semantic_assessment_report.json`, run
+`semantic-support bind --workspace <workspace>` before any human adjudication to
+seal the report's checked-input hashes. Then use
 `semantic-support adjudicate --workspace <workspace> --proposal-id <id>` to
-record an explicit human accept/reject decision for a valid
-`semantic_assessment_report.json` proposal row. This writes
-`semantic_support_acceptance_ledger.json` and an event-log record only. It does
-not write Claim-Support Matrix rows, route repair, run gates, block or approve
-delivery, authorize release, or prove truth.
+record an explicit human accept/reject decision for a valid, fresh, bound
+proposal row. Adjudication writes `semantic_support_acceptance_ledger.json` and
+an event-log record only; it does not edit the Semantic Assessment Report, write
+Claim-Support Matrix rows, route repair, run gates, block or approve delivery,
+authorize release, or prove truth. If a later repair changes audited inputs,
+the bound report becomes stale; rerun the auditor and bind the new report before
+adjudicating again.
 
 ## Gates
 

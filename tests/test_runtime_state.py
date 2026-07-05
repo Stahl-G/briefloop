@@ -18,6 +18,7 @@ from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import interpret_frozen_artifact_integrity
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    build_semantic_assessment_checked_inputs,
     validate_semantic_assessment_report_against_artifacts,
 )
 from multi_agent_brief.orchestrator.runtime_state import (
@@ -5184,6 +5185,49 @@ def test_state_check_validates_present_semantic_assessment_report_schema(tmp_pat
     assert record["status"] == "valid"
     assert record["required"] is False
     assert record["validation_result"] == "experimental_semantic_assessment_report_schema"
+
+
+def test_state_check_marks_stale_checked_semantic_assessment_report_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "audited_brief.md").write_text("# Audited Brief\n", encoding="utf-8")
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+    ledger_path = intermediate / "claim_ledger.json"
+    ledger_path.write_text(ledger_path.read_text(encoding="utf-8").rstrip("\n") + "\n\n", encoding="utf-8")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "semantic_assessment_report_validation_error:checked_input_stale:claim_ledger"
+
+
+def test_state_check_marks_non_file_checked_semantic_assessment_report_input_invalid(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_valid_claim_support_matrix_dependencies(ws)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "audited_brief.md").write_text("# Audited Brief\n", encoding="utf-8")
+    payload = json.loads(_valid_semantic_assessment_report_payload())
+    payload["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
+    audited_brief = intermediate / "audited_brief.md"
+    audited_brief.unlink()
+    audited_brief.mkdir()
+    payload["checked_inputs"]["audited_brief"]["size_bytes"] = audited_brief.stat().st_size
+    _write_json_artifact(ws, "semantic_assessment_report.json", json.dumps(payload) + "\n")
+
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    record = state["artifact_registry"]["artifacts"]["semantic_assessment_report"]
+
+    assert record["status"] == "invalid"
+    assert (
+        record["validation_result"]
+        == "semantic_assessment_report_validation_error:checked_input_not_file:audited_brief"
+    )
 
 
 def test_state_check_marks_semantic_assessment_report_missing_claim_ledger_invalid(tmp_path):
