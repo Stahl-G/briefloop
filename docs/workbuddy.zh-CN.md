@@ -2,10 +2,12 @@
 
 BriefLoop 的 WorkBuddy surface 是一个实验性的本地 Skill adapter。它帮助
 WorkBuddy 操作者安装 BriefLoop Skill 包、创建或打开 workspace、运行确定性的
-BriefLoop CLI transaction、查看 status 和 Quality Panel，并避免手改控制文件。
+BriefLoop CLI transaction、调用 CodeBuddy-compatible role agents 起草 handoff
+分配的 artifacts、查看 status 和 Quality Panel，并避免手改控制文件。
 
-这不是 WorkBuddy delegated runtime。它不证明语义真实性，不批准交付，不授权
-release，不发布报告，也不声称 WorkBuddy subagent 已经运行。
+这不是新的 BriefLoop authority layer。它不证明语义真实性，不批准交付，不授权
+release，不发布报告；除非宿主真实 delegated 对应 role agent，否则不能声称
+WorkBuddy / CodeBuddy role agent 已经运行。
 
 ## 支持状态
 
@@ -17,7 +19,7 @@ release，不发布报告，也不声称 WorkBuddy subagent 已经运行。
 | CodeBuddy runtime handoff | Experimental | `--runtime codebuddy` 生成 CodeBuddy-specific handoff；确定性 CLI transactions 仍由主会话负责 |
 | 本地 WorkBuddy Skill zip | Experimental | 由 `briefloop workbuddy pack-skill` 生成；不是 WorkBuddy Marketplace 发布 |
 | WorkBuddy Assistant trigger | Experimental template | 远程提示模板，应转入已安装 Skill 的本地 WorkBuddy session |
-| WorkBuddy delegated runtime | Not supported | 使用 `--runtime operator`；除非 WorkBuddy 真实提供并记录 delegation，否则不能声称 role delegation 发生过 |
+| WorkBuddy role-agent orchestration | Experimental | 使用 `--runtime codebuddy`；除非 WorkBuddy / CodeBuddy 真实调用 checked-in role agent，否则不能声称 role delegation 发生过 |
 
 当前支持边界是可追溯性和过程问责。语义证明、输出质量提升证明、交付批准和
 release 批准都不是当前支持声明；这不授权 release。
@@ -85,15 +87,25 @@ adapter。
 
 ```bash
 briefloop new industry-weekly <workspace>
-briefloop run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime codebuddy
 ```
+
+只有在 source checkout 中存在 CodeBuddy project assets 时，才运行
+`--runtime codebuddy`：
+
+```text
+.codebuddy/skills/briefloop/SKILL.md
+.codebuddy/agents/briefloop-*.md
+```
+
+本地 WorkBuddy Skill zip 本身不会安装这些 `.codebuddy/` project assets。
 
 `solar-periodic` 仍是实验性入口，使用前必须说明它是 experimental。
 
 ### 默认搜索
 
 BriefLoop 的 first-run 默认是本地/不启用实时网络搜索。WorkBuddy 用户可以在没有
-搜索 API key 的情况下创建 workspace、查看 status、生成 operator handoff。`.env`
+搜索 API key 的情况下创建 workspace、查看 status、生成 CodeBuddy handoff。`.env`
 里的可选搜索 provider key 为空，不代表配置失败。
 
 如果用户要启用外部网络搜索，默认先使用 Tavily，并且只验证 `TAVILY_API_KEY`
@@ -102,12 +114,8 @@ Brave、Firecrawl 或 Serper。
 
 ## 操作规则
 
-普通 WorkBuddy 操作使用 `--runtime operator`。operator runtime 是 host-agnostic
-compact operator workflow。它不假设 WorkBuddy 已经 delegated Scout、Screener、
-Claim Ledger、Analyst、Editor、Auditor、Formatter 或任何其他角色。
-
-只有在 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets 时，
-才使用 `--runtime codebuddy`：
+只有当 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets
+时，WorkBuddy 完整工作流才使用 `--runtime codebuddy`：
 
 ```bash
 briefloop run --workspace <workspace> --runtime codebuddy
@@ -117,7 +125,7 @@ briefloop run --workspace <workspace> --runtime codebuddy
 `runtime_capabilities` metadata。它仍是 experimental，不新增 gate、delivery、
 release 或 semantic-proof authority。
 
-如果 CodeBuddy project role agents 可用，main CodeBuddy session 可以显式调用：
+main WorkBuddy / CodeBuddy session 显式调用：
 
 ```text
 briefloop-scout
@@ -132,6 +140,10 @@ briefloop-formatter
 这些 role agents 只能起草当前 handoff 分配的 artifacts。它们不运行 BriefLoop
 CLI 命令，不编辑控制文件，不运行 gates，不批准 delivery，也不授权 release。
 每个 role 返回后，确定性 CLI transactions 仍由 main CodeBuddy session 负责。
+
+如果这些 role agents 不可用，必须在完整工作流执行前停止。仍可运行确定性的
+setup、status、quality、delivery draft 或 demo 命令，但不能手写 BriefLoop workflow
+JSON artifacts，也不能静默回退到 `--runtime operator`。
 
 每次运行 BriefLoop CLI 命令后，WorkBuddy operator 应重新阅读：
 
@@ -148,13 +160,46 @@ output/intermediate/agent_handoff.json
 
 ```text
 已创建工作区。
-已生成 operator handoff。
+已生成 CodeBuddy handoff。
 当前状态：等待 source/scout artifact。
 Quality Panel 已生成。
 ```
 
 除非对应 artifact、event、transaction 或 status output 存在，不要说
 “Analyst 已经分析完成”或“Auditor 已通过”。
+
+### Run Card 和硬停止规则
+
+每次关键 CLI 命令、role 返回、repair、gate check、finalize 尝试、Quality
+Panel 或打包/导出请求后，WorkBuddy 都应该展示只来自机器事实的 Run Card：
+
+```text
+runtime:
+current_stage:
+run_integrity:
+blocked:
+latest_gate_status:
+finalize_report:
+delivery_dir:
+next_allowed_action:
+```
+
+硬停止条件：
+
+- `briefloop doctor` 有任何 error：停止，展示完整 doctor 输出、workspace
+  路径、当前用户、output 路径存在/可写结果、权限或 ACL 证据；
+- `run_integrity` 不是 clean、已经 contaminated、stale 或 unknown：停止
+  finalize、delivery、export 和 share；早期 draft work 只有在 handoff 允许的
+  非交付步骤里才能继续；
+- 缺少 `output/intermediate/finalize_report.json` 或 `output/delivery/`：
+  只能说有草稿，不能说交付完成，也不能导出 delivery package；这是 finalize
+  之前的正常状态，本身不阻止更早的 handoff-assigned stages；
+- 打包、导出、附件候选包含 `.env`、token、private planning 文件或机器密钥：
+  停止，丢弃该包，并建议轮换暴露的 key。
+
+不要分享整个 workspace zip。只使用 BriefLoop 生成的 delivery bundle 或 audit
+bundle。需要支持时，只分享人工检查过、确认不含密钥的
+`briefloop status --json` 或 doctor 输出摘录。
 
 ## Assistant Trigger 模板
 

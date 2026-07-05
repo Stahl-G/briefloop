@@ -21,7 +21,7 @@ checkout.
 ## 2. Use The First-Run Search Default
 
 BriefLoop's first-run default is local/no live web search. A user can create a
-workspace, inspect status, and generate operator handoff without any search API
+workspace, inspect status, and generate CodeBuddy handoff without any search API
 key. Empty search-provider keys in `.env` do not mean setup failed.
 
 If the user asks for live web search or says they want to configure an API key,
@@ -41,7 +41,9 @@ If the user asks "跑周报" and has no workspace:
 
 1. Explain in one sentence: a BriefLoop workspace is the local folder for this
    report project.
-2. Suggest a safe local folder, for example `~/BriefLoop/<topic-slug>`.
+2. Suggest a safe local folder outside the BriefLoop source checkout, for
+   example `~/Documents/BriefLoop/workspaces/<topic-slug>` on macOS/Linux or
+   `C:\Users\<User>\Documents\BriefLoop\workspaces\<topic-slug>` on Windows.
 3. Ask for explicit confirmation before creating it. Suggest only; do not create
    the folder or workspace silently.
 4. Choose the product entry from the user's plain-language request:
@@ -64,12 +66,12 @@ briefloop new solar-periodic <workspace>
 `industry-weekly`, `management-monthly`, and `document-review` are the baseline
 supported product entries. `solar-periodic` is experimental.
 
-## 4. Run Operator Handoff
+## 4. Run CodeBuddy Handoff
 
 Run:
 
 ```bash
-briefloop run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
 Then inspect:
@@ -84,12 +86,50 @@ CLI output, for example:
 
 ```text
 已创建工作区。
-已生成 operator handoff。
+已生成 CodeBuddy handoff。
 当前状态：等待 source/scout artifact。
 ```
 
 Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
 artifact, event, transaction, or status output exists.
+
+After every key command or role return, print this Run Card from machine facts:
+
+```text
+runtime:
+current_stage:
+run_integrity:
+blocked:
+latest_gate_status:
+finalize_report:
+delivery_dir:
+next_allowed_action:
+```
+
+If `doctor` reports any error, stop and show the complete doctor output before
+continuing. If `run_integrity` is not clean, stop finalize, delivery, export,
+and share actions; for earlier role-work stages, report the Run Card and
+continue only with non-delivery workflow steps allowed by the handoff. If
+`output/intermediate/finalize_report.json` or `output/delivery/` is missing,
+do not claim delivery or export a delivery package; say the run has a draft
+only, then continue earlier stages only when the handoff allows them.
+
+The WorkBuddy main session must invoke the matching role subagent for
+handoff-assigned draft work:
+
+```text
+briefloop-scout
+briefloop-screener
+briefloop-claim-ledger
+briefloop-analyst
+briefloop-editor
+briefloop-auditor
+briefloop-formatter
+```
+
+If these role subagents are not available, stop before full workflow execution.
+Do not fall back to hand-writing BriefLoop JSON artifacts or silently switching
+to `--runtime operator`.
 
 ## 5. Summarize Quality
 
@@ -99,6 +139,14 @@ When the workspace has enough artifacts to summarize:
 briefloop quality summarize --workspace <workspace>
 ```
 
-Open `output/intermediate/quality_panel.html` for the static operator view.
+Open `output/intermediate/quality_panel.html` for the static audit view.
 Quality Panel is traceability and process accountability, not semantic proof,
 delivery approval, or release authorization.
+
+## 6. Share Outputs Safely
+
+Do not zip or share the whole workspace. Whole workspaces can contain `.env`,
+tokens, private planning notes, control files, and unfinished artifacts. Use
+BriefLoop-generated delivery or audit bundles when present. If a package or
+attachment candidate contains `.env`, stop, remove the package, and recommend
+rotating any exposed key.

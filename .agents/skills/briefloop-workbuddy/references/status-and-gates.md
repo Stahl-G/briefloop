@@ -28,7 +28,7 @@ The output files are:
 - `output/intermediate/quality_summary.md`
 - `output/intermediate/quality_panel.html`
 
-These are operator/audit projections. They are not gates, release approval, or
+These are audit projections. They are not gates, release approval, or
 delivery approval.
 
 ## Delivery

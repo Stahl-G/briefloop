@@ -55,27 +55,16 @@ or any issue/PR comment that reports the result.
      briefloop new industry-weekly <workspace>
      ```
 
-3. Ask WorkBuddy to run the operator handoff.
-
-   ```bash
-   briefloop run --workspace <workspace> --runtime operator
-   ```
-
-   Expected:
-   - `output/intermediate/agent_handoff.md` exists.
-   - `output/intermediate/agent_handoff.json` exists.
-   - WorkBuddy does not claim Scout, Screener, Claim Ledger, Analyst, Editor,
-     Auditor, Formatter, or any other role subagent ran unless WorkBuddy
-     actually delegated and recorded that role.
-
-   If CodeBuddy project Skill and role agents are used, run the CodeBuddy
-   handoff instead:
+3. Ask WorkBuddy to run the CodeBuddy handoff.
 
    ```bash
    briefloop run --workspace <workspace> --runtime codebuddy
    ```
 
-   Role delegation must be explicit and use the checked-in project sub-agents:
+   Expected:
+   - `output/intermediate/agent_handoff.md` exists.
+   - `output/intermediate/agent_handoff.json` exists.
+   - role delegation is explicit and uses the checked-in project sub-agents:
 
    ```text
    briefloop-scout
@@ -92,6 +81,9 @@ or any issue/PR comment that reports the result.
    - role agents do not run BriefLoop CLI commands;
    - the main CodeBuddy session runs deterministic validation, stage, gate,
      finalize, delivery, and quality commands when allowed.
+   - if role agents are unavailable, WorkBuddy stops before full workflow
+     execution instead of hand-authoring workflow JSON artifacts or silently
+     switching to `--runtime operator`.
 
 4. Ask WorkBuddy to inspect status and state.
 
@@ -103,6 +95,19 @@ or any issue/PR comment that reports the result.
    Expected:
    - WorkBuddy reports only deterministic status visible in CLI output or
      generated artifacts.
+   - WorkBuddy prints a Run Card with:
+
+     ```text
+     runtime:
+     current_stage:
+     run_integrity:
+     blocked:
+     latest_gate_status:
+     finalize_report:
+     delivery_dir:
+     next_allowed_action:
+     ```
+
    - WorkBuddy does not hand-edit `workflow_state.json`,
      `artifact_registry.json`, `runtime_manifest.json`, or `event_log.jsonl`.
 
@@ -114,7 +119,7 @@ or any issue/PR comment that reports the result.
 
    Expected:
    - WorkBuddy treats `quality_panel.json`, `quality_summary.md`, and
-     `quality_panel.html` as operator/audit projections.
+     `quality_panel.html` as audit projections.
    - WorkBuddy does not describe Quality Panel as a gate, delivery approval, or
      release approval.
 
@@ -131,13 +136,24 @@ or any issue/PR comment that reports the result.
    - WorkBuddy must not auto-deliver, bypass gates, publish, approve release, or
      edit control files to make the workspace look valid.
 
+8. Confirm hard stop behavior.
+   - Any `doctor` error stops the workflow and shows the full doctor output.
+   - Non-clean, contaminated, stale, or unknown `run_integrity` stops
+     finalize, delivery, export, and share, but does not by itself stop earlier
+     handoff-assigned stages.
+   - Missing `output/intermediate/finalize_report.json` or `output/delivery/`
+     prevents WorkBuddy from saying delivery is complete or exporting a
+     delivery package; it does not by itself stop pre-finalize role work.
+   - Any export/share package candidate containing `.env`, tokens, private
+     planning files, or machine secrets is rejected before sharing.
+   - WorkBuddy does not zip or share the whole workspace.
+
 ## Pass Criteria
 
 The smoke passes only if all of these are true:
 
 - WorkBuddy used the installed BriefLoop Skill or generated local Skill bundle.
-- WorkBuddy used `--runtime operator`, or used `--runtime codebuddy` only when
-  the CodeBuddy project Skill and role-agent assets were available.
+- WorkBuddy used `--runtime codebuddy` when running the full workflow.
 - WorkBuddy reported the active BriefLoop CLI path and version.
 - WorkBuddy created or opened only a confirmed workspace path.
 - WorkBuddy did not hand-edit Python-owned control files or frozen artifacts.
@@ -145,6 +161,15 @@ The smoke passes only if all of these are true:
   delegation.
 - CodeBuddy project role agents, when used, did not run CLI transactions or
   edit Python-owned control files.
+- WorkBuddy printed machine-fact Run Cards instead of free-form completion
+  claims.
+- WorkBuddy did not silently fall back to `--runtime operator` for full
+  workflow execution.
+- WorkBuddy stopped on doctor errors, stopped finalize/delivery/export/share
+  on contaminated or unknown run integrity, did not claim delivery when
+  finalize/delivery artifacts were missing, and rejected secret-bearing package
+  candidates.
+- WorkBuddy did not share a whole workspace zip.
 - WorkBuddy did not describe traceability as semantic proof, output-quality
   improvement proof, delivery approval, release approval, or publication
   authority.

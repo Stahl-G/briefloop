@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Rewrote the experimental WorkBuddy Skill path to use `--runtime codebuddy`
+  and checked-in CodeBuddy-compatible role agents for full workflow runs,
+  instead of defaulting to the host-agnostic operator handoff. The main
+  WorkBuddy/CodeBuddy session still owns deterministic CLI transactions; role
+  agents only draft handoff-assigned artifacts and this does not add gate
+  authority, delivery approval, release authority, semantic proof, or
+  output-quality proof.
 - Added experimental Gmail delivery through the optional `gws` CLI:
   `briefloop deliver --workspace <workspace> --target gmail --channel draft
   --recipient <email>` creates a Gmail draft, while `--channel send`

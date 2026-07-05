@@ -240,13 +240,21 @@ def test_workbuddy_skill_has_natural_language_triggers() -> None:
         assert phrase in text
 
 
-def test_workbuddy_skill_uses_operator_runtime_not_manual_path() -> None:
+def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default() -> None:
     text = _all_skill_text()
-    assert "multi-agent-brief run --workspace <workspace> --runtime operator" in text
+    assert "briefloop run --workspace <workspace> --runtime codebuddy" in text
+    assert "CodeBuddy-compatible role subagent" in text
+    assert "Use `--runtime codebuddy` only when the source checkout contains" in text
+    assert "The local WorkBuddy Skill zip alone does\nnot install those CodeBuddy project assets" in text
+    assert "briefloop-scout" in text
+    assert "briefloop-auditor" in text
+    assert "do not\nfall back to hand-authoring BriefLoop JSON artifacts" in text
+    assert "silently switch\nto `--runtime operator`" in text
+    assert "run --workspace <workspace> --runtime operator" not in text
+    assert "Use `--runtime operator`" not in text
+    assert "use `--runtime operator` for handoff" not in text
     assert "--runtime manual" not in text
     assert "legacy manual" not in text.lower()
-    assert "host-agnostic compact operator workflow" in text
-    assert "does not assume WorkBuddy delegated" in text
 
 
 def test_workbuddy_skill_includes_required_cli_surface() -> None:
@@ -260,6 +268,7 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         "briefloop new management-monthly <workspace>",
         "briefloop new document-review <workspace>",
         "briefloop new solar-periodic <workspace>",
+        "briefloop run --workspace <workspace> --runtime codebuddy",
         "multi-agent-brief status --workspace <workspace>",
         "multi-agent-brief state check --workspace <workspace>",
         "multi-agent-brief quality summarize --workspace <workspace>",
@@ -285,7 +294,8 @@ def test_workbuddy_skill_preserves_control_boundaries() -> None:
         "Before each stage or role-owned artifact action",
         "re-read the relevant handoff step before continuing",
         "Do not claim Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or\nFormatter subagents ran",
-        "follow the English operator handoff literally",
+        "follow the generated handoff literally",
+        "Role subagents draft only handoff-assigned artifacts",
         "not semantic proof",
         "not gates, release approval, or\ndelivery approval",
     ]:
@@ -304,7 +314,8 @@ def test_workbuddy_skill_hardens_first_use_routing_and_progress_feedback() -> No
     for phrase in [
         "a BriefLoop workspace is the local folder for this report project",
         "ask for explicit confirmation of the target path",
-        "Suggest a safe local folder, for example `~/BriefLoop/<topic-slug>`",
+        "Suggest a safe local folder outside the BriefLoop source checkout",
+        "`C:\\Users\\<User>\\Documents\\BriefLoop\\workspaces\\<topic-slug>`",
         "Suggest only; do not create the folder or workspace silently",
         "周报, 行业, or 竞品 -> `industry-weekly`",
         "管理月报, or 月报 -> `management-monthly`",
@@ -321,7 +332,7 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
         "`agent_handoff.md` / `agent_handoff.json` step",
         "After each deterministic CLI transaction, summarize progress to the user",
         "已创建工作区。",
-        "已生成 operator handoff。",
+        "已生成 CodeBuddy handoff。",
         "当前状态：等待 source/scout artifact。",
         "Quality Panel 已生成。",
     ]:
@@ -332,6 +343,52 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
         "Preserve command names, artifact names, and handoff obligations exactly",
     ]:
         assert phrase in compact
+
+
+def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
+    text = _all_skill_text()
+    compact = _compact(text)
+    for field in [
+        "runtime:",
+        "current_stage:",
+        "run_integrity:",
+        "blocked:",
+        "latest_gate_status:",
+        "finalize_report:",
+        "delivery_dir:",
+        "next_allowed_action:",
+    ]:
+        assert field in text
+    for phrase in [
+        "After every key CLI command, role return, repair action, gate check, finalize",
+        "`briefloop doctor` reports any error",
+        "Show the full doctor output",
+        "`run_integrity` is not clean",
+        "Do not run finalize or delivery",
+        "`output/intermediate/finalize_report.json` or `output/delivery/` is missing",
+        "draft only",
+        "Any export, share, package, zip, or attachment candidate contains",
+    ]:
+        assert phrase in text
+    for phrase in [
+        "Do not turn normal pre-finalize state into a workflow stop",
+        "stop finalize, delivery, export, and share actions",
+        "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
+            "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
+            "Do not say \"delivered\" unless `output/intermediate/finalize_report.json`, `output/delivery/`, and the relevant finalize / delivery events exist",
+            "Do not zip or share the whole workspace. Use BriefLoop-generated delivery or audit bundles when present; never include `.env`",
+            "share only manually reviewed, non-secret excerpts from `briefloop status --json` or doctor output",
+            "Never share a whole workspace zip",
+            "Do not downgrade the error yourself",
+            "recommend rotating any exposed key",
+    ]:
+        assert phrase in compact
+    for phrase in [
+        "future support bundles",
+        "support-bundle",
+        "support package",
+    ]:
+        assert phrase not in compact
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
@@ -372,14 +429,20 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "source-clone-only" in text.lower()
         assert "briefloop workbuddy pack-skill --output dist/workbuddy" in text
         assert "WorkBuddy Assistant trigger" in text
-        assert "--runtime operator" in text
-        assert "not a WorkBuddy delegated runtime" in text or "不是 WorkBuddy delegated runtime" in text
+        assert "--runtime codebuddy" in text
+        assert "WorkBuddy role-agent orchestration" in text
+        assert "silently fall back to `--runtime operator`" in text or "静默回退到 `--runtime operator`" in text
         assert "semantic proof" in text or "semantic truth" in text or "语义证明" in text
         assert "approve delivery" in text or "不批准交付" in text
         assert "authorize release" in text or "不授权 release" in text
         assert "WorkBuddy Marketplace" in text
         assert "docs/workbuddy-smoke-checklist.md" in text
         assert "not the WorkBuddy first-user adapter" in compact or "不是 WorkBuddy first-user" in compact
+        assert "Run Card" in text
+        assert "workspace zip" in text or "workspace" in text and ".env" in text
+        assert "run_integrity" in text
+        assert "finalize_report.json" in text
+        assert "output/delivery/" in text
 
 
 def test_workbuddy_docs_do_not_route_users_to_repo_operator_skill() -> None:
@@ -397,7 +460,9 @@ def test_workbuddy_assistant_prompt_is_trigger_only() -> None:
         "remote trigger into a local WorkBuddy session",
         "BriefLoop Skill installed",
         "You are not a BriefLoop runtime",
-        "Use `--runtime operator`",
+        "Use `--runtime codebuddy`",
+        "briefloop-scout",
+        "briefloop-auditor",
         "Do not hand-author control files",
         "Do not finalize, deliver, publish, approve release",
         "Do not say role subagents ran unless WorkBuddy explicitly delegated",
@@ -415,16 +480,20 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "experimental integration smoke",
         "not runtime proof",
         "briefloop workbuddy pack-skill --output dist/workbuddy",
-        "briefloop run --workspace <workspace> --runtime operator",
+        "briefloop run --workspace <workspace> --runtime codebuddy",
         "briefloop status --workspace <workspace>",
         "briefloop state check --workspace <workspace>",
         "briefloop quality summarize --workspace <workspace>",
         ".codebuddy/skills/briefloop/",
         ".codebuddy/agents/briefloop-*.md",
         "must not auto-deliver",
-        "not evidence that WorkBuddy is a supported delegated runtime",
+        "WorkBuddy did not silently fall back to `--runtime operator`",
+        "WorkBuddy printed machine-fact Run Cards",
+        "WorkBuddy stopped on doctor errors, stopped finalize/delivery/export/share",
+        "did not claim delivery when finalize/delivery artifacts were missing",
+        "WorkBuddy did not share a whole workspace zip",
     ]:
-        assert phrase in text
+        assert phrase in compact
     for phrase in [
         "not runtime proof, delegated-agent proof, output-quality proof, semantic proof",
         "WorkBuddy did not hand-edit Python-owned control files or frozen artifacts",
@@ -461,7 +530,8 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
     with zipfile.ZipFile(result.zip_path) as archive:
         assert sorted(archive.namelist()) == sorted(names)
         skill_text = archive.read("briefloop/SKILL.md").decode("utf-8")
-    assert "--runtime operator" in skill_text
+    assert "--runtime codebuddy" in skill_text
+    assert "run --workspace <workspace> --runtime operator" not in skill_text
     assert "BriefLoop WorkBuddy Skill" in skill_text
     assert "BriefLoop Operator Protocol" not in skill_text
     assert "semantic proof" in skill_text

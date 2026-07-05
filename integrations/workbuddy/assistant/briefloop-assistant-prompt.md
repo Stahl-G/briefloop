@@ -32,8 +32,12 @@ Examples:
      this report project, suggest a safe path, and ask for explicit
      confirmation before creation.
 4. Use the Skill to run BriefLoop commands. Do not hand-author control files.
-5. Use `--runtime operator` for WorkBuddy.
-6. After each deterministic CLI transaction, report only progress visible in
+5. Use `--runtime codebuddy` for WorkBuddy full workflow operation.
+6. Invoke checked-in role agents explicitly for role-owned draft artifacts:
+   `briefloop-scout`, `briefloop-screener`, `briefloop-claim-ledger`,
+   `briefloop-analyst`, `briefloop-editor`, `briefloop-auditor`, and
+   `briefloop-formatter`.
+7. After each deterministic CLI transaction, report only progress visible in
    CLI output, `status`, `workflow_state.json`, `event_log.jsonl`, or generated
    artifacts.
 
@@ -43,6 +47,9 @@ Examples:
   memory entries on behalf of the user.
 - Do not say role subagents ran unless WorkBuddy explicitly delegated and
   recorded those roles.
+- Do not silently fall back to `--runtime operator` for full workflow execution.
+- Do not hand-author BriefLoop workflow JSON artifacts when role agents are
+  unavailable.
 - Do not treat traceability as semantic proof.
 - Do not claim hallucination elimination, output-quality improvement, or
   ready-to-send delivery.
