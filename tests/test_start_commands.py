@@ -1080,8 +1080,8 @@ def test_start_hermes_output_no_legacy_generate_brief(tmp_path, capsys):
     assert "/generate-brief" not in data["prompt"]
 
 
-def test_start_claude_output_contains_briefloop_command(tmp_path, capsys):
-    """start --runtime claude must mention the public /briefloop command."""
+def test_start_claude_output_contains_stage_workflow_command(tmp_path, capsys):
+    """start --runtime claude must point the operator at the stage-running command."""
     ws = _write_workspace(tmp_path)
     rc = main([
         "start",
@@ -1092,8 +1092,8 @@ def test_start_claude_output_contains_briefloop_command(tmp_path, capsys):
     ])
     assert rc == 0
     captured = capsys.readouterr()
+    assert "/generate-brief" in captured.out
     assert "/briefloop run" in captured.out
-    assert "/generate-brief" not in captured.out
 
 
 def test_start_codex_handoff_uses_root_session_orchestrator(tmp_path):
@@ -1382,7 +1382,7 @@ def test_build_handoff_hermes_has_delegate_task(tmp_path):
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
 
-def test_build_handoff_claude_has_briefloop_command(tmp_path):
+def test_build_handoff_claude_has_stage_workflow_command(tmp_path):
     ws = _write_workspace(tmp_path)
     handoff = build_handoff(
         workspace=ws,
@@ -1391,8 +1391,11 @@ def test_build_handoff_claude_has_briefloop_command(tmp_path):
         venv="/tmp/.venv/bin/activate",
         run_doctor=False,
     )
+    assert "/generate-brief" in handoff.next_steps
+    assert "/generate-brief" in handoff.prompt
     assert "/briefloop run" in handoff.prompt
-    assert "/generate-brief" not in handoff.prompt
+    assert "only to create or refresh handoff files" in handoff.prompt
+    assert "does not execute specialists or complete stages" in handoff.prompt
     assert "With role_topology=default, Scout performs discovery and screening in one role" in handoff.prompt
     assert "do not call `state stage-complete --stage screener` in default topology" in handoff.prompt
     assert "strict: scout → screener" in handoff.prompt
@@ -1566,8 +1569,8 @@ def test_run_default_auto_resolves_to_hermes(tmp_path):
     assert manifest["improvement"]["materialized_entry_ids"] == []
 
 
-def test_run_claude_contains_briefloop_command(tmp_path):
-    """run --runtime claude must contain the public /briefloop command."""
+def test_run_claude_contains_stage_workflow_command(tmp_path):
+    """run --runtime claude must contain the command that actually runs stages."""
     ws = _write_workspace(tmp_path)
     rc = main([
         "run",
@@ -1578,8 +1581,10 @@ def test_run_claude_contains_briefloop_command(tmp_path):
     ])
     assert rc == 0
     data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    assert "/generate-brief" in data["next_steps"]
+    assert "/generate-brief" in data["prompt"]
     assert "/briefloop run" in data["prompt"]
-    assert "/generate-brief" not in data["prompt"]
+    assert "only to create or refresh handoff files" in data["prompt"]
 
 
 def test_run_does_not_generate_brief(tmp_path):

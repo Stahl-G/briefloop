@@ -420,9 +420,14 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         workspace=ws_path,
         repo_workdir=str(repo.resolve()),
         venv_activate=venv,
-        next_steps=f"In Claude Code, run: /briefloop run {ws_path}. The command context is the Orchestrator main agent.",
+        next_steps=(
+            f"In Claude Code, continue the delegated stage workflow with: /generate-brief {ws_path}. "
+            "The command context is the Orchestrator main agent. "
+            "Use /briefloop run only to create or refresh handoff files."
+        ),
         prompt=(
-            f"Use /briefloop run {ws_path} as the Orchestrator main-agent entrypoint.\n"
+            f"Use /generate-brief {ws_path} as the delegated stage workflow command.\n"
+            f"Use /briefloop run {ws_path} only to create or refresh handoff files; it does not execute specialists or complete stages.\n"
             "Read contract references before delegation:\n"
             "- configs/orchestrator_contract.yaml\n"
             "- configs/stage_specs.yaml\n"
@@ -454,7 +459,8 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         notes=[
             "Claude Code must be opened from the repository root.",
-            "The /briefloop command handles the Orchestrator-led delegated workflow.",
+            "The /generate-brief command handles the Orchestrator-led delegated stage workflow.",
+            "The /briefloop run command creates or refreshes handoff files only.",
         ],
     )
 
