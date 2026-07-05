@@ -1522,7 +1522,15 @@ def _without_auditable_delivery_steps(text: str) -> str:
         "Run finalize, finalize gate",
     )
     kept: list[str] = []
+    skipping_finalize_block = False
     for line in text.splitlines():
+        if line.startswith("- finalize:"):
+            skipping_finalize_block = True
+            continue
+        if skipping_finalize_block and line.startswith("- ") and not line.startswith("  "):
+            skipping_finalize_block = False
+        if skipping_finalize_block:
+            continue
         if any(fragment in line for fragment in blocked_fragments):
             continue
         kept.append(line)

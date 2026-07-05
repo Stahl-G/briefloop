@@ -195,6 +195,13 @@ def test_codebuddy_formatter_is_read_only_readiness_reporter() -> None:
         assert phrase in text
 
 
+def test_codebuddy_claim_ledger_never_emits_claim_ids() -> None:
+    text = _read(CODEBUDDY_AGENT_ROOT / "briefloop-claim-ledger.md")
+    assert "Never\nemit `claim_id` in `claim_drafts.json`" in text
+    assert "including nested metadata fields" in text
+    assert "let the deterministic freeze transaction assign\nauthoritative Claim Ledger IDs" in text
+
+
 def test_workbuddy_skill_is_exposed_at_agent_skill_root() -> None:
     assert WORKBUDDY_SKILL.exists()
     assert LEGACY_WORKBUDDY_SKILL.exists()

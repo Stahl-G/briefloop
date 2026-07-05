@@ -126,8 +126,11 @@ def _check_source_assets(checks: list[dict[str, str]]) -> None:
 def _role_agent_contract_errors(role: str, text: str) -> list[str]:
     errors: list[str] = []
     frontmatter = _frontmatter(text)
+    name = _frontmatter_value(frontmatter, "name")
     tools = _frontmatter_tools(frontmatter)
     expected_tools = EXPECTED_ROLE_AGENT_TOOLS.get(role)
+    if name != role:
+        errors.append(f"{role}: frontmatter name must be {role}")
     if expected_tools is None:
         errors.append(f"{role}: unknown CodeBuddy role agent")
     elif tools != expected_tools:

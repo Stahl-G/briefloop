@@ -95,3 +95,20 @@ Never edit workflow_state.json or event_log.jsonl.
 """
     errors = smoke._role_agent_contract_errors("briefloop-formatter", formatter_with_write)
     assert "briefloop-formatter: tools must be Read, Grep, Glob" in errors
+
+
+def test_codebuddy_adapter_smoke_rejects_role_agent_name_mismatch() -> None:
+    smoke = _load_smoke_module()
+    scout_with_wrong_name = """---
+name: briefloop-scout-typo
+description: Scout role.
+tools: Read, Write, Grep, Glob
+model: inherit
+permissionMode: default
+---
+
+Do not run `briefloop` or `multi-agent-brief` CLI commands.
+Never edit workflow_state.json or event_log.jsonl.
+"""
+    errors = smoke._role_agent_contract_errors("briefloop-scout", scout_with_wrong_name)
+    assert "briefloop-scout: frontmatter name must be briefloop-scout" in errors
