@@ -589,6 +589,18 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
 ) -> None:
     ws = _finalized_workspace(tmp_path)
     _write_quality_projection_artifacts(ws)
+    delivery_readme_artifact = ws / "output" / "delivery" / "README.md"
+    delivery_readme_artifact.write_text(
+        "# Reader Delivery Notes\n\nThis is a reader-facing delivery artifact.\n",
+        encoding="utf-8",
+    )
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifacts"].append("output/delivery/README.md")
+    report["delivery_artifact_sha256"]["output/delivery/README.md"] = _sha256_file(
+        delivery_readme_artifact
+    )
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (ws / "output" / "delivery" / ".DS_Store").write_text("macOS junk\n", encoding="utf-8")
     legacy_zip = ws / "output" / "output.zip"
     with zipfile.ZipFile(legacy_zip, "w") as zf:
@@ -602,6 +614,17 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     archives = manifest["bundle_archives"]
     assert archives["status"] == "generated"
+    assert manifest["supplemental_guidance"] == {
+        "status": "available_when_archives_are_written",
+        "semantics": "supplemental_guidance_non_authoritative_not_counted_as_artifacts",
+        "artifact_count_policy": "excluded_from_delivery_bundle_and_audit_bundle_artifact_count",
+        "delivery_archive_member": "delivery/_BUNDLE_README.md",
+        "audit_archive_member": "audit/_BUNDLE_README.md",
+    }
+    assert manifest["delivery_bundle"]["artifact_count"] == len(
+        manifest["delivery_bundle"]["artifacts"]
+    )
+    assert manifest["audit_bundle"]["artifact_count"] == len(manifest["audit_bundle"]["artifacts"])
     delivery_zip = ws / archives["delivery"]["path"]
     audit_zip = ws / archives["audit"]["path"]
     assert delivery_zip.exists()
@@ -612,16 +635,36 @@ def test_packs_bundle_cli_writes_clean_archives_from_manifest(
     first_audit_sha = archives["audit"]["sha256"]
 
     with zipfile.ZipFile(delivery_zip) as zf:
-        delivery_names = set(zf.namelist())
+        delivery_member_names = zf.namelist()
+        delivery_names = set(delivery_member_names)
+        delivery_readme = zf.read("delivery/_BUNDLE_README.md").decode("utf-8")
+        reader_readme = zf.read("delivery/README.md").decode("utf-8")
     with zipfile.ZipFile(audit_zip) as zf:
-        audit_names = set(zf.namelist())
+        audit_member_names = zf.namelist()
+        audit_names = set(audit_member_names)
+        audit_readme = zf.read("audit/_BUNDLE_README.md").decode("utf-8")
 
+    assert delivery_member_names.count("delivery/_BUNDLE_README.md") == 1
+    assert delivery_member_names.count("delivery/README.md") == 1
+    assert "delivery/_BUNDLE_README.md" in delivery_names
     assert "delivery/brief.md" in delivery_names
+    assert "delivery/README.md" in delivery_names
+    assert "reader-facing delivery artifact" in reader_readme
+    assert "reader-facing report" in delivery_readme
+    assert "Audit/control artifacts are intentionally excluded" in delivery_readme
+    assert "does not prove semantic truth" in delivery_readme
+    assert "approve publication" in delivery_readme
+    assert audit_member_names.count("audit/_BUNDLE_README.md") == 1
+    assert "audit/_BUNDLE_README.md" in audit_names
     assert "audit/output/intermediate/finalize_report.json" in audit_names
     assert "audit/output/intermediate/audited_brief.md" in audit_names
     assert "audit/output/intermediate/quality_panel.json" in audit_names
     assert "audit/output/intermediate/quality_summary.md" in audit_names
     assert "audit/output/intermediate/quality_panel.html" in audit_names
+    assert "quality_summary.md" in audit_readme
+    assert "claim_ledger.json" in audit_readme
+    assert "not reader delivery" in audit_readme
+    assert "release authority" in audit_readme
     assert not any("quality_panel" in name for name in delivery_names)
     all_names = delivery_names | audit_names
     assert not any("__MACOSX" in name for name in all_names)
