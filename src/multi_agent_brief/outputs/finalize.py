@@ -90,6 +90,12 @@ class FinalizeResult:
     delivery_snapshot_artifact_sha256: dict[str, str] = field(default_factory=dict)
     delivery_snapshot_semantics: str = "convenience_copy_not_immutable_archive"
     delivery_snapshot_error: str = ""
+    finalize_staging_dir: str = ""
+    staging_reader_brief: str = ""
+    staging_reader_docx: str = ""
+    staging_named_reader_brief: str = ""
+    staging_named_reader_docx: str = ""
+    delivery_promotion: str = "not_started"
     template_rendering: dict[str, Any] = field(default_factory=dict)
     report_template_conformance: dict[str, Any] = field(default_factory=dict)
     reader_clean: dict[str, Any] | None = None
@@ -140,6 +146,11 @@ _FINALIZE_REPORT_PATH_FIELDS = (
     "delivery_docx",
     "delivery_latest_dir",
     "delivery_snapshot_dir",
+    "finalize_staging_dir",
+    "staging_reader_brief",
+    "staging_reader_docx",
+    "staging_named_reader_brief",
+    "staging_named_reader_docx",
 )
 _FINALIZE_REPORT_PATH_LIST_FIELDS = (
     "delivery_artifacts",
@@ -302,46 +313,46 @@ def finalize_reader_outputs(
     )
     reader_markdown = template_render.markdown
 
-    brief_path = out / "brief.md"
-    brief_path.write_text(reader_markdown, encoding="utf-8")
+    staging_dir = intermediate_dir / "finalize_staging"
+    _reset_finalize_staging_dir(staging_dir)
+    staging_brief_path = staging_dir / "brief.md"
+    staging_brief_path.write_text(reader_markdown, encoding="utf-8")
+    final_brief_path = out / "brief.md"
 
-    named_brief_path: Path | None = None
+    staging_named_brief_path: Path | None = None
+    final_named_brief_path: Path | None = None
     if output_named_outputs:
         tokens = dict(output_filename_tokens or {})
         tokens.setdefault("project_name", project_name)
         tokens.setdefault("title", project_name)
         named_stem = render_output_stem(output_filename_template, tokens) if output_filename_template else ""
         if named_stem:
-            named_brief_path = out / f"{named_stem}.md"
-            if named_brief_path != brief_path:
-                named_brief_path.write_text(reader_markdown, encoding="utf-8")
+            staging_named_brief_path = staging_dir / f"{named_stem}.md"
+            final_named_brief_path = out / f"{named_stem}.md"
+            if staging_named_brief_path != staging_brief_path:
+                staging_named_brief_path.write_text(reader_markdown, encoding="utf-8")
 
     docx_status = "not_requested"
-    docx_path = out / "brief.docx"
-    named_docx_path: Path | None = None
+    staging_docx_path = staging_dir / "brief.docx"
+    final_docx_path = out / "brief.docx"
+    staging_named_docx_path: Path | None = None
+    final_named_docx_path: Path | None = None
     if "docx" in formats:
-        # Avoid leaving a stale rendered file that may still contain internal
-        # [src:<claim_id>] markers when regeneration fails or dependencies are missing.
-        if docx_path.exists():
-            docx_path.unlink()
-        if named_brief_path is not None:
-            possible_named_docx = named_brief_path.with_suffix(".docx")
-            if possible_named_docx.exists():
-                possible_named_docx.unlink()
         try:
             from multi_agent_brief.outputs.ib_docx import convert
 
             convert(
-                brief_path,
-                docx_path,
+                staging_brief_path,
+                staging_docx_path,
                 title=project_name,
                 footer=output_footer or None,
                 template=docx_template or "default",
             )
             docx_status = "generated"
-            if named_brief_path is not None and named_brief_path.stem != "brief":
-                named_docx_path = named_brief_path.with_suffix(".docx")
-                shutil.copyfile(docx_path, named_docx_path)
+            if staging_named_brief_path is not None and staging_named_brief_path.stem != "brief":
+                staging_named_docx_path = staging_named_brief_path.with_suffix(".docx")
+                final_named_docx_path = out / staging_named_docx_path.name
+                shutil.copyfile(staging_docx_path, staging_named_docx_path)
         except ImportError:
             docx_status = "skipped_missing_dependency"
         except Exception:
@@ -351,10 +362,10 @@ def finalize_reader_outputs(
     result = FinalizeResult(
         status="pass",
         audited_brief=str(audited_path),
-        reader_brief=str(brief_path),
-        named_reader_brief=str(named_brief_path or ""),
-        reader_docx=str(docx_path) if docx_path.exists() else "",
-        named_reader_docx=str(named_docx_path or ""),
+        reader_brief=str(final_brief_path),
+        named_reader_brief=str(final_named_brief_path or ""),
+        reader_docx=str(final_docx_path) if staging_docx_path.exists() else "",
+        named_reader_docx=str(final_named_docx_path or ""),
         docx_generation=docx_status,
         stripped_src_marker_count=stripped_count,
         source_appendix=str(appendix_path) if appendix_result.markdown and appendix_path.exists() else "",
@@ -375,6 +386,12 @@ def finalize_reader_outputs(
         source_appendix_trace_source_count=appendix_result.trace_source_count,
         source_appendix_trace_span_count=appendix_result.trace_span_count,
         source_appendix_trace_warnings=appendix_result.trace_warnings,
+        finalize_staging_dir=str(staging_dir),
+        staging_reader_brief=str(staging_brief_path),
+        staging_reader_docx=str(staging_docx_path) if staging_docx_path.exists() else "",
+        staging_named_reader_brief=str(staging_named_brief_path or ""),
+        staging_named_reader_docx=str(staging_named_docx_path or ""),
+        delivery_promotion="pending_reader_clean",
         template_rendering=template_render.to_report(),
         audit_binding=_audit_binding_report(
             intermediate_dir=intermediate_dir,
@@ -414,6 +431,7 @@ def finalize_reader_outputs(
     )
     if result.audit_input_integrity.get("status") == "fail":
         result.status = "fail"
+        _skip_delivery_promotion(result, reason="skipped_audit_input_integrity_failed")
         _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
         findings = result.audit_input_integrity.get("findings") or []
         raise RuntimeError(
@@ -421,38 +439,24 @@ def finalize_reader_outputs(
             f"{len(findings)} changed artifact{'s' if len(findings) != 1 else ''}. "
             f"See {report_path}."
         )
-    delivery_bundle = _build_delivery_bundle(
-        output_dir=out,
-        brief_path=brief_path,
-        docx_path=docx_path if docx_path.exists() else None,
-        named_docx_path=named_docx_path,
-    )
-    result.delivery_markdown = delivery_bundle["delivery_markdown"]
-    result.delivery_docx = delivery_bundle["delivery_docx"]
-    result.delivery_latest_dir = delivery_bundle["delivery_latest_dir"]
-    result.delivery_artifacts = delivery_bundle["delivery_artifacts"]
-    result.delivery_artifact_sha256 = delivery_bundle["delivery_artifact_sha256"]
-
     reader_clean = _reader_clean_report(
         markdown_paths=[
             path
             for path in (
-                Path(result.delivery_markdown) if result.delivery_markdown else None,
+                staging_brief_path,
                 appendix_path if appendix_path.exists() else None,
             )
             if path is not None and path.exists()
         ],
         docx_paths=[
-            path
-            for path in (Path(result.delivery_docx) if result.delivery_docx else None,)
-            if path is not None and path.exists()
+            path for path in (staging_docx_path if staging_docx_path.exists() else None,) if path is not None
         ],
         forbidden_phrases=forbidden_phrases,
     )
     result.reader_clean = reader_clean
-    result.report_template_conformance = project_workspace_report_template_conformance(workspace)
     if result.audit_binding and result.audit_binding.get("status") == "fail":
         result.status = "fail"
+        _skip_delivery_promotion(result, reason="skipped_audit_binding_failed")
         _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
         findings = result.audit_binding.get("findings") or []
         raise RuntimeError(
@@ -462,6 +466,7 @@ def finalize_reader_outputs(
         )
     if reader_clean["status"] == "fail":
         result.status = "fail"
+        _skip_delivery_promotion(result, reason="skipped_reader_clean_failed")
         _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
         finding_count = len(reader_clean.get("sample_findings", []))
         total_count = sum(
@@ -474,6 +479,29 @@ def finalize_reader_outputs(
             f"{total_count or finding_count} blocking residue findings. "
             f"See {report_path}."
         )
+    _promote_staged_reader_outputs(
+        staging_brief_path=staging_brief_path,
+        final_brief_path=final_brief_path,
+        staging_named_brief_path=staging_named_brief_path,
+        final_named_brief_path=final_named_brief_path,
+        staging_docx_path=staging_docx_path if staging_docx_path.exists() else None,
+        final_docx_path=final_docx_path if staging_docx_path.exists() else None,
+        staging_named_docx_path=staging_named_docx_path,
+        final_named_docx_path=final_named_docx_path,
+    )
+    result.delivery_promotion = "promoted"
+    delivery_bundle = _build_delivery_bundle(
+        output_dir=out,
+        brief_path=final_brief_path,
+        docx_path=final_docx_path if final_docx_path.exists() else None,
+        named_docx_path=final_named_docx_path,
+    )
+    result.delivery_markdown = delivery_bundle["delivery_markdown"]
+    result.delivery_docx = delivery_bundle["delivery_docx"]
+    result.delivery_latest_dir = delivery_bundle["delivery_latest_dir"]
+    result.delivery_artifacts = delivery_bundle["delivery_artifacts"]
+    result.delivery_artifact_sha256 = delivery_bundle["delivery_artifact_sha256"]
+    result.report_template_conformance = project_workspace_report_template_conformance(workspace)
     try:
         delivery_snapshot = _build_delivery_snapshot(
             output_dir=out,
@@ -491,6 +519,50 @@ def finalize_reader_outputs(
     result.delivery_snapshot_artifact_sha256 = delivery_snapshot["delivery_snapshot_artifact_sha256"]
     _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
     return result
+
+
+def _reset_finalize_staging_dir(staging_dir: Path) -> None:
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _skip_delivery_promotion(result: FinalizeResult, *, reason: str) -> None:
+    result.delivery_promotion = reason
+    result.reader_brief = ""
+    result.named_reader_brief = ""
+    result.reader_docx = ""
+    result.named_reader_docx = ""
+    result.delivery_markdown = ""
+    result.delivery_docx = ""
+    result.delivery_latest_dir = ""
+    result.delivery_artifacts = []
+    result.delivery_artifact_sha256 = {}
+    result.delivery_snapshot_dir = ""
+    result.delivery_snapshot_artifacts = []
+    result.delivery_snapshot_artifact_sha256 = {}
+
+
+def _promote_staged_reader_outputs(
+    *,
+    staging_brief_path: Path,
+    final_brief_path: Path,
+    staging_named_brief_path: Path | None,
+    final_named_brief_path: Path | None,
+    staging_docx_path: Path | None,
+    final_docx_path: Path | None,
+    staging_named_docx_path: Path | None,
+    final_named_docx_path: Path | None,
+) -> None:
+    final_brief_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(staging_brief_path, final_brief_path)
+    if staging_named_brief_path is not None and final_named_brief_path is not None:
+        if staging_named_brief_path != staging_brief_path:
+            shutil.copyfile(staging_named_brief_path, final_named_brief_path)
+    if staging_docx_path is not None and final_docx_path is not None:
+        shutil.copyfile(staging_docx_path, final_docx_path)
+    if staging_named_docx_path is not None and final_named_docx_path is not None:
+        shutil.copyfile(staging_named_docx_path, final_named_docx_path)
 
 
 def _build_delivery_bundle(

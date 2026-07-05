@@ -2165,6 +2165,53 @@ def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
     assert report["reader_clean"]["status"] == "fail"
     assert report["reader_clean"]["bare_claim_id_count"] == 1
     assert report["reader_clean"]["sample_findings"][0]["artifact"].endswith("brief.md")
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["reader_brief"] == ""
+    assert report["delivery_artifacts"] == []
+    assert report["staging_reader_brief"] == "output/intermediate/finalize_staging/brief.md"
+    assert (output_dir / "intermediate" / "finalize_staging" / "brief.md").exists()
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+
+
+def test_failed_finalize_does_not_overwrite_existing_valid_delivery(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nReader-safe text.\n",
+        encoding="utf-8",
+    )
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+    previous_reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    previous_delivery = (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8")
+    previous_snapshot_dirs = sorted((output_dir / "delivery-history").iterdir())
+
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nThis bad reader output contains [CL-0001].\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["delivery_artifacts"] == []
+    assert (output_dir / "brief.md").read_text(encoding="utf-8") == previous_reader
+    assert (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8") == previous_delivery
+    assert sorted((output_dir / "delivery-history").iterdir()) == previous_snapshot_dirs
 
 
 def test_finalize_applies_policy_profile_forbidden_phrases(tmp_path: Path):
@@ -2230,7 +2277,9 @@ def test_finalize_cli_resolves_policy_profile_from_workspace_for_nested_output(
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["policy_gate_adapter"]["status"] == "applied"
     assert report["policy_gate_adapter"]["policy_profile_id"] == "finance_default"
-    assert report["reader_brief"] == "nested/output/brief.md"
+    assert report["reader_brief"] == ""
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["staging_reader_brief"] == "nested/output/intermediate/finalize_staging/brief.md"
     assert report["reader_clean"]["status"] == "fail"
     assert report["reader_clean"]["policy_forbidden_phrase_count"] == 1
 
