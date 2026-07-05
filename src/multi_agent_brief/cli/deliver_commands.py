@@ -399,11 +399,26 @@ def _deliver_gmail(
         ) from exc
     if not result.delivered:
         fallback = "Gmail draft creation failed" if channel == "draft" else "Gmail send failed"
+        extra: dict[str, Any] = {}
+        if result.metadata.get("outcome_unknown"):
+            extra = {
+                "artifact": _workspace_relative(workspace, artifact),
+                "draft_created": False,
+                "sent": False,
+                "event_recorded": event_recorded,
+                "event_error": event_error,
+                "outcome_unknown": True,
+                "inspect_target": result.metadata.get("inspect_target") or (
+                    "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
+                ),
+                "run_integrity": run_integrity,
+            }
         raise DeliverCommandError(
             _sanitize_delivery_message(result.message or fallback, recipient=recipient),
             error_code=E_DELIVERY_FAILED,
             target="gmail",
             channel=channel,
+            extra=extra,
         )
     return {
         "ok": True,
@@ -426,8 +441,16 @@ def _gmail_success_event(channel: str) -> str:
 
 def _gmail_event_metadata(channel: str, result: DeliveryResult) -> dict[str, Any]:
     if channel == "draft":
-        return {"draft_id_present": bool(result.metadata.get("draft_id_present"))}
-    return {"sent_message_present": bool(result.metadata.get("sent_message_present"))}
+        metadata = {"draft_id_present": bool(result.metadata.get("draft_id_present"))}
+    else:
+        metadata = {"sent_message_present": bool(result.metadata.get("sent_message_present"))}
+    if result.metadata.get("outcome_unknown"):
+        metadata["outcome_unknown"] = True
+        metadata["timeout"] = bool(result.metadata.get("timeout"))
+        metadata["inspect_target"] = result.metadata.get("inspect_target") or (
+            "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
+        )
+    return metadata
 
 
 def _require_workspace(workspace: str | Path) -> Path:

@@ -6,10 +6,16 @@ import json
 import os
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryConnector, DeliveryResult, DeliveryTarget
+
+
+@dataclass(frozen=True)
+class _GwsTimeout:
+    args: tuple[str, ...]
 
 
 class GwsGmailDeliveryConnector(DeliveryConnector):
@@ -62,8 +68,22 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
             args.extend(["--attach", attachment.relative_to(attachment_cwd).as_posix()])
 
         result = self._run_gws(args, cwd=attachment_cwd)
+        if isinstance(result, _GwsTimeout):
+            action = "draft creation" if target.channel == "draft" else "send"
+            inspect_target = "Gmail Drafts" if target.channel == "draft" else "Gmail Sent Mail"
+            return DeliveryResult(
+                self.name,
+                False,
+                f"gmail: gws {action} timed out after the Gmail request may have been accepted. "
+                f"Inspect {inspect_target} before retrying; do not retry blindly.",
+                metadata={
+                    "outcome_unknown": True,
+                    "timeout": True,
+                    "inspect_target": inspect_target,
+                },
+            )
         if result is None:
-            return DeliveryResult(self.name, False, "gmail: gws command failed or timed out")
+            return DeliveryResult(self.name, False, "gmail: gws command failed")
         if result.returncode != 0:
             action = "draft creation" if target.channel == "draft" else "send"
             return DeliveryResult(
@@ -105,7 +125,7 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
 
     def _check_auth(self) -> str | None:
         result = self._run_gws(["auth", "status"], timeout=10)
-        if result is None:
+        if result is None or isinstance(result, _GwsTimeout):
             return "gmail: unable to check gws auth. Run: gws auth setup; gws auth login"
         if result.returncode != 0:
             if _has_external_auth_signal():
@@ -124,7 +144,7 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
         *,
         timeout: int = 60,
         cwd: Path | None = None,
-    ) -> subprocess.CompletedProcess[str] | None:
+    ) -> subprocess.CompletedProcess[str] | _GwsTimeout | None:
         env = {**os.environ}
         try:
             return subprocess.run(
@@ -135,8 +155,10 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
                 cwd=str(cwd) if cwd is not None else None,
                 env=env,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except FileNotFoundError:
             return None
+        except subprocess.TimeoutExpired:
+            return _GwsTimeout(tuple(args))
 
 
 def _metadata_text(value: Any) -> str:

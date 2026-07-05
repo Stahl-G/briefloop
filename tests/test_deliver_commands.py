@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -848,6 +849,47 @@ def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
         assert secret not in output_blob
         assert secret not in event_blob
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted", "delivery_failed"]
+
+
+def test_deliver_gmail_timeout_is_reported_as_unknown_outcome(tmp_path: Path, capsys, monkeypatch) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
+        if cmd == ["gws", "auth", "status"]:
+            return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=timeout)
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    rc = main([
+        "deliver",
+        "--workspace",
+        str(ws),
+        "--target",
+        "gmail",
+        "--channel",
+        "send",
+        "--recipient",
+        "recipient@example.com",
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_DELIVERY_FAILED"
+    assert payload["outcome_unknown"] is True
+    assert payload["inspect_target"] == "Gmail Sent Mail"
+    assert payload["sent"] is False
+    assert "timed out" in payload["message"]
+    assert "Inspect Gmail Sent Mail before retrying" in payload["message"]
+    events = _delivery_events(ws)
+    assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_failed"]
+    assert events[1]["metadata"]["outcome_unknown"] is True
+    assert events[1]["metadata"]["timeout"] is True
+    assert events[1]["metadata"]["inspect_target"] == "Gmail Sent Mail"
 
 
 def test_deliver_gmail_rejects_unknown_channel(tmp_path: Path, capsys) -> None:
