@@ -4,7 +4,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[15 分钟试用](docs/15-minute-pilot.zh-CN.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
+[官网](https://briefloop.ai) · [15 分钟试用](docs/15-minute-pilot.zh-CN.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [联系方式](docs/contact.zh-CN.md)
 
 写作入口：Claude Code 里用 `/briefloop`；命令行里用 `briefloop`。
 
@@ -394,6 +394,10 @@ BriefLoop 想把软件工程里的那套“可追踪、可回滚、可审计、�
 - 愿意从 issue、文档、测试、示例场景开始贡献的人。
 
 可以从 [good first issue](https://github.com/Stahl-G/briefloop/issues) 开始。提交前建议先读 [红线与反模式](docs/red-lines-and-anti-patterns.md)。
+
+人工联系入口见 [briefloop.ai](https://briefloop.ai) 和
+[联系方式](docs/contact.zh-CN.md)。私密安全问题请发到
+[security@briefloop.ai](mailto:security@briefloop.ai)。
 
 ---
 
