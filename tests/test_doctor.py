@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from multi_agent_brief.sources import doctor
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 
 
@@ -139,6 +140,38 @@ class TestDoctorAvailableButUnconfigured:
 
         assert any(r.status == "ERROR" and "runtime_tool must not configure backend" in r.message for r in results)
         assert not any("no backend configured" in m.lower() for m in messages)
+
+    def test_output_writability_check_cleans_probe_file(self, workspace):
+        output = workspace / "output"
+        output.mkdir()
+
+        results = run_doctor(config_path=workspace / "config.yaml")
+
+        assert any(r.status == "OK" and r.message == "Output directory writable" for r in results)
+        assert list(output.glob(".write_test*")) == []
+
+    def test_output_writability_cleanup_failure_is_warning_not_not_writable(
+        self,
+        workspace,
+        monkeypatch,
+    ):
+        output = workspace / "output"
+        output.mkdir()
+
+        def fail_cleanup(path: Path) -> str:
+            return "windows_sandbox_recycle_bin_unavailable"
+
+        monkeypatch.setattr(doctor, "_try_remove_write_test", fail_cleanup)
+
+        results = run_doctor(config_path=workspace / "config.yaml")
+
+        assert not any(r.status == "ERROR" and "Output directory not writable" in r.message for r in results)
+        assert any(
+            r.status == "WARN"
+            and "Output directory writable, but write-test cleanup failed" in r.message
+            and "windows_sandbox_recycle_bin_unavailable" in r.message
+            for r in results
+        )
 
 
 class TestDoctorRootEnvExample:
