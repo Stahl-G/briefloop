@@ -366,8 +366,33 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
         "BriefLoop first-user setup should use MABW-080 experiments 080.\n",
         encoding="utf-8",
     )
+    (tmp_path / "README.md").write_text(
+        "Start new users with BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "README.zh-CN.md").write_text(
+        "新用户路径不要写 MABW-080。\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "SKILL.md").write_text(
         "Do not route new WorkBuddy users to BriefLoop-090 A-controlled runs.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "references" / "quickstart.md").parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "references" / "quickstart.md").write_text(
+        "New WorkBuddy users should not see experiments 080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "integrations" / "workbuddy" / "briefloop" / "references" / "quickstart.md").parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    (tmp_path / "integrations" / "workbuddy" / "briefloop" / "references" / "quickstart.md").write_text(
+        "New WorkBuddy users should not see MABW-080.\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(module, "ROOT", tmp_path)
@@ -380,8 +405,12 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
     assert quarantine_check["status"] == "fail"
     assert "docs/workbuddy.md:MABW-080" in quarantine_check["detail"]
     assert "docs/workbuddy.md:experiments 080" in quarantine_check["detail"]
+    assert "README.md:BriefLoop-090" in quarantine_check["detail"]
+    assert "README.zh-CN.md:MABW-080" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled" in quarantine_check["detail"]
+    assert ".agents/skills/briefloop-workbuddy/references/quickstart.md:experiments 080" in quarantine_check["detail"]
+    assert "integrations/workbuddy/briefloop/references/quickstart.md:MABW-080" in quarantine_check["detail"]
 
 
 def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:

@@ -355,6 +355,8 @@ ARCHIVED_EXPERIMENT_FIRST_USER_FORBIDDEN_TERMS = (
     "manifestation score",
 )
 ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
+    "README.md",
+    "README.zh-CN.md",
     "docs/15-minute-pilot.md",
     "docs/15-minute-pilot.zh-CN.md",
     "docs/getting-started.md",
@@ -363,8 +365,10 @@ ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
     "docs/workbuddy.md",
     "docs/workbuddy.zh-CN.md",
     "docs/workbuddy-smoke-checklist.md",
-    ".agents/skills/briefloop-workbuddy/SKILL.md",
-    "integrations/workbuddy/briefloop/SKILL.md",
+)
+ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS = (
+    ".agents/skills/briefloop-workbuddy/**/*.md",
+    "integrations/workbuddy/briefloop/**/*.md",
 )
 PIPX_CURRENT_INSTALL_DOCS = [
     "README.md",
@@ -952,8 +956,7 @@ def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
 
 def _check_archived_experiment_namespace_quarantine(checks: list[dict[str, str]]) -> None:
     findings: list[str] = []
-    for rel_path in ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES:
-        path = ROOT / rel_path
+    for rel_path, path in _archived_experiment_first_user_paths():
         if not path.exists():
             continue
         text = path.read_text(encoding="utf-8").lower()
@@ -966,6 +969,22 @@ def _check_archived_experiment_namespace_quarantine(checks: list[dict[str, str]]
         not findings,
         f"archived experiment namespace in first-user surfaces={findings}",
     )
+
+
+def _archived_experiment_first_user_paths() -> list[tuple[str, Path]]:
+    paths: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for rel_path in ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES:
+        if rel_path not in seen:
+            paths.append((rel_path, ROOT / rel_path))
+            seen.add(rel_path)
+    for pattern in ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS:
+        for path in sorted(ROOT.glob(pattern)):
+            rel_path = path.relative_to(ROOT).as_posix()
+            if rel_path not in seen:
+                paths.append((rel_path, path))
+                seen.add(rel_path)
+    return paths
 
 
 def _check_readme_first_user_doc_blocks(checks: list[dict[str, str]]) -> None:
