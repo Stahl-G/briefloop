@@ -154,6 +154,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/workbuddy.md": [
         "WorkBuddy Skill source bundle",
+        ".agents/skills/briefloop-workbuddy/",
         "Experimental",
         "source-clone-only",
         "not WorkBuddy Marketplace publication",
@@ -166,6 +167,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/workbuddy.zh-CN.md": [
         "WorkBuddy Skill source bundle",
+        ".agents/skills/briefloop-workbuddy/",
         "Experimental",
         "source-clone-only",
         "不是 WorkBuddy Marketplace 发布",
@@ -181,6 +183,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "experimental integration smoke",
         "not runtime proof",
         "not runtime proof, delegated-agent proof, output-quality proof, semantic proof",
+        ".agents/skills/briefloop-workbuddy/",
         "briefloop workbuddy pack-skill --output dist/workbuddy",
         "briefloop run --workspace <workspace> --runtime operator",
         "briefloop status --workspace <workspace>",

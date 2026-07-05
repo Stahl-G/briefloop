@@ -24,7 +24,9 @@ or any issue/PR comment that reports the result.
   ```
 
 - The generated Skill zip or the source Skill folder has been installed into
-  WorkBuddy through WorkBuddy's local Skill import flow.
+  WorkBuddy through WorkBuddy's local Skill import flow. If installing from a
+  folder, use `.agents/skills/briefloop-workbuddy/`, not the repo operator
+  protocol skill at `.agents/skills/briefloop/`.
 
 ## Smoke Path
 

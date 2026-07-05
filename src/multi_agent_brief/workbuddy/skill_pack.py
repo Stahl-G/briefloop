@@ -11,7 +11,7 @@ import zipfile
 from multi_agent_brief import __version__
 
 
-SKILL_SOURCE_RELATIVE = Path("integrations/workbuddy/briefloop")
+SKILL_SOURCE_RELATIVE = Path(".agents/skills/briefloop-workbuddy")
 PACKAGE_PREFIX = "briefloop"
 EMBEDDED_MANIFEST = "briefloop-workbuddy-skill-manifest.json"
 MANIFEST_SCHEMA_VERSION = "briefloop.workbuddy_skill_pack_manifest.v1"

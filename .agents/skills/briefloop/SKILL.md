@@ -17,6 +17,12 @@ complete CLI manual. Prefer the generated handoff for a run, current CLI help,
 `docs/architecture-status.md`, and `docs/support-matrix.md` when they conflict
 with this skill.
 
+This skill is also not the WorkBuddy first-user adapter. WorkBuddy users should
+install and use the BriefLoop WorkBuddy Skill from
+`.agents/skills/briefloop-workbuddy/` or the local zip produced by
+`briefloop workbuddy pack-skill`. Do not point WorkBuddy users at this repo
+operator protocol skill as their primary entrypoint.
+
 ## Purpose
 
 Keep BriefLoop operation aligned with the control-plane architecture:

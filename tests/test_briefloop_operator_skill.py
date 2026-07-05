@@ -51,7 +51,10 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "`--runtime operator`: host-agnostic compact operator workflow" in text
     assert "`--runtime manual`: legacy compatibility alias resolved to `operator`" in text
     assert "WorkBuddy Skill source bundle" in text
+    assert ".agents/skills/briefloop-workbuddy/" in text
+    assert "canonical path" in text
     assert "integrations/workbuddy/briefloop/" in text
+    assert "legacy mirror" in text
     assert "source-clone-only" in text
     assert "workbuddy pack-skill" in text
     assert "not a WorkBuddy Marketplace publication" in text

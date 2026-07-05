@@ -16,12 +16,13 @@ Historical implementation name: MABW
     without a dedicated runtime adapter; it does not assume subagents ran
   - `--runtime manual`: legacy compatibility alias resolved to `operator`
 - WorkBuddy Skill source bundle:
-  - path: `integrations/workbuddy/briefloop/`
+  - canonical path: `.agents/skills/briefloop-workbuddy/`
+  - legacy mirror: `integrations/workbuddy/briefloop/`
   - status: experimental; source-clone-only
   - uses `--runtime operator` and deterministic BriefLoop CLI transactions
   - `briefloop workbuddy pack-skill` /
     `briefloop workbuddy pack-skill` generates a deterministic local
-    Skill zip and sidecar manifest from the source-clone Skill files
+    Skill zip and sidecar manifest from the canonical source-clone Skill files
   - not included in wheel/sdist package data
   - generated zip is not a WorkBuddy Marketplace publication
   - must not claim WorkBuddy subagents ran unless WorkBuddy explicitly

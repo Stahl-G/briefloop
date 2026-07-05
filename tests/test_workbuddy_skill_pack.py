@@ -18,7 +18,9 @@ from multi_agent_brief.workbuddy.skill_pack import (
 
 
 ROOT = Path(__file__).resolve().parent.parent
-WORKBUDDY_SKILL = ROOT / "integrations" / "workbuddy" / "briefloop"
+WORKBUDDY_SKILL = ROOT / ".agents" / "skills" / "briefloop-workbuddy"
+REPO_OPERATOR_SKILL = ROOT / ".agents" / "skills" / "briefloop" / "SKILL.md"
+LEGACY_WORKBUDDY_SKILL = ROOT / "integrations" / "workbuddy" / "briefloop"
 WORKBUDDY_ASSISTANT_PROMPT = (
     ROOT / "integrations" / "workbuddy" / "assistant" / "briefloop-assistant-prompt.md"
 )
@@ -55,6 +57,26 @@ def test_workbuddy_skill_bundle_has_required_files() -> None:
         assert (WORKBUDDY_SKILL / "references" / name).exists(), name
 
 
+def test_workbuddy_skill_is_exposed_at_agent_skill_root() -> None:
+    assert WORKBUDDY_SKILL.exists()
+    assert LEGACY_WORKBUDDY_SKILL.exists()
+    assert WORKBUDDY_SKILL.relative_to(ROOT).as_posix() == ".agents/skills/briefloop-workbuddy"
+    assert LEGACY_WORKBUDDY_SKILL.relative_to(ROOT).as_posix() == "integrations/workbuddy/briefloop"
+    text = _read(WORKBUDDY_SKILL / "SKILL.md")
+    assert "BriefLoop WorkBuddy Skill" in text
+    assert "WorkBuddy-facing adapter" in text
+    assert "## First Checks" in text
+
+
+def test_repo_operator_skill_redirects_workbuddy_users() -> None:
+    text = _read(REPO_OPERATOR_SKILL)
+    compact = _compact(text)
+    assert "not the WorkBuddy first-user adapter" in text
+    assert ".agents/skills/briefloop-workbuddy/" in text
+    assert "briefloop workbuddy pack-skill" in text
+    assert "Do not point WorkBuddy users at this repo operator protocol skill" in compact
+
+
 def test_workbuddy_skill_references_are_linked_from_entrypoint() -> None:
     text = _read(WORKBUDDY_SKILL / "SKILL.md")
     references = set(re.findall(r"references/[a-z0-9-]+\.md", text))
@@ -85,10 +107,10 @@ def test_workbuddy_skill_uses_operator_runtime_not_manual_path() -> None:
 def test_workbuddy_skill_includes_required_cli_surface() -> None:
     text = _all_skill_text()
     for phrase in [
-        'BRIEFLOOP_CLI="$(command -v briefloop || command -v multi-agent-brief)"',
+        'BRIEFLOOP_CLI="$(command -v briefloop)"',
         'test -n "$BRIEFLOOP_CLI"',
         '"$BRIEFLOOP_CLI" version',
-        "command -v briefloop || command -v multi-agent-brief",
+        "command -v briefloop",
         "briefloop new industry-weekly <workspace>",
         "briefloop new management-monthly <workspace>",
         "briefloop new document-review <workspace>",
@@ -196,7 +218,9 @@ def test_workbuddy_skill_declares_source_clone_distribution_boundary() -> None:
 def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> None:
     for path in WORKBUDDY_DOCS:
         text = _read(path)
+        compact = _compact(text)
         assert "WorkBuddy Skill source bundle" in text
+        assert ".agents/skills/briefloop-workbuddy/" in text
         assert "Experimental" in text
         assert "source-clone-only" in text.lower()
         assert "briefloop workbuddy pack-skill --output dist/workbuddy" in text
@@ -208,6 +232,16 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "authorize release" in text or "不授权 release" in text
         assert "WorkBuddy Marketplace" in text
         assert "docs/workbuddy-smoke-checklist.md" in text
+        assert "not the WorkBuddy first-user adapter" in compact or "不是 WorkBuddy first-user" in compact
+
+
+def test_workbuddy_docs_do_not_route_users_to_repo_operator_skill() -> None:
+    for path in (*WORKBUDDY_DOCS, WORKBUDDY_SMOKE_CHECKLIST):
+        text = _read(path)
+        assert ".agents/skills/briefloop-workbuddy/" in text
+        assert "open `.agents/skills/briefloop/`" not in text
+        assert "use `.agents/skills/briefloop/`" not in text
+        assert "install `.agents/skills/briefloop/`" not in text
 
 
 def test_workbuddy_assistant_prompt_is_trigger_only() -> None:
@@ -263,6 +297,7 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
     assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
     assert manifest["runtime_effect"] == "packaging_only"
     assert manifest["zip_sha256"] == result.zip_sha256
+    assert manifest["source_root"] == ".agents/skills/briefloop-workbuddy"
     assert manifest["distribution_boundary"] == (
         "local_workbuddy_skill_zip_not_marketplace_ready_not_python_package_data"
     )
@@ -278,6 +313,8 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
         assert sorted(archive.namelist()) == sorted(names)
         skill_text = archive.read("briefloop/SKILL.md").decode("utf-8")
     assert "--runtime operator" in skill_text
+    assert "BriefLoop WorkBuddy Skill" in skill_text
+    assert "BriefLoop Operator Protocol" not in skill_text
     assert "semantic proof" in skill_text
 
 
@@ -353,7 +390,7 @@ def test_validate_workbuddy_skill_pack_reports_malformed_included_files(tmp_path
 
 
 def test_workbuddy_skill_pack_rejects_symlinked_source_file(tmp_path: Path) -> None:
-    source = tmp_path / "repo" / "integrations" / "workbuddy" / "briefloop"
+    source = tmp_path / "repo" / ".agents" / "skills" / "briefloop-workbuddy"
     (source / "references").mkdir(parents=True)
     for rel in ["SKILL.md", *REFERENCE_NAMES]:
         target = source / (Path("references") / rel if rel != "SKILL.md" else Path(rel))

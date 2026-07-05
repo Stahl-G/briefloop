@@ -32,6 +32,7 @@ TARGET_FILES = [
     "docs/windows-powershell.zh-CN.md",
     "scripts/setup.sh",
     "scripts/setup.ps1",
+    ".agents/skills/briefloop-workbuddy/SKILL.md",
     "integrations/workbuddy/briefloop/SKILL.md",
     ".claude/commands/briefloop.md",
     ".opencode/commands/briefloop.md",

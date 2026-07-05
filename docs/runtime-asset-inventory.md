@@ -31,7 +31,8 @@ new workflow contract.
 | `.opencode/commands/**` | Hand-maintained source asset | Source-clone-only | Source-repo commands. Use `runtime install` for workspace-local copies. |
 | `docs/agents/**` | Generated source/docs asset | Source-clone-only | Adapter documentation generated from role source. |
 | `integrations/hermes-plugin/**` | Hermes plugin source asset | Source-clone-only | Plugin source tree; package-only installs should not assume it exists. |
-| `integrations/workbuddy/briefloop/**` | WorkBuddy Skill source asset | Source-clone-only | Local WorkBuddy Skill source bundle; `workbuddy pack-skill` can generate a local Skill zip from source-clone files. Package-only installs should not assume the source tree exists. |
+| `.agents/skills/briefloop-workbuddy/**` | WorkBuddy Skill source asset | Source-clone-only | Canonical local WorkBuddy Skill source bundle; `workbuddy pack-skill` generates a local Skill zip from these source-clone files. Package-only installs should not assume the source tree exists. |
+| `integrations/workbuddy/briefloop/**` | WorkBuddy Skill legacy mirror | Source-clone-only | Compatibility mirror kept for older references; not the canonical pack source. |
 | `scripts/check_workbuddy_skill_pack.py` | WorkBuddy package readiness check | Source-clone-only | Builds and validates the local WorkBuddy Skill zip shape without publishing to WorkBuddy Marketplace. |
 | `scripts/install.sh` | Installer asset | Source-clone-only | curl/archive install helper. |
 | `scripts/install.ps1` | Installer asset | Source-clone-only | PowerShell install helper. |
