@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,7 @@ def main() -> int:
     _check_source_assets(checks)
     if all(item["status"] == "pass" for item in checks):
         _check_codebuddy_handoff(checks)
+        _check_missing_codebuddy_assets_fail_closed(checks)
 
     ok = all(item["status"] == "pass" for item in checks)
     payload = {
@@ -217,6 +219,61 @@ def _check_codebuddy_handoff(checks: list[dict[str, str]]) -> None:
         not errors,
         f"errors={errors}",
     )
+
+
+def _check_missing_codebuddy_assets_fail_closed(checks: list[dict[str, str]]) -> None:
+    with tempfile.TemporaryDirectory(prefix="briefloop-codebuddy-missing-assets-") as temp:
+        temp_path = Path(temp)
+        workspace = temp_path / "ws"
+        fake_repo = temp_path / "repo_without_codebuddy"
+        _copy_contract_refs(fake_repo)
+
+        new_result = _run_cli(["new", "industry-weekly", str(workspace)])
+        if new_result.returncode != 0:
+            _append_check(checks, "codebuddy.missing_assets.workspace", False, _command_detail(new_result))
+            return
+        run_result = _run_cli([
+            "run",
+            "--workspace", str(workspace),
+            "--runtime", "codebuddy",
+            "--repo-workdir", str(fake_repo),
+            "--skip-doctor",
+        ])
+        handoff_json = workspace / "output" / "intermediate" / "agent_handoff.json"
+        combined_output = f"{run_result.stdout}\n{run_result.stderr}"
+        handoff_written = handoff_json.exists()
+
+    errors: list[str] = []
+    if run_result.returncode == 0:
+        errors.append("missing CodeBuddy assets run returned success")
+    if "CodeBuddy runtime is source-clone-only" not in combined_output:
+        errors.append("missing source-clone-only diagnostic")
+    if ".codebuddy/skills/briefloop/SKILL.md" not in combined_output:
+        errors.append("missing skill path diagnostic")
+    if handoff_written:
+        errors.append("handoff JSON was written despite missing CodeBuddy assets")
+    _append_check(
+        checks,
+        "codebuddy.missing_assets.fail_closed",
+        not errors,
+        f"errors={errors}",
+    )
+
+
+def _copy_contract_refs(target_repo: Path) -> None:
+    target_repo.mkdir(parents=True, exist_ok=True)
+    (target_repo / "__init__.py").write_text("", encoding="utf-8")
+    rel_paths = [
+        Path("configs") / "orchestrator_contract.yaml",
+        Path("configs") / "stage_specs.yaml",
+        Path("configs") / "artifact_contracts.yaml",
+        Path("configs") / "policy_packs" / "default.yaml",
+    ]
+    for rel_path in rel_paths:
+        source = ROOT / rel_path
+        target = target_repo / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
 
 
 def _run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:

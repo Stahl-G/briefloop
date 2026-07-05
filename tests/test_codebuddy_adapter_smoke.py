@@ -37,6 +37,7 @@ def test_codebuddy_adapter_smoke_json_passes() -> None:
         "codebuddy.skill.contract",
         "codebuddy.role_agents.contract",
         "codebuddy.handoff.contract",
+        "codebuddy.missing_assets.fail_closed",
     } <= check_ids
 
 
