@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added a read-only `briefloop status` progress projection with user-language
+  work labels such as `prepare sources`, `select claims`, `audit brief`, and
+  `build quality package`. When post-finalize Quality Panel closeout is
+  recommended or stale, status may prioritize `briefloop quality summarize` as
+  the suggested next command before delivery. The projection is
+  diagnostic/operator guidance only and does not create stage, gate, delivery,
+  or release authority.
 - Productized first-user routing surfaces so README and first-user guides route
   by supported report job (`industry-weekly`, `management-monthly`,
   `document-review`) while the product baseline guard prevents internal report

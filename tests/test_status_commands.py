@@ -359,6 +359,16 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
     assert payload["timing"]["status"] == "unknown"
     assert payload["artifacts"]["expected_count"] == 1
     assert payload["events"]["event_count"] == before_event_count
+    assert payload["progress"] == {
+        "schema_version": "briefloop.status_progress.v1",
+        "runtime_effect": "read_only",
+        "source": "workspace_status_projection",
+        "current_stage": "doctor",
+        "current_work": "prepare sources",
+        "next_command": f"/briefloop run {ws}",
+        "status": "ready_for_operator",
+        "message": "Continue the prepare sources step through the suggested command or handoff.",
+    }
     assert "stage-complete" not in payload["suggested_next_command"]
     assert payload["suggested_next_command"] == f"/briefloop run {ws}"
 
@@ -366,6 +376,18 @@ def test_status_command_is_read_only_for_existing_runtime_state(tmp_path, capsys
         assert path.read_bytes() == before_bytes[path]
         assert path.stat().st_mtime_ns == before_mtime[path]
     assert len(paths["event_log"].read_text(encoding="utf-8").splitlines()) == before_event_count
+
+
+def test_status_command_human_output_reports_user_progress_language(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+
+    rc = main(["status", "--workspace", str(ws)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '[status] progress: ready_for_operator current_work="prepare sources"' in out
+    assert 'message="Continue the prepare sources step through the suggested command or handoff."' in out
 
 
 def test_status_command_reports_trajectory_decision_narrowing(tmp_path, capsys):
@@ -388,6 +410,9 @@ def test_status_command_reports_trajectory_decision_narrowing(tmp_path, capsys):
     assert payload["workflow"]["trajectory_regulation"]["status"] == "decision_narrowed"
     assert payload["workflow"]["trajectory_regulation"]["reasons"] == ["retry_budget_exhausted"]
     assert payload["trajectory_regulation"]["status"] == "action_required"
+    assert payload["progress"]["status"] == "human_review_needed"
+    assert payload["progress"]["current_work"] == "prepare sources"
+    assert payload["progress"]["message"] == "Retry or repair budget is exhausted; request human review or block the run."
 
     rc = main(["status", "--workspace", str(ws)])
     assert rc == 0
@@ -440,6 +465,46 @@ def test_status_command_reports_fact_layer_import_summary(tmp_path, capsys):
     assert summary["next_stage"] == "analyst"
     assert all(stage["display_status"] == "complete via import" for stage in summary["imported_stages"])
     assert payload["suggested_next_command"] == f"briefloop run --workspace {ws} --recipe fast-rerun --skip-doctor"
+
+
+def test_status_command_recommends_quality_package_before_delivery(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["current_stage"] = "finalize"
+    workflow["blocked"] = False
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    finalize_report = ws / "output" / "intermediate" / "finalize_report.json"
+    finalize_report.write_text(
+        json.dumps(
+            {
+                "schema_version": "mabw.finalize_report.v1",
+                "status": "pass",
+                "reader_clean": {"status": "pass", "sample_findings": []},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    expected = f"briefloop quality summarize --workspace {ws}"
+    assert payload["quality_panel_closeout"]["status"] == "recommended"
+    assert payload["workflow"]["blocked"] is False
+    assert payload["quality_panel_closeout"]["gate_authority"] is False
+    assert payload["quality_panel_closeout"]["delivery_authority"] is False
+    assert payload["quality_panel_closeout"]["release_authority"] is False
+    assert payload["suggested_next_command"] == expected
+    assert payload["progress"]["status"] == "needs_quality_package"
+    assert payload["progress"]["current_work"] == "build quality package"
+    assert payload["progress"]["next_command"] == expected
+    assert "/briefloop deliver" not in payload["progress"]["next_command"]
 
 
 def test_status_command_reports_invalid_fact_layer_import_when_file_missing(tmp_path, capsys):
@@ -827,6 +892,9 @@ def test_status_command_does_not_initialize_missing_runtime_state(tmp_path, caps
     payload = json.loads(capsys.readouterr().out)
     assert payload["read_only"] is True
     assert payload["runtime"]["present"] is False
+    assert payload["progress"]["status"] == "not_started"
+    assert payload["progress"]["current_work"] == "create handoff"
+    assert payload["progress"]["runtime_effect"] == "read_only"
     assert "runtime_manifest missing" in payload["stale_or_unknown"]
     for path in paths.values():
         assert not path.exists()
@@ -901,6 +969,29 @@ def test_status_command_reports_corrupt_event_log_without_writing(tmp_path, caps
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["events"]["corrupt_count"] == 1
+    assert payload["progress"]["status"] == "needs_operator_action"
+    assert payload["progress"]["current_work"] == "check run record"
+    assert payload["timing"]["status"] == "invalid_event_log"
+    assert "event_log contains unreadable records" in payload["stale_or_unknown"]
+    assert event_log.read_bytes() == before
+    assert event_log.stat().st_mtime_ns == before_mtime
+
+
+def test_status_command_reports_invalid_utf8_event_log_without_writing(tmp_path, capsys):
+    ws = _minimal_workspace(tmp_path / "ws")
+    event_log = ws / "output" / "intermediate" / "event_log.jsonl"
+    event_log.parent.mkdir(parents=True)
+    event_log.write_bytes(b"\xff\xfe\x00")
+    before = event_log.read_bytes()
+    before_mtime = event_log.stat().st_mtime_ns
+
+    rc = main(["status", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["events"]["corrupt_count"] == 1
+    assert payload["progress"]["status"] == "needs_operator_action"
+    assert payload["progress"]["current_work"] == "check run record"
     assert payload["timing"]["status"] == "invalid_event_log"
     assert "event_log contains unreadable records" in payload["stale_or_unknown"]
     assert event_log.read_bytes() == before
