@@ -165,8 +165,10 @@ The smoke passes only if all of these are true:
   claims.
 - WorkBuddy did not silently fall back to `--runtime operator` for full
   workflow execution.
-- WorkBuddy stopped on doctor errors, contaminated run integrity, missing
-  finalize/delivery artifacts, and secret-bearing package candidates.
+- WorkBuddy stopped on doctor errors, stopped finalize/delivery/export/share
+  on contaminated or unknown run integrity, did not claim delivery when
+  finalize/delivery artifacts were missing, and rejected secret-bearing package
+  candidates.
 - WorkBuddy did not share a whole workspace zip.
 - WorkBuddy did not describe traceability as semantic proof, output-quality
   improvement proof, delivery approval, release approval, or publication

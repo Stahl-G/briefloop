@@ -487,10 +487,11 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "must not auto-deliver",
         "WorkBuddy did not silently fall back to `--runtime operator`",
         "WorkBuddy printed machine-fact Run Cards",
-        "WorkBuddy stopped on doctor errors",
+        "WorkBuddy stopped on doctor errors, stopped finalize/delivery/export/share",
+        "did not claim delivery when finalize/delivery artifacts were missing",
         "WorkBuddy did not share a whole workspace zip",
     ]:
-        assert phrase in text
+        assert phrase in compact
     for phrase in [
         "not runtime proof, delegated-agent proof, output-quality proof, semantic proof",
         "WorkBuddy did not hand-edit Python-owned control files or frozen artifacts",
