@@ -172,6 +172,23 @@ def test_compatibility_quarantine_classifies_remaining_legacy_names() -> None:
         assert phrase in normalized
 
 
+def test_deep_rename_deferral_documents_non_blockers() -> None:
+    naming = (ROOT / "docs" / "briefloop-naming.md").read_text(encoding="utf-8")
+    normalized = " ".join(naming.lower().split())
+
+    assert "## Deep rename deferral" in naming
+    assert "product-facing rename completion, not grep-zero" in normalized
+    assert "not v1.0 blockers" in normalized
+    assert "`multi_agent_brief`" in naming
+    assert "`multi-agent-brief-workflow`" in naming
+    assert "`mabw.*` schema ids" in naming
+    assert "historical run IDs" in naming
+    assert "deleting `/mabw`" in naming
+    assert "user friction or packaging evidence" in normalized
+    assert "non-editable install smoke coverage" in normalized
+    assert "must not rewrite frozen archives or schema ids in place" in normalized
+
+
 def test_compatibility_surfaces_remain_available_but_not_first_user() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'briefloop = "multi_agent_brief.cli.main:main"' in pyproject

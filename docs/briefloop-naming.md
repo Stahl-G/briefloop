@@ -36,6 +36,31 @@ GitHub redirects from the historical
 remain available during the compatibility period, but new public documentation
 should use `https://github.com/Stahl-G/briefloop`.
 
+## Deep rename deferral
+
+v1.0 completion means product-facing rename completion, not grep-zero removal
+of every historical or implementation name.
+
+These deep renames are explicitly not v1.0 blockers:
+
+- renaming the Python module path `multi_agent_brief` to `briefloop`;
+- changing the PyPI/distribution/package name
+  `multi-agent-brief-workflow`;
+- globally rewriting `mabw.*` schema ids or historical
+  `multi-agent-brief-*` schema ids;
+- changing historical run IDs, archived reference runs, old release notes, or
+  existing workspace contents;
+- deleting `/mabw` or `multi-agent-brief` compatibility entrypoints in the same
+  release;
+- moving old Hermes plugin or integration directory names where that would
+  break source-clone or installed-plugin paths.
+
+Post-v1 deep rename or shim migration may be considered only if user friction
+or packaging evidence justifies it. Such a migration must preserve old
+workspace compatibility, keep package-index install paths clear, and include
+source-clone plus non-editable install smoke coverage. It must not rewrite
+frozen archives or schema ids in place.
+
 ## Compatibility quarantine
 
 Remaining MABW and `multi-agent-brief` references are compatibility records,
