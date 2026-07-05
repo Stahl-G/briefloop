@@ -11,7 +11,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     init_parser = subparsers.add_parser(
         "init",
         help="Create a brief workspace from onboarding.json."
-        " Run 'multi-agent-brief onboard' first for conversational setup.",
+        " Run 'briefloop onboard' first for conversational setup.",
     )
     init_parser.add_argument(
         "target",
@@ -373,9 +373,9 @@ def _init_workspace(args: argparse.Namespace) -> int:
             " brief workspace."
         )
         print("For a real brief workspace:")
-        print("  multi-agent-brief onboard")
+        print("  briefloop onboard")
         print(
-            "  multi-agent-brief init <workspace> --from-onboarding"
+            "  briefloop init <workspace> --from-onboarding"
             " onboarding.json"
         )
         return 0
@@ -417,10 +417,10 @@ def _init_workspace(args: argparse.Namespace) -> int:
                 " audience, language, cadence, etc."
             )
             print("        Run conversational onboarding:")
-            print("          multi-agent-brief onboard")
+            print("          briefloop onboard")
             print("        Then create the workspace:")
             print(
-                "          multi-agent-brief init <workspace>"
+                "          briefloop init <workspace>"
                 " --from-onboarding onboarding.json"
             )
             return 1
@@ -441,10 +441,10 @@ def _init_workspace(args: argparse.Namespace) -> int:
         if missing and has_direct_init_args(args):
             print("[error] Direct init with CLI args is incomplete.")
             print("        Run conversational onboarding:")
-            print("          multi-agent-brief onboard")
+            print("          briefloop onboard")
             print("        Then create the workspace:")
             print(
-                "          multi-agent-brief init <workspace>"
+                "          briefloop init <workspace>"
                 " --from-onboarding onboarding.json"
             )
             print(
@@ -459,10 +459,10 @@ def _init_workspace(args: argparse.Namespace) -> int:
                 " defaults."
             )
             print("        Run conversational onboarding:")
-            print("          multi-agent-brief onboard")
+            print("          briefloop onboard")
             print("        Then create the workspace:")
             print(
-                "          multi-agent-brief init <workspace>"
+                "          briefloop init <workspace>"
                 " --from-onboarding onboarding.json"
             )
             print(
@@ -477,9 +477,9 @@ def _init_workspace(args: argparse.Namespace) -> int:
         except InitOnboardingRequired as exc:
             print(f"[error] {exc}")
             print("        Run conversational onboarding:")
-            print("          multi-agent-brief onboard")
+            print("          briefloop onboard")
             print(
-                "        Then: multi-agent-brief init <workspace>"
+                "        Then: briefloop init <workspace>"
                 " --from-onboarding onboarding.json"
             )
             return 1
@@ -492,9 +492,9 @@ def _init_workspace(args: argparse.Namespace) -> int:
     create_workspace(target, profile, force=args.force)
     print(f"Created brief workspace: {target}")
     print_context_reference_guidance(target, profile.interface_language)
-    print(f"Next: multi-agent-brief run --workspace {target}")
+    print(f"Next: briefloop run --workspace {target}")
     print(
-        "Hermes prompt: multi-agent-brief hermes prompt"
+        "Hermes prompt: briefloop hermes prompt"
         f" --config {target}/config.yaml"
     )
 
@@ -560,5 +560,5 @@ def _print_capability_recommendations(target: Path, profile) -> None:
         print(f"  → {rec.capability_id}: {rec.reason}")
     print()
     print("To enable recommended features:")
-    print(f"  multi-agent-brief setup {target}")
+    print(f"  briefloop setup {target}")
     print()

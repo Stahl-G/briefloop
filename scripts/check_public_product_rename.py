@@ -10,6 +10,8 @@ first-user product path where BriefLoop should be the only primary name.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import re
 import sys
 from dataclasses import dataclass
@@ -35,6 +37,14 @@ TARGET_FILES = [
     "examples/reference-workspaces/industry-weekly-demo/artifacts/final_brief.md",
     "examples/reference-workspaces/industry-weekly-demo/artifacts/quality_summary.md",
     "examples/reference-workspaces/industry-weekly-demo/artifacts/source_appendix.md",
+]
+
+CLI_HELP_COMMANDS = [
+    (),
+    ("onboard",),
+    ("init",),
+    ("claude",),
+    ("claude", "install"),
 ]
 
 FORBIDDEN_PATTERNS = [
@@ -87,11 +97,40 @@ def scan_file(path: Path) -> list[Finding]:
     return findings
 
 
+def _briefloop_help_text(args: tuple[str, ...]) -> str:
+    src_path = ROOT / "src"
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+    from multi_agent_brief.cli.main import build_parser
+
+    parser = build_parser(prog="briefloop")
+    output = io.StringIO()
+    argv = [*args, "--help"]
+    with contextlib.redirect_stdout(output):
+        try:
+            parser.parse_args(argv)
+        except SystemExit:
+            pass
+    return output.getvalue()
+
+
+def _briefloop_cli_help_findings() -> list[Finding]:
+    findings: list[Finding] = []
+    for args in CLI_HELP_COMMANDS:
+        label = " ".join(("briefloop", *args, "--help"))
+        path = Path(f"<{label}>")
+        for line_no, line in enumerate(_briefloop_help_text(args).splitlines(), start=1):
+            findings.extend(_line_findings(path, line_no, line))
+    return findings
+
+
 def scan(paths: list[Path] | None = None, *, root: Path = ROOT) -> list[Finding]:
     target_paths = [root / rel_path for rel_path in TARGET_FILES] if paths is None else paths
     findings: list[Finding] = []
     for path in target_paths:
         findings.extend(scan_file(path))
+    if paths is None:
+        findings.extend(_briefloop_cli_help_findings())
     return findings
 
 

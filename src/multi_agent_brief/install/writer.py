@@ -82,7 +82,7 @@ def _check_overwrites(
         ):
             continue
         raise InstallWriteError(
-            f"Refusing to overwrite existing non-MABW file without --force: {dst}"
+            f"Refusing to overwrite existing non-generated file without --force: {dst}"
         )
 
 
@@ -95,4 +95,3 @@ def _read_existing_text(path: Path) -> str | None:
 
 def _text_has_generated_marker(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker and marker in text for marker in markers)
-

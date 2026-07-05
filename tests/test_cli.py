@@ -249,7 +249,7 @@ def test_claude_install_writes_user_command_and_agents(tmp_path, capsys):
 
     assert rc == 0
     output = capsys.readouterr().out
-    assert "Installed /briefloop, /mabw, and /generate-brief" in output
+    assert "Installed /briefloop and compatibility Claude Code assets" in output
     installed_briefloop_command = target / "commands" / "briefloop.md"
     assert installed_briefloop_command.exists()
     assert installed_briefloop_command.read_text(encoding="utf-8").startswith("---\n")
@@ -314,7 +314,7 @@ def test_claude_install_refuses_existing_non_mabw_file_without_force(tmp_path, c
     rc = main(["claude", "install", "--repo-workdir", str(repo), "--target", str(target)])
 
     assert rc == 1
-    assert "Refusing to overwrite existing non-MABW file without --force" in capsys.readouterr().out
+    assert "Refusing to overwrite existing non-generated file without --force" in capsys.readouterr().out
 
 
 def test_cli_run_command_creates_handoff(capsys):
@@ -347,7 +347,7 @@ def test_cli_prepare_is_deprecated_and_does_not_generate_outputs(tmp_path: Path,
 
     assert result == 1
     assert "prepare has been replaced by" in captured.out
-    assert "multi-agent-brief run --workspace <workspace>" in captured.out
+    assert "briefloop run --workspace <workspace>" in captured.out
     assert "/generate-brief" not in captured.out
     assert not (ws / "output" / "brief.md").exists()
     assert not (ws / "output" / "intermediate" / "claim_ledger.json").exists()

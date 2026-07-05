@@ -546,7 +546,7 @@ def test_start_no_workspace_in_non_workspace_dir(tmp_path, monkeypatch, capsys):
     assert rc == 1
     captured = capsys.readouterr()
     output = captured.out
-    assert "No workspace found" in output or "multi-agent-brief init" in output
+    assert "No workspace found" in output or "briefloop init" in output
 
 
 def test_start_auto_detects_workspace_in_cwd(tmp_path, monkeypatch):
@@ -1597,13 +1597,13 @@ def test_run_does_not_generate_brief(tmp_path):
 
 
 def test_prepare_output_points_to_run(capsys):
-    """prepare must only point to multi-agent-brief run, nothing else."""
+    """prepare must only point to briefloop run, nothing else."""
     try:
         main(["prepare", "--config", "/tmp/nonexistent/config.yaml"])
     except SystemExit:
         pass
     output = capsys.readouterr().out + capsys.readouterr().err
-    assert "multi-agent-brief run --workspace <workspace>" in output
+    assert "briefloop run --workspace <workspace>" in output
     assert "/generate-brief" not in output
     assert "Python pipeline" not in output
     assert "deterministic pipeline" not in output
@@ -1640,8 +1640,8 @@ def test_run_no_workspace_mentions_onboard(tmp_path, capsys):
     assert rc == 1
     captured = capsys.readouterr()
     output = captured.out
-    assert "multi-agent-brief onboard" in output
-    assert "multi-agent-brief init" in output
+    assert "briefloop onboard" in output
+    assert "briefloop init" in output
     assert "--from-onboarding onboarding.json" in output
 
 
@@ -1653,7 +1653,7 @@ def test_init_demo_mentions_onboard(tmp_path, capsys):
     captured = capsys.readouterr()
     output = captured.out
     assert "demo" in output.lower()
-    assert "multi-agent-brief onboard" in output
+    assert "briefloop onboard" in output
     assert "input/context" in output
     assert "example brief Markdown" in output
     input_readme = (ws / "input" / "README.md").read_text(encoding="utf-8")

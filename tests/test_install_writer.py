@@ -47,7 +47,7 @@ def test_apply_planned_writes_refuses_non_generated_existing_file(tmp_path):
     dst = root / "AGENTS.md"
     dst.write_text("user notes\n", encoding="utf-8")
 
-    with pytest.raises(InstallWriteError, match="non-MABW file"):
+    with pytest.raises(InstallWriteError, match="non-generated file"):
         apply_planned_writes(
             writes=[PlannedWrite(dst, "new content\n")],
             root=root,
@@ -115,4 +115,3 @@ def test_apply_planned_writes_refuses_symlink_destination(tmp_path):
         )
 
     assert real.read_text(encoding="utf-8") == "real\n"
-

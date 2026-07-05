@@ -84,3 +84,15 @@ def test_installed_briefloop_command_passes_public_rename_guard(tmp_path, capsys
     assert findings == [], "\n".join(finding.format(ROOT) for finding in findings)
     first_screen = installed_briefloop.read_text(encoding="utf-8").split("## Routing", maxsplit=1)[0]
     assert "/mabw" not in first_screen
+
+
+def test_public_product_rename_guard_scans_briefloop_cli_help() -> None:
+    module = _load_module()
+
+    findings = [
+        finding
+        for finding in module.scan()
+        if str(finding.path).startswith("<briefloop")
+    ]
+
+    assert findings == [], "\n".join(finding.format(ROOT) for finding in findings)
