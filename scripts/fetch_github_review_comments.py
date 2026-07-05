@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = args.output_dir or _default_output_dir(root)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    pr = _gh_json(["pr", "view", str(pr_number), "--json", "number,title,url,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision"])
+    pr = _gh_json(_pr_view_args(pr_number, repo=repo, explicit_repo=args.repo is not None))
     if not isinstance(pr, dict):
         return _skip(f"could not load PR #{pr_number}", quiet=args.quiet)
 
@@ -172,6 +172,19 @@ def _current_pr_number() -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _pr_view_args(pr_number: int, *, repo: str, explicit_repo: bool) -> list[str]:
+    args = [
+        "pr",
+        "view",
+        str(pr_number),
+        "--json",
+        "number,title,url,headRefName,baseRefName,isDraft,mergeStateStatus,reviewDecision",
+    ]
+    if explicit_repo:
+        args.extend(["--repo", repo])
+    return args
 
 
 def _gh_json(args: list[str]) -> Any:

@@ -74,3 +74,13 @@ def test_parse_concatenated_json_arrays_from_paginated_gh_output() -> None:
     parsed = module._parse_concatenated_json_arrays('[{"id": 1}]\n[{"id": 2}]')
 
     assert parsed == [{"id": 1}, {"id": 2}]
+
+
+def test_pr_view_args_honor_explicit_repo() -> None:
+    module = _module()
+
+    assert module._pr_view_args(437, repo="Stahl-G/briefloop", explicit_repo=True)[-2:] == [
+        "--repo",
+        "Stahl-G/briefloop",
+    ]
+    assert "--repo" not in module._pr_view_args(437, repo="Stahl-G/briefloop", explicit_repo=False)
