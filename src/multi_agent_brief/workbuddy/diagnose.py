@@ -9,6 +9,8 @@ from typing import Any, Mapping
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
+from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state.workflow import WORKFLOW_STATE_SCHEMA
 from multi_agent_brief.quality_gates.contract import validate_quality_gate_report_payload
 
 
@@ -21,8 +23,14 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
     ws = Path(workspace).expanduser().resolve()
     config_path = ws / "config.yaml"
     intermediate = ws / "output" / "intermediate"
-    workflow, workflow_status = _read_json(intermediate / "workflow_state.json")
-    manifest, manifest_status = _read_json(intermediate / "runtime_manifest.json")
+    workflow, workflow_status = _read_json_with_schema(
+        intermediate / "workflow_state.json",
+        expected_schema=WORKFLOW_STATE_SCHEMA,
+    )
+    manifest, manifest_status = _read_json_with_schema(
+        intermediate / "runtime_manifest.json",
+        expected_schema=RUNTIME_MANIFEST_SCHEMA,
+    )
     registry, registry_status = _read_json(intermediate / "artifact_registry.json")
     event_records, event_log_status = _read_event_log(intermediate / "event_log.jsonl")
 
@@ -307,9 +315,9 @@ def _latest_gate_projection(intermediate: Path, *, current_stage: str) -> dict[s
             }
         gate_status = _clean_text(payload.get("status")) or "unknown"
         findings = payload.get("findings")
-        blocking_count = 0
+        blocking_count = _blocking_gate_result_count(payload)
         if isinstance(findings, list):
-            blocking_count = sum(1 for finding in findings if _is_blocking_gate_finding(finding))
+            blocking_count += sum(1 for finding in findings if _is_blocking_gate_finding(finding))
         return {
             "artifact_id": artifact_id,
             "gate_status": gate_status,
@@ -328,6 +336,18 @@ def _is_blocking_gate_finding(finding: Any) -> bool:
     if not isinstance(finding, Mapping):
         return False
     return finding.get("blocking") is True or _clean_text(finding.get("blocking_level")) == "blocking"
+
+
+def _blocking_gate_result_count(payload: Mapping[str, Any]) -> int:
+    gate_results = payload.get("gate_results")
+    if not isinstance(gate_results, list):
+        return 0
+    return sum(
+        1
+        for result in gate_results
+        if isinstance(result, Mapping)
+        and (result.get("blocking") is True or _clean_text(result.get("status")) == "fail")
+    )
 
 
 def _diagnose_gate_validation_stages() -> list[dict[str, Any]]:
@@ -385,7 +405,10 @@ def _next_safe_action(
 ) -> str:
     if doctor.get("status") == "error":
         return "stop_show_full_doctor_output"
-    if any(status in {"unreadable_utf8", "invalid_json", "unreadable"} for status in control_file_status.values()):
+    if any(
+        status in {"unreadable_utf8", "invalid_json", "invalid_schema", "unreadable"}
+        for status in control_file_status.values()
+    ):
         return "inspect_unreadable_or_missing_control_files"
     if blocked:
         return "stop_workflow_blocked_human_review_required"
@@ -420,6 +443,15 @@ def _read_json(path: Path) -> tuple[Any, str]:
         return None, "invalid_json"
     except OSError:
         return None, "unreadable"
+
+
+def _read_json_with_schema(path: Path, *, expected_schema: str) -> tuple[Any, str]:
+    payload, status = _read_json(path)
+    if status != "present" or not isinstance(payload, Mapping):
+        return payload, status
+    if payload.get("schema_version") != expected_schema:
+        return payload, "invalid_schema"
+    return payload, status
 
 
 def _read_event_log(path: Path) -> tuple[list[Mapping[str, Any]], str]:
