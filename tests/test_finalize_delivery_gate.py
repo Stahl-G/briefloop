@@ -2082,6 +2082,67 @@ def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path)
     assert "[src:" not in reader
 
 
+def test_finalize_strips_agent_authored_chinese_source_appendix_with_internal_residue(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "ExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n\n"
+        "## 来源附录\n\n"
+        "| Claim Ledger | Source file |\n"
+        "| --- | --- |\n"
+        "| CL-0001 | input/sources/source-001.md |\n\n"
+        "## Reader Section\n\n"
+        "This section should remain.\n",
+        encoding="utf-8",
+    )
+    _write_claim_ledger(intermediate / "claim_ledger.json")
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+        source_appendix_config={"enabled": True, "mode": "append"},
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    delivery = (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8")
+    assert "Reader Section" in reader
+    assert "Source Appendix" in reader
+    assert "ExampleCo Opens Demo Facility" in reader
+    assert "Claim Ledger" not in reader
+    assert "CL-" not in reader
+    assert "[src:CL-" not in reader
+    assert "input/sources/" not in reader
+    assert delivery == reader
+
+
+def test_finalize_keeps_reader_facing_chinese_source_appendix_without_internal_residue(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Reader-safe text.\n\n"
+        "## 来源附录\n\n"
+        "本附录列出公开来源，供读者追溯。\n",
+        encoding="utf-8",
+    )
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    assert "来源附录" in reader
+    assert "本附录列出公开来源" in reader
+
+
 def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"

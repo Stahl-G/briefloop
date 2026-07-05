@@ -40,6 +40,18 @@ _INTERNAL_READER_SECTION_RE = re.compile(
     r"(?:claim\s+ledger|声明账本).{0,80}(?:coverage|覆盖情况|覆盖)",
     re.IGNORECASE,
 )
+_AGENT_AUTHORED_APPENDIX_HEADING_RE = re.compile(
+    r"^(?:来源附录|来源索引|引用索引|参考来源|source\s+appendix|source\s+index|citation\s+index|references)$",
+    re.IGNORECASE,
+)
+_LOCAL_PATH_RESIDUE_PATTERN = "/" + r"(?:Users|private|tmp)" + "/"
+_AGENT_AUTHORED_APPENDIX_RESIDUE_RE = re.compile(
+    r"(\[src:CL-|(?<![A-Za-z0-9_])CL-(?:\d{3,})?|claim\s+ledger|input/sources/|"
+    r"output/intermediate/|artifact_registry|workflow_state|"
+    + _LOCAL_PATH_RESIDUE_PATTERN
+    + r"|[A-Za-z]:[\\/])",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -1335,24 +1347,44 @@ def _strip_internal_reader_sections(markdown: str) -> str:
     """Remove process-only sections that should not reach final readers."""
     lines = markdown.splitlines()
     cleaned: list[str] = []
-    skip_level: int | None = None
+    index = 0
 
-    for line in lines:
+    while index < len(lines):
+        line = lines[index]
         heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
-        if skip_level is not None:
-            if heading and len(heading.group(1)) <= skip_level:
-                skip_level = None
-            else:
-                continue
+        if not heading:
+            cleaned.append(line)
+            index += 1
+            continue
 
-        if heading:
-            title = heading.group(2).strip()
-            if _INTERNAL_READER_SECTION_RE.search(title):
-                skip_level = len(heading.group(1))
-                while cleaned and not cleaned[-1].strip():
-                    cleaned.pop()
-                continue
+        heading_level = len(heading.group(1))
+        title = heading.group(2).strip()
+        next_index = _next_peer_or_parent_heading_index(lines, index + 1, heading_level)
+        section_lines = lines[index + 1 : next_index]
+        if _should_strip_reader_section(title=title, section_lines=section_lines):
+            while cleaned and not cleaned[-1].strip():
+                cleaned.pop()
+            index = next_index
+            continue
 
         cleaned.append(line)
+        index += 1
 
     return "\n".join(cleaned).rstrip() + "\n"
+
+
+def _next_peer_or_parent_heading_index(lines: list[str], start: int, heading_level: int) -> int:
+    for index in range(start, len(lines)):
+        heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", lines[index])
+        if heading and len(heading.group(1)) <= heading_level:
+            return index
+    return len(lines)
+
+
+def _should_strip_reader_section(*, title: str, section_lines: list[str]) -> bool:
+    if _INTERNAL_READER_SECTION_RE.search(title):
+        return True
+    if not _AGENT_AUTHORED_APPENDIX_HEADING_RE.match(title):
+        return False
+    section_body = "\n".join(section_lines)
+    return bool(_AGENT_AUTHORED_APPENDIX_RESIDUE_RE.search(section_body))
