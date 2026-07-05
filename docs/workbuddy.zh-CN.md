@@ -12,6 +12,8 @@ release，不发布报告，也不声称 WorkBuddy subagent 已经运行。
 | Surface | 状态 | 边界 |
 |---|---|---|
 | WorkBuddy Skill source bundle | Experimental | 位于 `.agents/skills/briefloop-workbuddy/` 的 source-clone-only 文件 |
+| CodeBuddy project Skill adapter | Experimental | 位于 `.codebuddy/skills/briefloop/` 的 source-clone-only project Skill；只负责主会话编排 |
+| CodeBuddy project role agents | Experimental | 位于 `.codebuddy/agents/briefloop-*.md` 的 source-clone-only role agents；只起草 handoff 分配的 artifacts |
 | 本地 WorkBuddy Skill zip | Experimental | 由 `briefloop workbuddy pack-skill` 生成；不是 WorkBuddy Marketplace 发布 |
 | WorkBuddy Assistant trigger | Experimental template | 远程提示模板，应转入已安装 Skill 的本地 WorkBuddy session |
 | WorkBuddy delegated runtime | Not supported | 使用 `--runtime operator`；除非 WorkBuddy 真实提供并记录 delegation，否则不能声称 role delegation 发生过 |
@@ -44,6 +46,18 @@ WorkBuddy Marketplace release。
 ```text
 .agents/skills/briefloop-workbuddy/
 ```
+
+如果你的 CodeBuddy 版本按官方 project Skill 和 project sub-agent 目录发现能力，
+使用仓库里的 project adapter：
+
+```text
+.codebuddy/skills/briefloop/
+.codebuddy/agents/briefloop-*.md
+```
+
+CodeBuddy Skill 是主会话编排 adapter。不要添加 `context: fork`；BriefLoop
+Skill 必须留在 main CodeBuddy session，这样它才能显式调用 role sub-agents，
+然后由主会话运行确定性的 BriefLoop CLI transactions。
 
 WorkBuddy 用户应安装或打开 BriefLoop WorkBuddy Skill。不要把第一次使用
 WorkBuddy 的用户指向 `.agents/skills/briefloop/`；那是给 coding agent 和
@@ -90,6 +104,20 @@ Brave、Firecrawl 或 Serper。
 WorkBuddy 使用 `--runtime operator`。operator runtime 是 host-agnostic compact
 operator workflow。它不假设 WorkBuddy 已经 delegated Scout、Analyst、Editor、
 Auditor、Formatter 或任何其他角色。
+
+如果 CodeBuddy project role agents 可用，main CodeBuddy session 可以显式调用：
+
+```text
+briefloop-scout
+briefloop-analyst
+briefloop-editor
+briefloop-auditor
+briefloop-formatter
+```
+
+这些 role agents 只能起草当前 handoff 分配的 artifacts。它们不运行 BriefLoop
+CLI 命令，不编辑控制文件，不运行 gates，不批准 delivery，也不授权 release。
+每个 role 返回后，确定性 CLI transactions 仍由 main CodeBuddy session 负责。
 
 每次运行 BriefLoop CLI 命令后，WorkBuddy operator 应重新阅读：
 
