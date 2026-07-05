@@ -82,6 +82,8 @@ class FinalizeResult:
     report_template_conformance: dict[str, Any] = field(default_factory=dict)
     reader_clean: dict[str, Any] | None = None
     audit_binding: dict[str, Any] | None = None
+    consumed_audit_artifacts: dict[str, dict[str, str]] = field(default_factory=dict)
+    audit_input_integrity: dict[str, Any] = field(default_factory=dict)
     policy_gate_adapter: dict[str, Any] = field(default_factory=dict)
     citation_profile: str = "executive"
     citation_profile_source: str = "default"
@@ -105,6 +107,8 @@ class FinalizeResult:
             data["reader_clean"] = _empty_reader_clean_report()
         if data["audit_binding"] is None:
             data["audit_binding"] = _empty_audit_binding_report()
+        if not data["audit_input_integrity"]:
+            data["audit_input_integrity"] = _empty_audit_input_integrity_report()
         if not data["quality_panel_closeout"]:
             data["quality_panel_closeout"] = quality_panel_closeout_projection(
                 finalize_report=data,
@@ -233,6 +237,10 @@ def finalize_reader_outputs(
 
     out.mkdir(parents=True, exist_ok=True)
     intermediate_dir.mkdir(parents=True, exist_ok=True)
+    consumed_audit_artifacts = _audit_input_snapshot(
+        workspace=workspace,
+        intermediate_dir=intermediate_dir,
+    )
 
     audited_markdown = audited_path.read_text(encoding="utf-8")
     stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
@@ -360,6 +368,7 @@ def finalize_reader_outputs(
             intermediate_dir=intermediate_dir,
             audited_markdown=audited_markdown,
         ),
+        consumed_audit_artifacts=consumed_audit_artifacts,
         policy_gate_adapter=policy_gate_adapter,
         citation_profile=str(citation_profile.get("profile") or "executive"),
         citation_profile_source=str(citation_profile.get("source") or "default"),
@@ -386,6 +395,20 @@ def finalize_reader_outputs(
         ),
         citation_profile_warnings=list(citation_profile.get("warnings") or []),
     )
+    report_path = intermediate_dir / "finalize_report.json"
+    result.audit_input_integrity = _audit_input_integrity_report(
+        snapshot=consumed_audit_artifacts,
+        workspace=workspace,
+    )
+    if result.audit_input_integrity.get("status") == "fail":
+        result.status = "fail"
+        _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
+        findings = result.audit_input_integrity.get("findings") or []
+        raise RuntimeError(
+            "Finalizer mutated consumed audit artifact: "
+            f"{len(findings)} changed artifact{'s' if len(findings) != 1 else ''}. "
+            f"See {report_path}."
+        )
     delivery_bundle = _build_delivery_bundle(
         output_dir=out,
         brief_path=brief_path,
@@ -398,7 +421,6 @@ def finalize_reader_outputs(
     result.delivery_artifacts = delivery_bundle["delivery_artifacts"]
     result.delivery_artifact_sha256 = delivery_bundle["delivery_artifact_sha256"]
 
-    report_path = intermediate_dir / "finalize_report.json"
     reader_clean = _reader_clean_report(
         markdown_paths=[
             path
@@ -639,6 +661,108 @@ def _empty_audit_binding_report() -> dict[str, Any]:
         "audited_brief_cited_claim_count": 0,
         "findings": [],
         "warnings": [],
+    }
+
+
+def _empty_audit_input_integrity_report() -> dict[str, Any]:
+    return {
+        "status": "not_checked",
+        "findings": [],
+    }
+
+
+_AUDIT_INPUT_ARTIFACTS = {
+    "audited_brief": "output/intermediate/audited_brief.md",
+    "audit_report": "output/intermediate/audit_report.json",
+    "claim_ledger": "output/intermediate/claim_ledger.json",
+}
+
+
+def _audit_input_snapshot(
+    *,
+    workspace: Path,
+    intermediate_dir: Path,
+) -> dict[str, dict[str, str]]:
+    paths = {
+        "audited_brief": intermediate_dir / "audited_brief.md",
+        "audit_report": intermediate_dir / "audit_report.json",
+        "claim_ledger": intermediate_dir / "claim_ledger.json",
+    }
+    return {
+        artifact_id: _audit_input_artifact_record(
+            path=path,
+            workspace=workspace,
+        )
+        for artifact_id, path in paths.items()
+    }
+
+
+def _audit_input_artifact_record(
+    *,
+    path: Path,
+    workspace: Path,
+) -> dict[str, str]:
+    rel_path = _workspace_relative_value(workspace, str(path))
+    if not path.exists():
+        return {
+            "path": rel_path,
+            "status": "missing",
+            "sha256": "",
+        }
+    try:
+        return {
+            "path": rel_path,
+            "status": "present",
+            "sha256": _sha256_file(path),
+        }
+    except OSError as exc:
+        return {
+            "path": rel_path,
+            "status": "unreadable",
+            "sha256": "",
+            "reason": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _audit_input_integrity_report(
+    *,
+    snapshot: dict[str, dict[str, str]],
+    workspace: Path,
+) -> dict[str, Any]:
+    findings: list[dict[str, str]] = []
+    current: dict[str, dict[str, str]] = {}
+    for artifact_id, expected_path in _AUDIT_INPUT_ARTIFACTS.items():
+        before = snapshot.get(artifact_id) or {
+            "path": expected_path,
+            "status": "missing",
+            "sha256": "",
+        }
+        path_value = before.get("path") or expected_path
+        path = workspace / path_value
+        after = _audit_input_artifact_record(
+            path=path,
+            workspace=workspace,
+        )
+        current[artifact_id] = after
+        if (
+            before.get("status") != after.get("status")
+            or before.get("sha256") != after.get("sha256")
+        ):
+            findings.append(
+                {
+                    "kind": "finalizer_mutated_consumed_audit_artifact",
+                    "artifact_id": artifact_id,
+                    "path": path_value,
+                    "before_status": before.get("status", "unknown"),
+                    "after_status": after.get("status", "unknown"),
+                    "before_sha256": before.get("sha256", ""),
+                    "after_sha256": after.get("sha256", ""),
+                }
+            )
+    return {
+        "status": "fail" if findings else "pass",
+        "current": current,
+        "findings": findings,
     }
 
 

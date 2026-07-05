@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import multi_agent_brief.outputs.finalize as finalize_module
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
 from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
@@ -1356,10 +1357,84 @@ def test_finalize_verifies_python_audit_binding_without_updating_audit_report(tm
 
     assert audit_report.read_text(encoding="utf-8") == original_audit
     assert result.audit_binding["status"] == "pass"
+    assert result.audit_input_integrity["status"] == "pass"
+    assert result.consumed_audit_artifacts["audited_brief"]["sha256"] == _sha256_file(
+        audited
+    )
+    assert result.consumed_audit_artifacts["claim_ledger"]["sha256"] == _sha256_file(
+        ledger
+    )
+    assert result.consumed_audit_artifacts["audit_report"]["sha256"] == _sha256_file(
+        audit_report
+    )
     assert result.audit_binding["claim_ledger_sha256"] == _sha256_file(ledger)
     assert result.audit_binding["audit_report_sha256"] == _sha256_file(audit_report)
     assert result.audit_binding["ledger_claim_count"] == 1
     assert result.audit_binding["audited_brief_cited_claim_count"] == 1
+
+
+def test_finalize_fails_if_finalizer_mutates_consumed_audit_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    ledger = intermediate / "claim_ledger.json"
+    _write_single_claim_ledger(ledger)
+    audit_report = intermediate / "audit_report.json"
+    audit_report.write_text(
+        json.dumps(
+            _passing_audit_payload(),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+    original_audited_sha = _sha256_file(audited)
+    original_strip = finalize_module._strip_internal_reader_sections
+
+    def mutating_strip(markdown: str) -> str:
+        audited.write_text(
+            "# Brief\n\nFinalizer-side mutation of audit substrate. [src:CL-001]\n",
+            encoding="utf-8",
+        )
+        return original_strip(markdown)
+
+    monkeypatch.setattr(
+        finalize_module,
+        "_strip_internal_reader_sections",
+        mutating_strip,
+    )
+
+    with pytest.raises(RuntimeError, match="Finalizer mutated consumed audit artifact"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads(
+        (intermediate / "finalize_report.json").read_text(encoding="utf-8")
+    )
+    assert report["status"] == "fail"
+    assert (
+        report["consumed_audit_artifacts"]["audited_brief"]["sha256"]
+        == original_audited_sha
+    )
+    assert report["audit_input_integrity"]["status"] == "fail"
+    assert any(
+        finding["kind"] == "finalizer_mutated_consumed_audit_artifact"
+        and finding["artifact_id"] == "audited_brief"
+        for finding in report["audit_input_integrity"]["findings"]
+    )
 
 
 def test_finalize_accepts_missing_legacy_audit_report_metadata_binding(tmp_path: Path):
