@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -137,6 +138,18 @@ def _is_placeholder_value(value: str) -> bool:
     return normalized in {"tbd", "todo", "placeholder", "unknown", "n/a"}
 
 
+def _record_date_error(value: str) -> str | None:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return "Date must use YYYY-MM-DD"
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError:
+        return "Date must be a valid calendar date"
+    if parsed > date.today():
+        return "Date must not be in the future"
+    return None
+
+
 def _artifact_path_error(value: str, *, evidence_doc_path: Path, field_values: dict[str, str]) -> str | None:
     parsed = urlparse(value)
     if parsed.scheme:
@@ -187,6 +200,12 @@ def _evidence_record_errors(title: str, block: str, *, evidence_doc_path: Path) 
     evidence_type = field_values.get("Evidence type")
     if evidence_type and evidence_type not in REQUIRED_EVIDENCE_TYPES:
         errors.append(f"invalid Evidence type: {evidence_type}")
+
+    record_date = field_values.get("Date")
+    if record_date:
+        date_error = _record_date_error(record_date)
+        if date_error:
+            errors.append(date_error)
 
     boundary = field_values.get("Boundary statement", "")
     missing_boundary = [phrase for phrase in REQUIRED_RECORD_BOUNDARY_PHRASES if not _contains(boundary, phrase)]

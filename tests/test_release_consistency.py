@@ -209,6 +209,12 @@ class TestCheckReleaseConsistency:
         assert "v1_pilot_evidence.boundaries" in output
         assert "pilot evidence failed" in output
 
+    def test_release_script_requires_satisfied_v1_pilot_evidence_for_v1_0(self):
+        text = RELEASE_SCRIPT.read_text(encoding="utf-8")
+        assert '[[ "$VERSION" =~ ^1\\.0\\. ]]' in text
+        assert "scripts/check_v1_pilot_evidence.py --require-satisfied" in text
+        assert "scripts/check_release_consistency.py --no-tag" in text
+
 
 def test_release_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
