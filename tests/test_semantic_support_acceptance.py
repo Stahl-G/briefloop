@@ -533,3 +533,25 @@ def test_semantic_support_acceptance_ledger_rejects_stripped_event_linkage_field
         artifact["validation_result"]
         == f"semantic_support_acceptance_ledger_schema_error:records[0].event_metadata_mismatch:{field}"
     )
+
+
+def test_semantic_support_acceptance_ledger_requires_current_bound_sar_for_linked_records(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_fresh_semantic_support_artifacts(ws)
+    capsys.readouterr()
+    _record_acceptance(ws, capsys)
+    report_path = ws / "output" / "intermediate" / "semantic_assessment_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.pop("checked_inputs")
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    artifact = _artifact_status(ws, capsys)
+
+    assert artifact["status"] == "invalid"
+    assert artifact["validation_result"] == (
+        "semantic_support_acceptance_ledger_schema_error:"
+        "records[0].current_effectiveness:missing_checked_inputs"
+    )

@@ -355,6 +355,11 @@ def validate_semantic_support_acceptance_ledger_for_workspace(
         reason = _event_link_error(record, event_index)
         if reason:
             return f"records[{idx}].{reason}"
+        if _record_has_current_linkage(record):
+            effectiveness = semantic_support_acceptance_record_current_effectiveness(record, workspace=workspace)
+            if not effectiveness.get("current_effective"):
+                reason = _clean_text(effectiveness.get("reason")) or "semantic_assessment_report_not_current"
+                return f"records[{idx}].current_effectiveness:{reason}"
     return None
 
 
@@ -394,6 +399,13 @@ def semantic_support_acceptance_record_current_effectiveness(
     if proposal_id not in proposal_ids:
         return {"current_effective": False, "reason": f"proposal_missing:{proposal_id}"}
     return {"current_effective": True, "reason": None}
+
+
+def _record_has_current_linkage(record: Mapping[str, Any]) -> bool:
+    return any(
+        _clean_text(record.get(field))
+        for field in ("semantic_assessment_report_sha256", "checked_inputs_digest")
+    )
 
 
 def _validate_acceptance_record(record: Any) -> str | None:
