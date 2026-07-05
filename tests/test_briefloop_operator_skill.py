@@ -44,8 +44,8 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     text = _read(CANONICAL / "references" / "version-matrix.md")
     assert "briefloop-operator-skill-v0.1.2" in text
     assert f"v{_read(ROOT / 'VERSION').strip()}" in text
-    assert "multi-agent-brief" in text
-    assert "Shell CLI alias: `briefloop`" in text
+    assert "Public CLI: `briefloop`" in text
+    assert "Compatibility CLI: `multi-agent-brief`" in text
     assert "Claude writer command: `/briefloop`" in text
     assert "/mabw" in text
     assert "`--runtime operator`: host-agnostic compact operator workflow" in text

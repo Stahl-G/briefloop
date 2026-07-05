@@ -7,8 +7,8 @@ Historical implementation name: MABW
 
 ## Supported Current Surfaces
 
-- CLI: `multi-agent-brief`
-- Shell CLI alias: `briefloop`
+- Public CLI: `briefloop`
+- Compatibility CLI: `multi-agent-brief`
 - Claude writer command: `/briefloop`
 - Compatibility Claude command: `/mabw`
 - Runtime handoff surfaces:
