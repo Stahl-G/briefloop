@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added a deterministic CodeBuddy adapter smoke guard that validates
+  source-clone `.codebuddy` Skill/agent assets and a fresh `--runtime codebuddy`
+  handoff. The smoke is release-readiness coverage only; it does not launch
+  CodeBuddy, prove delegated runtime execution, approve delivery, authorize
+  release, or prove semantic truth.
 - Added experimental `--runtime codebuddy` handoff generation for source-clone
   CodeBuddy operation. The handoff names the project Skill and role-agent
   assets, records CodeBuddy runtime capabilities, and keeps deterministic CLI

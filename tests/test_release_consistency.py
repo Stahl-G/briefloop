@@ -56,6 +56,7 @@ class TestCheckReleaseConsistency:
         assert "Minimal comparative evaluation packet passes" in result.stdout
         assert "Launch demo smoke passes" in result.stdout
         assert "Public product rename guard passes" in result.stdout
+        assert "CodeBuddy adapter smoke passes" in result.stdout
         assert "v1.0 pilot evidence shape passes" in result.stdout
         assert "ALL CHECKS PASSED" in result.stdout
 
@@ -214,6 +215,28 @@ class TestCheckReleaseConsistency:
         assert '[[ "$VERSION" =~ ^1\\.0\\. ]]' in text
         assert "scripts/check_v1_pilot_evidence.py --require-satisfied" in text
         assert "scripts/check_release_consistency.py --no-tag" in text
+
+    def test_codebuddy_adapter_smoke_failure_prints_diagnostics(self, monkeypatch, capsys):
+        spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=1,
+                stdout='{"ok": false, "checks": [{"id": "codebuddy.handoff.contract", "status": "fail"}]}\n',
+                stderr="codebuddy smoke failed\n",
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        assert module.check_codebuddy_adapter_smoke() is False
+        output = capsys.readouterr().out
+        assert "CodeBuddy adapter smoke failed" in output
+        assert "codebuddy.handoff.contract" in output
+        assert "codebuddy smoke failed" in output
 
 
 def test_release_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):
