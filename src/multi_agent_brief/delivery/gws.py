@@ -65,8 +65,11 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
         if result is None:
             return DeliveryResult(self.name, False, "gmail: gws command failed or timed out")
         if result.returncode != 0:
-            stderr = (result.stderr or result.stdout or "gws command failed").strip()[:500]
-            return DeliveryResult(self.name, False, f"gmail: {stderr}")
+            return DeliveryResult(
+                self.name,
+                False,
+                "gmail: gws draft creation failed. Check gws auth, Gmail permissions, recipient, and attachment access.",
+            )
 
         return DeliveryResult(
             self.name,

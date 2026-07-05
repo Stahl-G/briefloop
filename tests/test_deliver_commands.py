@@ -674,6 +674,58 @@ def test_deliver_gmail_draft_uses_markdown_when_docx_missing(tmp_path: Path, mon
     assert calls == [str(markdown)]
 
 
+def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    recipient = "recipient@example.com"
+    subject = "Secret Q3 Board Plan"
+    body = "Confidential launch narrative"
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+
+    def fake_run(cmd, capture_output, text, timeout, env):
+        if cmd == ["gws", "auth", "status"]:
+            return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
+        leaked = f"failed command contained {recipient} {subject} {body}"
+        return type("Completed", (), {"returncode": 2, "stdout": leaked, "stderr": leaked})()
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    rc = main([
+        "deliver",
+        "--workspace",
+        str(ws),
+        "--target",
+        "gmail",
+        "--channel",
+        "draft",
+        "--recipient",
+        recipient,
+        "--subject",
+        subject,
+        "--body",
+        body,
+        "--json",
+    ])
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_DELIVERY_FAILED"
+    assert "gws draft creation failed" in payload["message"]
+    output_blob = captured.out + captured.err
+    event_blob = json.dumps(_delivery_events(ws), ensure_ascii=False)
+    for secret in (recipient, subject, body):
+        assert secret not in output_blob
+        assert secret not in event_blob
+    assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted", "delivery_failed"]
+
+
 def test_deliver_gmail_requires_draft_channel(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
