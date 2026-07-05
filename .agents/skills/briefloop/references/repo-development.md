@@ -7,6 +7,8 @@ Read this when changing the BriefLoop source repository.
 - Runtime role source: `configs/agent_roles.yaml`
 - Hand-maintained skills: `.agents/skills/*/SKILL.md`
 - Hermes skill: `.agents/hermes-skills/*/SKILL.md`
+- CodeBuddy project role agents: `.codebuddy/agents/briefloop-*.md`
+  (hand-maintained, source-clone-only)
 - Generated platform assets: `.claude/agents/`, `.codex/agents/`,
   `.opencode/agents/`, `docs/agents/`
 - Public architecture status: `docs/architecture-status.md`

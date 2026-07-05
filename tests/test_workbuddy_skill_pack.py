@@ -29,6 +29,32 @@ WORKBUDDY_DOCS = (
     ROOT / "docs" / "workbuddy.zh-CN.md",
 )
 WORKBUDDY_SMOKE_CHECKLIST = ROOT / "docs" / "workbuddy-smoke-checklist.md"
+CODEBUDDY_AGENT_ROOT = ROOT / ".codebuddy" / "agents"
+CODEBUDDY_ROLE_AGENTS = {
+    "briefloop-scout.md": {
+        "tools": "tools: Read, Write, Grep, Glob",
+        "outputs": [
+            "output/intermediate/candidate_claims.json",
+            "output/intermediate/screened_candidates.json",
+        ],
+    },
+    "briefloop-analyst.md": {
+        "tools": "tools: Read, Write, Grep, Glob",
+        "outputs": ["output/intermediate/audited_brief.md"],
+    },
+    "briefloop-editor.md": {
+        "tools": "tools: Read, Write, Grep, Glob",
+        "outputs": ["output/intermediate/audited_brief.md"],
+    },
+    "briefloop-auditor.md": {
+        "tools": "tools: Read, Write, Grep, Glob",
+        "outputs": ["output/intermediate/audit_report.json"],
+    },
+    "briefloop-formatter.md": {
+        "tools": "tools: Read, Grep, Glob",
+        "outputs": ["finalize readiness"],
+    },
+}
 REFERENCE_NAMES = {
     "quickstart.md",
     "workspace-workflow.md",
@@ -55,6 +81,74 @@ def test_workbuddy_skill_bundle_has_required_files() -> None:
     assert (WORKBUDDY_SKILL / "SKILL.md").exists()
     for name in REFERENCE_NAMES:
         assert (WORKBUDDY_SKILL / "references" / name).exists(), name
+
+
+def test_codebuddy_role_agents_are_project_level_assets() -> None:
+    for filename, spec in CODEBUDDY_ROLE_AGENTS.items():
+        path = CODEBUDDY_AGENT_ROOT / filename
+        text = _read(path)
+        compact = _compact(text)
+        role_name = filename.removesuffix(".md")
+
+        assert path.exists(), filename
+        assert f"name: {role_name}" in text
+        assert "Use only when the main CodeBuddy session explicitly delegates" in text
+        assert "MUST BE USED" not in text
+        assert spec["tools"] in text
+        assert "Bash" not in text
+        assert "model: inherit" in text
+        assert "permissionMode: default" in text
+        assert "context: fork" not in text
+        assert "CodeBuddy project sub-agent" in text
+        assert "agent_handoff.md" in text
+        assert "agent_handoff.json" in text
+        assert "CodeBuddy sub-agents cannot spawn other sub-agents" in compact
+        assert "stop without writing" in text
+        assert "Do not run `briefloop` or `multi-agent-brief` CLI commands" in text
+        assert "ask the main CodeBuddy session to run deterministic validation" in compact
+        for output in spec["outputs"]:
+            assert output in text
+
+
+def test_codebuddy_role_agents_refuse_control_authority() -> None:
+    forbidden_targets = [
+        "workflow_state.json",
+        "artifact_registry.json",
+        "runtime_manifest.json",
+        "event_log.jsonl",
+        "gate reports",
+        "release reports",
+        "frozen artifacts",
+    ]
+    for path in sorted(CODEBUDDY_AGENT_ROOT.glob("briefloop-*.md")):
+        text = _read(path)
+        assert "You must not edit Python-owned control files" in text
+        assert "Forbidden edits:" in text
+        for target in forbidden_targets:
+            assert target in text
+        assert "Bash" not in text
+        if path.name != "briefloop-formatter.md":
+            assert "briefloop finalize" not in text
+            assert "briefloop deliver" not in text
+        assert "delivery approval" not in text.lower()
+        assert "release authority" not in text.lower()
+
+
+def test_codebuddy_formatter_is_read_only_readiness_reporter() -> None:
+    text = _read(CODEBUDDY_AGENT_ROOT / "briefloop-formatter.md")
+    assert "tools: Read, Grep, Glob" in text
+    assert "Write" not in text
+    assert "Bash" not in text
+    assert "You must not write any files" in text
+    assert "Return a concise readiness summary only" in text
+    for phrase in [
+        "Do not run `briefloop finalize`",
+        "`briefloop deliver`",
+        "gate commands",
+        "stage-complete commands",
+        "release commands",
+    ]:
+        assert phrase in text
 
 
 def test_workbuddy_skill_is_exposed_at_agent_skill_root() -> None:

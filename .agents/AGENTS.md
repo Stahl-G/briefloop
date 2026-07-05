@@ -8,6 +8,7 @@ In repository development mode, treat files under this directory as source asset
 
 Platform-specific subagents live in:
 
+- `.codebuddy/agents/briefloop-*.md` for CodeBuddy project sub-agents, hand-maintained and source-clone-only
 - `.claude/agents/*.md` for Claude Code
 - `.opencode/agents/*.md` for OpenCode
 - `.codex/agents/*.toml` for Codex

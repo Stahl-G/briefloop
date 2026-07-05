@@ -156,6 +156,7 @@ Before implementing a feature or writing a code plan, answer these questions exp
 - Update source files first, then regenerate/check generated files.
 - Runtime role source is `configs/agent_roles.yaml`.
 - Hand-maintained skills live under `.agents/skills/` and `.agents/hermes-skills/`.
+- CodeBuddy project role agents live under `.codebuddy/agents/briefloop-*.md`; they are hand-maintained, source-clone-only assets.
 - Generated platform assets live under `.claude/agents/`, `.codex/agents/`, `.opencode/agents/`, and `docs/agents/`.
 - When generated platform assets change, run `python3 scripts/generate_agent_configs.py --check` before finishing.
 
@@ -176,9 +177,8 @@ For details, see `docs/onboarding.md`.
 
 - `.agents/skills/*/SKILL.md` — runtime capability contracts, hand-maintained.
 - `.agents/hermes-skills/*/SKILL.md` — Hermes runtime skills and reference files, hand-maintained.
-- `.claude/agents/*.md` — Claude Code subagent definitions.
-- `.codex/agents/*.toml` — Codex custom agent configs.
-- `.opencode/agents/*.md` — OpenCode subagent definitions.
+- `.codebuddy/agents/briefloop-*.md` — CodeBuddy project sub-agent definitions, hand-maintained and source-clone-only.
+- `.claude/agents/*.md`, `.codex/agents/*.toml`, `.opencode/agents/*.md` — generated platform adapter role assets.
 - `docs/agents/` — generated platform adapter documentation.
 
 ## Artifact Contract

@@ -438,6 +438,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
 | Hermes plugin (`integrations/hermes-plugin/`) | Supported |
 | WorkBuddy Skill source bundle (`.agents/skills/briefloop-workbuddy/`) and local zip packaging (`workbuddy pack-skill`) | Experimental; source-clone-only input, generated local Skill zip, not WorkBuddy Marketplace publication or wheel/sdist package data |
+| CodeBuddy project role agents (`.codebuddy/agents/briefloop-*.md`) | Experimental; source-clone-only project sub-agent assets for role drafting only, not a supported delegated runtime until a CodeBuddy handoff and smoke exist |
 
 | Runtime asset | Source clone | Wheel / sdist / PyPI package |
 |---|---|---|
@@ -450,6 +451,7 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | `.codex/config.toml` and `.codex/agents/**` | Experimental | Source-clone-only; installable into a workspace with `runtime install --runtime codex` |
 | `integrations/hermes-plugin/**` | Supported | Source-clone-only |
 | `.agents/skills/briefloop-workbuddy/**` | Experimental | Source-clone-only WorkBuddy Skill source; `workbuddy pack-skill` generates a local Skill zip from these files, but wheel/sdist installs still do not include them |
+| `.codebuddy/agents/briefloop-*.md` | Experimental | Source-clone-only CodeBuddy project role sub-agents. They may draft handoff-assigned role artifacts only; they do not write control files, run gates, approve delivery, or authorize release |
 | `integrations/workbuddy/briefloop/**` | Experimental legacy mirror | Source-clone-only compatibility copy; not the canonical WorkBuddy pack source |
 | `scripts/install.sh`, `scripts/install.ps1`, `Formula/` | Supported | Source-clone-only |
 

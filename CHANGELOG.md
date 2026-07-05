@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added experimental CodeBuddy project role sub-agent source assets for
+  BriefLoop Scout, Analyst, Editor, Auditor, and Formatter. These are
+  source-clone-only drafting adapters and do not add CodeBuddy runtime support,
+  gate authority, delivery approval, release authority, or semantic proof.
 - Added a v1.0 pilot evidence gate document and advisory release-consistency
   check. The normal guard verifies that the evidence record exists and states
   its current status; the v1.0 release operator must run the same check with
