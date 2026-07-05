@@ -1025,13 +1025,16 @@ def test_gws_gmail_connector_fails_without_draft_confirmation(monkeypatch, tmp_p
     assert "do not retry blindly" in result.message
 
 
-def test_gws_gmail_connector_fails_closed_on_unparseable_auth_status(monkeypatch, tmp_path: Path) -> None:
+def test_gws_gmail_connector_allows_keyring_auth_status_prefix(monkeypatch, tmp_path: Path) -> None:
     artifact = tmp_path / "brief.md"
     artifact.write_text("# Brief\n", encoding="utf-8")
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
 
     def fake_run(cmd, capture_output, text, timeout, cwd, env):
-        return type("Completed", (), {"returncode": 0, "stdout": "logged in as someone", "stderr": ""})()
+        if cmd == ["gws", "auth", "status"]:
+            stdout = 'Using keyring backend: keyring\n{"auth_method":"oauth"}\n'
+            return type("Completed", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": '{"id":"draft-123"}', "stderr": ""})()
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
 
@@ -1040,14 +1043,65 @@ def test_gws_gmail_connector_fails_closed_on_unparseable_auth_status(monkeypatch
         target=type("Target", (), {"channel": "draft", "recipient": "recipient@example.com", "metadata": {}})(),
     )
 
-    assert result.delivered is False
-    assert "unable to parse gws auth status" in result.message
+    assert result.delivered is True
+    assert result.metadata == {"draft_id_present": True}
+
+
+def test_gws_gmail_connector_allows_env_token_when_auth_status_reports_none(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "brief.md"
+    artifact.write_text("# Brief\n", encoding="utf-8")
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+    monkeypatch.setenv("GOOGLE_WORKSPACE_CLI_TOKEN", "example-env-auth")
+
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
+        if cmd == ["gws", "auth", "status"]:
+            return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"none"}', "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": '{"id":"draft-123"}', "stderr": ""})()
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    result = GwsGmailDeliveryConnector().deliver(
+        artifact=type("Artifact", (), {"path": str(artifact), "title": "Weekly"})(),
+        target=type("Target", (), {"channel": "draft", "recipient": "recipient@example.com", "metadata": {}})(),
+    )
+
+    assert result.delivered is True
+    assert result.metadata == {"draft_id_present": True}
+
+
+def test_gws_gmail_connector_lets_unparseable_auth_status_fall_through(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "brief.md"
+    artifact.write_text("# Brief\n", encoding="utf-8")
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
+        if cmd == ["gws", "auth", "status"]:
+            return type("Completed", (), {"returncode": 0, "stdout": "logged in as someone", "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": '{"id":"draft-123"}', "stderr": ""})()
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    result = GwsGmailDeliveryConnector().deliver(
+        artifact=type("Artifact", (), {"path": str(artifact), "title": "Weekly"})(),
+        target=type("Target", (), {"channel": "draft", "recipient": "recipient@example.com", "metadata": {}})(),
+    )
+
+    assert result.delivered is True
+    assert result.metadata == {"draft_id_present": True}
 
 
 def test_gws_gmail_connector_fails_closed_without_auth(monkeypatch, tmp_path: Path) -> None:
     artifact = tmp_path / "brief.md"
     artifact.write_text("# Brief\n", encoding="utf-8")
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+    monkeypatch.delenv("GOOGLE_WORKSPACE_CLI_TOKEN", raising=False)
+    monkeypatch.delenv("GWS_TOKEN", raising=False)
 
     def fake_run(cmd, capture_output, text, timeout, cwd, env):
         return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"none"}', "stderr": ""})()

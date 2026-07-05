@@ -108,12 +108,13 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
         if result is None:
             return "gmail: unable to check gws auth. Run: gws auth setup; gws auth login"
         if result.returncode != 0:
+            if _has_env_auth():
+                return None
             return "gmail: gws is not authenticated. Run: gws auth setup; gws auth login"
-        try:
-            payload = json.loads(result.stdout or "{}")
-        except json.JSONDecodeError:
-            return "gmail: unable to parse gws auth status. Run: gws auth setup; gws auth login"
-        if isinstance(payload, dict) and payload.get("auth_method") == "none":
+        payload = _json_object_from_output(result.stdout)
+        if payload is None:
+            return None
+        if isinstance(payload, dict) and payload.get("auth_method") == "none" and not _has_env_auth():
             return "gmail: gws is not authenticated. Run: gws auth setup; gws auth login"
         return None
 
@@ -148,12 +149,37 @@ def _metadata_list(value: Any) -> list[str]:
     return [str(item) for item in value if str(item).strip()]
 
 
-def _draft_metadata(stdout: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(stdout or "{}")
-    except json.JSONDecodeError:
+def _has_env_auth() -> bool:
+    return any(
+        os.environ.get(name)
+        for name in (
+            "GOOGLE_WORKSPACE_CLI_TOKEN",
+            "GWS_TOKEN",
+        )
+    )
+
+
+def _json_object_from_output(stdout: str) -> dict[str, Any] | None:
+    text = stdout.strip()
+    if not text:
         return {}
-    if not isinstance(payload, dict):
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end < start:
+            return None
+        try:
+            payload = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _draft_metadata(stdout: str) -> dict[str, Any]:
+    payload = _json_object_from_output(stdout)
+    if payload is None:
         return {}
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     draft_id = payload.get("id") or payload.get("draft_id") or data.get("id")
@@ -163,11 +189,8 @@ def _draft_metadata(stdout: str) -> dict[str, Any]:
 
 
 def _message_metadata(stdout: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(stdout or "{}")
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(payload, dict):
+    payload = _json_object_from_output(stdout)
+    if payload is None:
         return {}
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
