@@ -219,6 +219,21 @@ Do not share a whole workspace zip. Use BriefLoop-generated delivery or audit
 bundles when present. If support is needed, share only manually reviewed,
 non-secret excerpts from `briefloop status --json` or doctor output.
 
+## Read-Only Diagnosis
+
+Use this command when WorkBuddy needs a compact machine-readable Run Card
+instead of interpreting multiple control JSON files itself:
+
+```bash
+briefloop workbuddy diagnose --workspace <workspace> --json
+```
+
+The command is read-only diagnostic projection. It reports doctor status,
+runtime, current stage, run integrity, blocked state, latest gate status,
+invalid/stale artifacts, finalize/delivery presence, secret-risk flags such as
+`.env` with nonempty keys, and the next safe action. It does not run gates,
+repair artifacts, approve delivery, authorize release, or prove semantic truth.
+
 ## Assistant Trigger Template
 
 The Assistant template is here:
