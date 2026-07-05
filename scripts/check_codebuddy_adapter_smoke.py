@@ -24,6 +24,7 @@ CODEBUDDY_SKILL = ROOT / ".codebuddy" / "skills" / "briefloop" / "SKILL.md"
 CODEBUDDY_AGENT_ROOT = ROOT / ".codebuddy" / "agents"
 ROLE_AGENTS = [
     "briefloop-scout",
+    "briefloop-screener",
     "briefloop-claim-ledger",
     "briefloop-analyst",
     "briefloop-editor",
@@ -32,6 +33,7 @@ ROLE_AGENTS = [
 ]
 EXPECTED_ROLE_AGENT_TOOLS = {
     "briefloop-scout": ["Read", "Write", "Grep", "Glob"],
+    "briefloop-screener": ["Read", "Write", "Grep", "Glob"],
     "briefloop-claim-ledger": ["Read", "Write", "Grep", "Glob"],
     "briefloop-analyst": ["Read", "Write", "Grep", "Glob"],
     "briefloop-editor": ["Read", "Write", "Grep", "Glob"],
