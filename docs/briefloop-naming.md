@@ -36,6 +36,27 @@ GitHub redirects from the historical
 remain available during the compatibility period, but new public documentation
 should use `https://github.com/Stahl-G/briefloop`.
 
+## Compatibility quarantine
+
+Remaining MABW and `multi-agent-brief` references are compatibility records,
+not the public product identity. Keep them in explicit compatibility,
+history, schema, packaging, or test surfaces. Do not use them as first-user
+instructions, launch claims, or recommended writer paths.
+
+| Compatibility surface | Status | Allowed placement | Not allowed |
+|---|---|---|---|
+| `/mabw` | Deprecated Claude compatibility alias | `.claude/commands/mabw.md`, compatibility docs, tests | README first screen, launch path, new-user examples |
+| `multi-agent-brief` | Compatibility CLI and script entrypoint | CLI compatibility notes, package tests, existing automation docs | Primary shell examples for new users |
+| `multi_agent_brief` | Python module compatibility surface | Python imports, packaging metadata, source tests | User-facing product name |
+| `multi-agent-brief-workflow` | Distribution/package compatibility surface | `pyproject.toml`, Homebrew formula, installer compatibility notes | Setup banners or first-run product copy |
+| `MABW-080` | Historical experiment namespace | Experiment docs, scorecards, release archives, tests | Product workspace guidance |
+| `mabw.*` schema ids | Old-workspace compatibility ids | Validators, schema fixtures, migration notes | New public product messaging |
+| Old release notes and tech reports | Historical archive | `CHANGELOG.md`, `docs/mabw-*`, release references | Current capability claims |
+
+Compatibility surfaces must never imply that BriefLoop is a truth proof,
+delivery approval system, autonomous agent runtime, or output-quality
+improvement proof.
+
 ## Naming layers
 
 - BriefLoop: public project name

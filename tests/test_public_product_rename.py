@@ -117,3 +117,48 @@ def test_public_product_rename_guard_scans_briefloop_cli_help() -> None:
     ]
 
     assert findings == [], "\n".join(finding.format(ROOT) for finding in findings)
+
+
+def test_compatibility_quarantine_classifies_remaining_legacy_names() -> None:
+    naming = (ROOT / "docs" / "briefloop-naming.md").read_text(encoding="utf-8")
+    normalized = " ".join(naming.lower().split())
+    assert "## Compatibility quarantine" in naming
+    assert "not the public product identity" in naming
+    assert "do not use them as first-user instructions" in normalized
+
+    expected_rows = [
+        "| `/mabw` | Deprecated Claude compatibility alias |",
+        "| `multi-agent-brief` | Compatibility CLI and script entrypoint |",
+        "| `multi_agent_brief` | Python module compatibility surface |",
+        "| `multi-agent-brief-workflow` | Distribution/package compatibility surface |",
+        "| `MABW-080` | Historical experiment namespace |",
+        "| `mabw.*` schema ids | Old-workspace compatibility ids |",
+        "| Old release notes and tech reports | Historical archive |",
+    ]
+    for row in expected_rows:
+        assert row in naming
+
+    forbidden_promotional_claims = [
+        "truth proof",
+        "delivery approval",
+        "autonomous agent runtime",
+        "output-quality improvement proof",
+    ]
+    for phrase in forbidden_promotional_claims:
+        assert phrase in normalized
+
+
+def test_compatibility_surfaces_remain_available_but_not_first_user() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'briefloop = "multi_agent_brief.cli.main:main"' in pyproject
+    assert 'multi-agent-brief = "multi_agent_brief.cli.main:main"' in pyproject
+
+    mabw_command = (ROOT / ".claude" / "commands" / "mabw.md").read_text(encoding="utf-8")
+    assert "The command name `/mabw` is retained for compatibility" in mabw_command
+    assert "BRIEFLOOP_CLI=multi-agent-brief" in mabw_command
+
+    briefloop_command = (ROOT / ".claude" / "commands" / "briefloop.md").read_text(encoding="utf-8")
+    first_screen = briefloop_command.split("## Routing", maxsplit=1)[0]
+    assert "/briefloop new" in first_screen
+    assert "/mabw" not in first_screen
+    assert "multi-agent-brief" not in first_screen
