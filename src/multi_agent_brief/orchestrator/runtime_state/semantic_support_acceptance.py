@@ -23,6 +23,7 @@ from multi_agent_brief.orchestrator.runtime_state.identity import _validate_runt
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    build_semantic_assessment_checked_inputs,
     project_semantic_assessment_report_from_workspace,
 )
 
@@ -80,6 +81,47 @@ def record_semantic_support_adjudication(
     clean_reason = _require_text(reason, field="reason")
     clean_actor = _clean_text(actor_id) or "human"
     projection = project_semantic_assessment_report_from_workspace(ws)
+    ledger_path = semantic_support_acceptance_ledger_path(ws)
+    paths = runtime_state_paths(ws)
+    report_path = ws / "output" / "intermediate" / "semantic_assessment_report.json"
+    snapshots = {
+        report_path: _read_state_bytes(report_path),
+        ledger_path: _read_state_bytes(ledger_path),
+        paths["event_log"]: _read_state_bytes(paths["event_log"]),
+    }
+    try:
+        projection = _ensure_checked_inputs_for_adjudication(
+            ws,
+            projection=projection,
+            report_path=report_path,
+        )
+        result = _record_semantic_support_adjudication_with_projection(
+            ws=ws,
+            run_id=run_id,
+            projection=projection,
+            proposal_id=clean_proposal_id,
+            decision=clean_decision,
+            reason=clean_reason,
+            actor_id=clean_actor,
+            ledger_path=ledger_path,
+        )
+        return result
+    except Exception:
+        _restore_paths(snapshots)
+        raise
+
+
+def _record_semantic_support_adjudication_with_projection(
+    *,
+    ws: Path,
+    run_id: str,
+    projection: Mapping[str, Any],
+    proposal_id: str,
+    decision: str,
+    reason: str,
+    actor_id: str,
+    ledger_path: Path,
+) -> dict[str, Any]:
     if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "fresh":
         raise RuntimeStateError(
             "semantic_assessment_report.json must be present, valid, and checked-input fresh before human adjudication.",
@@ -90,78 +132,101 @@ def record_semantic_support_adjudication(
             },
             error_code=E_ARTIFACT_INVALID,
         )
-    proposal = _proposal_from_projection(projection, clean_proposal_id)
+    proposal = _proposal_from_projection(projection, proposal_id)
     report_sha256 = _require_text(projection.get("report_sha256"), field="semantic_assessment_report_sha256")
     checked_inputs_digest = _require_text(projection.get("checked_inputs_digest"), field="checked_inputs_digest")
-    ledger_path = semantic_support_acceptance_ledger_path(ws)
-    paths = runtime_state_paths(ws)
-    snapshots = {
-        ledger_path: _read_state_bytes(ledger_path),
-        paths["event_log"]: _read_state_bytes(paths["event_log"]),
-    }
-    try:
-        _validated_event_log_for_current_run(ws, run_id=run_id)
-        ledger = _load_or_new_ledger(ledger_path)
-        validation_reason = validate_semantic_support_acceptance_ledger_for_workspace(ledger, artifact_path=ledger_path)
-        if validation_reason:
-            raise RuntimeStateError(
-                f"semantic_support_acceptance_ledger invalid: {validation_reason}",
-                details={"path": str(ledger_path), "reason": validation_reason},
-                error_code=E_ARTIFACT_INVALID,
-            )
-        now = utc_now()
-        acceptance_id = f"SSA-{uuid.uuid4().hex[:12]}"
-        event = append_event(
-            workspace=ws,
-            run_id=run_id,
-            event_type="semantic_support_finding_adjudicated",
-            actor="cli",
-            artifact_id="semantic_support_acceptance_ledger",
-            decision=clean_decision,
-            reason=f"Recorded human {clean_decision} decision for semantic proposal {clean_proposal_id}.",
-            metadata={
-                "acceptance_id": acceptance_id,
-                "proposal_id": clean_proposal_id,
-                "source_row_id": _clean_text(proposal.get("source_row_id")),
-                "claim_id": _clean_text(proposal.get("claim_id")),
-                "atom_id": _clean_text(proposal.get("atom_id")),
-                "calibration_label": _clean_text(proposal.get("calibration_label")),
-                "actor_id_present": bool(clean_actor),
-                "reason_present": bool(clean_reason),
-                "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
-                "semantic_assessment_report_sha256": report_sha256,
-                "checked_inputs_digest": checked_inputs_digest,
-            },
+    _validated_event_log_for_current_run(ws, run_id=run_id)
+    ledger = _load_or_new_ledger(ledger_path)
+    validation_reason = validate_semantic_support_acceptance_ledger_for_workspace(ledger, artifact_path=ledger_path)
+    if validation_reason:
+        raise RuntimeStateError(
+            f"semantic_support_acceptance_ledger invalid: {validation_reason}",
+            details={"path": str(ledger_path), "reason": validation_reason},
+            error_code=E_ARTIFACT_INVALID,
         )
-        record = _acceptance_record(
-            acceptance_id=acceptance_id,
-            run_id=run_id,
-            proposal=proposal,
-            semantic_assessment_report_sha256=report_sha256,
-            checked_inputs_digest=checked_inputs_digest,
-            decision=clean_decision,
-            reason=clean_reason,
-            actor_id=clean_actor,
-            recorded_at=now,
-            event_id=str(event["event_id"]),
-        )
-        ledger.setdefault("records", []).append(record)
-        ledger["updated_at"] = now
-        _write_json_atomic(ledger_path, ledger)
-        return {
-            "ok": True,
-            "schema_version": "briefloop.semantic_support_adjudication_result.v1",
-            "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
-            "ledger_path": "output/intermediate/semantic_support_acceptance_ledger.json",
+    now = utc_now()
+    acceptance_id = f"SSA-{uuid.uuid4().hex[:12]}"
+    event = append_event(
+        workspace=ws,
+        run_id=run_id,
+        event_type="semantic_support_finding_adjudicated",
+        actor="cli",
+        artifact_id="semantic_support_acceptance_ledger",
+        decision=decision,
+        reason=f"Recorded human {decision} decision for semantic proposal {proposal_id}.",
+        metadata={
             "acceptance_id": acceptance_id,
-            "proposal_id": clean_proposal_id,
-            "decision": clean_decision,
-            "event_id": event["event_id"],
-            "authority_effects": _no_authority_effects(),
-        }
-    except Exception:
-        _restore_paths(snapshots)
-        raise
+            "proposal_id": proposal_id,
+            "source_row_id": _clean_text(proposal.get("source_row_id")),
+            "claim_id": _clean_text(proposal.get("claim_id")),
+            "atom_id": _clean_text(proposal.get("atom_id")),
+            "calibration_label": _clean_text(proposal.get("calibration_label")),
+            "actor_id_present": bool(actor_id),
+            "reason_present": bool(reason),
+            "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
+            "semantic_assessment_report_sha256": report_sha256,
+            "checked_inputs_digest": checked_inputs_digest,
+        },
+    )
+    record = _acceptance_record(
+        acceptance_id=acceptance_id,
+        run_id=run_id,
+        proposal=proposal,
+        semantic_assessment_report_sha256=report_sha256,
+        checked_inputs_digest=checked_inputs_digest,
+        decision=decision,
+        reason=reason,
+        actor_id=actor_id,
+        recorded_at=now,
+        event_id=str(event["event_id"]),
+    )
+    ledger.setdefault("records", []).append(record)
+    ledger["updated_at"] = now
+    _write_json_atomic(ledger_path, ledger)
+    return {
+        "ok": True,
+        "schema_version": "briefloop.semantic_support_adjudication_result.v1",
+        "boundary": SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
+        "ledger_path": "output/intermediate/semantic_support_acceptance_ledger.json",
+        "acceptance_id": acceptance_id,
+        "proposal_id": proposal_id,
+        "decision": decision,
+        "event_id": event["event_id"],
+        "authority_effects": _no_authority_effects(),
+    }
+
+
+def _ensure_checked_inputs_for_adjudication(
+    workspace: Path,
+    *,
+    projection: Mapping[str, Any],
+    report_path: Path,
+) -> Mapping[str, Any]:
+    """Bind legacy auditor-produced SARs to current checked inputs.
+
+    Auditor-produced reports that omit ``checked_inputs`` remain valid advisory
+    artifacts. Human adjudication needs an exact input binding, so the
+    deterministic transaction adds the binding only when the field is absent.
+    Declared but stale/incomplete bindings are never overwritten here.
+    """
+
+    if projection.get("status") == "valid" and projection.get("checked_inputs_status") == "fresh":
+        return projection
+    if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "missing_checked_inputs":
+        return projection
+    report = _read_json_if_exists(report_path)
+    if not isinstance(report, dict) or "checked_inputs" in report:
+        return projection
+    try:
+        report["checked_inputs"] = build_semantic_assessment_checked_inputs(workspace)
+    except FileNotFoundError as exc:
+        raise RuntimeStateError(
+            "semantic_assessment_report.json cannot be bound to checked inputs because a required input is missing.",
+            details={"missing_input": str(exc)},
+            error_code=E_ARTIFACT_INVALID,
+        ) from exc
+    _write_json_atomic(report_path, report)
+    return project_semantic_assessment_report_from_workspace(workspace)
 
 
 def validate_semantic_support_acceptance_ledger_payload(payload: Any) -> str | None:

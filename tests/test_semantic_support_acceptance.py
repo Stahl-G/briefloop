@@ -8,7 +8,9 @@ from pathlib import Path
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    SEMANTIC_ASSESSMENT_CHECKED_INPUTS,
     build_semantic_assessment_checked_inputs,
+    project_semantic_assessment_report_from_workspace,
 )
 from multi_agent_brief.orchestrator.runtime_state.semantic_support_acceptance import (
     SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
@@ -134,6 +136,34 @@ def test_semantic_support_adjudicate_records_acceptance_without_authority(tmp_pa
     artifact = _artifact_status(ws, capsys)
     assert artifact["status"] == "valid"
     assert artifact["validation_result"] == "experimental_semantic_support_acceptance_ledger"
+
+
+def test_semantic_support_adjudicate_binds_legacy_auditor_report_before_acceptance(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_semantic_support_artifacts(ws)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "audited_brief.md").write_text("# Audited Brief\n\nTargetCo opened a demo facility.\n", encoding="utf-8")
+    report_path = intermediate / "semantic_assessment_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert "checked_inputs" not in report
+    capsys.readouterr()
+
+    rc, payload = _adjudicate_rc(ws, capsys)
+
+    assert rc == 0
+    assert payload["ok"] is True
+    bound_report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert set(bound_report["checked_inputs"]) == set(SEMANTIC_ASSESSMENT_CHECKED_INPUTS)
+    projection = project_semantic_assessment_report_from_workspace(ws)
+    assert projection["status"] == "valid"
+    assert projection["checked_inputs_status"] == "fresh"
+    ledger = json.loads(semantic_support_acceptance_ledger_path(ws).read_text(encoding="utf-8"))
+    record = ledger["records"][0]
+    assert record["semantic_assessment_report_sha256"] == projection["report_sha256"]
+    assert record["checked_inputs_digest"] == projection["checked_inputs_digest"]
 
 
 def test_semantic_support_acceptance_record_current_effective_tracks_sar_and_inputs(
