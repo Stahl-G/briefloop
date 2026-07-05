@@ -9,6 +9,10 @@ from multi_agent_brief.workbuddy.skill_pack import (
     WorkBuddySkillPackError,
     package_workbuddy_skill,
 )
+from multi_agent_brief.workbuddy.diagnose import (
+    build_workbuddy_diagnosis,
+    format_workbuddy_diagnosis,
+)
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -34,6 +38,17 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     pack.add_argument("--json", action="store_true", help="Emit JSON output.")
+
+    diagnose = actions.add_parser(
+        "diagnose",
+        help="Print a read-only WorkBuddy Run Card for a workspace.",
+    )
+    diagnose.add_argument(
+        "--workspace",
+        required=True,
+        help="BriefLoop workspace directory.",
+    )
+    diagnose.add_argument("--json", action="store_true", help="Emit JSON output.")
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -77,5 +92,12 @@ def handle(args: argparse.Namespace) -> int:
                 "[workbuddy pack-skill] local Skill zip only; "
                 "not marketplace-ready and not Python package data."
             )
+        return 0
+    if args.workbuddy_action == "diagnose":
+        payload = build_workbuddy_diagnosis(workspace=args.workspace)
+        if getattr(args, "json", False):
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(format_workbuddy_diagnosis(payload))
         return 0
     return 1

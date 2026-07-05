@@ -169,6 +169,21 @@ Quality Panel generated.
 Do not say "Analyst completed" or "Auditor passed" unless the matching artifact,
 event, transaction, or status output exists.
 
+## Read-Only Diagnosis
+
+Use this command when WorkBuddy needs a compact machine-readable Run Card
+instead of interpreting multiple control JSON files itself:
+
+```bash
+briefloop workbuddy diagnose --workspace <workspace> --json
+```
+
+The command is read-only diagnostic projection. It reports doctor status,
+runtime, current stage, run integrity, blocked state, latest gate status,
+invalid/stale artifacts, finalize/delivery presence, secret-risk flags such as
+`.env` with nonempty keys, and the next safe action. It does not run gates,
+repair artifacts, approve delivery, authorize release, or prove semantic truth.
+
 ## Assistant Trigger Template
 
 The Assistant template is here:

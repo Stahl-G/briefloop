@@ -156,6 +156,21 @@ Quality Panel 已生成。
 除非对应 artifact、event、transaction 或 status output 存在，不要说
 “Analyst 已经分析完成”或“Auditor 已通过”。
 
+## 只读诊断
+
+当 WorkBuddy 需要紧凑、机器可读的 Run Card，而不是自己解释多个控制 JSON
+文件时，使用：
+
+```bash
+briefloop workbuddy diagnose --workspace <workspace> --json
+```
+
+这个命令是只读 diagnostic projection。它报告 doctor 状态、runtime、current
+stage、run integrity、blocked 状态、latest gate status、invalid/stale
+artifacts、finalize/delivery 是否存在、`.env` 非空 key 等 secret-risk flags，
+以及 next safe action。它不运行 gates、不修复 artifacts、不批准 delivery、不授权
+release，也不证明语义真实。
+
 ## Assistant Trigger 模板
 
 Assistant 模板在这里：
