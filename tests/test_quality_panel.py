@@ -12,6 +12,9 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    build_semantic_assessment_checked_inputs,
+)
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
 from multi_agent_brief.product.quality_panel import (
     QUALITY_PANEL_HTML_BOUNDARY,
@@ -871,6 +874,26 @@ def test_quality_panel_surfaces_invalid_semantic_support_report_as_warning_only(
         str(item.get("reason") or "") == "semantic_support_human_adjudication_required"
         for item in panel["recommended_actions"]
     )
+    assert validate_quality_panel_payload(panel) is None
+
+
+def test_quality_panel_accepts_stale_checked_semantic_support_report_as_warning_only(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _write_semantic_support_artifacts(ws)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "audited_brief.md").write_text("# Audited Brief\n\nExampleCo reported growth.\n", encoding="utf-8")
+    report_path = intermediate / "semantic_assessment_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    ledger_path = intermediate / "claim_ledger.json"
+    ledger_path.write_text(ledger_path.read_text(encoding="utf-8").rstrip("\n") + "\n\n", encoding="utf-8")
+
+    panel = build_quality_panel(ws)
+    semantic = panel["semantic_support"]
+
+    assert semantic["status"] == "stale"
+    assert panel["overall_status"] in {"incomplete", "warning"}
     assert validate_quality_panel_payload(panel) is None
 
 

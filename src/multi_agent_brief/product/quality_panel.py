@@ -1454,7 +1454,7 @@ def _support_wording_warning_count(support_wording: Mapping[str, Any]) -> int:
 
 
 def _semantic_support_warning_count(semantic_support: Mapping[str, Any]) -> int:
-    if _text(semantic_support.get("status")) == "invalid_report":
+    if _text(semantic_support.get("status")) in {"invalid_report", "missing_input", "stale"}:
         return 1
     return int(semantic_support.get("proposal_count") or 0)
 
@@ -1479,7 +1479,7 @@ def _validate_semantic_support_payload(payload: Mapping[str, Any]) -> str | None
         if key in payload:
             return f"semantic_support_schema_error:{key}"
     status = _text(payload.get("status"))
-    if status not in {"not_available", "valid", "invalid_report"}:
+    if status not in {"not_available", "valid", "invalid_report", "missing_input", "stale"}:
         return "semantic_support_schema_error:status"
     for field in (
         "proposal_count",
