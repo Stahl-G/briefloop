@@ -382,6 +382,20 @@ def _deliver_gmail_draft(
         event_error = str(exc)
         if not result.delivered:
             raise
+        raise DeliverCommandError(
+            "Gmail draft was created but delivery_draft_created event was not recorded. "
+            "Inspect Gmail Drafts before retrying; do not retry blindly.",
+            error_code=E_DELIVERY_EVENT_FAILED,
+            target="gmail",
+            channel="draft",
+            extra={
+                "artifact": _workspace_relative(workspace, artifact),
+                "draft_created": True,
+                "event_recorded": event_recorded,
+                "event_error": event_error,
+                "run_integrity": run_integrity,
+            },
+        ) from exc
     if not result.delivered:
         raise DeliverCommandError(
             _sanitize_delivery_message(result.message or "Gmail draft creation failed", recipient=recipient),

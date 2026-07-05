@@ -594,6 +594,58 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
     assert '"recipient_present": true' in event_blob
 
 
+def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws)
+
+    def fake_deliver(self, artifact, target):
+        return DeliveryResult("gmail", True, "Gmail draft created", {"draft_id_present": True})
+
+    real_append_event = __import__(
+        "multi_agent_brief.cli.deliver_commands",
+        fromlist=["append_event"],
+    ).append_event
+
+    def flaky_append_event(**kwargs):
+        if kwargs.get("event_type") == "delivery_draft_created":
+            raise RuntimeStateError("event write failed")
+        return real_append_event(**kwargs)
+
+    monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
+    monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
+
+    rc = main([
+        "deliver",
+        "--workspace",
+        str(ws),
+        "--target",
+        "gmail",
+        "--channel",
+        "draft",
+        "--recipient",
+        "recipient@example.com",
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_DELIVERY_EVENT_FAILED"
+    assert payload["target"] == "gmail"
+    assert payload["channel"] == "draft"
+    assert payload["draft_created"] is True
+    assert payload["event_recorded"] is False
+    assert "event write failed" in payload["event_error"]
+    assert "Gmail draft was created" in payload["message"]
+    assert "Inspect Gmail Drafts" in payload["message"]
+    assert "do not retry blindly" in payload["message"]
+    assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted"]
+
+
 def test_deliver_gmail_draft_uses_markdown_when_docx_missing(tmp_path: Path, monkeypatch) -> None:
     ws = _workspace(tmp_path)
     markdown, _docx = _write_bundle(ws, include_docx=False)
