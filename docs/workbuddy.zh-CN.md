@@ -193,7 +193,7 @@ next_allowed_action:
   非交付步骤里才能继续；
 - 缺少 `output/intermediate/finalize_report.json` 或 `output/delivery/`：
   不能说交付完成，也不能导出 delivery package。只有
-  `output/intermediate/audited_brief.md` 或 `output/brief.md` 存在时，才能说
+  `output/intermediate/audited_brief.md` 存在时，才能说
   有草稿；否则应说目前还没有草稿或交付产物。这是 finalize 之前的正常状态，本身
   不阻止更早的 handoff-assigned stages；
 - 打包、导出、附件候选包含 `.env`、token、private planning 文件或机器密钥：

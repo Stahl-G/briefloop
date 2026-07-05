@@ -208,7 +208,7 @@ The hard stops are:
   when the handoff allows non-delivery workflow steps;
 - missing `output/intermediate/finalize_report.json` or `output/delivery/`:
   do not claim delivery or export a delivery package. Report draft-only status
-  only when `output/intermediate/audited_brief.md` or `output/brief.md` exists;
+  only when `output/intermediate/audited_brief.md` exists;
   otherwise report that no draft or delivery exists yet. This is normal before
   finalize and does not by itself block earlier handoff-assigned stages;
 - package/export candidate contains `.env`, tokens, private planning files, or

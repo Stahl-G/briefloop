@@ -183,8 +183,7 @@ Read the values from `briefloop status --workspace <workspace> --json`,
 `workflow_state.json`, `event_log.jsonl`, and file existence checks. If
 `output/intermediate/finalize_report.json` and `output/delivery/` are missing,
 the Run Card must not claim delivery. Say the run has a draft only when an
-actual draft artifact exists, such as `output/intermediate/audited_brief.md` or
-`output/brief.md`; otherwise say no draft or delivery exists yet.
+actual role-owned draft artifact exists, such as `output/intermediate/audited_brief.md`; otherwise say no draft or delivery exists yet.
 
 ## Hard Stop Rules
 
@@ -205,8 +204,7 @@ workflow stop.
 3. For delivery, export, share, or completion claims: if
    `output/intermediate/finalize_report.json` or `output/delivery/` is missing,
    stop that action. Do not say "delivered", "交付完成", or "delivery complete".
-   Say only that a draft exists when `output/intermediate/audited_brief.md` or
-   `output/brief.md` exists; otherwise say no draft or delivery exists yet.
+   Say only that a draft exists when `output/intermediate/audited_brief.md` exists; otherwise say no draft or delivery exists yet.
    Continue earlier role-work stages only when the handoff and Run Card allow
    them.
 4. Any export, share, package, zip, or attachment candidate contains
