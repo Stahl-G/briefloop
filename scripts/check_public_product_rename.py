@@ -53,6 +53,10 @@ FORBIDDEN_PATTERNS = [
     ("mabw_name", re.compile(r"(?<![\w./-])mabw(?![\w.-])", re.IGNORECASE)),
 ]
 
+FORBIDDEN_SETUP_OUTPUT_PATTERNS = [
+    ("package_name_setup_output", re.compile(r"multi-agent-brief-workflow", re.IGNORECASE)),
+]
+
 SUGGESTION = (
     "Use BriefLoop public naming here: prefer `briefloop` for shell commands "
     "and `/briefloop` for Claude Code. Move compatibility or history wording "
@@ -83,7 +87,19 @@ def _line_findings(path: Path, line_no: int, line: str) -> list[Finding]:
             findings.append(Finding(path=path, line=line_no, kind=kind, sample=sample))
             # One finding per kind per line is enough and keeps diagnostics readable.
             break
+    if _is_setup_user_visible_output(path, line):
+        for kind, pattern in FORBIDDEN_SETUP_OUTPUT_PATTERNS:
+            if pattern.search(line):
+                findings.append(Finding(path=path, line=line_no, kind=kind, sample=line.strip()))
+                break
     return findings
+
+
+def _is_setup_user_visible_output(path: Path, line: str) -> bool:
+    if path.name not in {"setup.sh", "setup.ps1"}:
+        return False
+    stripped = line.lstrip()
+    return stripped.startswith("echo ") or stripped.startswith("Write-Host ")
 
 
 def scan_file(path: Path) -> list[Finding]:

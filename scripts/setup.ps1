@@ -6,7 +6,7 @@
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "=== multi-agent-brief-workflow setup ===" -ForegroundColor Cyan
+Write-Host "=== BriefLoop setup ===" -ForegroundColor Cyan
 
 function Test-PythonCandidate {
     param(

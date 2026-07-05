@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "=== multi-agent-brief-workflow setup ==="
+echo "=== BriefLoop setup ==="
 
 # Find Python 3.9+: try python3, python
 PYTHON=""

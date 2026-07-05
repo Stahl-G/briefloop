@@ -57,6 +57,27 @@ def test_public_product_rename_guard_reports_line_and_suggestion(tmp_path) -> No
     assert "prefer `briefloop`" in result.stdout
 
 
+def test_public_product_rename_guard_rejects_old_setup_banner(tmp_path) -> None:
+    target = tmp_path / "scripts" / "setup.sh"
+    target.parent.mkdir()
+    target.write_text(
+        "# package implementation name remains allowed in comments: multi-agent-brief-workflow\n"
+        "echo \"=== multi-agent-brief-workflow setup ===\"\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--path", str(target)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "package_name_setup_output" in result.stdout
+    assert f"{target}:2" in result.stdout
+
+
 def test_public_product_rename_scan_is_limited_to_requested_paths(tmp_path) -> None:
     module = _load_module()
     compatibility_doc = tmp_path / "docs" / "MIGRATION.md"
