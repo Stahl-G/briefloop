@@ -31,8 +31,12 @@ notes, or compatibility claims.
 - When public docs say BriefLoop, keep compatibility notes for
   `briefloop`, `multi-agent-brief`, `/briefloop`, `/mabw`, package/module
   paths, and MABW experiment IDs.
-- Do not present `/generate-brief` as a recommended first-user path; it is a
-  legacy direct-delegation/debug command.
+- Do not present `/generate-brief` as a recommended first-user writer path.
+  It is the supported Claude delegated stage-workflow command when a generated
+  `briefloop run --runtime claude` handoff or advanced Claude operation tells
+  the operator to continue stage execution. `/briefloop run` creates or
+  refreshes handoff files only; it does not execute specialists or complete
+  stages.
 - Keep README canonicalization intact. `README_en.md` should remain a pointer,
   not a third long-form README body.
 - BriefLoop-090 can be a future experiment/readiness label; v0.9.0 is a semver

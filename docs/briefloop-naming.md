@@ -101,11 +101,16 @@ improvement proof.
 | Compatibility writer command | `/mabw` | Existing Claude Code users during compatibility period |
 | Agent protocol | BriefLoop skill | Runtime/coding agents reading operation rules |
 | Deterministic control plane | `briefloop`, `multi-agent-brief` | CLI transactions, validators, tests, scripts |
-| Legacy delegated command | `/generate-brief <workspace>` | Compatibility/debug only; not a first-user path |
+| Claude delegated stage workflow | `/generate-brief <workspace>` | Supported when following generated Claude handoff or advanced Claude operation; not a first-user writer path |
 
 `/briefloop` is the only recommended Claude writer command for new users. The
 BriefLoop skill is an agent operator protocol surface, not the slash-command
 implementation.
+For Claude runs launched with `briefloop run --runtime claude`, the generated
+handoff may instruct the Orchestrator main agent to continue stage execution
+with `/generate-brief <workspace>`. That command runs the delegated stage
+workflow; `/briefloop run <workspace>` only creates or refreshes handoff files
+and does not execute specialists or complete stages.
 
 ## Allowed language
 
