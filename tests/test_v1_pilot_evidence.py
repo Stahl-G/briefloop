@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_v1_pilot_evidence.py"
@@ -175,6 +176,35 @@ def test_missing_artifact_path_fails_required_mode(tmp_path: Path) -> None:
     assert payload["valid_evidence_record_count"] == 0
     recorded = next(check for check in payload["checks"] if check["id"] == "v1_pilot_evidence.recorded_evidence")
     assert "does not exist" in recorded["detail"]
+
+
+def test_invalid_evidence_date_fails_required_mode(tmp_path: Path) -> None:
+    doc = tmp_path / "v1-pilot-evidence.md"
+    (tmp_path / "evidence.log").write_text("fresh clone smoke passed\n", encoding="utf-8")
+    doc.write_text(_satisfied_doc().replace("- Date: 2026-07-05", "- Date: someday"), encoding="utf-8")
+
+    result = _run("--path", str(doc), "--require-satisfied", "--json")
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["satisfied"] is False
+    recorded = next(check for check in payload["checks"] if check["id"] == "v1_pilot_evidence.recorded_evidence")
+    assert "Date must use YYYY-MM-DD" in recorded["detail"]
+
+
+def test_future_evidence_date_fails_required_mode(tmp_path: Path) -> None:
+    doc = tmp_path / "v1-pilot-evidence.md"
+    future = (date.today() + timedelta(days=1)).isoformat()
+    (tmp_path / "evidence.log").write_text("fresh clone smoke passed\n", encoding="utf-8")
+    doc.write_text(_satisfied_doc().replace("- Date: 2026-07-05", f"- Date: {future}"), encoding="utf-8")
+
+    result = _run("--path", str(doc), "--require-satisfied", "--json")
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["satisfied"] is False
+    recorded = next(check for check in payload["checks"] if check["id"] == "v1_pilot_evidence.recorded_evidence")
+    assert "Date must not be in the future" in recorded["detail"]
 
 
 def test_https_artifact_reference_passes_required_mode(tmp_path: Path) -> None:
