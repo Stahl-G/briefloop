@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added a v1.0 pilot evidence gate document and advisory release-consistency
+  check. The normal guard verifies that the evidence record exists and states
+  its current status; the v1.0 release operator must run the same check with
+  `--require-satisfied` before claiming v1.0 readiness. This is release
+  evidence bookkeeping only, not semantic proof, output-quality proof, delivery
+  approval, or release authority.
 - Hardened the first-user documentation guard so README and Chinese README keep
   the user-facing document block focused on Getting Started, Weekly Loop,
   Troubleshooting, and the golden reference workspace.

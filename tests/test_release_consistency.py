@@ -56,6 +56,7 @@ class TestCheckReleaseConsistency:
         assert "Minimal comparative evaluation packet passes" in result.stdout
         assert "Launch demo smoke passes" in result.stdout
         assert "Public product rename guard passes" in result.stdout
+        assert "v1.0 pilot evidence shape passes" in result.stdout
         assert "ALL CHECKS PASSED" in result.stdout
 
     def test_strict_mode_runs(self):
@@ -185,6 +186,28 @@ class TestCheckReleaseConsistency:
         assert "Launch demo smoke failed" in output
         assert "demo_init" in output
         assert "launch smoke failed" in output
+
+    def test_v1_pilot_evidence_failure_prints_diagnostics(self, monkeypatch, capsys):
+        spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=1,
+                stdout='{"ok": false, "checks": [{"id": "v1_pilot_evidence.boundaries", "status": "fail"}]}\n',
+                stderr="pilot evidence failed\n",
+            )
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        assert module.check_v1_pilot_evidence() is False
+        output = capsys.readouterr().out
+        assert "v1.0 pilot evidence check failed" in output
+        assert "v1_pilot_evidence.boundaries" in output
+        assert "pilot evidence failed" in output
 
 
 def test_release_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):
