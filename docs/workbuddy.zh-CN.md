@@ -90,6 +90,16 @@ briefloop new industry-weekly <workspace>
 briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
+只有在 source checkout 中存在 CodeBuddy project assets 时，才运行
+`--runtime codebuddy`：
+
+```text
+.codebuddy/skills/briefloop/SKILL.md
+.codebuddy/agents/briefloop-*.md
+```
+
+本地 WorkBuddy Skill zip 本身不会安装这些 `.codebuddy/` project assets。
+
 `solar-periodic` 仍是实验性入口，使用前必须说明它是 experimental。
 
 ### 默认搜索
@@ -104,8 +114,8 @@ Brave、Firecrawl 或 Serper。
 
 ## 操作规则
 
-当 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets 时，
-WorkBuddy 完整工作流使用 `--runtime codebuddy`：
+只有当 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets
+时，WorkBuddy 完整工作流才使用 `--runtime codebuddy`：
 
 ```bash
 briefloop run --workspace <workspace> --runtime codebuddy

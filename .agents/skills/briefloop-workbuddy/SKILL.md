@@ -116,6 +116,11 @@ Run full BriefLoop workspaces through the CodeBuddy runtime:
 briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
+Use `--runtime codebuddy` only when the source checkout contains
+`.codebuddy/skills/briefloop/SKILL.md` and
+`.codebuddy/agents/briefloop-*.md`. The local WorkBuddy Skill zip alone does
+not install those CodeBuddy project assets.
+
 The WorkBuddy main session owns deterministic CLI transactions. It must invoke
 the matching CodeBuddy-compatible role subagent for role-owned draft artifact
 work, then return to the main session for validation, gate, state, finalize,

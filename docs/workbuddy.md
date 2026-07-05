@@ -96,6 +96,17 @@ briefloop new industry-weekly <workspace>
 briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
+Run `--runtime codebuddy` only from a source checkout that contains the
+CodeBuddy project assets:
+
+```text
+.codebuddy/skills/briefloop/SKILL.md
+.codebuddy/agents/briefloop-*.md
+```
+
+The local WorkBuddy Skill zip alone does not install those `.codebuddy/`
+project assets.
+
 `solar-periodic` remains experimental and should be described that way before
 use.
 
@@ -111,8 +122,9 @@ Exa, Brave, Firecrawl, or Serper only when the user asks for alternatives.
 
 ## Operating Rules
 
-Use `--runtime codebuddy` for WorkBuddy full workflow operation when CodeBuddy
-project Skill and role-agent assets are available in the source checkout:
+Use `--runtime codebuddy` for WorkBuddy full workflow operation only when
+CodeBuddy project Skill and role-agent assets are available in the source
+checkout:
 
 ```bash
 briefloop run --workspace <workspace> --runtime codebuddy

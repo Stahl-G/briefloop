@@ -244,6 +244,8 @@ def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default(
     text = _all_skill_text()
     assert "briefloop run --workspace <workspace> --runtime codebuddy" in text
     assert "CodeBuddy-compatible role subagent" in text
+    assert "Use `--runtime codebuddy` only when the source checkout contains" in text
+    assert "The local WorkBuddy Skill zip alone does\nnot install those CodeBuddy project assets" in text
     assert "briefloop-scout" in text
     assert "briefloop-auditor" in text
     assert "do not\nfall back to hand-authoring BriefLoop JSON artifacts" in text
