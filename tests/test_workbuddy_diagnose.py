@@ -8,6 +8,10 @@ from pathlib import Path
 from multi_agent_brief.cli.main import main
 
 
+EVENT_LOG_SCHEMA = "multi-agent-brief-event-log/v1"
+QUALITY_GATE_SCHEMA = "multi-agent-brief-quality-gates/v1"
+
+
 def _workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "workspace"
     ws.mkdir()
@@ -27,6 +31,39 @@ def _workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return ws
+
+
+def _event(event_type: str, **extra: object) -> dict[str, object]:
+    return {
+        "schema_version": EVENT_LOG_SCHEMA,
+        "event_id": f"evt-{event_type}",
+        "run_id": "RUN-TEST",
+        "created_at": "2026-07-05T00:00:00Z",
+        "event_type": event_type,
+        "actor": "cli",
+        **extra,
+    }
+
+
+def _gate_report(status: str, *, blocking: bool = False, warning: bool = False) -> dict[str, object]:
+    findings: list[dict[str, object]] = []
+    if blocking or warning:
+        blocking_level = "blocking" if blocking else "warning"
+        findings.append(
+            {
+                "finding_id": f"F-{status}-001",
+                "finding_type": "diagnostic_fixture",
+                "severity": "high" if blocking else "medium",
+                "blocking_level": blocking_level,
+                "blocking": blocking,
+            }
+        )
+    return {
+        "schema_version": QUALITY_GATE_SCHEMA,
+        "status": status,
+        "gate_results": [],
+        "findings": findings,
+    }
 
 
 def test_workbuddy_diagnose_json_reports_run_card_and_secret_risk(
@@ -178,8 +215,8 @@ def test_workbuddy_diagnose_secret_risk_controls_next_action_for_finalized_works
         encoding="utf-8",
     )
     (intermediate / "event_log.jsonl").write_text(
-        json.dumps({"event_type": "finalize_completed"}) + "\n"
-        + json.dumps({"event_type": "delivery_succeeded"}) + "\n",
+        json.dumps(_event("decision_recorded", decision="finalize", stage_id="finalize")) + "\n"
+        + json.dumps(_event("delivery_succeeded")) + "\n",
         encoding="utf-8",
     )
 
@@ -262,7 +299,7 @@ def test_workbuddy_diagnose_reads_gate_report_status_not_registry_validity(
         encoding="utf-8",
     )
     (gates / "auditor_quality_gate_report.json").write_text(
-        json.dumps({"status": "fail", "findings": [{"blocking_level": "blocking"}]}),
+        json.dumps(_gate_report("fail", blocking=True)),
         encoding="utf-8",
     )
 
@@ -298,7 +335,7 @@ def test_workbuddy_diagnose_does_not_count_warning_only_gate_findings_as_blockin
         encoding="utf-8",
     )
     (gates / "auditor_quality_gate_report.json").write_text(
-        json.dumps({"status": "warning", "findings": [{"severity": "high"}]}),
+        json.dumps(_gate_report("warning", warning=True)),
         encoding="utf-8",
     )
 
@@ -334,11 +371,11 @@ def test_workbuddy_diagnose_prefers_current_stage_gate_over_stale_finalize_gate(
         encoding="utf-8",
     )
     (gates / "finalize_quality_gate_report.json").write_text(
-        json.dumps({"status": "fail", "findings": [{"blocking_level": "blocking"}]}),
+        json.dumps(_gate_report("fail", blocking=True)),
         encoding="utf-8",
     )
     (gates / "auditor_quality_gate_report.json").write_text(
-        json.dumps({"status": "pass", "findings": []}),
+        json.dumps(_gate_report("pass")),
         encoding="utf-8",
     )
 
@@ -407,15 +444,15 @@ def test_workbuddy_diagnose_recognizes_finalize_decision_event(
     )
     (intermediate / "event_log.jsonl").write_text(
         json.dumps(
-            {
-                "event_type": "decision_recorded",
-                "decision": "finalize",
-                "stage_id": "finalize",
-                "metadata": {"transaction_id": "tx-finalize"},
-            }
+            _event(
+                "decision_recorded",
+                decision="finalize",
+                stage_id="finalize",
+                metadata={"transaction_id": "tx-finalize"},
+            )
         )
         + "\n"
-        + json.dumps({"event_type": "delivery_succeeded"}) + "\n",
+        + json.dumps(_event("delivery_succeeded")) + "\n",
         encoding="utf-8",
     )
 
@@ -502,8 +539,8 @@ def test_workbuddy_diagnose_stops_on_blocked_workflow_state(
         encoding="utf-8",
     )
     (intermediate / "event_log.jsonl").write_text(
-        json.dumps({"event_type": "finalize_completed"}) + "\n"
-        + json.dumps({"event_type": "delivery_succeeded"}) + "\n",
+        json.dumps(_event("decision_recorded", decision="finalize", stage_id="finalize")) + "\n"
+        + json.dumps(_event("delivery_succeeded")) + "\n",
         encoding="utf-8",
     )
 
@@ -514,3 +551,77 @@ def test_workbuddy_diagnose_stops_on_blocked_workflow_state(
     assert payload["workflow"]["blocked"] is True
     assert payload["workflow"]["blocking_reason"] == "human review required"
     assert payload["run_card"]["next_allowed_action"] == "stop_workflow_blocked_human_review_required"
+
+
+def test_workbuddy_diagnose_rejects_malformed_gate_report_before_continuing(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    gates = intermediate / "gates"
+    gates.mkdir()
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "auditor", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (gates / "auditor_quality_gate_report.json").write_text(
+        json.dumps({"status": "pass", "findings": []}),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert (
+        payload["run_card"]["latest_gate_status"]
+        == "auditor_quality_gate_report:invalid:gate_report_invalid"
+    )
+    assert payload["run_card"]["next_allowed_action"] == "stop_resolve_blocking_gate_report"
+
+
+def test_workbuddy_diagnose_rejects_non_strict_event_log_before_trusting_events(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (ws / "output" / "delivery").mkdir(parents=True)
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "finalize", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps({"status": "pass"}),
+        encoding="utf-8",
+    )
+    (intermediate / "event_log.jsonl").write_text(
+        json.dumps({"event_type": "delivery_succeeded"}) + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["control_files"]["event_log"] == "invalid_json"
+    assert payload["run_card"]["finalize_event"] == "missing"
+    assert payload["run_card"]["delivery_event"] == "missing"
+    assert payload["run_card"]["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"

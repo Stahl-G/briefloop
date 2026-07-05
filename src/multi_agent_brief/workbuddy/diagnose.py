@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
+from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
+from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
+from multi_agent_brief.quality_gates.contract import validate_quality_gate_report_payload
 
 
 DIAGNOSE_SCHEMA_VERSION = "briefloop.workbuddy_diagnose.v1"
@@ -289,6 +292,19 @@ def _latest_gate_projection(intermediate: Path, *, current_stage: str) -> dict[s
                 "blocking_count": 0,
                 "status_text": f"{artifact_id}:unreadable:{status}",
             }
+        errors = validate_quality_gate_report_payload(
+            dict(payload),
+            stages=_diagnose_gate_validation_stages(),
+            artifacts=_diagnose_gate_validation_artifacts(),
+        )
+        if errors:
+            return {
+                "artifact_id": artifact_id,
+                "gate_status": "invalid",
+                "blocking_count": 1,
+                "status_text": f"{artifact_id}:invalid:gate_report_invalid",
+                "validation_errors": errors,
+            }
         gate_status = _clean_text(payload.get("status")) or "unknown"
         findings = payload.get("findings")
         blocking_count = 0
@@ -312,6 +328,43 @@ def _is_blocking_gate_finding(finding: Any) -> bool:
     if not isinstance(finding, Mapping):
         return False
     return finding.get("blocking") is True or _clean_text(finding.get("blocking_level")) == "blocking"
+
+
+def _diagnose_gate_validation_stages() -> list[dict[str, Any]]:
+    return [
+        {"stage_id": stage}
+        for stage in (
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+            "auditor",
+            "finalize",
+        )
+    ]
+
+
+def _diagnose_gate_validation_artifacts() -> list[dict[str, Any]]:
+    return [
+        {"artifact_id": artifact}
+        for artifact in (
+            "candidate_claims",
+            "screened_candidates",
+            "claim_drafts",
+            "claim_ledger",
+            "analyst_draft_snapshot",
+            "audited_brief",
+            "audit_report",
+            "reader_brief",
+            "auditor_quality_gate_report",
+            "finalize_quality_gate_report",
+            "quality_gate_report",
+        )
+    ]
 
 
 def _next_safe_action(
@@ -372,17 +425,13 @@ def _read_json(path: Path) -> tuple[Any, str]:
 def _read_event_log(path: Path) -> tuple[list[Mapping[str, Any]], str]:
     if not path.exists():
         return [], "missing"
-    records: list[Mapping[str, Any]] = []
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            item = json.loads(line)
-            if isinstance(item, Mapping):
-                records.append(item)
+        records = read_event_log_records_strict(path)
     except UnicodeDecodeError:
         return [], "unreadable_utf8"
     except json.JSONDecodeError:
+        return [], "invalid_json"
+    except RuntimeStateError:
         return [], "invalid_json"
     except OSError:
         return [], "unreadable"
