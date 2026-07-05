@@ -147,8 +147,10 @@ Claim Ledger / Atomic Claim Graph / Evidence Span Registry references, and
 high-materiality `llm_only` adjudication flags. Present valid reports can
 project proposal-only Claim-Support Matrix delta candidates and read-only status
 counts. Missing reports remain non-blocking, and invalid reports are not
-projected. Humans may record accept/reject adjudication decisions for proposal
-rows through `semantic-support adjudicate`, which writes
+projected. Before human adjudication, `semantic-support bind` seals the report's
+checked-input metadata so later input drift is visible. Humans may then record
+accept/reject adjudication decisions for fresh, bound proposal rows through
+`semantic-support adjudicate`, which writes
 `semantic_support_acceptance_ledger.json` and an event-log record. These records
 do not by themselves create support truth, write the Claim-Support Matrix, route
 repair, gate delivery, decide release eligibility, or prove truth.

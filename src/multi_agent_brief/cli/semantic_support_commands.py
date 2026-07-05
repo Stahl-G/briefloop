@@ -8,6 +8,7 @@ from typing import Any
 
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.semantic_support_acceptance import (
+    bind_semantic_assessment_checked_inputs_transaction,
     record_semantic_support_adjudication,
 )
 
@@ -18,6 +19,13 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Record human adjudication for Semantic Support Auditor proposals.",
     )
     actions = parser.add_subparsers(dest="semantic_support_action", required=True)
+
+    bind = actions.add_parser(
+        "bind",
+        help="Seal semantic_assessment_report.json checked_inputs once before human adjudication.",
+    )
+    bind.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    bind.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     adjudicate = actions.add_parser(
         "adjudicate",
@@ -39,6 +47,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 def handle(args: argparse.Namespace) -> int:
     action = getattr(args, "semantic_support_action", "")
     try:
+        if action == "bind":
+            payload = bind_semantic_assessment_checked_inputs_transaction(workspace=args.workspace)
+            _print_payload("semantic-support bind", payload, as_json=getattr(args, "json", False))
+            return 0
         if action == "adjudicate":
             payload = record_semantic_support_adjudication(
                 workspace=args.workspace,

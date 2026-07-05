@@ -58,6 +58,94 @@ def semantic_support_acceptance_ledger_path(workspace: str | Path) -> Path:
     )
 
 
+def bind_semantic_assessment_checked_inputs_transaction(*, workspace: str | Path) -> dict[str, Any]:
+    """Seal a Semantic Assessment Report's checked inputs exactly once.
+
+    The Semantic Support Auditor writes proposal rows. This deterministic
+    transaction binds that report to the workspace inputs that were present at
+    seal time. Human adjudication later reads the binding but never writes it.
+    """
+
+    ws = Path(workspace).expanduser().resolve()
+    run_id = _current_run_id(ws)
+    paths = runtime_state_paths(ws)
+    report_path = ws / "output" / "intermediate" / "semantic_assessment_report.json"
+    snapshots = {
+        report_path: _read_state_bytes(report_path),
+        paths["event_log"]: _read_state_bytes(paths["event_log"]),
+    }
+    try:
+        _validated_event_log_for_current_run(ws, run_id=run_id)
+        report = _read_json_if_exists(report_path)
+        if not isinstance(report, dict):
+            raise RuntimeStateError(
+                "semantic_assessment_report.json is missing or not an object; nothing to bind.",
+                details={"path": str(report_path)},
+                error_code=E_ARTIFACT_INVALID,
+            )
+        existing = report.get("checked_inputs")
+        if isinstance(existing, dict) and existing:
+            projection = project_semantic_assessment_report_from_workspace(ws)
+            if projection.get("status") == "valid" and projection.get("checked_inputs_status") == "fresh":
+                return _bind_result(
+                    bound=False,
+                    reason="already_bound",
+                    projection=projection,
+                    event_id="",
+                )
+            raise RuntimeStateError(
+                "semantic_assessment_report.json already declares checked_inputs that are not fresh; rerun the Semantic Support Auditor instead of rebinding.",
+                details={
+                    "status": projection.get("status"),
+                    "reason": projection.get("reason"),
+                    "checked_inputs_status": projection.get("checked_inputs_status"),
+                },
+                error_code=E_ARTIFACT_INVALID,
+            )
+        try:
+            report["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
+        except (FileNotFoundError, OSError) as exc:
+            raise RuntimeStateError(
+                "semantic_assessment_report.json cannot be bound to checked inputs because a required input is missing or unreadable.",
+                details={"reason": str(exc)},
+                error_code=E_ARTIFACT_INVALID,
+            ) from exc
+        _write_json_atomic(report_path, report)
+        projection = project_semantic_assessment_report_from_workspace(ws)
+        if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "fresh":
+            raise RuntimeStateError(
+                "semantic_assessment_report.json did not project as fresh after checked_inputs binding.",
+                details={
+                    "status": projection.get("status"),
+                    "reason": projection.get("reason"),
+                    "checked_inputs_status": projection.get("checked_inputs_status"),
+                },
+                error_code=E_ARTIFACT_INVALID,
+            )
+        event = append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="semantic_assessment_checked_inputs_bound",
+            actor="cli",
+            artifact_id="semantic_assessment_report",
+            reason="Bound semantic_assessment_report.json checked_inputs for human adjudication.",
+            metadata={
+                "semantic_assessment_report_sha256": _clean_text(projection.get("report_sha256")),
+                "checked_inputs_digest": _clean_text(projection.get("checked_inputs_digest")),
+                "boundary": "checked_input_binding_only_not_support_truth",
+            },
+        )
+        return _bind_result(
+            bound=True,
+            reason="sealed",
+            projection=projection,
+            event_id=_clean_text(event.get("event_id")),
+        )
+    except Exception:
+        _restore_paths(snapshots)
+        raise
+
+
 def record_semantic_support_adjudication(
     *,
     workspace: str | Path,
@@ -83,18 +171,11 @@ def record_semantic_support_adjudication(
     projection = project_semantic_assessment_report_from_workspace(ws)
     ledger_path = semantic_support_acceptance_ledger_path(ws)
     paths = runtime_state_paths(ws)
-    report_path = ws / "output" / "intermediate" / "semantic_assessment_report.json"
     snapshots = {
-        report_path: _read_state_bytes(report_path),
         ledger_path: _read_state_bytes(ledger_path),
         paths["event_log"]: _read_state_bytes(paths["event_log"]),
     }
     try:
-        projection = _ensure_checked_inputs_for_adjudication(
-            ws,
-            projection=projection,
-            report_path=report_path,
-        )
         result = _record_semantic_support_adjudication_with_projection(
             ws=ws,
             run_id=run_id,
@@ -124,7 +205,7 @@ def _record_semantic_support_adjudication_with_projection(
 ) -> dict[str, Any]:
     if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "fresh":
         raise RuntimeStateError(
-            "semantic_assessment_report.json must be present, valid, and checked-input fresh before human adjudication.",
+            "semantic_assessment_report.json must be present, valid, and checked-input fresh before human adjudication. Run `briefloop semantic-support bind --workspace <workspace>` after the auditor writes the report.",
             details={
                 "status": projection.get("status"),
                 "reason": projection.get("reason"),
@@ -195,42 +276,6 @@ def _record_semantic_support_adjudication_with_projection(
         "authority_effects": _no_authority_effects(),
     }
 
-
-def _ensure_checked_inputs_for_adjudication(
-    workspace: Path,
-    *,
-    projection: Mapping[str, Any],
-    report_path: Path,
-) -> Mapping[str, Any]:
-    """Bind legacy auditor-produced SARs to current checked inputs.
-
-    Auditor-produced reports that omit ``checked_inputs`` remain valid advisory
-    artifacts. Human adjudication needs an exact input binding, so the
-    deterministic transaction adds the binding only when the field is absent.
-    Declared but stale/incomplete bindings are never overwritten here.
-    """
-
-    if projection.get("status") == "valid" and projection.get("checked_inputs_status") == "fresh":
-        return projection
-    if projection.get("status") != "valid" or projection.get("checked_inputs_status") != "missing_checked_inputs":
-        return projection
-    report = _read_json_if_exists(report_path)
-    if not isinstance(report, dict):
-        return projection
-    if "checked_inputs" in report and report.get("checked_inputs") is not None:
-        return projection
-    try:
-        report["checked_inputs"] = build_semantic_assessment_checked_inputs(workspace)
-    except FileNotFoundError as exc:
-        raise RuntimeStateError(
-            "semantic_assessment_report.json cannot be bound to checked inputs because a required input is missing.",
-            details={"missing_input": str(exc)},
-            error_code=E_ARTIFACT_INVALID,
-        ) from exc
-    _write_json_atomic(report_path, report)
-    return project_semantic_assessment_report_from_workspace(workspace)
-
-
 def validate_semantic_support_acceptance_ledger_payload(payload: Any) -> str | None:
     if not isinstance(payload, Mapping):
         return "not_object"
@@ -252,6 +297,29 @@ def validate_semantic_support_acceptance_ledger_payload(payload: Any) -> str | N
         if reason:
             return f"records[{idx}].{reason}"
     return None
+
+
+def _bind_result(
+    *,
+    bound: bool,
+    reason: str,
+    projection: Mapping[str, Any],
+    event_id: str,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "schema_version": "briefloop.semantic_assessment_checked_inputs_bind_result.v1",
+        "boundary": "checked_input_binding_only_not_support_truth",
+        "path": "output/intermediate/semantic_assessment_report.json",
+        "bound": bound,
+        "reason": reason,
+        "event_id": event_id,
+        "status": projection.get("status"),
+        "checked_inputs_status": projection.get("checked_inputs_status"),
+        "semantic_assessment_report_sha256": _clean_text(projection.get("report_sha256")),
+        "checked_inputs_digest": _clean_text(projection.get("checked_inputs_digest")),
+        "authority_effects": _no_authority_effects(),
+    }
 
 
 def validate_semantic_support_acceptance_ledger_for_workspace(
@@ -571,7 +639,7 @@ def _restore_paths(snapshots: Mapping[Path, bytes | None]) -> None:
             rollback_errors.append({"path": str(path), "reason": str(exc)})
     if rollback_errors:
         raise RuntimeStateError(
-            "Semantic support adjudication rollback failed after partial write.",
+            "Semantic support transaction rollback failed after partial write.",
             details={"rollback_errors": rollback_errors},
             error_code=E_TRANSACTION_INTEGRITY,
         )

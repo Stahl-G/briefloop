@@ -69,8 +69,10 @@ Historical implementation name: MABW
     - read-only status visibility
   - Semantic support human adjudication ledger:
     `semantic_support_acceptance_ledger.json`
+    - `semantic-support bind` seals `semantic_assessment_report.json`
+      checked-input metadata before human adjudication
     - written only by `semantic-support adjudicate`
-    - records human accept/reject decisions for proposal rows
+    - records human accept/reject decisions for fresh, bound proposal rows
     - does not write Claim-Support Matrix rows, gates, repair routes, delivery,
       release state, or semantic truth
 - Quality-gate surfaces:

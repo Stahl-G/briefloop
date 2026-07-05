@@ -13,6 +13,7 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    SEMANTIC_ASSESSMENT_REPORT_STATUSES,
     build_semantic_assessment_checked_inputs,
 )
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
@@ -895,6 +896,16 @@ def test_quality_panel_accepts_stale_checked_semantic_support_report_as_warning_
     assert semantic["status"] == "stale"
     assert panel["overall_status"] in {"incomplete", "warning"}
     assert validate_quality_panel_payload(panel) is None
+
+
+def test_quality_panel_accepts_all_semantic_assessment_report_statuses(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    panel = build_quality_panel(ws)
+
+    for status in SEMANTIC_ASSESSMENT_REPORT_STATUSES:
+        candidate = json.loads(json.dumps(panel))
+        candidate["semantic_support"]["status"] = status
+        assert validate_quality_panel_payload(candidate) is None
 
 
 def test_quality_panel_validator_rejects_forged_semantic_support_authority(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ from multi_agent_brief.audit.semantic import (
     normalize_calibration_label,
 )
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
+from multi_agent_brief.contracts.semantic_assessment_status import SEMANTIC_ASSESSMENT_REPORT_STATUSES
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     _read_json_mapping,
     _schema_error_reason,
@@ -238,14 +239,24 @@ def project_semantic_assessment_checked_inputs(
                 "checked_inputs": normalized,
                 "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
             }
-        if path.stat().st_size != entry.get("size_bytes"):
+        try:
+            current_size = path.stat().st_size
+            current_sha256 = _file_sha256(path)
+        except OSError:
+            return {
+                "status": "missing_input",
+                "reason": f"checked_input_unreadable:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
+        if current_size != entry.get("size_bytes"):
             return {
                 "status": "stale",
                 "reason": f"checked_input_stale:{key}",
                 "checked_inputs": normalized,
                 "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
             }
-        if _file_sha256(path) != entry.get("sha256"):
+        if current_sha256 != entry.get("sha256"):
             return {
                 "status": "stale",
                 "reason": f"checked_input_stale:{key}",
