@@ -70,6 +70,6 @@ def test_claude_policy_disallows_required_free_text_askuserquestion():
     claude_path = ROOT / "CLAUDE.md"
     assert claude_path.exists(), "CLAUDE.md not found"
     text = claude_path.read_text(encoding="utf-8")
-    assert "multi-agent-brief onboard" in text
-    assert "multi-agent-brief init" in text
-    assert "multi-agent-brief run" in text
+    assert "briefloop onboard" in text
+    assert "briefloop init" in text
+    assert "briefloop run" in text
