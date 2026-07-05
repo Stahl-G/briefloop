@@ -37,7 +37,7 @@ breaking rename.
 - Workspace-local audience taste profiles can be frozen into per-run snapshots and exposed through runtime handoff as context.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
 - Finalize writes the reader delivery bundle under `output/delivery/`, appending the source appendix to delivery Markdown/DOCX while retaining `output/source_appendix.md` as an audit/control copy. Reader-facing appendices can show safe source identity and taxonomy labels, while `output/source_appendix_trace.md` can carry internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for audit review. Delivery artifacts must not expose internal claim IDs, source IDs, evidence text, local paths, or file URLs.
-- Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `multi-agent-brief runtime install`.
+- Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, `.codebuddy/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `multi-agent-brief runtime install` or used directly from a source checkout where documented.
 - The Improvement Ledger lifecycle can preserve human-authored, human-approved reader guidance in `improvement/ledger.jsonl`, project approved materializable entries into `improvement/memory.md`, freeze per-run `output/intermediate/improvement_memory_snapshot.md`, and expose only the frozen snapshot through handoff.
 - Packaged public-safe evaluation cases now cover Improvement Memory control behavior: unapproved entries are not materialized, approved guidance is frozen, and reverted entries disappear from the next snapshot.
 - Experimental Atomic Claim Graph controls can validate an optional
@@ -206,10 +206,13 @@ breaking rename.
   bypass gates, approve delivery, provide tax or investment advice, or
   authorize publication.
 - Python commands provide setup, source tooling, validation, audit support, and rendering.
-- Hermes, Claude Code, Codex, OpenCode, and operator fallback are treated as agent runtime surfaces.
-  The operator runtime is a host-agnostic compact workflow for environments
-  without a dedicated runtime adapter; legacy `manual` remains a CLI
-  compatibility alias and is not a Python brief-generation path.
+- Hermes, Claude Code, Codex, OpenCode, experimental source-clone CodeBuddy,
+  and operator fallback are treated as agent runtime surfaces. The CodeBuddy
+  runtime handoff requires `.codebuddy/skills/briefloop/` and
+  `.codebuddy/agents/briefloop-*.md` in the source checkout; it is not packaged
+  runtime proof. The operator runtime is a host-agnostic compact workflow for
+  environments without a dedicated runtime adapter; legacy `manual` remains a
+  CLI compatibility alias and is not a Python brief-generation path.
 - Input governance can extract supported non-text input documents to Markdown with MinerU, then separates evidence from feedback, instructions, and background context.
 - Old Python-pipeline framing is deprecated for the standard workflow.
 

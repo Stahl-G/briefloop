@@ -1013,6 +1013,36 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     assert "docx_pdf_delivery_quality" in text
 
 
+def test_start_codebuddy_handoff_strips_finalize_for_auditable_assessment_target(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_auditable_condition_metadata(ws)
+
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--runtime", "codebuddy",
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+
+    assert rc == 0
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    md = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+    text = data["prompt"] + "\n" + "\n".join(data["notes"]) + "\n" + md
+    assert data["runtime"] == RUNTIME_CODEBUDDY
+    assert data["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
+    assert "TARGET COMPLETE: auditable_brief" in text
+    assert "briefloop-auditor" in text
+    assert "briefloop-formatter" not in text
+    assert "finalize readiness" not in text
+    assert "Run finalize, finalize gate" not in text
+    assert "briefloop finalize" not in text
+    assert "state finalize-complete" not in text
+    assert "--stage finalize" not in text
+    assert "experiments 080 register-run" in text
+    assert "experiments 080 score-run" in text
+
+
 def test_start_does_not_generate_brief(tmp_path):
     """start must NOT generate brief.md or claim_ledger.json."""
     ws = _write_workspace(tmp_path)

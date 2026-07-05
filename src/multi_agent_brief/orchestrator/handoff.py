@@ -1487,6 +1487,7 @@ def _apply_experiment_080_assessment_target(handoff: AgentHandoff, workspace: Pa
         artifact for artifact in handoff.expected_artifacts if artifact != "output/delivery/brief.md"
     ]
     handoff.artifact_ownership = _without_auditable_delivery_artifact_ownership(handoff.artifact_ownership)
+    handoff.runtime_capabilities = _without_auditable_delivery_runtime_capabilities(handoff.runtime_capabilities)
     handoff.next_steps = (
         "080 auditable_brief target: stop after auditor stage-complete; next allowed commands are "
         "experiments 080 register-run and score-run."
@@ -1516,6 +1517,9 @@ def _without_auditable_delivery_steps(text: str) -> str:
         "The 'auditor' step and required gates check must run before finalize",
         "Record finalize completion",
         "Formatter/finalize may only write",
+        "briefloop-formatter",
+        "finalize readiness",
+        "Run finalize, finalize gate",
     )
     kept: list[str] = []
     for line in text.splitlines():
@@ -1562,6 +1566,19 @@ def _without_auditable_delivery_artifact_ownership(ownership: dict[str, Any]) ->
         for item in rewritten.get("cli_owned_outputs", [])
         if not _is_auditable_delivery_owned_output(item)
     ]
+    return rewritten
+
+
+def _without_auditable_delivery_runtime_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(capabilities, dict):
+        return capabilities
+    rewritten = dict(capabilities)
+    subagents = rewritten.get("subagent_names")
+    if isinstance(subagents, list):
+        rewritten["subagent_names"] = [
+            name for name in subagents
+            if "formatter" not in str(name).lower()
+        ]
     return rewritten
 
 
