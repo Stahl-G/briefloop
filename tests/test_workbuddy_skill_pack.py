@@ -39,6 +39,14 @@ CODEBUDDY_ROLE_AGENTS = {
             "output/intermediate/screened_candidates.json",
         ],
     },
+    "briefloop-screener.md": {
+        "tools": "tools: Read, Write, Grep, Glob",
+        "outputs": ["output/intermediate/screened_candidates.json"],
+    },
+    "briefloop-claim-ledger.md": {
+        "tools": "tools: Read, Write, Grep, Glob",
+        "outputs": ["output/intermediate/claim_drafts.json"],
+    },
     "briefloop-analyst.md": {
         "tools": "tools: Read, Write, Grep, Glob",
         "outputs": ["output/intermediate/audited_brief.md"],
@@ -124,9 +132,11 @@ def test_codebuddy_skill_adapter_is_main_session_orchestrator() -> None:
     assert ".agents/skills/briefloop-workbuddy/SKILL.md" in text
     assert ".agents/skills/briefloop-workbuddy/references/" in text
     assert ".codebuddy/skills/briefloop/SKILL.md" in text
-    assert "Do not perform Scout, Analyst, Editor, Auditor, or Formatter work in the main" in text
+    assert "Do not perform Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or" in text
     for role_name in [
         "briefloop-scout",
+        "briefloop-screener",
+        "briefloop-claim-ledger",
         "briefloop-analyst",
         "briefloop-editor",
         "briefloop-auditor",

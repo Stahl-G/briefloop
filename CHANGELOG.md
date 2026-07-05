@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added experimental `--runtime codebuddy` handoff generation for source-clone
+  CodeBuddy operation. The handoff names the project Skill and role-agent
+  assets, records CodeBuddy runtime capabilities, and keeps deterministic CLI
+  transactions in the main CodeBuddy session. This does not add gate authority,
+  delivery approval, release authority, semantic proof, or output-quality proof.
 - Added an experimental CodeBuddy project Skill adapter under
   `.codebuddy/skills/briefloop/`. The adapter keeps orchestration in the main
   CodeBuddy session, points to the WorkBuddy/CodeBuddy canonical Skill

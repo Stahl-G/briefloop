@@ -80,10 +80,15 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "CodeBuddy project Skill adapter",
         ".codebuddy/skills/briefloop/",
         "must not use `context: fork`",
+        "used by `--runtime codebuddy` handoff",
         "CodeBuddy project role agents",
         ".codebuddy/agents/briefloop-*.md",
         "must not run `briefloop` or `multi-agent-brief` CLI commands",
         "main CodeBuddy session remains responsible for deterministic transactions",
+        "CodeBuddy runtime handoff",
+        "`--runtime codebuddy`: experimental handoff",
+        "nested_subagents_supported",
+        "role_agents_run_cli_transactions",
     ],
     "references/status-and-gates.md": [
         "Coverage/omission findings",
@@ -96,6 +101,12 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
         "Support-Calibrated Wording is warning-only",
         "quality_panel_closeout",
         "excluded from reader-facing delivery bundles",
+    ],
+    "references/runtime-workspace.md": [
+        "briefloop run --workspace <workspace> --runtime codebuddy",
+        ".codebuddy/skills/briefloop/",
+        ".codebuddy/agents/briefloop-*.md",
+        "deterministic CLI transactions to the main session",
     ],
     "references/control-record-map.md": [
         "quality_panel.json",

@@ -22,6 +22,12 @@ Read this when operating a real BriefLoop workspace.
   `agent_owned_drafts`, `cli_owned_outputs`, `read_only_diagnostics`, and
   `forbidden_direct_edits`; use these buckets instead of treating control JSON
   paths as writable instructions.
+- Use `briefloop run --workspace <workspace> --runtime codebuddy` only when
+  operating from a source checkout with `.codebuddy/skills/briefloop/` and
+  `.codebuddy/agents/briefloop-*.md` available. The generated CodeBuddy
+  handoff keeps orchestration in the main CodeBuddy session, explicitly invokes
+  role sub-agents for handoff-assigned draft artifacts, and leaves
+  deterministic CLI transactions to the main session.
 - Advance stages only with deterministic completion transactions.
 - Use owner-stage repair transactions for frozen artifact repair.
 - Trigger delivery only when the operator explicitly asks and gates allow it.

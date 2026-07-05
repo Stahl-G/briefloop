@@ -32,8 +32,8 @@ new workflow contract.
 | `docs/agents/**` | Generated source/docs asset | Source-clone-only | Adapter documentation generated from role source. |
 | `integrations/hermes-plugin/**` | Hermes plugin source asset | Source-clone-only | Plugin source tree; package-only installs should not assume it exists. |
 | `.agents/skills/briefloop-workbuddy/**` | WorkBuddy Skill source asset | Source-clone-only | Canonical local WorkBuddy Skill source bundle; `workbuddy pack-skill` generates a local Skill zip from these source-clone files. Package-only installs should not assume the source tree exists. |
-| `.codebuddy/skills/briefloop/**` | CodeBuddy project Skill adapter | Source-clone-only | Experimental project-level CodeBuddy Skill adapter. It keeps orchestration in the main CodeBuddy session and does not add gate, delivery, release, or control-file authority. |
-| `.codebuddy/agents/briefloop-*.md` | CodeBuddy project role sub-agents | Source-clone-only | Experimental native CodeBuddy role-agent assets for Scout, Analyst, Editor, Auditor, and Formatter. These are project-level sub-agents, not gate, delivery, release, or control-file authority. |
+| `.codebuddy/skills/briefloop/**` | CodeBuddy project Skill adapter | Source-clone-only | Experimental project-level CodeBuddy Skill adapter used by `--runtime codebuddy`. It keeps orchestration in the main CodeBuddy session and does not add gate, delivery, release, or control-file authority. |
+| `.codebuddy/agents/briefloop-*.md` | CodeBuddy project role sub-agents | Source-clone-only | Experimental native CodeBuddy role-agent assets for Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, and Formatter. These are project-level sub-agents for handoff-assigned drafting, not gate, delivery, release, or control-file authority. |
 | `integrations/workbuddy/briefloop/**` | WorkBuddy Skill legacy mirror | Source-clone-only | Compatibility mirror kept for older references; not the canonical pack source. |
 | `scripts/check_workbuddy_skill_pack.py` | WorkBuddy package readiness check | Source-clone-only | Builds and validates the local WorkBuddy Skill zip shape without publishing to WorkBuddy Marketplace. |
 | `scripts/install.sh` | Installer asset | Source-clone-only | curl/archive install helper. |
@@ -51,7 +51,7 @@ new workflow contract.
 | Homebrew formula source | Experimental CLI-only | Supported when installed package includes package data | Not included | Source-clone-only unless a source clone is also available. |
 | Hermes plugin source install | Supported from source clone | Uses CLI/package contracts | Source plugin tree required | Plugin installation remains source-clone-driven unless plugin assets are packaged separately. |
 | WorkBuddy Skill source bundle | Experimental from source clone | Uses CLI/package contracts | Source Skill tree required | `workbuddy pack-skill` generates a local Skill zip; this is not Marketplace publication or Python package data. |
-| CodeBuddy project Skill adapter | Experimental from source clone | Uses CLI/package contracts | Source `.codebuddy/skills` tree required | Main-session adapter that routes to CodeBuddy project role agents when explicitly delegated. Not a forked Skill, runtime authority, gate authority, delivery approval, or release authority. |
+| CodeBuddy project Skill adapter | Experimental from source clone | Uses CLI/package contracts | Source `.codebuddy/skills` tree required | Main-session adapter used by `--runtime codebuddy` to route to CodeBuddy project role agents when explicitly delegated. Not a forked Skill, gate authority, delivery approval, release authority, or semantic proof. |
 | CodeBuddy project role agents | Experimental from source clone | Uses CLI/package contracts | Source `.codebuddy/agents` tree required | Role agents may draft role-owned artifacts only. The main session still runs deterministic BriefLoop CLI transactions. |
 
 ## Workspace Runtime Kit

@@ -299,7 +299,7 @@ Current main entrypoints:
 
 - CLI: `briefloop`
 - Claude command: `/briefloop`
-- experimental WorkBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
+- experimental WorkBuddy / CodeBuddy guide: [docs/workbuddy.md](docs/workbuddy.md)
 
 v0.11.12 releases the accumulated v0.11 product-baseline, WorkBuddy adapter,
 operator-runtime, and semantic-support auditor hardening line, including:
@@ -321,6 +321,8 @@ operator-runtime, and semantic-support auditor hardening line, including:
 - trajectory-regulation decision narrowing for repeated retry/repair/blocker
   loops
 - experimental source-clone WorkBuddy Skill packaging and first-use routing
+- experimental source-clone CodeBuddy project Skill and role-agent handoff
+  through `--runtime codebuddy`
 - `operator` runtime for host-agnostic compact operation, with `manual` kept as
   a legacy alias
 - proposal-only Semantic Support Auditor surfaces and human adjudication records

@@ -335,6 +335,7 @@ correctness, and generalization claims remain out of scope.
 | Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` generated-handoff delegated stage workflow; installable with `multi-agent-brief claude install`) | Supported |
 | OpenCode (subagent workflow) | Supported |
 | Codex (custom-agent workflow via `runtime install`) | Experimental |
+| CodeBuddy (`--runtime codebuddy` handoff using `.codebuddy/skills/briefloop/` and `.codebuddy/agents/briefloop-*.md`) | Experimental |
 | Operator (host-agnostic compact workflow; `manual` is a legacy CLI alias) | Supported |
 
 Claude Code is the first-class writer / five-verb path (`new`, `run`, `status`,
@@ -352,6 +353,13 @@ ship the CLI, packaged contracts, and packaged eval fixtures, but they do not
 ship those source runtime directories as Python package data. Use
 `multi-agent-brief runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
 from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime kits.
+
+CodeBuddy handoff support is experimental and source-clone-based. It uses the
+project Skill under `.codebuddy/skills/briefloop/` and role agents under
+`.codebuddy/agents/briefloop-*.md`. The main CodeBuddy session remains the
+Orchestrator and runs deterministic BriefLoop CLI transactions; role agents only
+draft handoff-assigned artifacts. This does not add gate authority, delivery
+approval, release authority, semantic proof, or output-quality proof.
 
 ## Source Providers
 
@@ -438,8 +446,8 @@ from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime k
 | PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
 | Hermes plugin (`integrations/hermes-plugin/`) | Supported |
 | WorkBuddy Skill source bundle (`.agents/skills/briefloop-workbuddy/`) and local zip packaging (`workbuddy pack-skill`) | Experimental; source-clone-only input, generated local Skill zip, not WorkBuddy Marketplace publication or wheel/sdist package data |
-| CodeBuddy project Skill adapter (`.codebuddy/skills/briefloop/`) | Experimental; source-clone-only project Skill that keeps orchestration in the main CodeBuddy session, not a forked Skill or supported delegated runtime |
-| CodeBuddy project role agents (`.codebuddy/agents/briefloop-*.md`) | Experimental; source-clone-only project sub-agent assets for role drafting only, not a supported delegated runtime until a CodeBuddy handoff and smoke exist |
+| CodeBuddy project Skill adapter (`.codebuddy/skills/briefloop/`) | Experimental; source-clone-only project Skill used by `--runtime codebuddy`; keeps orchestration in the main CodeBuddy session and is not a forked Skill |
+| CodeBuddy project role agents (`.codebuddy/agents/briefloop-*.md`) | Experimental; source-clone-only project sub-agent assets for role drafting only; main CodeBuddy session still owns deterministic CLI transactions |
 
 | Runtime asset | Source clone | Wheel / sdist / PyPI package |
 |---|---|---|

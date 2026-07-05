@@ -58,6 +58,18 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "source-clone-only" in text
     assert "workbuddy pack-skill" in text
     assert "not a WorkBuddy Marketplace publication" in text
+    assert "CodeBuddy project Skill adapter" in text
+    assert ".codebuddy/skills/briefloop/" in text
+    assert "must not use `context: fork`" in text
+    assert "used by `--runtime codebuddy` handoff" in text
+    assert "CodeBuddy project role agents" in text
+    assert ".codebuddy/agents/briefloop-*.md" in text
+    assert "main CodeBuddy session remains responsible for deterministic transactions" in text
+    assert "CodeBuddy runtime handoff" in text
+    assert "`--runtime codebuddy`: experimental handoff" in text
+    assert "runtime_capabilities.delegation_supported" in text
+    assert "runtime_capabilities.nested_subagents_supported" in text
+    assert "runtime_capabilities.role_agents_run_cli_transactions" in text
     assert "BriefLoop skill is an agent protocol surface" in text
     assert "not the `/briefloop` slash" in text
     assert "auditable_brief" in text
@@ -145,7 +157,11 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
 
     assert "briefloop quality summarize --workspace <workspace>" in runtime
     assert "briefloop run --workspace <workspace> --runtime operator" in runtime
+    assert "briefloop run --workspace <workspace> --runtime codebuddy" in runtime
     assert "Legacy `--runtime manual` remains a compatibility alias only." in runtime
+    assert ".codebuddy/skills/briefloop/" in runtime
+    assert ".codebuddy/agents/briefloop-*.md" in runtime
+    assert "deterministic CLI transactions to the main session" in runtime
     assert "`agent_owned_drafts`, `cli_owned_outputs`, `read_only_diagnostics`" in runtime
     assert "`forbidden_direct_edits`" in runtime
     assert "not a gate runner" in runtime

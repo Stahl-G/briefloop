@@ -45,10 +45,42 @@ Expected runtime roles:
 Python remains the tool, validator, audit, control, and rendering layer. The
 runtime Orchestrator decides when to delegate roles and when to run CLI tools.
 
+## CodeBuddy Runtime Handoff
+
+Use `--runtime codebuddy` when operating from a source checkout with the
+project Skill and role-agent assets available:
+
+```text
+.codebuddy/skills/briefloop/
+.codebuddy/agents/briefloop-*.md
+```
+
+The main CodeBuddy session remains the Orchestrator. It loads the BriefLoop
+project Skill, invokes role sub-agents explicitly, and runs deterministic
+BriefLoop CLI transactions after each role returns. The Skill must not use
+`context: fork`, because CodeBuddy sub-agents cannot spawn other sub-agents.
+
+Runtime capabilities:
+
+```text
+delegation_supported: true
+nested_subagents_supported: false
+role_agents_run_cli_transactions: false
+```
+
+Not allowed:
+
+- Do not let role sub-agents run `briefloop` CLI transactions.
+- Do not let role sub-agents edit control files, gate reports, delivery files,
+  release reports, or frozen artifacts.
+- Do not claim a role sub-agent ran unless CodeBuddy actually invoked it.
+- Do not treat CodeBuddy handoff as gate authority, delivery approval, release
+  authority, semantic proof, or output-quality proof.
+
 ## Operator Runtime Compact Workflow
 
 Use `--runtime operator` when the host does not have a dedicated BriefLoop
-runtime adapter such as Hermes, Claude Code, Codex, or OpenCode. This is a
+runtime adapter such as Hermes, Claude Code, Codex, OpenCode, or CodeBuddy. This is a
 host-agnostic compact operator workflow. It does not assume subagent or delegate
 capability. The legacy `--runtime manual` value remains a compatibility alias
 for `operator`.

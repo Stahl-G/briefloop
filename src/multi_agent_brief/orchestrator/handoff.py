@@ -64,6 +64,7 @@ RUNTIME_HERMES = "hermes"
 RUNTIME_CLAUDE = "claude"
 RUNTIME_OPENCODE = "opencode"
 RUNTIME_CODEX = "codex"
+RUNTIME_CODEBUDDY = "codebuddy"
 RUNTIME_OPERATOR = "operator"
 RUNTIME_MANUAL = "manual"
 VALID_RUNTIMES = (
@@ -72,6 +73,7 @@ VALID_RUNTIMES = (
     RUNTIME_CLAUDE,
     RUNTIME_OPENCODE,
     RUNTIME_CODEX,
+    RUNTIME_CODEBUDDY,
     RUNTIME_OPERATOR,
     RUNTIME_MANUAL,
 )
@@ -111,6 +113,19 @@ DECISION_RECORDING_NOTE = (
     "through `state decide`. "
     "Use only decisions allowed by `workflow_state.json.next_allowed_decisions`. "
     "If the transaction is rejected, stop and correct the stage state instead of continuing."
+)
+ORCHESTRATOR_CONTEXT_READING_NOTE = (
+    "Read runtime state files before selecting the next stage:\n"
+    "- output/intermediate/runtime_manifest.json\n"
+    "- output/intermediate/workflow_state.json\n"
+    "- output/intermediate/artifact_registry.json\n"
+    "- output/intermediate/event_log.jsonl\n\n"
+    "Read audience memory snapshot for this run:\n"
+    "- output/intermediate/audience_profile_snapshot.md\n"
+    "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
+    "Read the Orchestrator control switchboard:\n"
+    "- output/intermediate/orchestrator_control_switchboard.json\n"
+    "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval."
 )
 FINALIZE_GATE_NOTE = (
     "Before finalize, after the auditor stage completes, run "
@@ -438,17 +453,7 @@ def _claude_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "default: scout(discovery+screening) → claim-ledger → analyst → editor/Delivery Editor → auditor → finalize.\n"
             "strict: scout → screener → claim-ledger → analyst → editor/Delivery Editor → auditor → finalize.\n\n"
             f"{ROLE_TOPOLOGY_HANDOFF_NOTE}\n\n"
-            "Read runtime state files before selecting the next stage:\n"
-            "- output/intermediate/runtime_manifest.json\n"
-            "- output/intermediate/workflow_state.json\n"
-            "- output/intermediate/artifact_registry.json\n"
-            "- output/intermediate/event_log.jsonl\n\n"
-            "Read audience memory snapshot for this run:\n"
-            "- output/intermediate/audience_profile_snapshot.md\n"
-            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
-            "Read the Orchestrator control switchboard:\n"
-            "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{ORCHESTRATOR_CONTEXT_READING_NOTE}\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}\n\n"
@@ -489,17 +494,7 @@ def _opencode_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "default: scout(discovery+screening) → claim-ledger → analyst → editor/Delivery Editor → auditor → finalize.\n"
             "strict: scout → screener → claim-ledger → analyst → editor/Delivery Editor → auditor → finalize.\n\n"
             f"{ROLE_TOPOLOGY_HANDOFF_NOTE}\n\n"
-            "Read runtime state files before selecting the next stage:\n"
-            "- output/intermediate/runtime_manifest.json\n"
-            "- output/intermediate/workflow_state.json\n"
-            "- output/intermediate/artifact_registry.json\n"
-            "- output/intermediate/event_log.jsonl\n\n"
-            "Read audience memory snapshot for this run:\n"
-            "- output/intermediate/audience_profile_snapshot.md\n"
-            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
-            "Read the Orchestrator control switchboard:\n"
-            "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{ORCHESTRATOR_CONTEXT_READING_NOTE}\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}"
@@ -585,17 +580,7 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"{role_mapping}\n"
             "Do not call the next specialist until `briefloop state stage-complete` succeeds for the current stage.\n"
             "Finalize is a Python delivery/rendering tool. After finalize writes delivery artifacts, record completion with `briefloop state finalize-complete`.\n\n"
-            "Read runtime state files before selecting the next stage:\n"
-            "- output/intermediate/runtime_manifest.json\n"
-            "- output/intermediate/workflow_state.json\n"
-            "- output/intermediate/artifact_registry.json\n"
-            "- output/intermediate/event_log.jsonl\n\n"
-            "Read audience memory snapshot for this run:\n"
-            "- output/intermediate/audience_profile_snapshot.md\n"
-            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
-            "Read the Orchestrator control switchboard:\n"
-            "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{ORCHESTRATOR_CONTEXT_READING_NOTE}\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}"
@@ -620,6 +605,128 @@ def _operator_runtime_capabilities(legacy_alias: str | None = None) -> dict[str,
         "must_not_claim_subagents_ran": True,
         "fallback_if_no_delegation": "compact_operator_workflow_or_stop",
     }
+
+
+CODEBUDDY_ROLE_AGENTS = [
+    "briefloop-scout",
+    "briefloop-screener",
+    "briefloop-claim-ledger",
+    "briefloop-analyst",
+    "briefloop-editor",
+    "briefloop-auditor",
+    "briefloop-formatter",
+]
+CODEBUDDY_SKILL_PATH = Path(".codebuddy") / "skills" / "briefloop" / "SKILL.md"
+CODEBUDDY_AGENT_ROOT = Path(".codebuddy") / "agents"
+
+
+def _codebuddy_runtime_capabilities() -> dict[str, Any]:
+    return {
+        "runtime": RUNTIME_CODEBUDDY,
+        "host": "codebuddy",
+        "delegation_supported": True,
+        "subagent_names": list(CODEBUDDY_ROLE_AGENTS),
+        "nested_subagents_supported": False,
+        "skill_path": ".codebuddy/skills/briefloop/SKILL.md",
+        "role_agent_path_glob": ".codebuddy/agents/briefloop-*.md",
+        "main_session_runs_cli_transactions": True,
+        "role_agents_run_cli_transactions": False,
+        "must_not_claim_uninvoked_subagents_ran": True,
+    }
+
+
+def _require_codebuddy_source_assets(repo: Path) -> None:
+    missing: list[str] = []
+    skill_path = repo / CODEBUDDY_SKILL_PATH
+    if not skill_path.is_file():
+        missing.append(CODEBUDDY_SKILL_PATH.as_posix())
+    for role in CODEBUDDY_ROLE_AGENTS:
+        rel_path = CODEBUDDY_AGENT_ROOT / f"{role}.md"
+        if not (repo / rel_path).is_file():
+            missing.append(rel_path.as_posix())
+    if missing:
+        missing_list = ", ".join(missing)
+        raise ValueError(
+            "CodeBuddy runtime is source-clone-only and requires local CodeBuddy "
+            f"assets under repo_workdir. Missing: {missing_list}. "
+            "Use --runtime operator or pass --repo-workdir pointing to a BriefLoop "
+            "source checkout with .codebuddy assets."
+        )
+
+
+def _codebuddy_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
+    _require_codebuddy_source_assets(repo)
+    ws_path = str(workspace.resolve())
+    role_agents = "\n".join(f"- {name}" for name in CODEBUDDY_ROLE_AGENTS)
+    role_sequence = "\n".join(
+        [
+            "1. Ask `briefloop-scout` to draft Scout-owned artifacts from the current handoff.",
+            "2. Run deterministic BriefLoop validation and stage transactions in the main CodeBuddy session.",
+            "3. Default topology: Scout already writes `output/intermediate/screened_candidates.json`; do not invoke `briefloop-screener` or complete screener separately.",
+            "4. Strict topology only: ask `briefloop-screener` to draft `output/intermediate/screened_candidates.json`, then run deterministic BriefLoop validation and screener stage transactions in the main CodeBuddy session.",
+            "5. Ask `briefloop-claim-ledger` to draft `output/intermediate/claim_drafts.json` from screened candidates.",
+            f"6. Run `briefloop state freeze-claim-ledger --workspace {ws_path}` and `briefloop state stage-complete --workspace {ws_path} --stage claim-ledger --reason \"Claim Ledger was frozen from claim drafts.\"` in the main CodeBuddy session.",
+            "7. Ask `briefloop-analyst` to draft Analyst-owned artifacts from frozen `output/intermediate/claim_ledger.json`.",
+            "8. Run deterministic BriefLoop validation and stage transactions in the main CodeBuddy session.",
+            "9. Ask `briefloop-editor` to polish the audited brief without adding facts.",
+            "10. Run deterministic BriefLoop validation and stage transactions in the main CodeBuddy session.",
+            "11. Ask `briefloop-auditor` to draft the audit report.",
+            "12. Run deterministic auditor gate and stage-complete commands in the main CodeBuddy session.",
+            "13. Ask `briefloop-formatter` for finalize readiness only; it must not write files or run CLI commands.",
+            "14. Run finalize, finalize gate, finalize-complete, quality, and delivery commands from the main CodeBuddy session only when allowed.",
+        ]
+    )
+    return AgentHandoff(
+        runtime=RUNTIME_CODEBUDDY,
+        recipe=RUNTIME_RECIPE_FULL,
+        workspace=ws_path,
+        repo_workdir=str(repo.resolve()),
+        venv_activate=venv,
+        next_steps=(
+            f"In CodeBuddy, use the project Skill `.codebuddy/skills/briefloop/` for {ws_path}. "
+            "The main CodeBuddy session is the Orchestrator main agent and must invoke BriefLoop role sub-agents explicitly."
+        ),
+        prompt=(
+            f"CodeBuddy runtime for workspace: {ws_path}\n"
+            f"Repository: {repo.resolve()}\n"
+            f"Activate venv: source {venv}\n\n"
+            "Use the project Skill at `.codebuddy/skills/briefloop/SKILL.md` in the main CodeBuddy session. "
+            "Do not add or use `context: fork` for the BriefLoop Skill. The main CodeBuddy session is the Orchestrator main agent.\n\n"
+            "CodeBuddy role sub-agents are project-level assets:\n"
+            f"{role_agents}\n\n"
+            "Do not perform Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or Formatter work in the main conversation. "
+            "Explicitly invoke the matching CodeBuddy role sub-agent for role-owned artifact work. "
+            "Role sub-agents may draft only the artifacts assigned by the current handoff. "
+            "Role sub-agents must not run `briefloop` or `multi-agent-brief` CLI commands, edit control files, run gates, finalize, deliver, or authorize release. "
+            "CodeBuddy sub-agents cannot spawn other sub-agents; keep delegation depth at one.\n\n"
+            "The main CodeBuddy session owns deterministic BriefLoop CLI transactions. "
+            "After each role sub-agent returns, re-read `output/intermediate/agent_handoff.md` and "
+            "`output/intermediate/agent_handoff.json`, then run only the deterministic validation, "
+            "stage-complete, gate, repair, finalize, quality, or delivery command allowed by current state and user intent.\n\n"
+            "Read contract references before delegation:\n"
+            "- configs/orchestrator_contract.yaml\n"
+            "- configs/stage_specs.yaml\n"
+            "- configs/artifact_contracts.yaml\n"
+            "- configs/policy_packs/default.yaml\n\n"
+            f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n\n"
+            f"{ROLE_TOPOLOGY_HANDOFF_NOTE}\n\n"
+            "CodeBuddy stage workflow:\n"
+            f"{role_sequence}\n\n"
+            f"{ORCHESTRATOR_CONTEXT_READING_NOTE}\n\n"
+            f"{DECISION_RECORDING_NOTE}\n\n"
+            f"{FINALIZE_GATE_NOTE}\n\n"
+            f"{REPAIR_GUIDANCE_NOTE}"
+        ),
+        expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
+        runtime_capabilities=_codebuddy_runtime_capabilities(),
+        notes=[
+            "CodeBuddy project Skill adapter is in .codebuddy/skills/briefloop/.",
+            "CodeBuddy role sub-agents are in .codebuddy/agents/briefloop-*.md.",
+            "The main CodeBuddy session is the Orchestrator and runs deterministic BriefLoop CLI transactions.",
+            "Role sub-agents draft handoff-assigned artifacts only and must not run CLI transactions.",
+            "This runtime handoff does not add gate authority, delivery approval, release authority, or semantic proof.",
+        ],
+    )
 
 
 def _operator_artifact_ownership() -> dict[str, Any]:
@@ -667,17 +774,7 @@ def _operator_handoff(
             "- configs/policy_packs/default.yaml\n\n"
             f"Orchestrator loop: {ORCHESTRATOR_LOOP}\n\n"
             f"{ROLE_TOPOLOGY_HANDOFF_NOTE}\n\n"
-            "Read runtime state files before selecting the next stage:\n"
-            "- output/intermediate/runtime_manifest.json\n"
-            "- output/intermediate/workflow_state.json\n"
-            "- output/intermediate/artifact_registry.json\n"
-            "- output/intermediate/event_log.jsonl\n\n"
-            "Read audience memory snapshot for this run:\n"
-            "- output/intermediate/audience_profile_snapshot.md\n"
-            "Summarize relevant taste guidance for delegated roles. Do not treat audience_profile.md as source evidence, and do not use mid-run profile edits until the next run.\n\n"
-            "Read the Orchestrator control switchboard:\n"
-            "- output/intermediate/orchestrator_control_switchboard.json\n"
-            "Record control selections with briefloop controls select. Selection is not execution; explicitly run the selected CLI/subagent/human action after selection and approval.\n\n"
+            f"{ORCHESTRATOR_CONTEXT_READING_NOTE}\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"
             f"{REPAIR_GUIDANCE_NOTE}\n\n"
@@ -731,6 +828,7 @@ _HANDOFF_BUILDERS = {
     RUNTIME_CLAUDE: _claude_handoff,
     RUNTIME_OPENCODE: _opencode_handoff,
     RUNTIME_CODEX: _codex_handoff,
+    RUNTIME_CODEBUDDY: _codebuddy_handoff,
     RUNTIME_OPERATOR: _operator_handoff,
     RUNTIME_MANUAL: _manual_handoff,
 }
@@ -1389,6 +1487,7 @@ def _apply_experiment_080_assessment_target(handoff: AgentHandoff, workspace: Pa
         artifact for artifact in handoff.expected_artifacts if artifact != "output/delivery/brief.md"
     ]
     handoff.artifact_ownership = _without_auditable_delivery_artifact_ownership(handoff.artifact_ownership)
+    handoff.runtime_capabilities = _without_auditable_delivery_runtime_capabilities(handoff.runtime_capabilities)
     handoff.next_steps = (
         "080 auditable_brief target: stop after auditor stage-complete; next allowed commands are "
         "experiments 080 register-run and score-run."
@@ -1418,6 +1517,9 @@ def _without_auditable_delivery_steps(text: str) -> str:
         "The 'auditor' step and required gates check must run before finalize",
         "Record finalize completion",
         "Formatter/finalize may only write",
+        "briefloop-formatter",
+        "finalize readiness",
+        "Run finalize, finalize gate",
     )
     kept: list[str] = []
     for line in text.splitlines():
@@ -1464,6 +1566,19 @@ def _without_auditable_delivery_artifact_ownership(ownership: dict[str, Any]) ->
         for item in rewritten.get("cli_owned_outputs", [])
         if not _is_auditable_delivery_owned_output(item)
     ]
+    return rewritten
+
+
+def _without_auditable_delivery_runtime_capabilities(capabilities: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(capabilities, dict):
+        return capabilities
+    rewritten = dict(capabilities)
+    subagents = rewritten.get("subagent_names")
+    if isinstance(subagents, list):
+        rewritten["subagent_names"] = [
+            name for name in subagents
+            if "formatter" not in str(name).lower()
+        ]
     return rewritten
 
 
