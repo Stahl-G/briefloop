@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -184,17 +185,7 @@ def run_doctor(
         results.append(CheckResult("OK", "Provider config validation passed"))
 
     # 11. Output directory
-    output_dir = p.parent / "output"
-    if output_dir.exists():
-        try:
-            test_file = output_dir / ".write_test"
-            test_file.write_text("ok", encoding="utf-8")
-            test_file.unlink()
-            results.append(CheckResult("OK", "Output directory writable"))
-        except (PermissionError, OSError):
-            results.append(CheckResult("ERROR", "Output directory not writable"))
-    else:
-        results.append(CheckResult("OK", "Output directory does not exist yet (will be created)"))
+    _add_output_directory_check(results, p.parent / "output")
 
     # 12. Available but unconfigured providers
     _add_available_info(results, source_config)
@@ -206,6 +197,69 @@ def run_doctor(
     _add_recommendations(results, source_config, p.parent)
 
     return results
+
+
+def _add_output_directory_check(results: list[CheckResult], output_dir: Path) -> None:
+    created_output_dir = False
+    if not output_dir.exists():
+        try:
+            output_dir.mkdir()
+            created_output_dir = True
+        except (PermissionError, OSError) as exc:
+            results.append(CheckResult("ERROR", f"Output directory cannot be created: {exc}"))
+            return
+    if not output_dir.is_dir():
+        results.append(CheckResult("ERROR", "Output path exists but is not a directory"))
+        return
+
+    test_file = output_dir / f".write_test.{os.getpid()}.{uuid.uuid4().hex}"
+    try:
+        with test_file.open("w", encoding="utf-8") as handle:
+            handle.write("ok")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except (PermissionError, OSError) as exc:
+        _try_remove_write_test(test_file)
+        results.append(CheckResult("ERROR", f"Output directory not writable: {exc}"))
+        return
+
+    cleanup_error = _try_remove_write_test(test_file)
+    created_dir_cleanup_error = _try_remove_created_output_dir(output_dir) if created_output_dir else ""
+    if cleanup_error:
+        results.append(CheckResult(
+            "WARN",
+            "Output directory writable, but write-test cleanup failed "
+            f"({cleanup_error}). Remove {test_file.name} manually if it remains.",
+        ))
+        return
+    if created_dir_cleanup_error:
+        results.append(CheckResult(
+            "WARN",
+            "Output directory can be created and written, but cleanup failed "
+            f"({created_dir_cleanup_error}). Remove {output_dir.name} manually if it remains.",
+        ))
+        return
+
+    if created_output_dir:
+        results.append(CheckResult("OK", "Output directory can be created and written"))
+    else:
+        results.append(CheckResult("OK", "Output directory writable"))
+
+
+def _try_remove_write_test(path: Path) -> str:
+    try:
+        path.unlink(missing_ok=True)
+    except (PermissionError, OSError) as exc:
+        return str(exc)
+    return ""
+
+
+def _try_remove_created_output_dir(path: Path) -> str:
+    try:
+        path.rmdir()
+    except (PermissionError, OSError) as exc:
+        return str(exc)
+    return ""
 
 
 def _add_available_info(results: list[CheckResult], source_config: SourceConfig) -> None:
