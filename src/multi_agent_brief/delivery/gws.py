@@ -71,11 +71,19 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
                 "gmail: gws draft creation failed. Check gws auth, Gmail permissions, recipient, and attachment access.",
             )
 
+        metadata = _draft_metadata(result.stdout)
+        if not metadata.get("draft_id_present"):
+            return DeliveryResult(
+                self.name,
+                False,
+                "gmail: gws did not confirm Gmail draft creation. Inspect Gmail Drafts before retrying; do not retry blindly.",
+            )
+
         return DeliveryResult(
             self.name,
             True,
             "Gmail draft created",
-            metadata=_draft_metadata(result.stdout),
+            metadata=metadata,
         )
 
     def _check_auth(self) -> str | None:
@@ -87,7 +95,7 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
         try:
             payload = json.loads(result.stdout or "{}")
         except json.JSONDecodeError:
-            return None
+            return "gmail: unable to parse gws auth status. Run: gws auth setup; gws auth login"
         if isinstance(payload, dict) and payload.get("auth_method") == "none":
             return "gmail: gws is not authenticated. Run: gws auth setup; gws auth login"
         return None

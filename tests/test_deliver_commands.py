@@ -536,7 +536,18 @@ def test_deliver_feishu_success_event_failure_warns_in_text_output(
 
 def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
     ws = _workspace(tmp_path)
-    _markdown, docx = _write_bundle(ws)
+    markdown, docx = _write_bundle(ws)
+    markdown.write_text(
+        "# Final Brief\n\n"
+        "Reader-facing summary.\n\n"
+        "# Source Appendix\n\n"
+        "Appendix detail should not appear in the email body.\n",
+        encoding="utf-8",
+    )
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifact_sha256"][str(markdown)] = _sha256_file(markdown)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     calls: list[tuple[str, str, str, dict[str, object]]] = []
 
     def fake_deliver(self, artifact, target):
@@ -577,7 +588,8 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
                     "Please review the attached BriefLoop delivery draft.\n\n"
                     "Attachment: output/delivery/Weekly_Brief_2026-06-12.docx\n\n"
                     "Brief excerpt:\n"
-                    "# Final Brief\n\n"
+                    "# Final Brief\n"
+                    "Reader-facing summary.\n\n"
                     "Audit/control files are not attached."
                 ),
                 "attachments": [str(docx)],
@@ -591,6 +603,7 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
     event_blob = json.dumps(events, ensure_ascii=False)
     assert "recipient@example.com" not in event_blob
     assert "BriefLoop delivery" not in event_blob
+    assert "Appendix detail" not in calls[0][3]["body"]
     assert '"recipient_present": true' in event_blob
 
 
@@ -797,6 +810,47 @@ def test_gws_gmail_connector_creates_draft_with_attachment(monkeypatch, tmp_path
     assert "Body" in calls[1]
     assert "--draft" in calls[1]
     assert "--attach" in calls[1]
+
+
+def test_gws_gmail_connector_fails_without_draft_confirmation(monkeypatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "brief.md"
+    artifact.write_text("# Brief\n", encoding="utf-8")
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+
+    def fake_run(cmd, capture_output, text, timeout, env):
+        if cmd == ["gws", "auth", "status"]:
+            return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": '{"status":"ok"}', "stderr": ""})()
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    result = GwsGmailDeliveryConnector().deliver(
+        artifact=type("Artifact", (), {"path": str(artifact), "title": "Weekly"})(),
+        target=type("Target", (), {"channel": "draft", "recipient": "recipient@example.com", "metadata": {}})(),
+    )
+
+    assert result.delivered is False
+    assert "did not confirm Gmail draft creation" in result.message
+    assert "do not retry blindly" in result.message
+
+
+def test_gws_gmail_connector_fails_closed_on_unparseable_auth_status(monkeypatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "brief.md"
+    artifact.write_text("# Brief\n", encoding="utf-8")
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+
+    def fake_run(cmd, capture_output, text, timeout, env):
+        return type("Completed", (), {"returncode": 0, "stdout": "logged in as someone", "stderr": ""})()
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    result = GwsGmailDeliveryConnector().deliver(
+        artifact=type("Artifact", (), {"path": str(artifact), "title": "Weekly"})(),
+        target=type("Target", (), {"channel": "draft", "recipient": "recipient@example.com", "metadata": {}})(),
+    )
+
+    assert result.delivered is False
+    assert "unable to parse gws auth status" in result.message
 
 
 def test_gws_gmail_connector_fails_closed_without_auth(monkeypatch, tmp_path: Path) -> None:

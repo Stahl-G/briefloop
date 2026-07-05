@@ -876,7 +876,8 @@ def _markdown_excerpt(text: str, *, limit: int = 1200) -> str:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.lower() == "source appendix":
+        heading_text = stripped.lstrip("#").strip().lower()
+        if heading_text == "source appendix":
             break
         cleaned_lines.append(stripped)
     excerpt = "\n".join(cleaned_lines).strip()
