@@ -119,6 +119,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["golden_path.docs/golden-path.zh-CN.md.required_product_entries"]["status"] == "pass"
     assert checks["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
     assert checks["reference_run_surface_count"]["status"] == "pass"
+    assert checks["reference_run_archived_experiment_framing"]["status"] == "pass"
     readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
     assert "English README has moved to [README.md](README.md)." in readme_en
     readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
@@ -477,6 +478,27 @@ def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatc
     assert "experiments 080" in drift_check["detail"]
     assert "score-run" in drift_check["detail"]
     assert checks_by_id["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
+
+
+def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    reference_dir = tmp_path / "docs" / "reference-runs"
+    reference_dir.mkdir(parents=True)
+    for idx in range(5):
+        text = "This is public-safe reference evidence and not proof.\n"
+        if idx == 0:
+            text += "This run is for future BriefLoop-090 readiness.\n"
+        (reference_dir / f"run-{idx}.md").write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_reference_run_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["reference_run_surface_count"]["status"] == "pass"
+    framing_check = checks_by_id["reference_run_archived_experiment_framing"]
+    assert framing_check["status"] == "fail"
+    assert "run-0.md:future BriefLoop-090 readiness" in framing_check["detail"]
 
 
 def test_golden_path_guard_rejects_non_executable_shell_shorthand(tmp_path, monkeypatch) -> None:

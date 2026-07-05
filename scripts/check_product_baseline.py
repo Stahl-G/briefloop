@@ -1181,6 +1181,22 @@ def _check_reference_run_surface(checks: list[dict[str, str]]) -> None:
         not unsafe,
         f"files missing obvious boundary language={unsafe}",
     )
+    stale_framing = []
+    forbidden = (
+        "future BriefLoop-090 readiness",
+        "fresh controlled pilot",
+    )
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for phrase in forbidden:
+            if phrase in text:
+                stale_framing.append(f"{path.name}:{phrase}")
+    _append_check(
+        checks,
+        "reference_run_archived_experiment_framing",
+        not stale_framing,
+        f"stale archived-experiment framing={stale_framing}",
+    )
 
 
 def _load_yaml_dir(path: Path) -> dict[str, dict[str, Any]]:
