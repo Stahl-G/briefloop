@@ -366,7 +366,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "`run_integrity` is not clean",
         "Do not run finalize or delivery",
         "`output/intermediate/finalize_report.json` or `output/delivery/` is missing",
-        "draft only",
+        "Say the run has a draft only when an",
         "Any export, share, package, zip, or attachment candidate contains",
     ]:
         assert phrase in text
@@ -374,13 +374,14 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "Do not turn normal pre-finalize state into a workflow stop",
         "stop finalize, delivery, export, and share actions",
         "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
-            "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
-            "Do not say \"delivered\" unless `output/intermediate/finalize_report.json`, `output/delivery/`, and the relevant finalize / delivery events exist",
-            "Do not zip or share the whole workspace. Use BriefLoop-generated delivery or audit bundles when present; never include `.env`",
-            "share only manually reviewed, non-secret excerpts from `briefloop status --json` or doctor output",
-            "Never share a whole workspace zip",
-            "Do not downgrade the error yourself",
-            "recommend rotating any exposed key",
+        "otherwise say no draft or delivery exists yet",
+        "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
+        "Do not say \"delivered\" unless `output/intermediate/finalize_report.json`, `output/delivery/`, and the relevant finalize / delivery events exist",
+        "Do not zip or share the whole workspace. Use BriefLoop-generated delivery or audit bundles when present; never include `.env`",
+        "share only manually reviewed, non-secret excerpts from `briefloop status --json` or doctor output",
+        "Never share a whole workspace zip",
+        "Do not downgrade the error yourself",
+        "recommend rotating any exposed key",
     ]:
         assert phrase in compact
     for phrase in [

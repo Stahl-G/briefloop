@@ -111,8 +111,10 @@ continuing. If `run_integrity` is not clean, stop finalize, delivery, export,
 and share actions; for earlier role-work stages, report the Run Card and
 continue only with non-delivery workflow steps allowed by the handoff. If
 `output/intermediate/finalize_report.json` or `output/delivery/` is missing,
-do not claim delivery or export a delivery package; say the run has a draft
-only, then continue earlier stages only when the handoff allows them.
+do not claim delivery or export a delivery package. Say the run has a draft
+only when `output/intermediate/audited_brief.md` exists;
+otherwise say no draft or delivery exists yet. Continue earlier stages only
+when the handoff allows them.
 
 The WorkBuddy main session must invoke the matching role subagent for
 handoff-assigned draft work:

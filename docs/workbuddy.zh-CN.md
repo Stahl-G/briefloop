@@ -192,8 +192,10 @@ next_allowed_action:
   finalize、delivery、export 和 share；早期 draft work 只有在 handoff 允许的
   非交付步骤里才能继续；
 - 缺少 `output/intermediate/finalize_report.json` 或 `output/delivery/`：
-  只能说有草稿，不能说交付完成，也不能导出 delivery package；这是 finalize
-  之前的正常状态，本身不阻止更早的 handoff-assigned stages；
+  不能说交付完成，也不能导出 delivery package。只有
+  `output/intermediate/audited_brief.md` 存在时，才能说
+  有草稿；否则应说目前还没有草稿或交付产物。这是 finalize 之前的正常状态，本身
+  不阻止更早的 handoff-assigned stages；
 - 打包、导出、附件候选包含 `.env`、token、private planning 文件或机器密钥：
   停止，丢弃该包，并建议轮换暴露的 key。
 

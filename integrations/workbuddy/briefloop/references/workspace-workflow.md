@@ -81,9 +81,11 @@ relevant finalize / delivery events exist.
   actions. Do not run finalize or delivery. For early-stage role work, report
   the Run Card and continue only with non-delivery workflow steps allowed by
   the handoff.
-- If finalize report or delivery directory is missing, report draft-only status
-  and do not claim delivery or export a delivery package. This is normal before
-  finalize and must not block earlier handoff-assigned stages by itself.
+- If finalize report or delivery directory is missing, do not claim delivery or
+  export a delivery package. Report draft-only status only when
+  `output/intermediate/audited_brief.md` exists; otherwise
+  report that no draft or delivery exists yet. This is normal before finalize
+  and must not block earlier handoff-assigned stages by itself.
 - If a zip, export, or attachment candidate contains `.env` or secrets, stop.
   Do not share it; recommend rotating any exposed key.
 
