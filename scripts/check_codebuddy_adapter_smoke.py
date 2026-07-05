@@ -71,7 +71,7 @@ def _check_source_assets(checks: list[dict[str, str]]) -> None:
         _append_check(checks, "codebuddy.skill.exists", False, "missing .codebuddy/skills/briefloop/SKILL.md")
         return
     skill_text = CODEBUDDY_SKILL.read_text(encoding="utf-8")
-    frontmatter = skill_text.split("---", 2)[1] if skill_text.startswith("---") else ""
+    frontmatter = _frontmatter(skill_text)
     required_skill_phrases = [
         "name: briefloop",
         "main CodeBuddy session",
@@ -81,7 +81,7 @@ def _check_source_assets(checks: list[dict[str, str]]) -> None:
         "The main CodeBuddy session owns deterministic CLI transactions",
     ]
     missing_skill = [phrase for phrase in required_skill_phrases if phrase not in skill_text]
-    if "context:" in frontmatter:
+    if _frontmatter_has_key(frontmatter, "context"):
         missing_skill.append("frontmatter must not contain context")
     for role in ROLE_AGENTS:
         if role not in skill_text:
@@ -101,11 +101,13 @@ def _check_source_assets(checks: list[dict[str, str]]) -> None:
             missing_agents.append(path.relative_to(ROOT).as_posix())
             continue
         text = path.read_text(encoding="utf-8")
-        if "Bash" in text:
+        frontmatter = _frontmatter(text)
+        tools = _frontmatter_tools(frontmatter)
+        if "Bash" in tools:
             invalid_agents.append(f"{role}: Bash must not be granted")
         if "MUST BE USED" in text:
             invalid_agents.append(f"{role}: description must not force automatic delegation")
-        if "context: fork" in text:
+        if _frontmatter_has_key(frontmatter, "context"):
             invalid_agents.append(f"{role}: role agent must not be a forked skill")
         if "Do not run `briefloop` or `multi-agent-brief` CLI commands" not in text:
             invalid_agents.append(f"{role}: missing no-CLI boundary")
@@ -117,6 +119,35 @@ def _check_source_assets(checks: list[dict[str, str]]) -> None:
         not missing_agents and not invalid_agents,
         f"missing={missing_agents}; invalid={invalid_agents}",
     )
+
+
+def _frontmatter(text: str) -> str:
+    if not text.startswith("---"):
+        return ""
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return ""
+    return parts[1]
+
+
+def _frontmatter_value(frontmatter: str, key: str) -> str | None:
+    prefix = f"{key}:"
+    for line in frontmatter.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix):].strip()
+    return None
+
+
+def _frontmatter_has_key(frontmatter: str, key: str) -> bool:
+    return _frontmatter_value(frontmatter, key) is not None
+
+
+def _frontmatter_tools(frontmatter: str) -> list[str]:
+    value = _frontmatter_value(frontmatter, "tools")
+    if not value:
+        return []
+    return [tool.strip() for tool in value.split(",") if tool.strip()]
 
 
 def _check_codebuddy_handoff(checks: list[dict[str, str]]) -> None:
