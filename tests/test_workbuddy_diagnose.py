@@ -132,6 +132,9 @@ def test_workbuddy_diagnose_text_prints_run_card_without_delivery_claim(
     assert "delivery complete" not in output.lower()
     assert "delivered" not in output.lower()
     assert "read_only_workbuddy_run_card_not_gate_delivery_release_or_semantic_proof" in output
+    assert "Doctor: not_run_read_only" in output
+    assert "Output directory writable" not in output
+    assert "Output directory not writable" not in output
 
 
 def test_workbuddy_diagnose_json_fails_soft_on_corrupt_utf8_control_json(
@@ -227,3 +230,92 @@ def test_workbuddy_diagnose_flags_finalize_delivery_file_event_gap(
     assert payload["run_card"]["finalize_event"] == "missing"
     assert payload["run_card"]["delivery_event"] == "missing"
     assert payload["run_card"]["next_allowed_action"] == "inspect_finalize_delivery_event_gap"
+
+
+def test_workbuddy_diagnose_reads_gate_report_status_not_registry_validity(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    gates = intermediate / "gates"
+    gates.mkdir()
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "auditor", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps(
+            {
+                "artifacts": {
+                    "auditor_quality_gate_report": {
+                        "status": "valid",
+                        "validation_result": "valid_quality_gate_report_schema",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (gates / "auditor_quality_gate_report.json").write_text(
+        json.dumps({"status": "fail", "findings": [{"severity": "critical"}]}),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert (
+        payload["run_card"]["latest_gate_status"]
+        == "auditor_quality_gate_report:fail:blocking_findings=1"
+    )
+
+
+def test_workbuddy_diagnose_stops_on_blocked_workflow_state(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (ws / "output" / "delivery").mkdir(parents=True)
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps(
+            {
+                "current_stage": "finalize",
+                "blocked": True,
+                "blocking_reason": "human review required",
+                "run_integrity": {"status": "clean"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps({"status": "pass"}),
+        encoding="utf-8",
+    )
+    (intermediate / "event_log.jsonl").write_text(
+        json.dumps({"event_type": "finalize_completed"}) + "\n"
+        + json.dumps({"event_type": "delivery_succeeded"}) + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["workflow"]["blocked"] is True
+    assert payload["workflow"]["blocking_reason"] == "human review required"
+    assert payload["run_card"]["next_allowed_action"] == "stop_workflow_blocked_human_review_required"

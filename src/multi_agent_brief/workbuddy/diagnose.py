@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from multi_agent_brief.sources.doctor import format_doctor_report, run_doctor
-
 
 DIAGNOSE_SCHEMA_VERSION = "briefloop.workbuddy_diagnose.v1"
 
@@ -23,8 +21,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
     registry, registry_status = _read_json(intermediate / "artifact_registry.json")
     event_records, event_log_status = _read_event_log(intermediate / "event_log.jsonl")
 
-    doctor_results = run_doctor(config_path=config_path) if config_path.exists() else []
-    doctor_payload = _doctor_payload(doctor_results, config_exists=config_path.exists())
+    doctor_payload = _doctor_payload(config_exists=config_path.exists())
     artifact_payload = _artifact_payload(registry)
     finalize_path = intermediate / "finalize_report.json"
     delivery_dir = ws / "output" / "delivery"
@@ -43,9 +40,10 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
     run_integrity = workflow.get("run_integrity") if isinstance(workflow, Mapping) else None
     active_repair = workflow.get("active_repair") if isinstance(workflow, Mapping) else None
     blocked = bool(workflow.get("blocked")) if isinstance(workflow, Mapping) else False
+    blocking_reason = _clean_text(workflow.get("blocking_reason")) if isinstance(workflow, Mapping) else ""
     current_stage = _clean_text(workflow.get("current_stage")) if isinstance(workflow, Mapping) else "unknown"
     runtime = _clean_text(manifest.get("runtime")) if isinstance(manifest, Mapping) else "unknown"
-    latest_gate_status = _latest_gate_status(registry)
+    latest_gate_status = _latest_gate_status(intermediate)
 
     run_card = {
         "runtime": runtime or "unknown",
@@ -61,6 +59,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "next_allowed_action": _next_safe_action(
             doctor=doctor_payload,
             control_file_status=control_file_status,
+            blocked=blocked,
             run_integrity=run_integrity,
             active_repair=active_repair,
             invalid_or_stale_artifacts=artifact_payload["invalid_or_stale"],
@@ -90,6 +89,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
             "workflow_state_status": workflow_status,
             "current_stage": current_stage,
             "blocked": blocked,
+            "blocking_reason": blocking_reason,
             "active_repair_present": bool(active_repair),
             "run_integrity": run_integrity,
         },
@@ -155,22 +155,23 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _doctor_payload(results: list[Any], *, config_exists: bool) -> dict[str, Any]:
-    errors = [result.message for result in results if getattr(result, "status", "") == "ERROR"]
-    warnings = [result.message for result in results if getattr(result, "status", "") == "WARN"]
+def _doctor_payload(*, config_exists: bool) -> dict[str, Any]:
     if not config_exists:
         status = "error"
         errors = ["config.yaml missing"]
+        warnings: list[str] = []
         report = "config.yaml missing"
-    elif errors:
-        status = "error"
-        report = format_doctor_report(results)
-    elif warnings:
-        status = "warning"
-        report = format_doctor_report(results)
     else:
-        status = "pass"
-        report = format_doctor_report(results)
+        status = "not_run_read_only"
+        errors = []
+        warnings = [
+            "briefloop workbuddy diagnose does not run doctor because it is a read-only diagnostic.",
+        ]
+        report = (
+            "Doctor not run by WorkBuddy diagnosis. This command is read-only and "
+            "does not perform output writability checks. Run `briefloop doctor "
+            "--config <workspace>/config.yaml` separately when write-check evidence is needed."
+        )
     return {
         "status": status,
         "error_count": len(errors),
@@ -233,27 +234,50 @@ def _run_integrity_status(run_integrity: Any) -> str:
     return _clean_text(run_integrity.get("status")) or "unknown"
 
 
-def _latest_gate_status(registry: Any) -> str:
-    artifacts = registry.get("artifacts") if isinstance(registry, Mapping) else {}
-    for artifact_id in (
-        "finalize_quality_gate_report",
-        "auditor_quality_gate_report",
-        "quality_gate_report",
+def _latest_gate_status(intermediate: Path) -> str:
+    for artifact_id, path in (
+        (
+            "finalize_quality_gate_report",
+            intermediate / "gates" / "finalize_quality_gate_report.json",
+        ),
+        (
+            "auditor_quality_gate_report",
+            intermediate / "gates" / "auditor_quality_gate_report.json",
+        ),
+        ("quality_gate_report", intermediate / "quality_gate_report.json"),
     ):
-        entry = artifacts.get(artifact_id) if isinstance(artifacts, Mapping) else None
-        if not isinstance(entry, Mapping):
+        payload, status = _read_json(path)
+        if status == "missing":
             continue
-        status = _clean_text(entry.get("status"))
-        validation = _clean_text(entry.get("validation_result"))
-        if status and status != "expected":
-            return f"{artifact_id}:{status}:{validation or 'unknown'}"
+        if status != "present" or not isinstance(payload, Mapping):
+            return f"{artifact_id}:unreadable:{status}"
+        gate_status = _clean_text(payload.get("status")) or "unknown"
+        findings = payload.get("findings")
+        blocking_count = 0
+        if isinstance(findings, list):
+            blocking_count = sum(1 for finding in findings if _is_blocking_gate_finding(finding))
+        return f"{artifact_id}:{gate_status}:blocking_findings={blocking_count}"
     return "unknown"
+
+
+def _is_blocking_gate_finding(finding: Any) -> bool:
+    if not isinstance(finding, Mapping):
+        return False
+    severity = _clean_text(finding.get("severity")).lower()
+    status = _clean_text(finding.get("status")).lower()
+    return severity in {"high", "critical", "blocker", "blocking"} or status in {
+        "fail",
+        "block",
+        "blocked",
+        "blocking",
+    }
 
 
 def _next_safe_action(
     *,
     doctor: Mapping[str, Any],
     control_file_status: Mapping[str, str],
+    blocked: bool,
     run_integrity: Any,
     active_repair: Any,
     invalid_or_stale_artifacts: list[Mapping[str, str]],
@@ -267,6 +291,8 @@ def _next_safe_action(
         return "stop_show_full_doctor_output"
     if any(status in {"unreadable_utf8", "invalid_json", "unreadable"} for status in control_file_status.values()):
         return "inspect_unreadable_or_missing_control_files"
+    if blocked:
+        return "stop_workflow_blocked_human_review_required"
     if active_repair:
         return "stop_complete_or_inspect_active_repair"
     integrity = _run_integrity_status(run_integrity)
