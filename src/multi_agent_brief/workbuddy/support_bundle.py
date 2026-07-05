@@ -51,6 +51,9 @@ _FORBIDDEN_FILENAMES = {
 _SECRET_KEY_RE = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|credential|authorization|bearer)"
 )
+_SECRET_PATH_RE = re.compile(
+    r"(?i)(api[_-]?key|secret|password|credential|authorization|bearer)"
+)
 _ASSIGNMENT_RE = re.compile(r"^(\s*[^#\n:=]{0,120}?(?:=|:)\s*)(.+?)(\s*)$")
 _TOKEN_LIKE_RE = re.compile(
     r"\b(?:"
@@ -106,7 +109,7 @@ def package_workbuddy_support_bundle(
             raw = entry.read_bytes()
             data, redacted, error = _redact_bytes(raw)
             if error:
-                excluded.append({"path": rel, "reason": error})
+                excluded.append(_redacted_excluded_record(error))
                 continue
             if redacted:
                 redacted_files.append(rel)
@@ -197,6 +200,18 @@ def validate_workbuddy_support_bundle(
     if not isinstance(included_files, list):
         errors.append("manifest included_files must be a list")
         included_files = []
+    excluded_files = manifest.get("excluded_files")
+    if isinstance(excluded_files, list):
+        for item in excluded_files:
+            if not isinstance(item, dict):
+                errors.append("manifest excluded_files contains non-object item")
+                continue
+            if item.get("path") != "<redacted>":
+                errors.append("manifest excluded_files paths must be redacted")
+            if not isinstance(item.get("reason"), str) or not item.get("reason"):
+                errors.append("manifest excluded_files entries must include reason")
+    elif excluded_files is not None:
+        errors.append("manifest excluded_files must be a list")
     try:
         with zipfile.ZipFile(zip_file) as archive:
             names = sorted(archive.namelist())
@@ -214,6 +229,9 @@ def validate_workbuddy_support_bundle(
                     errors.append("manifest contains invalid path")
                     continue
                 _validate_archive_path(rel, errors)
+                source_path = item.get("source_path")
+                if isinstance(source_path, str) and _path_contains_secret_material(source_path):
+                    errors.append("manifest source_path must not contain secret-like material")
                 try:
                     data = archive.read(rel)
                 except KeyError:
@@ -240,7 +258,7 @@ def _support_entries(workspace: Path) -> tuple[list[Path], list[dict[str, str]]]
         rel = path.relative_to(workspace).as_posix()
         reason = _exclusion_reason(rel, path)
         if reason:
-            excluded.append({"path": rel, "reason": reason})
+            excluded.append(_redacted_excluded_record(reason))
             continue
         if _is_support_file(rel, path):
             entries.append(path)
@@ -258,6 +276,8 @@ def _is_support_file(rel: str, path: Path) -> bool:
 
 
 def _exclusion_reason(rel: str, path: Path) -> str | None:
+    if _path_contains_secret_material(rel):
+        return "secret_like_path"
     parts = set(Path(rel).parts)
     for forbidden in _FORBIDDEN_PARTS:
         if forbidden in rel or forbidden in parts:
@@ -374,7 +394,7 @@ def _manifest_payload(
         "semantics": "workbuddy_support_bundle_not_delivery_bundle",
         "share_workspace_zip_allowed": False,
         "included_files": list(files),
-        "excluded_files": list(excluded),
+        "excluded_files": _excluded_summary(excluded),
         "redacted_files": sorted(set(redacted_files)),
         "secret_policy": {
             "env_files_included": False,
@@ -426,10 +446,29 @@ def _validate_archive_path(path: str, errors: list[str]) -> None:
         errors.append(f"env file must not be included: {path}")
     if "private_planning" in parts:
         errors.append(f"private planning path must not be included: {path}")
+    if _path_contains_secret_material(path):
+        errors.append("secret-like archive path must not be included")
 
 
 def _excluded_record(workspace: Path, path: Path, reason: str) -> dict[str, str]:
-    return {"path": path.relative_to(workspace).as_posix(), "reason": reason}
+    _ = workspace, path
+    return _redacted_excluded_record(reason)
+
+
+def _redacted_excluded_record(reason: str) -> dict[str, str]:
+    return {"path": "<redacted>", "reason": reason}
+
+
+def _excluded_summary(excluded: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [_redacted_excluded_record(_clean_reason(item.get("reason"))) for item in excluded]
+
+
+def _clean_reason(value: object) -> str:
+    return value if isinstance(value, str) and value else "excluded"
+
+
+def _path_contains_secret_material(path: str) -> bool:
+    return bool(_TOKEN_LIKE_RE.search(path) or _SECRET_PATH_RE.search(Path(path).name))
 
 
 def _json_bytes(payload: dict[str, Any]) -> bytes:

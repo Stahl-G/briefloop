@@ -7,6 +7,7 @@ from hashlib import sha256
 import zipfile
 from pathlib import Path
 
+import multi_agent_brief.cli.workbuddy_commands as workbuddy_commands
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.workbuddy.support_bundle import (
     package_workbuddy_support_bundle,
@@ -51,6 +52,7 @@ def _workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (ws / "input" / "bad.md").write_bytes(b"TAVILY_API_KEY=super-secret-value\xff")
+    (ws / "input" / f"{BARE_TOKEN}.md").write_text("secret-like filename\n", encoding="utf-8")
     (ws / "output" / "intermediate" / "workflow_state.json").write_text(
         json.dumps({"current_stage": "auditor", "run_integrity": {"status": "clean"}}),
         encoding="utf-8",
@@ -85,22 +87,19 @@ def test_workbuddy_support_bundle_excludes_env_and_redacts_text_secrets(tmp_path
     assert "input/source.md" in result.redacted_files
     assert "input/token.md" in result.redacted_files
     assert "input/multi.yaml" in result.redacted_files
-    assert any(item["path"] == ".env" and item["reason"] == "secret_env_file" for item in result.excluded_files)
-    assert any(
-        item["path"] == "input/bad.md" and item["reason"] == "non_utf8_text_file"
-        for item in result.excluded_files
-    )
-    assert any(
-        item["path"] == "private_planning/notes.md"
-        and item["reason"] == "forbidden_private_or_generated_path"
-        for item in result.excluded_files
-    )
+    excluded_reasons = {item["reason"] for item in result.excluded_files}
+    assert all(item["path"] == "<redacted>" for item in result.excluded_files)
+    assert "secret_env_file" in excluded_reasons
+    assert "non_utf8_text_file" in excluded_reasons
+    assert "forbidden_private_or_generated_path" in excluded_reasons
+    assert "secret_like_path" in excluded_reasons
 
     with zipfile.ZipFile(result.zip_path) as archive:
         names = set(archive.namelist())
         assert "workspace/.env" not in names
         assert "workspace/private_planning/notes.md" not in names
         assert "workspace/input/bad.md" not in names
+        assert not any(BARE_TOKEN in name for name in names)
         assert "workspace/output/delivery_bundle.zip" not in names
         assert "workspace/output/intermediate/workflow_state.json" in names
         assert "workspace/output/intermediate/event_log.jsonl" in names
@@ -111,11 +110,14 @@ def test_workbuddy_support_bundle_excludes_env_and_redacts_text_secrets(tmp_path
     assert b"super-secret-value" not in combined
     assert b"multiline-secret-value" not in combined
     assert BARE_TOKEN.encode("utf-8") not in combined
+    assert BARE_TOKEN.encode("utf-8") not in result.zip_path.read_bytes()
+    assert BARE_TOKEN not in result.manifest_path.read_text(encoding="utf-8")
     assert b"<redacted>" in combined
     assert b"<redacted-token>" in combined
     assert str(tmp_path).encode("utf-8") not in combined
     assert "zip_filename" in embedded_manifest
     assert "zip_path" not in embedded_manifest
+    assert all(item["path"] == "<redacted>" for item in embedded_manifest["excluded_files"])
 
 
 def test_validate_workbuddy_support_bundle_rejects_unredacted_multiline_secret(
@@ -147,6 +149,73 @@ def test_validate_workbuddy_support_bundle_rejects_unredacted_multiline_secret(
     errors = validate_workbuddy_support_bundle(zip_path=zip_path, manifest_path=manifest_path)
 
     assert any("possible unredacted secret" in error for error in errors)
+
+
+def test_validate_workbuddy_support_bundle_rejects_unredacted_excluded_paths(
+    tmp_path: Path,
+) -> None:
+    zip_path = tmp_path / "support.zip"
+    manifest_path = tmp_path / "support.manifest.json"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("support_bundle_manifest.json", b"{}\n")
+    manifest = {
+        "schema_version": "briefloop.workbuddy_support_bundle.v1",
+        "runtime_effect": "packaging_only_read_only",
+        "share_workspace_zip_allowed": False,
+        "zip_sha256": _sha256_file(zip_path),
+        "included_files": [
+            {
+                "path": "support_bundle_manifest.json",
+                "source_path": "support_bundle_manifest.json",
+                "sha256": sha256(b"{}\n").hexdigest(),
+                "size": 3,
+                "redacted": False,
+            }
+        ],
+        "excluded_files": [
+            {"path": "private_planning/Acme-MA-targets.md", "reason": "forbidden_private_or_generated_path"}
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    errors = validate_workbuddy_support_bundle(zip_path=zip_path, manifest_path=manifest_path)
+
+    assert "manifest excluded_files paths must be redacted" in errors
+
+
+def test_workbuddy_support_bundle_cli_removes_rejected_bundle(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    output = tmp_path / "support"
+
+    def reject_bundle(*, zip_path: str | Path, manifest_path: str | Path) -> list[str]:
+        assert Path(zip_path).exists()
+        assert Path(manifest_path).exists()
+        return ["forced validation failure"]
+
+    monkeypatch.setattr(workbuddy_commands, "validate_workbuddy_support_bundle", reject_bundle)
+
+    rc = main(
+        [
+            "workbuddy",
+            "support-bundle",
+            "--workspace",
+            str(ws),
+            "--output",
+            str(output),
+            "--json",
+        ]
+    )
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert "forced validation failure" in payload["error"]
+    assert list(output.glob("*.zip")) == []
+    assert list(output.glob("*.manifest.json")) == []
 
 
 def test_workbuddy_support_bundle_cli_json(tmp_path: Path, capsys) -> None:

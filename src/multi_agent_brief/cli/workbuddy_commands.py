@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from multi_agent_brief.workbuddy.skill_pack import (
     WorkBuddySkillPackError,
@@ -132,6 +133,7 @@ def handle(args: argparse.Namespace) -> int:
                 manifest_path=result.manifest_path,
             )
             if validation_errors:
+                _remove_rejected_support_bundle(result.zip_path, result.manifest_path)
                 raise WorkBuddySupportBundleError(
                     "generated support bundle failed validation: "
                     + "; ".join(validation_errors)
@@ -177,3 +179,12 @@ def handle(args: argparse.Namespace) -> int:
             )
         return 0
     return 1
+
+
+def _remove_rejected_support_bundle(*paths: object) -> None:
+    for path in paths:
+        try:
+            if path:
+                Path(path).unlink(missing_ok=True)
+        except OSError:
+            continue
