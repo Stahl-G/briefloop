@@ -12,6 +12,8 @@ from multi_agent_brief.workbuddy.support_bundle import (
     validate_workbuddy_support_bundle,
 )
 
+BARE_TOKEN = "sk-" + ("a" * 32)
+
 
 def _workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "workspace"
@@ -28,6 +30,11 @@ def _workspace(tmp_path: Path) -> Path:
         "Source note\n\napi_key: redaction-secret-value\n",
         encoding="utf-8",
     )
+    (ws / "input" / "token.md").write_text(
+        f"Plain leaked value {BARE_TOKEN}\n",
+        encoding="utf-8",
+    )
+    (ws / "input" / "bad.md").write_bytes(b"TAVILY_API_KEY=super-secret-value\xff")
     (ws / "output" / "intermediate" / "workflow_state.json").write_text(
         json.dumps({"current_stage": "auditor", "run_integrity": {"status": "clean"}}),
         encoding="utf-8",
@@ -57,8 +64,15 @@ def test_workbuddy_support_bundle_excludes_env_and_redacts_text_secrets(tmp_path
     assert result.manifest["share_workspace_zip_allowed"] is False
     assert result.manifest["runtime_effect"] == "packaging_only_read_only"
     assert result.manifest["boundary"] == "secret_safe_support_bundle_not_delivery_gate_release_authority"
+    assert "zip_filename" in result.manifest
+    assert "zip_path" not in result.manifest
     assert "input/source.md" in result.redacted_files
+    assert "input/token.md" in result.redacted_files
     assert any(item["path"] == ".env" and item["reason"] == "secret_env_file" for item in result.excluded_files)
+    assert any(
+        item["path"] == "input/bad.md" and item["reason"] == "non_utf8_text_file"
+        for item in result.excluded_files
+    )
     assert any(
         item["path"] == "private_planning/notes.md"
         and item["reason"] == "forbidden_private_or_generated_path"
@@ -69,13 +83,21 @@ def test_workbuddy_support_bundle_excludes_env_and_redacts_text_secrets(tmp_path
         names = set(archive.namelist())
         assert "workspace/.env" not in names
         assert "workspace/private_planning/notes.md" not in names
+        assert "workspace/input/bad.md" not in names
         assert "workspace/output/delivery_bundle.zip" not in names
         assert "workspace/output/intermediate/workflow_state.json" in names
         assert "workspace/output/intermediate/event_log.jsonl" in names
         assert "support_bundle_manifest.json" in names
         combined = b"\n".join(archive.read(name) for name in archive.namelist())
+        embedded_manifest = json.loads(archive.read("support_bundle_manifest.json").decode("utf-8"))
     assert b"redaction-secret-value" not in combined
+    assert b"super-secret-value" not in combined
+    assert BARE_TOKEN.encode("utf-8") not in combined
     assert b"<redacted>" in combined
+    assert b"<redacted-token>" in combined
+    assert str(tmp_path).encode("utf-8") not in combined
+    assert "zip_filename" in embedded_manifest
+    assert "zip_path" not in embedded_manifest
 
 
 def test_workbuddy_support_bundle_cli_json(tmp_path: Path, capsys) -> None:
@@ -100,7 +122,7 @@ def test_workbuddy_support_bundle_cli_json(tmp_path: Path, capsys) -> None:
     assert payload["ok"] is True
     assert payload["runtime_effect"] == "packaging_only_read_only"
     assert payload["share_workspace_zip_allowed"] is False
-    assert payload["redacted_files"] == ["input/source.md"]
+    assert payload["redacted_files"] == ["input/source.md", "input/token.md"]
     assert Path(payload["zip_path"]).exists()
     assert Path(payload["manifest_path"]).exists()
 

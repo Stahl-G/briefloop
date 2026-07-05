@@ -52,6 +52,14 @@ _SECRET_KEY_RE = re.compile(
     r"(?i)(api[_-]?key|token|secret|password|credential|authorization|bearer)"
 )
 _ASSIGNMENT_RE = re.compile(r"^(\s*[^#\n:=]{0,120}?(?:=|:)\s*)(.+?)(\s*)$")
+_TOKEN_LIKE_RE = re.compile(
+    r"\b(?:"
+    r"sk-[A-Za-z0-9]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{20,}"
+    r"|(?:oc|ou|on|om)_[A-Za-z0-9][A-Za-z0-9_-]{5,}"
+    r"|cli_[A-Za-z0-9][A-Za-z0-9_-]{5,}"
+    r")\b"
+)
 
 
 class WorkBuddySupportBundleError(RuntimeError):
@@ -96,7 +104,10 @@ def package_workbuddy_support_bundle(
         for entry in entries:
             rel = entry.relative_to(ws).as_posix()
             raw = entry.read_bytes()
-            data, redacted = _redact_bytes(raw)
+            data, redacted, error = _redact_bytes(raw)
+            if error:
+                excluded.append({"path": rel, "reason": error})
+                continue
             if redacted:
                 redacted_files.append(rel)
             archive_path = f"workspace/{rel}"
@@ -176,6 +187,8 @@ def validate_workbuddy_support_bundle(
         errors.append("manifest schema_version mismatch")
     if manifest.get("runtime_effect") != "packaging_only_read_only":
         errors.append("manifest runtime_effect must be packaging_only_read_only")
+    if "zip_path" in manifest:
+        errors.append("manifest must not include absolute local zip_path")
     if manifest.get("share_workspace_zip_allowed") is not False:
         errors.append("manifest must forbid sharing whole workspace zips")
     if manifest.get("zip_sha256") != _sha256_file(zip_file):
@@ -259,11 +272,11 @@ def _exclusion_reason(rel: str, path: Path) -> str | None:
     return None
 
 
-def _redact_bytes(data: bytes) -> tuple[bytes, bool]:
+def _redact_bytes(data: bytes) -> tuple[bytes, bool, str | None]:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
-        return data, False
+        return b"", False, "non_utf8_text_file"
     redacted = False
     lines: list[str] = []
     for line in text.splitlines(keepends=True):
@@ -277,17 +290,23 @@ def _redact_bytes(data: bytes) -> tuple[bytes, bool]:
             elif line_body.strip():
                 line = "<redacted secret-bearing line>" + line_end
                 redacted = True
+        token_redacted = _TOKEN_LIKE_RE.sub("<redacted-token>", line)
+        if token_redacted != line:
+            line = token_redacted
+            redacted = True
         lines.append(line)
     if not redacted:
-        return data, False
-    return "".join(lines).encode("utf-8"), True
+        return data, False, None
+    return "".join(lines).encode("utf-8"), True, None
 
 
 def _contains_secret_value(data: bytes) -> bool:
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
-        return False
+        return True
+    if _TOKEN_LIKE_RE.search(text):
+        return True
     for line in text.splitlines():
         match = _ASSIGNMENT_RE.match(line)
         if not match:
@@ -319,7 +338,7 @@ def _manifest_payload(
         "schema_version": SUPPORT_BUNDLE_SCHEMA_VERSION,
         "runtime_effect": "packaging_only_read_only",
         "workspace_name": workspace.name,
-        "zip_path": str(zip_path),
+        "zip_filename": zip_path.name,
         "semantics": "workbuddy_support_bundle_not_delivery_bundle",
         "share_workspace_zip_allowed": False,
         "included_files": list(files),
