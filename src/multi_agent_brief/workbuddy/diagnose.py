@@ -45,7 +45,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
     blocking_reason = _clean_text(workflow.get("blocking_reason")) if isinstance(workflow, Mapping) else ""
     current_stage = _clean_text(workflow.get("current_stage")) if isinstance(workflow, Mapping) else "unknown"
     runtime = _clean_text(manifest.get("runtime")) if isinstance(manifest, Mapping) else "unknown"
-    latest_gate = _latest_gate_projection(intermediate)
+    latest_gate = _latest_gate_projection(intermediate, current_stage=current_stage)
     latest_gate_status = latest_gate["status_text"]
 
     run_card = {
@@ -259,18 +259,26 @@ def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, 
     )
 
 
-def _latest_gate_projection(intermediate: Path) -> dict[str, Any]:
-    for artifact_id, path in (
-        (
+def _latest_gate_projection(intermediate: Path, *, current_stage: str) -> dict[str, Any]:
+    scoped_reports = {
+        "auditor_quality_gate_report": intermediate / "gates" / "auditor_quality_gate_report.json",
+        "finalize_quality_gate_report": intermediate / "gates" / "finalize_quality_gate_report.json",
+        "quality_gate_report": intermediate / "quality_gate_report.json",
+    }
+    if _clean_text(current_stage) in {"finalize", "delivery", "delivered"}:
+        scan_order = (
             "finalize_quality_gate_report",
-            intermediate / "gates" / "finalize_quality_gate_report.json",
-        ),
-        (
             "auditor_quality_gate_report",
-            intermediate / "gates" / "auditor_quality_gate_report.json",
-        ),
-        ("quality_gate_report", intermediate / "quality_gate_report.json"),
-    ):
+            "quality_gate_report",
+        )
+    else:
+        scan_order = (
+            "auditor_quality_gate_report",
+            "quality_gate_report",
+            "finalize_quality_gate_report",
+        )
+    for artifact_id in scan_order:
+        path = scoped_reports[artifact_id]
         payload, status = _read_json(path)
         if status == "missing":
             continue

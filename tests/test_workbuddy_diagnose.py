@@ -313,6 +313,46 @@ def test_workbuddy_diagnose_does_not_count_warning_only_gate_findings_as_blockin
     assert payload["run_card"]["next_allowed_action"] == "continue_current_stage_or_handoff_workflow"
 
 
+def test_workbuddy_diagnose_prefers_current_stage_gate_over_stale_finalize_gate(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    gates = intermediate / "gates"
+    gates.mkdir()
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "auditor", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (gates / "finalize_quality_gate_report.json").write_text(
+        json.dumps({"status": "fail", "findings": [{"blocking_level": "blocking"}]}),
+        encoding="utf-8",
+    )
+    (gates / "auditor_quality_gate_report.json").write_text(
+        json.dumps({"status": "pass", "findings": []}),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert (
+        payload["run_card"]["latest_gate_status"]
+        == "auditor_quality_gate_report:pass:blocking_findings=0"
+    )
+    assert payload["run_card"]["next_allowed_action"] == "continue_current_stage_or_handoff_workflow"
+
+
 def test_workbuddy_diagnose_uses_workflow_stage_before_finalize_guidance(
     tmp_path: Path,
     capsys,
