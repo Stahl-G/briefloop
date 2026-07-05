@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Maintainer convenience hook: refresh GitHub PR review comments after merge/pull.
+# Install: git config core.hooksPath .githooks
+
+set -u
+
+if [ "${BRIEFLOOP_SKIP_REVIEW_COMMENT_HOOK:-}" = "1" ]; then
+  exit 0
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/fetch_github_review_comments.py --quiet >/dev/null 2>&1 || true
+elif command -v python >/dev/null 2>&1; then
+  python scripts/fetch_github_review_comments.py --quiet >/dev/null 2>&1 || true
+fi
+
+exit 0

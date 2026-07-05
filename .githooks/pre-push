@@ -18,7 +18,7 @@ if [ -z "$PYTHON_BIN" ]; then
 fi
 
 echo "[pre-push] Public-safe content scan..."
-"$PYTHON_BIN" scripts/public_safe_scan.py
+"$PYTHON_BIN" scripts/check_public_safety.py
 
 echo "[pre-push] Terminology check..."
 "$PYTHON_BIN" scripts/check_terms.py
