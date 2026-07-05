@@ -47,7 +47,6 @@ tree is fully bilingual.
 - [Weekly loop](weekly-loop.md)
 - [Troubleshooting](troubleshooting.md)
 - [Claude Code quickstart](claude-code-quickstart.md)
-- [Gmail draft delivery](gmail-delivery.md)
 - [Function map](features.md)
 - [Runtime agent contract](agent-contract.md)
 - [BriefLoop naming policy](briefloop-naming.md)
