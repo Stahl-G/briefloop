@@ -1,6 +1,6 @@
 ---
 name: briefloop-workbuddy
-description: Operate BriefLoop from WorkBuddy through the host-agnostic operator runtime and deterministic CLI transactions. Use for requests like "跑周报", "生成行业简报", "运行简报", "briefloop", "industry weekly", or "market brief".
+description: Operate BriefLoop from WorkBuddy through CodeBuddy-compatible role subagents and deterministic CLI transactions. Use for requests like "跑周报", "生成行业简报", "运行简报", "briefloop", "industry weekly", or "market brief".
 ---
 
 # BriefLoop WorkBuddy Skill
@@ -12,18 +12,19 @@ or summarize a BriefLoop workspace. Also use it for natural-language requests
 such as "跑周报", "生成行业简报", "运行简报", or "帮我做市场简报" when the user
 expects a BriefLoop-backed briefing workflow.
 
-This Skill is a WorkBuddy-facing adapter around BriefLoop's CLI and artifacts.
-It is not a new BriefLoop runtime authority layer. It does not prove semantic
-truth, approve delivery, run gates by itself, or claim that role subagents ran.
-This source bundle is available from a BriefLoop source checkout; Python
-wheel/sdist package installs do not include it until a packaging command is
-added.
+This Skill is a WorkBuddy-facing adapter around BriefLoop's CLI, CodeBuddy
+project role agents, and workspace artifacts. It is not a new BriefLoop runtime
+authority layer. It does not prove semantic truth, approve delivery, run gates
+by itself, or claim that role subagents ran without actual WorkBuddy/CodeBuddy
+delegation. This source bundle is available from a BriefLoop source checkout;
+Python wheel/sdist package installs do not include it until a packaging command
+is added.
 
 ## Purpose
 
 Help WorkBuddy users operate BriefLoop through confirmed local workspaces,
-`briefloop` CLI transactions, and generated handoff artifacts without turning
-WorkBuddy prose into runtime authority.
+CodeBuddy-compatible role subagents, `briefloop` CLI transactions, and generated
+handoff artifacts without turning WorkBuddy prose into runtime authority.
 
 ## Use When
 
@@ -45,7 +46,7 @@ BriefLoop source code, use the repository development skill instead.
 - BriefLoop CLI commands that the user can inspect.
 - Deterministic progress summaries based on status, workflow state, event log,
   or generated artifacts.
-- Agent-authored draft artifacts only where the handoff allows them.
+- Role-subagent draft artifacts only where the handoff assigns them.
 - No direct edits to Python-owned control files or frozen artifacts.
 
 ## First Checks
@@ -109,23 +110,44 @@ unless they explicitly ask for alternatives.
 
 ## Operating Mode
 
-Run existing workspaces through the operator runtime:
+Run full BriefLoop workspaces through the CodeBuddy runtime:
 
 ```bash
-briefloop run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
-Operator runtime means a host-agnostic compact operator workflow. It does not
-assume WorkBuddy delegated Scout, Analyst, Editor, Auditor, or Formatter roles.
-It does not assume WorkBuddy delegated any role.
-If WorkBuddy has not explicitly delegated and recorded a role, do not claim that
-the role ran as a subagent.
+The WorkBuddy main session owns deterministic CLI transactions. It must invoke
+the matching CodeBuddy-compatible role subagent for role-owned draft artifact
+work, then return to the main session for validation, gate, state, finalize,
+delivery, and quality commands.
+
+Use these role names exactly when the handoff assigns the corresponding stage:
+
+- `briefloop-scout`
+- `briefloop-screener`
+- `briefloop-claim-ledger`
+- `briefloop-analyst`
+- `briefloop-editor`
+- `briefloop-auditor`
+- `briefloop-formatter`
+
+The checked-in role definitions live under:
+
+```text
+.codebuddy/agents/briefloop-*.md
+```
+
+If the current WorkBuddy environment cannot invoke those role subagents, stop
+before full workflow execution. You may still run deterministic setup,
+`status`, `state check`, `quality summarize`, or `demo` commands, but do not
+fall back to hand-authoring BriefLoop JSON artifacts and do not silently switch
+to `--runtime operator`.
 
 Before each stage or role-owned artifact action, and after each BriefLoop CLI
 command, re-open the relevant step in `output/intermediate/agent_handoff.md`
 and `output/intermediate/agent_handoff.json` before continuing. Do not skip
-handoff steps or claim that a subagent ran unless WorkBuddy actually delegated
-and recorded that role.
+handoff steps or claim that a subagent ran unless WorkBuddy/CodeBuddy actually
+delegated and recorded that role.
 
 After each deterministic CLI transaction, summarize progress to the user. Only
 report completed states that are visible in `status`, `workflow_state.json`,
@@ -134,9 +156,10 @@ report completed states that are visible in `status`, `workflow_state.json`,
 ## Work
 
 Classify the request, confirm or create the workspace path, run deterministic
-BriefLoop commands, read the current handoff before stage or artifact work, and
-stop when gates, status, or user intent are unclear. Use reference files for
-details instead of expanding authority in this entrypoint.
+BriefLoop commands, invoke role subagents only for handoff-assigned draft work,
+read the current handoff before stage or artifact work, and stop when gates,
+status, role-agent availability, or user intent are unclear. Use reference
+files for details instead of expanding authority in this entrypoint.
 
 ## Handoff
 

@@ -2,10 +2,12 @@
 
 BriefLoop 的 WorkBuddy surface 是一个实验性的本地 Skill adapter。它帮助
 WorkBuddy 操作者安装 BriefLoop Skill 包、创建或打开 workspace、运行确定性的
-BriefLoop CLI transaction、查看 status 和 Quality Panel，并避免手改控制文件。
+BriefLoop CLI transaction、调用 CodeBuddy-compatible role agents 起草 handoff
+分配的 artifacts、查看 status 和 Quality Panel，并避免手改控制文件。
 
-这不是 WorkBuddy delegated runtime。它不证明语义真实性，不批准交付，不授权
-release，不发布报告，也不声称 WorkBuddy subagent 已经运行。
+这不是新的 BriefLoop authority layer。它不证明语义真实性，不批准交付，不授权
+release，不发布报告；除非宿主真实 delegated 对应 role agent，否则不能声称
+WorkBuddy / CodeBuddy role agent 已经运行。
 
 ## 支持状态
 
@@ -17,7 +19,7 @@ release，不发布报告，也不声称 WorkBuddy subagent 已经运行。
 | CodeBuddy runtime handoff | Experimental | `--runtime codebuddy` 生成 CodeBuddy-specific handoff；确定性 CLI transactions 仍由主会话负责 |
 | 本地 WorkBuddy Skill zip | Experimental | 由 `briefloop workbuddy pack-skill` 生成；不是 WorkBuddy Marketplace 发布 |
 | WorkBuddy Assistant trigger | Experimental template | 远程提示模板，应转入已安装 Skill 的本地 WorkBuddy session |
-| WorkBuddy delegated runtime | Not supported | 使用 `--runtime operator`；除非 WorkBuddy 真实提供并记录 delegation，否则不能声称 role delegation 发生过 |
+| WorkBuddy role-agent orchestration | Experimental | 使用 `--runtime codebuddy`；除非 WorkBuddy / CodeBuddy 真实调用 checked-in role agent，否则不能声称 role delegation 发生过 |
 
 当前支持边界是可追溯性和过程问责。语义证明、输出质量提升证明、交付批准和
 release 批准都不是当前支持声明；这不授权 release。
@@ -85,7 +87,7 @@ adapter。
 
 ```bash
 briefloop new industry-weekly <workspace>
-briefloop run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
 `solar-periodic` 仍是实验性入口，使用前必须说明它是 experimental。
@@ -93,7 +95,7 @@ briefloop run --workspace <workspace> --runtime operator
 ### 默认搜索
 
 BriefLoop 的 first-run 默认是本地/不启用实时网络搜索。WorkBuddy 用户可以在没有
-搜索 API key 的情况下创建 workspace、查看 status、生成 operator handoff。`.env`
+搜索 API key 的情况下创建 workspace、查看 status、生成 CodeBuddy handoff。`.env`
 里的可选搜索 provider key 为空，不代表配置失败。
 
 如果用户要启用外部网络搜索，默认先使用 Tavily，并且只验证 `TAVILY_API_KEY`
@@ -102,12 +104,8 @@ Brave、Firecrawl 或 Serper。
 
 ## 操作规则
 
-普通 WorkBuddy 操作使用 `--runtime operator`。operator runtime 是 host-agnostic
-compact operator workflow。它不假设 WorkBuddy 已经 delegated Scout、Screener、
-Claim Ledger、Analyst、Editor、Auditor、Formatter 或任何其他角色。
-
-只有在 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets 时，
-才使用 `--runtime codebuddy`：
+当 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets 时，
+WorkBuddy 完整工作流使用 `--runtime codebuddy`：
 
 ```bash
 briefloop run --workspace <workspace> --runtime codebuddy
@@ -117,7 +115,7 @@ briefloop run --workspace <workspace> --runtime codebuddy
 `runtime_capabilities` metadata。它仍是 experimental，不新增 gate、delivery、
 release 或 semantic-proof authority。
 
-如果 CodeBuddy project role agents 可用，main CodeBuddy session 可以显式调用：
+main WorkBuddy / CodeBuddy session 显式调用：
 
 ```text
 briefloop-scout
@@ -132,6 +130,10 @@ briefloop-formatter
 这些 role agents 只能起草当前 handoff 分配的 artifacts。它们不运行 BriefLoop
 CLI 命令，不编辑控制文件，不运行 gates，不批准 delivery，也不授权 release。
 每个 role 返回后，确定性 CLI transactions 仍由 main CodeBuddy session 负责。
+
+如果这些 role agents 不可用，必须在完整工作流执行前停止。仍可运行确定性的
+setup、status、quality、delivery draft 或 demo 命令，但不能手写 BriefLoop workflow
+JSON artifacts，也不能静默回退到 `--runtime operator`。
 
 每次运行 BriefLoop CLI 命令后，WorkBuddy operator 应重新阅读：
 
@@ -148,7 +150,7 @@ output/intermediate/agent_handoff.json
 
 ```text
 已创建工作区。
-已生成 operator handoff。
+已生成 CodeBuddy handoff。
 当前状态：等待 source/scout artifact。
 Quality Panel 已生成。
 ```

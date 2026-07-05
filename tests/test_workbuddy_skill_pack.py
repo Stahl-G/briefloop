@@ -240,13 +240,19 @@ def test_workbuddy_skill_has_natural_language_triggers() -> None:
         assert phrase in text
 
 
-def test_workbuddy_skill_uses_operator_runtime_not_manual_path() -> None:
+def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default() -> None:
     text = _all_skill_text()
-    assert "multi-agent-brief run --workspace <workspace> --runtime operator" in text
+    assert "briefloop run --workspace <workspace> --runtime codebuddy" in text
+    assert "CodeBuddy-compatible role subagent" in text
+    assert "briefloop-scout" in text
+    assert "briefloop-auditor" in text
+    assert "do not\nfall back to hand-authoring BriefLoop JSON artifacts" in text
+    assert "silently switch\nto `--runtime operator`" in text
+    assert "run --workspace <workspace> --runtime operator" not in text
+    assert "Use `--runtime operator`" not in text
+    assert "use `--runtime operator` for handoff" not in text
     assert "--runtime manual" not in text
     assert "legacy manual" not in text.lower()
-    assert "host-agnostic compact operator workflow" in text
-    assert "does not assume WorkBuddy delegated" in text
 
 
 def test_workbuddy_skill_includes_required_cli_surface() -> None:
@@ -260,6 +266,7 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         "briefloop new management-monthly <workspace>",
         "briefloop new document-review <workspace>",
         "briefloop new solar-periodic <workspace>",
+        "briefloop run --workspace <workspace> --runtime codebuddy",
         "multi-agent-brief status --workspace <workspace>",
         "multi-agent-brief state check --workspace <workspace>",
         "multi-agent-brief quality summarize --workspace <workspace>",
@@ -285,7 +292,8 @@ def test_workbuddy_skill_preserves_control_boundaries() -> None:
         "Before each stage or role-owned artifact action",
         "re-read the relevant handoff step before continuing",
         "Do not claim Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or\nFormatter subagents ran",
-        "follow the English operator handoff literally",
+        "follow the generated handoff literally",
+        "Role subagents draft only handoff-assigned artifacts",
         "not semantic proof",
         "not gates, release approval, or\ndelivery approval",
     ]:
@@ -304,7 +312,8 @@ def test_workbuddy_skill_hardens_first_use_routing_and_progress_feedback() -> No
     for phrase in [
         "a BriefLoop workspace is the local folder for this report project",
         "ask for explicit confirmation of the target path",
-        "Suggest a safe local folder, for example `~/BriefLoop/<topic-slug>`",
+        "Suggest a safe local folder outside the BriefLoop source checkout",
+        "`C:\\Users\\<User>\\Documents\\BriefLoop\\workspaces\\<topic-slug>`",
         "Suggest only; do not create the folder or workspace silently",
         "周报, 行业, or 竞品 -> `industry-weekly`",
         "管理月报, or 月报 -> `management-monthly`",
@@ -321,7 +330,7 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
         "`agent_handoff.md` / `agent_handoff.json` step",
         "After each deterministic CLI transaction, summarize progress to the user",
         "已创建工作区。",
-        "已生成 operator handoff。",
+        "已生成 CodeBuddy handoff。",
         "当前状态：等待 source/scout artifact。",
         "Quality Panel 已生成。",
     ]:
@@ -372,8 +381,9 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "source-clone-only" in text.lower()
         assert "briefloop workbuddy pack-skill --output dist/workbuddy" in text
         assert "WorkBuddy Assistant trigger" in text
-        assert "--runtime operator" in text
-        assert "not a WorkBuddy delegated runtime" in text or "不是 WorkBuddy delegated runtime" in text
+        assert "--runtime codebuddy" in text
+        assert "WorkBuddy role-agent orchestration" in text
+        assert "silently fall back to `--runtime operator`" in text or "静默回退到 `--runtime operator`" in text
         assert "semantic proof" in text or "semantic truth" in text or "语义证明" in text
         assert "approve delivery" in text or "不批准交付" in text
         assert "authorize release" in text or "不授权 release" in text
@@ -397,7 +407,9 @@ def test_workbuddy_assistant_prompt_is_trigger_only() -> None:
         "remote trigger into a local WorkBuddy session",
         "BriefLoop Skill installed",
         "You are not a BriefLoop runtime",
-        "Use `--runtime operator`",
+        "Use `--runtime codebuddy`",
+        "briefloop-scout",
+        "briefloop-auditor",
         "Do not hand-author control files",
         "Do not finalize, deliver, publish, approve release",
         "Do not say role subagents ran unless WorkBuddy explicitly delegated",
@@ -415,14 +427,14 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "experimental integration smoke",
         "not runtime proof",
         "briefloop workbuddy pack-skill --output dist/workbuddy",
-        "briefloop run --workspace <workspace> --runtime operator",
+        "briefloop run --workspace <workspace> --runtime codebuddy",
         "briefloop status --workspace <workspace>",
         "briefloop state check --workspace <workspace>",
         "briefloop quality summarize --workspace <workspace>",
         ".codebuddy/skills/briefloop/",
         ".codebuddy/agents/briefloop-*.md",
         "must not auto-deliver",
-        "not evidence that WorkBuddy is a supported delegated runtime",
+        "WorkBuddy did not silently fall back to `--runtime operator`",
     ]:
         assert phrase in text
     for phrase in [
@@ -461,7 +473,8 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
     with zipfile.ZipFile(result.zip_path) as archive:
         assert sorted(archive.namelist()) == sorted(names)
         skill_text = archive.read("briefloop/SKILL.md").decode("utf-8")
-    assert "--runtime operator" in skill_text
+    assert "--runtime codebuddy" in skill_text
+    assert "run --workspace <workspace> --runtime operator" not in skill_text
     assert "BriefLoop WorkBuddy Skill" in skill_text
     assert "BriefLoop Operator Protocol" not in skill_text
     assert "semantic proof" in skill_text
