@@ -262,7 +262,7 @@ def test_workbuddy_diagnose_reads_gate_report_status_not_registry_validity(
         encoding="utf-8",
     )
     (gates / "auditor_quality_gate_report.json").write_text(
-        json.dumps({"status": "fail", "findings": [{"severity": "critical"}]}),
+        json.dumps({"status": "fail", "findings": [{"blocking_level": "blocking"}]}),
         encoding="utf-8",
     )
 
@@ -274,6 +274,130 @@ def test_workbuddy_diagnose_reads_gate_report_status_not_registry_validity(
         payload["run_card"]["latest_gate_status"]
         == "auditor_quality_gate_report:fail:blocking_findings=1"
     )
+
+
+def test_workbuddy_diagnose_does_not_count_warning_only_gate_findings_as_blocking(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    gates = intermediate / "gates"
+    gates.mkdir()
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "auditor", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (gates / "auditor_quality_gate_report.json").write_text(
+        json.dumps({"status": "warning", "findings": [{"severity": "high"}]}),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert (
+        payload["run_card"]["latest_gate_status"]
+        == "auditor_quality_gate_report:warning:blocking_findings=0"
+    )
+
+
+def test_workbuddy_diagnose_recognizes_finalize_decision_event(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (ws / "output" / "delivery").mkdir(parents=True)
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps({"current_stage": "finalize", "run_integrity": {"status": "clean"}}),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+    (intermediate / "finalize_report.json").write_text(
+        json.dumps({"status": "pass"}),
+        encoding="utf-8",
+    )
+    (intermediate / "event_log.jsonl").write_text(
+        json.dumps(
+            {
+                "event_type": "decision_recorded",
+                "decision": "finalize",
+                "stage_id": "finalize",
+                "metadata": {"transaction_id": "tx-finalize"},
+            }
+        )
+        + "\n"
+        + json.dumps({"event_type": "delivery_succeeded"}) + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_card"]["finalize_event"] == "present"
+    assert payload["run_card"]["delivery_event"] == "present"
+    assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_workbuddy_diagnose_uses_shared_run_integrity_interpreter(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "runtime_manifest.json").write_text(
+        json.dumps({"runtime": "codebuddy"}),
+        encoding="utf-8",
+    )
+    (intermediate / "workflow_state.json").write_text(
+        json.dumps(
+            {
+                "current_stage": "finalize",
+                "run_integrity": {
+                    "status": "clean",
+                    "reference_eligible": False,
+                    "clean_single_shot": True,
+                    "reasons": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_card"]["run_integrity"] == "unknown"
+    assert payload["workflow"]["run_integrity"]["reasons"] == [
+        {
+            "reason_code": "run_integrity_clean_not_reference_eligible",
+            "message": "workflow_state.run_integrity clean runs must be reference eligible.",
+        }
+    ]
+    assert payload["run_card"]["next_allowed_action"] == "stop_run_integrity_not_clean"
 
 
 def test_workbuddy_diagnose_stops_on_blocked_workflow_state(

@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
+
 
 DIAGNOSE_SCHEMA_VERSION = "briefloop.workbuddy_diagnose.v1"
 
@@ -31,13 +33,13 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "artifact_registry": registry_status,
         "event_log": event_log_status,
     }
-    finalize_event = _has_event(event_records, {"finalize_completed", "finalize_complete"})
+    finalize_event = _has_finalize_event(event_records)
     delivery_event = _has_event(
         event_records,
         {"delivery_completed", "delivery_recorded", "delivery_draft_created", "delivery_succeeded"},
     )
     secret_risk = _secret_risk_payload(ws)
-    run_integrity = workflow.get("run_integrity") if isinstance(workflow, Mapping) else None
+    run_integrity = _run_integrity_projection(workflow, workflow_status)
     active_repair = workflow.get("active_repair") if isinstance(workflow, Mapping) else None
     blocked = bool(workflow.get("blocked")) if isinstance(workflow, Mapping) else False
     blocking_reason = _clean_text(workflow.get("blocking_reason")) if isinstance(workflow, Mapping) else ""
@@ -234,6 +236,26 @@ def _run_integrity_status(run_integrity: Any) -> str:
     return _clean_text(run_integrity.get("status")) or "unknown"
 
 
+def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, Any]:
+    if not isinstance(workflow, Mapping):
+        return project_for_read(
+            interpret_run_integrity(
+                None,
+                field_present=False,
+                unavailable_reason={
+                    "reason_code": f"workflow_state_{workflow_status}",
+                    "message": "workflow_state.json is unavailable for WorkBuddy diagnosis.",
+                },
+            )
+        )
+    return project_for_read(
+        interpret_run_integrity(
+            workflow.get("run_integrity"),
+            field_present="run_integrity" in workflow,
+        )
+    )
+
+
 def _latest_gate_status(intermediate: Path) -> str:
     for artifact_id, path in (
         (
@@ -263,14 +285,7 @@ def _latest_gate_status(intermediate: Path) -> str:
 def _is_blocking_gate_finding(finding: Any) -> bool:
     if not isinstance(finding, Mapping):
         return False
-    severity = _clean_text(finding.get("severity")).lower()
-    status = _clean_text(finding.get("status")).lower()
-    return severity in {"high", "critical", "blocker", "blocking"} or status in {
-        "fail",
-        "block",
-        "blocked",
-        "blocking",
-    }
+    return finding.get("blocking") is True or _clean_text(finding.get("blocking_level")) == "blocking"
 
 
 def _next_safe_action(
@@ -346,6 +361,20 @@ def _has_event(records: list[Mapping[str, Any]], event_types: set[str]) -> bool:
     for record in records:
         event_type = _clean_text(record.get("event_type"))
         if event_type in event_types:
+            return True
+    return False
+
+
+def _has_finalize_event(records: list[Mapping[str, Any]]) -> bool:
+    for record in records:
+        event_type = _clean_text(record.get("event_type"))
+        if event_type in {"finalize_completed", "finalize_complete"}:
+            return True
+        if (
+            event_type == "decision_recorded"
+            and _clean_text(record.get("decision")) == "finalize"
+            and _clean_text(record.get("stage_id")) == "finalize"
+        ):
             return True
     return False
 
