@@ -1036,6 +1036,8 @@ def test_start_codebuddy_handoff_strips_finalize_for_auditable_assessment_target
     assert "briefloop-formatter" not in text
     assert "finalize readiness" not in text
     assert "Run finalize, finalize gate" not in text
+    assert "\n- finalize:" not in text
+    assert "MUST produce: reader_brief" not in text
     assert "briefloop finalize" not in text
     assert "state finalize-complete" not in text
     assert "--stage finalize" not in text

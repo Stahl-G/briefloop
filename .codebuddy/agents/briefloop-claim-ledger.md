@@ -48,9 +48,10 @@ Forbidden edits:
 - delivery files
 - frozen artifacts
 
-Use only screened candidate records and their source-backed evidence. Preserve
-claim IDs only if assigned by the handoff or input artifact; otherwise draft
-claims in the expected shape and let the deterministic freeze transaction assign
-authoritative ledger IDs. Do not mark unsupported claims as supported. Do not
-invoke other sub-agents; CodeBuddy sub-agents cannot spawn other sub-agents.
-Return a concise summary and the artifact path you wrote.
+Use only screened candidate records and their source-backed evidence. Never
+emit `claim_id` in `claim_drafts.json`, including nested metadata fields.
+Carry upstream identifiers only through allowed fields such as `candidate_id`
+or source references, then let the deterministic freeze transaction assign
+authoritative Claim Ledger IDs. Do not mark unsupported claims as supported.
+Do not invoke other sub-agents; CodeBuddy sub-agents cannot spawn other
+sub-agents. Return a concise summary and the artifact path you wrote.
