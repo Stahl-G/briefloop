@@ -29,6 +29,13 @@ ROLE_AGENTS = [
     "briefloop-auditor",
     "briefloop-formatter",
 ]
+EXPECTED_ROLE_AGENT_TOOLS = {
+    "briefloop-scout": ["Read", "Write", "Grep", "Glob"],
+    "briefloop-analyst": ["Read", "Write", "Grep", "Glob"],
+    "briefloop-editor": ["Read", "Write", "Grep", "Glob"],
+    "briefloop-auditor": ["Read", "Write", "Grep", "Glob"],
+    "briefloop-formatter": ["Read", "Grep", "Glob"],
+}
 FORBIDDEN_HANDOFF_SNIPPETS = [
     "main agent manually writes JSON",
     "main session manually writes JSON",
@@ -103,24 +110,35 @@ def _check_source_assets(checks: list[dict[str, str]]) -> None:
             missing_agents.append(path.relative_to(ROOT).as_posix())
             continue
         text = path.read_text(encoding="utf-8")
-        frontmatter = _frontmatter(text)
-        tools = _frontmatter_tools(frontmatter)
-        if "Bash" in tools:
-            invalid_agents.append(f"{role}: Bash must not be granted")
-        if "MUST BE USED" in text:
-            invalid_agents.append(f"{role}: description must not force automatic delegation")
-        if _frontmatter_has_key(frontmatter, "context"):
-            invalid_agents.append(f"{role}: role agent must not be a forked skill")
-        if "Do not run `briefloop` or `multi-agent-brief` CLI commands" not in text:
-            invalid_agents.append(f"{role}: missing no-CLI boundary")
-        if "workflow_state.json" not in text or "event_log.jsonl" not in text:
-            invalid_agents.append(f"{role}: missing control-file boundary")
+        invalid_agents.extend(_role_agent_contract_errors(role, text))
     _append_check(
         checks,
         "codebuddy.role_agents.contract",
         not missing_agents and not invalid_agents,
         f"missing={missing_agents}; invalid={invalid_agents}",
     )
+
+
+def _role_agent_contract_errors(role: str, text: str) -> list[str]:
+    errors: list[str] = []
+    frontmatter = _frontmatter(text)
+    tools = _frontmatter_tools(frontmatter)
+    expected_tools = EXPECTED_ROLE_AGENT_TOOLS.get(role)
+    if expected_tools is None:
+        errors.append(f"{role}: unknown CodeBuddy role agent")
+    elif tools != expected_tools:
+        errors.append(f"{role}: tools must be {', '.join(expected_tools)}")
+    if "Bash" in tools:
+        errors.append(f"{role}: Bash must not be granted")
+    if "MUST BE USED" in text:
+        errors.append(f"{role}: description must not force automatic delegation")
+    if _frontmatter_has_key(frontmatter, "context"):
+        errors.append(f"{role}: role agent must not be a forked skill")
+    if "Do not run `briefloop` or `multi-agent-brief` CLI commands" not in text:
+        errors.append(f"{role}: missing no-CLI boundary")
+    if "workflow_state.json" not in text or "event_log.jsonl" not in text:
+        errors.append(f"{role}: missing control-file boundary")
+    return errors
 
 
 def _frontmatter(text: str) -> str:

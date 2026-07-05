@@ -78,3 +78,20 @@ context: fork
     unsafe_frontmatter = smoke._frontmatter(unsafe)
     assert "Bash" in smoke._frontmatter_tools(unsafe_frontmatter)
     assert smoke._frontmatter_has_key(unsafe_frontmatter, "context")
+
+
+def test_codebuddy_adapter_smoke_rejects_formatter_write_tool() -> None:
+    smoke = _load_smoke_module()
+    formatter_with_write = """---
+name: briefloop-formatter
+description: Formatter readiness review.
+tools: Read, Write, Grep, Glob
+model: inherit
+permissionMode: default
+---
+
+Do not run `briefloop` or `multi-agent-brief` CLI commands.
+Never edit workflow_state.json or event_log.jsonl.
+"""
+    errors = smoke._role_agent_contract_errors("briefloop-formatter", formatter_with_write)
+    assert "briefloop-formatter: tools must be Read, Grep, Glob" in errors
