@@ -365,7 +365,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "Do not run finalize or delivery",
         "`output/intermediate/finalize_report.json` or `output/delivery/` is missing",
         "draft only",
-        "Any export, share, support package, zip, or attachment candidate contains",
+        "Any export, share, package, zip, or attachment candidate contains",
     ]:
         assert phrase in text
     for phrase in [
@@ -374,12 +374,19 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
         "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
         "Do not say \"delivered\" unless `output/intermediate/finalize_report.json`, `output/delivery/`, and the relevant finalize / delivery events exist",
-        "Do not zip or share the whole workspace. Use BriefLoop-generated delivery, audit, or future support bundles only; never include `.env`",
+        "Do not zip or share the whole workspace. Use BriefLoop-generated delivery or audit bundles when present; never include `.env`",
+        "run `briefloop workbuddy diagnose --json` and share the redacted output manually",
         "Never share a whole workspace zip",
         "Do not downgrade the error yourself",
         "recommend rotating any exposed key",
     ]:
         assert phrase in compact
+    for phrase in [
+        "future support bundles",
+        "support-bundle",
+        "support package",
+    ]:
+        assert phrase not in compact
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:

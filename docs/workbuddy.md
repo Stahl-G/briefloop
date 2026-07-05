@@ -203,8 +203,8 @@ The hard stops are:
   keys.
 
 Do not share a whole workspace zip. Use BriefLoop-generated delivery or audit
-bundles when present. Future support bundles must be secret-safe and explicitly
-exclude `.env`.
+bundles when present. If support is needed, run
+`briefloop workbuddy diagnose --json` and share the redacted output manually.
 
 ## Assistant Trigger Template
 

@@ -200,7 +200,7 @@ workflow stop.
    stop that action. Do not say "delivered", "交付完成", or "delivery complete".
    Say only that a draft exists, if a draft artifact exists. Continue earlier
    role-work stages only when the handoff and Run Card allow them.
-4. Any export, share, support package, zip, or attachment candidate contains
+4. Any export, share, package, zip, or attachment candidate contains
    `.env`, tokens, private planning files, or machine secrets. Stop, tell the
    user to remove the package, and recommend rotating any exposed key. Never
    share a whole workspace zip.
@@ -244,7 +244,9 @@ Read the relevant reference before acting:
   artifact, event, status, or transaction is present.
 - Do not say "delivered" unless `output/intermediate/finalize_report.json`,
   `output/delivery/`, and the relevant finalize / delivery events exist.
-- Do not zip or share the whole workspace. Use BriefLoop-generated delivery,
-  audit, or future support bundles only; never include `.env`.
+- Do not zip or share the whole workspace. Use BriefLoop-generated delivery
+  or audit bundles when present; never include `.env`. If support is needed,
+  run `briefloop workbuddy diagnose --json` and share the redacted output
+  manually.
 - Stop and ask when the workspace path, active binary, gate status, or delivery
   intent is unclear.
