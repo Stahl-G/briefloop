@@ -30,6 +30,7 @@ def _workspace(tmp_path: Path) -> Path:
     (ws / "input").mkdir(parents=True)
     (ws / "output" / "intermediate" / "gates").mkdir(parents=True)
     (ws / "output" / "delivery").mkdir(parents=True)
+    (ws / "output" / "runs" / "RUN-001").mkdir(parents=True)
     (ws / "private_planning").mkdir()
     (ws / "config.yaml").write_text("project:\n  name: Support\n", encoding="utf-8")
     (ws / "sources.yaml").write_text("source_strategy:\n  profile: conservative\n", encoding="utf-8")
@@ -66,6 +67,10 @@ def _workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (ws / "output" / "delivery" / "brief.md").write_text("Reader copy\n", encoding="utf-8")
+    (ws / "output" / "runs" / "RUN-001" / "event_log.jsonl").write_text(
+        json.dumps({"event_type": "run_initialized"}) + "\n",
+        encoding="utf-8",
+    )
     (ws / "output" / "delivery_bundle.zip").write_bytes(b"not included")
     return ws
 
@@ -93,6 +98,7 @@ def test_workbuddy_support_bundle_excludes_env_and_redacts_text_secrets(tmp_path
     assert "non_utf8_text_file" in excluded_reasons
     assert "forbidden_private_or_generated_path" in excluded_reasons
     assert "secret_like_path" in excluded_reasons
+    assert "run_archive_control_path" in excluded_reasons
 
     with zipfile.ZipFile(result.zip_path) as archive:
         names = set(archive.namelist())
@@ -101,6 +107,7 @@ def test_workbuddy_support_bundle_excludes_env_and_redacts_text_secrets(tmp_path
         assert "workspace/input/bad.md" not in names
         assert not any(BARE_TOKEN in name for name in names)
         assert "workspace/output/delivery_bundle.zip" not in names
+        assert "workspace/output/runs/RUN-001/event_log.jsonl" not in names
         assert "workspace/output/intermediate/workflow_state.json" in names
         assert "workspace/output/intermediate/event_log.jsonl" in names
         assert "support_bundle_manifest.json" in names

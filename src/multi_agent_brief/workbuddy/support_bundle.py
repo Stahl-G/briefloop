@@ -278,6 +278,8 @@ def _is_support_file(rel: str, path: Path) -> bool:
 def _exclusion_reason(rel: str, path: Path) -> str | None:
     if _path_contains_secret_material(rel):
         return "secret_like_path"
+    if rel == "output/runs" or rel.startswith("output/runs/"):
+        return "run_archive_control_path"
     parts = set(Path(rel).parts)
     for forbidden in _FORBIDDEN_PARTS:
         if forbidden in rel or forbidden in parts:
