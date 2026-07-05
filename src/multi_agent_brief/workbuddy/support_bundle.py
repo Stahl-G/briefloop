@@ -279,14 +279,26 @@ def _redact_bytes(data: bytes) -> tuple[bytes, bool, str | None]:
         return b"", False, "non_utf8_text_file"
     redacted = False
     lines: list[str] = []
+    secret_block_parent_indent: int | None = None
     for line in text.splitlines(keepends=True):
         line_body = line.rstrip("\r\n")
         line_end = line[len(line_body) :]
+        if secret_block_parent_indent is not None and line_body.strip():
+            current_indent = _indent_width(line_body)
+            if current_indent > secret_block_parent_indent:
+                line = f"{line_body[:current_indent]}<redacted>{line_end}"
+                redacted = True
+                lines.append(line)
+                continue
+            secret_block_parent_indent = None
         if _SECRET_KEY_RE.search(line_body):
             match = _ASSIGNMENT_RE.match(line_body)
             if match:
+                raw_value = match.group(2).strip().strip('"\'')
                 line = f"{match.group(1)}<redacted>{match.group(3)}{line_end}"
                 redacted = True
+                if _is_yaml_block_scalar(raw_value):
+                    secret_block_parent_indent = _indent_width(line_body)
             elif line_body.strip():
                 line = "<redacted secret-bearing line>" + line_end
                 redacted = True
@@ -307,13 +319,24 @@ def _contains_secret_value(data: bytes) -> bool:
         return True
     if _TOKEN_LIKE_RE.search(text):
         return True
+    secret_block_parent_indent: int | None = None
     for line in text.splitlines():
+        if secret_block_parent_indent is not None and line.strip():
+            current_indent = _indent_width(line)
+            if current_indent > secret_block_parent_indent:
+                if line.strip() not in {"<redacted>", "<redacted-token>"}:
+                    return True
+                continue
+            secret_block_parent_indent = None
         match = _ASSIGNMENT_RE.match(line)
         if not match:
             continue
         key = match.group(1)
         value = match.group(2).strip().strip('",')
         if not _SECRET_KEY_RE.search(key):
+            continue
+        if _is_yaml_block_scalar(value):
+            secret_block_parent_indent = _indent_width(line)
             continue
         if value in {"", "false", "true", "null", "{", "[", "<redacted>"}:
             continue
@@ -322,6 +345,15 @@ def _contains_secret_value(data: bytes) -> bool:
         if _SECRET_KEY_RE.search(line):
             return True
     return False
+
+
+def _is_yaml_block_scalar(value: str) -> bool:
+    marker = value.split("#", 1)[0].strip()
+    return marker in {"|", ">", "|-", "|+", ">-", ">+"}
+
+
+def _indent_width(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
 
 
 def _manifest_payload(
