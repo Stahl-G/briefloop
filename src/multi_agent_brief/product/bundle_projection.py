@@ -41,6 +41,34 @@ from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 REPORT_BUNDLE_MANIFEST_SCHEMA_VERSION = "briefloop.report_bundle_manifest.v1"
 _ASCII_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _JUNK_SUFFIXES = {".tmp", ".temp", ".swp", ".swo"}
+_DELIVERY_BUNDLE_README_MEMBER = "delivery/_BUNDLE_README.md"
+_AUDIT_BUNDLE_README_MEMBER = "audit/_BUNDLE_README.md"
+_DELIVERY_BUNDLE_README = """# BriefLoop Delivery Bundle
+
+Open the files in this bundle for the reader-facing report.
+
+- `brief.md` is the local Markdown delivery when present.
+- DOCX or other configured delivery files are reader-facing copies of the same finalized report surface.
+- Audit/control artifacts are intentionally excluded from this bundle.
+
+This bundle does not prove semantic truth, approve publication, or replace human review before sending.
+For claim, source, gate, event, and quality traces, open the separate audit bundle.
+"""
+_AUDIT_BUNDLE_README = """# BriefLoop Audit Bundle
+
+Open this bundle when a reviewer asks where a claim, warning, gate result, or delivery decision came from.
+
+Useful starting points when present:
+
+- `output/intermediate/quality_summary.md` for a compact quality summary.
+- `output/intermediate/quality_panel.html` for a static inspection panel.
+- `output/intermediate/claim_ledger.json` for recorded claims.
+- `output/source_appendix.md` and `output/source_appendix_trace.md` for source trail review.
+- `output/intermediate/audit_report.json`, gate reports, workflow state, runtime manifest, and event log for control records.
+
+This bundle is not reader delivery, semantic proof, delivery approval, or release authority.
+Do not edit these control files in place to change a run outcome.
+"""
 
 
 class ReportBundleProjectionError(Exception):
@@ -72,6 +100,13 @@ def build_report_bundle_manifest(
         "template": template,
         "citation_profile": citation_profile,
         "packaging_hygiene": hygiene,
+        "supplemental_guidance": {
+            "status": "available_when_archives_are_written",
+            "semantics": "supplemental_guidance_non_authoritative_not_counted_as_artifacts",
+            "artifact_count_policy": "excluded_from_delivery_bundle_and_audit_bundle_artifact_count",
+            "delivery_archive_member": _DELIVERY_BUNDLE_README_MEMBER,
+            "audit_archive_member": _AUDIT_BUNDLE_README_MEMBER,
+        },
         "bundle_archives": {"status": "not_requested"},
         "delivery_bundle": {
             "status": "available",
@@ -181,6 +216,7 @@ def _write_zip_from_records(
 ) -> None:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        _write_bundle_readme(zf, surface=surface)
         for record in sorted(records, key=lambda item: str(item.get("path") or "")):
             rel = str(record.get("path") or "").strip()
             if not rel:
@@ -192,6 +228,22 @@ def _write_zip_from_records(
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o644 << 16
             zf.writestr(info, source.read_bytes())
+
+
+def _write_bundle_readme(zf: zipfile.ZipFile, *, surface: str) -> None:
+    if surface == "delivery":
+        arcname = _DELIVERY_BUNDLE_README_MEMBER
+        text = _DELIVERY_BUNDLE_README
+    elif surface == "audit":
+        arcname = _AUDIT_BUNDLE_README_MEMBER
+        text = _AUDIT_BUNDLE_README
+    else:
+        return
+    info = zipfile.ZipInfo(arcname)
+    info.date_time = (1980, 1, 1, 0, 0, 0)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o644 << 16
+    zf.writestr(info, text)
 
 
 def _archive_member_name(rel_path: str, *, surface: str) -> str:

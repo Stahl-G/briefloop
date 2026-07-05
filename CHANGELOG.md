@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `document-review`) while the product baseline guard prevents internal report
   pack ids or control-plane vocabulary from returning to those first-run route
   blocks.
+- Added static `_BUNDLE_README.md` guidance files inside generated delivery and
+  audit bundle archives so non-developer reviewers know which files to open
+  first. These guidance files are packaging instructions only; they do not
+  create delivery approval, release authority, or semantic-proof claims.
 
 ## [0.11.12] — 2026-07-04
 
