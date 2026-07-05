@@ -395,6 +395,16 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
         "New WorkBuddy users should not see MABW-080.\n",
         encoding="utf-8",
     )
+    (tmp_path / "examples" / "reference-workspaces" / "industry-weekly-demo").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "examples" / "reference-workspaces" / "industry-weekly-demo" / "README.md").write_text(
+        "Reference workspace should not route readers to BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "integrations" / "workbuddy" / "assistant").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "integrations" / "workbuddy" / "assistant" / "briefloop-assistant-prompt.md").write_text(
+        "Assistant trigger should not point first users at manifestation score workflows.\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
     checks: list[dict[str, str]] = []
@@ -411,6 +421,10 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
     assert ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/references/quickstart.md:experiments 080" in quarantine_check["detail"]
     assert "integrations/workbuddy/briefloop/references/quickstart.md:MABW-080" in quarantine_check["detail"]
+    assert "examples/reference-workspaces/industry-weekly-demo/README.md:BriefLoop-090" in quarantine_check["detail"]
+    assert "integrations/workbuddy/assistant/briefloop-assistant-prompt.md:manifestation score" in quarantine_check[
+        "detail"
+    ]
 
 
 def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:

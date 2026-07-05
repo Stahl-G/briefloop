@@ -360,11 +360,15 @@ ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
     "docs/15-minute-pilot.md",
     "docs/15-minute-pilot.zh-CN.md",
     "docs/getting-started.md",
+    "docs/golden-path.md",
+    "docs/golden-path.zh-CN.md",
     "docs/weekly-loop.md",
     "docs/troubleshooting.md",
     "docs/workbuddy.md",
     "docs/workbuddy.zh-CN.md",
     "docs/workbuddy-smoke-checklist.md",
+    "examples/reference-workspaces/industry-weekly-demo/README.md",
+    "integrations/workbuddy/assistant/briefloop-assistant-prompt.md",
 )
 ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS = (
     ".agents/skills/briefloop-workbuddy/**/*.md",
