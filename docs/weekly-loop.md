@@ -20,6 +20,12 @@ create or select workspace
 
 For a new recurring brief:
 
+| Report job | Start with | Best for |
+|---|---|---|
+| Industry or market weekly | `industry-weekly` | recurring market updates, competitor tracking, policy monitoring |
+| Management monthly | `management-monthly` | executive reviews, monthly operating updates, management briefing packs |
+| Document review | `document-review` | reviewing a set of documents with page/source traceability |
+
 ```bash
 briefloop new industry-weekly ./weekly-brief
 ```

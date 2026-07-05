@@ -230,9 +230,10 @@ briefloop claude install --repo-workdir .
 
 建议新用户先看：
 
-- [黄金路径](docs/golden-path.zh-CN.md)
-- [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)
-- [Claude Code quickstart](docs/claude-code-quickstart.md)
+- [15 分钟试用](docs/15-minute-pilot.zh-CN.md)
+- [Getting Started](docs/getting-started.md)
+- [Weekly Loop](docs/weekly-loop.md)
+- [Troubleshooting](docs/troubleshooting.md)
 
 ---
 
@@ -240,19 +241,22 @@ briefloop claude install --repo-workdir .
 
 先按报告类型选择产品入口：
 
+| 报告任务 | 选择入口 | 适合场景 |
+|---|---|---|
+| 行业 / 市场周报 | `industry-weekly` | 行业动态、竞品跟踪、政策监测 |
+| 管理层月报 | `management-monthly` | 管理层复盘、月度经营更新、汇报材料 |
+| 文档审阅 | `document-review` | 对一组文档做有页码 / 来源 trace 的审阅 |
+
 ```bash
 briefloop new industry-weekly ./weekly-brief
 briefloop new management-monthly ./monthly-review
 briefloop new document-review ./document-review
 ```
 
-这些是给用户看的 alias。内部 `report_spec.yaml` 仍写稳定的 canonical id，
-例如 `market_weekly`、`management_monthly` 和 `evidence_extract`。
 `document-review` 是文档证据审阅工作区入口，不代表自动法律、合规或披露判断。
 
-这三个入口是 v0.11 支持的产品基线 surface。`solar-periodic`、Quality
-Panel、SourceHub Lite 和内部 release approval 等高级 Product OS surface 仍是
-实验性能力，除非 support matrix 另有明确说明。
+新用户先从上面三个支持入口开始。其他实验性入口在后文说明，适合已经理解
+基本循环的用户。
 
 | 路径 | 适合谁 | 怎么做 |
 |---|---|---|

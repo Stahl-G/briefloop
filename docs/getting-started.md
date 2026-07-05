@@ -83,6 +83,12 @@ The same public-safe package is available in
 
 Choose the product entry that matches the work:
 
+| Report job | Start with | Best for |
+|---|---|---|
+| Industry or market weekly | `industry-weekly` | recurring market updates, competitor tracking, policy monitoring |
+| Management monthly | `management-monthly` | executive reviews, monthly operating updates, management briefing packs |
+| Document review | `document-review` | reviewing a set of documents with page/source traceability |
+
 ```bash
 briefloop new industry-weekly ./weekly-brief
 briefloop new management-monthly ./monthly-review

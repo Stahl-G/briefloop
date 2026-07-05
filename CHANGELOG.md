@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Productized first-user routing surfaces so README and first-user guides route
+  by supported report job (`industry-weekly`, `management-monthly`,
+  `document-review`) while the product baseline guard prevents internal report
+  pack ids or control-plane vocabulary from returning to those first-run route
+  blocks.
+
 ## [0.11.12] — 2026-07-04
 
 ### Added
