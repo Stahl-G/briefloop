@@ -4,7 +4,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md)
+[Website](https://briefloop.ai) · [15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [Contact](docs/contact.md)
 
 Writer entry: use `/briefloop` in Claude Code, or `briefloop` in a shell.
 
@@ -422,6 +422,11 @@ You are welcome to participate if you:
 - want to contribute through issues, docs, tests, or example scenarios.
 
 Start with a [good first issue](https://github.com/Stahl-G/briefloop/issues). Please read [red lines and anti-patterns](docs/red-lines-and-anti-patterns.md) before contributing.
+
+For human contact, see [briefloop.ai](https://briefloop.ai) or
+[docs/contact.md](docs/contact.md). Use
+[security@briefloop.ai](mailto:security@briefloop.ai) for private security
+reports.
 
 ---
 

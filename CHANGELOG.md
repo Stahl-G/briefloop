@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the suggested next command before delivery. The projection is
   diagnostic/operator guidance only and does not create stage, gate, delivery,
   or release authority.
+- Added public BriefLoop contact entrypoints for `briefloop.ai`,
+  `hello@briefloop.ai`, `contact@briefloop.ai`, `help@briefloop.ai`, and
+  `security@briefloop.ai`, with explicit support/security boundaries.
 - Productized first-user routing surfaces so README and first-user guides route
   by supported report job (`industry-weekly`, `management-monthly`,
   `document-review`) while the product baseline guard prevents internal report
