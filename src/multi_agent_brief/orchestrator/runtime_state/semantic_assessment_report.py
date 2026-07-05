@@ -231,6 +231,13 @@ def project_semantic_assessment_checked_inputs(
                 "checked_inputs": normalized,
                 "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
             }
+        if not path.is_file():
+            return {
+                "status": "missing_input",
+                "reason": f"checked_input_not_file:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
         if path.stat().st_size != entry.get("size_bytes"):
             return {
                 "status": "stale",
