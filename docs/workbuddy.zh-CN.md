@@ -158,6 +158,36 @@ Quality Panel 已生成。
 除非对应 artifact、event、transaction 或 status output 存在，不要说
 “Analyst 已经分析完成”或“Auditor 已通过”。
 
+### Run Card 和硬停止规则
+
+每次关键 CLI 命令、role 返回、repair、gate check、finalize 尝试、Quality
+Panel 或打包/导出请求后，WorkBuddy 都应该展示只来自机器事实的 Run Card：
+
+```text
+runtime:
+current_stage:
+run_integrity:
+blocked:
+latest_gate_status:
+finalize_report:
+delivery_dir:
+next_allowed_action:
+```
+
+硬停止条件：
+
+- `briefloop doctor` 有任何 error：停止，展示完整 doctor 输出、workspace
+  路径、当前用户、output 路径存在/可写结果、权限或 ACL 证据；
+- `run_integrity` 不是 clean 或已经 contaminated：停止，不得 finalize 或
+  deliver；
+- 缺少 `output/intermediate/finalize_report.json` 或 `output/delivery/`：
+  只能说有草稿，不能说交付完成；
+- 打包、导出、附件候选包含 `.env`、token、private planning 文件或机器密钥：
+  停止，丢弃该包，并建议轮换暴露的 key。
+
+不要分享整个 workspace zip。只使用 BriefLoop 生成的 delivery bundle 或 audit
+bundle。未来 support bundle 必须 secret-safe，并明确排除 `.env`。
+
 ## Assistant Trigger 模板
 
 Assistant 模板在这里：

@@ -153,6 +153,52 @@ After each deterministic CLI transaction, summarize progress to the user. Only
 report completed states that are visible in `status`, `workflow_state.json`,
 `event_log.jsonl`, or generated artifacts.
 
+## Run Card Protocol
+
+After every key CLI command, role return, repair action, gate check, finalize
+attempt, quality summary, or bundle/export request, print a machine-fact Run
+Card. Do not replace the Run Card with a free-form "completed" summary.
+
+Use exactly these fields and fill unknown values with `unknown` rather than
+guessing:
+
+```text
+runtime:
+current_stage:
+run_integrity:
+blocked:
+latest_gate_status:
+finalize_report:
+delivery_dir:
+next_allowed_action:
+```
+
+Read the values from `briefloop status --workspace <workspace> --json`,
+`briefloop state check --workspace <workspace> --json`,
+`workflow_state.json`, `event_log.jsonl`, and file existence checks. If
+`output/intermediate/finalize_report.json` and `output/delivery/` are missing,
+the Run Card must say the run has a draft only, not completed delivery.
+
+## Hard Stop Rules
+
+Stop immediately and show the machine evidence when any of these conditions
+appears:
+
+1. `briefloop doctor` reports any error. Show the full doctor output, actual
+   workspace path, current user, output path existence/writability check, and
+   platform permission/ACL output. Do not downgrade the error in prose and do
+   not mark doctor complete unless the user explicitly confirms the evidence.
+2. `run_integrity` is not clean, or it is `contaminated`,
+   `stale_or_invalid`, or unknown. Do not run finalize or delivery. The next
+   safe action is fresh run, controlled repair, or human review.
+3. `output/intermediate/finalize_report.json` or `output/delivery/` is missing.
+   Do not say "delivered", "交付完成", or "delivery complete". Say only that a
+   draft exists, if a draft artifact exists.
+4. Any export, share, support package, zip, or attachment candidate contains
+   `.env`, tokens, private planning files, or machine secrets. Stop, tell the
+   user to remove the package, and recommend rotating any exposed key. Never
+   share a whole workspace zip.
+
 ## Work
 
 Classify the request, confirm or create the workspace path, run deterministic
@@ -190,5 +236,9 @@ Read the relevant reference before acting:
 - Do not present traceability as semantic proof or output-quality improvement.
 - Do not say "Analyst is complete" or "Auditor passed" unless the matching
   artifact, event, status, or transaction is present.
+- Do not say "delivered" unless `output/intermediate/finalize_report.json`,
+  `output/delivery/`, and the relevant finalize / delivery events exist.
+- Do not zip or share the whole workspace. Use BriefLoop-generated delivery,
+  audit, or future support bundles only; never include `.env`.
 - Stop and ask when the workspace path, active binary, gate status, or delivery
   intent is unclear.

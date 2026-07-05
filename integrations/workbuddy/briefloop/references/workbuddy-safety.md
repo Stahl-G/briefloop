@@ -15,6 +15,8 @@ authority layer.
 - invoke the matching CodeBuddy-compatible role subagent for role-owned draft
   work;
 - run deterministic BriefLoop CLI commands when the user approves;
+- print a machine-fact Run Card after key commands, role returns, repairs,
+  gates, finalize attempts, quality summaries, and bundle/export requests;
 - before each stage or role-owned artifact action, re-read the relevant
   `agent_handoff.md` / `agent_handoff.json` step;
 - after each CLI command, report only deterministic progress visible in status,
@@ -36,6 +38,14 @@ authority layer.
   unavailable;
 - say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching artifact,
   event, transaction, or status output exists;
+- say `delivered`, `delivery complete`, or `交付完成` unless
+  `output/intermediate/finalize_report.json`, `output/delivery/`, and the
+  relevant finalize / delivery events exist;
+- run finalize or delivery when `run_integrity` is contaminated or not clean;
+- downgrade a `doctor` error in prose; show the full output and wait for user
+  confirmation;
+- zip or share the whole workspace; never include `.env`, tokens, or private
+  planning files in an attachment;
 - approve delivery, release, gates, or memory entries;
 - claim semantic proof, automatic truth checking, hallucination elimination, or
   output-quality improvement;
@@ -54,3 +64,8 @@ If the WorkBuddy conversation is in Chinese, explain the generated handoff in
 Chinese as needed, but follow the handoff literally. Preserve command names,
 artifact names, and handoff obligations exactly. Do not skip steps, hide
 blockers, or claim subagents ran because of translation.
+
+If a user asks to share results, use only BriefLoop-generated delivery or audit
+bundles when present. If the workspace has no `output/delivery/` or
+`finalize_report.json`, say there is only a draft. If any package candidate
+contains `.env`, stop and recommend key rotation before sharing anything.

@@ -38,6 +38,24 @@ After each deterministic CLI transaction, summarize progress to the user. Only
 report completed states that are visible in `status`, `workflow_state.json`,
 `event_log.jsonl`, or generated artifacts.
 
+Use a Run Card after every key CLI command, role return, repair action, gate
+check, finalize attempt, quality summary, or bundle/export request:
+
+```text
+runtime:
+current_stage:
+run_integrity:
+blocked:
+latest_gate_status:
+finalize_report:
+delivery_dir:
+next_allowed_action:
+```
+
+Read these fields from `briefloop status --workspace <workspace> --json`,
+`briefloop state check --workspace <workspace> --json`, `workflow_state.json`,
+`event_log.jsonl`, and file existence checks. Do not infer them from prose.
+
 Allowed examples:
 
 ```text
@@ -49,6 +67,20 @@ Quality Panel 已生成。
 
 Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
 artifact, event, transaction, or status output exists.
+
+Do not say `交付完成`, `delivered`, or `delivery complete` unless
+`output/intermediate/finalize_report.json`, `output/delivery/`, and the
+relevant finalize / delivery events exist.
+
+## Hard Stops
+
+- If `doctor` reports any error, stop. Show the full doctor output, workspace
+  path, current user, output path existence/writability result, and permission
+  or ACL output. Do not downgrade the error yourself.
+- If `run_integrity` is not clean, stop. Do not run finalize or delivery.
+- If finalize report or delivery directory is missing, report draft-only status.
+- If a zip, export, or attachment candidate contains `.env` or secrets, stop.
+  Do not share it; recommend rotating any exposed key.
 
 ## Role Delegation
 

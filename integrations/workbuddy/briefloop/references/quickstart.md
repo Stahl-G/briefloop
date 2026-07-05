@@ -93,6 +93,24 @@ CLI output, for example:
 Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
 artifact, event, transaction, or status output exists.
 
+After every key command or role return, print this Run Card from machine facts:
+
+```text
+runtime:
+current_stage:
+run_integrity:
+blocked:
+latest_gate_status:
+finalize_report:
+delivery_dir:
+next_allowed_action:
+```
+
+If `doctor` reports any error, stop and show the complete doctor output before
+continuing. If `run_integrity` is not clean, stop and do not run finalize or
+delivery. If `output/intermediate/finalize_report.json` or `output/delivery/`
+is missing, say the run has a draft only; do not say delivery is complete.
+
 The WorkBuddy main session must invoke the matching role subagent for
 handoff-assigned draft work:
 
@@ -121,3 +139,11 @@ briefloop quality summarize --workspace <workspace>
 Open `output/intermediate/quality_panel.html` for the static audit view.
 Quality Panel is traceability and process accountability, not semantic proof,
 delivery approval, or release authorization.
+
+## 6. Share Outputs Safely
+
+Do not zip or share the whole workspace. Whole workspaces can contain `.env`,
+tokens, private planning notes, control files, and unfinished artifacts. Use
+BriefLoop-generated delivery or audit bundles when present. If a package or
+attachment candidate contains `.env`, stop, remove the package, and recommend
+rotating any exposed key.

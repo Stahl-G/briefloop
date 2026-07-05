@@ -343,6 +343,41 @@ def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progres
         assert phrase in compact
 
 
+def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
+    text = _all_skill_text()
+    compact = _compact(text)
+    for field in [
+        "runtime:",
+        "current_stage:",
+        "run_integrity:",
+        "blocked:",
+        "latest_gate_status:",
+        "finalize_report:",
+        "delivery_dir:",
+        "next_allowed_action:",
+    ]:
+        assert field in text
+    for phrase in [
+        "After every key CLI command, role return, repair action, gate check, finalize",
+        "`briefloop doctor` reports any error",
+        "Show the full doctor output",
+        "`run_integrity` is not clean",
+        "Do not run finalize or delivery",
+        "`output/intermediate/finalize_report.json` or `output/delivery/` is missing",
+        "draft only",
+        "Any export, share, support package, zip, or attachment candidate contains",
+    ]:
+        assert phrase in text
+    for phrase in [
+        "Do not say \"delivered\" unless `output/intermediate/finalize_report.json`, `output/delivery/`, and the relevant finalize / delivery events exist",
+        "Do not zip or share the whole workspace. Use BriefLoop-generated delivery, audit, or future support bundles only; never include `.env`",
+        "Never share a whole workspace zip",
+        "Do not downgrade the error yourself",
+        "recommend rotating any exposed key",
+    ]:
+        assert phrase in compact
+
+
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
     text = _all_skill_text()
     forbidden = [
@@ -390,6 +425,11 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "WorkBuddy Marketplace" in text
         assert "docs/workbuddy-smoke-checklist.md" in text
         assert "not the WorkBuddy first-user adapter" in compact or "不是 WorkBuddy first-user" in compact
+        assert "Run Card" in text
+        assert "workspace zip" in text or "workspace" in text and ".env" in text
+        assert "run_integrity" in text
+        assert "finalize_report.json" in text
+        assert "output/delivery/" in text
 
 
 def test_workbuddy_docs_do_not_route_users_to_repo_operator_skill() -> None:
@@ -435,6 +475,9 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         ".codebuddy/agents/briefloop-*.md",
         "must not auto-deliver",
         "WorkBuddy did not silently fall back to `--runtime operator`",
+        "WorkBuddy printed machine-fact Run Cards",
+        "WorkBuddy stopped on doctor errors",
+        "WorkBuddy did not share a whole workspace zip",
     ]:
         assert phrase in text
     for phrase in [

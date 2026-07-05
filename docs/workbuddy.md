@@ -169,6 +169,39 @@ Quality Panel generated.
 Do not say "Analyst completed" or "Auditor passed" unless the matching artifact,
 event, transaction, or status output exists.
 
+### Run Card And Stop Rules
+
+After every key CLI command, role return, repair action, gate check, finalize
+attempt, quality summary, or bundle/export request, WorkBuddy should show a
+Run Card populated only from machine facts:
+
+```text
+runtime:
+current_stage:
+run_integrity:
+blocked:
+latest_gate_status:
+finalize_report:
+delivery_dir:
+next_allowed_action:
+```
+
+The hard stops are:
+
+- any `briefloop doctor` error: stop and show the complete doctor output plus
+  workspace path, user, output path existence/writability, and permission/ACL
+  evidence;
+- non-clean or contaminated `run_integrity`: stop; do not finalize or deliver;
+- missing `output/intermediate/finalize_report.json` or `output/delivery/`:
+  report draft-only status, not delivery completion;
+- package/export candidate contains `.env`, tokens, private planning files, or
+  machine secrets: stop, discard the package, and recommend rotating exposed
+  keys.
+
+Do not share a whole workspace zip. Use BriefLoop-generated delivery or audit
+bundles when present. Future support bundles must be secret-safe and explicitly
+exclude `.env`.
+
 ## Assistant Trigger Template
 
 The Assistant template is here:
