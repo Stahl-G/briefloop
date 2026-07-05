@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from multi_agent_brief.contracts.target_contract import EXPERIMENT_080_CONDITION_PATH, project_assessment_target_status
+from multi_agent_brief.contracts.target_contract import (
+    ALLOWED_ASSESSMENT_TARGETS,
+    EXPERIMENT_080_CONDITION_PATH,
+    project_assessment_target_status,
+)
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
@@ -418,6 +422,17 @@ def _assessment_target_projection(
             "status": "invalid_condition",
             "condition_status": condition_status,
         }
+    assessment_target = condition.get("assessment_target")
+    if "assessment_target" in condition and (
+        not isinstance(assessment_target, str)
+        or assessment_target not in ALLOWED_ASSESSMENT_TARGETS
+    ):
+        return {
+            "present": True,
+            "status": "invalid_condition",
+            "condition_status": condition_status,
+            "reason": "unsupported_assessment_target",
+        }
     auditor_gate, auditor_gate_status = _read_json(
         intermediate / "gates" / "auditor_quality_gate_report.json"
     )
@@ -473,7 +488,9 @@ def _next_safe_action(
     if assessment_target.get("assessment_target") == "auditable_brief":
         if assessment_target.get("target_complete") is True:
             return "register_auditable_brief_run"
-        return "inspect_auditable_brief_target_status"
+        if _clean_text(current_stage) in {"finalize", "delivery", "delivered"}:
+            return "inspect_auditable_brief_target_status"
+        return "continue_current_stage_or_handoff_workflow"
     if not finalize_report_exists or not delivery_dir_exists:
         if _clean_text(current_stage) not in {"finalize", "delivery", "delivered"}:
             return "continue_current_stage_or_handoff_workflow"

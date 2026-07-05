@@ -684,6 +684,29 @@ def test_workbuddy_diagnose_does_not_route_auditable_target_to_finalize(
     assert payload["run_card"]["next_allowed_action"] != "draft_only_run_finalize_when_allowed"
 
 
+def test_workbuddy_diagnose_keeps_in_progress_auditable_target_on_current_stage(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_condition(ws)
+    intermediate = ws / "output" / "intermediate"
+    _write_manifest(intermediate)
+    _write_workflow(intermediate, current_stage="analyst", run_integrity={"status": "clean"})
+    (intermediate / "artifact_registry.json").write_text(
+        json.dumps({"artifacts": {}}),
+        encoding="utf-8",
+    )
+
+    rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_card"]["assessment_target"] == "auditable_brief"
+    assert payload["run_card"]["assessment_target_status"] == "incomplete"
+    assert payload["run_card"]["next_allowed_action"] == "continue_current_stage_or_handoff_workflow"
+
+
 def test_workbuddy_diagnose_stops_on_invalid_experiment_condition(
     tmp_path: Path,
     capsys,
@@ -709,6 +732,41 @@ def test_workbuddy_diagnose_stops_on_invalid_experiment_condition(
     assert payload["run_card"]["assessment_target_status"] == "invalid_condition"
     assert payload["run_card"]["next_allowed_action"] == "inspect_invalid_experiment_condition"
     assert payload["run_card"]["next_allowed_action"] != "draft_only_run_finalize_when_allowed"
+
+
+def test_workbuddy_diagnose_stops_on_invalid_assessment_target_metadata(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    for index, invalid_value in enumerate(
+        ("auditable-brief", ["auditable_brief"], {"target": "auditable_brief"}),
+        start=1,
+    ):
+        case_dir = tmp_path / f"case_{index}"
+        case_dir.mkdir()
+        ws = _workspace(case_dir)
+        _write_condition(ws, assessment_target=invalid_value)
+        intermediate = ws / "output" / "intermediate"
+        _write_manifest(intermediate)
+        _write_workflow(
+            intermediate,
+            current_stage="finalize",
+            run_integrity={"status": "clean"},
+        )
+        (intermediate / "artifact_registry.json").write_text(
+            json.dumps({"artifacts": {}}),
+            encoding="utf-8",
+        )
+
+        rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
+
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["assessment_target"]["status"] == "invalid_condition"
+        assert payload["assessment_target"]["reason"] == "unsupported_assessment_target"
+        assert payload["run_card"]["assessment_target_status"] == "invalid_condition"
+        assert payload["run_card"]["next_allowed_action"] == "inspect_invalid_experiment_condition"
+        assert payload["run_card"]["next_allowed_action"] != "draft_only_run_finalize_when_allowed"
 
 
 def test_workbuddy_diagnose_stops_on_failed_gate_result_even_without_blocking_finding(
