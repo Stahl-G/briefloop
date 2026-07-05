@@ -41,6 +41,11 @@ TARGET_FILES = [
 
 CLI_HELP_COMMANDS = [
     (),
+    ("new",),
+    ("run",),
+    ("status",),
+    ("feedback",),
+    ("deliver",),
     ("onboard",),
     ("init",),
     ("claude",),
