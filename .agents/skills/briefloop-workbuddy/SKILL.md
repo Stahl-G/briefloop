@@ -19,6 +19,35 @@ This source bundle is available from a BriefLoop source checkout; Python
 wheel/sdist package installs do not include it until a packaging command is
 added.
 
+## Purpose
+
+Help WorkBuddy users operate BriefLoop through confirmed local workspaces,
+`briefloop` CLI transactions, and generated handoff artifacts without turning
+WorkBuddy prose into runtime authority.
+
+## Use When
+
+Use when a WorkBuddy conversation asks for a weekly brief, industry brief,
+market brief, document review, existing BriefLoop workspace inspection, repair,
+status, quality summary, or delivery preparation. If the user is only changing
+BriefLoop source code, use the repository development skill instead.
+
+## Inputs
+
+- The user's report topic or existing workspace path.
+- The active `briefloop` command path and version.
+- Current workspace files, status output, and generated handoff artifacts when
+  they exist.
+- Explicit user confirmation before creating a new workspace or delivering.
+
+## Outputs
+
+- BriefLoop CLI commands that the user can inspect.
+- Deterministic progress summaries based on status, workflow state, event log,
+  or generated artifacts.
+- Agent-authored draft artifacts only where the handoff allows them.
+- No direct edits to Python-owned control files or frozen artifacts.
+
 ## First Checks
 
 Before operating a workspace:
@@ -38,10 +67,10 @@ Before operating a workspace:
    First classify:
    - existing workspace: ask for the folder path;
    - first-time run: offer to create one.
-4. Explain that a BriefLoop workspace is the local folder for this report
+5. Explain that a BriefLoop workspace is the local folder for this report
    project. Before creating it, ask for explicit confirmation of the target
    path.
-5. If creating a workspace, use a product entry:
+6. If creating a workspace, use a product entry:
 
    ```bash
    briefloop new industry-weekly <workspace>
@@ -75,6 +104,20 @@ and recorded that role.
 After each deterministic CLI transaction, summarize progress to the user. Only
 report completed states that are visible in `status`, `workflow_state.json`,
 `event_log.jsonl`, or generated artifacts.
+
+## Work
+
+Classify the request, confirm or create the workspace path, run deterministic
+BriefLoop commands, read the current handoff before stage or artifact work, and
+stop when gates, status, or user intent are unclear. Use reference files for
+details instead of expanding authority in this entrypoint.
+
+## Handoff
+
+Treat `output/intermediate/agent_handoff.md` and
+`output/intermediate/agent_handoff.json` as the workspace-specific execution
+contract. Re-read the relevant step before each stage or role-owned artifact
+action and after each deterministic CLI transaction.
 
 ## Required References
 
