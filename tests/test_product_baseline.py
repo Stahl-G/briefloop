@@ -388,6 +388,16 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
         "New WorkBuddy users should not see experiments 080.\n",
         encoding="utf-8",
     )
+    (tmp_path / ".codebuddy" / "skills" / "briefloop").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".codebuddy" / "skills" / "briefloop" / "SKILL.md").write_text(
+        "New CodeBuddy users should not see BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".codebuddy" / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".codebuddy" / "agents" / "briefloop-scout.md").write_text(
+        "The CodeBuddy scout should not route first users to A-controlled experiment flows.\n",
+        encoding="utf-8",
+    )
     (tmp_path / "integrations" / "workbuddy" / "briefloop" / "references" / "quickstart.md").parent.mkdir(
         parents=True,
         exist_ok=True,
@@ -421,6 +431,8 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
     assert ".agents/skills/briefloop-workbuddy/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/references/quickstart.md:experiments 080" in quarantine_check["detail"]
+    assert ".codebuddy/skills/briefloop/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
+    assert ".codebuddy/agents/briefloop-scout.md:A-controlled" in quarantine_check["detail"]
     assert "integrations/workbuddy/briefloop/references/quickstart.md:MABW-080" in quarantine_check["detail"]
     assert "examples/reference-workspaces/industry-weekly-demo/README.md:BriefLoop-090" in quarantine_check["detail"]
     assert "integrations/workbuddy/assistant/briefloop-assistant-prompt.md:manifestation score" in quarantine_check[

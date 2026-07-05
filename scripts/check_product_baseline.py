@@ -372,6 +372,8 @@ ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
 )
 ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS = (
     ".agents/skills/briefloop-workbuddy/**/*.md",
+    ".codebuddy/skills/briefloop/**/*.md",
+    ".codebuddy/agents/briefloop-*.md",
     "integrations/workbuddy/briefloop/**/*.md",
 )
 PIPX_CURRENT_INSTALL_DOCS = [
