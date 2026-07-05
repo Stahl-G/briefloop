@@ -336,11 +336,48 @@ FIRST_USER_ROUTE_FORBIDDEN_TERMS = (
     "Product OS",
     "Quality Panel",
     "SourceHub Lite",
+    "MABW-080",
+    "BriefLoop-090",
+    "experiments 080",
+    "A-controlled",
+    "manifestation score",
     "release approval",
     "support matrix",
     "surface",
     "高级 Product OS",
     "内部 release approval",
+)
+ARCHIVED_EXPERIMENT_FIRST_USER_FORBIDDEN_TERMS = (
+    "MABW-080",
+    "BriefLoop-090",
+    "experiments 080",
+    "A-controlled",
+    "manifestation score",
+)
+ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
+    "CLAUDE.md",
+    "README.md",
+    "README.zh-CN.md",
+    ".claude/commands/briefloop.md",
+    ".opencode/commands/briefloop.md",
+    "docs/15-minute-pilot.md",
+    "docs/15-minute-pilot.zh-CN.md",
+    "docs/getting-started.md",
+    "docs/golden-path.md",
+    "docs/golden-path.zh-CN.md",
+    "docs/weekly-loop.md",
+    "docs/troubleshooting.md",
+    "docs/workbuddy.md",
+    "docs/workbuddy.zh-CN.md",
+    "docs/workbuddy-smoke-checklist.md",
+    "examples/reference-workspaces/industry-weekly-demo/README.md",
+    "integrations/workbuddy/assistant/briefloop-assistant-prompt.md",
+)
+ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS = (
+    ".agents/skills/briefloop-workbuddy/**/*.md",
+    ".codebuddy/skills/briefloop/**/*.md",
+    ".codebuddy/agents/briefloop-*.md",
+    "integrations/workbuddy/briefloop/**/*.md",
 )
 PIPX_CURRENT_INSTALL_DOCS = [
     "README.md",
@@ -854,6 +891,7 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         )
 
     _check_first_user_route_surfaces(checks)
+    _check_archived_experiment_namespace_quarantine(checks)
 
     getting_started = (ROOT / "docs" / "getting-started.md").read_text(encoding="utf-8")
     activation_reason = _unix_source_clone_activation_reason(
@@ -923,6 +961,39 @@ def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
             "missing_entries="
             f"{missing_entries} forbidden_internal_or_control_terms={forbidden_terms}",
         )
+
+
+def _check_archived_experiment_namespace_quarantine(checks: list[dict[str, str]]) -> None:
+    findings: list[str] = []
+    for rel_path, path in _archived_experiment_first_user_paths():
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8").lower()
+        for term in ARCHIVED_EXPERIMENT_FIRST_USER_FORBIDDEN_TERMS:
+            if term.lower() in text:
+                findings.append(f"{rel_path}:{term}")
+    _append_check(
+        checks,
+        "first_user_docs.no_archived_experiment_namespace",
+        not findings,
+        f"archived experiment namespace in first-user surfaces={findings}",
+    )
+
+
+def _archived_experiment_first_user_paths() -> list[tuple[str, Path]]:
+    paths: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for rel_path in ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES:
+        if rel_path not in seen:
+            paths.append((rel_path, ROOT / rel_path))
+            seen.add(rel_path)
+    for pattern in ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS:
+        for path in sorted(ROOT.glob(pattern)):
+            rel_path = path.relative_to(ROOT).as_posix()
+            if rel_path not in seen:
+                paths.append((rel_path, path))
+                seen.add(rel_path)
+    return paths
 
 
 def _check_readme_first_user_doc_blocks(checks: list[dict[str, str]]) -> None:
@@ -1114,6 +1185,22 @@ def _check_reference_run_surface(checks: list[dict[str, str]]) -> None:
         "reference_run_boundary_language",
         not unsafe,
         f"files missing obvious boundary language={unsafe}",
+    )
+    stale_framing = []
+    forbidden = (
+        "future BriefLoop-090 readiness",
+        "fresh controlled pilot",
+    )
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for phrase in forbidden:
+            if phrase in text:
+                stale_framing.append(f"{path.name}:{phrase}")
+    _append_check(
+        checks,
+        "reference_run_archived_experiment_framing",
+        not stale_framing,
+        f"stale archived-experiment framing={stale_framing}",
     )
 
 

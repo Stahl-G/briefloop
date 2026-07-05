@@ -74,13 +74,19 @@ instructions, launch claims, or recommended writer paths.
 | `multi-agent-brief` | Compatibility CLI and script entrypoint | CLI compatibility notes, package tests, existing automation docs | Primary shell examples for new users |
 | `multi_agent_brief` | Python module compatibility surface | Python imports, packaging metadata, source tests | User-facing product name |
 | `multi-agent-brief-workflow` | Distribution/package compatibility surface | `pyproject.toml`, Homebrew formula, installer compatibility notes | Setup banners or first-run product copy |
-| `MABW-080` | Historical experiment namespace | Experiment docs, scorecards, release archives, tests | Product workspace guidance |
+| `MABW-080` | Archived experiment namespace | Experiment docs, scorecards, release archives, reference-run reproduction, tests | Product workspace guidance, WorkBuddy first-user flow, launch path |
+| `BriefLoop-090` | Archived experiment/readiness label | Reference-run notes, experiment closeout, research/evaluation discussion | Product version label, CLI namespace, first-user path |
 | `mabw.*` schema ids | Old-workspace compatibility ids | Validators, schema fixtures, migration notes | New public product messaging |
 | Old release notes and tech reports | Historical archive | `CHANGELOG.md`, `docs/mabw-*`, release references | Current capability claims |
 
 Compatibility surfaces must never imply that BriefLoop is a truth proof,
 delivery approval system, autonomous agent runtime, or output-quality
 improvement proof.
+
+For v1.0, MABW-080 / BriefLoop-090 are archived measurement surfaces. They are
+kept for public evidence audit and explicit experiment reproduction, not for
+new-user onboarding, WorkBuddy setup, README launch examples, or ordinary
+workspace operation.
 
 ## Naming layers
 

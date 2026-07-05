@@ -8,10 +8,26 @@ output quality improved. It helps operators prepare comparable condition
 workspaces, register completed runs, build deterministic scorecard drafts,
 import external assessment, and summarize the resulting metadata.
 
+## Archive Status
+
+MABW-080 and BriefLoop-090 are experiment-line labels, not BriefLoop product
+version numbers and not first-user product surfaces. The shipped command
+namespace remains `briefloop experiments 080` for reference-run reproduction,
+scorecard audit, and explicitly requested controlled experiment work.
+
+As of the v1.0 product line, this guide is an archived experimental measurement
+surface. Do not use MABW-080 or BriefLoop-090 in normal workspace onboarding,
+WorkBuddy first-user flows, README launch paths, or product capability claims.
+The current public closeout record is:
+
+- [BriefLoop-090 experiment closeout](reference-runs/briefloop-090-experiment-closeout.md)
+
 ## Status
 
-MABW-080 commands are **Experimental**. They are intended for controlled
-experiment setup and analysis, not for normal brief delivery.
+MABW-080 commands are **Archived Experimental**. They remain available for
+controlled experiment setup, scorecard audit, and reference-run reproduction;
+they are not normal brief-delivery commands and are not recommended product
+entrypoints.
 
 The harness currently supports this command loop:
 
@@ -493,3 +509,11 @@ target:
 
 Broader quality, management-ready delivery, DOCX/PDF delivery quality,
 source-support sufficiency, and generalization claims remain out of scope.
+
+## Retirement Boundary
+
+Do not delete the 080 harness while archived scorecards, target-complete
+handoff behavior, status projections, or reference-run reproduction still depend
+on the current `experiments 080` namespace. A future removal or extraction must
+first provide a migration path for archived reference runs and must not rewrite
+frozen scorecards, schema IDs, or run archives in place.

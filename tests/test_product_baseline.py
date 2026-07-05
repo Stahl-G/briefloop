@@ -85,6 +85,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.README.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.no_current_pipx_install"]["status"] == "pass"
+    assert checks["first_user_docs.no_archived_experiment_namespace"]["status"] == "pass"
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
@@ -118,6 +119,7 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["golden_path.docs/golden-path.zh-CN.md.required_product_entries"]["status"] == "pass"
     assert checks["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
     assert checks["reference_run_surface_count"]["status"] == "pass"
+    assert checks["reference_run_archived_experiment_framing"]["status"] == "pass"
     readme_en = (ROOT / "README_en.md").read_text(encoding="utf-8")
     assert "English README has moved to [README.md](README.md)." in readme_en
     readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
@@ -203,6 +205,7 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
             "briefloop new document-review ./document-review\n"
             "Internal report_spec.yaml uses market_weekly YAML.\n"
             "Advanced Product OS surfaces include Quality Panel and SourceHub Lite.\n"
+            "Do not send first users to MABW-080 or BriefLoop-090 A-controlled experiments.\n"
             "Check the support matrix before release approval.\n"
             "## 🧭 Current status\n"
         ),
@@ -245,6 +248,9 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
     assert "Product OS" in readme_check["detail"]
     assert "Quality Panel" in readme_check["detail"]
     assert "SourceHub Lite" in readme_check["detail"]
+    assert "MABW-080" in readme_check["detail"]
+    assert "BriefLoop-090" in readme_check["detail"]
+    assert "A-controlled" in readme_check["detail"]
     assert "support matrix" in readme_check["detail"]
     assert "release approval" in readme_check["detail"]
 
@@ -351,6 +357,106 @@ def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path
     assert "README.md" not in pipx_check["detail"]
 
 
+def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    for rel_path in module.ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES:
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("BriefLoop first-user setup.\n", encoding="utf-8")
+    (tmp_path / "docs" / "workbuddy.md").write_text(
+        "BriefLoop first-user setup should use MABW-080 experiments 080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "README.md").write_text(
+        "Start new users with BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "README.zh-CN.md").write_text(
+        "新用户路径不要写 MABW-080。\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CLAUDE.md").write_text(
+        "First-user writer commands should not route to MABW-080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".claude" / "commands").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".claude" / "commands" / "briefloop.md").write_text(
+        "/briefloop new should not present BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".opencode" / "commands").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".opencode" / "commands" / "briefloop.md").write_text(
+        "OpenCode first-user command should not mention experiments 080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "SKILL.md").write_text(
+        "Do not route new WorkBuddy users to BriefLoop-090 A-controlled runs.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "references" / "quickstart.md").parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "references" / "quickstart.md").write_text(
+        "New WorkBuddy users should not see experiments 080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".codebuddy" / "skills" / "briefloop").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".codebuddy" / "skills" / "briefloop" / "SKILL.md").write_text(
+        "New CodeBuddy users should not see BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".codebuddy" / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".codebuddy" / "agents" / "briefloop-scout.md").write_text(
+        "The CodeBuddy scout should not route first users to A-controlled experiment flows.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "integrations" / "workbuddy" / "briefloop" / "references" / "quickstart.md").parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+    (tmp_path / "integrations" / "workbuddy" / "briefloop" / "references" / "quickstart.md").write_text(
+        "New WorkBuddy users should not see MABW-080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "examples" / "reference-workspaces" / "industry-weekly-demo").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "examples" / "reference-workspaces" / "industry-weekly-demo" / "README.md").write_text(
+        "Reference workspace should not route readers to BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "integrations" / "workbuddy" / "assistant").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "integrations" / "workbuddy" / "assistant" / "briefloop-assistant-prompt.md").write_text(
+        "Assistant trigger should not point first users at manifestation score workflows.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_archived_experiment_namespace_quarantine(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    quarantine_check = checks_by_id["first_user_docs.no_archived_experiment_namespace"]
+    assert quarantine_check["status"] == "fail"
+    assert "docs/workbuddy.md:MABW-080" in quarantine_check["detail"]
+    assert "docs/workbuddy.md:experiments 080" in quarantine_check["detail"]
+    assert "README.md:BriefLoop-090" in quarantine_check["detail"]
+    assert "README.zh-CN.md:MABW-080" in quarantine_check["detail"]
+    assert "CLAUDE.md:MABW-080" in quarantine_check["detail"]
+    assert ".claude/commands/briefloop.md:BriefLoop-090" in quarantine_check["detail"]
+    assert ".opencode/commands/briefloop.md:experiments 080" in quarantine_check["detail"]
+    assert ".agents/skills/briefloop-workbuddy/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
+    assert ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled" in quarantine_check["detail"]
+    assert ".agents/skills/briefloop-workbuddy/references/quickstart.md:experiments 080" in quarantine_check["detail"]
+    assert ".codebuddy/skills/briefloop/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
+    assert ".codebuddy/agents/briefloop-scout.md:A-controlled" in quarantine_check["detail"]
+    assert "integrations/workbuddy/briefloop/references/quickstart.md:MABW-080" in quarantine_check["detail"]
+    assert "examples/reference-workspaces/industry-weekly-demo/README.md:BriefLoop-090" in quarantine_check["detail"]
+    assert "integrations/workbuddy/assistant/briefloop-assistant-prompt.md:manifestation score" in quarantine_check[
+        "detail"
+    ]
+
+
 def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
@@ -401,6 +507,27 @@ def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatc
     assert "experiments 080" in drift_check["detail"]
     assert "score-run" in drift_check["detail"]
     assert checks_by_id["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
+
+
+def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    reference_dir = tmp_path / "docs" / "reference-runs"
+    reference_dir.mkdir(parents=True)
+    for idx in range(5):
+        text = "This is public-safe reference evidence and not proof.\n"
+        if idx == 0:
+            text += "This run is for future BriefLoop-090 readiness.\n"
+        (reference_dir / f"run-{idx}.md").write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_reference_run_surface(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    assert checks_by_id["reference_run_surface_count"]["status"] == "pass"
+    framing_check = checks_by_id["reference_run_archived_experiment_framing"]
+    assert framing_check["status"] == "fail"
+    assert "run-0.md:future BriefLoop-090 readiness" in framing_check["detail"]
 
 
 def test_golden_path_guard_rejects_non_executable_shell_shorthand(tmp_path, monkeypatch) -> None:

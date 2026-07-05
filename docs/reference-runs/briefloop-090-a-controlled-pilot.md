@@ -1,7 +1,8 @@
 # BriefLoop-090 A-Controlled Auditable-Brief Pilot
 
 This public reference note records one public-safe synthetic experiment case run
-through the MABW-080 experiment harness for future BriefLoop-090 readiness.
+through the shipped MABW-080 experiment harness. It is archived experimental
+evidence for the v1.0 product boundary, not a current first-user path.
 
 It is a content-level `auditable_brief` observation, not a delivery-quality
 claim and not a general proof that Improvement Memory improves output quality.
@@ -61,6 +62,7 @@ Do not use this note to claim:
 
 ## Relationship To Current Tooling
 
-The shipped CLI namespace remains `multi-agent-brief experiments 080`.
-BriefLoop-090 is the experiment/readiness label for the fresh controlled pilot,
-not a separate CLI namespace.
+The shipped CLI namespace remains `briefloop experiments 080` for archived
+reproduction and audit of this measurement surface. BriefLoop-090 is an
+archived experiment label, not a semver release number, normal product workflow,
+or separate CLI namespace.

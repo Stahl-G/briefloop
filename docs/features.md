@@ -96,7 +96,7 @@ into a truth-proof system.
 | Deterministic test suite | Runs 1,000+ tests without LLM calls | Always on in CI | Tests contracts and control behavior, not model quality |
 | Synthetic demos | Shows the evidence chain on safe example materials | Supported | Demo behavior is not a production-quality claim |
 | Reference run reports | Publishes selected public-safe integration and failure studies | Supported | Each report states what it proves and does not prove |
-| MABW-080 / BriefLoop-090 experiments | Registers, scores, and summarizes controlled experiment runs | Experimental | Early evidence, not broad quality proof |
+| MABW-080 / BriefLoop-090 experiments | Reproduces and audits archived controlled experiment runs | Archived Experimental | Pilot-level observation, not broad quality proof |
 
 ## Output Formats
 
