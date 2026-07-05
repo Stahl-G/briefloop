@@ -16,6 +16,7 @@ Checks:
   12. Launch/demo smoke guard passes
   13. WorkBuddy Skill pack guard passes
   14. Public product rename guard passes
+  15. v1.0 pilot evidence record shape passes
 
 Usage:
   python scripts/check_release_consistency.py [--strict] [--no-tag]
@@ -350,6 +351,41 @@ def check_public_product_rename() -> bool:
     return True
 
 
+def check_v1_pilot_evidence() -> bool:
+    """Run v1.0 pilot evidence shape guard and return True if it passes.
+
+    This is intentionally advisory in release consistency. The actual v1.0
+    release gate should run the same script with --require-satisfied.
+    """
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "check_v1_pilot_evidence.py"), "--json"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    payload_ok = False
+    if result.returncode == 0 and stdout:
+        try:
+            payload = json.loads(stdout)
+            payload_ok = payload.get("ok") is True
+        except json.JSONDecodeError:
+            payload_ok = False
+    if result.returncode != 0 or not payload_ok:
+        print("  [FAIL] v1.0 pilot evidence check failed:")
+        if stdout:
+            print("         stdout:")
+            for line in stdout.splitlines():
+                print(f"           {line}")
+        if stderr:
+            print("         stderr:")
+            for line in stderr.splitlines():
+                print(f"           {line}")
+        if not stdout and not stderr:
+            print("         no stdout/stderr captured")
+        return False
+    return True
+
+
 def main(strict: bool = False, check_tag: bool = True) -> int:
     print("Release Consistency Check")
     print("=" * 40)
@@ -446,6 +482,12 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("Public product rename guard passes", public_product_rename_ok)
     except Exception as exc:
         check("Public product rename guard passes", False, str(exc))
+
+    try:
+        v1_pilot_evidence_ok = check_v1_pilot_evidence()
+        check("v1.0 pilot evidence shape passes", v1_pilot_evidence_ok)
+    except Exception as exc:
+        check("v1.0 pilot evidence shape passes", False, str(exc))
 
     print()
     if ERRORS:

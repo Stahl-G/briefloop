@@ -54,6 +54,16 @@ python3 scripts/check_launch_smoke.py --json
 git diff --check
 ```
 
+For a v1.0 release, also require the pilot evidence gate to be satisfied:
+
+```bash
+python3 scripts/check_v1_pilot_evidence.py --require-satisfied
+```
+
+Without `--require-satisfied`, `check_release_consistency.py --no-tag` only
+verifies that the v1.0 pilot evidence record exists, is public-safe in shape,
+and honestly states its current status.
+
 When the release includes a generated reference pack, demo bundle, launch pack,
 or other public artifact outside the normal git-tracked file set, also scan the
 actual candidate artifact paths before publishing:

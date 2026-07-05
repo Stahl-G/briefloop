@@ -26,6 +26,7 @@ tree is fully bilingual.
 | Weekly use script | [weekly-use.md](weekly-use.md) | [weekly-use.zh-CN.md](weekly-use.zh-CN.md) |
 | Launch validation checklist | [launch-validation.md](launch-validation.md) | [launch-validation.zh-CN.md](launch-validation.zh-CN.md) |
 | Release checklist | [release-checklist.md](release-checklist.md) | English-first |
+| v1.0 pilot evidence gate | [v1-pilot-evidence.md](v1-pilot-evidence.md) | English-first |
 | Architecture status | [architecture-status.md](architecture-status.md) | [architecture-status.zh-CN.md](architecture-status.zh-CN.md) |
 | Architecture overview | [architecture.md](architecture.md) | [architecture.zh-CN.md](architecture.zh-CN.md) |
 | Orchestrator contracts | [orchestrator-contracts.md](orchestrator-contracts.md) | [orchestrator-contracts.zh-CN.md](orchestrator-contracts.zh-CN.md) |
@@ -59,6 +60,7 @@ tree is fully bilingual.
 - [Support matrix](support-matrix.md)
 - [Red lines and anti-patterns](red-lines-and-anti-patterns.md)
 - [Release checklist](release-checklist.md)
+- [v1.0 pilot evidence gate](v1-pilot-evidence.md)
 - [Pre-release v0.11.3 Product OS reader-quality reference package](reference-runs/v0.11.3-product-os-reader-quality-reference.md)
 - [Pre-release v0.11.4 minimal comparative evaluation packet](evaluation-results/v0.11.4-minimal-comparative-evaluation/README.md)
 - [Pre-release v0.11.1 synthetic regression pack](reference-runs/v0.11.1-synthetic-regression-pack.md)
