@@ -71,3 +71,8 @@ bundles when present. If the workspace has no `output/delivery/` or
 `output/intermediate/audited_brief.md` exists; otherwise
 say no draft or delivery exists yet. If any package candidate contains `.env`,
 stop and recommend key rotation before sharing anything.
+
+Reader-clean requests are finalize requests. Do not edit
+`output/intermediate/audited_brief.md` to remove reader residue. If
+`reader_clean` fails, stop and report finalize failure. Do not call a manual
+cleaned copy final, delivery, complete, `终稿`, or `已交付`.

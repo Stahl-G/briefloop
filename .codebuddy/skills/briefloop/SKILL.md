@@ -100,6 +100,13 @@ output/intermediate/agent_handoff.json
 Report progress only when visible in CLI output, `status`, `workflow_state.json`,
 `event_log.jsonl`, or generated artifacts.
 
+## Reader-Clean Boundary
+
+Reader-clean requests are finalize requests handled by deterministic BriefLoop
+finalize. Do not edit `output/intermediate/audited_brief.md` to remove reader
+residue. If `reader_clean` fails, stop and report finalize failure. Do not call
+a manual cleaned copy final, delivery, complete, `终稿`, or `已交付`.
+
 ## Hard Boundaries
 
 - Do not directly edit `workflow_state.json`, `artifact_registry.json`,

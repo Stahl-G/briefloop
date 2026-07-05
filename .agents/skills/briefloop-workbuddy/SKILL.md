@@ -185,6 +185,16 @@ Read the values from `briefloop status --workspace <workspace> --json`,
 the Run Card must not claim delivery. Say the run has a draft only when an
 actual role-owned draft artifact exists, such as `output/intermediate/audited_brief.md`; otherwise say no draft or delivery exists yet.
 
+## Reader-Clean Boundary
+
+Reader-clean requests are finalize requests. Do not edit
+`output/intermediate/audited_brief.md` to remove reader residue. That file is
+the frozen audit substrate after editor/auditor completion.
+
+If `reader_clean` fails, stop and report finalize failure. Do not call a manual
+cleaned copy final, delivery, complete, `终稿`, or `已交付`. The only valid
+delivery path is deterministic finalize promotion after reader-clean passes.
+
 ## Hard Stop Rules
 
 Stop immediately and show the machine evidence only for conditions that make

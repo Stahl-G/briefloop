@@ -116,6 +116,11 @@ only when `output/intermediate/audited_brief.md` exists;
 otherwise say no draft or delivery exists yet. Continue earlier stages only
 when the handoff allows them.
 
+Reader-clean requests are finalize requests. Do not edit
+`output/intermediate/audited_brief.md` to remove reader residue. If
+`reader_clean` fails, stop and report finalize failure. Do not call a manual
+cleaned copy final, delivery, complete, `终稿`, or `已交付`.
+
 The WorkBuddy main session must invoke the matching role subagent for
 handoff-assigned draft work:
 

@@ -193,6 +193,13 @@ def test_codebuddy_formatter_is_read_only_readiness_reporter() -> None:
         "release commands",
     ]:
         assert phrase in text
+    for phrase in [
+        "Reader-clean requests are finalize requests",
+        "Do not edit\n`output/intermediate/audited_brief.md` to remove reader residue",
+        "If\n`reader_clean` fails, stop and report finalize failure",
+        "Do not call a manual\ncleaned copy final, delivery, complete",
+    ]:
+        assert phrase in text
 
 
 def test_codebuddy_claim_ledger_never_emits_claim_ids() -> None:
@@ -390,6 +397,29 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "support package",
     ]:
         assert phrase not in compact
+
+
+def test_workbuddy_reader_clean_failure_is_finalize_boundary() -> None:
+    workbuddy_text = _all_skill_text()
+    workbuddy_compact = _compact(workbuddy_text)
+    codebuddy_text = _read(CODEBUDDY_SKILL)
+    codebuddy_compact = _compact(codebuddy_text)
+    formatter_text = _read(CODEBUDDY_AGENT_ROOT / "briefloop-formatter.md")
+    formatter_compact = _compact(formatter_text)
+
+    for compact in (workbuddy_compact, codebuddy_compact, formatter_compact):
+        for phrase in [
+            "Reader-clean requests are finalize requests",
+            "Do not edit `output/intermediate/audited_brief.md` to remove reader residue",
+            "If `reader_clean` fails, stop and report finalize failure",
+            "Do not call a manual cleaned copy final, delivery, complete",
+        ]:
+            assert phrase in compact
+
+    assert "The only valid delivery path is deterministic finalize promotion after reader-clean passes" in (
+        workbuddy_compact
+    )
+    assert "reader-facing delivery output readiness after deterministic finalize promotion" in formatter_compact
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:

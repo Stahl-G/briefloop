@@ -86,6 +86,10 @@ relevant finalize / delivery events exist.
   `output/intermediate/audited_brief.md` exists; otherwise
   report that no draft or delivery exists yet. This is normal before finalize
   and must not block earlier handoff-assigned stages by itself.
+- Reader-clean requests are finalize requests. Do not edit
+  `output/intermediate/audited_brief.md` to remove reader residue. If
+  `reader_clean` fails, stop and report finalize failure. Do not call a manual
+  cleaned copy final, delivery, complete, `终稿`, or `已交付`.
 - If a zip, export, or attachment candidate contains `.env` or secrets, stop.
   Do not share it; recommend rotating any exposed key.
 

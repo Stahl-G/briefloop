@@ -36,3 +36,8 @@ delivery approval.
 Only run delivery when the user explicitly asks and the current gate/status path
 allows it. If a reader-clean or gate blocker exists, do not package or deliver
 around it.
+
+Reader-clean requests are finalize requests. Do not edit
+`output/intermediate/audited_brief.md` to remove reader residue. If
+`reader_clean` fails, stop and report finalize failure. Do not call a manual
+cleaned copy final, delivery, complete, `终稿`, or `已交付`.

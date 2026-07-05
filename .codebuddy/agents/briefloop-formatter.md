@@ -32,6 +32,8 @@ readiness review, stop without writing.
 Allowed work:
 
 - report finalize readiness and expected delivery paths
+- report reader-facing delivery output readiness after deterministic finalize
+  promotion
 
 Forbidden edits:
 
@@ -49,5 +51,8 @@ Forbidden edits:
 Do not run `briefloop finalize`, `briefloop deliver`, gate commands,
 stage-complete commands, or release commands. Do not approve delivery or
 release. Do not patch the audited brief to make finalize pass; route repair to
-the owning stage. Do not invoke other sub-agents; CodeBuddy sub-agents cannot
-spawn other sub-agents. Return a concise readiness summary only.
+the owning stage. Reader-clean requests are finalize requests. Do not edit
+`output/intermediate/audited_brief.md` to remove reader residue. If
+`reader_clean` fails, stop and report finalize failure. Do not call a manual
+cleaned copy final, delivery, complete, `终稿`, or `已交付`. Do not invoke other
+sub-agents; CodeBuddy sub-agents cannot spawn other sub-agents. Return a concise readiness summary only.
