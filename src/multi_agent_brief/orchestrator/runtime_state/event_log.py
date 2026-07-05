@@ -63,6 +63,7 @@ EVENT_TYPES = {
     "improvement_reverted",
     "improvement_memory_snapshot_created",
     "delivery_attempted",
+    "delivery_draft_created",
     "delivery_succeeded",
     "delivery_failed",
     "human_approval_ledger_initialized",

@@ -162,3 +162,8 @@ For `assessment_target=delivery_brief` or normal workspaces:
 - delivery remains human-triggered and gated
 - non-reference-eligible delivery may be useful locally, but it is not clean
   reference evidence
+- Gmail delivery currently means `--target gmail --channel draft` or
+  `--target gmail --channel send` through the optional `gws` CLI. The `send`
+  path is an explicit external email side effect; it does not approve delivery,
+  authorize publication, prove semantic truth, or attach audit/control
+  artifacts.

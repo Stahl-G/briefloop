@@ -13,6 +13,7 @@ from typing import Any
 
 from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryResult, DeliveryTarget
 from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
+from multi_agent_brief.delivery.gws import GwsGmailDeliveryConnector
 from multi_agent_brief.orchestrator.runtime_state import (
     E_ACTIVE_REPAIR_OPEN,
     E_RUNTIME_STATE_NOT_INITIALIZED,
@@ -103,19 +104,21 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
     parser.add_argument(
         "--target",
-        choices=("local", "feishu"),
+        choices=("local", "feishu", "gmail"),
         default="local",
         help="Delivery target. Defaults to local.",
     )
     parser.add_argument(
         "--channel",
-        choices=("doc", "drive", "chat"),
-        help="Feishu channel when --target feishu.",
+        choices=("doc", "drive", "chat", "draft", "send"),
+        help="Delivery channel. Feishu: doc|drive|chat. Gmail: draft|send.",
     )
     parser.add_argument(
         "--recipient",
-        help="Feishu folder token or chat id. Event metadata stores only recipient_present and recipient_sha256.",
+        help="Feishu folder token/chat id or Gmail recipient. Event metadata stores only recipient_present and recipient_sha256.",
     )
+    parser.add_argument("--subject", help="Gmail subject. Defaults to the delivery title.")
+    parser.add_argument("--body", help="Gmail body. Defaults to a short delivery note and brief excerpt.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
@@ -128,6 +131,8 @@ def handle(args: argparse.Namespace) -> int:
             target=target,
             channel=channel,
             recipient=getattr(args, "recipient", None) or "",
+            subject=getattr(args, "subject", None) or "",
+            body=getattr(args, "body", None) or "",
         )
     except DeliverCommandError as exc:
         payload = exc.to_payload()
@@ -146,6 +151,12 @@ def handle(args: argparse.Namespace) -> int:
         for artifact in payload["delivery_artifacts"]:
             print(f"  - {artifact}")
         print("[deliver] Internal audit/control records remain under output/intermediate/.")
+        _print_run_integrity_warning(payload)
+    elif target == "gmail":
+        if payload.get("sent"):
+            print(f"[deliver] Gmail message sent for {payload['artifact']}")
+        else:
+            print(f"[deliver] Gmail draft created for {payload['artifact']}")
         _print_run_integrity_warning(payload)
     else:
         suffix = f" {payload['channel']}" if payload.get("channel") else ""
@@ -169,6 +180,8 @@ def deliver_workspace(
     target: str = "local",
     channel: str = "",
     recipient: str = "",
+    subject: str = "",
+    body: str = "",
 ) -> dict[str, Any]:
     ws = _require_workspace(workspace)
     bundle = _load_delivery_bundle(ws)
@@ -211,6 +224,17 @@ def deliver_workspace(
             "message": "Delivery bundle ready",
             "run_integrity": run_integrity,
         }
+
+    if target == "gmail":
+        return _deliver_gmail(
+            ws,
+            bundle=bundle,
+            channel=channel,
+            recipient=recipient,
+            subject=subject,
+            body=body,
+            run_integrity=run_integrity,
+        )
 
     if target != "feishu":
         raise DeliverCommandError(
@@ -286,6 +310,147 @@ def deliver_workspace(
         "event_error": event_error,
         "run_integrity": run_integrity,
     }
+
+
+def _deliver_gmail(
+    workspace: Path,
+    *,
+    bundle: DeliveryBundle,
+    channel: str,
+    recipient: str,
+    subject: str,
+    body: str,
+    run_integrity: dict[str, Any],
+) -> dict[str, Any]:
+    if channel not in {"draft", "send"}:
+        raise DeliverCommandError(
+            "Gmail delivery requires --channel draft|send.",
+            error_code=E_DELIVERY_TARGET_INVALID,
+            target="gmail",
+            channel=channel,
+        )
+    if not recipient:
+        raise DeliverCommandError(
+            "Gmail delivery requires --recipient.",
+            error_code=E_DELIVERY_TARGET_INVALID,
+            target="gmail",
+            channel=channel,
+        )
+
+    artifact = _select_gmail_attachment(bundle)
+    markdown = bundle.markdown
+    gmail_subject = subject.strip() or _default_gmail_subject(bundle)
+    gmail_body = body.strip() or _default_gmail_body(bundle)
+    _record_delivery_event(
+        workspace,
+        event_type="delivery_attempted",
+        target="gmail",
+        channel=channel,
+        artifact=artifact,
+        recipient=recipient,
+    )
+    result = GwsGmailDeliveryConnector().deliver(
+        DeliveryArtifact(path=str(artifact), title=artifact.stem),
+        DeliveryTarget(
+            channel=channel,
+            recipient=recipient,
+            metadata={
+                "subject": gmail_subject,
+                "body": gmail_body,
+                "attachments": [str(artifact)],
+                "markdown": str(markdown) if markdown else "",
+            },
+        ),
+    )
+    final_event = _gmail_success_event(channel) if result.delivered else "delivery_failed"
+    event_recorded = True
+    event_error = ""
+    try:
+        _record_delivery_event(
+            workspace,
+            event_type=final_event,
+            target="gmail",
+            channel=channel,
+            artifact=artifact,
+            recipient=recipient,
+            metadata=_gmail_event_metadata(channel, result),
+        )
+    except DeliverCommandError as exc:
+        event_recorded = False
+        event_error = str(exc)
+        if not result.delivered:
+            raise
+        side_effect = "Gmail draft was created" if channel == "draft" else "Gmail message was sent"
+        inspect_target = "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
+        raise DeliverCommandError(
+            f"{side_effect} but {_gmail_success_event(channel)} event was not recorded. "
+            f"Inspect {inspect_target} before retrying; do not retry blindly.",
+            error_code=E_DELIVERY_EVENT_FAILED,
+            target="gmail",
+            channel=channel,
+            extra={
+                "artifact": _workspace_relative(workspace, artifact),
+                "draft_created": channel == "draft",
+                "sent": channel == "send",
+                "event_recorded": event_recorded,
+                "event_error": event_error,
+                "run_integrity": run_integrity,
+            },
+        ) from exc
+    if not result.delivered:
+        fallback = "Gmail draft creation failed" if channel == "draft" else "Gmail send failed"
+        extra: dict[str, Any] = {}
+        if result.metadata.get("outcome_unknown"):
+            extra = {
+                "artifact": _workspace_relative(workspace, artifact),
+                "draft_created": False,
+                "sent": False,
+                "event_recorded": event_recorded,
+                "event_error": event_error,
+                "outcome_unknown": True,
+                "inspect_target": result.metadata.get("inspect_target") or (
+                    "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
+                ),
+                "run_integrity": run_integrity,
+            }
+        raise DeliverCommandError(
+            _sanitize_delivery_message(result.message or fallback, recipient=recipient),
+            error_code=E_DELIVERY_FAILED,
+            target="gmail",
+            channel=channel,
+            extra=extra,
+        )
+    return {
+        "ok": True,
+        "target": "gmail",
+        "channel": channel,
+        "artifact": _workspace_relative(workspace, artifact),
+        "delivered": channel == "send",
+        "draft_created": channel == "draft",
+        "sent": channel == "send",
+        "message": "Gmail draft created" if channel == "draft" else "Gmail message sent",
+        "event_recorded": event_recorded,
+        "event_error": event_error,
+        "run_integrity": run_integrity,
+    }
+
+
+def _gmail_success_event(channel: str) -> str:
+    return "delivery_draft_created" if channel == "draft" else "delivery_succeeded"
+
+
+def _gmail_event_metadata(channel: str, result: DeliveryResult) -> dict[str, Any]:
+    if channel == "draft":
+        metadata = {"draft_id_present": bool(result.metadata.get("draft_id_present"))}
+    else:
+        metadata = {"sent_message_present": bool(result.metadata.get("sent_message_present"))}
+    if result.metadata.get("outcome_unknown"):
+        metadata["outcome_unknown"] = True
+        metadata["timeout"] = bool(result.metadata.get("timeout"))
+        metadata["inspect_target"] = result.metadata.get("inspect_target") or (
+            "Gmail Drafts" if channel == "draft" else "Gmail Sent Mail"
+        )
+    return metadata
 
 
 def _require_workspace(workspace: str | Path) -> Path:
@@ -460,6 +625,10 @@ def _select_feishu_artifact(bundle: DeliveryBundle, channel: str) -> Path:
     )
 
 
+def _select_gmail_attachment(bundle: DeliveryBundle) -> Path:
+    return bundle.docx or bundle.markdown or bundle.artifacts[0]
+
+
 def _record_delivery_event(
     workspace: Path,
     *,
@@ -469,6 +638,7 @@ def _record_delivery_event(
     artifact: Path,
     recipient: str = "",
     url: str = "",
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     try:
         run_id = _delivery_run_id(workspace)
@@ -485,6 +655,7 @@ def _record_delivery_event(
                 "recipient_present": bool(recipient),
                 "recipient_sha256": _sha256(recipient) if recipient else "",
                 "url": url,
+                **(metadata or {}),
             },
         )
     except (RuntimeStateError, OSError, json.JSONDecodeError) as exc:
@@ -673,6 +844,7 @@ def _print_run_integrity_warning(payload: dict[str, Any]) -> None:
 def _event_reason(event_type: str) -> str:
     return {
         "delivery_attempted": "Reader delivery attempted.",
+        "delivery_draft_created": "Reader delivery draft created.",
         "delivery_succeeded": "Reader delivery succeeded.",
         "delivery_failed": "Reader delivery failed.",
     }.get(event_type, "Reader delivery event.")
@@ -696,6 +868,58 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _default_gmail_subject(bundle: DeliveryBundle) -> str:
+    title = ""
+    if bundle.markdown is not None:
+        try:
+            for line in bundle.markdown.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped.startswith("# "):
+                    title = stripped[2:].strip()
+                    break
+        except OSError:
+            title = ""
+    return f"BriefLoop delivery: {title or 'Final brief'}"
+
+
+def _default_gmail_body(bundle: DeliveryBundle) -> str:
+    attachment = _workspace_relative(bundle.workspace, _select_gmail_attachment(bundle))
+    excerpt = ""
+    if bundle.markdown is not None:
+        try:
+            text = bundle.markdown.read_text(encoding="utf-8")
+            excerpt = _markdown_excerpt(text)
+        except OSError:
+            excerpt = ""
+    lines = [
+        "Please review the attached BriefLoop delivery.",
+        "",
+        f"Attachment: {attachment}",
+        "",
+        "Brief excerpt:",
+        excerpt or "(No markdown excerpt available.)",
+        "",
+        "Audit/control files are not attached.",
+    ]
+    return "\n".join(lines)
+
+
+def _markdown_excerpt(text: str, *, limit: int = 1200) -> str:
+    cleaned_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        heading_text = stripped.lstrip("#").strip().lower()
+        if heading_text == "source appendix":
+            break
+        cleaned_lines.append(stripped)
+    excerpt = "\n".join(cleaned_lines).strip()
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[: limit - 3].rstrip() + "..."
 
 
 def _safe_delivery_message(result: DeliveryResult, channel: str, *, recipient: str = "") -> str:
