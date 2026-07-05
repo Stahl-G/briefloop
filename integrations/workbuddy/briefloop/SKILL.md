@@ -181,19 +181,25 @@ the Run Card must say the run has a draft only, not completed delivery.
 
 ## Hard Stop Rules
 
-Stop immediately and show the machine evidence when any of these conditions
-appears:
+Stop immediately and show the machine evidence only for conditions that make
+the requested action unsafe. Do not turn normal pre-finalize state into a
+workflow stop.
 
 1. `briefloop doctor` reports any error. Show the full doctor output, actual
    workspace path, current user, output path existence/writability check, and
    platform permission/ACL output. Do not downgrade the error in prose and do
    not mark doctor complete unless the user explicitly confirms the evidence.
-2. `run_integrity` is not clean, or it is `contaminated`,
-   `stale_or_invalid`, or unknown. Do not run finalize or delivery. The next
-   safe action is fresh run, controlled repair, or human review.
-3. `output/intermediate/finalize_report.json` or `output/delivery/` is missing.
-   Do not say "delivered", "交付完成", or "delivery complete". Say only that a
-   draft exists, if a draft artifact exists.
+2. For finalize, delivery, export, or share requests: if `run_integrity` is not
+   clean, or it is `contaminated`, `stale_or_invalid`, or unknown, stop that
+   action. Do not run finalize or delivery. The next safe action is fresh run,
+   controlled repair, or human review. For early-stage draft work, report the
+   Run Card and continue only with non-delivery workflow steps allowed by the
+   handoff.
+3. For delivery, export, share, or completion claims: if
+   `output/intermediate/finalize_report.json` or `output/delivery/` is missing,
+   stop that action. Do not say "delivered", "交付完成", or "delivery complete".
+   Say only that a draft exists, if a draft artifact exists. Continue earlier
+   role-work stages only when the handoff and Run Card allow them.
 4. Any export, share, support package, zip, or attachment candidate contains
    `.env`, tokens, private planning files, or machine secrets. Stop, tell the
    user to remove the package, and recommend rotating any exposed key. Never

@@ -107,9 +107,12 @@ next_allowed_action:
 ```
 
 If `doctor` reports any error, stop and show the complete doctor output before
-continuing. If `run_integrity` is not clean, stop and do not run finalize or
-delivery. If `output/intermediate/finalize_report.json` or `output/delivery/`
-is missing, say the run has a draft only; do not say delivery is complete.
+continuing. If `run_integrity` is not clean, stop finalize, delivery, export,
+and share actions; for earlier role-work stages, report the Run Card and
+continue only with non-delivery workflow steps allowed by the handoff. If
+`output/intermediate/finalize_report.json` or `output/delivery/` is missing,
+do not claim delivery or export a delivery package; say the run has a draft
+only, then continue earlier stages only when the handoff allows them.
 
 The WorkBuddy main session must invoke the matching role subagent for
 handoff-assigned draft work:

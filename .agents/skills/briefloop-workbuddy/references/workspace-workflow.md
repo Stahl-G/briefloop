@@ -77,8 +77,13 @@ relevant finalize / delivery events exist.
 - If `doctor` reports any error, stop. Show the full doctor output, workspace
   path, current user, output path existence/writability result, and permission
   or ACL output. Do not downgrade the error yourself.
-- If `run_integrity` is not clean, stop. Do not run finalize or delivery.
-- If finalize report or delivery directory is missing, report draft-only status.
+- If `run_integrity` is not clean, stop finalize, delivery, export, and share
+  actions. Do not run finalize or delivery. For early-stage role work, report
+  the Run Card and continue only with non-delivery workflow steps allowed by
+  the handoff.
+- If finalize report or delivery directory is missing, report draft-only status
+  and do not claim delivery or export a delivery package. This is normal before
+  finalize and must not block earlier handoff-assigned stages by itself.
 - If a zip, export, or attachment candidate contains `.env` or secrets, stop.
   Do not share it; recommend rotating any exposed key.
 

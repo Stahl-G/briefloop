@@ -369,6 +369,10 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
     ]:
         assert phrase in text
     for phrase in [
+        "Do not turn normal pre-finalize state into a workflow stop",
+        "stop finalize, delivery, export, and share actions",
+        "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
+        "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
         "Do not say \"delivered\" unless `output/intermediate/finalize_report.json`, `output/delivery/`, and the relevant finalize / delivery events exist",
         "Do not zip or share the whole workspace. Use BriefLoop-generated delivery, audit, or future support bundles only; never include `.env`",
         "Never share a whole workspace zip",

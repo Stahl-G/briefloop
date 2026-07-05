@@ -178,10 +178,12 @@ next_allowed_action:
 
 - `briefloop doctor` 有任何 error：停止，展示完整 doctor 输出、workspace
   路径、当前用户、output 路径存在/可写结果、权限或 ACL 证据；
-- `run_integrity` 不是 clean 或已经 contaminated：停止，不得 finalize 或
-  deliver；
+- `run_integrity` 不是 clean、已经 contaminated、stale 或 unknown：停止
+  finalize、delivery、export 和 share；早期 draft work 只有在 handoff 允许的
+  非交付步骤里才能继续；
 - 缺少 `output/intermediate/finalize_report.json` 或 `output/delivery/`：
-  只能说有草稿，不能说交付完成；
+  只能说有草稿，不能说交付完成，也不能导出 delivery package；这是 finalize
+  之前的正常状态，本身不阻止更早的 handoff-assigned stages；
 - 打包、导出、附件候选包含 `.env`、token、private planning 文件或机器密钥：
   停止，丢弃该包，并建议轮换暴露的 key。
 

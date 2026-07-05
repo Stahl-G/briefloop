@@ -191,9 +191,13 @@ The hard stops are:
 - any `briefloop doctor` error: stop and show the complete doctor output plus
   workspace path, user, output path existence/writability, and permission/ACL
   evidence;
-- non-clean or contaminated `run_integrity`: stop; do not finalize or deliver;
+- non-clean, contaminated, stale, or unknown `run_integrity`: stop finalize,
+  delivery, export, and share actions; early-stage draft work may continue only
+  when the handoff allows non-delivery workflow steps;
 - missing `output/intermediate/finalize_report.json` or `output/delivery/`:
-  report draft-only status, not delivery completion;
+  report draft-only status and do not claim delivery or export a delivery
+  package; this is normal before finalize and does not by itself block earlier
+  handoff-assigned stages;
 - package/export candidate contains `.env`, tokens, private planning files, or
   machine secrets: stop, discard the package, and recommend rotating exposed
   keys.

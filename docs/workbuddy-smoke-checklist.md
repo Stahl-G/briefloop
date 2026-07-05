@@ -138,9 +138,12 @@ or any issue/PR comment that reports the result.
 
 8. Confirm hard stop behavior.
    - Any `doctor` error stops the workflow and shows the full doctor output.
-   - Non-clean or contaminated `run_integrity` stops finalize and delivery.
+   - Non-clean, contaminated, stale, or unknown `run_integrity` stops
+     finalize, delivery, export, and share, but does not by itself stop earlier
+     handoff-assigned stages.
    - Missing `output/intermediate/finalize_report.json` or `output/delivery/`
-     prevents WorkBuddy from saying delivery is complete.
+     prevents WorkBuddy from saying delivery is complete or exporting a
+     delivery package; it does not by itself stop pre-finalize role work.
    - Any export/share package candidate containing `.env`, tokens, private
      planning files, or machine secrets is rejected before sharing.
    - WorkBuddy does not zip or share the whole workspace.
