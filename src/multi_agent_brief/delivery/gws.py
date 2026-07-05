@@ -46,6 +46,10 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
         subject = _metadata_text(target.metadata.get("subject")) or artifact.title or path.stem
         body = _metadata_text(target.metadata.get("body")) or "Please review the attached BriefLoop delivery."
         attachments = _metadata_list(target.metadata.get("attachments")) or [str(path)]
+        attachment_paths = [Path(attachment).expanduser().resolve() for attachment in attachments]
+        if any(not attachment.exists() for attachment in attachment_paths):
+            return DeliveryResult(self.name, False, "gmail: attachment not found")
+        attachment_cwd = Path(os.path.commonpath([str(attachment.parent) for attachment in attachment_paths]))
 
         args = [
             "gmail",
@@ -58,10 +62,10 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
             body,
             "--draft",
         ]
-        for attachment in attachments:
-            args.extend(["--attach", str(Path(attachment).resolve())])
+        for attachment in attachment_paths:
+            args.extend(["--attach", attachment.relative_to(attachment_cwd).as_posix()])
 
-        result = self._run_gws(args)
+        result = self._run_gws(args, cwd=attachment_cwd)
         if result is None:
             return DeliveryResult(self.name, False, "gmail: gws command failed or timed out")
         if result.returncode != 0:
@@ -100,7 +104,13 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
             return "gmail: gws is not authenticated. Run: gws auth setup; gws auth login"
         return None
 
-    def _run_gws(self, args: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess[str] | None:
+    def _run_gws(
+        self,
+        args: list[str],
+        *,
+        timeout: int = 60,
+        cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str] | None:
         env = {**os.environ}
         try:
             return subprocess.run(
@@ -108,6 +118,7 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                cwd=str(cwd) if cwd is not None else None,
                 env=env,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):

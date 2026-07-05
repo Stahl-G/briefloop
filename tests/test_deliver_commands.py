@@ -700,7 +700,7 @@ def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
 
-    def fake_run(cmd, capture_output, text, timeout, env):
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
         if cmd == ["gws", "auth", "status"]:
             return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
         leaked = f"failed command contained {recipient} {subject} {body}"
@@ -766,12 +766,12 @@ def test_deliver_gmail_requires_draft_channel(tmp_path: Path, capsys) -> None:
 def test_gws_gmail_connector_creates_draft_with_attachment(monkeypatch, tmp_path: Path) -> None:
     artifact = tmp_path / "brief.md"
     artifact.write_text("# Brief\n", encoding="utf-8")
-    calls: list[list[str]] = []
+    calls: list[tuple[list[str], str | None]] = []
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
 
-    def fake_run(cmd, capture_output, text, timeout, env):
-        calls.append(cmd)
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
+        calls.append((cmd, cwd))
         if cmd == ["gws", "auth", "status"]:
             return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
         return type("Completed", (), {"returncode": 0, "stdout": '{"id":"draft-123"}', "stderr": ""})()
@@ -797,7 +797,9 @@ def test_gws_gmail_connector_creates_draft_with_attachment(monkeypatch, tmp_path
 
     assert result.delivered is True
     assert result.metadata == {"draft_id_present": True}
-    assert calls[1][:7] == [
+    send_cmd, send_cwd = calls[1]
+    assert send_cwd == str(tmp_path)
+    assert send_cmd[:7] == [
         "gws",
         "gmail",
         "+send",
@@ -806,10 +808,12 @@ def test_gws_gmail_connector_creates_draft_with_attachment(monkeypatch, tmp_path
         "--subject",
         "Subject",
     ]
-    assert "--body" in calls[1]
-    assert "Body" in calls[1]
-    assert "--draft" in calls[1]
-    assert "--attach" in calls[1]
+    assert "--body" in send_cmd
+    assert "Body" in send_cmd
+    assert "--draft" in send_cmd
+    assert "--attach" in send_cmd
+    assert str(artifact) not in send_cmd
+    assert artifact.name in send_cmd
 
 
 def test_gws_gmail_connector_fails_without_draft_confirmation(monkeypatch, tmp_path: Path) -> None:
@@ -817,7 +821,7 @@ def test_gws_gmail_connector_fails_without_draft_confirmation(monkeypatch, tmp_p
     artifact.write_text("# Brief\n", encoding="utf-8")
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
 
-    def fake_run(cmd, capture_output, text, timeout, env):
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
         if cmd == ["gws", "auth", "status"]:
             return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
         return type("Completed", (), {"returncode": 0, "stdout": '{"status":"ok"}', "stderr": ""})()
@@ -839,7 +843,7 @@ def test_gws_gmail_connector_fails_closed_on_unparseable_auth_status(monkeypatch
     artifact.write_text("# Brief\n", encoding="utf-8")
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
 
-    def fake_run(cmd, capture_output, text, timeout, env):
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
         return type("Completed", (), {"returncode": 0, "stdout": "logged in as someone", "stderr": ""})()
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
@@ -858,7 +862,7 @@ def test_gws_gmail_connector_fails_closed_without_auth(monkeypatch, tmp_path: Pa
     artifact.write_text("# Brief\n", encoding="utf-8")
     monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
 
-    def fake_run(cmd, capture_output, text, timeout, env):
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
         return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"none"}', "stderr": ""})()
 
     monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
