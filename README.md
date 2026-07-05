@@ -4,7 +4,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[Website](https://briefloop.ai) · [15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [Contact](docs/contact.md)
+Website: [briefloop.ai](https://briefloop.ai) · Contact: [contact@briefloop.ai](mailto:contact@briefloop.ai)
+
+[15-Minute Pilot](docs/15-minute-pilot.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [Contact](docs/contact.md)
 
 Writer entry: use `/briefloop` in Claude Code, or `briefloop` in a shell.
 

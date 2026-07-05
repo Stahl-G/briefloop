@@ -4,7 +4,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[官网](https://briefloop.ai) · [15 分钟试用](docs/15-minute-pilot.zh-CN.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [联系方式](docs/contact.zh-CN.md)
+官网：[briefloop.ai](https://briefloop.ai) · 联系：[contact@briefloop.ai](mailto:contact@briefloop.ai)
+
+[15 分钟试用](docs/15-minute-pilot.zh-CN.md) · [Getting Started](docs/getting-started.md) · [Weekly Loop](docs/weekly-loop.md) · [Troubleshooting](docs/troubleshooting.md) · [Reference Workspace](examples/reference-workspaces/industry-weekly-demo/README.md) · [联系方式](docs/contact.zh-CN.md)
 
 写作入口：Claude Code 里用 `/briefloop`；命令行里用 `briefloop`。
 
