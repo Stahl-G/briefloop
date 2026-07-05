@@ -609,6 +609,7 @@ def _operator_runtime_capabilities(legacy_alias: str | None = None) -> dict[str,
 
 CODEBUDDY_ROLE_AGENTS = [
     "briefloop-scout",
+    "briefloop-claim-ledger",
     "briefloop-analyst",
     "briefloop-editor",
     "briefloop-auditor",
@@ -660,14 +661,16 @@ def _codebuddy_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
         [
             "1. Ask `briefloop-scout` to draft Scout-owned artifacts from the current handoff.",
             "2. Run deterministic BriefLoop validation and stage transactions in the main CodeBuddy session.",
-            "3. Ask `briefloop-analyst` to draft Analyst-owned artifacts from frozen upstream artifacts.",
-            "4. Run deterministic BriefLoop validation and stage transactions in the main CodeBuddy session.",
-            "5. Ask `briefloop-editor` to polish the audited brief without adding facts.",
+            "3. Ask `briefloop-claim-ledger` to draft `output/intermediate/claim_drafts.json` from screened candidates.",
+            f"4. Run `briefloop state freeze-claim-ledger --workspace {ws_path}` and `briefloop state stage-complete --workspace {ws_path} --stage claim-ledger --reason \"Claim Ledger was frozen from claim drafts.\"` in the main CodeBuddy session.",
+            "5. Ask `briefloop-analyst` to draft Analyst-owned artifacts from frozen `output/intermediate/claim_ledger.json`.",
             "6. Run deterministic BriefLoop validation and stage transactions in the main CodeBuddy session.",
-            "7. Ask `briefloop-auditor` to draft the audit report.",
-            "8. Run deterministic auditor gate and stage-complete commands in the main CodeBuddy session.",
-            "9. Ask `briefloop-formatter` for finalize readiness only; it must not write files or run CLI commands.",
-            "10. Run finalize, finalize gate, finalize-complete, quality, and delivery commands from the main CodeBuddy session only when allowed.",
+            "7. Ask `briefloop-editor` to polish the audited brief without adding facts.",
+            "8. Run deterministic BriefLoop validation and stage transactions in the main CodeBuddy session.",
+            "9. Ask `briefloop-auditor` to draft the audit report.",
+            "10. Run deterministic auditor gate and stage-complete commands in the main CodeBuddy session.",
+            "11. Ask `briefloop-formatter` for finalize readiness only; it must not write files or run CLI commands.",
+            "12. Run finalize, finalize gate, finalize-complete, quality, and delivery commands from the main CodeBuddy session only when allowed.",
         ]
     )
     return AgentHandoff(
@@ -688,7 +691,7 @@ def _codebuddy_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "Do not add or use `context: fork` for the BriefLoop Skill. The main CodeBuddy session is the Orchestrator main agent.\n\n"
             "CodeBuddy role sub-agents are project-level assets:\n"
             f"{role_agents}\n\n"
-            "Do not perform Scout, Analyst, Editor, Auditor, or Formatter work in the main conversation. "
+            "Do not perform Scout, Claim Ledger, Analyst, Editor, Auditor, or Formatter work in the main conversation. "
             "Explicitly invoke the matching CodeBuddy role sub-agent for role-owned artifact work. "
             "Role sub-agents may draft only the artifacts assigned by the current handoff. "
             "Role sub-agents must not run `briefloop` or `multi-agent-brief` CLI commands, edit control files, run gates, finalize, deliver, or authorize release. "

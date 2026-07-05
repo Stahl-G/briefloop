@@ -54,11 +54,12 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
 
 ## Role Delegation
 
-Do not perform Scout, Analyst, Editor, Auditor, or Formatter work in the main
-conversation. For role-owned artifact work, explicitly invoke the matching
-project CodeBuddy sub-agent:
+Do not perform Scout, Claim Ledger, Analyst, Editor, Auditor, or Formatter work
+in the main conversation. For role-owned artifact work, explicitly invoke the
+matching project CodeBuddy sub-agent:
 
 - `briefloop-scout`
+- `briefloop-claim-ledger`
 - `briefloop-analyst`
 - `briefloop-editor`
 - `briefloop-auditor`
@@ -68,6 +69,7 @@ Project role-agent files live in:
 
 ```text
 .codebuddy/agents/briefloop-scout.md
+.codebuddy/agents/briefloop-claim-ledger.md
 .codebuddy/agents/briefloop-analyst.md
 .codebuddy/agents/briefloop-editor.md
 .codebuddy/agents/briefloop-auditor.md

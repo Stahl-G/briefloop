@@ -1327,6 +1327,7 @@ def test_start_codebuddy_handoff_contains_project_skill_and_role_agent_contract(
     assert capabilities["must_not_claim_uninvoked_subagents_ran"] is True
     assert capabilities["subagent_names"] == [
         "briefloop-scout",
+        "briefloop-claim-ledger",
         "briefloop-analyst",
         "briefloop-editor",
         "briefloop-auditor",
@@ -1338,11 +1339,18 @@ def test_start_codebuddy_handoff_contains_project_skill_and_role_agent_contract(
     assert "The main CodeBuddy session is the Orchestrator" in data["prompt"]
     assert "CodeBuddy sub-agents cannot spawn other sub-agents" in data["prompt"]
     assert "Role sub-agents must not run `briefloop` or `multi-agent-brief` CLI commands" in data["prompt"]
+    assert "briefloop-claim-ledger" in data["prompt"]
+    assert "output/intermediate/claim_drafts.json" in data["prompt"]
+    assert "freeze-claim-ledger" in data["prompt"]
     assert "briefloop-formatter` for finalize readiness only" in data["prompt"]
     assert "The main CodeBuddy session owns deterministic BriefLoop CLI transactions" in data["prompt"]
+    workflow = data["prompt"].split("CodeBuddy stage workflow:", 1)[1]
+    assert workflow.index("briefloop-scout") < workflow.index("briefloop-claim-ledger")
+    assert workflow.index("briefloop-claim-ledger") < workflow.index("briefloop-analyst")
     assert "## Runtime Capabilities" in text
     assert "`runtime`: `codebuddy`" in text
     assert "briefloop-scout" in text
+    assert "briefloop-claim-ledger" in text
     assert "gate authority" in " ".join(data["notes"])
     assert "delivery approval" in " ".join(data["notes"])
     assert "release authority" in " ".join(data["notes"])
@@ -1520,14 +1528,28 @@ def test_build_handoff_codebuddy_uses_project_skill_and_role_agents(tmp_path):
     assert handoff.runtime_capabilities["delegation_supported"] is True
     assert handoff.runtime_capabilities["nested_subagents_supported"] is False
     assert handoff.runtime_capabilities["role_agent_path_glob"] == ".codebuddy/agents/briefloop-*.md"
+    assert handoff.runtime_capabilities["subagent_names"] == [
+        "briefloop-scout",
+        "briefloop-claim-ledger",
+        "briefloop-analyst",
+        "briefloop-editor",
+        "briefloop-auditor",
+        "briefloop-formatter",
+    ]
     assert ".codebuddy/skills/briefloop/SKILL.md" in handoff.prompt
     assert "briefloop-scout" in handoff.prompt
+    assert "briefloop-claim-ledger" in handoff.prompt
     assert "briefloop-auditor" in handoff.prompt
+    assert "output/intermediate/claim_drafts.json" in handoff.prompt
+    assert "freeze-claim-ledger" in handoff.prompt
     assert "briefloop-formatter` for finalize readiness only" in handoff.prompt
     assert "Role sub-agents must not run `briefloop` or `multi-agent-brief` CLI commands" in handoff.prompt
     assert "The main CodeBuddy session owns deterministic BriefLoop CLI transactions" in handoff.prompt
     assert "Do not add or use `context: fork`" in handoff.prompt
     assert "CodeBuddy sub-agents cannot spawn other sub-agents" in handoff.prompt
+    workflow = handoff.prompt.split("CodeBuddy stage workflow:", 1)[1]
+    assert workflow.index("briefloop-scout") < workflow.index("briefloop-claim-ledger")
+    assert workflow.index("briefloop-claim-ledger") < workflow.index("briefloop-analyst")
     assert "This runtime handoff does not add gate authority" in " ".join(handoff.notes)
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 

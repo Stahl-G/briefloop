@@ -112,7 +112,8 @@ Exa, Brave, Firecrawl, or Serper only when the user asks for alternatives.
 
 Use `--runtime operator` for generic WorkBuddy operation. Operator runtime means
 a host-agnostic compact operator workflow. It does not assume WorkBuddy
-delegated Scout, Analyst, Editor, Auditor, Formatter, or any other role.
+delegated Scout, Claim Ledger, Analyst, Editor, Auditor, Formatter, or any
+other role.
 
 Use `--runtime codebuddy` only when CodeBuddy project Skill and role-agent
 assets are available in the source checkout:
@@ -130,6 +131,7 @@ explicitly invoke:
 
 ```text
 briefloop-scout
+briefloop-claim-ledger
 briefloop-analyst
 briefloop-editor
 briefloop-auditor
