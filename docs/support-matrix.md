@@ -54,7 +54,7 @@ validation unless that is stated separately.
 | `multi-agent-brief status --workspace <path>` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target local` | Supported |
 | `multi-agent-brief deliver --workspace <path> --target feishu` | Experimental |
-| `multi-agent-brief deliver --workspace <path> --target gmail --channel draft` | Experimental |
+| `multi-agent-brief deliver --workspace <path> --target gmail --channel draft\|send` | Experimental |
 | `multi-agent-brief state init/check/show/decide/freeze-claim-ledger/stage-complete/finalize-complete` | Supported |
 | `multi-agent-brief state import-fact-layer` | Experimental |
 | `multi-agent-brief controls build-switchboard/show/select/validate` | Supported |
@@ -425,9 +425,9 @@ approval, release authority, semantic proof, or output-quality proof.
 | Named output copies | Supported |
 | PDF | Experimental |
 | Feishu delivery | Experimental |
-| Gmail draft delivery through optional `gws` CLI | Experimental |
+| Gmail draft and explicit send delivery through optional `gws` CLI | Experimental |
 | Slack delivery | Not shipped |
-| Direct email send | Not shipped |
+| Direct email send | Experimental; Gmail only through optional `gws` CLI and explicit `--channel send` |
 
 ## Analysis Tooling
 

@@ -1,4 +1,4 @@
-"""Gmail draft delivery connector using the optional gws CLI."""
+"""Gmail delivery connector using the optional gws CLI."""
 
 from __future__ import annotations
 
@@ -13,18 +13,13 @@ from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryConnector,
 
 
 class GwsGmailDeliveryConnector(DeliveryConnector):
-    """Create Gmail drafts through the optional gws CLI.
-
-    This connector intentionally supports draft creation only. Sending remains
-    outside this connector until BriefLoop has a human-approval ledger for email
-    sends.
-    """
+    """Create Gmail drafts or send Gmail messages through the optional gws CLI."""
 
     name = "gmail"
 
     def deliver(self, artifact: DeliveryArtifact, target: DeliveryTarget) -> DeliveryResult:
-        if target.channel != "draft":
-            return DeliveryResult(self.name, False, "gmail: only channel 'draft' is supported")
+        if target.channel not in {"draft", "send"}:
+            return DeliveryResult(self.name, False, "gmail: supported channels are 'draft' and 'send'")
         if not target.recipient:
             return DeliveryResult(self.name, False, "gmail: --recipient is required")
 
@@ -60,8 +55,9 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
             subject,
             "--body",
             body,
-            "--draft",
         ]
+        if target.channel == "draft":
+            args.append("--draft")
         for attachment in attachment_paths:
             args.extend(["--attach", attachment.relative_to(attachment_cwd).as_posix()])
 
@@ -69,24 +65,41 @@ class GwsGmailDeliveryConnector(DeliveryConnector):
         if result is None:
             return DeliveryResult(self.name, False, "gmail: gws command failed or timed out")
         if result.returncode != 0:
+            action = "draft creation" if target.channel == "draft" else "send"
             return DeliveryResult(
                 self.name,
                 False,
-                "gmail: gws draft creation failed. Check gws auth, Gmail permissions, recipient, and attachment access.",
+                f"gmail: gws {action} failed. Check gws auth, Gmail permissions, recipient, and attachment access.",
             )
 
-        metadata = _draft_metadata(result.stdout)
-        if not metadata.get("draft_id_present"):
+        if target.channel == "draft":
+            metadata = _draft_metadata(result.stdout)
+            if not metadata.get("draft_id_present"):
+                return DeliveryResult(
+                    self.name,
+                    False,
+                    "gmail: gws did not confirm Gmail draft creation. "
+                    "Inspect Gmail Drafts before retrying; do not retry blindly.",
+                )
+            return DeliveryResult(
+                self.name,
+                True,
+                "Gmail draft created",
+                metadata=metadata,
+            )
+
+        metadata = _message_metadata(result.stdout)
+        if not metadata.get("sent_message_present"):
             return DeliveryResult(
                 self.name,
                 False,
-                "gmail: gws did not confirm Gmail draft creation. Inspect Gmail Drafts before retrying; do not retry blindly.",
+                "gmail: gws did not confirm Gmail send. "
+                "Inspect Gmail Sent Mail before retrying; do not retry blindly.",
             )
-
         return DeliveryResult(
             self.name,
             True,
-            "Gmail draft created",
+            "Gmail message sent",
             metadata=metadata,
         )
 
@@ -146,4 +159,19 @@ def _draft_metadata(stdout: str) -> dict[str, Any]:
     draft_id = payload.get("id") or payload.get("draft_id") or data.get("id")
     if isinstance(draft_id, str) and draft_id.strip():
         return {"draft_id_present": True}
+    return {}
+
+
+def _message_metadata(stdout: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(stdout or "{}")
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
+    sent_ref = payload.get("message" + "_id") or payload.get("id") or message.get("id") or data.get("id")
+    if isinstance(sent_ref, str) and sent_ref.strip():
+        return {"sent_message_present": True}
     return {}

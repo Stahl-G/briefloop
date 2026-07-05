@@ -1,10 +1,11 @@
-# Gmail Draft Delivery
+# Gmail Delivery
 
-BriefLoop can create a Gmail draft through the optional
-[gws](https://github.com/googleworkspace/cli) CLI.
+BriefLoop can create a Gmail draft or explicitly send a Gmail message through
+the optional [gws](https://github.com/googleworkspace/cli) CLI.
 
-This is an experimental connector. It creates a draft only; it does not send
-mail, approve delivery, authorize publication, or attach audit/control files.
+This is an experimental connector. It does not approve delivery, authorize
+publication, prove semantic truth, or attach audit/control files. Sending mail
+requires an explicit `--channel send` command from the operator.
 
 ## Prerequisites
 
@@ -32,16 +33,31 @@ briefloop deliver \
   --recipient someone@example.com
 ```
 
-Optional subject and body:
+## Send A Message
+
+To send the delivery attachment directly, use `--channel send` explicitly:
 
 ```bash
 briefloop deliver \
   --workspace <workspace> \
   --target gmail \
-  --channel draft \
+  --channel send \
+  --recipient someone@example.com
+```
+
+Use `draft` when the recipient or message content still needs review. Use
+`send` only when the operator intends the external email side effect.
+
+Optional subject and body work for both channels:
+
+```bash
+briefloop deliver \
+  --workspace <workspace> \
+  --target gmail \
+  --channel send \
   --recipient someone@example.com \
   --subject "Weekly brief for review" \
-  --body "Please review the attached BriefLoop delivery draft."
+  --body "Please review the attached BriefLoop delivery."
 ```
 
 BriefLoop attaches `output/delivery/<named>.docx` when present, otherwise it
@@ -55,11 +71,13 @@ The delivery event log records:
 
 - `delivery_attempted`
 - `delivery_draft_created` when the Gmail draft is created
-- `delivery_failed` when draft creation fails
+- `delivery_succeeded` when a Gmail message is sent
+- `delivery_failed` when draft creation or sending fails
 
 Event metadata records only whether a recipient was present and the recipient
 SHA-256. It does not record the email address, subject, or body.
 
-Direct send is intentionally not supported. A future send path would require a
-separate human-approval record bound to the recipient, subject, and delivery
-artifact hash.
+If a Gmail draft is created or message is sent but the local event cannot be
+recorded, the command returns failure and tells the operator to inspect Gmail
+before retrying. This avoids marking an unrecorded external side effect as a
+clean success.

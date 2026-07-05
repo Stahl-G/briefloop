@@ -585,7 +585,7 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
             {
                 "subject": "BriefLoop delivery: Final Brief",
                 "body": (
-                    "Please review the attached BriefLoop delivery draft.\n\n"
+                    "Please review the attached BriefLoop delivery.\n\n"
                     "Attachment: output/delivery/Weekly_Brief_2026-06-12.docx\n\n"
                     "Brief excerpt:\n"
                     "# Final Brief\n"
@@ -655,6 +655,117 @@ def test_deliver_gmail_draft_event_failure_returns_error_without_retry_signal(
     assert "event write failed" in payload["event_error"]
     assert "Gmail draft was created" in payload["message"]
     assert "Inspect Gmail Drafts" in payload["message"]
+    assert "do not retry blindly" in payload["message"]
+    assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted"]
+
+
+def test_deliver_gmail_send_sends_message_without_email_leak(tmp_path: Path, capsys, monkeypatch) -> None:
+    ws = _workspace(tmp_path)
+    _markdown, docx = _write_bundle(ws)
+    calls: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def fake_deliver(self, artifact, target):
+        calls.append((artifact.path, target.channel, target.recipient, dict(target.metadata)))
+        return DeliveryResult("gmail", True, "Gmail message sent", {"sent_message_present": True})
+
+    monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
+
+    rc = main([
+        "deliver",
+        "--workspace",
+        str(ws),
+        "--target",
+        "gmail",
+        "--channel",
+        "send",
+        "--recipient",
+        "recipient@example.com",
+        "--subject",
+        "Secret Q3 Board Plan",
+        "--body",
+        "Confidential launch narrative",
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["target"] == "gmail"
+    assert payload["channel"] == "send"
+    assert payload["delivered"] is True
+    assert payload["sent"] is True
+    assert payload["draft_created"] is False
+    assert payload["artifact"].endswith(".docx")
+    assert calls == [
+        (
+            str(docx),
+            "send",
+            "recipient@example.com",
+            {
+                "subject": "Secret Q3 Board Plan",
+                "body": "Confidential launch narrative",
+                "attachments": [str(docx)],
+                "markdown": str(ws / "output" / "delivery" / "brief.md"),
+            },
+        )
+    ]
+    events = _delivery_events(ws)
+    assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_succeeded"]
+    assert events[1]["metadata"]["sent_message_present"] is True
+    event_blob = json.dumps(events, ensure_ascii=False)
+    for secret in ("recipient@example.com", "Secret Q3 Board Plan", "Confidential launch narrative"):
+        assert secret not in event_blob
+
+
+def test_deliver_gmail_send_event_failure_returns_error_without_retry_signal(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws)
+
+    def fake_deliver(self, artifact, target):
+        return DeliveryResult("gmail", True, "Gmail message sent", {"sent_message_present": True})
+
+    real_append_event = __import__(
+        "multi_agent_brief.cli.deliver_commands",
+        fromlist=["append_event"],
+    ).append_event
+
+    def flaky_append_event(**kwargs):
+        if kwargs.get("event_type") == "delivery_succeeded":
+            raise RuntimeStateError("event write failed")
+        return real_append_event(**kwargs)
+
+    monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.GwsGmailDeliveryConnector.deliver", fake_deliver)
+    monkeypatch.setattr("multi_agent_brief.cli.deliver_commands.append_event", flaky_append_event)
+
+    rc = main([
+        "deliver",
+        "--workspace",
+        str(ws),
+        "--target",
+        "gmail",
+        "--channel",
+        "send",
+        "--recipient",
+        "recipient@example.com",
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_DELIVERY_EVENT_FAILED"
+    assert payload["target"] == "gmail"
+    assert payload["channel"] == "send"
+    assert payload["sent"] is True
+    assert payload["draft_created"] is False
+    assert payload["event_recorded"] is False
+    assert "event write failed" in payload["event_error"]
+    assert "Gmail message was sent" in payload["message"]
+    assert "Inspect Gmail Sent Mail" in payload["message"]
     assert "do not retry blindly" in payload["message"]
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted"]
 
@@ -739,7 +850,7 @@ def test_deliver_gmail_draft_failure_scrubs_gws_subject_body_and_recipient(
     assert [event["event_type"] for event in _delivery_events(ws)] == ["delivery_attempted", "delivery_failed"]
 
 
-def test_deliver_gmail_requires_draft_channel(tmp_path: Path, capsys) -> None:
+def test_deliver_gmail_rejects_unknown_channel(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False)
 
@@ -759,7 +870,7 @@ def test_deliver_gmail_requires_draft_channel(tmp_path: Path, capsys) -> None:
     assert rc == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_TARGET_INVALID"
-    assert "Direct send is not supported" in payload["message"]
+    assert "draft|send" in payload["message"]
     assert _delivery_events(ws) == []
 
 
@@ -814,6 +925,82 @@ def test_gws_gmail_connector_creates_draft_with_attachment(monkeypatch, tmp_path
     assert "--attach" in send_cmd
     assert str(artifact) not in send_cmd
     assert artifact.name in send_cmd
+
+
+def test_gws_gmail_connector_sends_message_with_attachment(monkeypatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "brief.md"
+    artifact.write_text("# Brief\n", encoding="utf-8")
+    calls: list[tuple[list[str], str | None]] = []
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
+        calls.append((cmd, cwd))
+        if cmd == ["gws", "auth", "status"]:
+            return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": '{"id":"msg-123"}', "stderr": ""})()
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    result = GwsGmailDeliveryConnector().deliver(
+        artifact=type("Artifact", (), {"path": str(artifact), "title": "Weekly"})(),
+        target=type(
+            "Target",
+            (),
+            {
+                "channel": "send",
+                "recipient": "recipient@example.com",
+                "metadata": {
+                    "subject": "Subject",
+                    "body": "Body",
+                    "attachments": [str(artifact)],
+                },
+            },
+        )(),
+    )
+
+    assert result.delivered is True
+    assert result.metadata == {"sent_message_present": True}
+    send_cmd, send_cwd = calls[1]
+    assert send_cwd == str(tmp_path)
+    assert send_cmd[:7] == [
+        "gws",
+        "gmail",
+        "+send",
+        "--to",
+        "recipient@example.com",
+        "--subject",
+        "Subject",
+    ]
+    assert "--body" in send_cmd
+    assert "Body" in send_cmd
+    assert "--draft" not in send_cmd
+    assert "--attach" in send_cmd
+    assert str(artifact) not in send_cmd
+    assert artifact.name in send_cmd
+
+
+def test_gws_gmail_connector_fails_without_send_confirmation(monkeypatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "brief.md"
+    artifact.write_text("# Brief\n", encoding="utf-8")
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.shutil.which", lambda name: "/usr/local/bin/gws")
+
+    def fake_run(cmd, capture_output, text, timeout, cwd, env):
+        if cmd == ["gws", "auth", "status"]:
+            return type("Completed", (), {"returncode": 0, "stdout": '{"auth_method":"oauth"}', "stderr": ""})()
+        return type("Completed", (), {"returncode": 0, "stdout": '{"status":"ok"}', "stderr": ""})()
+
+    monkeypatch.setattr("multi_agent_brief.delivery.gws.subprocess.run", fake_run)
+
+    result = GwsGmailDeliveryConnector().deliver(
+        artifact=type("Artifact", (), {"path": str(artifact), "title": "Weekly"})(),
+        target=type("Target", (), {"channel": "send", "recipient": "recipient@example.com", "metadata": {}})(),
+    )
+
+    assert result.delivered is False
+    assert "did not confirm Gmail send" in result.message
+    assert "Inspect Gmail Sent Mail" in result.message
+    assert "do not retry blindly" in result.message
 
 
 def test_gws_gmail_connector_fails_without_draft_confirmation(monkeypatch, tmp_path: Path) -> None:
