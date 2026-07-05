@@ -355,8 +355,11 @@ ARCHIVED_EXPERIMENT_FIRST_USER_FORBIDDEN_TERMS = (
     "manifestation score",
 )
 ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
+    "CLAUDE.md",
     "README.md",
     "README.zh-CN.md",
+    ".claude/commands/briefloop.md",
+    ".opencode/commands/briefloop.md",
     "docs/15-minute-pilot.md",
     "docs/15-minute-pilot.zh-CN.md",
     "docs/getting-started.md",

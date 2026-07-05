@@ -375,6 +375,20 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
         "新用户路径不要写 MABW-080。\n",
         encoding="utf-8",
     )
+    (tmp_path / "CLAUDE.md").write_text(
+        "First-user writer commands should not route to MABW-080.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".claude" / "commands").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".claude" / "commands" / "briefloop.md").write_text(
+        "/briefloop new should not present BriefLoop-090.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".opencode" / "commands").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".opencode" / "commands" / "briefloop.md").write_text(
+        "OpenCode first-user command should not mention experiments 080.\n",
+        encoding="utf-8",
+    )
     (tmp_path / ".agents" / "skills" / "briefloop-workbuddy").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".agents" / "skills" / "briefloop-workbuddy" / "SKILL.md").write_text(
         "Do not route new WorkBuddy users to BriefLoop-090 A-controlled runs.\n",
@@ -428,6 +442,9 @@ def test_first_user_docs_guard_rejects_archived_experiment_namespace(tmp_path, m
     assert "docs/workbuddy.md:experiments 080" in quarantine_check["detail"]
     assert "README.md:BriefLoop-090" in quarantine_check["detail"]
     assert "README.zh-CN.md:MABW-080" in quarantine_check["detail"]
+    assert "CLAUDE.md:MABW-080" in quarantine_check["detail"]
+    assert ".claude/commands/briefloop.md:BriefLoop-090" in quarantine_check["detail"]
+    assert ".opencode/commands/briefloop.md:experiments 080" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/SKILL.md:BriefLoop-090" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/SKILL.md:A-controlled" in quarantine_check["detail"]
     assert ".agents/skills/briefloop-workbuddy/references/quickstart.md:experiments 080" in quarantine_check["detail"]
