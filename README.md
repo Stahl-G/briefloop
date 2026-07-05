@@ -254,16 +254,20 @@ Good next reads:
 
 Start from the product entry that matches your report:
 
+| Report job | Start with | Best for |
+|---|---|---|
+| Industry or market weekly | `industry-weekly` | recurring market updates, competitor tracking, policy monitoring |
+| Management monthly | `management-monthly` | executive reviews, monthly operating updates, management briefing packs |
+| Document review | `document-review` | reviewing a set of documents with page/source traceability |
+
 ```bash
 briefloop new industry-weekly ./weekly-brief
 briefloop new management-monthly ./monthly-review
 briefloop new document-review ./document-review
 ```
 
-These entries are user-facing aliases. Internal `report_spec.yaml` values stay
-canonical, for example `market_weekly`, `management_monthly`, and
-`evidence_extract`. `document-review` prepares a document evidence review
-workspace; it does not make legal, compliance, or disclosure judgments.
+`document-review` prepares a document evidence review workspace. It does not
+make legal, compliance, or disclosure judgments.
 
 These three entries are the supported v0.11 product-baseline surface. Advanced
 Product OS surfaces such as `solar-periodic`, Quality Panel, SourceHub Lite,
@@ -396,6 +400,7 @@ Architecture reference and contributor docs:
 - [Function Map](docs/features.md)
 - [Golden Path](docs/golden-path.md)
 - [Architecture Status](docs/architecture-status.md)
+- [Naming and compatibility](docs/briefloop-naming.md)
 - [Roadmap](docs/roadmap.md)
 - [Red lines and anti-patterns](docs/red-lines-and-anti-patterns.md)
 - [Product OS reader-quality reference package](docs/reference-runs/v0.11.3-product-os-reader-quality-reference.md)

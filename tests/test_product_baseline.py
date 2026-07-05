@@ -88,6 +88,10 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
+    assert checks["first_user_route.README.md"]["status"] == "pass"
+    assert checks["first_user_route.README.zh-CN.md"]["status"] == "pass"
+    assert checks["first_user_route.docs/getting-started.md"]["status"] == "pass"
+    assert checks["first_user_route.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
     assert checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
     assert checks["support_matrix.wider_product_os_extensions"]["status"] == "pass"
@@ -151,6 +155,59 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     readme_check = checks_by_id["first_user_docs.README.md.first_screen_links"]
     assert readme_check["status"] == "fail"
     assert "docs/architecture-status.md" in readme_check["detail"]
+
+
+def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path, monkeypatch) -> None:
+    module = _load_product_baseline_module()
+    route_blocks = {
+        "README.md": (
+            "## 🧪 Three ways to try it\n"
+            "briefloop new industry-weekly ./weekly-brief\n"
+            "briefloop new management-monthly ./monthly-review\n"
+            "briefloop new document-review ./document-review\n"
+            "Internal report_spec.yaml uses market_weekly YAML.\n"
+            "## 🧭 Current status\n"
+        ),
+        "README.zh-CN.md": (
+            "## 🧪 三条上手路径\n"
+            "briefloop new industry-weekly ./weekly-brief\n"
+            "briefloop new management-monthly ./monthly-review\n"
+            "briefloop new document-review ./document-review\n"
+            "## 🧭 当前状态\n"
+        ),
+        "docs/getting-started.md": (
+            "## 4. Create Your Own Workspace\n"
+            "briefloop new industry-weekly ./weekly-brief\n"
+            "briefloop new management-monthly ./monthly-review\n"
+            "briefloop new document-review ./document-review\n"
+            "## 5. What BriefLoop Does Not Do\n"
+        ),
+        "docs/weekly-loop.md": (
+            "## 1. Create Or Select A Workspace\n"
+            "briefloop new industry-weekly ./weekly-brief\n"
+            "briefloop new management-monthly ./monthly-review\n"
+            "## 2. Add Sources\n"
+        ),
+    }
+    for rel_path, text in route_blocks.items():
+        path = tmp_path / rel_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_first_user_route_surfaces(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    readme_check = checks_by_id["first_user_route.README.md"]
+    assert readme_check["status"] == "fail"
+    assert "market_weekly" in readme_check["detail"]
+    assert "report_spec.yaml" in readme_check["detail"]
+    assert "YAML" in readme_check["detail"]
+
+    weekly_check = checks_by_id["first_user_route.docs/weekly-loop.md"]
+    assert weekly_check["status"] == "fail"
+    assert "document-review" in weekly_check["detail"]
 
 
 def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_path, monkeypatch) -> None:

@@ -273,6 +273,38 @@ README_FIRST_SCREEN_FORBIDDEN_LINKS = [
     "docs/architecture-status.md",
     "docs/roadmap.md",
 ]
+FIRST_USER_ROUTE_SURFACES = {
+    "README.md": ("## 🧪 Three ways to try it", "## 🧭 Current status"),
+    "README.zh-CN.md": ("## 🧪 三条上手路径", "## 🧭 当前状态"),
+    "docs/getting-started.md": (
+        "## 4. Create Your Own Workspace",
+        "## 5. What BriefLoop Does Not Do",
+    ),
+    "docs/weekly-loop.md": ("## 1. Create Or Select A Workspace", "## 2. Add Sources"),
+}
+FIRST_USER_ROUTE_REQUIRED_ENTRIES = (
+    "industry-weekly",
+    "management-monthly",
+    "document-review",
+)
+FIRST_USER_ROUTE_FORBIDDEN_TERMS = (
+    "market_weekly",
+    "management_monthly",
+    "evidence_extract",
+    "solar_industry_periodic",
+    "report_spec.yaml",
+    "ReportSpec",
+    "ReportPack",
+    "PolicyProfile",
+    "YAML",
+    "schema",
+    "control-plane",
+    "Control Switchboard",
+    "Atomic Claim Graph",
+    "Evidence Span Registry",
+    "Claim-Support Matrix",
+    "Trajectory Regulation",
+)
 PIPX_CURRENT_INSTALL_DOCS = [
     "README.md",
     "README.zh-CN.md",
@@ -784,6 +816,8 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
             f"required first-user phrases missing={missing}",
         )
 
+    _check_first_user_route_surfaces(checks)
+
     getting_started = (ROOT / "docs" / "getting-started.md").read_text(encoding="utf-8")
     activation_reason = _unix_source_clone_activation_reason(
         getting_started,
@@ -822,6 +856,44 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         not missing_links and not forbidden_links,
         f"missing_links={missing_links} forbidden_links={forbidden_links}",
     )
+
+
+def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
+    for rel_path, (start_marker, end_marker) in FIRST_USER_ROUTE_SURFACES.items():
+        path = ROOT / rel_path
+        if not path.exists():
+            _append_check(
+                checks,
+                f"first_user_route.{rel_path}",
+                False,
+                f"missing route surface: {rel_path}",
+            )
+            continue
+        raw_text = path.read_text(encoding="utf-8")
+        route_text = _section_between(raw_text, start_marker, end_marker)
+        missing_entries = [
+            entry for entry in FIRST_USER_ROUTE_REQUIRED_ENTRIES if entry not in route_text
+        ]
+        forbidden_terms = [
+            term for term in FIRST_USER_ROUTE_FORBIDDEN_TERMS if term.lower() in route_text.lower()
+        ]
+        _append_check(
+            checks,
+            f"first_user_route.{rel_path}",
+            bool(route_text) and not missing_entries and not forbidden_terms,
+            "missing_entries="
+            f"{missing_entries} forbidden_internal_or_control_terms={forbidden_terms}",
+        )
+
+
+def _section_between(text: str, start_marker: str, end_marker: str) -> str:
+    start = text.find(start_marker)
+    if start < 0:
+        return ""
+    end = text.find(end_marker, start + len(start_marker))
+    if end < 0:
+        return text[start:]
+    return text[start:end]
 
 
 def _unix_source_clone_activation_reason(
