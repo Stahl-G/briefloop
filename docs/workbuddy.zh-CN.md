@@ -188,8 +188,8 @@ next_allowed_action:
   停止，丢弃该包，并建议轮换暴露的 key。
 
 不要分享整个 workspace zip。只使用 BriefLoop 生成的 delivery bundle 或 audit
-bundle。需要支持时，运行 `briefloop workbuddy diagnose --json`，然后手动分享
-已脱敏输出。
+bundle。需要支持时，只分享人工检查过、确认不含密钥的
+`briefloop status --json` 或 doctor 输出摘录。
 
 ## Assistant Trigger 模板
 

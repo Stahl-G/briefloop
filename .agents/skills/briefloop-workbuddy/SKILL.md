@@ -246,7 +246,7 @@ Read the relevant reference before acting:
   `output/delivery/`, and the relevant finalize / delivery events exist.
 - Do not zip or share the whole workspace. Use BriefLoop-generated delivery
   or audit bundles when present; never include `.env`. If support is needed,
-  run `briefloop workbuddy diagnose --json` and share the redacted output
-  manually.
+  share only manually reviewed, non-secret excerpts from `briefloop status
+  --json` or doctor output.
 - Stop and ask when the workspace path, active binary, gate status, or delivery
   intent is unclear.

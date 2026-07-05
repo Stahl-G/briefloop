@@ -203,8 +203,8 @@ The hard stops are:
   keys.
 
 Do not share a whole workspace zip. Use BriefLoop-generated delivery or audit
-bundles when present. If support is needed, run
-`briefloop workbuddy diagnose --json` and share the redacted output manually.
+bundles when present. If support is needed, share only manually reviewed,
+non-secret excerpts from `briefloop status --json` or doctor output.
 
 ## Assistant Trigger Template
 
