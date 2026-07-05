@@ -184,6 +184,27 @@ invalid/stale artifacts, finalize/delivery presence, secret-risk flags such as
 `.env` with nonempty keys, and the next safe action. It does not run gates,
 repair artifacts, approve delivery, authorize release, or prove semantic truth.
 
+## Secret-Safe Support Bundle
+
+Do not share or upload a whole BriefLoop workspace zip from WorkBuddy. A
+workspace can contain `.env`, cached inputs, private planning notes, or local
+operator traces.
+
+When a reviewer needs debugging material, create a support bundle instead:
+
+```bash
+briefloop workbuddy support-bundle --workspace <workspace> --output <outside-workspace-dir> --json
+```
+
+The command packages selected text inputs, runtime state, event logs, gate
+reports, and intermediate control records. It excludes `.env`, private planning
+paths, existing archives, and non-text files, and redacts secret-looking text
+lines such as API keys or tokens. The bundle is for support/debugging only; it
+is not a delivery bundle, gate approval, release authority, or semantic proof.
+
+For reader delivery use the normal finalized delivery bundle. For audit review
+use the normal audit bundle. Do not substitute a support bundle for either one.
+
 ## Assistant Trigger Template
 
 The Assistant template is here:

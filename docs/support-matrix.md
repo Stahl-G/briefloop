@@ -457,6 +457,7 @@ approval, release authority, semantic proof, or output-quality proof.
 | PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
 | Hermes plugin (`integrations/hermes-plugin/`) | Supported |
 | WorkBuddy Skill source bundle (`.agents/skills/briefloop-workbuddy/`) and local zip packaging (`workbuddy pack-skill`) | Experimental; source-clone-only input, generated local Skill zip, not WorkBuddy Marketplace publication or wheel/sdist package data |
+| WorkBuddy support bundle (`workbuddy support-bundle`) | Experimental; secret-safe support/debug package, not reader delivery, audit approval, gate authority, release authority, or semantic proof |
 | CodeBuddy project Skill adapter (`.codebuddy/skills/briefloop/`) | Experimental; source-clone-only project Skill used by `--runtime codebuddy`; keeps orchestration in the main CodeBuddy session and is not a forked Skill |
 | CodeBuddy project role agents (`.codebuddy/agents/briefloop-*.md`) | Experimental; source-clone-only project sub-agent assets for role drafting only; main CodeBuddy session still owns deterministic CLI transactions |
 

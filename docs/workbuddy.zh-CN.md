@@ -171,6 +171,25 @@ artifacts、finalize/delivery 是否存在、`.env` 非空 key 等 secret-risk f
 以及 next safe action。它不运行 gates、不修复 artifacts、不批准 delivery、不授权
 release，也不证明语义真实。
 
+## 密钥安全 Support Bundle
+
+不要从 WorkBuddy 直接分享或上传整个 BriefLoop workspace zip。Workspace 里可能包含
+`.env`、缓存输入、private planning notes 或本地 operator trace。
+
+需要给 reviewer 调试材料时，改用 support bundle：
+
+```bash
+briefloop workbuddy support-bundle --workspace <workspace> --output <workspace外部目录> --json
+```
+
+这个命令只打包选定的文本输入、runtime state、event log、gate reports 和中间
+control records。它会排除 `.env`、private planning 路径、已有 archive 和非文本文件，
+并把 API key、token 等疑似密钥行脱敏。这个 bundle 只用于 support/debugging；不是
+delivery bundle、gate approval、release authority 或 semantic proof。
+
+读者交付使用正式 finalized delivery bundle；审计复核使用正式 audit bundle。不要用
+support bundle 替代它们。
+
 ## Assistant Trigger 模板
 
 Assistant 模板在这里：

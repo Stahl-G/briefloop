@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added experimental `briefloop workbuddy support-bundle` packaging for
+  secret-safe support/debug handoff. The bundle excludes `.env`, private
+  planning paths, existing archives, and non-text files, redacts secret-looking
+  text lines, and does not create reader delivery, gate approval, release
+  authority, or semantic proof.
 - Added experimental Gmail delivery through the optional `gws` CLI:
   `briefloop deliver --workspace <workspace> --target gmail --channel draft
   --recipient <email>` creates a Gmail draft, while `--channel send`

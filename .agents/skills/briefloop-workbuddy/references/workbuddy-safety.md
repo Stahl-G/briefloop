@@ -17,6 +17,8 @@ authority layer.
   `agent_handoff.md` / `agent_handoff.json` step;
 - after each CLI command, report only deterministic progress visible in status,
   workflow state, event log, or generated artifacts;
+- when support material is needed, run
+  `briefloop workbuddy support-bundle --workspace <workspace> --output <outside-workspace-dir>`;
 - keep role delegation claims literal;
 - explain Quality Panel as an operator/audit attachment.
 
@@ -36,6 +38,8 @@ authority layer.
   output-quality improvement;
 - expose private local paths, private planning files, tokens, or company
   sensitive material in examples.
+- zip, upload, or share the whole workspace; use a finalized delivery/audit
+  bundle or `workbuddy support-bundle` instead.
 
 ## If Unsure
 
