@@ -58,9 +58,23 @@ For relative workspace paths, resolve from the current Claude Code project
 folder. If the workspace cannot be found and the verb is not `new`, ask for an
 absolute workspace path before proceeding.
 
-Use existing deterministic BriefLoop commands. Do not run specialist stages
-from this compatibility command; read the generated handoff and ask for
-explicit operator confirmation before continuing role-owned artifact work.
+Resolve the CLI once before running any shell command:
+
+```bash
+if command -v briefloop >/dev/null 2>&1; then
+  BRIEFLOOP_CLI=briefloop
+elif command -v multi-agent-brief >/dev/null 2>&1; then
+  BRIEFLOOP_CLI=multi-agent-brief
+else
+  echo "BriefLoop CLI not found. Run the setup instructions first."
+  exit 1
+fi
+```
+
+Use `$BRIEFLOOP_CLI` for every command below. Do not check one CLI binary and
+execute a different one. Do not run specialist stages from this compatibility
+command; read the generated handoff and ask for explicit operator confirmation
+before continuing role-owned artifact work.
 
 ## `new`
 
@@ -68,11 +82,11 @@ Purpose: create a new brief workspace.
 
 Allowed:
 
-- check whether `multi-agent-brief` is available;
+- resolve `$BRIEFLOOP_CLI` once using the compatibility fallback above;
 - collect onboarding fields in plain language;
 - create `onboarding.json`;
-- run `briefloop init <workspace> --from-onboarding <onboarding.json>`;
-- run `briefloop run --workspace <workspace> --runtime claude --skip-doctor`;
+- run `$BRIEFLOOP_CLI init <workspace> --from-onboarding <onboarding.json>`;
+- run `$BRIEFLOOP_CLI run --workspace <workspace> --runtime claude --skip-doctor`;
 - report the workspace path and handoff path.
 
 Rules:
@@ -128,7 +142,7 @@ Purpose: create or refresh runtime handoff for an existing workspace.
 Run:
 
 ```bash
-briefloop run --workspace <workspace> --runtime claude --skip-doctor
+$BRIEFLOOP_CLI run --workspace <workspace> --runtime claude --skip-doctor
 ```
 
 Then report:
@@ -158,7 +172,7 @@ Purpose: read-only operator dashboard.
 Run exactly this read-only helper:
 
 ```bash
-briefloop status --workspace <workspace> --json
+$BRIEFLOOP_CLI status --workspace <workspace> --json
 ```
 
 Hard rule:
@@ -182,8 +196,8 @@ Summarize the helper output. Report:
 Forbidden:
 
 - do not manually inspect workspace control files when this helper is available;
-- do not run `briefloop state check`;
-- do not run `briefloop run`;
+- do not run `$BRIEFLOOP_CLI state check`;
+- do not run `$BRIEFLOOP_CLI run`;
 - do not initialize runtime state;
 - do not refresh artifact registry;
 - do not refresh control switchboard;
@@ -194,7 +208,7 @@ Forbidden:
 If state may be stale, say:
 
 ```text
-artifact_registry may be stale; run `briefloop state check --workspace <workspace> --strict` only when you intend to refresh control records.
+artifact_registry may be stale; run `$BRIEFLOOP_CLI state check --workspace <workspace> --strict` only when you intend to refresh control records.
 ```
 
 ## `feedback <workspace> [text-or-file]`
@@ -204,7 +218,7 @@ Purpose: record and triage user feedback without executing repair.
 If a feedback file path is provided, run:
 
 ```bash
-briefloop feedback ingest --workspace <workspace> --feedback <file> --source human --json
+$BRIEFLOOP_CLI feedback ingest --workspace <workspace> --feedback <file> --source human --json
 ```
 
 If inline feedback text is provided, write it to a uniquely named
@@ -220,10 +234,10 @@ After recording, show:
 
 Downstream actions require explicit user confirmation before execution:
 
-- `briefloop feedback plan`;
-- `briefloop feedback resolve`;
-- `briefloop improve propose`;
-- `briefloop improve approve/reject/revert`.
+- `$BRIEFLOOP_CLI feedback plan`;
+- `$BRIEFLOOP_CLI feedback resolve`;
+- `$BRIEFLOOP_CLI improve propose`;
+- `$BRIEFLOOP_CLI improve approve/reject/revert`.
 
 Forbidden:
 
@@ -241,8 +255,8 @@ Purpose: check gates/finalize status, then deliver the reader delivery bundle.
 Run the delivery sequence explicitly:
 
 ```bash
-briefloop gates check --workspace <workspace> --stage auditor
-briefloop state check --workspace <workspace> --strict
+$BRIEFLOOP_CLI gates check --workspace <workspace> --stage auditor
+$BRIEFLOOP_CLI state check --workspace <workspace> --strict
 ```
 
 Interpret `current_stage: None` / `null` as terminal completion, not as
@@ -255,7 +269,7 @@ If the current stage is `auditor` and state is not blocked, record audit/gate
 completion:
 
 ```bash
-briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
+$BRIEFLOOP_CLI state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 ```
 
 If state is blocked, stop. Use feedback/repair, human review, or `block_run`.
@@ -264,9 +278,9 @@ Do not finalize.
 Once the current stage is `finalize`, run:
 
 ```bash
-briefloop finalize --config <workspace>/config.yaml
-briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+$BRIEFLOOP_CLI finalize --config <workspace>/config.yaml
+$BRIEFLOOP_CLI gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+$BRIEFLOOP_CLI state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 Finalize reads `output/intermediate/audited_brief.md` as frozen input. Do not
 edit `audited_brief.md`, `audit_report.json`, artifact registry, or workflow
@@ -276,14 +290,14 @@ brief, stop and route repair to Editor before rerunning downstream stages.
 If no delivery target is specified, run:
 
 ```bash
-briefloop deliver --workspace <workspace> --target local
+$BRIEFLOOP_CLI deliver --workspace <workspace> --target local
 ```
 
 If the user asks to send to Feishu, ask for the missing channel and recipient
 first:
 
 ```bash
-briefloop deliver --workspace <workspace> --target feishu --channel doc|drive|chat --recipient <folder-or-chat-id>
+$BRIEFLOOP_CLI deliver --workspace <workspace> --target feishu --channel doc|drive|chat --recipient <folder-or-chat-id>
 ```
 
 The delivery command may send only files listed in
@@ -313,7 +327,7 @@ If `new`, `run`, or `status` finds a setup problem, surface the relevant
 diagnostic and suggest:
 
 ```bash
-briefloop doctor --config <workspace>/config.yaml
+$BRIEFLOOP_CLI doctor --config <workspace>/config.yaml
 ```
 
 Agent/operator commands include `state stage-complete`, `state

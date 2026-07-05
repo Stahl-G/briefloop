@@ -535,8 +535,8 @@ def test_deliver_feishu_success_event_failure_warns_in_text_output(
 
 def test_mabw_deliver_guidance_uses_delivery_command() -> None:
     text = (ROOT / ".claude" / "commands" / "mabw.md").read_text(encoding="utf-8")
-    assert "multi-agent-brief deliver --workspace <workspace> --target local" in text
-    assert "multi-agent-brief deliver --workspace <workspace> --target feishu" in text
+    assert "$BRIEFLOOP_CLI deliver --workspace <workspace> --target local" in text
+    assert "$BRIEFLOOP_CLI deliver --workspace <workspace> --target feishu" in text
     assert "delivery_artifacts" in text
     assert "do not send audit/control records" in text
     assert "`doctor` is not a writer verb" in text

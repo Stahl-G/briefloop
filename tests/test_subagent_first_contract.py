@@ -23,7 +23,11 @@ def _assert_scout_chunk_contract(path: str) -> None:
     assert "topic" in normalized, path
     assert "evidence text" in normalized, path
     assert "completion order" in normalized, path
-    assert "append to candidate_claims.json from chunk workers" in normalized, path
+    assert (
+        "append to candidate_claims.json from chunk workers" in normalized
+        or "join chunk outputs deterministically before writing candidate_claims.json" in normalized
+        or "join chunks deterministically before writing candidate_claims.json" in normalized
+    ), path
     assert "silently drop" in normalized, path
 
 
@@ -42,10 +46,10 @@ def _assert_generate_brief_repair_transaction(path: str) -> None:
     text = _read(path)
     normalized = " ".join(text.replace("`", "").split())
 
-    assert "Do not call multi-agent-brief run again mid-pipeline" in normalized, path
-    assert "multi-agent-brief repair route --workspace $ARGUMENTS --json" in normalized, path
-    assert "multi-agent-brief repair start --workspace $ARGUMENTS --json" in normalized, path
-    assert "multi-agent-brief repair complete --workspace $ARGUMENTS --reason" in normalized, path
+    assert "Do not call briefloop run again mid-pipeline" in normalized, path
+    assert "briefloop repair route --workspace $ARGUMENTS --json" in normalized, path
+    assert "briefloop repair start --workspace $ARGUMENTS --json" in normalized, path
+    assert "briefloop repair complete --workspace $ARGUMENTS --reason" in normalized, path
     assert "do not edit artifacts directly" in normalized.lower(), path
     assert "Do not edit frozen artifacts directly" in normalized, path
     assert "Direct edits will mark the run contaminated and non-reference-eligible" in normalized, path
@@ -141,10 +145,10 @@ def test_claude_generate_brief_command_uses_orchestrator_contract():
     assert "configs/orchestrator_contract.yaml" in text
     assert "configs/stage_specs.yaml" in text
     assert "configs/artifact_contracts.yaml" in text
-    assert "multi-agent-brief run --workspace $ARGUMENTS --runtime claude --skip-doctor" in text
+    assert "briefloop run --workspace $ARGUMENTS --runtime claude --skip-doctor" in text
     assert "output/intermediate/audience_profile_snapshot.md" in text
     assert "output/intermediate/orchestrator_control_switchboard.json" in text
-    assert "multi-agent-brief controls select" in text
+    assert "briefloop controls select" in text
     assert "selection is not execution" in text
     assert "Do not treat `audience_profile.md` as source evidence" in text
     assert "retry_stage" in text
@@ -326,7 +330,7 @@ def test_claude_generate_brief_requires_source_discovery_transaction_for_all_pro
     assert "Complete the `source-discovery` transaction before invoking Scout." in source_section
     assert "configured non-`llm_decide` source profile" in source_section
     assert (
-        "multi-agent-brief state stage-complete --workspace $ARGUMENTS --stage source-discovery"
+        "briefloop state stage-complete --workspace $ARGUMENTS --stage source-discovery"
         in source_section
     )
     assert "after the `source-discovery` transaction succeeds" in source_section
@@ -546,6 +550,21 @@ def test_claude_mabw_command_is_five_verb_writer_surface():
     assert "runtime install" not in first_screen
 
 
+def test_claude_mabw_command_resolves_cli_once_for_compatibility():
+    text = _read(".claude/commands/mabw.md")
+    routing_section = text.split("## Routing", 1)[1].split("## `new`", 1)[0]
+    new_section = text.split("## `new`", 1)[1].split("## `run <workspace>`", 1)[0]
+
+    assert "BRIEFLOOP_CLI=briefloop" in routing_section
+    assert "BRIEFLOOP_CLI=multi-agent-brief" in routing_section
+    assert "Use `$BRIEFLOOP_CLI` for every command below" in routing_section
+    assert "Do not check one CLI binary" in routing_section
+    assert "- check whether `multi-agent-brief` is available;" not in text
+    assert "briefloop init <workspace>" not in new_section
+    assert "$BRIEFLOOP_CLI init <workspace> --from-onboarding <onboarding.json>" in new_section
+    assert "$BRIEFLOOP_CLI run --workspace <workspace> --runtime claude --skip-doctor" in new_section
+
+
 def test_claude_briefloop_command_is_five_verb_writer_surface():
     text = _read(".claude/commands/briefloop.md")
     assert "BriefLoop writer command" in text
@@ -585,9 +604,9 @@ def test_claude_briefloop_command_is_five_verb_writer_surface():
 def test_briefloop_skill_is_not_slash_command_implementation():
     assert Path(".claude/commands/briefloop.md").exists()
     naming = _read("docs/briefloop-naming.md")
-    assert "`/briefloop` is the Claude writer command" in naming
-    assert "The BriefLoop skill is an agent" in naming
-    assert "not the slash-command implementation" in naming
+    assert "`/briefloop` Claude writer command" in naming
+    assert "BriefLoop skill is an agent operator protocol surface" in naming
+    assert "not the slash-command" in naming
 
 
 def test_readme_first_screen_uses_briefloop_as_writer_command():
@@ -617,13 +636,14 @@ def test_claude_mabw_new_forbids_private_company_inference():
     assert "Before writing onboarding.json" in new_section
 
 
-def test_claude_mabw_new_points_to_generation_after_handoff_setup():
+def test_claude_mabw_new_points_to_status_after_handoff_setup():
     text = _read(".claude/commands/mabw.md")
     new_section = text.split("## `new`", 1)[1].split("## `run <workspace>`", 1)[0]
     normalized = " ".join(new_section.split())
     assert "workspace handoff has already been created" in normalized
-    assert "The next writer command to produce the brief is:" in normalized
-    assert "/generate-brief <workspace>" in normalized
+    assert "The next writer command is:" in normalized
+    assert "/briefloop status <workspace>" in normalized
+    assert "/generate-brief <workspace>" not in normalized
     assert "`/mabw status <workspace>` first" in normalized
     assert "`/mabw run <workspace>` refreshes handoff" in normalized
     assert "does not execute specialists" in normalized
@@ -636,8 +656,8 @@ def test_claude_mabw_status_is_read_only_and_feedback_is_bounded():
         "## `feedback <workspace> [text-or-file]`", 1
     )[0]
     assert "status is strictly read-only" in status_section
-    assert "multi-agent-brief status --workspace <workspace> --json" in status_section
-    assert "do not run `multi-agent-brief state check`" in status_section
+    assert "$BRIEFLOOP_CLI status --workspace <workspace> --json" in status_section
+    assert "do not run `$BRIEFLOOP_CLI state check`" in status_section
     assert "do not initialize runtime state" in status_section
     assert "do not refresh artifact registry" in status_section
     assert "do not append event log entries" in status_section
@@ -645,7 +665,7 @@ def test_claude_mabw_status_is_read_only_and_feedback_is_bounded():
     feedback_section = text.split("## `feedback <workspace> [text-or-file]`", 1)[1].split(
         "## `deliver <workspace>`", 1
     )[0]
-    assert "multi-agent-brief feedback ingest" in feedback_section
+    assert "$BRIEFLOOP_CLI feedback ingest" in feedback_section
     assert "Downstream actions require explicit user confirmation" in feedback_section
     assert "do not execute repair" in feedback_section
     assert "do not auto-resolve" in feedback_section
@@ -658,12 +678,12 @@ def test_claude_mabw_deliver_uses_completion_transactions():
     deliver_section = text.split("## `deliver <workspace>`", 1)[1].split(
         "## Diagnostic And Maintainer Commands", 1
     )[0]
-    assert "multi-agent-brief gates check --workspace <workspace> --stage auditor" in deliver_section
-    assert "multi-agent-brief gates check --workspace <workspace> --stage finalize" in deliver_section
-    assert "multi-agent-brief state check --workspace <workspace> --strict" in deliver_section
-    assert "multi-agent-brief state stage-complete --workspace <workspace> --stage auditor" in deliver_section
-    assert "multi-agent-brief finalize --config <workspace>/config.yaml" in deliver_section
-    assert "multi-agent-brief state finalize-complete --workspace <workspace>" in deliver_section
+    assert "$BRIEFLOOP_CLI gates check --workspace <workspace> --stage auditor" in deliver_section
+    assert "$BRIEFLOOP_CLI gates check --workspace <workspace> --stage finalize" in deliver_section
+    assert "$BRIEFLOOP_CLI state check --workspace <workspace> --strict" in deliver_section
+    assert "$BRIEFLOOP_CLI state stage-complete --workspace <workspace> --stage auditor" in deliver_section
+    assert "$BRIEFLOOP_CLI finalize --config <workspace>/config.yaml" in deliver_section
+    assert "$BRIEFLOOP_CLI state finalize-complete --workspace <workspace>" in deliver_section
     assert "finalize` as a quality-gate executor" in deliver_section
     assert "state decide --decision finalize" in deliver_section
     assert "state decide --decision continue" not in deliver_section
@@ -672,10 +692,10 @@ def test_claude_mabw_deliver_uses_completion_transactions():
 def test_opencode_generate_brief_command_uses_audience_snapshot_context():
     text = _read(".opencode/commands/generate-brief.md")
     assert "Orchestrator main agent" in text
-    assert "multi-agent-brief run --workspace $ARGUMENTS --runtime opencode --skip-doctor" in text
+    assert "briefloop run --workspace $ARGUMENTS --runtime opencode --skip-doctor" in text
     assert "output/intermediate/audience_profile_snapshot.md" in text
     assert "output/intermediate/orchestrator_control_switchboard.json" in text
-    assert "multi-agent-brief controls select" in text
+    assert "briefloop controls select" in text
     assert "selection is not execution" in text
     assert "Do not treat `audience_profile.md` as source evidence" in text
     assert "Check the expected artifact" in text
