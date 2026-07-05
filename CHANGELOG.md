@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Added experimental Gmail draft delivery through the optional `gws` CLI:
+  `briefloop deliver --workspace <workspace> --target gmail --channel draft
+  --recipient <email>`. This creates a Gmail draft only, records redacted
+  delivery events, and does not send mail, attach audit/control files, approve
+  delivery, authorize release, or prove semantic truth.
 - Added a deterministic CodeBuddy adapter smoke guard that validates
   source-clone `.codebuddy` Skill/agent assets and a fresh `--runtime codebuddy`
   handoff. The smoke is release-readiness coverage only; it does not launch
