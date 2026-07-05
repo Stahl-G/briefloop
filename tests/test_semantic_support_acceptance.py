@@ -7,9 +7,13 @@ from pathlib import Path
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
+from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
+    build_semantic_assessment_checked_inputs,
+)
 from multi_agent_brief.orchestrator.runtime_state.semantic_support_acceptance import (
     SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY,
     semantic_support_acceptance_ledger_path,
+    semantic_support_acceptance_record_current_effectiveness,
 )
 from tests.test_quality_panel import _workspace, _write_semantic_support_artifacts
 
@@ -18,6 +22,16 @@ def _artifact_status(ws: Path, capsys) -> dict:
     assert main(["state", "check", "--workspace", str(ws), "--json"]) == 0
     state = json.loads(capsys.readouterr().out)
     return state["artifact_registry"]["artifacts"]["semantic_support_acceptance_ledger"]
+
+
+def _write_fresh_semantic_support_artifacts(ws: Path) -> None:
+    _write_semantic_support_artifacts(ws)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "audited_brief.md").write_text("# Audited Brief\n\nTargetCo opened a demo facility.\n", encoding="utf-8")
+    report_path = intermediate / "semantic_assessment_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["checked_inputs"] = build_semantic_assessment_checked_inputs(ws)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _record_acceptance(ws: Path, capsys, *, decision: str = "accept") -> None:
@@ -64,7 +78,7 @@ def _adjudicate_rc(ws: Path, capsys) -> tuple[int, dict]:
 
 def test_semantic_support_adjudicate_records_acceptance_without_authority(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
 
     rc = main(
@@ -101,6 +115,8 @@ def test_semantic_support_adjudicate_records_acceptance_without_authority(tmp_pa
     assert record["claim_id"] == "CL-0001"
     assert record["atom_id"] == "AC-0001-01"
     assert record["decision"] == "accept"
+    assert record["semantic_assessment_report_sha256"]
+    assert record["checked_inputs_digest"]
     assert all(value is False for value in record["authority_effects"].values())
     assert not (ws / "output" / "intermediate" / "claim_support_matrix.json").exists()
     assert not (ws / "output" / "intermediate" / "gates" / "auditor_quality_gate_report.json").exists()
@@ -112,15 +128,63 @@ def test_semantic_support_adjudicate_records_acceptance_without_authority(tmp_pa
     assert event["decision"] == "accept"
     assert event["metadata"]["proposal_id"] == "SAR-0001"
     assert event["metadata"]["boundary"] == SEMANTIC_SUPPORT_ACCEPTANCE_BOUNDARY
+    assert event["metadata"]["semantic_assessment_report_sha256"] == record["semantic_assessment_report_sha256"]
+    assert event["metadata"]["checked_inputs_digest"] == record["checked_inputs_digest"]
 
     artifact = _artifact_status(ws, capsys)
     assert artifact["status"] == "valid"
     assert artifact["validation_result"] == "experimental_semantic_support_acceptance_ledger"
 
 
+def test_semantic_support_acceptance_record_current_effective_tracks_sar_and_inputs(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_fresh_semantic_support_artifacts(ws)
+    capsys.readouterr()
+    _record_acceptance(ws, capsys)
+    path = semantic_support_acceptance_ledger_path(ws)
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+    record = ledger["records"][0]
+
+    assert semantic_support_acceptance_record_current_effectiveness(record, workspace=ws) == {
+        "current_effective": True,
+        "reason": None,
+    }
+
+    (ws / "output" / "intermediate" / "audited_brief.md").write_text("# Edited after adjudication\n", encoding="utf-8")
+
+    effectiveness = semantic_support_acceptance_record_current_effectiveness(record, workspace=ws)
+    assert effectiveness["current_effective"] is False
+    assert effectiveness["reason"] == "checked_input_stale:audited_brief"
+
+
+def test_semantic_support_acceptance_record_current_effective_tracks_report_sha(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_fresh_semantic_support_artifacts(ws)
+    capsys.readouterr()
+    _record_acceptance(ws, capsys)
+    path = semantic_support_acceptance_ledger_path(ws)
+    ledger = json.loads(path.read_text(encoding="utf-8"))
+    record = ledger["records"][0]
+    report_path = ws / "output" / "intermediate" / "semantic_assessment_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.setdefault("metadata", {})["post_adjudication_edit"] = True
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    effectiveness = semantic_support_acceptance_record_current_effectiveness(record, workspace=ws)
+
+    assert effectiveness["current_effective"] is False
+    assert effectiveness["reason"] == "semantic_assessment_report_sha256_changed"
+
+
 def test_semantic_support_adjudicate_rejects_unknown_proposal_without_writes(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     event_path = ws / "output" / "intermediate" / "event_log.jsonl"
     before_events = event_path.read_text(encoding="utf-8") if event_path.exists() else ""
@@ -151,7 +215,7 @@ def test_semantic_support_adjudicate_rejects_unknown_proposal_without_writes(tmp
 
 def test_semantic_support_adjudicate_rejects_missing_event_log_without_writes(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     event_path = ws / "output" / "intermediate" / "event_log.jsonl"
     event_path.unlink()
@@ -167,7 +231,7 @@ def test_semantic_support_adjudicate_rejects_missing_event_log_without_writes(tm
 
 def test_semantic_support_adjudicate_rejects_invalid_event_log_without_writes(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     event_path = ws / "output" / "intermediate" / "event_log.jsonl"
     before = "{bad json}\n"
@@ -184,7 +248,7 @@ def test_semantic_support_adjudicate_rejects_invalid_event_log_without_writes(tm
 
 def test_semantic_support_adjudicate_rejects_non_newline_event_log_without_writes(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     event_path = ws / "output" / "intermediate" / "event_log.jsonl"
     before = event_path.read_text(encoding="utf-8").rstrip("\n")
@@ -201,7 +265,7 @@ def test_semantic_support_adjudicate_rejects_non_newline_event_log_without_write
 
 def test_semantic_support_acceptance_ledger_rejects_authority_forgery(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     _record_acceptance(ws, capsys, decision="reject")
     path = semantic_support_acceptance_ledger_path(ws)
@@ -219,7 +283,7 @@ def test_semantic_support_acceptance_ledger_rejects_authority_forgery(tmp_path: 
 
 def test_semantic_support_acceptance_ledger_rejects_record_authority_forgery(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     _record_acceptance(ws, capsys)
     path = semantic_support_acceptance_ledger_path(ws)
@@ -238,7 +302,7 @@ def test_semantic_support_acceptance_ledger_rejects_record_authority_forgery(tmp
 
 def test_semantic_support_acceptance_ledger_rejects_nested_authority_forgery(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     _record_acceptance(ws, capsys)
     path = semantic_support_acceptance_ledger_path(ws)
@@ -257,7 +321,7 @@ def test_semantic_support_acceptance_ledger_rejects_nested_authority_forgery(tmp
 
 def test_semantic_support_acceptance_ledger_rejects_fake_event_id(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     _record_acceptance(ws, capsys)
     path = semantic_support_acceptance_ledger_path(ws)
@@ -276,7 +340,7 @@ def test_semantic_support_acceptance_ledger_rejects_fake_event_id(tmp_path: Path
 
 def test_semantic_support_acceptance_ledger_rejects_event_metadata_mismatch(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     _record_acceptance(ws, capsys)
     event_path = ws / "output" / "intermediate" / "event_log.jsonl"
@@ -298,7 +362,7 @@ def test_semantic_support_acceptance_ledger_rejects_event_metadata_mismatch(tmp_
 
 def test_semantic_support_acceptance_ledger_rejects_edited_decision(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
-    _write_semantic_support_artifacts(ws)
+    _write_fresh_semantic_support_artifacts(ws)
     capsys.readouterr()
     _record_acceptance(ws, capsys, decision="accept")
     path = semantic_support_acceptance_ledger_path(ws)

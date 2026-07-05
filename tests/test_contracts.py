@@ -740,6 +740,51 @@ class TestSemanticAssessmentReportContract:
         assert SemanticAssessmentReportContract.validate(_valid_semantic_assessment_report()) == []
         assert SemanticAssessmentReportContract.is_valid(_valid_semantic_assessment_report())
 
+    def test_accepts_checked_inputs_shape(self):
+        report = _valid_semantic_assessment_report()
+        report["checked_inputs"] = {
+            "audited_brief": {
+                "path": "output/intermediate/audited_brief.md",
+                "sha256": "a" * 64,
+                "size_bytes": 10,
+            },
+            "claim_ledger": {
+                "path": "output/intermediate/claim_ledger.json",
+                "sha256": "b" * 64,
+                "size_bytes": 20,
+            },
+            "atomic_claim_graph": {
+                "path": "output/intermediate/atomic_claim_graph.json",
+                "sha256": "c" * 64,
+                "size_bytes": 30,
+            },
+            "evidence_span_registry": {
+                "path": "output/intermediate/evidence_span_registry.json",
+                "sha256": "d" * 64,
+                "size_bytes": 40,
+            },
+        }
+
+        assert SemanticAssessmentReportContract.validate(report) == []
+
+    def test_rejects_invalid_checked_inputs_shape(self):
+        report = _valid_semantic_assessment_report()
+        report["checked_inputs"] = {
+            "audited_brief": {
+                "path": "",
+                "sha256": "not-a-sha",
+                "size_bytes": -1,
+            }
+        }
+
+        violations = SemanticAssessmentReportContract.validate(report)
+        fields = {violation.field for violation in violations}
+
+        assert "checked_inputs.audited_brief.path" in fields
+        assert "checked_inputs.audited_brief.sha256" in fields
+        assert "checked_inputs.audited_brief.size_bytes" in fields
+        assert "checked_inputs.claim_ledger" in fields
+
     def test_json_schema_requires_evidence_span_binding(self):
         row_schema = SemanticAssessmentReportContract.json_schema()["properties"]["rows"]["items"]
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from pathlib import Path
@@ -31,6 +33,18 @@ SEMANTIC_ASSESSMENT_WORKSPACE_PROJECTION_SCHEMA_VERSION = (
 )
 SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX = "semantic_assessment_report_validation_error"
 UNRESOLVED_SEMANTIC_ASSESSMENT_LEVELS = {"high", "unknown"}
+SEMANTIC_ASSESSMENT_CHECKED_INPUTS = {
+    "audited_brief": "output/intermediate/audited_brief.md",
+    "claim_ledger": "output/intermediate/claim_ledger.json",
+    "atomic_claim_graph": "output/intermediate/atomic_claim_graph.json",
+    "evidence_span_registry": "output/intermediate/evidence_span_registry.json",
+}
+SEMANTIC_ASSESSMENT_CHECKED_INPUT_STATUSES = {
+    "fresh",
+    "stale",
+    "missing_checked_inputs",
+    "missing_input",
+}
 
 
 def project_semantic_assessment_report_from_workspace(workspace: str | Path) -> dict[str, Any]:
@@ -98,17 +112,165 @@ def project_semantic_assessment_report_from_workspace(workspace: str | Path) -> 
         )
 
     proposal_projection = project_semantic_assessment_proposals(report_payload)
+    checked_projection = project_semantic_assessment_checked_inputs(
+        report_payload=report_payload,
+        workspace=ws,
+    )
+    checked_status = checked_projection["status"]
+    status = "valid" if checked_status in {"fresh", "missing_checked_inputs"} else checked_status
     return {
         **base,
-        "status": "valid",
+        "status": status,
         "report_present": True,
-        "reason": None,
+        "reason": None if checked_status in {"fresh", "missing_checked_inputs"} else checked_projection["reason"],
+        "report_sha256": _file_sha256(report_path),
+        "checked_inputs_status": checked_status,
+        "checked_inputs": checked_projection["checked_inputs"],
+        "checked_inputs_digest": checked_projection["checked_inputs_digest"],
         "proposal_projection": proposal_projection,
         "summary_counts": proposal_projection.get("summary_counts") or {},
         "proposed_claim_support_rows": proposal_projection.get("proposed_claim_support_rows")
         if isinstance(proposal_projection.get("proposed_claim_support_rows"), list)
         else [],
     }
+
+
+def build_semantic_assessment_checked_inputs(workspace: str | Path) -> dict[str, dict[str, Any]]:
+    """Return current checked-input bindings for a workspace.
+
+    This helper is deterministic metadata only. It does not create, validate, or
+    accept semantic support truth; it records the exact artifacts a Semantic
+    Assessment Report reviewed so later readers can detect stale reports.
+    """
+
+    ws = Path(workspace).expanduser().resolve()
+    checked: dict[str, dict[str, Any]] = {}
+    for key, rel_path in SEMANTIC_ASSESSMENT_CHECKED_INPUTS.items():
+        path = ws / rel_path
+        if not path.exists():
+            raise FileNotFoundError(rel_path)
+        checked[key] = {
+            "path": rel_path,
+            "sha256": _file_sha256(path),
+            "size_bytes": path.stat().st_size,
+        }
+    return checked
+
+
+def semantic_assessment_checked_inputs_digest(checked_inputs: Mapping[str, Any]) -> str:
+    """Return a stable digest for checked-input metadata."""
+
+    normalized = _normalized_checked_inputs(checked_inputs)
+    encoded = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def project_semantic_assessment_checked_inputs(
+    *,
+    report_payload: Mapping[str, Any],
+    workspace: str | Path,
+) -> dict[str, Any]:
+    """Project whether a report's declared checked inputs match workspace files."""
+
+    declared = report_payload.get("checked_inputs")
+    if declared is None:
+        return {
+            "status": "missing_checked_inputs",
+            "reason": "checked_inputs_missing",
+            "checked_inputs": {},
+            "checked_inputs_digest": "",
+        }
+    if not isinstance(declared, Mapping):
+        return {
+            "status": "missing_checked_inputs",
+            "reason": "checked_inputs_not_object",
+            "checked_inputs": {},
+            "checked_inputs_digest": "",
+        }
+    normalized = _normalized_checked_inputs(declared)
+    if set(normalized) != set(SEMANTIC_ASSESSMENT_CHECKED_INPUTS):
+        return {
+            "status": "missing_checked_inputs",
+            "reason": "checked_inputs_incomplete",
+            "checked_inputs": normalized,
+            "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized) if normalized else "",
+        }
+
+    ws = Path(workspace).expanduser().resolve()
+    for key in SEMANTIC_ASSESSMENT_CHECKED_INPUTS:
+        entry = normalized[key]
+        rel_path = _text(entry.get("path"))
+        if not rel_path:
+            return {
+                "status": "missing_checked_inputs",
+                "reason": f"checked_input_path_missing:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
+        if rel_path != SEMANTIC_ASSESSMENT_CHECKED_INPUTS[key]:
+            return {
+                "status": "missing_input",
+                "reason": f"checked_input_path_mismatch:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
+        path = (ws / rel_path).resolve()
+        try:
+            path.relative_to(ws)
+        except ValueError:
+            return {
+                "status": "missing_input",
+                "reason": f"checked_input_path_outside_workspace:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
+        if not path.exists():
+            return {
+                "status": "missing_input",
+                "reason": f"checked_input_missing:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
+        if path.stat().st_size != entry.get("size_bytes"):
+            return {
+                "status": "stale",
+                "reason": f"checked_input_stale:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
+        if _file_sha256(path) != entry.get("sha256"):
+            return {
+                "status": "stale",
+                "reason": f"checked_input_stale:{key}",
+                "checked_inputs": normalized,
+                "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+            }
+
+    return {
+        "status": "fresh",
+        "reason": None,
+        "checked_inputs": normalized,
+        "checked_inputs_digest": semantic_assessment_checked_inputs_digest(normalized),
+    }
+
+
+def validate_semantic_assessment_checked_inputs_for_workspace(
+    *,
+    report_payload: Mapping[str, Any],
+    workspace: str | Path,
+) -> str | None:
+    """Return checked-input validation reason for authoritative consumers.
+
+    Legacy reports without ``checked_inputs`` remain optional/advisory and do
+    not invalidate the artifact registry. Declared checked inputs must match.
+    """
+
+    projection = project_semantic_assessment_checked_inputs(report_payload=report_payload, workspace=workspace)
+    status = projection["status"]
+    reason = _text(projection.get("reason"))
+    if status == "fresh" or (status == "missing_checked_inputs" and reason == "checked_inputs_missing"):
+        return None
+    return reason or status
 
 
 def project_semantic_assessment_proposals(report_payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -194,6 +356,9 @@ def _invalid_workspace_projection(base: Mapping[str, Any], *, reason: str) -> di
         "status": "invalid_report",
         "report_present": True,
         "reason": reason,
+        "checked_inputs_status": "missing_checked_inputs",
+        "checked_inputs": {},
+        "checked_inputs_digest": "",
         "proposal_projection": _empty_proposal_projection(),
         "summary_counts": {},
         "proposed_claim_support_rows": [],
@@ -481,6 +646,28 @@ def _evidence_span_ids(evidence_span_registry_payload: Mapping[str, Any]) -> set
             if span_id:
                 span_ids.add(span_id)
     return span_ids
+
+
+def _normalized_checked_inputs(checked_inputs: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, value in checked_inputs.items():
+        clean_key = _text(key)
+        if not clean_key or not isinstance(value, Mapping):
+            continue
+        normalized[clean_key] = {
+            "path": _text(value.get("path")),
+            "sha256": _text(value.get("sha256")),
+            "size_bytes": value.get("size_bytes"),
+        }
+    return dict(sorted(normalized.items()))
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _text(value: Any) -> str:

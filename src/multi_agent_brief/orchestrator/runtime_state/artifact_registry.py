@@ -42,6 +42,7 @@ from multi_agent_brief.orchestrator.runtime_state.evidence_span_registry import 
 )
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX,
+    validate_semantic_assessment_checked_inputs_for_workspace,
     validate_semantic_assessment_report_against_artifacts,
 )
 from multi_agent_brief.orchestrator.runtime_state.semantic_support_acceptance import (
@@ -1390,6 +1391,13 @@ def _validate_semantic_assessment_report_payload(payload: Any, *, artifact_path:
         ledger_claims=ledger_claims or [],
         graph_payload=graph_payload or {},
         evidence_span_registry_payload=evidence_payload or {},
+    )
+    if reason:
+        return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"
+    workspace = artifact_path.parent.parent.parent if artifact_path.parent.name == "intermediate" else artifact_path.parent
+    reason = validate_semantic_assessment_checked_inputs_for_workspace(
+        report_payload=payload,
+        workspace=workspace,
     )
     if reason:
         return ARTIFACT_INVALID, f"{SEMANTIC_ASSESSMENT_REPORT_VALIDATION_PREFIX}:{reason}"

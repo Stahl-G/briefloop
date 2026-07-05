@@ -14,6 +14,13 @@ SEMANTIC_ASSESSMENT_ROW_ID_RE = re.compile(r"^SAR-\d{4}$")
 CLAIM_ID_RE = re.compile(r"^CL-(\d{4})$")
 ATOM_ID_RE = re.compile(r"^AC-(\d{4})-\d{2}$")
 EVIDENCE_SPAN_ID_RE = re.compile(r"^ESP-\d{3,4}-\d{2}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+CHECKED_INPUT_KEYS = {
+    "audited_brief",
+    "claim_ledger",
+    "atomic_claim_graph",
+    "evidence_span_registry",
+}
 
 VALID_ASSESSMENT_METHODS = {
     "human",
@@ -125,6 +132,24 @@ class SemanticAssessmentReportContract(Contract):
                     },
                 },
                 "metadata": {"type": "object"},
+                "checked_inputs": {
+                    "type": "object",
+                    "required": sorted(CHECKED_INPUT_KEYS),
+                    "properties": {
+                        key: {
+                            "type": "object",
+                            "required": ["path", "sha256", "size_bytes"],
+                            "properties": {
+                                "path": {"type": "string"},
+                                "sha256": {"type": "string", "pattern": SHA256_RE.pattern},
+                                "size_bytes": {"type": "integer", "minimum": 0},
+                            },
+                            "additionalProperties": False,
+                        }
+                        for key in sorted(CHECKED_INPUT_KEYS)
+                    },
+                    "additionalProperties": False,
+                },
             },
             "additionalProperties": True,
         }
@@ -149,6 +174,8 @@ class SemanticAssessmentReportContract(Contract):
         metadata = data.get("metadata")
         if metadata is not None and not isinstance(metadata, dict):
             violations.append(FieldViolation(field="metadata", error="must be an object"))
+
+        violations.extend(_validate_checked_inputs(data.get("checked_inputs")))
 
         declared_assessor_ids: set[str] = set()
         declared_assessor_methods: dict[str, str] = {}
@@ -192,6 +219,35 @@ class SemanticAssessmentReportContract(Contract):
     @classmethod
     def migrate(cls, data: dict[str, Any], from_version: str) -> dict[str, Any]:
         return dict(data)
+
+
+def _validate_checked_inputs(value: Any) -> list[FieldViolation]:
+    if value is None:
+        return []
+    if not isinstance(value, dict):
+        return [FieldViolation(field="checked_inputs", error="must be an object")]
+    violations: list[FieldViolation] = []
+    keys = set(value)
+    for key in sorted(CHECKED_INPUT_KEYS - keys):
+        violations.append(FieldViolation(field=f"checked_inputs.{key}", error="required field is missing"))
+    for key in sorted(keys - CHECKED_INPUT_KEYS):
+        violations.append(FieldViolation(field=f"checked_inputs.{key}", error="unsupported checked input"))
+    for key in sorted(CHECKED_INPUT_KEYS & keys):
+        entry = value.get(key)
+        prefix = f"checked_inputs.{key}"
+        if not isinstance(entry, dict):
+            violations.append(FieldViolation(field=prefix, error="must be an object"))
+            continue
+        path = entry.get("path")
+        if not _non_empty_string(path):
+            violations.append(FieldViolation(field=f"{prefix}.path", error="must be a non-empty string"))
+        sha256 = entry.get("sha256")
+        if not _non_empty_string(sha256) or not SHA256_RE.match(str(sha256).strip()):
+            violations.append(FieldViolation(field=f"{prefix}.sha256", error="must be 64 lowercase hex characters"))
+        size_bytes = entry.get("size_bytes")
+        if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or size_bytes < 0:
+            violations.append(FieldViolation(field=f"{prefix}.size_bytes", error="must be a non-negative integer"))
+    return violations
 
 
 def _validate_assessor_entry(
