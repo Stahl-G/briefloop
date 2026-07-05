@@ -45,7 +45,8 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
     blocking_reason = _clean_text(workflow.get("blocking_reason")) if isinstance(workflow, Mapping) else ""
     current_stage = _clean_text(workflow.get("current_stage")) if isinstance(workflow, Mapping) else "unknown"
     runtime = _clean_text(manifest.get("runtime")) if isinstance(manifest, Mapping) else "unknown"
-    latest_gate_status = _latest_gate_status(intermediate)
+    latest_gate = _latest_gate_projection(intermediate)
+    latest_gate_status = latest_gate["status_text"]
 
     run_card = {
         "runtime": runtime or "unknown",
@@ -61,9 +62,11 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "next_allowed_action": _next_safe_action(
             doctor=doctor_payload,
             control_file_status=control_file_status,
+            current_stage=current_stage,
             blocked=blocked,
             run_integrity=run_integrity,
             active_repair=active_repair,
+            latest_gate=latest_gate,
             invalid_or_stale_artifacts=artifact_payload["invalid_or_stale"],
             finalize_report_exists=finalize_path.exists(),
             delivery_dir_exists=delivery_dir.is_dir(),
@@ -256,7 +259,7 @@ def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, 
     )
 
 
-def _latest_gate_status(intermediate: Path) -> str:
+def _latest_gate_projection(intermediate: Path) -> dict[str, Any]:
     for artifact_id, path in (
         (
             "finalize_quality_gate_report",
@@ -272,14 +275,29 @@ def _latest_gate_status(intermediate: Path) -> str:
         if status == "missing":
             continue
         if status != "present" or not isinstance(payload, Mapping):
-            return f"{artifact_id}:unreadable:{status}"
+            return {
+                "artifact_id": artifact_id,
+                "gate_status": "unreadable",
+                "blocking_count": 0,
+                "status_text": f"{artifact_id}:unreadable:{status}",
+            }
         gate_status = _clean_text(payload.get("status")) or "unknown"
         findings = payload.get("findings")
         blocking_count = 0
         if isinstance(findings, list):
             blocking_count = sum(1 for finding in findings if _is_blocking_gate_finding(finding))
-        return f"{artifact_id}:{gate_status}:blocking_findings={blocking_count}"
-    return "unknown"
+        return {
+            "artifact_id": artifact_id,
+            "gate_status": gate_status,
+            "blocking_count": blocking_count,
+            "status_text": f"{artifact_id}:{gate_status}:blocking_findings={blocking_count}",
+        }
+    return {
+        "artifact_id": "",
+        "gate_status": "unknown",
+        "blocking_count": 0,
+        "status_text": "unknown",
+    }
 
 
 def _is_blocking_gate_finding(finding: Any) -> bool:
@@ -292,9 +310,11 @@ def _next_safe_action(
     *,
     doctor: Mapping[str, Any],
     control_file_status: Mapping[str, str],
+    current_stage: str,
     blocked: bool,
     run_integrity: Any,
     active_repair: Any,
+    latest_gate: Mapping[str, Any],
     invalid_or_stale_artifacts: list[Mapping[str, str]],
     finalize_report_exists: bool,
     delivery_dir_exists: bool,
@@ -313,9 +333,13 @@ def _next_safe_action(
     integrity = _run_integrity_status(run_integrity)
     if integrity not in {"clean", "pass", "ok"}:
         return "stop_run_integrity_not_clean"
+    if int(latest_gate.get("blocking_count") or 0) > 0 or _clean_text(latest_gate.get("gate_status")) == "fail":
+        return "stop_resolve_blocking_gate_report"
     if invalid_or_stale_artifacts:
         return "inspect_invalid_or_stale_artifacts"
     if not finalize_report_exists or not delivery_dir_exists:
+        if _clean_text(current_stage) not in {"finalize", "delivery", "delivered"}:
+            return "continue_current_stage_or_handoff_workflow"
         return "draft_only_run_finalize_when_allowed"
     if not finalize_event_exists or not delivery_event_exists:
         return "inspect_finalize_delivery_event_gap"
