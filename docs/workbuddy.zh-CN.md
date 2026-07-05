@@ -14,6 +14,7 @@ release，不发布报告，也不声称 WorkBuddy subagent 已经运行。
 | WorkBuddy Skill source bundle | Experimental | 位于 `.agents/skills/briefloop-workbuddy/` 的 source-clone-only 文件 |
 | CodeBuddy project Skill adapter | Experimental | 位于 `.codebuddy/skills/briefloop/` 的 source-clone-only project Skill；只负责主会话编排 |
 | CodeBuddy project role agents | Experimental | 位于 `.codebuddy/agents/briefloop-*.md` 的 source-clone-only role agents；只起草 handoff 分配的 artifacts |
+| CodeBuddy runtime handoff | Experimental | `--runtime codebuddy` 生成 CodeBuddy-specific handoff；确定性 CLI transactions 仍由主会话负责 |
 | 本地 WorkBuddy Skill zip | Experimental | 由 `briefloop workbuddy pack-skill` 生成；不是 WorkBuddy Marketplace 发布 |
 | WorkBuddy Assistant trigger | Experimental template | 远程提示模板，应转入已安装 Skill 的本地 WorkBuddy session |
 | WorkBuddy delegated runtime | Not supported | 使用 `--runtime operator`；除非 WorkBuddy 真实提供并记录 delegation，否则不能声称 role delegation 发生过 |
@@ -101,9 +102,20 @@ Brave、Firecrawl 或 Serper。
 
 ## 操作规则
 
-WorkBuddy 使用 `--runtime operator`。operator runtime 是 host-agnostic compact
-operator workflow。它不假设 WorkBuddy 已经 delegated Scout、Analyst、Editor、
-Auditor、Formatter 或任何其他角色。
+普通 WorkBuddy 操作使用 `--runtime operator`。operator runtime 是 host-agnostic
+compact operator workflow。它不假设 WorkBuddy 已经 delegated Scout、Analyst、
+Editor、Auditor、Formatter 或任何其他角色。
+
+只有在 source checkout 中存在 CodeBuddy project Skill 和 role-agent assets 时，
+才使用 `--runtime codebuddy`：
+
+```bash
+briefloop run --workspace <workspace> --runtime codebuddy
+```
+
+这会写出 CodeBuddy-specific handoff，包含明确的 role-agent 名称和
+`runtime_capabilities` metadata。它仍是 experimental，不新增 gate、delivery、
+release 或 semantic-proof authority。
 
 如果 CodeBuddy project role agents 可用，main CodeBuddy session 可以显式调用：
 

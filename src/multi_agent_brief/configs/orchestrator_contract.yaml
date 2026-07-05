@@ -62,6 +62,7 @@ runtime_surfaces:
   - hermes
   - claude
   - codex
+  - codebuddy
   - opencode
   - operator
   - manual

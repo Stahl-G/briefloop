@@ -32,14 +32,23 @@ Historical implementation name: MABW
   - status: experimental; source-clone-only
   - stays in the main CodeBuddy session and must not use `context: fork`
   - invokes CodeBuddy project role agents only when explicitly delegated
-  - does not add CodeBuddy runtime support, gate authority, delivery approval,
-    release authority, or semantic proof
+  - used by `--runtime codebuddy` handoff for native CodeBuddy operation
+  - does not add gate authority, delivery approval, release authority, or
+    semantic proof
 - CodeBuddy project role agents:
   - path: `.codebuddy/agents/briefloop-*.md`
   - status: experimental; source-clone-only
   - role agents draft handoff-assigned artifacts only
   - role agents must not run `briefloop` or `multi-agent-brief` CLI commands
   - main CodeBuddy session remains responsible for deterministic transactions
+- CodeBuddy runtime handoff:
+  - `--runtime codebuddy`: experimental handoff for CodeBuddy project Skill plus
+    project role agents
+  - `runtime_capabilities.delegation_supported`: `true`
+  - `runtime_capabilities.nested_subagents_supported`: `false`
+  - `runtime_capabilities.role_agents_run_cli_transactions`: `false`
+  - no gate execution, delivery approval, release authority, semantic proof, or
+    output-quality proof
 - BriefLoop skill is an agent protocol surface, not the `/briefloop` slash
   command implementation.
 - Python package/module path: `multi_agent_brief`

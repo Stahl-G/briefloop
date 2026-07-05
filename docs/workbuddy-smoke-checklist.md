@@ -68,8 +68,14 @@ or any issue/PR comment that reports the result.
      other role subagent ran unless WorkBuddy actually delegated and recorded
      that role.
 
-   If CodeBuddy project role agents are used, role delegation must be explicit
-   and use the checked-in project sub-agents:
+   If CodeBuddy project Skill and role agents are used, run the CodeBuddy
+   handoff instead:
+
+   ```bash
+   briefloop run --workspace <workspace> --runtime codebuddy
+   ```
+
+   Role delegation must be explicit and use the checked-in project sub-agents:
 
    ```text
    briefloop-scout
@@ -128,7 +134,8 @@ or any issue/PR comment that reports the result.
 The smoke passes only if all of these are true:
 
 - WorkBuddy used the installed BriefLoop Skill or generated local Skill bundle.
-- WorkBuddy used `--runtime operator`.
+- WorkBuddy used `--runtime operator`, or used `--runtime codebuddy` only when
+  the CodeBuddy project Skill and role-agent assets were available.
 - WorkBuddy reported the active BriefLoop CLI path and version.
 - WorkBuddy created or opened only a confirmed workspace path.
 - WorkBuddy did not hand-edit Python-owned control files or frozen artifacts.

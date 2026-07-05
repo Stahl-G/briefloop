@@ -10,6 +10,7 @@ import yaml
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.start_commands import (
     CONTRACT_REFERENCES,
+    RUNTIME_CODEBUDDY,
     RUNTIME_OPERATOR,
     VALID_RUNTIMES,
     build_handoff,
@@ -1300,6 +1301,54 @@ def test_start_operator_handoff_contains_compact_runtime_contract(tmp_path):
     _assert_orchestrator_contract_handoff(data)
 
 
+def test_start_codebuddy_handoff_contains_project_skill_and_role_agent_contract(tmp_path):
+    ws = _write_workspace(tmp_path)
+    rc = main([
+        "start",
+        "--workspace", str(ws),
+        "--runtime", "codebuddy",
+        "--skip-doctor",
+        "--venv", str(tmp_path / ".venv" / "bin" / "activate"),
+    ])
+    assert rc == 0
+    data = json.loads((ws / "output" / "intermediate" / "agent_handoff.json").read_text(encoding="utf-8"))
+    text = (ws / "output" / "intermediate" / "agent_handoff.md").read_text(encoding="utf-8")
+
+    assert data["runtime"] == RUNTIME_CODEBUDDY
+    capabilities = data["runtime_capabilities"]
+    assert capabilities["runtime"] == RUNTIME_CODEBUDDY
+    assert capabilities["host"] == "codebuddy"
+    assert capabilities["delegation_supported"] is True
+    assert capabilities["nested_subagents_supported"] is False
+    assert capabilities["skill_path"] == ".codebuddy/skills/briefloop/SKILL.md"
+    assert capabilities["role_agent_path_glob"] == ".codebuddy/agents/briefloop-*.md"
+    assert capabilities["main_session_runs_cli_transactions"] is True
+    assert capabilities["role_agents_run_cli_transactions"] is False
+    assert capabilities["must_not_claim_uninvoked_subagents_ran"] is True
+    assert capabilities["subagent_names"] == [
+        "briefloop-scout",
+        "briefloop-analyst",
+        "briefloop-editor",
+        "briefloop-auditor",
+        "briefloop-formatter",
+    ]
+
+    assert ".codebuddy/skills/briefloop/SKILL.md" in data["prompt"]
+    assert "Do not add or use `context: fork`" in data["prompt"]
+    assert "The main CodeBuddy session is the Orchestrator" in data["prompt"]
+    assert "CodeBuddy sub-agents cannot spawn other sub-agents" in data["prompt"]
+    assert "Role sub-agents must not run `briefloop` or `multi-agent-brief` CLI commands" in data["prompt"]
+    assert "briefloop-formatter` for finalize readiness only" in data["prompt"]
+    assert "The main CodeBuddy session owns deterministic BriefLoop CLI transactions" in data["prompt"]
+    assert "## Runtime Capabilities" in text
+    assert "`runtime`: `codebuddy`" in text
+    assert "briefloop-scout" in text
+    assert "gate authority" in " ".join(data["notes"])
+    assert "delivery approval" in " ".join(data["notes"])
+    assert "release authority" in " ".join(data["notes"])
+    _assert_orchestrator_contract_handoff(data)
+
+
 def test_start_manual_alias_resolves_to_operator_and_warns(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     rc = main([
@@ -1434,6 +1483,31 @@ def test_build_handoff_codex_maps_specialists_to_custom_agents(tmp_path):
     assert "Do not launch the interactive terminal onboarding wizard inside Codex chat" in handoff.prompt
     assert "[stage] produced <artifact> -> stage-complete passed -> next <stage>" in handoff.prompt
     assert any("Codex must trust the workspace" in note for note in handoff.notes)
+    _assert_orchestrator_contract_handoff(handoff.to_dict())
+
+
+def test_build_handoff_codebuddy_uses_project_skill_and_role_agents(tmp_path):
+    ws = _write_workspace(tmp_path)
+    handoff = build_handoff(
+        workspace=ws,
+        repo_workdir=ROOT,
+        runtime="codebuddy",
+        venv="/tmp/.venv/bin/activate",
+        run_doctor=False,
+    )
+    assert handoff.runtime == "codebuddy"
+    assert handoff.runtime_capabilities["delegation_supported"] is True
+    assert handoff.runtime_capabilities["nested_subagents_supported"] is False
+    assert handoff.runtime_capabilities["role_agent_path_glob"] == ".codebuddy/agents/briefloop-*.md"
+    assert ".codebuddy/skills/briefloop/SKILL.md" in handoff.prompt
+    assert "briefloop-scout" in handoff.prompt
+    assert "briefloop-auditor" in handoff.prompt
+    assert "briefloop-formatter` for finalize readiness only" in handoff.prompt
+    assert "Role sub-agents must not run `briefloop` or `multi-agent-brief` CLI commands" in handoff.prompt
+    assert "The main CodeBuddy session owns deterministic BriefLoop CLI transactions" in handoff.prompt
+    assert "Do not add or use `context: fork`" in handoff.prompt
+    assert "CodeBuddy sub-agents cannot spawn other sub-agents" in handoff.prompt
+    assert "This runtime handoff does not add gate authority" in " ".join(handoff.notes)
     _assert_orchestrator_contract_handoff(handoff.to_dict())
 
 
