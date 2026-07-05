@@ -63,14 +63,23 @@ Before operating a workspace:
 2. Report the resolved binary path and version to the user.
 3. If `briefloop` is not available, ask the user to activate the source-clone
    virtual environment or finish setup before continuing.
-4. If no workspace path is provided, do not ask only "where is the workspace?"
+4. Use the first-run search default correctly:
+   - default BriefLoop first run does not require live web search;
+   - missing search API keys do not make setup incomplete;
+   - if the user asks for live web search or API setup, use Tavily as the
+     default provider and check `TAVILY_API_KEY` first;
+   - mention Exa, Brave, Firecrawl, or Serper only when the user asks for a
+     different provider;
+   - never print API key values; report only whether the expected env key is
+     present.
+5. If no workspace path is provided, do not ask only "where is the workspace?"
    First classify:
    - existing workspace: ask for the folder path;
    - first-time run: offer to create one.
-5. Explain that a BriefLoop workspace is the local folder for this report
+6. Explain that a BriefLoop workspace is the local folder for this report
    project. Before creating it, ask for explicit confirmation of the target
    path.
-6. If creating a workspace, use a product entry:
+7. If creating a workspace, use a product entry:
 
    ```bash
    briefloop new industry-weekly <workspace>
@@ -80,6 +89,23 @@ Before operating a workspace:
    ```
 
 `solar-periodic` is an experimental product entry. Say that before using it.
+
+## Search Default
+
+BriefLoop's first-run product default is local/no live web search. A workspace
+can be created, inspected, and handed off with no search API key. Do not tell
+the user BriefLoop is unfinished only because `.env` has empty search-provider
+keys.
+
+If the user wants BriefLoop-hosted external web search, configure Tavily first:
+
+```bash
+TAVILY_API_KEY=<user-provided-key>
+```
+
+Then verify only that `TAVILY_API_KEY` is present. Do not display the key. Do
+not ask the user to choose among Tavily, Exa, Brave, Firecrawl, and Serper
+unless they explicitly ask for alternatives.
 
 ## Operating Mode
 

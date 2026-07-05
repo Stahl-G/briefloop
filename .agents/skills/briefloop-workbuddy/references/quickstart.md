@@ -18,7 +18,24 @@ Report the resolved command path and version before making changes. If neither
 command exists, stop and ask the user to install BriefLoop or open the source
 checkout.
 
-## 2. Create A Workspace
+## 2. Use The First-Run Search Default
+
+BriefLoop's first-run default is local/no live web search. A user can create a
+workspace, inspect status, and generate operator handoff without any search API
+key. Empty search-provider keys in `.env` do not mean setup failed.
+
+If the user asks for live web search or says they want to configure an API key,
+use Tavily as the default provider:
+
+```text
+TAVILY_API_KEY=<user-provided-key>
+```
+
+Check only whether `TAVILY_API_KEY` is present. Do not print the key value. Do
+not ask the user to choose Exa, Brave, Firecrawl, or Serper unless they ask for
+a non-Tavily provider.
+
+## 3. Create A Workspace
 
 If the user asks "跑周报" and has no workspace:
 
@@ -47,19 +64,19 @@ briefloop new solar-periodic <workspace>
 `industry-weekly`, `management-monthly`, and `document-review` are the baseline
 supported product entries. `solar-periodic` is experimental.
 
-## 3. Run Operator Handoff
+## 4. Run Operator Handoff
 
 Run:
 
 ```bash
-multi-agent-brief run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime operator
 ```
 
 Then inspect:
 
 ```bash
-multi-agent-brief status --workspace <workspace>
-multi-agent-brief state check --workspace <workspace>
+briefloop status --workspace <workspace>
+briefloop state check --workspace <workspace>
 ```
 
 After handoff, report only deterministic progress that is visible in files or
@@ -74,12 +91,12 @@ CLI output, for example:
 Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
 artifact, event, transaction, or status output exists.
 
-## 4. Summarize Quality
+## 5. Summarize Quality
 
 When the workspace has enough artifacts to summarize:
 
 ```bash
-multi-agent-brief quality summarize --workspace <workspace>
+briefloop quality summarize --workspace <workspace>
 ```
 
 Open `output/intermediate/quality_panel.html` for the static operator view.

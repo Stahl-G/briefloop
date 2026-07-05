@@ -8,6 +8,9 @@ authority layer.
 - classify missing workspace paths as existing workspace or first-time run,
   then confirm the folder path before any creation;
 - report the active BriefLoop CLI path and version;
+- treat local/no live web search as the first-run default;
+- when live web search is requested, use Tavily first and verify
+  `TAVILY_API_KEY` without displaying the key value;
 - use `--runtime operator` for handoff;
 - run deterministic BriefLoop CLI commands when the user approves;
 - before each stage or role-owned artifact action, re-read the relevant
@@ -20,6 +23,10 @@ authority layer.
 ## Do Not
 
 - guess a workspace from the repository path;
+- claim setup is incomplete only because optional search-provider keys are
+  empty;
+- ask the user to choose among all search providers unless they request an
+  alternative to Tavily;
 - direct-edit control files or frozen artifacts;
 - say specialist subagents ran unless WorkBuddy actually delegated them;
 - say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching artifact,

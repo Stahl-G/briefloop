@@ -82,6 +82,16 @@ briefloop run --workspace <workspace> --runtime operator
 `solar-periodic` remains experimental and should be described that way before
 use.
 
+### Search Default
+
+BriefLoop's first-run default is local/no live web search. A WorkBuddy user can
+create a workspace, inspect status, and generate operator handoff without a
+search API key. Empty optional search keys in `.env` do not mean setup failed.
+
+If the user wants external web search, use Tavily as the default provider and
+verify only that `TAVILY_API_KEY` is present. Do not display the key value. List
+Exa, Brave, Firecrawl, or Serper only when the user asks for alternatives.
+
 ## Operating Rules
 
 Use `--runtime operator` for WorkBuddy. Operator runtime means a host-agnostic
