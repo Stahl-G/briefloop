@@ -169,6 +169,7 @@ def test_repo_development_reference_includes_product_baseline_and_review_checkli
 
 def test_naming_reference_tracks_readme_pointer_and_product_aliases() -> None:
     text = _read(CANONICAL / "references" / "naming-and-compatibility.md")
+    normalized = " ".join(text.split())
 
     assert "`README.md` is the canonical English README" in text
     assert "`README.zh-CN.md` is the canonical Chinese README" in text
@@ -178,3 +179,17 @@ def test_naming_reference_tracks_readme_pointer_and_product_aliases() -> None:
     assert "`document-review` -> internal/canonical `evidence_extract`" in text
     assert "`solar-periodic` -> internal/canonical `solar_industry_periodic`" in text
     assert "Do not write product-facing aliases into control artifacts" in text
+    assert "Do not present `/generate-brief` as a recommended first-user writer path" in text
+    assert "supported Claude delegated stage-workflow command" in text
+    assert "does not execute specialists or complete stages" in normalized
+    assert "legacy direct-delegation/debug command" not in text
+
+
+def test_public_naming_doc_aligns_generate_brief_with_claude_handoff() -> None:
+    text = _read(ROOT / "docs" / "briefloop-naming.md")
+
+    assert "Claude delegated stage workflow" in text
+    assert "Supported when following generated Claude handoff" in text
+    assert "not a first-user writer path" in text
+    assert "/briefloop run <workspace>` only creates or refreshes handoff files" in text
+    assert "Compatibility/debug only" not in text

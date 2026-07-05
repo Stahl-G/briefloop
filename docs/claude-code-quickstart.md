@@ -95,6 +95,12 @@ deterministic transactions. The delegated workflow follows this sequence:
 source discovery -> doctor -> scout -> screener -> claim-ledger -> analyst -> editor -> auditor -> finalize
 ```
 
+If the generated Claude handoff instructs the Orchestrator main agent to
+continue with `/generate-brief <workspace>`, that command is the Claude
+delegated stage-workflow entrypoint. It is not the first writer command for new
+users. `/briefloop run <workspace>` creates or refreshes handoff files only; it
+does not execute specialists or complete stages.
+
 ## What `/briefloop status` Means
 
 `/briefloop status <workspace>` is a read-only dashboard. It should help a writer

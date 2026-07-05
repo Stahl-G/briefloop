@@ -332,7 +332,7 @@ correctness, and generalization claims remain out of scope.
 | Runtime | Status |
 |---|---|
 | Hermes (`delegate_task` native pipeline + cron) | Supported |
-| Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` compatibility; installable with `multi-agent-brief claude install`) | Supported |
+| Claude Code (`/briefloop` and `/mabw` five-verb writer entrypoints + `/generate-brief` generated-handoff delegated stage workflow; installable with `multi-agent-brief claude install`) | Supported |
 | OpenCode (subagent workflow) | Supported |
 | Codex (custom-agent workflow via `runtime install`) | Experimental |
 | Operator (host-agnostic compact workflow; `manual` is a legacy CLI alias) | Supported |
