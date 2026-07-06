@@ -12,7 +12,7 @@ SRC_REF_PATTERN = re.compile(rf"\[src:({CLAIM_ID_RE_FRAGMENT})\]")
 VALID_SRC_REF_PATTERN = re.compile(rf"\[src:{CLAIM_ID_RE_FRAGMENT}\]")
 CLAIM_ID_TOKEN_RE = re.compile(rf"^{CLAIM_ID_RE_FRAGMENT}$")
 
-_BRACKETED_SOURCE_MARKER_RE = re.compile(r"\[(src|source)\s*:\s*([^\]]*)\]", re.IGNORECASE)
+_BRACKETED_SOURCE_MARKER_RE = re.compile(r"\[(src|source)\s*:\s*([^\]\[\r\n]*)\]", re.IGNORECASE)
 _BARE_SOURCE_MARKER_RE = re.compile(
     r"(?<![A-Za-z0-9_/:?&=#.-])\b(src|source):([^\s\]\[(){}<>]+)",
     re.IGNORECASE,

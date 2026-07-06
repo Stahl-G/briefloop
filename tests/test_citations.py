@@ -85,6 +85,18 @@ def test_parse_internal_citation_markers_reports_empty_and_unknown_markers() -> 
     ]
 
 
+def test_parse_internal_citation_markers_does_not_let_broken_bracket_hide_later_citation() -> None:
+    text = "Broken [src:CL-404\nNext [src:CL-001]."
+
+    markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001"})
+
+    assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
+        ("src:CL-404", "CL-404", "unresolved"),
+        ("[src:CL-001]", "CL-001", "resolved"),
+    ]
+    assert resolved_internal_citation_ids(text, valid_claim_ids={"CL-001"}) == ["CL-001"]
+
+
 def test_parse_internal_citation_markers_preserves_prose_and_urls() -> None:
     text = (
         "Primary source: company filing.\n"
