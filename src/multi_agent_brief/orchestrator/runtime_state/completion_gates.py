@@ -421,11 +421,20 @@ def _finalize_report_delivery_manifest_reasons(workspace: Path, report: dict[str
     if not manifest_path.exists():
         reasons.append(f"finalize_report.json references missing delivery_manifest: {manifest_path}.")
         return reasons
+    if not manifest_path.is_file():
+        reasons.append(f"finalize_report.json delivery_manifest is not a file: {manifest_path}.")
+        return reasons
     expected_sha = report.get("delivery_manifest_sha256")
     if not isinstance(expected_sha, str) or not expected_sha.strip():
         reasons.append("finalize_report.json delivery_manifest_sha256 is required before finalize-complete.")
-    elif _sha256_file(manifest_path) != expected_sha.strip():
-        reasons.append("delivery_manifest.json has changed since finalize.")
+    else:
+        try:
+            actual_sha = _sha256_file(manifest_path)
+        except OSError as exc:
+            reasons.append(f"delivery_manifest.json could not be read: {exc}")
+            return reasons
+        if actual_sha != expected_sha.strip():
+            reasons.append("delivery_manifest.json has changed since finalize.")
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -462,7 +471,11 @@ def _finalize_report_delivery_manifest_reasons(workspace: Path, report: dict[str
     if not isinstance(report_hashes, dict):
         reasons.append("finalize_report.json delivery_artifact_sha256 is required before finalize-complete.")
         return reasons
-    for item in report.get("delivery_artifacts") or []:
+    report_artifacts = report.get("delivery_artifacts")
+    if not isinstance(report_artifacts, list):
+        reasons.append("finalize_report.json delivery_artifacts must list the reader delivery bundle.")
+        return reasons
+    for item in report_artifacts:
         path = _resolve_report_artifact_path(workspace, item)
         if path is None:
             continue

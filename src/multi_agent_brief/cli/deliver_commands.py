@@ -601,13 +601,24 @@ def _load_delivery_manifest(workspace: Path, finalize_report: dict[str, Any]) ->
             "delivery_manifest is missing. Run finalize again before delivery.",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         )
+    if not manifest_path.is_file():
+        raise DeliverCommandError(
+            "delivery_manifest is not a file. Run finalize again before delivery.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
     expected_sha = finalize_report.get("delivery_manifest_sha256")
     if not isinstance(expected_sha, str) or not expected_sha.strip():
         raise DeliverCommandError(
             "Delivery bundle is missing delivery_manifest_sha256. Run finalize again before delivery.",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         )
-    actual_sha = _sha256_file(manifest_path)
+    try:
+        actual_sha = _sha256_file(manifest_path)
+    except OSError as exc:
+        raise DeliverCommandError(
+            f"delivery_manifest.json could not be read: {exc}",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        ) from exc
     if actual_sha != expected_sha.strip():
         raise DeliverCommandError(
             "delivery_manifest.json has changed since finalize. Run finalize again before delivery.",

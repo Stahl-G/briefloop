@@ -399,6 +399,25 @@ def test_deliver_rejects_invalid_utf8_delivery_manifest_without_traceback(
     assert _delivery_events(ws) == []
 
 
+def test_deliver_rejects_directory_delivery_manifest_without_traceback(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    manifest_path = ws / "output" / "intermediate" / "delivery_manifest.json"
+    manifest_path.unlink()
+    manifest_path.mkdir()
+
+    rc = main(["deliver", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
+    assert "delivery_manifest is not a file" in payload["message"]
+    assert _delivery_events(ws) == []
+
+
 def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False, init_runtime=False)
