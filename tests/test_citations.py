@@ -62,6 +62,16 @@ def test_parse_internal_citation_markers_resolves_explicit_alpha_ledger_id() -> 
     ) == []
 
 
+def test_parse_internal_citation_markers_reports_alpha_only_explicit_marker_without_ledger() -> None:
+    text = "Explicit unresolved marker source:ALPHACLAIM, but prose Source:FDA and source:company stay text."
+
+    markers = parse_internal_citation_markers(text, valid_claim_ids=None)
+
+    assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
+        ("source:ALPHACLAIM", "ALPHACLAIM", "unresolved"),
+    ]
+
+
 def test_parse_internal_citation_markers_does_not_prefix_match_bare_markers() -> None:
     text = "Bad suffixes src:CL-001-extra and src:CL-001A must not project a prefix."
 

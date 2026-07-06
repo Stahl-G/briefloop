@@ -81,7 +81,7 @@ def parse_internal_citation_markers(
             end=match.end(),
         )
         if valid_ids is None or candidate not in valid_ids:
-            if not _is_bare_citation_candidate(candidate):
+            if not _is_explicit_source_marker_candidate(candidate):
                 continue
         if _span_overlaps(match.start(), end, occupied_spans):
             continue
@@ -223,7 +223,7 @@ def _normalized_bare_marker_candidate(*, candidate: str, end: int) -> tuple[str,
 
 def _iter_known_claim_id_spans(markdown: str, valid_claim_ids: set[str]):
     for claim_id in sorted(valid_claim_ids, key=len, reverse=True):
-        if not _is_bare_citation_candidate(claim_id):
+        if not _is_free_standing_bare_claim_candidate(claim_id):
             continue
         start = 0
         while True:
@@ -236,11 +236,16 @@ def _iter_known_claim_id_spans(markdown: str, valid_claim_ids: set[str]):
             start = index + 1
 
 
-def _is_bare_citation_candidate(candidate: str) -> bool:
-    return (
-        bool(CLAIM_ID_TOKEN_RE.fullmatch(candidate))
-        and any(ch.isdigit() or ch in "_-" for ch in candidate)
-    )
+def _is_free_standing_bare_claim_candidate(candidate: str) -> bool:
+    if not CLAIM_ID_TOKEN_RE.fullmatch(candidate):
+        return False
+    return any(ch.isdigit() or ch in "_-" for ch in candidate)
+
+
+def _is_explicit_source_marker_candidate(candidate: str) -> bool:
+    if _is_free_standing_bare_claim_candidate(candidate):
+        return True
+    return bool(CLAIM_ID_TOKEN_RE.fullmatch(candidate)) and candidate.isalpha() and candidate.isupper() and len(candidate) >= 6
 
 
 def _has_citation_token_boundaries(markdown: str, start: int, end: int) -> bool:
