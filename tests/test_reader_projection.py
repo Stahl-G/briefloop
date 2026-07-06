@@ -142,3 +142,36 @@ def test_reader_projection_refuses_same_transaction_id_overwrite(tmp_path: Path)
 
     assert first_reader.read_text(encoding="utf-8") == first_text
     assert "Second candidate content" not in first_reader.read_text(encoding="utf-8")
+
+
+def test_reader_projection_cleans_failed_candidate_for_same_transaction_retry(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    candidate = intermediate / "finalize_candidate" / "tx-retry"
+
+    with pytest.raises(FileNotFoundError):
+        build_reader_projection(
+            output_dir=output_dir,
+            output_formats=["markdown", "source_appendix"],
+            transaction_id="tx-retry",
+        )
+
+    assert not candidate.exists()
+
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    result = build_reader_projection(
+        output_dir=output_dir,
+        output_formats=["markdown", "source_appendix"],
+        transaction_id="tx-retry",
+    )
+
+    assert Path(result.candidate_dir) == candidate
+    assert Path(result.reader_brief).exists()
+    assert result.source_appendix_generation == "generated"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -114,117 +115,120 @@ def build_reader_projection(
             "existing candidate."
         )
     candidate_dir.mkdir(parents=True)
-
-    audited_markdown = audited_path.read_text(encoding="utf-8")
-    stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
-    formats = set(output_formats or ["markdown"])
-    source_appendix_config = source_appendix_config or {}
-    appendix_request = _source_appendix_request(
-        output_formats=formats,
-        source_appendix_config=source_appendix_config,
-    )
-    citation_profile = resolve_workspace_citation_profile(
-        workspace,
-        source_appendix_config=source_appendix_config,
-    )
-    appendix_path = candidate_dir / "source_appendix.md"
-    appendix_trace_path = candidate_dir / "source_appendix_trace.md"
-    appendix_result = _maybe_generate_source_appendix(
-        audited_markdown=audited_markdown,
-        ledger_path=intermediate_dir / "claim_ledger.json",
-        appendix_path=appendix_path,
-        trace_path=appendix_trace_path,
-        requested_by=appendix_request["requested_by"],
-        explicit=bool(appendix_request["explicit"]),
-    )
-    appendix_requested_by = (
-        "cited_claims"
-        if appendix_request["requested_by"] == "none" and appendix_result.source_count
-        else str(appendix_request["requested_by"])
-    )
-    reader_source_markdown = (
-        replace_claim_citations_with_labels(
-            audited_markdown,
-            appendix_result.citation_labels,
+    try:
+        audited_markdown = audited_path.read_text(encoding="utf-8")
+        stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
+        formats = set(output_formats or ["markdown"])
+        source_appendix_config = source_appendix_config or {}
+        appendix_request = _source_appendix_request(
+            output_formats=formats,
+            source_appendix_config=source_appendix_config,
         )
-        if appendix_result.citation_labels
-        else strip_claim_citations(audited_markdown)
-    )
-    base_reader_markdown = _strip_internal_reader_sections(reader_source_markdown)
-    reader_markdown = base_reader_markdown
-    if appendix_result.markdown and appendix_result.source_count:
-        reader_markdown = base_reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
-    template_render = render_reader_markdown_with_template(
-        workspace=workspace,
-        markdown=reader_markdown,
-    )
-    reader_markdown = template_render.markdown
-    reader_path = candidate_dir / "reader_brief.md"
-    reader_path.write_text(reader_markdown, encoding="utf-8")
+        citation_profile = resolve_workspace_citation_profile(
+            workspace,
+            source_appendix_config=source_appendix_config,
+        )
+        appendix_path = candidate_dir / "source_appendix.md"
+        appendix_trace_path = candidate_dir / "source_appendix_trace.md"
+        appendix_result = _maybe_generate_source_appendix(
+            audited_markdown=audited_markdown,
+            ledger_path=intermediate_dir / "claim_ledger.json",
+            appendix_path=appendix_path,
+            trace_path=appendix_trace_path,
+            requested_by=appendix_request["requested_by"],
+            explicit=bool(appendix_request["explicit"]),
+        )
+        appendix_requested_by = (
+            "cited_claims"
+            if appendix_request["requested_by"] == "none" and appendix_result.source_count
+            else str(appendix_request["requested_by"])
+        )
+        reader_source_markdown = (
+            replace_claim_citations_with_labels(
+                audited_markdown,
+                appendix_result.citation_labels,
+            )
+            if appendix_result.citation_labels
+            else strip_claim_citations(audited_markdown)
+        )
+        base_reader_markdown = _strip_internal_reader_sections(reader_source_markdown)
+        reader_markdown = base_reader_markdown
+        if appendix_result.markdown and appendix_result.source_count:
+            reader_markdown = base_reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
+        template_render = render_reader_markdown_with_template(
+            workspace=workspace,
+            markdown=reader_markdown,
+        )
+        reader_markdown = template_render.markdown
+        reader_path = candidate_dir / "reader_brief.md"
+        reader_path.write_text(reader_markdown, encoding="utf-8")
 
-    policy_gate_adapter = resolve_workspace_policy_gate_adapter(workspace)
-    reader_clean_paths = [reader_path]
-    if appendix_result.markdown and appendix_path.exists():
-        reader_clean_paths.append(appendix_path)
-    reader_clean = build_reader_clean_report(
-        markdown_paths=reader_clean_paths,
-        docx_paths=[],
-        forbidden_phrases=policy_forbidden_phrases(policy_gate_adapter),
-    )
+        policy_gate_adapter = resolve_workspace_policy_gate_adapter(workspace)
+        reader_clean_paths = [reader_path]
+        if appendix_result.markdown and appendix_path.exists():
+            reader_clean_paths.append(appendix_path)
+        reader_clean = build_reader_clean_report(
+            markdown_paths=reader_clean_paths,
+            docx_paths=[],
+            forbidden_phrases=policy_forbidden_phrases(policy_gate_adapter),
+        )
 
-    return ReaderProjectionResult(
-        candidate_dir=str(candidate_dir),
-        audited_brief=str(audited_path),
-        audited_markdown=audited_markdown,
-        reader_brief=str(reader_path),
-        reader_markdown=reader_markdown,
-        stripped_src_marker_count=stripped_count,
-        source_appendix=str(appendix_path) if appendix_result.markdown and appendix_path.exists() else "",
-        source_appendix_generation=appendix_result.status,
-        source_appendix_requested_by=appendix_requested_by,
-        source_appendix_mode=str(appendix_request["mode"]),
-        source_appendix_source_count=appendix_result.source_count,
-        source_appendix_cited_claim_count=appendix_result.cited_claim_count,
-        source_appendix_resolved_claim_count=appendix_result.resolved_claim_count,
-        source_appendix_warnings=appendix_result.warnings,
-        source_appendix_claim_map=appendix_result.claim_source_map,
-        source_appendix_trace=(
-            str(appendix_trace_path)
-            if appendix_result.trace_markdown and appendix_trace_path.exists()
-            else ""
-        ),
-        source_appendix_trace_generation=appendix_result.trace_status,
-        source_appendix_trace_source_count=appendix_result.trace_source_count,
-        source_appendix_trace_span_count=appendix_result.trace_span_count,
-        source_appendix_trace_warnings=appendix_result.trace_warnings,
-        template_rendering=template_render.to_report(),
-        policy_gate_adapter=policy_gate_adapter,
-        citation_profile=str(citation_profile.get("profile") or "executive"),
-        citation_profile_source=str(citation_profile.get("source") or "default"),
-        citation_profile_runtime_effect=str(
-            citation_profile.get("runtime_effect") or "citation_profile_resolution_only"
-        ),
-        citation_profile_reader_citation_style=str(
-            citation_profile.get("reader_citation_style") or "source_label"
-        ),
-        citation_profile_reader_metadata_level=str(
-            citation_profile.get("reader_metadata_level") or "low_interference"
-        ),
-        citation_profile_audit_trace_level=str(
-            citation_profile.get("audit_trace_level") or "complete_when_available"
-        ),
-        citation_profile_delivery_exposes_internal_ids=bool(
-            citation_profile.get("delivery_exposes_internal_ids")
-        ),
-        citation_profile_delivery_exposes_local_paths=bool(
-            citation_profile.get("delivery_exposes_local_paths")
-        ),
-        citation_profile_audit_bundle_keeps_trace=bool(
-            citation_profile.get("audit_bundle_keeps_trace")
-        ),
-        citation_profile_warnings=list(citation_profile.get("warnings") or []),
-        reader_clean=reader_clean,
-    )
+        return ReaderProjectionResult(
+            candidate_dir=str(candidate_dir),
+            audited_brief=str(audited_path),
+            audited_markdown=audited_markdown,
+            reader_brief=str(reader_path),
+            reader_markdown=reader_markdown,
+            stripped_src_marker_count=stripped_count,
+            source_appendix=str(appendix_path) if appendix_result.markdown and appendix_path.exists() else "",
+            source_appendix_generation=appendix_result.status,
+            source_appendix_requested_by=appendix_requested_by,
+            source_appendix_mode=str(appendix_request["mode"]),
+            source_appendix_source_count=appendix_result.source_count,
+            source_appendix_cited_claim_count=appendix_result.cited_claim_count,
+            source_appendix_resolved_claim_count=appendix_result.resolved_claim_count,
+            source_appendix_warnings=appendix_result.warnings,
+            source_appendix_claim_map=appendix_result.claim_source_map,
+            source_appendix_trace=(
+                str(appendix_trace_path)
+                if appendix_result.trace_markdown and appendix_trace_path.exists()
+                else ""
+            ),
+            source_appendix_trace_generation=appendix_result.trace_status,
+            source_appendix_trace_source_count=appendix_result.trace_source_count,
+            source_appendix_trace_span_count=appendix_result.trace_span_count,
+            source_appendix_trace_warnings=appendix_result.trace_warnings,
+            template_rendering=template_render.to_report(),
+            policy_gate_adapter=policy_gate_adapter,
+            citation_profile=str(citation_profile.get("profile") or "executive"),
+            citation_profile_source=str(citation_profile.get("source") or "default"),
+            citation_profile_runtime_effect=str(
+                citation_profile.get("runtime_effect") or "citation_profile_resolution_only"
+            ),
+            citation_profile_reader_citation_style=str(
+                citation_profile.get("reader_citation_style") or "source_label"
+            ),
+            citation_profile_reader_metadata_level=str(
+                citation_profile.get("reader_metadata_level") or "low_interference"
+            ),
+            citation_profile_audit_trace_level=str(
+                citation_profile.get("audit_trace_level") or "complete_when_available"
+            ),
+            citation_profile_delivery_exposes_internal_ids=bool(
+                citation_profile.get("delivery_exposes_internal_ids")
+            ),
+            citation_profile_delivery_exposes_local_paths=bool(
+                citation_profile.get("delivery_exposes_local_paths")
+            ),
+            citation_profile_audit_bundle_keeps_trace=bool(
+                citation_profile.get("audit_bundle_keeps_trace")
+            ),
+            citation_profile_warnings=list(citation_profile.get("warnings") or []),
+            reader_clean=reader_clean,
+        )
+    except Exception:
+        shutil.rmtree(candidate_dir, ignore_errors=True)
+        raise
 
 
 def build_reader_clean_report(
