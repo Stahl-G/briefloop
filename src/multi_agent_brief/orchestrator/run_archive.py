@@ -36,6 +36,7 @@ _KNOWN_INTERMEDIATE_FILES = (
     "gates/finalize_quality_gate_report.json",
     "quality_gate_report.json",
     "finalize_report.json",
+    "delivery_manifest.json",
 )
 _CONTROL_FILES = (
     "runtime_manifest.json",

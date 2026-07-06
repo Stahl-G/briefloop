@@ -7801,10 +7801,23 @@ def test_finalize_complete_archives_delivery_intermediate_and_control_files(tmp_
     assert (archive / "intermediate" / "claim_ledger.json").exists()
     assert (archive / "intermediate" / "audit_report.json").exists()
     assert (archive / "intermediate" / "finalize_report.json").exists()
+    assert (archive / "intermediate" / "delivery_manifest.json").exists()
     assert (archive / "control" / "runtime_manifest.json").exists()
     assert (archive / "control" / "workflow_state.json").exists()
     assert (archive / "control" / "artifact_registry.json").exists()
     assert (archive / "control" / "event_log.jsonl").exists()
+    manifest = json.loads((archive / "manifest.json").read_text(encoding="utf-8"))
+    delivery_manifest_records = [
+        record
+        for record in manifest["files"]
+        if record.get("original_path") == "output/intermediate/delivery_manifest.json"
+    ]
+    assert len(delivery_manifest_records) == 1
+    assert delivery_manifest_records[0]["role"] == "intermediate"
+    assert delivery_manifest_records[0]["archive_path"] == "intermediate/delivery_manifest.json"
+    assert delivery_manifest_records[0]["sha256"] == _sha256_file(
+        ws / "output" / "intermediate" / "delivery_manifest.json"
+    )
     assert any(event["event_type"] == "run_archived" for event in _event_records(ws))
 
 
