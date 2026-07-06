@@ -110,7 +110,7 @@ or any issue/PR comment that reports the result.
      blocked:
      latest_gate_status:
      finalize_report:
-     delivery_dir:
+     delivery_truth:
      next_allowed_action:
      ```
 
@@ -147,9 +147,9 @@ or any issue/PR comment that reports the result.
    - Non-clean, contaminated, stale, or unknown `run_integrity` stops
      finalize, delivery, export, and share, but does not by itself stop earlier
      handoff-assigned stages.
-   - Missing `output/intermediate/finalize_report.json` or `output/delivery/`
-     prevents WorkBuddy from saying delivery is complete or exporting a
-     delivery package; it does not by itself stop pre-finalize role work.
+   - `delivery_truth.valid` not being `true` prevents WorkBuddy from saying
+     delivery is complete or exporting a delivery package; it does not by
+     itself stop pre-finalize role work.
    - Any export/share package candidate containing `.env`, tokens, private
      planning files, or machine secrets is rejected before sharing.
    - WorkBuddy does not zip or share the whole workspace.
@@ -173,8 +173,8 @@ The smoke passes only if all of these are true:
   workflow execution.
 - WorkBuddy stopped on doctor errors, stopped finalize/delivery/export/share
   on contaminated or unknown run integrity, did not claim delivery when
-  finalize/delivery artifacts were missing, and rejected secret-bearing package
-  candidates.
+  completion projection reported `delivery_truth.valid=false`, and rejected
+  secret-bearing package candidates.
 - WorkBuddy did not share a whole workspace zip.
 - WorkBuddy did not describe traceability as semantic proof, output-quality
   improvement proof, delivery approval, release approval, or publication

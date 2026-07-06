@@ -191,7 +191,7 @@ run_integrity:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
 next_allowed_action:
 ```
 
@@ -202,7 +202,7 @@ next_allowed_action:
 - `run_integrity` 不是 clean、已经 contaminated、stale 或 unknown：停止
   finalize、delivery、export 和 share；早期 draft work 只有在 handoff 允许的
   非交付步骤里才能继续；
-- 缺少 `output/intermediate/finalize_report.json` 或 `output/delivery/`：
+- completion projection 的 `delivery_truth.valid` 不是 `true`：
   不能说交付完成，也不能导出 delivery package。只有
   `output/intermediate/audited_brief.md` 存在时，才能说
   有草稿；否则应说目前还没有草稿或交付产物。这是 finalize 之前的正常状态，本身
@@ -223,11 +223,13 @@ bundle。需要支持时，只分享人工检查过、确认不含密钥的
 briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
-这个命令是只读 diagnostic projection。它报告 doctor 状态、runtime、current
-stage、run integrity、blocked 状态、latest gate status、invalid/stale
-artifacts、finalize/delivery 是否存在、`.env` 非空 key 等 secret-risk flags，
-以及 next safe action。它不运行 gates、不修复 artifacts、不批准 delivery、不授权
-release，也不证明语义真实。
+这个命令是 canonical completion projection 上的只读 adapter。它报告 doctor
+状态、runtime、current stage、run integrity、blocked 状态、latest gate status、
+invalid/stale artifacts、finalize truth、delivery truth、`.env` 非空 key 等
+secret-risk flags，以及 next safe action。它不根据文件存在推断 delivery；
+除非 projection 显示 `delivery_truth.valid=true`，WorkBuddy 不能把
+`output/delivery/` 或 `finalize_report.json` 存在当成交付真实状态。它不运行
+gates、不修复 artifacts、不批准 delivery、不授权 release，也不证明语义真实。
 
 ## Assistant Trigger 模板
 
