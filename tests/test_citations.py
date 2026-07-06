@@ -45,6 +45,23 @@ def test_parse_internal_citation_markers_uses_ledger_membership_not_id_family() 
     ) == ["SOURCEA_9F8E7D6C"]
 
 
+def test_parse_internal_citation_markers_resolves_explicit_alpha_ledger_id() -> None:
+    text = "Explicit compact marker source:ALPHACLAIM resolves, prose source:company does not."
+
+    markers = parse_internal_citation_markers(
+        text,
+        valid_claim_ids={"ALPHACLAIM"},
+    )
+
+    assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
+        ("source:ALPHACLAIM", "ALPHACLAIM", "resolved"),
+    ]
+    assert resolved_internal_citation_ids(
+        "Free-standing ALPHACLAIM stays prose.",
+        valid_claim_ids={"ALPHACLAIM"},
+    ) == []
+
+
 def test_parse_internal_citation_markers_does_not_prefix_match_bare_markers() -> None:
     text = "Bad suffixes src:CL-001-extra and src:CL-001A must not project a prefix."
 

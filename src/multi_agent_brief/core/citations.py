@@ -80,8 +80,9 @@ def parse_internal_citation_markers(
             candidate=match.group(2).strip(),
             end=match.end(),
         )
-        if not _is_bare_citation_candidate(candidate):
-            continue
+        if valid_ids is None or candidate not in valid_ids:
+            if not _is_bare_citation_candidate(candidate):
+                continue
         if _span_overlaps(match.start(), end, occupied_spans):
             continue
         markers.append(
