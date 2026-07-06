@@ -109,11 +109,25 @@ def _write_valid_delivery(ws: Path) -> None:
     _write_registry(ws)
 
 
+def _record_finalize_event(ws: Path) -> None:
+    manifest = _read_json(runtime_state_paths(ws)["runtime_manifest"])
+    append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="decision_recorded",
+        actor="cli",
+        stage_id="finalize",
+        decision="finalize",
+        reason="finalize completed",
+    )
+
+
 def test_completion_projection_reports_valid_delivery_truth(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _set_workflow(ws, current_stage="finalize")
     _write_gate(ws, stage="finalize", status="warning")
     _write_valid_delivery(ws)
+    _record_finalize_event(ws)
 
     payload = build_completion_projection(workspace=ws)
 
@@ -121,12 +135,48 @@ def test_completion_projection_reports_valid_delivery_truth(tmp_path: Path) -> N
     assert payload["runtime_effect"] == "read_only_completion_projection"
     assert payload["gate_truth"]["status"] == "warning"
     assert payload["gate_truth"]["blocking"] is False
+    assert payload["finalize_gate_truth"]["status"] == "warning"
     assert payload["finalize_truth"]["status"] == "pass"
     assert payload["delivery_truth"]["valid"] is True
     assert payload["delivery_truth"]["paths_current"] is True
     assert payload["delivery_truth"]["hash_bound"] is True
     assert "manifest_status" not in payload["delivery_truth"]
     assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_completion_projection_routes_valid_delivery_without_finalize_event_to_finalize_complete(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="finalize", status="warning")
+    _write_valid_delivery(ws)
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["finalize_gate_truth"]["status"] == "warning"
+    assert payload["delivery_truth"]["valid"] is True
+    assert payload["event_truth"]["finalize_event_present"] is False
+    assert payload["next_allowed_action"] == "run_finalize_gate_or_finalize_complete"
+
+
+def test_completion_projection_requires_finalize_gate_before_delivery_guidance(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="auditor", status="pass")
+    _write_valid_delivery(ws)
+    _record_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["gate_truth"]["artifact_id"] == "auditor_quality_gate_report"
+    assert payload["gate_truth"]["status"] == "pass"
+    assert payload["finalize_gate_truth"]["status"] == "missing"
+    assert payload["delivery_truth"]["valid"] is True
+    assert payload["event_truth"]["finalize_event_present"] is True
+    assert payload["next_allowed_action"] == "run_finalize_gate_or_finalize_complete"
 
 
 def test_completion_projection_rejects_delivery_dir_without_finalize_report(tmp_path: Path) -> None:
@@ -325,16 +375,7 @@ def test_completion_projection_prioritizes_invalid_experiment_condition(tmp_path
 
 def test_completion_projection_detects_finalize_decision_event(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
-    manifest = _read_json(runtime_state_paths(ws)["runtime_manifest"])
-    append_event(
-        workspace=ws,
-        run_id=manifest["run_id"],
-        event_type="decision_recorded",
-        actor="cli",
-        stage_id="finalize",
-        decision="finalize",
-        reason="finalize completed",
-    )
+    _record_finalize_event(ws)
 
     payload = build_completion_projection(workspace=ws)
 

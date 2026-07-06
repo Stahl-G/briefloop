@@ -69,6 +69,10 @@ def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
     run_integrity = _run_integrity_projection(workflow, workflow_status)
     artifact_truth = _artifact_truth(registry, registry_status=registry_status)
     gate_truth = _latest_gate_truth(intermediate, current_stage=current_stage)
+    finalize_gate_truth = _stage_gate_truth(
+        artifact_id="finalize_quality_gate_report",
+        path=intermediate / "gates" / "finalize_quality_gate_report.json",
+    )
     assessment_target = _assessment_target_projection(
         workspace=ws,
         workflow=workflow,
@@ -109,6 +113,7 @@ def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
         "workflow": workflow_truth,
         "artifacts": artifact_truth,
         "gate_truth": gate_truth,
+        "finalize_gate_truth": finalize_gate_truth,
         "assessment_target": assessment_target,
         "finalize_truth": finalize_truth,
         "delivery_truth": delivery_truth,
@@ -118,10 +123,12 @@ def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
             workflow=workflow_truth,
             run_integrity=run_integrity,
             gate_truth=gate_truth,
+            finalize_gate_truth=finalize_gate_truth,
             artifact_truth=artifact_truth,
             assessment_target=assessment_target,
             finalize_truth=finalize_truth,
             delivery_truth=delivery_truth,
+            event_truth=event_truth,
         ),
         "boundary": "completion_projection_not_gate_delivery_release_or_semantic_proof",
     }
@@ -203,52 +210,66 @@ def _latest_gate_truth(intermediate: Path, *, current_stage: str) -> dict[str, A
         )
     for artifact_id in scan_order:
         path = scoped_reports[artifact_id]
-        payload, status = _read_json(path)
-        if status == "missing":
+        truth = _stage_gate_truth(artifact_id=artifact_id, path=path)
+        if truth["control_status"] == "missing":
             continue
-        if status != "present" or not isinstance(payload, Mapping):
-            return {
-                "artifact_id": artifact_id,
-                "status": "unreadable",
-                "control_status": status,
-                "blocking_count": 1,
-                "blocking": True,
-                "findings": [f"{artifact_id}:{status}"],
-            }
-        errors = validate_quality_gate_report_payload(
-            dict(payload),
-            stages=_gate_validation_stages(),
-            artifacts=_gate_validation_artifacts(),
-        )
-        if errors:
-            return {
-                "artifact_id": artifact_id,
-                "status": "invalid",
-                "control_status": "present",
-                "blocking_count": 1,
-                "blocking": True,
-                "validation_errors": errors,
-                "findings": ["gate_report_invalid"],
-            }
-        gate_status = _clean_text(payload.get("status")) or "unknown"
-        blocking_count = _blocking_gate_result_count(payload)
-        findings = payload.get("findings")
-        if isinstance(findings, list):
-            blocking_count += sum(1 for finding in findings if _is_blocking_gate_finding(finding))
-        return {
-            "artifact_id": artifact_id,
-            "status": gate_status,
-            "control_status": "present",
-            "blocking_count": blocking_count,
-            "blocking": gate_status == "fail" or blocking_count > 0,
-            "findings": [],
-        }
+        return truth
     return {
         "artifact_id": "",
         "status": "missing",
         "control_status": "missing",
         "blocking_count": 0,
         "blocking": False,
+        "findings": [],
+    }
+
+
+def _stage_gate_truth(*, artifact_id: str, path: Path) -> dict[str, Any]:
+    payload, status = _read_json(path)
+    if status == "missing":
+        return {
+            "artifact_id": artifact_id,
+            "status": "missing",
+            "control_status": "missing",
+            "blocking_count": 0,
+            "blocking": False,
+            "findings": [],
+        }
+    if status != "present" or not isinstance(payload, Mapping):
+        return {
+            "artifact_id": artifact_id,
+            "status": "unreadable",
+            "control_status": status,
+            "blocking_count": 1,
+            "blocking": True,
+            "findings": [f"{artifact_id}:{status}"],
+        }
+    errors = validate_quality_gate_report_payload(
+        dict(payload),
+        stages=_gate_validation_stages(),
+        artifacts=_gate_validation_artifacts(),
+    )
+    if errors:
+        return {
+            "artifact_id": artifact_id,
+            "status": "invalid",
+            "control_status": "present",
+            "blocking_count": 1,
+            "blocking": True,
+            "validation_errors": errors,
+            "findings": ["gate_report_invalid"],
+        }
+    gate_status = _clean_text(payload.get("status")) or "unknown"
+    blocking_count = _blocking_gate_result_count(payload)
+    findings = payload.get("findings")
+    if isinstance(findings, list):
+        blocking_count += sum(1 for finding in findings if _is_blocking_gate_finding(finding))
+    return {
+        "artifact_id": artifact_id,
+        "status": gate_status,
+        "control_status": "present",
+        "blocking_count": blocking_count,
+        "blocking": gate_status == "fail" or blocking_count > 0,
         "findings": [],
     }
 
@@ -390,10 +411,12 @@ def _next_allowed_action(
     workflow: Mapping[str, Any],
     run_integrity: Mapping[str, Any],
     gate_truth: Mapping[str, Any],
+    finalize_gate_truth: Mapping[str, Any],
     artifact_truth: Mapping[str, Any],
     assessment_target: Mapping[str, Any],
     finalize_truth: Mapping[str, Any],
     delivery_truth: Mapping[str, Any],
+    event_truth: Mapping[str, Any],
 ) -> str:
     if any(
         status in {"unreadable_utf8", "invalid_json", "invalid_json_shape", "invalid_schema", "unreadable"}
@@ -417,6 +440,14 @@ def _next_allowed_action(
         return "stop_run_integrity_not_clean"
     if gate_truth.get("blocking") is True:
         return "stop_resolve_blocking_gate_report"
+    if (
+        _finalize_lifecycle_delivery_ready(
+            finalize_truth=finalize_truth,
+            delivery_truth=delivery_truth,
+        )
+        and finalize_gate_truth.get("blocking") is True
+    ):
+        return "stop_resolve_blocking_gate_report"
     if assessment_target.get("status") == "invalid_condition":
         return "inspect_invalid_experiment_condition"
     invalid_or_stale = artifact_truth.get("invalid_or_stale")
@@ -432,6 +463,13 @@ def _next_allowed_action(
         return "stop_finalize_failed_no_valid_delivery"
     if finalize_truth.get("status") == "pass" and finalize_truth.get("reader_clean_status") != "pass":
         return "stop_finalize_failed_no_valid_delivery"
+    if _finalize_lifecycle_pending(
+        finalize_truth=finalize_truth,
+        delivery_truth=delivery_truth,
+        finalize_gate_truth=finalize_gate_truth,
+        event_truth=event_truth,
+    ):
+        return "run_finalize_gate_or_finalize_complete"
     if delivery_truth.get("valid") is True:
         return "inspect_status_before_delivery_or_quality"
     if _clean_text(workflow.get("current_stage")) not in {"finalize", "delivery", "delivered"}:
@@ -439,6 +477,37 @@ def _next_allowed_action(
     if finalize_truth.get("status") == "missing":
         return "run_finalize_when_allowed"
     return "inspect_invalid_delivery_truth"
+
+
+def _finalize_lifecycle_delivery_ready(
+    *,
+    finalize_truth: Mapping[str, Any],
+    delivery_truth: Mapping[str, Any],
+) -> bool:
+    return (
+        finalize_truth.get("status") == "pass"
+        and finalize_truth.get("reader_clean_status") == "pass"
+        and delivery_truth.get("valid") is True
+    )
+
+
+def _finalize_lifecycle_pending(
+    *,
+    finalize_truth: Mapping[str, Any],
+    delivery_truth: Mapping[str, Any],
+    finalize_gate_truth: Mapping[str, Any],
+    event_truth: Mapping[str, Any],
+) -> bool:
+    if not _finalize_lifecycle_delivery_ready(
+        finalize_truth=finalize_truth,
+        delivery_truth=delivery_truth,
+    ):
+        return False
+    if finalize_gate_truth.get("control_status") == "missing":
+        return True
+    if event_truth.get("finalize_event_present") is not True:
+        return True
+    return False
 
 
 def _read_json(path: Path) -> tuple[Any, str]:
