@@ -1673,7 +1673,9 @@ def test_finalize_preserves_bare_source_marker_as_reader_clean_failure(tmp_path:
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
     (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\nReader content with unresolved bare marker source:SOURCEA_ABC123.\n",
+        "# Brief\n\n"
+        "Reader content with unresolved bare marker source:SOURCEA_ABC123.\n"
+        "Reader content with unresolved alpha marker source:ALPHACLAIM.\n",
         encoding="utf-8",
     )
 
@@ -1688,8 +1690,10 @@ def test_finalize_preserves_bare_source_marker_as_reader_clean_failure(tmp_path:
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["status"] == "fail"
     assert report["delivery_promotion"] == "skipped_reader_clean_failed"
-    assert report["reader_clean"]["src_marker_count"] == 1
-    assert "source:SOURCEA_ABC123" in report["reader_clean"]["sample_findings"][0]["text"]
+    assert report["reader_clean"]["src_marker_count"] == 2
+    finding_text = "\n".join(finding["text"] for finding in report["reader_clean"]["sample_findings"])
+    assert "source:SOURCEA_ABC123" in finding_text
+    assert "source:ALPHACLAIM" in finding_text
     assert not (output_dir / "delivery").exists()
 
 

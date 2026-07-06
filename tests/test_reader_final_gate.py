@@ -64,16 +64,18 @@ def test_reader_final_gate_detects_bare_source_markers_via_shared_parser() -> No
         [
             "Unresolved policy marker source:POLICY_123456.",
             "Unresolved generated marker source:SOURCEA_ABC123.",
+            "Unresolved alpha marker source:ALPHACLAIM.",
         ]
     )
 
     result = detect_reader_residue(text, artifact="output/brief.md")
 
     assert result.status == "fail"
-    assert result.counts["src_marker_count"] == 2
+    assert result.counts["src_marker_count"] == 3
     assert [finding.text for finding in result.findings if finding.kind == "src_marker"] == [
         "source:POLICY_123456",
         "source:SOURCEA_ABC123",
+        "source:ALPHACLAIM",
     ]
 
 
