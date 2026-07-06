@@ -5,6 +5,18 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from multi_agent_brief.outputs.reader_residue_taxonomy import (
+    ATOM_ID_RE,
+    CLAIM_ID_RE,
+    CONTEXTUAL_SRC_ID_RE,
+    DEBUG_RE,
+    LOCAL_PATH_RE,
+    PROCESS_WORDINGS,
+    SOURCE_ID_RE,
+    SPAN_ID_RE,
+    SRC_MARKER_RE,
+)
+
 
 FindingKind = Literal[
     "src_marker",
@@ -32,52 +44,19 @@ COUNT_KEYS = {
     "policy_forbidden_phrase": "policy_forbidden_phrase_count",
 }
 
-_SRC_MARKER_RE = re.compile(r"\[(?:src|source):[^\]]+\]", re.IGNORECASE)
-_CLAIM_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|CLM-\d{3,}|CL-\d{3,}|(?:[A-Z][A-Z0-9]*_)?CLAIM_[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_])"
-)
-_SOURCE_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:[A-Z][A-Z0-9]*_)?(?:SRC|SOURCE)_[A-Z0-9][A-Z0-9_-]*(?![A-Za-z0-9_])"
-)
-_CONTEXTUAL_SRC_ID_RE = re.compile(
-    r"(?i)(?:source[_\s-]*id|source\s+ref(?:erence)?|来源\s*ID|源\s*ID)[:：\s`'\"]*(SRC-\d{3,})"
-)
-_LOCAL_PATH_RE = re.compile(r"(?:/Users/[^\s)]+|/mnt/data/[^\s)]+|file://[^\s)]+|[A-Za-z]:\\[^\s)]+)")
-_DEBUG_RE = re.compile(r"\b(?:DEBUG|TRACE)\b")
-_ATOM_ID_RE = re.compile(r"(?<![A-Za-z0-9_])AC-\d{4}-\d{2}(?![A-Za-z0-9_])")
-_SPAN_ID_RE = re.compile(r"(?<![A-Za-z0-9_])ESP-\d{3,4}-\d{2}(?![A-Za-z0-9_])")
+_SRC_MARKER_RE = SRC_MARKER_RE
+_CLAIM_ID_RE = CLAIM_ID_RE
+_SOURCE_ID_RE = SOURCE_ID_RE
+_CONTEXTUAL_SRC_ID_RE = CONTEXTUAL_SRC_ID_RE
+_LOCAL_PATH_RE = LOCAL_PATH_RE
+_DEBUG_RE = DEBUG_RE
+_ATOM_ID_RE = ATOM_ID_RE
+_SPAN_ID_RE = SPAN_ID_RE
 _ATOM_ID_WORDING_RE = re.compile(r"\batom(?:\s+|-)+ids?\b", re.IGNORECASE)
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
-_PROCESS_WORDINGS = [
-    "Analyst subagent",
-    "Auditor subagent",
-    "Claim Ledger",
-    "source appendix generated from cited Claim Ledger",
-    "Human review required before distribution",
-    "audited_brief",
-    "artifact_registry",
-    "workflow_state",
-    "quality_gate_report",
-    "runtime_manifest",
-    "agent_handoff",
-    "claim_ledger.json",
-    "finalize_report.json",
-    "atomic_claim_graph",
-    "Atomic Claim Graph",
-    "atom_id",
-    "事实账本",
-    "声明账本",
-    "分析师子代理",
-    "审计师子代理",
-    "审计员子代理",
-    "运行交接单",
-    "运行清单",
-    "工作流状态",
-    "产物注册表",
-    "质量门禁",
-]
+_PROCESS_WORDINGS = list(PROCESS_WORDINGS)
 
 _CITATION_SECTION_TITLES = [
     "citation index",

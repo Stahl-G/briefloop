@@ -217,6 +217,21 @@ def test_public_safety_scan_allows_json_suffix_sha256_hex_fields(tmp_path):
     assert findings == []
 
 
+def test_public_safety_scan_allows_reader_projection_sha256_field_names(tmp_path):
+    module = _load_module()
+    sample = tmp_path / "finalize.py"
+    sample.write_text(
+        '"source_sha256": "",\n'
+        '"output_sha256": "",\n'
+        '"candidate_sha256": "",\n',
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample], banned_terms=[])
+
+    assert findings == []
+
+
 def test_public_safety_scan_suffix_sha256_does_not_hide_nearby_token(tmp_path):
     module = _load_module()
     sample = tmp_path / "mixed.yaml"

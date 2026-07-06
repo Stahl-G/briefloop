@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -18,7 +19,18 @@ from multi_agent_brief.outputs.source_appendix import (
     SourceAppendixResult,
     build_source_appendix,
     cited_claim_ids,
-    replace_claim_citations_with_labels,
+)
+from multi_agent_brief.outputs.reader_residue_taxonomy import (
+    READER_PROJECTION_ALLOWED_OPERATIONS,
+    READER_PROJECTION_TOOL_IDENTITY,
+    READER_PROJECTION_TRANSFORM_TYPE,
+    READER_PROJECTION_TRANSFORM_VERSION,
+    ReaderProjectionContractError,
+    ReaderProjectionTransformResult,
+    count_source_markers,
+    project_reader_source_markdown,
+    reader_projection_source_markdown,
+    source_appendix_reference_markdown,
 )
 from multi_agent_brief.product.citation_profile import resolve_workspace_citation_profile
 from multi_agent_brief.product.policy_gate_adapter import (
@@ -26,14 +38,6 @@ from multi_agent_brief.product.policy_gate_adapter import (
     resolve_workspace_policy_gate_adapter,
 )
 from multi_agent_brief.product.template_renderer import render_reader_markdown_with_template
-from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
-
-_SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
-_INTERNAL_READER_SECTION_RE = re.compile(
-    r"(?:claim\s+ledger|声明账本).{0,80}(?:coverage|覆盖情况|覆盖)",
-    re.IGNORECASE,
-)
-
 
 @dataclass(frozen=True)
 class ReaderProjectionResult:
@@ -72,6 +76,7 @@ class ReaderProjectionResult:
     citation_profile_audit_bundle_keeps_trace: bool = True
     citation_profile_warnings: list[str] = field(default_factory=list)
     reader_clean: dict[str, Any] = field(default_factory=dict)
+    reader_projection: dict[str, Any] = field(default_factory=dict)
 
 
 def build_reader_projection(
@@ -117,7 +122,9 @@ def build_reader_projection(
     candidate_dir.mkdir(parents=True)
     try:
         audited_markdown = audited_path.read_text(encoding="utf-8")
-        stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
+        reader_source = reader_projection_source_markdown(audited_markdown)
+        reader_source_markdown = reader_source.markdown
+        stripped_count = count_source_markers(reader_source_markdown)
         formats = set(output_formats or ["markdown"])
         source_appendix_config = source_appendix_config or {}
         appendix_request = _source_appendix_request(
@@ -130,8 +137,9 @@ def build_reader_projection(
         )
         appendix_path = candidate_dir / "source_appendix.md"
         appendix_trace_path = candidate_dir / "source_appendix_trace.md"
+        appendix_source_markdown = source_appendix_reference_markdown(reader_source_markdown)
         appendix_result = _maybe_generate_source_appendix(
-            audited_markdown=audited_markdown,
+            audited_markdown=appendix_source_markdown,
             ledger_path=intermediate_dir / "claim_ledger.json",
             appendix_path=appendix_path,
             trace_path=appendix_trace_path,
@@ -143,18 +151,14 @@ def build_reader_projection(
             if appendix_request["requested_by"] == "none" and appendix_result.source_count
             else str(appendix_request["requested_by"])
         )
-        reader_source_markdown = (
-            replace_claim_citations_with_labels(
-                audited_markdown,
-                appendix_result.citation_labels,
-            )
-            if appendix_result.citation_labels
-            else strip_claim_citations(audited_markdown)
+        projected = project_reader_source_markdown(
+            reader_source_markdown,
+            citation_labels=appendix_result.citation_labels,
+            initial_operations=reader_source.applied_operations,
         )
-        base_reader_markdown = _strip_internal_reader_sections(reader_source_markdown)
-        reader_markdown = base_reader_markdown
+        reader_markdown = projected.markdown
         if appendix_result.markdown and appendix_result.source_count:
-            reader_markdown = base_reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
+            reader_markdown = reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
         template_render = render_reader_markdown_with_template(
             workspace=workspace,
             markdown=reader_markdown,
@@ -162,6 +166,12 @@ def build_reader_projection(
         reader_markdown = template_render.markdown
         reader_path = candidate_dir / "reader_brief.md"
         reader_path.write_text(reader_markdown, encoding="utf-8")
+        reader_projection = _reader_projection_report(
+            workspace=workspace,
+            audited_path=audited_path,
+            reader_path=reader_path,
+            projected=projected,
+        )
 
         policy_gate_adapter = resolve_workspace_policy_gate_adapter(workspace)
         reader_clean_paths = [reader_path]
@@ -225,7 +235,11 @@ def build_reader_projection(
             ),
             citation_profile_warnings=list(citation_profile.get("warnings") or []),
             reader_clean=reader_clean,
+            reader_projection=reader_projection,
         )
+    except ReaderProjectionContractError:
+        shutil.rmtree(candidate_dir, ignore_errors=True)
+        raise
     except Exception:
         shutil.rmtree(candidate_dir, ignore_errors=True)
         raise
@@ -370,28 +384,41 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
-def _strip_internal_reader_sections(markdown: str) -> str:
-    """Remove process-only sections that should not reach final readers."""
-    lines = markdown.splitlines()
-    cleaned: list[str] = []
-    skip_level: int | None = None
+def _reader_projection_report(
+    *,
+    workspace: Path,
+    audited_path: Path,
+    reader_path: Path,
+    projected: ReaderProjectionTransformResult,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "briefloop.reader_projection.v1",
+        "source_artifact": _workspace_relative(workspace, audited_path),
+        "source_sha256": _sha256_file(audited_path),
+        "transform_type": READER_PROJECTION_TRANSFORM_TYPE,
+        "transform_version": READER_PROJECTION_TRANSFORM_VERSION,
+        "allowed_operations": list(READER_PROJECTION_ALLOWED_OPERATIONS),
+        "applied_operations": list(projected.applied_operations),
+        "warnings": list(projected.warnings),
+        "output_artifact": _workspace_relative(workspace, reader_path),
+        "output_sha256": _sha256_file(reader_path),
+        "tool_identity": READER_PROJECTION_TOOL_IDENTITY,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "identity_fields": ["source_sha256", "transform_version", "output_sha256"],
+        "generated_at_identity": False,
+    }
 
-    for line in lines:
-        heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
-        if skip_level is not None:
-            if heading and len(heading.group(1)) <= skip_level:
-                skip_level = None
-            else:
-                continue
 
-        if heading:
-            title = heading.group(2).strip()
-            if _INTERNAL_READER_SECTION_RE.search(title):
-                skip_level = len(heading.group(1))
-                while cleaned and not cleaned[-1].strip():
-                    cleaned.pop()
-                continue
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
-        cleaned.append(line)
 
-    return "\n".join(cleaned).rstrip() + "\n"
+def _workspace_relative(workspace: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(workspace.resolve()).as_posix()
+    except ValueError:
+        return str(path)

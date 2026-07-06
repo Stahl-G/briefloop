@@ -17,6 +17,13 @@ from multi_agent_brief.outputs.reader_projection import (
     build_reader_clean_report,
     build_reader_projection,
 )
+from multi_agent_brief.outputs.reader_residue_taxonomy import (
+    READER_PROJECTION_ALLOWED_OPERATIONS,
+    READER_PROJECTION_TOOL_IDENTITY,
+    READER_PROJECTION_TRANSFORM_TYPE,
+    READER_PROJECTION_TRANSFORM_VERSION,
+    ReaderProjectionContractError,
+)
 from multi_agent_brief.outputs.source_appendix import cited_claim_ids
 from multi_agent_brief.product.policy_gate_adapter import policy_forbidden_phrases
 from multi_agent_brief.product.quality_closeout import quality_panel_closeout_projection
@@ -71,6 +78,7 @@ class FinalizeResult:
     reader_clean: dict[str, Any] | None = None
     audit_binding: dict[str, Any] | None = None
     policy_gate_adapter: dict[str, Any] = field(default_factory=dict)
+    reader_projection: dict[str, Any] = field(default_factory=dict)
     citation_profile: str = "executive"
     citation_profile_source: str = "default"
     citation_profile_runtime_effect: str = "citation_profile_resolution_only"
@@ -538,6 +546,37 @@ def finalize_reader_outputs(
             candidate_root=candidate_root,
             transaction_id=finalize_transaction_id,
         )
+    except ReaderProjectionContractError as exc:
+        _remove_empty_dir(candidate_root)
+        audited_path = intermediate_dir / "audited_brief.md"
+        result = FinalizeResult(
+            status="fail",
+            finalize_transaction_id=finalize_transaction_id,
+            audited_brief=str(audited_path),
+            reader_brief="",
+            delivery_promotion="skipped_reader_projection_contract_failed",
+            delivery_promotion_error=str(exc),
+            reader_projection={
+                "schema_version": "briefloop.reader_projection.v1",
+                "status": "fail",
+                "source_artifact": _workspace_relative_value(workspace, str(audited_path)),
+                "source_sha256": _sha256_file(audited_path) if audited_path.exists() else "",
+                "transform_type": READER_PROJECTION_TRANSFORM_TYPE,
+                "transform_version": READER_PROJECTION_TRANSFORM_VERSION,
+                "allowed_operations": list(READER_PROJECTION_ALLOWED_OPERATIONS),
+                "applied_operations": [],
+                "findings": [finding.to_dict() for finding in exc.findings],
+                "output_artifact": "",
+                "output_sha256": "",
+                "tool_identity": READER_PROJECTION_TOOL_IDENTITY,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "identity_fields": ["source_sha256", "transform_version", "output_sha256"],
+                "generated_at_identity": False,
+            },
+        )
+        if _can_write_failure_report(report_path):
+            _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
+        raise RuntimeError(f"Reader projection contract failed. See {report_path}.") from exc
     except Exception:
         _remove_empty_dir(candidate_root)
         raise
@@ -580,6 +619,7 @@ def finalize_reader_outputs(
             source_appendix_trace_span_count=projection.source_appendix_trace_span_count,
             source_appendix_trace_warnings=projection.source_appendix_trace_warnings,
             template_rendering=projection.template_rendering,
+            reader_projection=projection.reader_projection,
             audit_binding=_audit_binding_report(
                 intermediate_dir=intermediate_dir,
                 audited_markdown=projection.audited_markdown,
@@ -743,6 +783,20 @@ def finalize_reader_outputs(
             result.delivery_artifacts = delivery_bundle["delivery_artifacts"]
             result.delivery_artifact_sha256 = delivery_bundle["delivery_artifact_sha256"]
             result.delivery_promotion = "promoted"
+            if result.reader_projection:
+                delivery_markdown_hash = delivery_bundle["delivery_artifact_sha256"].get(
+                    delivery_bundle["delivery_markdown"]
+                )
+                result.reader_projection = {
+                    **result.reader_projection,
+                    "candidate_artifact": result.reader_projection.get("output_artifact", ""),
+                    "candidate_sha256": result.reader_projection.get("output_sha256", ""),
+                    "output_artifact": _workspace_relative_value(
+                        workspace,
+                        delivery_bundle["delivery_markdown"],
+                    ),
+                    "output_sha256": delivery_markdown_hash or "",
+                }
             result.report_template_conformance = project_workspace_report_template_conformance(workspace)
             result.delivery_snapshot_dir = delivery_snapshot["delivery_snapshot_dir"]
             result.delivery_snapshot_artifacts = delivery_snapshot["delivery_snapshot_artifacts"]

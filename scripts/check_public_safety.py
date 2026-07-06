@@ -172,6 +172,7 @@ def _allowed_fixture(
     if rel in {
         "src/multi_agent_brief/improvement/contract.py",
         "src/multi_agent_brief/outputs/reader_final_gate.py",
+        "src/multi_agent_brief/outputs/reader_residue_taxonomy.py",
     } and kind in {"user_path", "file_url"}:
         return True
     if rel in _PUBLIC_TEST_FIXTURE_FINDINGS and kind in _PUBLIC_TEST_FIXTURE_FINDINGS[rel]:
@@ -200,6 +201,12 @@ def _allowed_fixture(
     ):
         return True
     if kind == "lark_token" and re.fullmatch(r"(?:oc|ou|on|om)_x+", needle):
+        return True
+    if kind == "lark_token" and needle in {
+        "candidate_sha256",
+        "output_sha256",
+        "source_sha256",
+    }:
         return True
     if kind == "lark_token" and _is_sha256_value(needle, line, start=start, end=end):
         return True

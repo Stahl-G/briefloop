@@ -511,8 +511,45 @@ def test_finalize_reader_outputs_strip_src_markers(tmp_path: Path):
 
     audited = intermediate / "audited_brief.md"
     audited.write_text(
-        "# Test Brief\n\nThe company announced a new product. [src:CLM_001]\n\n"
-        "More details followed. [src:CLM_002]",
+        "# Test Brief\n\nThe company announced a new product. [src:CLM-001]\n\n"
+        "More details followed. [src:CLM-002]",
+        encoding="utf-8",
+    )
+    (intermediate / "claim_ledger.json").write_text(
+        json.dumps(
+            [
+                {
+                    "claim_id": "CLM-001",
+                    "statement": "The company announced a new product.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "The company announced a new product.",
+                    "source_url": "https://example.com/product",
+                    "source_type": "web_search",
+                    "metadata": {
+                        "source_title": "Product Announcement",
+                        "publisher": "Example News",
+                        "published_at": "2026-06-01",
+                        "source_category": "news_media",
+                    },
+                },
+                {
+                    "claim_id": "CLM-002",
+                    "statement": "More details followed.",
+                    "source_id": "SRC-002",
+                    "evidence_text": "More details followed.",
+                    "source_url": "https://example.com/details",
+                    "source_type": "web_search",
+                    "metadata": {
+                        "source_title": "Product Details",
+                        "publisher": "Example News",
+                        "published_at": "2026-06-02",
+                        "source_category": "news_media",
+                    },
+                },
+            ],
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 

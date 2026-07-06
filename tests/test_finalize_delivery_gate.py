@@ -341,10 +341,11 @@ def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     audited = intermediate / "audited_brief.md"
     audited.write_text(
         "# 上能电气 电力设备市场周报\n\n"
-        "- 美国政策出现变化 [src:POLICY_123456]\n"
-        "- 市场需求增长 5% [src:MARKET_ABCDEF]\n",
+        "- 美国政策出现变化 [src:SYN_CLAIM_001]\n"
+        "- 市场需求增长 5% [src:SYN_CLAIM_002]\n",
         encoding="utf-8",
     )
+    _write_claim_ledger(intermediate / "claim_ledger.json")
 
     result = finalize_reader_outputs(
         output_dir=output_dir,
@@ -381,6 +382,15 @@ def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     assert result.delivery_artifacts == [
         str(output_dir / "delivery" / "brief.md"),
         str(output_dir / "delivery" / "上能电气_电力设备周报_2026-06-06.docx"),
+    ]
+    assert result.reader_projection["transform_type"] == "reader_projection"
+    assert result.reader_projection["output_artifact"] == "output/delivery/brief.md"
+    assert result.reader_projection["generated_at_identity"] is False
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["reader_projection"]["source_artifact"] == "output/intermediate/audited_brief.md"
+    assert report["reader_projection"]["output_artifact"] == "output/delivery/brief.md"
+    assert report["reader_projection"]["output_sha256"] == report["delivery_artifact_sha256"][
+        "output/delivery/brief.md"
     ]
 
 
@@ -471,6 +481,7 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, 
     )
     audited_path = intermediate / "audited_brief.md"
     audited_path.write_text("# Brief\n\n- Claim [src:CLAIM_123456]\n", encoding="utf-8")
+    _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="CLAIM_123456")
 
     assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 0
     captured = capsys.readouterr()
@@ -874,8 +885,7 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     intermediate.mkdir(parents=True)
     (intermediate / "audited_brief.md").write_text(
         "# Brief\n\n"
-        "ExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n"
-        "A missing internal ref should not leak. [src:SYN_CLAIM_MISSING]\n",
+        "ExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n",
         encoding="utf-8",
     )
     _write_claim_ledger(intermediate / "claim_ledger.json")
@@ -891,10 +901,10 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     reader = (output_dir / "brief.md").read_text(encoding="utf-8")
 
-    assert result.source_appendix_generation == "generated_with_warnings"
+    assert result.source_appendix_generation == "generated"
     assert report["source_appendix_requested_by"] == "source_appendix"
     assert report["source_appendix_source_count"] == 1
-    assert report["source_appendix_cited_claim_count"] == 2
+    assert report["source_appendix_cited_claim_count"] == 1
     assert report["source_appendix_resolved_claim_count"] == 1
     assert report["source_appendix_mode"] == "separate"
     assert report["source_appendix_claim_map"]["SYN_CLAIM_001"] == {
@@ -1565,12 +1575,70 @@ def test_finalize_rejects_if_audit_report_changed_after_auditor_complete(tmp_pat
     )
 
 
+def test_finalize_fails_closed_on_unresolved_source_marker(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nRevenue grew in the quarter. [src:CL-999]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="CL-001")
+
+    with pytest.raises(RuntimeError, match="Reader projection contract failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_projection_contract_failed"
+    assert report["reader_projection"]["status"] == "fail"
+    assert "unresolved_source_marker" in {
+        finding["kind"] for finding in report["reader_projection"]["findings"]
+    }
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+
+
+def test_finalize_preserves_reader_safe_source_prose(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Primary source: company filing.\n\n"
+        "Source: FDA clinical registry.\n\n"
+        "The source: company filing supports this statement.\n\n"
+        "来源：公司公告。\n",
+        encoding="utf-8",
+    )
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    assert result.status == "pass"
+    assert "Primary source: company filing." in reader
+    assert "Source: FDA clinical registry." in reader
+    assert "The source: company filing supports this statement." in reader
+    assert "来源：公司公告。" in reader
+    assert (output_dir / "delivery" / "brief.md").exists()
+
+
 def test_finalize_legacy_source_map_skips_missing_ledger_without_failing(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
     (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\nClaim. [src:SYN_CLAIM_001]\n",
+        "# Brief\n\nClaim without internal citation.\n",
         encoding="utf-8",
     )
 
@@ -1671,6 +1739,10 @@ def test_finalize_legacy_missing_ledger_removes_stale_source_appendix(tmp_path: 
     )
     assert (output_dir / "source_appendix.md").exists()
     ledger.unlink()
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility without an internal citation.\n",
+        encoding="utf-8",
+    )
 
     result = finalize_reader_outputs(
         output_dir=output_dir,
@@ -1703,6 +1775,10 @@ def test_finalize_legacy_malformed_ledger_removes_stale_source_appendix(tmp_path
     )
     assert (output_dir / "source_appendix.md").exists()
     ledger.write_text("{not json", encoding="utf-8")
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility without an internal citation.\n",
+        encoding="utf-8",
+    )
 
     result = finalize_reader_outputs(
         output_dir=output_dir,
@@ -1994,7 +2070,7 @@ def test_finalize_report_relative_paths_survive_workspace_move(tmp_path: Path):
     assert all(path.exists() for path in reader_paths)
 
 
-def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path):
+def test_finalize_rejects_unmarked_internal_claim_ledger_coverage_section(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -2011,19 +2087,23 @@ def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path)
         encoding="utf-8",
     )
 
-    finalize_reader_outputs(
-        output_dir=output_dir,
-        project_name="ExampleCo Brief",
-        output_formats=["markdown"],
-        output_named_outputs=False,
-    )
+    with pytest.raises(RuntimeError, match="Reader projection contract failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
 
-    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
-    assert "Claim Ledger 覆盖情况" not in reader
-    assert "覆盖类别" not in reader
-    assert "内部覆盖说明" not in reader
-    assert "Normal Reader Section" in reader
-    assert "[src:" not in reader
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_projection_contract_failed"
+    assert any(
+        finding["kind"] == "internal_process_wording"
+        for finding in report["reader_projection"]["findings"]
+    )
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
 
 
 def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
@@ -2035,7 +2115,7 @@ def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+    with pytest.raises(RuntimeError, match="Reader projection contract failed"):
         finalize_reader_outputs(
             output_dir=output_dir,
             project_name="ExampleCo Brief",
@@ -2045,12 +2125,37 @@ def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["status"] == "fail"
-    assert report["reader_clean"]["status"] == "fail"
-    assert report["reader_clean"]["bare_claim_id_count"] == 1
-    finding_artifact = Path(report["reader_clean"]["sample_findings"][0]["artifact"])
-    assert finding_artifact.exists()
-    assert "finalize_candidate" in finding_artifact.parts
-    assert finding_artifact.name == "reader_brief.md"
+    assert report["delivery_promotion"] == "skipped_reader_projection_contract_failed"
+    assert "bare_claim_id" in {
+        finding["kind"] for finding in report["reader_projection"]["findings"]
+    }
+
+
+def test_finalize_projects_standard_claim_ledger_disclaimer(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nThis brief draws from the frozen Claim Ledger.\n\nReader-safe text.\n",
+        encoding="utf-8",
+    )
+    before_sha = _sha256_file(audited)
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert _sha256_file(audited) == before_sha
+    assert result.delivery_promotion == "promoted"
+    assert "frozen Claim Ledger" not in reader
+    assert "registered source evidence" in reader
+    assert "disclaimer_rewrite" in report["reader_projection"]["applied_operations"]
 
 
 def test_failed_reader_clean_does_not_overwrite_existing_delivery(tmp_path: Path):
@@ -2083,7 +2188,7 @@ def test_failed_reader_clean_does_not_overwrite_existing_delivery(tmp_path: Path
         "# Brief\n\nSecond run has raw internal marker [CL-0001].\n",
         encoding="utf-8",
     )
-    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+    with pytest.raises(RuntimeError, match="Reader projection contract failed"):
         finalize_reader_outputs(
             output_dir=output_dir,
             project_name="ExampleCo Brief",
@@ -2093,7 +2198,7 @@ def test_failed_reader_clean_does_not_overwrite_existing_delivery(tmp_path: Path
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["status"] == "fail"
-    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["delivery_promotion"] == "skipped_reader_projection_contract_failed"
     assert root_brief.read_text(encoding="utf-8") == first_root_text
     assert delivery_brief.read_text(encoding="utf-8") == first_delivery_text
     assert appendix.read_text(encoding="utf-8") == first_appendix_text
@@ -2279,7 +2384,7 @@ def test_finalize_fails_on_common_internal_id_reader_residue(tmp_path: Path):
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+    with pytest.raises(RuntimeError, match="Reader projection contract failed"):
         finalize_reader_outputs(
             output_dir=output_dir,
             project_name="ExampleCo Brief",
@@ -2288,9 +2393,9 @@ def test_finalize_fails_on_common_internal_id_reader_residue(tmp_path: Path):
         )
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
-    reader_clean = report["reader_clean"]
-    assert reader_clean["bare_claim_id_count"] == 2
-    assert reader_clean["source_id_count"] == 3
+    findings = report["reader_projection"]["findings"]
+    assert sum(1 for finding in findings if finding["kind"] == "bare_claim_id") == 2
+    assert sum(1 for finding in findings if finding["kind"] == "source_id") == 3
 
 
 def test_finalize_fails_on_docx_footer_reader_residue(tmp_path: Path):
@@ -2336,7 +2441,7 @@ def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Pat
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+    with pytest.raises(RuntimeError, match="Reader projection contract failed"):
         finalize_reader_outputs(
             output_dir=output_dir,
             project_name="ExampleCo Brief",
@@ -2345,11 +2450,11 @@ def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Pat
         )
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
-    reader_clean = report["reader_clean"]
-    assert reader_clean["src_marker_count"] == 1
-    assert reader_clean["process_wording_count"] >= 3
-    assert reader_clean["local_path_count"] == 1
-    assert reader_clean["debug_residue_count"] == 1
+    findings = report["reader_projection"]["findings"]
+    kinds = [finding["kind"] for finding in findings]
+    assert kinds.count("internal_process_wording") >= 3
+    assert kinds.count("local_path") == 1
+    assert kinds.count("debug_residue") == 1
 
 
 def test_finalize_fails_on_blank_source_index_row(tmp_path: Path):
@@ -2465,8 +2570,11 @@ def test_finalize_cli_reports_reader_clean_failure_without_traceback(
 
     assert rc == 1
     assert "[finalize] Error:" in captured.err
-    assert "Reader final output gate failed" in captured.err
+    assert "Reader projection contract failed" in captured.err
     assert "finalize_report.json" in captured.err
     assert "Traceback" not in captured.err
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
-    assert report["reader_clean"]["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_projection_contract_failed"
+    assert "bare_claim_id" in {
+        finding["kind"] for finding in report["reader_projection"]["findings"]
+    }
