@@ -7418,6 +7418,53 @@ def test_finalize_complete_does_not_consume_delivery_snapshot(tmp_path):
     assert not snapshot_dir.exists()
 
 
+def test_finalize_complete_rejects_non_list_delivery_artifacts_without_crashing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    report_path = _intermediate(ws) / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifacts"] = 42
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == "E_READER_FINAL_GATE_FAILED"
+    assert "delivery_artifacts must list the reader delivery bundle" in str(excinfo.value)
+
+
+def test_finalize_complete_rejects_external_delivery_artifact_without_crashing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    external = tmp_path / "outside-delivery.md"
+    external.write_text("# Reader Brief\n\nExternal artifact.\n", encoding="utf-8")
+    report_path = _intermediate(ws) / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifacts"] = [str(external)]
+    report["delivery_artifact_sha256"] = {str(external): _sha256_file(external)}
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == "E_READER_FINAL_GATE_FAILED"
+    assert "delivery_artifacts may only reference files under output/delivery" in str(excinfo.value)
+
+
 def test_finalize_complete_requires_passing_audit_binding(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

@@ -19,6 +19,7 @@ from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
 )
+from multi_agent_brief.outputs import finalize as finalize_module
 from tests.helpers import sha256_file as _sha256_file
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1608,8 +1609,8 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
             output_named_outputs=False,
         )
 
-    assert not stale_appendix.exists()
-    assert not stale_trace.exists()
+    assert stale_appendix.read_text(encoding="utf-8") == "stale appendix"
+    assert stale_trace.read_text(encoding="utf-8") == "stale trace"
     assert not (intermediate / "finalize_candidate").exists()
     assert not any(
         path.name.startswith(".briefloop-finalize-candidate-")
@@ -1943,14 +1944,14 @@ def test_finalize_delivery_snapshot_does_not_silently_overwrite_same_run_id(tmp_
     assert "Second reader-safe text" in (output_dir / "delivery" / "brief.md").read_text(encoding="utf-8")
 
 
-def test_finalize_delivery_snapshot_failure_writes_failed_report(tmp_path: Path):
+def test_finalize_delivery_snapshot_target_preflight_writes_failed_report(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
     (intermediate / "audited_brief.md").write_text("# Brief\n\nReader-safe text.\n", encoding="utf-8")
     (output_dir / "delivery-history").write_text("not a directory", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="Delivery snapshot creation failed"):
+    with pytest.raises(RuntimeError, match="Finalize promotion preflight failed"):
         finalize_reader_outputs(
             output_dir=output_dir,
             project_name="ExampleCo Brief",
@@ -1960,10 +1961,11 @@ def test_finalize_delivery_snapshot_failure_writes_failed_report(tmp_path: Path)
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["status"] == "fail"
-    assert report["delivery_artifacts"] == ["output/delivery/brief.md"]
+    assert report["delivery_promotion"] == "skipped_promotion_preflight_failed"
+    assert report["delivery_artifacts"] == []
     assert report["delivery_snapshot_dir"] == ""
     assert report["delivery_snapshot_artifacts"] == []
-    assert "FileExistsError" in report["delivery_snapshot_error"]
+    assert "delivery history directory target is not a directory" in report["delivery_promotion_error"]
 
 
 def test_finalize_report_relative_paths_survive_workspace_move(tmp_path: Path):
@@ -2045,7 +2047,158 @@ def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
     assert report["status"] == "fail"
     assert report["reader_clean"]["status"] == "fail"
     assert report["reader_clean"]["bare_claim_id_count"] == 1
-    assert report["reader_clean"]["sample_findings"][0]["artifact"].endswith("brief.md")
+    finding_artifact = Path(report["reader_clean"]["sample_findings"][0]["artifact"])
+    assert finding_artifact.exists()
+    assert "finalize_candidate" in finding_artifact.parts
+    assert finding_artifact.name == "reader_brief.md"
+
+
+def test_failed_reader_clean_does_not_overwrite_existing_delivery(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text("# Brief\n\nFirst reader-safe delivery.\n", encoding="utf-8")
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+    root_brief = output_dir / "brief.md"
+    delivery_brief = output_dir / "delivery" / "brief.md"
+    appendix = output_dir / "source_appendix.md"
+    appendix_trace = output_dir / "source_appendix_trace.md"
+    appendix.write_text("previous appendix", encoding="utf-8")
+    appendix_trace.write_text("previous trace", encoding="utf-8")
+    first_root_text = root_brief.read_text(encoding="utf-8")
+    first_delivery_text = delivery_brief.read_text(encoding="utf-8")
+    first_appendix_text = appendix.read_text(encoding="utf-8")
+    first_appendix_trace_text = appendix_trace.read_text(encoding="utf-8")
+    delivery_history = output_dir / "delivery-history"
+    first_snapshot_names = sorted(path.name for path in delivery_history.iterdir())
+
+    audited.write_text(
+        "# Brief\n\nSecond run has raw internal marker [CL-0001].\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert root_brief.read_text(encoding="utf-8") == first_root_text
+    assert delivery_brief.read_text(encoding="utf-8") == first_delivery_text
+    assert appendix.read_text(encoding="utf-8") == first_appendix_text
+    assert appendix_trace.read_text(encoding="utf-8") == first_appendix_trace_text
+    assert sorted(path.name for path in delivery_history.iterdir()) == first_snapshot_names
+
+
+def test_failed_delivery_snapshot_does_not_overwrite_existing_delivery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text("# Brief\n\nFirst reader-safe delivery.\n", encoding="utf-8")
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+    root_brief = output_dir / "brief.md"
+    delivery_brief = output_dir / "delivery" / "brief.md"
+    appendix = output_dir / "source_appendix.md"
+    appendix_trace = output_dir / "source_appendix_trace.md"
+    appendix.write_text("previous appendix", encoding="utf-8")
+    appendix_trace.write_text("previous trace", encoding="utf-8")
+    first_root_text = root_brief.read_text(encoding="utf-8")
+    first_delivery_text = delivery_brief.read_text(encoding="utf-8")
+    first_appendix_text = appendix.read_text(encoding="utf-8")
+    first_appendix_trace_text = appendix_trace.read_text(encoding="utf-8")
+    delivery_history = output_dir / "delivery-history"
+    first_snapshot_names = sorted(path.name for path in delivery_history.iterdir())
+
+    def fail_snapshot(**_: object) -> dict[str, object]:
+        raise RuntimeError("snapshot storage unavailable")
+
+    audited.write_text("# Brief\n\nSecond reader-safe delivery.\n", encoding="utf-8")
+    monkeypatch.setattr(finalize_module, "_write_delivery_snapshot", fail_snapshot)
+
+    with pytest.raises(RuntimeError, match="Finalize promotion commit failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_promotion_commit_failed"
+    assert "snapshot storage unavailable" in report["delivery_promotion_error"]
+    assert root_brief.read_text(encoding="utf-8") == first_root_text
+    assert delivery_brief.read_text(encoding="utf-8") == first_delivery_text
+    assert appendix.read_text(encoding="utf-8") == first_appendix_text
+    assert appendix_trace.read_text(encoding="utf-8") == first_appendix_trace_text
+    assert sorted(path.name for path in delivery_history.iterdir()) == first_snapshot_names
+
+
+def test_failed_promotion_preflight_does_not_overwrite_existing_delivery(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_claim_ledger(intermediate / "claim_ledger.json")
+    audited = intermediate / "audited_brief.md"
+    audited.write_text("# Brief\n\nFirst reader-safe delivery.\n", encoding="utf-8")
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+    root_brief = output_dir / "brief.md"
+    delivery_brief = output_dir / "delivery" / "brief.md"
+    first_root_text = root_brief.read_text(encoding="utf-8")
+    first_delivery_text = delivery_brief.read_text(encoding="utf-8")
+    delivery_history = output_dir / "delivery-history"
+    preflight_snapshot_names = sorted(path.name for path in delivery_history.iterdir())
+
+    appendix = output_dir / "source_appendix.md"
+    appendix.mkdir()
+    audited.write_text(
+        "# Brief\n\nSecond run has a cited claim. [src:SYN_CLAIM_001]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Finalize promotion preflight failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_promotion_preflight_failed"
+    assert "source appendix target is not a file" in report["delivery_promotion_error"]
+    assert root_brief.read_text(encoding="utf-8") == first_root_text
+    assert delivery_brief.read_text(encoding="utf-8") == first_delivery_text
+    assert appendix.is_dir()
+    assert sorted(path.name for path in delivery_history.iterdir()) == preflight_snapshot_names
 
 
 def test_finalize_applies_policy_profile_forbidden_phrases(tmp_path: Path):
