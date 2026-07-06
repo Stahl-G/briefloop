@@ -131,6 +131,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserved explicit online-search opt-outs from `briefloop onboard` when the
+  saved `onboarding.json` is replayed through `briefloop init --from-onboarding`.
 - Hardened public-safety sha256 scanning so checksum fields are allowed by
   span, while token-like values near checksum text are still scanned.
 - Required screened-candidate discard reason codes and aligned Hermes-facing

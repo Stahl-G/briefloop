@@ -174,7 +174,7 @@ def _onboard_interactive(args: argparse.Namespace) -> int:
         language_plain=profile.output_language,
         cadence_plain=profile.cadence,
         must_watch=profile.focus_areas,
-        search_backend_plain=profile.search_backend,
+        search_backend_plain=_onboarding_search_backend_plain(profile),
         max_items_per_brief=profile.selector_max_items,
         source_age_days=profile.max_source_age_days,
         tavily_enabled=profile.tavily_enabled,
@@ -191,3 +191,19 @@ def _onboard_interactive(args: argparse.Namespace) -> int:
     )
     print(f"Then: briefloop run --workspace <workspace>")
     return 0
+
+
+def _onboarding_search_backend_plain(profile: object) -> str:
+    """Serialize the user's search choice for init --from-onboarding replay."""
+
+    mode = str(getattr(profile, "web_search_mode", "") or "").strip()
+    backend = str(getattr(profile, "search_backend", "") or "").strip()
+    if mode == "disabled":
+        return "none"
+    if mode == "runtime_tool":
+        return "runtime_websearch"
+    if mode == "configure_later":
+        return "configure_later"
+    if mode == "external_api":
+        return backend
+    return backend

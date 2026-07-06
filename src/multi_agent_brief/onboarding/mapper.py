@@ -434,9 +434,10 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
         profile.max_source_age_days = result.source_age_days
 
     # Web search: handle search backend selection
-    search_backend = getattr(result, "search_backend_plain", "").strip()
-    if search_backend:
-        search_backend = normalize_search_backend(search_backend)
+    raw_search_backend = getattr(result, "search_backend_plain", "").strip()
+    search_backend = normalize_search_backend(raw_search_backend) if raw_search_backend else ""
+    explicit_search_backend = bool(search_backend)
+    if explicit_search_backend:
         if search_backend == "tavily":
             profile.tavily_enabled = True
             profile.web_search_enabled = True
@@ -465,13 +466,11 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
             profile.search_backend = search_backend
 
     # Also check the legacy tavily_enabled field
-    if getattr(result, "tavily_enabled", False):
+    if not explicit_search_backend and getattr(result, "tavily_enabled", False):
         profile.tavily_enabled = True
         profile.web_search_enabled = True
-        if not profile.web_search_mode or profile.web_search_mode == "disabled":
-            profile.web_search_mode = "external_api"
-        if not profile.search_backend:
-            profile.search_backend = "tavily"
+        profile.web_search_mode = "external_api"
+        profile.search_backend = "tavily"
 
     # Competitor monitoring
     comp_prefs = getattr(result, "competitor_preferences", None) or {}

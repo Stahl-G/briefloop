@@ -1059,8 +1059,9 @@ def _build_llm_decide_sources(profile: InitProfile) -> dict[str, Any]:
     """Generate sources.yaml for llm_decide profile: agent-readable discovery policy."""
     lang = profile.output_language.split("-")[0] if "-" in profile.output_language else profile.output_language
 
-    # Build enabled_providers: always include manual and web_search
-    enabled_providers = ["manual", "web_search"]
+    enabled_providers = ["manual"]
+    if getattr(profile, "web_search_enabled", False):
+        enabled_providers.append("web_search")
     # filing_resolver is available but disabled by default; enable via sources decide --merge
 
     return {
