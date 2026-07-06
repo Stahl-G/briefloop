@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.outputs.reader_projection import build_reader_projection
 from tests.helpers import sha256_file
 
@@ -108,3 +110,35 @@ def test_reader_projection_rejects_pathlike_transaction_id_without_deleting_inte
     assert candidate.parent == intermediate / "finalize_candidate"
     assert candidate.name not in {".", ".."}
     assert Path(result.reader_brief).exists()
+
+
+def test_reader_projection_refuses_same_transaction_id_overwrite(tmp_path: Path) -> None:
+    output_dir, intermediate = _projection_workspace(tmp_path)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\nFirst candidate content. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+
+    first = build_reader_projection(
+        output_dir=output_dir,
+        output_formats=["markdown"],
+        transaction_id="tx-same",
+    )
+    first_reader = Path(first.reader_brief)
+    first_text = first_reader.read_text(encoding="utf-8")
+
+    audited.write_text(
+        "# Brief\n\nSecond candidate content. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        build_reader_projection(
+            output_dir=output_dir,
+            output_formats=["markdown"],
+            transaction_id="tx-same",
+        )
+
+    assert first_reader.read_text(encoding="utf-8") == first_text
+    assert "Second candidate content" not in first_reader.read_text(encoding="utf-8")

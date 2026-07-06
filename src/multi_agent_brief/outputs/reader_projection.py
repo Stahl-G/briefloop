@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,8 +103,12 @@ def build_reader_projection(
         transaction_id=transaction_id,
     )
     if candidate_dir.exists():
-        shutil.rmtree(candidate_dir)
-    candidate_dir.mkdir(parents=True, exist_ok=True)
+        raise FileExistsError(
+            "Reader projection candidate already exists for this transaction id: "
+            f"{candidate_dir}. Use a new transaction id instead of replacing an "
+            "existing candidate."
+        )
+    candidate_dir.mkdir(parents=True)
 
     audited_markdown = audited_path.read_text(encoding="utf-8")
     stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
