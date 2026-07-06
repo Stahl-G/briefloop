@@ -33,6 +33,12 @@ _INTERNAL_READER_SECTION_RE = re.compile(
     r"(?:claim\s+ledger|声明账本).{0,80}(?:coverage|覆盖情况|覆盖)",
     re.IGNORECASE,
 )
+PROJECTABLE_READER_BLOCK_START = "<!-- briefloop:projectable-reader-start -->"
+PROJECTABLE_READER_BLOCK_END = "<!-- briefloop:projectable-reader-end -->"
+
+
+class ReaderProjectionSourceError(ValueError):
+    """Raised when the audited brief cannot produce a canonical reader source."""
 
 
 @dataclass(frozen=True)
@@ -117,7 +123,8 @@ def build_reader_projection(
     candidate_dir.mkdir(parents=True)
     try:
         audited_markdown = audited_path.read_text(encoding="utf-8")
-        stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
+        reader_source = reader_projection_source_markdown(audited_markdown)
+        stripped_count = len(_SRC_MARKER_RE.findall(reader_source))
         formats = set(output_formats or ["markdown"])
         source_appendix_config = source_appendix_config or {}
         appendix_request = _source_appendix_request(
@@ -131,7 +138,7 @@ def build_reader_projection(
         appendix_path = candidate_dir / "source_appendix.md"
         appendix_trace_path = candidate_dir / "source_appendix_trace.md"
         appendix_result = _maybe_generate_source_appendix(
-            audited_markdown=audited_markdown,
+            reader_source_markdown=reader_source,
             ledger_path=intermediate_dir / "claim_ledger.json",
             appendix_path=appendix_path,
             trace_path=appendix_trace_path,
@@ -143,18 +150,17 @@ def build_reader_projection(
             if appendix_request["requested_by"] == "none" and appendix_result.source_count
             else str(appendix_request["requested_by"])
         )
-        reader_source_markdown = (
+        reader_body_markdown = (
             replace_claim_citations_with_labels(
-                audited_markdown,
+                reader_source,
                 appendix_result.citation_labels,
             )
             if appendix_result.citation_labels
-            else strip_claim_citations(audited_markdown)
+            else strip_claim_citations(reader_source)
         )
-        base_reader_markdown = _strip_internal_reader_sections(reader_source_markdown)
-        reader_markdown = base_reader_markdown
+        reader_markdown = reader_body_markdown
         if appendix_result.markdown and appendix_result.source_count:
-            reader_markdown = base_reader_markdown.rstrip() + "\n\n" + appendix_result.markdown
+            reader_markdown = reader_body_markdown.rstrip() + "\n\n" + appendix_result.markdown
         template_render = render_reader_markdown_with_template(
             workspace=workspace,
             markdown=reader_markdown,
@@ -313,14 +319,14 @@ def _source_appendix_request(
 
 def _maybe_generate_source_appendix(
     *,
-    audited_markdown: str,
+    reader_source_markdown: str,
     ledger_path: Path,
     appendix_path: Path,
     trace_path: Path,
     requested_by: str,
     explicit: bool,
 ) -> SourceAppendixResult:
-    cited_ids = cited_claim_ids(audited_markdown)
+    cited_ids = cited_claim_ids(reader_source_markdown)
     auto_from_citations = requested_by == "none" and bool(cited_ids) and ledger_path.exists()
     if requested_by == "none" and not auto_from_citations:
         return SourceAppendixResult(status="not_requested")
@@ -335,7 +341,7 @@ def _maybe_generate_source_appendix(
         )
     try:
         result = build_source_appendix(
-            audited_markdown=audited_markdown,
+            audited_markdown=reader_source_markdown,
             ledger_path=ledger_path,
             evidence_span_registry_path=ledger_path.parent / "evidence_span_registry.json",
             workspace=ledger_path.parents[2] if len(ledger_path.parents) > 2 else ledger_path.parent,
@@ -360,6 +366,17 @@ def _maybe_generate_source_appendix(
     return result
 
 
+def reader_projection_source_markdown(markdown: str) -> str:
+    """Return the single canonical Markdown source for reader projection.
+
+    Source Appendix lookup and reader body projection must consume this value
+    instead of independently rescanning the raw audited brief.
+    """
+
+    without_blocks = _strip_projectable_reader_blocks(markdown)
+    return _strip_internal_reader_sections(without_blocks)
+
+
 def _as_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -368,6 +385,57 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "y", "on"}
     return bool(value)
+
+
+def _strip_projectable_reader_blocks(markdown: str) -> str:
+    lines = markdown.splitlines()
+    kept: list[str] = []
+    in_block = False
+    block_start_line = 0
+
+    for line_number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        has_start = PROJECTABLE_READER_BLOCK_START in line
+        has_end = PROJECTABLE_READER_BLOCK_END in line
+        if has_start and has_end:
+            raise ReaderProjectionSourceError(
+                f"Malformed projectable reader block at line {line_number}: "
+                "start and end markers must be on separate lines."
+            )
+        if has_start and stripped != PROJECTABLE_READER_BLOCK_START:
+            raise ReaderProjectionSourceError(
+                f"Malformed projectable reader block at line {line_number}: "
+                "start marker must appear alone on its line."
+            )
+        if has_end and stripped != PROJECTABLE_READER_BLOCK_END:
+            raise ReaderProjectionSourceError(
+                f"Malformed projectable reader block at line {line_number}: "
+                "end marker must appear alone on its line."
+            )
+        if has_start:
+            if in_block:
+                raise ReaderProjectionSourceError(
+                    f"Malformed projectable reader block at line {line_number}: nested start marker."
+                )
+            in_block = True
+            block_start_line = line_number
+            continue
+        if has_end:
+            if not in_block:
+                raise ReaderProjectionSourceError(
+                    f"Malformed projectable reader block at line {line_number}: end marker without start."
+                )
+            in_block = False
+            block_start_line = 0
+            continue
+        if not in_block:
+            kept.append(line)
+
+    if in_block:
+        raise ReaderProjectionSourceError(
+            f"Malformed projectable reader block at line {block_start_line}: missing end marker."
+        )
+    return "\n".join(kept).rstrip() + "\n"
 
 
 def _strip_internal_reader_sections(markdown: str) -> str:
