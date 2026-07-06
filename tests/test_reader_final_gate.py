@@ -41,6 +41,24 @@ def test_reader_final_gate_detects_source_markers_and_claim_ids() -> None:
     assert result.findings[0].line == 1
 
 
+def test_reader_final_gate_detects_spaced_source_markers() -> None:
+    text = "\n".join(
+        [
+            "Claim with [source : POLICY_123456].",
+            "Claim with [ src : CL-404 ].",
+        ]
+    )
+
+    result = detect_reader_residue(text, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["src_marker_count"] == 2
+    assert [finding.text for finding in result.findings if finding.kind == "src_marker"] == [
+        "[source : POLICY_123456]",
+        "[ src : CL-404 ]",
+    ]
+
+
 def test_reader_final_gate_detects_process_wording_in_english_and_chinese() -> None:
     text = "\n".join(
         [

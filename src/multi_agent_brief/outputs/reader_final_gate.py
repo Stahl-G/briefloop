@@ -32,7 +32,7 @@ COUNT_KEYS = {
     "policy_forbidden_phrase": "policy_forbidden_phrase_count",
 }
 
-_SRC_MARKER_RE = re.compile(r"\[(?:src|source):[^\]]*\]", re.IGNORECASE)
+_SRC_MARKER_RE = re.compile(r"\[\s*(?:src|source)\s*:[^\]]*\]", re.IGNORECASE)
 _CLAIM_ID_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|CLM-\d{3,}|CL-\d{3,}|(?:[A-Z][A-Z0-9]*_)?CLAIM_[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_])"
 )
