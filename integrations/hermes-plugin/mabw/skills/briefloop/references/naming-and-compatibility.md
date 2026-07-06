@@ -10,7 +10,7 @@ notes, or compatibility claims.
 - Public CLI: `briefloop`; compatibility CLI: `multi-agent-brief`
 - Claude command: `/briefloop`; deprecated compatibility command: `/mabw`
 - Python module: `multi_agent_brief`
-- Package/distribution: `multi-agent-brief-workflow`
+- Package/distribution: `briefloop`
 - Experiment namespace: MABW-080
 - Public README bodies:
   - `README.md` is the canonical English README.

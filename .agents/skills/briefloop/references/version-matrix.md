@@ -52,7 +52,7 @@ Historical implementation name: MABW
 - BriefLoop skill is an agent protocol surface, not the `/briefloop` slash
   command implementation.
 - Python package/module path: `multi_agent_brief`
-- Distribution package name: `multi-agent-brief-workflow`
+- Distribution package name: `briefloop`
 - Assessment targets:
   - `delivery_brief`
   - `auditable_brief`
