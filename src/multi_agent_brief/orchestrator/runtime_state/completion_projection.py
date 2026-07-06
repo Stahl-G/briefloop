@@ -35,6 +35,24 @@ from multi_agent_brief.quality_gates.contract import validate_quality_gate_repor
 COMPLETION_PROJECTION_SCHEMA_VERSION = "briefloop.completion_projection.v1"
 INTERMEDIATE_DIR = Path("output/intermediate")
 DELIVERY_DIR = Path("output/delivery")
+REQUIRED_CONTROL_FILES = frozenset(
+    {
+        "workflow_state",
+        "runtime_manifest",
+        "artifact_registry",
+        "event_log",
+    }
+)
+CONTROL_FILE_STOP_STATUSES = frozenset(
+    {
+        "missing",
+        "unreadable_utf8",
+        "invalid_json",
+        "invalid_json_shape",
+        "invalid_schema",
+        "unreadable",
+    }
+)
 
 
 def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
@@ -425,17 +443,8 @@ def _next_allowed_action(
     event_truth: Mapping[str, Any],
 ) -> str:
     if any(
-        status in {"unreadable_utf8", "invalid_json", "invalid_json_shape", "invalid_schema", "unreadable"}
-        for status in control_file_status.values()
-    ):
-        return "inspect_unreadable_or_missing_control_files"
-    if (
-        control_file_status.get("artifact_registry") == "missing"
-        and _completion_depends_on_artifact_registry(
-            workflow=workflow,
-            finalize_truth=finalize_truth,
-            delivery_truth=delivery_truth,
-        )
+        control_file_status.get(name) in CONTROL_FILE_STOP_STATUSES
+        for name in REQUIRED_CONTROL_FILES
     ):
         return "inspect_unreadable_or_missing_control_files"
     if workflow.get("blocked") is True:
@@ -581,21 +590,6 @@ def _has_finalize_event(records: list[Mapping[str, Any]]) -> bool:
             )
         ):
             return True
-    return False
-
-
-def _completion_depends_on_artifact_registry(
-    *,
-    workflow: Mapping[str, Any],
-    finalize_truth: Mapping[str, Any],
-    delivery_truth: Mapping[str, Any],
-) -> bool:
-    if _clean_text(workflow.get("current_stage")) in {"finalize", "delivery", "delivered"}:
-        return True
-    if finalize_truth.get("status") != "missing":
-        return True
-    if delivery_truth.get("delivery_dir_status") == "present":
-        return True
     return False
 
 

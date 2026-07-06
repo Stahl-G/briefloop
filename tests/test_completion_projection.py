@@ -21,6 +21,26 @@ ROOT = Path(__file__).resolve().parents[1]
 def _workspace(tmp_path: Path) -> Path:
     ws = write_minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    runtime_state_paths(ws)["artifact_registry"].write_text(
+        json.dumps(
+            {
+                "schema_version": ARTIFACT_REGISTRY_SCHEMA,
+                "artifacts": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest = json.loads(runtime_state_paths(ws)["runtime_manifest"].read_text(encoding="utf-8"))
+    append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="run_initialized",
+        actor="system",
+        reason="test fixture runtime state initialized",
+    )
     return ws
 
 
@@ -269,6 +289,37 @@ def test_completion_projection_requires_artifact_registry_for_valid_delivery(tmp
     assert payload["control_files"]["artifact_registry"] == "missing"
     assert payload["delivery_truth"]["valid"] is False
     assert "artifact_registry_missing" in payload["delivery_truth"]["findings"]
+    assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
+
+
+def test_completion_projection_stops_when_runtime_manifest_missing(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="finalize")
+    _write_valid_delivery(ws)
+    _record_finalize_event(ws)
+    runtime_state_paths(ws)["runtime_manifest"].unlink()
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["control_files"]["runtime_manifest"] == "missing"
+    assert payload["delivery_truth"]["valid"] is True
+    assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
+
+
+def test_completion_projection_stops_when_event_log_missing(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="finalize")
+    _write_valid_delivery(ws)
+    _record_finalize_event(ws)
+    runtime_state_paths(ws)["event_log"].unlink()
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["control_files"]["event_log"] == "missing"
+    assert payload["delivery_truth"]["valid"] is True
+    assert payload["event_truth"]["finalize_event_present"] is False
     assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
 
 
