@@ -16,6 +16,7 @@ from multi_agent_brief.contracts.target_contract import (
     EXPERIMENT_080_CONDITION_PATH,
     project_assessment_target_status,
 )
+from multi_agent_brief.orchestrator.active_repair import active_repair_is_open
 from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
@@ -179,7 +180,7 @@ def _workflow_truth(workflow: Any, status: str) -> dict[str, Any]:
         "current_stage": _clean_text(workflow.get("current_stage")) or "unknown",
         "blocked": bool(workflow.get("blocked")),
         "blocking_reason": _clean_text(workflow.get("blocking_reason")),
-        "active_repair_present": bool(workflow.get("active_repair")),
+        "active_repair_present": active_repair_is_open(workflow),
         "finalize_stage_complete": _clean_text(finalize_status.get("status")) == "complete",
     }
 

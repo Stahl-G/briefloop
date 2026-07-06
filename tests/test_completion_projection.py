@@ -466,6 +466,17 @@ def test_completion_projection_stops_on_active_repair(tmp_path: Path) -> None:
     assert payload["next_allowed_action"] == "stop_complete_or_inspect_active_repair"
 
 
+def test_completion_projection_stops_on_empty_active_repair_object(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, active_repair={})
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["workflow"]["active_repair_present"] is True
+    assert payload["next_allowed_action"] == "stop_complete_or_inspect_active_repair"
+
+
 def test_completion_projection_stops_on_contaminated_run_integrity(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)

@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.orchestrator.active_repair import active_repair_is_open
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.feedback.feedback_contract import current_stage_feedback_blocking_reasons
 from multi_agent_brief.orchestrator.runtime_state._io import (
@@ -124,7 +125,7 @@ def _active_repair_blocking_error(
 
 
 def raise_if_active_repair_open(*, workspace: Path, workflow: dict[str, Any]) -> None:
-    if isinstance(workflow.get("active_repair"), dict):
+    if active_repair_is_open(workflow):
         raise _active_repair_blocking_error(workspace, workflow)
 
 
@@ -349,7 +350,7 @@ def start_repair_transaction(
             details={"current_stage": workflow.get("current_stage")},
             error_code=E_ILLEGAL_TRANSITION,
         )
-    if isinstance(workflow.get("active_repair"), dict):
+    if active_repair_is_open(workflow):
         raise RuntimeStateError(
             "A repair transaction is already active.",
             details={"active_repair": workflow.get("active_repair")},

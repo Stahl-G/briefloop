@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.orchestrator.active_repair import active_repair_is_open
+
 
 ALLOWED_ASSESSMENT_TARGETS = {"auditable_brief", "delivery_brief"}
 DEFAULT_ASSESSMENT_TARGET = "delivery_brief"
@@ -203,7 +205,7 @@ def _auditable_target_incomplete_reasons(
     current_stage = workflow.get("current_stage")
     if current_stage not in {"finalize", None}:
         reasons.append(f"workflow current_stage is {current_stage or '<missing>'}, expected finalize or terminal")
-    if isinstance(workflow.get("active_repair"), dict):
+    if active_repair_is_open(workflow):
         reasons.append("active repair is open")
 
     statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
