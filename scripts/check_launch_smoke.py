@@ -245,6 +245,8 @@ def run_launch_smoke() -> dict[str, Any]:
                     str(workspace),
                     "--demo",
                     "--force",
+                    "--web-search-mode",
+                    "disabled",
                 ],
             ),
             (

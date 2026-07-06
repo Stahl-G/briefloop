@@ -18,14 +18,17 @@ Report the resolved command path and version before making changes. If neither
 command exists, stop and ask the user to install BriefLoop or open the source
 checkout.
 
-## 2. Use The First-Run Search Default
+## 2. Ask About Online Search
 
-BriefLoop's first-run default is local/no live web search. A user can create a
-workspace, inspect status, and generate CodeBuddy handoff without any search API
-key. Empty search-provider keys in `.env` do not mean setup failed.
+Ask the user before first source discovery:
 
-If the user asks for live web search or says they want to configure an API key,
-use Tavily as the default provider:
+```text
+是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
+```
+
+BriefLoop recommends Tavily for online search, but generated workspaces keep
+online search in `configure_later` unless the user explicitly enables it. If the
+user enables online search, use Tavily as the recommended provider:
 
 ```text
 TAVILY_API_KEY=<user-provided-key>
@@ -34,6 +37,9 @@ TAVILY_API_KEY=<user-provided-key>
 Check only whether `TAVILY_API_KEY` is present. Do not print the key value. Do
 not ask the user to choose Exa, Brave, Firecrawl, or Serper unless they ask for
 a non-Tavily provider.
+
+If the user declines online search, create the workspace with web search
+explicitly disabled.
 
 ## 3. Create A Workspace
 
@@ -54,13 +60,24 @@ If the user asks "跑周报" and has no workspace:
      `document-review`
 5. Run `briefloop new ...` only after the user confirms the target path.
 
-Use one product entry:
+Use one product entry and make the user's search choice explicit.
+
+If the user enables online search, strongly recommend Tavily:
 
 ```bash
-briefloop new industry-weekly <workspace>
-briefloop new management-monthly <workspace>
-briefloop new document-review <workspace>
-briefloop new solar-periodic <workspace>
+briefloop new industry-weekly <workspace> --search-backend tavily
+briefloop new management-monthly <workspace> --search-backend tavily
+briefloop new document-review <workspace> --search-backend tavily
+briefloop new solar-periodic <workspace> --search-backend tavily
+```
+
+If the user declines online search, disable it explicitly:
+
+```bash
+briefloop new industry-weekly <workspace> --web-search-mode disabled
+briefloop new management-monthly <workspace> --web-search-mode disabled
+briefloop new document-review <workspace> --web-search-mode disabled
+briefloop new solar-periodic <workspace> --web-search-mode disabled
 ```
 
 `industry-weekly`, `management-monthly`, and `document-review` are the baseline

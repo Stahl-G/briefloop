@@ -42,15 +42,23 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
    ```
 
 2. Report only the resolved command path and version.
-3. Treat BriefLoop's first-run default as local/no live web search. Empty
-   optional search-provider keys do not make setup incomplete. If the user asks
-   for external web search, default to Tavily and verify only that
-   `TAVILY_API_KEY` is present without printing the key value.
+3. Ask whether the user wants online search enabled. If yes, strongly recommend
+   Tavily, verify only that `TAVILY_API_KEY` is present, and never print the key
+   value. If no, explicitly disable web search before continuing.
 4. Classify the workspace path:
    - existing workspace: ask for the folder path;
    - first-time run: explain that a BriefLoop workspace is the local folder for
      this report project, suggest a safe path, and ask for confirmation before
      creating it.
+5. When creating a workspace, make the search choice explicit:
+
+   ```bash
+   # user enables online search; strongly recommend Tavily
+   briefloop new industry-weekly <workspace> --search-backend tavily
+
+   # user declines online search
+   briefloop new industry-weekly <workspace> --web-search-mode disabled
+   ```
 
 ## Role Delegation
 

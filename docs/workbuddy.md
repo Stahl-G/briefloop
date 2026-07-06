@@ -89,10 +89,17 @@ After confirmation, choose a product entry:
 | management monthly, 管理月报, 月报 | `management-monthly` |
 | file review, PDF review, document review, 文件, PDF, 审阅 | `document-review` |
 
-Use:
+If the user enables online search, strongly recommend Tavily and use:
 
 ```bash
-briefloop new industry-weekly <workspace>
+briefloop new industry-weekly <workspace> --search-backend tavily
+briefloop run --workspace <workspace> --runtime codebuddy
+```
+
+If the user declines online search, use:
+
+```bash
+briefloop new industry-weekly <workspace> --web-search-mode disabled
 briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
@@ -112,13 +119,19 @@ use.
 
 ### Search Default
 
-BriefLoop's first-run default is local/no live web search. A WorkBuddy user can
-create a workspace, inspect status, and generate CodeBuddy handoff without a
-search API key. Empty optional search keys in `.env` do not mean setup failed.
+At first run, WorkBuddy should ask:
 
-If the user wants external web search, use Tavily as the default provider and
-verify only that `TAVILY_API_KEY` is present. Do not display the key value. List
-Exa, Brave, Firecrawl, or Serper only when the user asks for alternatives.
+```text
+是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
+```
+
+BriefLoop recommends Tavily for online search, but generated workspaces keep
+online search in `configure_later` unless the user explicitly enables it. If the
+user enables online search, use Tavily as the recommended provider and verify only
+that `TAVILY_API_KEY` is present. Do not display the key value. List Exa, Brave,
+Firecrawl, or Serper only when the user asks for alternatives.
+If the user declines online search, explicitly disable web search before source
+discovery.
 
 ## Operating Rules
 

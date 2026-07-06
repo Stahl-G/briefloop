@@ -1368,7 +1368,7 @@ def test_web_search_no_domains_passes_none():
     assert backend.last_domains is None
 
 
-# --- Init profiles should not enable web_search ---
+# --- Init profiles recommend online search without requiring an API key ---
 
 def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     import yaml
@@ -1394,9 +1394,9 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
-    # Without --tavily or --web-search-mode flag, web_search should be disabled
-    assert web_search["enabled"] is False
-    assert web_search["mode"] == "disabled"
+    assert web_search["enabled"] is True
+    assert web_search["mode"] == "configure_later"
+    assert "backend" not in web_search
 
 
 def test_init_custom_web_search_enabled_without_backend(tmp_path):
@@ -1423,9 +1423,9 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
-    # Without --tavily or --web-search-mode flag, web_search should be disabled
-    assert web_search["enabled"] is False
-    assert web_search["mode"] == "disabled"
+    assert web_search["enabled"] is True
+    assert web_search["mode"] == "configure_later"
+    assert "backend" not in web_search
 
 
 def test_init_research_web_search_enabled_without_backend(tmp_path):
@@ -1452,9 +1452,9 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
     ]) == 0
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
-    # Without --tavily or --web-search-mode flag, web_search should be disabled
-    assert web_search["enabled"] is False
-    assert web_search["mode"] == "disabled"
+    assert web_search["enabled"] is True
+    assert web_search["mode"] == "configure_later"
+    assert "backend" not in web_search
 
 
 # --- Unknown provider validation ---

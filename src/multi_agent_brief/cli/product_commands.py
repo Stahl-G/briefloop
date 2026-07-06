@@ -91,6 +91,16 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
         choices=["en-US", "zh-CN", "bilingual"],
         help="Brief language. Defaults to the pack audience language.",
     )
+    parser.add_argument(
+        "--web-search-mode",
+        choices=["disabled", "runtime_tool", "external_api", "configure_later"],
+        help="How web search is provided. Defaults to configure_later.",
+    )
+    parser.add_argument(
+        "--search-backend",
+        choices=["tavily", "exa", "brave", "firecrawl", "serper"],
+        help="Opt into an external API search backend, for example tavily.",
+    )
 
 
 def register_packs(subparsers: argparse._SubParsersAction) -> None:
@@ -220,6 +230,9 @@ def handle_new_workspace(args: argparse.Namespace) -> int:
         "report_spec": str(target / "report_spec.yaml"),
         "policy_profile": creation.get("policy_profile"),
         "policy_profile_resolution": creation.get("policy_profile_resolution"),
+        "web_search_mode": creation.get("web_search_mode"),
+        "search_backend": creation.get("search_backend"),
+        "search_api_key_env": creation.get("search_api_key_env"),
         "boundary": "zero_config_workspace_skeleton_only",
     }
     _print_payload("new", payload, as_json=False)
@@ -441,6 +454,26 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 "boundary: product workspace skeleton only; no stages, gates,"
                 " rendering, or delivery were run"
             )
+            web_search_mode = str(payload.get("web_search_mode") or "")
+            search_backend = str(payload.get("search_backend") or "")
+            search_api_key_env = str(payload.get("search_api_key_env") or "")
+            if web_search_mode == "external_api" and search_backend:
+                print()
+                print("Online search:")
+                print(f"  Online search is enabled via {search_backend}.")
+                if search_api_key_env:
+                    print(f"  Set {search_api_key_env} before running doctor or source discovery.")
+                print("  To run without online search, recreate with --web-search-mode disabled.")
+            elif web_search_mode == "configure_later":
+                print()
+                print("Online search:")
+                print("  Online search is recommended but not active by default.")
+                print("  Tavily is the recommended external API backend.")
+                print("  To enable it, recreate with --search-backend tavily and set TAVILY_API_KEY.")
+                print("  To stay offline, recreate with --web-search-mode disabled.")
+            elif web_search_mode == "disabled":
+                print()
+                print("Online search: disabled.")
             print()
             print("Next:")
             print(f"  Add local evidence files under {workspace}/input/sources/")
@@ -638,9 +671,37 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
         selector_max_items=PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS,
         output_formats=[str(item) for item in outputs],
         source_profile="conservative",
-        web_search_enabled=False,
-        web_search_mode="disabled",
+        tavily_enabled=False,
+        web_search_enabled=True,
+        web_search_mode="configure_later",
+        search_backend="",
     )
+    web_search_mode = getattr(args, "web_search_mode", None)
+    if web_search_mode:
+        profile.web_search_mode = web_search_mode
+        profile.web_search_enabled = web_search_mode != "disabled"
+        if web_search_mode == "disabled":
+            profile.tavily_enabled = False
+            profile.search_backend = ""
+        elif web_search_mode == "external_api" and not profile.search_backend:
+            profile.tavily_enabled = True
+            profile.search_backend = "tavily"
+        elif web_search_mode in {"runtime_tool", "configure_later"}:
+            profile.tavily_enabled = False
+            profile.search_backend = ""
+    search_backend = getattr(args, "search_backend", None)
+    if search_backend:
+        profile.search_backend = search_backend
+        profile.web_search_mode = "external_api"
+        profile.web_search_enabled = True
+        profile.tavily_enabled = search_backend == "tavily"
+    search_api_key_env = {
+        "tavily": "TAVILY_API_KEY",
+        "exa": "EXA_API_KEY",
+        "brave": "BRAVE_SEARCH_API_KEY",
+        "firecrawl": "FIRECRAWL_API_KEY",
+        "serper": "SERPER_API_KEY",
+    }.get(profile.search_backend, "")
     spec_path = target / "report_spec.yaml"
     if spec_path.exists() and not getattr(args, "force", False):
         raise FileExistsError(
@@ -654,6 +715,9 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
     return {
         "policy_profile": policy_resolution.policy_profile,
         "policy_profile_resolution": policy_resolution.to_dict(),
+        "web_search_mode": profile.web_search_mode,
+        "search_backend": profile.search_backend,
+        "search_api_key_env": search_api_key_env,
     }
 
 

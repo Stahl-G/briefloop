@@ -83,10 +83,17 @@ adapter。
 | 管理月报、月报、management monthly | `management-monthly` |
 | 文件审阅、PDF 审阅、document review、file review | `document-review` |
 
-使用：
+如果用户打开在线搜索，强烈推荐 Tavily，并使用：
 
 ```bash
-briefloop new industry-weekly <workspace>
+briefloop new industry-weekly <workspace> --search-backend tavily
+briefloop run --workspace <workspace> --runtime codebuddy
+```
+
+如果用户拒绝在线搜索，使用：
+
+```bash
+briefloop new industry-weekly <workspace> --web-search-mode disabled
 briefloop run --workspace <workspace> --runtime codebuddy
 ```
 
@@ -104,13 +111,17 @@ briefloop run --workspace <workspace> --runtime codebuddy
 
 ### 默认搜索
 
-BriefLoop 的 first-run 默认是本地/不启用实时网络搜索。WorkBuddy 用户可以在没有
-搜索 API key 的情况下创建 workspace、查看 status、生成 CodeBuddy handoff。`.env`
-里的可选搜索 provider key 为空，不代表配置失败。
+首次运行前，WorkBuddy 应先询问：
 
-如果用户要启用外部网络搜索，默认先使用 Tavily，并且只验证 `TAVILY_API_KEY`
-是否存在。不要显示 key 的值。只有用户明确要求替代 provider 时，才介绍 Exa、
-Brave、Firecrawl 或 Serper。
+```text
+是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
+```
+
+BriefLoop 推荐在线搜索使用 Tavily，但生成的 workspace 默认保持
+`configure_later`，除非用户明确打开在线搜索。用户选择打开在线搜索时，默认先使用
+Tavily，并且只验证 `TAVILY_API_KEY` 是否存在。不要显示 key 的值。只有用户明确要求
+替代 provider 时，才介绍 Exa、Brave、Firecrawl 或 Serper。
+如果用户选择不开启在线搜索，应在来源发现前显式关闭 web search。
 
 ## 操作规则
 

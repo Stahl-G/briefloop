@@ -109,6 +109,12 @@ def run_doctor(
                     "--workspace <workspace> --from ~/.env --keys <KEY>`.",
                 ))
                 results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))
+                results.append(CheckResult(
+                    "ERROR",
+                    "  To keep this workspace offline, recreate it with "
+                    "`briefloop new <entry> <workspace> --web-search-mode disabled` "
+                    "or set web_search.enabled: false in sources.yaml.",
+                ))
                 results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
             if validation_errors:
                 backend_name = ""
@@ -141,6 +147,12 @@ def run_doctor(
                             f"--workspace {p.parent} --from ~/.env --keys {api_key_env}",
                         ))
                     results.append(CheckResult("ERROR", "  Copy .env.example to .env, fill in your key, then re-run with the key available."))
+                    results.append(CheckResult(
+                        "ERROR",
+                        "  To keep this workspace offline, recreate it with "
+                        "`briefloop new <entry> <workspace> --web-search-mode disabled` "
+                        "or set web_search.enabled: false in sources.yaml.",
+                    ))
                     results.append(CheckResult("ERROR", "  Do not paste API keys into chat, config files, README, or GitHub."))
 
         # Cross-validate: web_search enabled but not in enabled_providers

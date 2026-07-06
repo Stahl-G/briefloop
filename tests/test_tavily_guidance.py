@@ -193,8 +193,8 @@ class TestSecretsImport:
 class TestInitTavilyGuidance:
     """Init wizard Tavily opt-in and setup guidance."""
 
-    def test_init_tavily_generates_config(self, tmp_path, monkeypatch):
-        """Init without tavily flag should generate web_search disabled."""
+    def test_init_defaults_to_configure_later_without_key(self, tmp_path, monkeypatch):
+        """Init without flags recommends web search without requiring an API key."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
         # Use CLI args to skip interactive prompts (no --tavily flag)
@@ -208,7 +208,52 @@ class TestInitTavilyGuidance:
             "--cadence", "weekly",
             "--source-profile", "research",
         ]) == 0
-        # Without tavily_enabled CLI arg, web_search should be disabled
+        import yaml
+        config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
+        web_search = config["web_search"]
+        assert web_search["enabled"] is True
+        assert web_search["mode"] == "configure_later"
+        assert "backend" not in web_search
+        assert "api_key_env" not in web_search
+
+    def test_init_explicit_tavily_generates_external_api_config(self, tmp_path, monkeypatch):
+        """Explicit Tavily selection should generate external API web_search."""
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        ws = tmp_path / "ws"
+        assert main([
+            "init", str(ws),
+            "--language", "zh-CN",
+            "--company", "Test Company",
+            "--industry", "manufacturing",
+            "--title", "Weekly Brief",
+            "--audience", "management",
+            "--cadence", "weekly",
+            "--source-profile", "research",
+            "--search-backend", "tavily",
+        ]) == 0
+        import yaml
+        config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
+        web_search = config["web_search"]
+        assert web_search["enabled"] is True
+        assert web_search["mode"] == "external_api"
+        assert web_search["backend"] == "tavily"
+        assert web_search["api_key_env"] == "TAVILY_API_KEY"
+
+    def test_init_can_explicitly_disable_web_search(self, tmp_path, monkeypatch):
+        """Explicit disabled mode must override the recommended search setup."""
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        ws = tmp_path / "ws"
+        assert main([
+            "init", str(ws),
+            "--language", "zh-CN",
+            "--company", "Test Company",
+            "--industry", "manufacturing",
+            "--title", "Weekly Brief",
+            "--audience", "management",
+            "--cadence", "weekly",
+            "--source-profile", "research",
+            "--web-search-mode", "disabled",
+        ]) == 0
         import yaml
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
@@ -264,7 +309,7 @@ class TestInitTavilyGuidance:
 
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        profile = InitProfile(tavily_enabled=False)
+        profile = InitProfile(tavily_enabled=False, web_search_enabled=False, web_search_mode="disabled", search_backend="")
         create_workspace(ws, profile)
         # .env.example is now always generated to guide users
         assert (ws / ".env.example").exists()
@@ -329,6 +374,7 @@ class TestDoctorTavilyGuidance:
         error_msgs = [r.message for r in results if r.status == "ERROR"]
         assert any("TAVILY_API_KEY" in m and "missing" in m.lower() for m in error_msgs)
         assert any(".env.example" in m for m in error_msgs)
+        assert any("--web-search-mode disabled" in m for m in error_msgs)
         assert any("Do not paste" in m for m in error_msgs)
 
     def test_doctor_never_prints_key_value(self, tmp_path, monkeypatch):
