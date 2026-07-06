@@ -104,13 +104,21 @@ def test_parse_internal_citation_markers_preserves_prose_and_urls() -> None:
 
 
 def test_parse_internal_citation_markers_treats_trailing_punctuation_as_delimiter() -> None:
-    text = 'Trailing punctuation source:CL-001: and quoted "source:CL-001".'
+    text = (
+        'Trailing punctuation source:CL-001: and quoted "source:CL-001".\n'
+        "Full-width punctuation source:CL-001。 and source:CL-001，\n"
+        "Bracketed punctuation [source:CL-001。] and [src:CL-001，]"
+    )
 
     markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001"})
 
     assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
         ("source:CL-001", "CL-001", "resolved"),
         ("source:CL-001", "CL-001", "resolved"),
+        ("source:CL-001", "CL-001", "resolved"),
+        ("source:CL-001", "CL-001", "resolved"),
+        ("[source:CL-001。]", "CL-001", "resolved"),
+        ("[src:CL-001，]", "CL-001", "resolved"),
     ]
 
 

@@ -20,7 +20,7 @@ _BARE_SOURCE_MARKER_RE = re.compile(
 _CLAIM_ID_BOUNDARY_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _CLAIM_ID_LEFT_CONTEXT_BLOCKERS = frozenset(":/?#&=.")
 _CLAIM_ID_RIGHT_CONTEXT_BLOCKERS = frozenset("/\\:?&#=")
-_TRAILING_PROSE_PUNCTUATION = frozenset(".,;:!\"'”’")
+_TRAILING_PROSE_PUNCTUATION = frozenset(".,;:!\"'”’。．，、；：！？）】》」』")
 
 InternalCitationKind = Literal["bracketed_source_marker", "bare_source_marker", "bare_claim_id"]
 InternalCitationStatus = Literal["resolved", "unresolved", "malformed"]
