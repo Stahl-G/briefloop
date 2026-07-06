@@ -112,13 +112,18 @@ use.
 
 ### Search Default
 
-BriefLoop's first-run default is local/no live web search. A WorkBuddy user can
-create a workspace, inspect status, and generate CodeBuddy handoff without a
-search API key. Empty optional search keys in `.env` do not mean setup failed.
+At first run, WorkBuddy should ask:
 
-If the user wants external web search, use Tavily as the default provider and
-verify only that `TAVILY_API_KEY` is present. Do not display the key value. List
-Exa, Brave, Firecrawl, or Serper only when the user asks for alternatives.
+```text
+是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
+```
+
+BriefLoop's product default for online search is external API search through
+Tavily. If the user enables online search, use Tavily as the default provider
+and verify only that `TAVILY_API_KEY` is present. Do not display the key value.
+List Exa, Brave, Firecrawl, or Serper only when the user asks for alternatives.
+If the user declines online search, explicitly disable web search before source
+discovery.
 
 ## Operating Rules
 

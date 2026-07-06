@@ -85,8 +85,10 @@ def _build_search_backend_choices(
     else:
         choices[later_key] = "configure_later (Add API key later)"
 
-    # Default to "configure_later" (semantic default, not positional)
-    return choices, later_key
+    # Default to Tavily external API. It is the product default for online
+    # search, while configure_later and runtime_websearch remain explicit
+    # alternatives.
+    return choices, "1"
 
 
 def _demo_published_at() -> str:
@@ -452,6 +454,15 @@ def build_profile_from_args(args: Any, *, input_func: Callable[[str], str] | Non
         if getattr(args, "web_search_mode", None):
             profile.web_search_mode = args.web_search_mode
             profile.web_search_enabled = args.web_search_mode != "disabled"
+            if args.web_search_mode == "disabled":
+                profile.tavily_enabled = False
+                profile.search_backend = ""
+            elif args.web_search_mode == "external_api" and not profile.search_backend:
+                profile.tavily_enabled = True
+                profile.search_backend = "tavily"
+            elif args.web_search_mode in {"runtime_tool", "configure_later"}:
+                profile.tavily_enabled = False
+                profile.search_backend = ""
         if getattr(args, "search_backend", None):
             profile.search_backend = args.search_backend
             profile.web_search_mode = "external_api"
@@ -557,7 +568,7 @@ def prompt_for_profile(*, input_func: Callable[[str], str] | None = None) -> Ini
     profile.source_profile = ask_choice(input_func, prompts["source_profile"], prompts["source_profile_options"], "2")
 
     # Web search backend selection
-    web_search_enabled = ask_yes_no(input_func, prompts["web_search"], default=False)
+    web_search_enabled = ask_yes_no(input_func, prompts["web_search"], default=True)
     if web_search_enabled:
         search_choices, default_key = _build_search_backend_choices(language_choice)
         selected_display = ask_choice(
@@ -657,7 +668,10 @@ def prompt_labels(language: str) -> dict[str, Any]:
             "max_age": "Maximum source age in days: ",
             "source_profile": "Source profile:\n1. Conservative: official and high-confidence sources only\n2. Research: balanced official, industry, market, and research sources\n3. Aggressive signal: broader signal discovery, more noise allowed\n4. Custom: user will manually edit sources.yaml\n5. Let LLM decide: generate an agent-readable source discovery policy\nDefault [2]: ",
             "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
-            "web_search": "Enable live web search? [y/N]: ",
+            "web_search": (
+                "Enable online search? Strongly recommended for fresh reports; "
+                "if enabled, add a Tavily API key. [Y/n]: "
+            ),
             "search_backend": "How should live web search be provided? ",
             "initial_news_backfill": (
                 "Run initial last-7-days news discovery? This searches 20"
@@ -690,7 +704,11 @@ def prompt_labels(language: str) -> dict[str, Any]:
                 "max_age": "Maximum source age in days / 最大来源天数: ",
                 "source_profile": "Source profile / 信息来源策略:\n1. Conservative / 保守：仅官方和高置信来源\n2. Research / 研究：官方、行业、市场、研究来源平衡\n3. Aggressive signal / 激进信号：扩大发现范围\n4. Custom / 自定义\n5. Let LLM decide / 让 LLM 自动决定来源\nDefault [2]: ",
                 "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
-                "web_search": "Enable live web search? / 启用实时网络搜索？[y/N]: ",
+                "web_search": (
+                    "Enable online search? / 是否打开在线搜索？"
+                    " If enabled, strongly add a Tavily API key. / "
+                    "如打开，强烈建议添加 Tavily API。[Y/n]: "
+                ),
                 "search_backend": "How should live web search be provided? / 如何提供实时网络搜索？ ",
                 "initial_news_backfill": (
                     "Run initial last-7-days news discovery? / 是否运行过去七天新闻查找？"
@@ -740,7 +758,7 @@ def prompt_labels(language: str) -> dict[str, Any]:
         "max_age": "请输入最大来源天数：",
         "source_profile": "请选择信息来源策略：\n1. 保守：只使用官方和高置信来源\n2. 研究：官方、行业媒体、市场数据、研究来源平衡\n3. 激进信号：扩大信号发现范围，允许更多噪音\n4. 自定义：用户后续手动编辑 sources.yaml\n5. 让 LLM 自动决定：生成 agent 可读的来源发现策略\n默认 [2]：",
         "source_profile_options": {"1": "conservative", "2": "research", "3": "aggressive_signal", "4": "custom", "5": "llm_decide"},
-        "web_search": "是否启用实时网络搜索？[y/N]：",
+        "web_search": "是否打开在线搜索？如打开，强烈建议添加 Tavily API。[Y/n]：",
         "search_backend": "如何提供实时网络搜索？ ",
         "initial_news_backfill": "是否运行过去七天新闻查找？将会搜索过去七天每日二十条相关新闻。[y/N]：",
         "preferred_news_domains": "可选：偏好的新闻网站域名，逗号分隔（留空则按用户需求通用搜索）：",

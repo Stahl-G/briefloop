@@ -253,7 +253,7 @@ def test_validate_report_spec_cli_rejects_malformed_yaml_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_new_report_pack_workspace_creates_local_first_skeleton(tmp_path: Path, capsys) -> None:
+def test_new_report_pack_workspace_creates_tavily_search_skeleton(tmp_path: Path, capsys) -> None:
     workspace = tmp_path / "weekly"
 
     assert main(["new", "industry-weekly", str(workspace)]) == 0
@@ -283,6 +283,20 @@ def test_new_report_pack_workspace_creates_local_first_skeleton(tmp_path: Path, 
 
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     assert sources["source_strategy"]["profile"] == "conservative"
+    assert sources["source_strategy"]["enabled_providers"] == ["manual", "web_search"]
+    assert sources["web_search"]["enabled"] is True
+    assert sources["web_search"]["mode"] == "external_api"
+    assert sources["web_search"]["backend"] == "tavily"
+    assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
+
+
+def test_new_report_pack_workspace_can_disable_web_search(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "weekly"
+
+    assert main(["new", "industry-weekly", str(workspace), "--web-search-mode", "disabled"]) == 0
+
+    capsys.readouterr()
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     assert sources["source_strategy"]["enabled_providers"] == ["manual"]
     assert sources["web_search"]["enabled"] is False
     assert sources["web_search"]["mode"] == "disabled"

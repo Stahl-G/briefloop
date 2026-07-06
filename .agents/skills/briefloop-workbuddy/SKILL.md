@@ -65,10 +65,13 @@ Before operating a workspace:
 3. If `briefloop` is not available, ask the user to activate the source-clone
    virtual environment or finish setup before continuing.
 4. Use the first-run search default correctly:
-   - default BriefLoop first run does not require live web search;
-   - missing search API keys do not make setup incomplete;
-   - if the user asks for live web search or API setup, use Tavily as the
-     default provider and check `TAVILY_API_KEY` first;
+   - ask whether the user wants online search enabled for this workspace;
+   - if online search is enabled, strongly recommend Tavily and check
+     `TAVILY_API_KEY` first;
+   - if `TAVILY_API_KEY` is missing while Tavily search is enabled, say setup
+     needs the key before live source discovery;
+   - if the user declines online search, explicitly disable web search before
+     continuing;
    - mention Exa, Brave, Firecrawl, or Serper only when the user asks for a
      different provider;
    - never print API key values; report only whether the expected env key is
@@ -93,12 +96,15 @@ Before operating a workspace:
 
 ## Search Default
 
-BriefLoop's first-run product default is local/no live web search. A workspace
-can be created, inspected, and handed off with no search API key. Do not tell
-the user BriefLoop is unfinished only because `.env` has empty search-provider
-keys.
+BriefLoop's product default for online search is external API search through
+Tavily. At first run, ask the user:
 
-If the user wants BriefLoop-hosted external web search, configure Tavily first:
+```text
+是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
+```
+
+If the user enables online search, configure Tavily first:
+
 
 ```bash
 TAVILY_API_KEY=<user-provided-key>
@@ -107,6 +113,9 @@ TAVILY_API_KEY=<user-provided-key>
 Then verify only that `TAVILY_API_KEY` is present. Do not display the key. Do
 not ask the user to choose among Tavily, Exa, Brave, Firecrawl, and Serper
 unless they explicitly ask for alternatives.
+
+If the user declines online search, disable it explicitly with
+`--web-search-mode disabled` or by setting `web_search.enabled: false`.
 
 ## Operating Mode
 

@@ -118,6 +118,8 @@ RAG must not write directly into the final brief. Every RAG-derived statement mu
 - Do not implement full RAG in the init wizard.
 - Do not implement real RSS, SEC, Feishu, Slack, or email connectors here.
 - Do not add real company-specific examples.
-- Do not require API keys.
+- Do not require API keys merely to create a workspace. Live external web
+  search uses Tavily by default and requires `TAVILY_API_KEY` before source
+  discovery.
 - Do not enable RAG by default.
 - Do not allow generated private outputs to be committed by default.

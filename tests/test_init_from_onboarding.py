@@ -50,9 +50,11 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
     assert sources["source_strategy"]["profile"] == "llm_decide"
     # Industry is preserved in source_discovery for llm_decide mode
     assert "manufacturing" in sources.get("source_discovery", {}).get("industry", "")
-    # web_search is disabled by default (user must explicitly enable it)
-    assert sources["web_search"]["enabled"] is False
-    assert sources["web_search"]["mode"] == "disabled"
+    # Online search defaults to Tavily external API unless explicitly disabled.
+    assert sources["web_search"]["enabled"] is True
+    assert sources["web_search"]["mode"] == "external_api"
+    assert sources["web_search"]["backend"] == "tavily"
+    assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
     config = yaml.safe_load((ws / "config.yaml").read_text(encoding="utf-8"))
     assert config["selector"]["max_items"] == 20
     assert config["selector"]["max_items"] >= config["brief_quality"]["min_items"]

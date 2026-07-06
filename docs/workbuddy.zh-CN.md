@@ -104,13 +104,16 @@ briefloop run --workspace <workspace> --runtime codebuddy
 
 ### 默认搜索
 
-BriefLoop 的 first-run 默认是本地/不启用实时网络搜索。WorkBuddy 用户可以在没有
-搜索 API key 的情况下创建 workspace、查看 status、生成 CodeBuddy handoff。`.env`
-里的可选搜索 provider key 为空，不代表配置失败。
+首次运行前，WorkBuddy 应先询问：
 
-如果用户要启用外部网络搜索，默认先使用 Tavily，并且只验证 `TAVILY_API_KEY`
-是否存在。不要显示 key 的值。只有用户明确要求替代 provider 时，才介绍 Exa、
-Brave、Firecrawl 或 Serper。
+```text
+是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
+```
+
+BriefLoop 的在线搜索产品默认是通过 Tavily 外部 API。用户选择打开在线搜索时，
+默认先使用 Tavily，并且只验证 `TAVILY_API_KEY` 是否存在。不要显示 key 的值。
+只有用户明确要求替代 provider 时，才介绍 Exa、Brave、Firecrawl 或 Serper。
+如果用户选择不开启在线搜索，应在来源发现前显式关闭 web search。
 
 ## 操作规则
 

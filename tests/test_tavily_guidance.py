@@ -194,7 +194,7 @@ class TestInitTavilyGuidance:
     """Init wizard Tavily opt-in and setup guidance."""
 
     def test_init_tavily_generates_config(self, tmp_path, monkeypatch):
-        """Init without tavily flag should generate web_search disabled."""
+        """Init without flags should generate Tavily external API web_search."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
         # Use CLI args to skip interactive prompts (no --tavily flag)
@@ -208,7 +208,29 @@ class TestInitTavilyGuidance:
             "--cadence", "weekly",
             "--source-profile", "research",
         ]) == 0
-        # Without tavily_enabled CLI arg, web_search should be disabled
+        import yaml
+        config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
+        web_search = config["web_search"]
+        assert web_search["enabled"] is True
+        assert web_search["mode"] == "external_api"
+        assert web_search["backend"] == "tavily"
+        assert web_search["api_key_env"] == "TAVILY_API_KEY"
+
+    def test_init_can_explicitly_disable_web_search(self, tmp_path, monkeypatch):
+        """Explicit disabled mode must override the Tavily product default."""
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        ws = tmp_path / "ws"
+        assert main([
+            "init", str(ws),
+            "--language", "zh-CN",
+            "--company", "Test Company",
+            "--industry", "manufacturing",
+            "--title", "Weekly Brief",
+            "--audience", "management",
+            "--cadence", "weekly",
+            "--source-profile", "research",
+            "--web-search-mode", "disabled",
+        ]) == 0
         import yaml
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
@@ -264,7 +286,7 @@ class TestInitTavilyGuidance:
 
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
-        profile = InitProfile(tavily_enabled=False)
+        profile = InitProfile(tavily_enabled=False, web_search_enabled=False, web_search_mode="disabled", search_backend="")
         create_workspace(ws, profile)
         # .env.example is now always generated to guide users
         assert (ws / ".env.example").exists()

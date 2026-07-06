@@ -292,6 +292,15 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
     if getattr(args, "web_search_mode", None):
         profile.web_search_mode = args.web_search_mode
         profile.web_search_enabled = args.web_search_mode != "disabled"
+        if args.web_search_mode == "disabled":
+            profile.tavily_enabled = False
+            profile.search_backend = ""
+        elif args.web_search_mode == "external_api" and not profile.search_backend:
+            profile.tavily_enabled = True
+            profile.search_backend = "tavily"
+        elif args.web_search_mode in {"runtime_tool", "configure_later"}:
+            profile.tavily_enabled = False
+            profile.search_backend = ""
     if getattr(args, "search_backend", None):
         profile.search_backend = args.search_backend
         profile.web_search_mode = "external_api"

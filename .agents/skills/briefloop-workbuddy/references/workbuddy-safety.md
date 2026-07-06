@@ -8,9 +8,11 @@ authority layer.
 - classify missing workspace paths as existing workspace or first-time run,
   then confirm the folder path before any creation;
 - report the active BriefLoop CLI path and version;
-- treat local/no live web search as the first-run default;
-- when live web search is requested, use Tavily first and verify
-  `TAVILY_API_KEY` without displaying the key value;
+- ask whether the user wants online search enabled before source discovery;
+- when online search is enabled, use Tavily first and verify `TAVILY_API_KEY`
+  without displaying the key value;
+- when online search is declined, explicitly disable web search before
+  continuing;
 - use `--runtime codebuddy` for full workflow handoff;
 - invoke the matching CodeBuddy-compatible role subagent for role-owned draft
   work;
@@ -27,8 +29,8 @@ authority layer.
 ## Do Not
 
 - guess a workspace from the repository path;
-- claim setup is incomplete only because optional search-provider keys are
-  empty;
+- continue live source discovery with Tavily enabled while `TAVILY_API_KEY` is
+  missing;
 - ask the user to choose among all search providers unless they request an
   alternative to Tavily;
 - direct-edit control files or frozen artifacts;

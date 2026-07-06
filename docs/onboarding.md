@@ -56,11 +56,14 @@ The agent creates an `onboarding.json` file like this:
   "language_plain": "English",
   "cadence_plain": "weekly",
   "must_watch": ["ExampleCo", "policy", "competitors", "risk events"],
-  "tavily_enabled": false
+  "tavily_enabled": true
 }
 ```
 
-Normal users do not need to write this file manually. The agent creates it from the conversation.
+Normal users do not need to write this file manually. The agent creates it from
+the conversation. The default online-search backend is Tavily; set
+`search_backend_plain` to `none` when the user explicitly declines online
+search.
 
 ## Architecture
 

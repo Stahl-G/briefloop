@@ -18,14 +18,16 @@ Report the resolved command path and version before making changes. If neither
 command exists, stop and ask the user to install BriefLoop or open the source
 checkout.
 
-## 2. Use The First-Run Search Default
+## 2. Ask About Online Search
 
-BriefLoop's first-run default is local/no live web search. A user can create a
-workspace, inspect status, and generate CodeBuddy handoff without any search API
-key. Empty search-provider keys in `.env` do not mean setup failed.
+Ask the user before first source discovery:
 
-If the user asks for live web search or says they want to configure an API key,
-use Tavily as the default provider:
+```text
+是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
+```
+
+BriefLoop's product default for online search is external API search through
+Tavily. If the user enables online search, use Tavily as the default provider:
 
 ```text
 TAVILY_API_KEY=<user-provided-key>
@@ -34,6 +36,9 @@ TAVILY_API_KEY=<user-provided-key>
 Check only whether `TAVILY_API_KEY` is present. Do not print the key value. Do
 not ask the user to choose Exa, Brave, Firecrawl, or Serper unless they ask for
 a non-Tavily provider.
+
+If the user declines online search, create the workspace with web search
+explicitly disabled.
 
 ## 3. Create A Workspace
 

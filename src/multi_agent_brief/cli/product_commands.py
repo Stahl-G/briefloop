@@ -91,6 +91,16 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
         choices=["en-US", "zh-CN", "bilingual"],
         help="Brief language. Defaults to the pack audience language.",
     )
+    parser.add_argument(
+        "--web-search-mode",
+        choices=["disabled", "runtime_tool", "external_api", "configure_later"],
+        help="How web search is provided. Defaults to external_api.",
+    )
+    parser.add_argument(
+        "--search-backend",
+        choices=["tavily", "exa", "brave", "firecrawl", "serper"],
+        help="Search backend for --web-search-mode external_api. Defaults to tavily.",
+    )
 
 
 def register_packs(subparsers: argparse._SubParsersAction) -> None:
@@ -638,9 +648,30 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
         selector_max_items=PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS,
         output_formats=[str(item) for item in outputs],
         source_profile="conservative",
-        web_search_enabled=False,
-        web_search_mode="disabled",
+        tavily_enabled=True,
+        web_search_enabled=True,
+        web_search_mode="external_api",
+        search_backend="tavily",
     )
+    web_search_mode = getattr(args, "web_search_mode", None)
+    if web_search_mode:
+        profile.web_search_mode = web_search_mode
+        profile.web_search_enabled = web_search_mode != "disabled"
+        if web_search_mode == "disabled":
+            profile.tavily_enabled = False
+            profile.search_backend = ""
+        elif web_search_mode == "external_api" and not profile.search_backend:
+            profile.tavily_enabled = True
+            profile.search_backend = "tavily"
+        elif web_search_mode in {"runtime_tool", "configure_later"}:
+            profile.tavily_enabled = False
+            profile.search_backend = ""
+    search_backend = getattr(args, "search_backend", None)
+    if search_backend:
+        profile.search_backend = search_backend
+        profile.web_search_mode = "external_api"
+        profile.web_search_enabled = True
+        profile.tavily_enabled = search_backend == "tavily"
     spec_path = target / "report_spec.yaml"
     if spec_path.exists() and not getattr(args, "force", False):
         raise FileExistsError(

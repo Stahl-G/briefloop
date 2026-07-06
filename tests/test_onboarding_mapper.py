@@ -213,8 +213,8 @@ def test_language_sentinels_mapper_no_longer_maps_to_defaults():
         assert iw_result == "en-US", f"init_wizard should map sentinel '{s}' to en-US, got {iw_result}"
 
 
-def test_legacy_onboarding_without_search_backend_does_not_enable_tavily():
-    """A legacy onboarding.json without search_backend_plain must not enable Tavily."""
+def test_legacy_onboarding_without_search_backend_defaults_to_tavily():
+    """A legacy onboarding.json without search_backend_plain uses the product default."""
     result = OnboardingResult(
         target="workspace",
         company_or_org="Sample Company",
@@ -225,7 +225,10 @@ def test_legacy_onboarding_without_search_backend_does_not_enable_tavily():
     assert result.tavily_enabled is False
 
     profile = map_onboarding_to_profile(result)
-    assert profile.tavily_enabled is False
+    assert profile.tavily_enabled is True
+    assert profile.web_search_enabled is True
+    assert profile.web_search_mode == "external_api"
+    assert profile.search_backend == "tavily"
 
 
 def test_onboarding_explicit_tavily_enables_backend():
@@ -250,6 +253,9 @@ def test_onboarding_explicit_none_disables_tavily():
     )
     profile = map_onboarding_to_profile(result)
     assert profile.tavily_enabled is False
+    assert profile.web_search_enabled is False
+    assert profile.web_search_mode == "disabled"
+    assert profile.search_backend == ""
 
 
 def test_onboarding_configure_later_sets_correct_mode():
