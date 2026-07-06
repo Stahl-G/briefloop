@@ -182,6 +182,22 @@ def test_replace_claim_citations_preserves_unresolved_and_malformed_markers():
     assert "[src:]" in reader
 
 
+def test_replace_claim_citations_preserves_non_citation_source_prose():
+    markdown = (
+        "Primary source:company filing. "
+        "Registry label Source:FDA clinical registry. "
+        "URL label source:https://example.com/report. "
+        "Known source:CL-001."
+    )
+
+    reader = replace_claim_citations_with_labels(markdown, {"CL-001": "S1"})
+
+    assert "Primary source:company filing." in reader
+    assert "Source:FDA clinical registry." in reader
+    assert "source:https://example.com/report." in reader
+    assert "Known [S1]." in reader
+
+
 def test_replace_claim_citations_dedupes_adjacent_reader_source_labels():
     markdown = "Shared source appears twice. [src:claim-001] [src:claim-002]\n"
 
