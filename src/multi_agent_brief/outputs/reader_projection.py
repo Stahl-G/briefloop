@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -320,19 +321,35 @@ def _maybe_generate_source_appendix(
     requested_by: str,
     explicit: bool,
 ) -> SourceAppendixResult:
-    cited_ids = cited_claim_ids(reader_source_markdown)
-    auto_from_citations = requested_by == "none" and bool(cited_ids) and ledger_path.exists()
-    if requested_by == "none" and not auto_from_citations:
-        return SourceAppendixResult(status="not_requested")
+    unresolved_explicit_marker_ids = cited_claim_ids(
+        reader_source_markdown,
+        include_bare_claim_ids=False,
+    )
     if not ledger_path.exists():
         if explicit:
             raise FileNotFoundError(
                 f"Claim Ledger not found for explicit source appendix request: {ledger_path}"
             )
+        if requested_by == "none" and not unresolved_explicit_marker_ids:
+            return SourceAppendixResult(status="not_requested")
         return SourceAppendixResult(
             status="skipped_missing_ledger",
             warnings=["Source appendix skipped because claim_ledger.json was missing."],
         )
+    if requested_by == "none":
+        try:
+            ledger = ClaimLedger.import_json(ledger_path)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            if not unresolved_explicit_marker_ids:
+                return SourceAppendixResult(status="not_requested")
+        else:
+            valid_claim_ids = {claim.claim_id for claim in ledger if claim.claim_id}
+            cited_ids = cited_claim_ids(
+                reader_source_markdown,
+                valid_claim_ids=valid_claim_ids,
+            )
+            if not cited_ids:
+                return SourceAppendixResult(status="not_requested")
     try:
         result = build_source_appendix(
             audited_markdown=reader_source_markdown,

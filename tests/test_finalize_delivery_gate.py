@@ -106,6 +106,27 @@ def _write_single_claim_ledger(path: Path, *, claim_id: str = "CL-001") -> None:
     path.write_text(json.dumps(claims, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_claim_ledger_for_ids(path: Path, claim_ids: list[str]) -> None:
+    claims = [
+        {
+            "claim_id": claim_id,
+            "statement": f"ExampleCo statement {idx}.",
+            "source_id": f"SRC-{idx:03d}",
+            "evidence_text": f"ExampleCo evidence {idx}.",
+            "source_url": f"https://example.com/source-{idx}",
+            "source_type": "web_search",
+            "metadata": {
+                "source_title": f"ExampleCo Source {idx}",
+                "publisher": "Example News",
+                "published_at": "2026-06-01",
+                "source_category": "news_media",
+            },
+        }
+        for idx, claim_id in enumerate(claim_ids, start=1)
+    ]
+    path.write_text(json.dumps(claims, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _write_report_spec(workspace: Path, *, policy_profile: str = "finance_default") -> None:
     (workspace / "report_spec.yaml").write_text(
         yaml.safe_dump(
@@ -347,6 +368,7 @@ def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
         "- 市场需求增长 5% [src:MARKET_ABCDEF]\n",
         encoding="utf-8",
     )
+    _write_claim_ledger_for_ids(intermediate / "claim_ledger.json", ["POLICY_123456", "MARKET_ABCDEF"])
 
     result = finalize_reader_outputs(
         output_dir=output_dir,
@@ -473,6 +495,7 @@ def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path, 
     )
     audited_path = intermediate / "audited_brief.md"
     audited_path.write_text("# Brief\n\n- Claim [src:CLAIM_123456]\n", encoding="utf-8")
+    _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="CLAIM_123456")
 
     assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 0
     captured = capsys.readouterr()
@@ -877,7 +900,7 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     (intermediate / "audited_brief.md").write_text(
         "# Brief\n\n"
         "ExampleCo opened a public demo facility. [src:SYN_CLAIM_001]\n"
-        "A missing internal ref should not leak. [src:SYN_CLAIM_MISSING]\n",
+        "A second internal ref should project. [src:SYN_CLAIM_002]\n",
         encoding="utf-8",
     )
     _write_claim_ledger(intermediate / "claim_ledger.json")
@@ -893,11 +916,11 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     reader = (output_dir / "brief.md").read_text(encoding="utf-8")
 
-    assert result.source_appendix_generation == "generated_with_warnings"
+    assert result.source_appendix_generation == "generated"
     assert report["source_appendix_requested_by"] == "source_appendix"
-    assert report["source_appendix_source_count"] == 1
+    assert report["source_appendix_source_count"] == 2
     assert report["source_appendix_cited_claim_count"] == 2
-    assert report["source_appendix_resolved_claim_count"] == 1
+    assert report["source_appendix_resolved_claim_count"] == 2
     assert report["source_appendix_mode"] == "separate"
     assert report["source_appendix_claim_map"]["SYN_CLAIM_001"] == {
         "source_label": "S1",
@@ -910,6 +933,7 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
         "source_category": "news_media",
     }
     assert "ExampleCo Opens Demo Facility" in appendix
+    assert "Q1 Results" in appendix
     assert "Unused Source" not in appendix
     assert "SYN_CLAIM" not in appendix
     assert "SYN_SRC" not in appendix
@@ -1567,7 +1591,7 @@ def test_finalize_rejects_if_audit_report_changed_after_auditor_complete(tmp_pat
     )
 
 
-def test_finalize_legacy_source_map_skips_missing_ledger_without_failing(tmp_path: Path):
+def test_finalize_legacy_source_map_missing_ledger_fails_without_hiding_marker(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -1576,18 +1600,47 @@ def test_finalize_legacy_source_map_skips_missing_ledger_without_failing(tmp_pat
         encoding="utf-8",
     )
 
-    result = finalize_reader_outputs(
-        output_dir=output_dir,
-        project_name="ExampleCo Brief",
-        output_formats=["markdown", "source_map"],
-        output_named_outputs=False,
-    )
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_map"],
+            output_named_outputs=False,
+        )
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
-    assert result.source_appendix_generation == "skipped_missing_ledger"
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["source_appendix_generation"] == "skipped_missing_ledger"
     assert report["source_appendix_requested_by"] == "legacy_source_map"
+    assert report["reader_clean"]["src_marker_count"] == 1
     assert not (output_dir / "source_appendix.md").exists()
-    assert (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+
+
+def test_finalize_preserves_malformed_source_marker_as_reader_clean_failure(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nReader content with malformed marker [src:].\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["reader_clean"]["src_marker_count"] == 1
+    assert "[src:]" in report["reader_clean"]["sample_findings"][0]["text"]
+    assert not (output_dir / "delivery").exists()
 
 
 def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Path):
@@ -1753,7 +1806,7 @@ def test_finalize_markdown_only_regenerates_stale_source_appendix_from_citations
     assert (output_dir / "source_appendix.md").exists()
 
 
-def test_finalize_legacy_missing_ledger_removes_stale_source_appendix(tmp_path: Path):
+def test_finalize_legacy_missing_ledger_preserves_stale_source_appendix_on_failed_finalize(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -1773,19 +1826,21 @@ def test_finalize_legacy_missing_ledger_removes_stale_source_appendix(tmp_path: 
     assert (output_dir / "source_appendix.md").exists()
     ledger.unlink()
 
-    result = finalize_reader_outputs(
-        output_dir=output_dir,
-        project_name="ExampleCo Brief",
-        output_formats=["markdown", "source_map"],
-        output_named_outputs=False,
-    )
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_map"],
+            output_named_outputs=False,
+        )
 
-    assert result.source_appendix_generation == "skipped_missing_ledger"
-    assert result.source_appendix == ""
-    assert not (output_dir / "source_appendix.md").exists()
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["source_appendix_generation"] == "skipped_missing_ledger"
+    assert (output_dir / "source_appendix.md").exists()
 
 
-def test_finalize_legacy_malformed_ledger_removes_stale_source_appendix(tmp_path: Path):
+def test_finalize_legacy_malformed_ledger_preserves_stale_source_appendix_on_failed_finalize(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -1805,16 +1860,18 @@ def test_finalize_legacy_malformed_ledger_removes_stale_source_appendix(tmp_path
     assert (output_dir / "source_appendix.md").exists()
     ledger.write_text("{not json", encoding="utf-8")
 
-    result = finalize_reader_outputs(
-        output_dir=output_dir,
-        project_name="ExampleCo Brief",
-        output_formats=["markdown", "source_map"],
-        output_named_outputs=False,
-    )
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_map"],
+            output_named_outputs=False,
+        )
 
-    assert result.source_appendix_generation == "skipped_malformed_ledger"
-    assert result.source_appendix == ""
-    assert not (output_dir / "source_appendix.md").exists()
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["source_appendix_generation"] == "skipped_malformed_ledger"
+    assert (output_dir / "source_appendix.md").exists()
 
 
 def test_finalize_cli_reports_missing_explicit_source_appendix_ledger_without_traceback(
@@ -2111,6 +2168,7 @@ def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path)
         "This should remain.\n",
         encoding="utf-8",
     )
+    _write_claim_ledger(intermediate / "claim_ledger.json")
 
     finalize_reader_outputs(
         output_dir=output_dir,
@@ -2447,7 +2505,7 @@ def test_finalize_fails_on_process_and_local_residue_after_known_source_marker_p
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     reader_clean = report["reader_clean"]
-    assert reader_clean["src_marker_count"] == 0
+    assert reader_clean["src_marker_count"] == 1
     assert reader_clean["process_wording_count"] >= 3
     assert reader_clean["local_path_count"] == 1
     assert reader_clean["debug_residue_count"] == 1

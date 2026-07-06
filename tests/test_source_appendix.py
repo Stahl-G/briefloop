@@ -161,8 +161,25 @@ def test_replace_claim_citations_with_reader_source_labels():
 
     assert "Alpha [S1]" in reader
     assert "Gamma [S2]" in reader
-    assert "[src:" not in reader
-    assert "claim-missing" not in reader
+    assert "Beta [src:claim-missing]" in reader
+
+
+def test_replace_claim_citations_preserves_unresolved_and_malformed_markers():
+    markdown = (
+        "Known [source:CL-001]. "
+        "Unknown source:CL-404. "
+        "Bad src:CL-001-extra. "
+        "Bracket bad [src:CL-404]. "
+        "Empty [src:]."
+    )
+
+    reader = replace_claim_citations_with_labels(markdown, {"CL-001": "S1"})
+
+    assert "Known [S1]." in reader
+    assert "source:CL-404" in reader
+    assert "src:CL-001-extra" in reader
+    assert "[src:CL-404]" in reader
+    assert "[src:]" in reader
 
 
 def test_replace_claim_citations_dedupes_adjacent_reader_source_labels():

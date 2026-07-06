@@ -103,6 +103,28 @@ def test_reader_projection_uses_canonical_source_for_body_and_appendix(tmp_path:
     assert "ExampleCo Source 2" not in appendix
 
 
+def test_reader_projection_auto_appendix_resolves_bare_ledger_id(tmp_path: Path) -> None:
+    output_dir, intermediate = _projection_workspace(tmp_path)
+    _write_claim_ledger(intermediate / "claim_ledger.json", ["SOURCEA_ABC123"])
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. SOURCEA_ABC123\n",
+        encoding="utf-8",
+    )
+
+    result = build_reader_projection(
+        output_dir=output_dir,
+        output_formats=["markdown"],
+        transaction_id="tx-bare-ledger-id",
+    )
+
+    assert result.source_appendix_generation == "generated"
+    assert result.source_appendix_cited_claim_count == 1
+    assert result.source_appendix_resolved_claim_count == 1
+    assert set(result.source_appendix_claim_map) == {"SOURCEA_ABC123"}
+    assert "SOURCEA_ABC123" not in result.reader_markdown
+    assert "[S1]" in result.reader_markdown
+
+
 def test_reader_projection_canonical_source_strips_internal_sections_before_appendix(
     tmp_path: Path,
 ) -> None:

@@ -312,6 +312,7 @@ def _replace_internal_citation_markers(
             continue
         parts.append(markdown[cursor:marker.start])
         if marker.status != "resolved":
+            parts.append(markdown[marker.start:marker.end])
             cursor = marker.end
             continue
         label = citation_labels.get(marker.claim_id)
