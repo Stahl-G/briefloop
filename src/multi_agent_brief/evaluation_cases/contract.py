@@ -18,6 +18,7 @@ STATIC_CONTRACT_CASE = "static_contract"
 CASE_TYPES = {WORKSPACE_CASE, STATIC_CONTRACT_CASE}
 
 ALLOWED_ACTIONS = {
+    "completion.project",
     "controls.build_switchboard",
     "controls.select",
     "controls.show",
@@ -44,6 +45,7 @@ ALLOWED_ACTIONS = {
     "state.stage_complete",
     "static.hermes_no_skip_finalize",
     "synthetic.seed_claim_support_case",
+    "workbuddy.diagnose",
 }
 
 ALLOWED_EXPECTED_KEYS = {

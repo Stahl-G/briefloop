@@ -54,6 +54,7 @@ from multi_agent_brief.product.release_approval import (
 from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     append_event,
+    build_completion_projection,
     check_runtime_state,
     complete_finalize_transaction,
     complete_stage_transaction,
@@ -76,6 +77,7 @@ from multi_agent_brief.quality_gates.state import (
     validate_quality_gates_workspace,
 )
 from multi_agent_brief.status import build_workspace_status
+from multi_agent_brief.workbuddy.diagnose import build_workbuddy_diagnosis
 
 
 class EvaluationCaseRunError(Exception):
@@ -521,6 +523,16 @@ def _dispatch_action(command: dict[str, Any], context: dict[str, Any]) -> dict[s
             result["delivery_artifact_count"] = data["delivery_artifact_count"]
         if "audit_artifact_count" in data:
             result["audit_artifact_count"] = data["audit_artifact_count"]
+        if "completion_projection" in data:
+            result["completion_projection"] = data["completion_projection"]
+        if "run_card" in data:
+            result["run_card"] = data["run_card"]
+        if "delivery_truth" in data:
+            result["delivery_truth"] = data["delivery_truth"]
+        if "finalize_truth" in data:
+            result["finalize_truth"] = data["finalize_truth"]
+        if "next_allowed_action" in data:
+            result["next_allowed_action"] = data["next_allowed_action"]
         if "packaging_hygiene" in data:
             result["packaging_hygiene"] = data["packaging_hygiene"]
         if "suggested_next_command" in data:
@@ -540,6 +552,31 @@ def _run_action(*, action: str, args: dict[str, Any], context: dict[str, Any]) -
     workspace = context.get("workspace")
     repo_workdir = context["repo_workdir"]
 
+    if action == "completion.project":
+        projection = build_completion_projection(
+            workspace=_require_workspace(workspace),
+            repo_workdir=repo_workdir,
+        )
+        return {
+            "ok": True,
+            "completion_projection": projection,
+            "delivery_truth": projection.get("delivery_truth") or {},
+            "finalize_truth": projection.get("finalize_truth") or {},
+            "next_allowed_action": projection.get("next_allowed_action"),
+        }
+    if action == "workbuddy.diagnose":
+        diagnosis = build_workbuddy_diagnosis(workspace=_require_workspace(workspace))
+        return {
+            "ok": True,
+            "run_card": diagnosis.get("run_card") or {},
+            "delivery_truth": (
+                diagnosis.get("delivery_truth")
+                or (diagnosis.get("delivery") or {}).get("truth")
+                or {}
+            ),
+            "finalize_truth": (diagnosis.get("finalize") or {}).get("truth") or {},
+            "next_allowed_action": (diagnosis.get("run_card") or {}).get("next_allowed_action"),
+        }
     if action == "controls.build_switchboard":
         return build_control_switchboard(
             workspace=_require_workspace(workspace),

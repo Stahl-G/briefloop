@@ -39,6 +39,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "artifacts": _mapping(completion.get("artifacts")),
         "finalize": _finalize_payload_from_completion(completion),
         "delivery": _delivery_payload_from_completion(completion),
+        "delivery_truth": _mapping(completion.get("delivery_truth")),
         "event_truth": _mapping(completion.get("event_truth")),
         "secret_risk": secret_risk,
         "boundary": (

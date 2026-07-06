@@ -175,6 +175,8 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     assert payload["run_card"]["next_allowed_action"] == projection["next_allowed_action"]
     assert payload["run_card"]["delivery_valid"] is True
     assert payload["run_card"]["delivery_truth"] == projection["delivery_truth"]["status"]
+    assert payload["delivery_truth"] == projection["delivery_truth"]
+    assert payload["delivery_truth"]["valid"] is True
     assert payload["delivery"]["truth"] == projection["delivery_truth"]
     assert payload["finalize"]["truth"] == projection["finalize_truth"]
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
@@ -209,6 +211,8 @@ def test_workbuddy_diagnose_does_not_infer_delivery_from_directory(tmp_path: Pat
 
     projection = payload["completion_projection"]
     assert projection["delivery_truth"]["valid"] is False
+    assert payload["delivery_truth"] == projection["delivery_truth"]
+    assert payload["delivery_truth"]["valid"] is False
     assert payload["run_card"]["delivery_valid"] is False
     assert payload["run_card"]["delivery_truth"] == "not_valid"
     assert payload["run_card"]["next_allowed_action"] == projection["next_allowed_action"]
