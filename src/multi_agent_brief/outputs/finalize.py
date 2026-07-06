@@ -206,6 +206,12 @@ def finalize_reader_outputs(
     )
     intermediate_dir = out / "intermediate"
     formats = set(output_formats or ["markdown"])
+    appendix_path = out / "source_appendix.md"
+    appendix_trace_path = out / "source_appendix_trace.md"
+    if appendix_path.exists():
+        appendix_path.unlink()
+    if appendix_trace_path.exists():
+        appendix_trace_path.unlink()
     projection = build_reader_projection(
         output_dir=out,
         output_formats=formats,
@@ -215,12 +221,6 @@ def finalize_reader_outputs(
     audited_path = Path(projection.audited_brief)
     audited_markdown = projection.audited_markdown
     stripped_count = projection.stripped_src_marker_count
-    appendix_path = out / "source_appendix.md"
-    appendix_trace_path = out / "source_appendix_trace.md"
-    if appendix_path.exists():
-        appendix_path.unlink()
-    if appendix_trace_path.exists():
-        appendix_trace_path.unlink()
     if projection.source_appendix:
         shutil.copyfile(Path(projection.source_appendix), appendix_path)
     if projection.source_appendix_trace:

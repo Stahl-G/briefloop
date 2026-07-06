@@ -1590,6 +1590,10 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
         "# Brief\n\nClaim. [src:SYN_CLAIM_001]\n",
         encoding="utf-8",
     )
+    stale_appendix = output_dir / "source_appendix.md"
+    stale_trace = output_dir / "source_appendix_trace.md"
+    stale_appendix.write_text("stale appendix", encoding="utf-8")
+    stale_trace.write_text("stale trace", encoding="utf-8")
 
     with pytest.raises(FileNotFoundError):
         finalize_reader_outputs(
@@ -1598,6 +1602,9 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
             output_formats=["markdown", "source_appendix"],
             output_named_outputs=False,
         )
+
+    assert not stale_appendix.exists()
+    assert not stale_trace.exists()
 
 
 def test_finalize_markdown_only_regenerates_stale_source_appendix_from_citations(tmp_path: Path):
