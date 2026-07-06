@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from multi_agent_brief.contracts.audited_brief_contract import AuditedBriefContractError
 from multi_agent_brief.outputs.reader_projection import build_reader_projection
 from tests.helpers import sha256_file
 
@@ -64,7 +65,9 @@ def test_reader_projection_writes_candidate_without_delivery_promotion(tmp_path:
     assert not (output_dir / "delivery").exists()
 
 
-def test_reader_projection_surfaces_internal_appendix_residue(tmp_path: Path) -> None:
+def test_reader_projection_rejects_unmarked_internal_appendix_before_candidate(
+    tmp_path: Path,
+) -> None:
     output_dir, intermediate = _projection_workspace(tmp_path)
     (intermediate / "audited_brief.md").write_text(
         "# Brief\n\n"
@@ -74,17 +77,43 @@ def test_reader_projection_surfaces_internal_appendix_residue(tmp_path: Path) ->
         encoding="utf-8",
     )
 
+    with pytest.raises(AuditedBriefContractError) as exc_info:
+        build_reader_projection(
+            output_dir=output_dir,
+            output_formats=["markdown"],
+            transaction_id="tx-residue",
+        )
+
+    assert exc_info.value.result.status == "fail"
+    kinds = {finding.kind for finding in exc_info.value.result.findings}
+    assert "unmarked_internal_source_appendix" in kinds
+    assert not (intermediate / "finalize_candidate" / "tx-residue").exists()
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+
+
+def test_reader_projection_strips_explicit_internal_blocks(tmp_path: Path) -> None:
+    output_dir, intermediate = _projection_workspace(tmp_path)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "ExampleCo opened a public demo facility. [src:CL-001]\n\n"
+        "<!-- briefloop:internal start -->\n"
+        "Claim Ledger: CL-0001 from input/sources/source-001.md\n"
+        "<!-- briefloop:internal end -->\n\n"
+        "Reader-safe tail.\n",
+        encoding="utf-8",
+    )
+
     result = build_reader_projection(
         output_dir=output_dir,
         output_formats=["markdown"],
-        transaction_id="tx-residue",
+        transaction_id="tx-internal-block",
     )
 
-    assert result.reader_clean["status"] == "fail"
-    kinds = {finding["kind"] for finding in result.reader_clean["sample_findings"]}
-    assert {"bare_claim_id", "process_wording"}.issubset(kinds)
-    assert not (output_dir / "brief.md").exists()
-    assert not (output_dir / "delivery").exists()
+    assert "Claim Ledger" not in result.reader_markdown
+    assert "input/sources" not in result.reader_markdown
+    assert "Reader-safe tail" in result.reader_markdown
+    assert result.reader_clean["status"] == "pass"
 
 
 def test_reader_projection_rejects_pathlike_transaction_id_without_deleting_intermediate(

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from multi_agent_brief.contracts.audited_brief_contract import AuditedBriefContractError
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.outputs.naming import render_output_stem
 from multi_agent_brief.outputs.reader_projection import (
@@ -83,6 +84,7 @@ class FinalizeResult:
     citation_profile_audit_bundle_keeps_trace: bool = True
     citation_profile_warnings: list[str] = field(default_factory=list)
     quality_panel_closeout: dict[str, Any] = field(default_factory=dict)
+    audited_brief_contract: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -354,14 +356,31 @@ def finalize_reader_outputs(
         prefix=".briefloop-finalize-candidate-",
         dir=intermediate_dir,
     ) as candidate_root_text:
-        projection = build_reader_projection(
-            output_dir=out,
-            output_formats=formats,
-            source_appendix_config=source_appendix_config or {},
-            workspace_dir=workspace,
-            candidate_root=Path(candidate_root_text),
-            transaction_id=finalize_transaction_id,
-        )
+        try:
+            projection = build_reader_projection(
+                output_dir=out,
+                output_formats=formats,
+                source_appendix_config=source_appendix_config or {},
+                workspace_dir=workspace,
+                candidate_root=Path(candidate_root_text),
+                transaction_id=finalize_transaction_id,
+            )
+        except AuditedBriefContractError as exc:
+            result = FinalizeResult(
+                status="fail",
+                finalize_transaction_id=finalize_transaction_id,
+                audited_brief=str(intermediate_dir / "audited_brief.md"),
+                reader_brief="",
+                delivery_promotion="skipped_audited_brief_contract_failed",
+                audited_brief_contract=exc.result.to_dict(),
+            )
+            _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
+            raise RuntimeError(
+                "Audited brief contract failed before reader projection: "
+                f"{exc.result.finding_count} blocking finding"
+                f"{'s' if exc.result.finding_count != 1 else ''}. "
+                f"See {report_path}."
+            ) from exc
         audited_path = Path(projection.audited_brief)
         candidate_reader_path = Path(projection.reader_brief)
         candidate_docx_path = Path(projection.candidate_dir) / "brief.docx"
@@ -414,6 +433,7 @@ def finalize_reader_outputs(
             citation_profile_delivery_exposes_local_paths=projection.citation_profile_delivery_exposes_local_paths,
             citation_profile_audit_bundle_keeps_trace=projection.citation_profile_audit_bundle_keeps_trace,
             citation_profile_warnings=projection.citation_profile_warnings,
+            audited_brief_contract=projection.audited_brief_contract,
             reader_clean=build_reader_clean_report(
                 markdown_paths=[
                     path

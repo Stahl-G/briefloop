@@ -2012,7 +2012,9 @@ def test_finalize_report_relative_paths_survive_workspace_move(tmp_path: Path):
     assert all(path.exists() for path in reader_paths)
 
 
-def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path):
+def test_finalize_rejects_unmarked_internal_claim_ledger_coverage_section(
+    tmp_path: Path,
+):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -2029,19 +2031,19 @@ def test_finalize_removes_internal_claim_ledger_coverage_section(tmp_path: Path)
         encoding="utf-8",
     )
 
-    finalize_reader_outputs(
-        output_dir=output_dir,
-        project_name="ExampleCo Brief",
-        output_formats=["markdown"],
-        output_named_outputs=False,
-    )
+    with pytest.raises(RuntimeError, match="Audited brief contract failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
 
-    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
-    assert "Claim Ledger 覆盖情况" not in reader
-    assert "覆盖类别" not in reader
-    assert "内部覆盖说明" not in reader
-    assert "Normal Reader Section" in reader
-    assert "[src:" not in reader
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["audited_brief_contract"]["status"] == "fail"
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
 
 
 def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
@@ -2244,7 +2246,7 @@ def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Pat
         encoding="utf-8",
     )
 
-    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+    with pytest.raises(RuntimeError, match="Audited brief contract failed"):
         finalize_reader_outputs(
             output_dir=output_dir,
             project_name="ExampleCo Brief",
@@ -2253,11 +2255,12 @@ def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Pat
         )
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
-    reader_clean = report["reader_clean"]
-    assert reader_clean["src_marker_count"] == 1
-    assert reader_clean["process_wording_count"] >= 3
-    assert reader_clean["local_path_count"] == 1
-    assert reader_clean["debug_residue_count"] == 1
+    contract = report["audited_brief_contract"]
+    assert contract["status"] == "fail"
+    kinds = {finding["kind"] for finding in contract["findings"]}
+    assert {"internal_process_wording", "local_path"}.issubset(kinds)
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
 
 
 def test_finalize_fails_on_blank_source_index_row(tmp_path: Path):

@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from multi_agent_brief.contracts.audited_brief_contract import (
+    validate_audited_brief_contract,
+    require_audited_brief_contract_pass,
+)
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -33,6 +37,8 @@ _INTERNAL_READER_SECTION_RE = re.compile(
     r"(?:claim\s+ledger|声明账本).{0,80}(?:coverage|覆盖情况|覆盖)",
     re.IGNORECASE,
 )
+_INTERNAL_BLOCK_START_RE = re.compile(r"^\s*<!--\s*briefloop:internal(?:\s+start|-start)?\s*-->\s*$", re.IGNORECASE)
+_INTERNAL_BLOCK_END_RE = re.compile(r"^\s*<!--\s*(?:/briefloop:internal|briefloop:internal\s+end|briefloop:internal-end)\s*-->\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -72,6 +78,7 @@ class ReaderProjectionResult:
     citation_profile_audit_bundle_keeps_trace: bool = True
     citation_profile_warnings: list[str] = field(default_factory=list)
     reader_clean: dict[str, Any] = field(default_factory=dict)
+    audited_brief_contract: dict[str, Any] = field(default_factory=dict)
 
 
 def build_reader_projection(
@@ -98,6 +105,12 @@ def build_reader_projection(
             f"Audited brief not found: {audited_path}. "
             "Run prepare/audit first or write output/intermediate/audited_brief.md."
         )
+    audited_markdown = audited_path.read_text(encoding="utf-8")
+    audited_contract = validate_audited_brief_contract(
+        audited_markdown,
+        artifact=str(audited_path),
+    )
+    require_audited_brief_contract_pass(audited_contract)
 
     candidate_root = (
         Path(candidate_root)
@@ -116,7 +129,6 @@ def build_reader_projection(
         )
     candidate_dir.mkdir(parents=True)
     try:
-        audited_markdown = audited_path.read_text(encoding="utf-8")
         stripped_count = len(_SRC_MARKER_RE.findall(audited_markdown))
         formats = set(output_formats or ["markdown"])
         source_appendix_config = source_appendix_config or {}
@@ -225,6 +237,7 @@ def build_reader_projection(
             ),
             citation_profile_warnings=list(citation_profile.get("warnings") or []),
             reader_clean=reader_clean,
+            audited_brief_contract=audited_contract.to_dict(),
         )
     except Exception:
         shutil.rmtree(candidate_dir, ignore_errors=True)
@@ -375,8 +388,20 @@ def _strip_internal_reader_sections(markdown: str) -> str:
     lines = markdown.splitlines()
     cleaned: list[str] = []
     skip_level: int | None = None
+    skip_internal_block = False
 
     for line in lines:
+        if _INTERNAL_BLOCK_START_RE.match(line):
+            skip_internal_block = True
+            while cleaned and not cleaned[-1].strip():
+                cleaned.pop()
+            continue
+        if _INTERNAL_BLOCK_END_RE.match(line):
+            skip_internal_block = False
+            continue
+        if skip_internal_block:
+            continue
+
         heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
         if skip_level is not None:
             if heading and len(heading.group(1)) <= skip_level:

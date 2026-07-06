@@ -163,6 +163,12 @@ For `assessment_target=auditable_brief`:
 For `assessment_target=delivery_brief` or normal workspaces:
 
 - finalize renders reader-facing files
+- before reader projection, finalize preflights
+  `output/intermediate/audited_brief.md` with the audited-brief contract. It
+  allows finalizer-owned `[src:...]` citation tokens and explicitly marked
+  `<!-- briefloop:internal start -->` / `<!-- briefloop:internal end -->`
+  blocks, but fails closed on unmarked Source Appendix / Claim Ledger /
+  local-path / control-file residue before creating reader or delivery files.
 - `state finalize-complete` writes the authoritative run archive
 - delivery remains human-triggered and gated
 - non-reference-eligible delivery may be useful locally, but it is not clean
