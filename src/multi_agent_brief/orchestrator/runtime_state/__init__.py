@@ -17,6 +17,10 @@ from .identity import new_run_id, utc_now
 from .manifest import RUNTIME_MANIFEST_SCHEMA
 from .claim_ledger_freeze import freeze_claim_ledger_transaction
 from .claim_metadata_enrichment import enrich_claim_metadata_transaction
+from .completion_projection import (
+    COMPLETION_PROJECTION_SCHEMA_VERSION,
+    build_completion_projection,
+)
 from .decisions import record_decision
 from .fact_layer import import_fact_layer_transaction
 from .lifecycle import (
@@ -47,10 +51,12 @@ __all__ = sorted([
     "RUNTIME_STATE_FILES",
     "RuntimeStateError",
     "append_event",
+    "build_completion_projection",
     "check_runtime_state",
     "complete_finalize_transaction",
     "complete_repair_transaction",
     "complete_stage_transaction",
+    "COMPLETION_PROJECTION_SCHEMA_VERSION",
     "enrich_claim_metadata_transaction",
     "freeze_claim_ledger_transaction",
     "import_fact_layer_transaction",
