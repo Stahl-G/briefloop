@@ -370,6 +370,11 @@ def test_finalize_regenerates_reader_outputs_from_audited_brief(tmp_path: Path):
     assert "[src:" not in _docx_text(output_dir / "上能电气_电力设备周报_2026-06-06.docx")
     assert (output_dir / "delivery" / "brief.md").exists()
     assert (output_dir / "delivery" / "上能电气_电力设备周报_2026-06-06.docx").exists()
+    assert not (intermediate / "finalize_candidate").exists()
+    assert not any(
+        path.name.startswith(".briefloop-finalize-candidate-")
+        for path in intermediate.iterdir()
+    )
     assert not (output_dir / "delivery" / "source_appendix.md").exists()
     assert not (output_dir / "delivery" / "claim_ledger.json").exists()
     assert result.delivery_artifacts == [
@@ -1590,6 +1595,10 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
         "# Brief\n\nClaim. [src:SYN_CLAIM_001]\n",
         encoding="utf-8",
     )
+    stale_appendix = output_dir / "source_appendix.md"
+    stale_trace = output_dir / "source_appendix_trace.md"
+    stale_appendix.write_text("stale appendix", encoding="utf-8")
+    stale_trace.write_text("stale trace", encoding="utf-8")
 
     with pytest.raises(FileNotFoundError):
         finalize_reader_outputs(
@@ -1598,6 +1607,14 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
             output_formats=["markdown", "source_appendix"],
             output_named_outputs=False,
         )
+
+    assert not stale_appendix.exists()
+    assert not stale_trace.exists()
+    assert not (intermediate / "finalize_candidate").exists()
+    assert not any(
+        path.name.startswith(".briefloop-finalize-candidate-")
+        for path in intermediate.iterdir()
+    )
 
 
 def test_finalize_markdown_only_regenerates_stale_source_appendix_from_citations(tmp_path: Path):
