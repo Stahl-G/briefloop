@@ -13,8 +13,8 @@ VALID_SRC_REF_PATTERN = re.compile(rf"\[src:{CLAIM_ID_RE_FRAGMENT}\]")
 CLAIM_ID_TOKEN_RE = re.compile(rf"^{CLAIM_ID_RE_FRAGMENT}$")
 
 _BRACKETED_SOURCE_MARKER_RE = re.compile(r"\[(src|source)\s*:\s*([^\]\[\r\n]*)\]", re.IGNORECASE)
-_BARE_SOURCE_MARKER_RE = re.compile(
-    r"(?<![A-Za-z0-9_/:?&=#.-])\b(src|source):([^\s\]\[(){}<>]+)",
+_BARE_SOURCE_MARKER_PREFIX_RE = re.compile(
+    r"(?<![A-Za-z0-9_/:?&=#.-])\b(src|source):",
     re.IGNORECASE,
 )
 _CLAIM_ID_BOUNDARY_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
@@ -75,11 +75,8 @@ def parse_internal_citation_markers(
         )
         occupied_spans.append((match.start(), match.end()))
 
-    for match in _BARE_SOURCE_MARKER_RE.finditer(markdown):
-        candidate, end = _normalized_bare_marker_candidate(
-            candidate=match.group(2).strip(),
-            end=match.end(),
-        )
+    for match in _BARE_SOURCE_MARKER_PREFIX_RE.finditer(markdown):
+        candidate, end = _bare_marker_candidate_at(markdown, match.end())
         if valid_ids is None or candidate not in valid_ids:
             if not _is_explicit_source_marker_candidate(candidate):
                 continue
@@ -219,6 +216,29 @@ def _normalized_bare_marker_candidate(*, candidate: str, end: int) -> tuple[str,
         candidate = candidate[:-1].rstrip()
         end -= 1
     return candidate, end
+
+
+def _bare_marker_candidate_at(markdown: str, start: int) -> tuple[str, int]:
+    end = start
+    while end < len(markdown):
+        char = markdown[end]
+        if char.isspace() or char in "][(){}<>":
+            break
+        if char in _TRAILING_PROSE_PUNCTUATION and _is_bare_marker_delimiter(markdown, end):
+            break
+        end += 1
+    return _normalized_bare_marker_candidate(
+        candidate=markdown[start:end].strip(),
+        end=end,
+    )
+
+
+def _is_bare_marker_delimiter(markdown: str, index: int) -> bool:
+    char = markdown[index]
+    if char != ".":
+        return True
+    next_char = markdown[index + 1] if index + 1 < len(markdown) else ""
+    return not next_char or next_char.isspace() or next_char in _TRAILING_PROSE_PUNCTUATION
 
 
 def _iter_known_claim_id_spans(markdown: str, valid_claim_ids: set[str]):

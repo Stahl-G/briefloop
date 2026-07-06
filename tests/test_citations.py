@@ -129,16 +129,21 @@ def test_parse_internal_citation_markers_treats_trailing_punctuation_as_delimite
     text = (
         'Trailing punctuation source:CL-001: and quoted "source:CL-001".\n'
         "Full-width punctuation source:CL-001。 and source:CL-001，\n"
+        "Compact list source:CL-001,source:CL-002 and source:CL-001，source:CL-002\n"
         "Bracketed punctuation [source:CL-001。] and [src:CL-001，]"
     )
 
-    markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001"})
+    markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001", "CL-002"})
 
     assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
         ("source:CL-001", "CL-001", "resolved"),
         ("source:CL-001", "CL-001", "resolved"),
         ("source:CL-001", "CL-001", "resolved"),
         ("source:CL-001", "CL-001", "resolved"),
+        ("source:CL-001", "CL-001", "resolved"),
+        ("source:CL-002", "CL-002", "resolved"),
+        ("source:CL-001", "CL-001", "resolved"),
+        ("source:CL-002", "CL-002", "resolved"),
         ("[source:CL-001。]", "CL-001", "resolved"),
         ("[src:CL-001，]", "CL-001", "resolved"),
     ]
@@ -149,6 +154,7 @@ def test_parse_internal_citation_markers_rejects_pathlike_bare_suffixes() -> Non
         "Path suffix source:CL-001/path "
         "query suffix source:CL-001?x "
         "fragment suffix source:CL-001#frag "
+        "extension suffix source:CL-001.txt "
         "sentence marker source:CL-001."
     )
 
