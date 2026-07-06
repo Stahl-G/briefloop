@@ -14,6 +14,7 @@ from uuid import uuid4
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.outputs.naming import render_output_stem
 from multi_agent_brief.outputs.reader_projection import (
+    ReaderProjectionSourceError,
     build_reader_clean_report,
     build_reader_projection,
 )
@@ -538,6 +539,27 @@ def finalize_reader_outputs(
             candidate_root=candidate_root,
             transaction_id=finalize_transaction_id,
         )
+    except ReaderProjectionSourceError as exc:
+        _remove_empty_dir(candidate_root)
+        result = FinalizeResult(
+            status="fail",
+            finalize_transaction_id=finalize_transaction_id,
+            audited_brief=str(intermediate_dir / "audited_brief.md"),
+            reader_brief=str(brief_path),
+            named_reader_brief=str(named_brief_path or ""),
+            docx_generation="not_requested",
+            source_appendix_generation="skipped_reader_projection_source_failed",
+            delivery_promotion="skipped_reader_projection_source_failed",
+            delivery_promotion_error=f"{type(exc).__name__}: {exc}",
+            reader_clean=_reader_projection_source_failure_report(
+                audited_path=intermediate_dir / "audited_brief.md",
+                error=exc,
+            ),
+        )
+        _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
+        raise RuntimeError(
+            f"Reader projection source check failed. See {report_path}."
+        ) from exc
     except Exception:
         _remove_empty_dir(candidate_root)
         raise
@@ -930,6 +952,26 @@ def _empty_reader_clean_report() -> dict[str, Any]:
         "policy_forbidden_phrase_count": 0,
         "sample_findings": [],
     }
+
+
+def _reader_projection_source_failure_report(
+    *,
+    audited_path: Path,
+    error: ReaderProjectionSourceError,
+) -> dict[str, Any]:
+    report = _empty_reader_clean_report()
+    report["status"] = "fail"
+    report["reader_projection_source_error_count"] = 1
+    report["sample_findings"] = [
+        {
+            "kind": "malformed_projectable_reader_block",
+            "text": "",
+            "line": None,
+            "artifact": str(audited_path),
+            "message": str(error),
+        }
+    ]
+    return report
 
 
 def _empty_audit_binding_report() -> dict[str, Any]:

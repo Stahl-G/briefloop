@@ -10,6 +10,7 @@ import yaml
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import initialize_runtime_state, runtime_state_paths
+from multi_agent_brief.orchestrator.runtime_state.completion_projection import build_completion_projection
 from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
     _finalize_report_delivery_artifact_reasons,
     _finalize_report_reader_artifact_paths,
@@ -19,6 +20,7 @@ from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
 )
+from multi_agent_brief.outputs.reader_projection import PROJECTABLE_READER_BLOCK_START
 from multi_agent_brief.outputs import finalize as finalize_module
 from tests.helpers import sha256_file as _sha256_file
 
@@ -1616,6 +1618,105 @@ def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Pat
         path.name.startswith(".briefloop-finalize-candidate-")
         for path in intermediate.iterdir()
     )
+
+
+def test_finalize_writes_failed_report_for_malformed_projectable_reader_block(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "ExampleCo opened a public demo facility.\n\n"
+        f"{PROJECTABLE_READER_BLOCK_START}\n"
+        "Internal note that should never be projected.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader projection source check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown", "source_appendix"],
+            output_named_outputs=False,
+        )
+
+    report_path = intermediate / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_projection_source_failed"
+    assert "missing end marker" in report["delivery_promotion_error"]
+    assert report["source_appendix_generation"] == "skipped_reader_projection_source_failed"
+    assert report["reader_clean"]["status"] == "fail"
+    assert report["reader_clean"]["reader_projection_source_error_count"] == 1
+    assert report["reader_clean"]["sample_findings"][0]["kind"] == "malformed_projectable_reader_block"
+    assert "missing end marker" in report["reader_clean"]["sample_findings"][0]["message"]
+    assert not (output_dir / "brief.md").exists()
+    assert not (output_dir / "delivery").exists()
+    assert not (intermediate / "finalize_candidate").exists()
+
+
+def test_malformed_projectable_block_failure_invalidates_stale_delivery_truth(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    output_dir = workspace / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (workspace / "config.yaml").write_text(
+        "project:\n"
+        "  name: ExampleCo Brief\n"
+        "input:\n"
+        "  path: input\n"
+        "output:\n"
+        "  path: output\n"
+        "  formats:\n"
+        "    - markdown\n",
+        encoding="utf-8",
+    )
+    (workspace / "input").mkdir()
+    _write_runtime_manifest(output_dir, run_id="mabw-stale-delivery")
+    audited = intermediate / "audited_brief.md"
+    audited.write_text("# Brief\n\nFirst reader-safe delivery.\n", encoding="utf-8")
+
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+        workspace_dir=workspace,
+    )
+    old_delivery = output_dir / "delivery" / "brief.md"
+    old_delivery_text = old_delivery.read_text(encoding="utf-8")
+
+    audited.write_text(
+        "# Brief\n\n"
+        "Second run has a malformed projectable block.\n\n"
+        f"{PROJECTABLE_READER_BLOCK_START}\n"
+        "Internal note that should never be projected.\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="Reader projection source check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+            workspace_dir=workspace,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_projection_source_failed"
+    assert old_delivery.exists()
+    assert old_delivery.read_text(encoding="utf-8") == old_delivery_text
+
+    projection = build_completion_projection(workspace=workspace, repo_workdir=ROOT)
+    assert projection["delivery_truth"]["valid"] is False
+    assert projection["finalize_truth"]["report_status"] == "fail"
+    assert projection["finalize_truth"]["delivery_promotion"] == "skipped_reader_projection_source_failed"
 
 
 def test_finalize_markdown_only_regenerates_stale_source_appendix_from_citations(tmp_path: Path):
