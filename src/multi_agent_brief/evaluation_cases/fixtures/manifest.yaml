@@ -312,6 +312,55 @@ cases:
         current_stage: finalize
         blocked: false
 
+  - case_id: reader_clean_failed_no_delivery_promotion
+    case_type: workspace
+    synthetic: true
+    description: Failed reader-clean leaves only an inspectable candidate; stale delivery files are not current delivery.
+    initial_stage: finalize
+    commands:
+      - action: completion.project
+        args: {}
+      - action: workbuddy.diagnose
+        args: {}
+    expected:
+      exit_code: 0
+      expected_actions:
+        - action: completion.project
+          exit_code: 0
+          result_contains:
+            delivery_truth:
+              valid: false
+              status: not_valid
+              source: finalize_report
+            finalize_truth:
+              report_status: fail
+              reader_clean_status: fail
+              delivery_promotion: skipped_reader_clean_failed
+            next_allowed_action: stop_finalize_failed_no_valid_delivery
+        - action: workbuddy.diagnose
+          exit_code: 0
+          result_contains:
+            run_card:
+              delivery_valid: false
+              delivery_truth: not_valid
+              next_allowed_action: stop_finalize_failed_no_valid_delivery
+            delivery_truth:
+              valid: false
+              status: not_valid
+      artifacts_exist:
+        - output/intermediate/finalize_report.json
+        - output/intermediate/finalize_candidate/tx-reader-clean-fail/reader_brief.md
+        - output/delivery/brief.md
+      artifacts_absent:
+        - output/delivery/final_report.docx
+      contains_text:
+        - scope: workspace
+          file: output/intermediate/finalize_candidate/tx-reader-clean-fail/reader_brief.md
+          text: "[src:CL-0001]"
+        - scope: workspace
+          file: output/delivery/brief.md
+          text: "stale delivery file"
+
   - case_id: static_hermes_no_skip_finalize
     case_type: static_contract
     synthetic: true

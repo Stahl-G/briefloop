@@ -1,0 +1,6 @@
+project:
+  name: "Reader Clean Failure Fixture"
+output:
+  path: "output"
+input:
+  path: "input"

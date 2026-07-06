@@ -61,6 +61,7 @@ REQUIRED_PACKAGE_DATA_PATTERNS = [
     '"evaluation_cases/fixtures/cases/*/workspace/*.yaml"',
     '"evaluation_cases/fixtures/cases/*/workspace/*.md"',
     '"evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.json"',
+    '"evaluation_cases/fixtures/cases/*/workspace/output/intermediate/finalize_candidate/*/*.md"',
 ]
 
 

@@ -38,14 +38,14 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
     assert rc == 0
     validation = json.loads(capsys.readouterr().out)
     assert validation["ok"] is True
-    assert validation["case_count"] == 24
+    assert validation["case_count"] == 25
 
     rc = main(["eval-cases", "run", "--repo-workdir", str(ROOT), "--json"])
 
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["ok"] is True
-    assert result["passed_count"] == 24
+    assert result["passed_count"] == 25
     assert result["failed_count"] == 0
     assert {
         "unsupported_material_fact",
@@ -56,6 +56,7 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "provenance_projection_minimal",
         "control_switchboard_selection_is_not_execution",
         "reader_facing_source_appendix",
+        "reader_clean_failed_no_delivery_promotion",
         "static_hermes_no_skip_finalize",
         "source_evidence_pack_blocks_non_evidence_file",
         "release_readiness_forged_event_blocker",
@@ -73,6 +74,36 @@ def test_eval_cases_validate_and_run_packaged_cases(capsys):
         "approved_guidance_materialized",
         "reverted_entry_removed_from_next_snapshot",
     } == {case["case_id"] for case in result["results"]}
+
+
+def test_eval_cases_reader_clean_failed_no_delivery_promotion(capsys):
+    rc = main([
+        "eval-cases",
+        "run",
+        "--case-id",
+        "reader_clean_failed_no_delivery_promotion",
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    result = json.loads(capsys.readouterr().out)
+    case = result["results"][0]
+    assert case["passed"] is True
+    assert [item["action"] for item in case["actions"]] == [
+        "completion.project",
+        "workbuddy.diagnose",
+    ]
+    projection_action = case["actions"][0]
+    assert projection_action["delivery_truth"]["valid"] is False
+    assert projection_action["finalize_truth"]["reader_clean_status"] == "fail"
+    assert projection_action["finalize_truth"]["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert projection_action["next_allowed_action"] == "stop_finalize_failed_no_valid_delivery"
+    diagnose_action = case["actions"][1]
+    assert diagnose_action["run_card"]["delivery_valid"] is False
+    assert diagnose_action["run_card"]["delivery_truth"] == "not_valid"
+    assert diagnose_action["run_card"]["next_allowed_action"] == "stop_finalize_failed_no_valid_delivery"
 
 
 def test_eval_cases_final_abstract_quality_warning_surface(capsys):
