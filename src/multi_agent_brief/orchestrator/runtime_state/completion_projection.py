@@ -21,6 +21,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
@@ -49,7 +50,10 @@ def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
         paths["runtime_manifest"],
         expected_schema=RUNTIME_MANIFEST_SCHEMA,
     )
-    registry, registry_status = _read_json(paths["artifact_registry"])
+    registry, registry_status = _read_json_with_schema(
+        paths["artifact_registry"],
+        expected_schema=ARTIFACT_REGISTRY_SCHEMA,
+    )
     event_records, event_log_status = _read_event_log(paths["event_log"])
     control_files = {
         "workflow_state": workflow_status,
@@ -62,7 +66,7 @@ def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
     blocked = bool(workflow.get("blocked")) if isinstance(workflow, Mapping) else False
     active_repair = workflow.get("active_repair") if isinstance(workflow, Mapping) else None
     run_integrity = _run_integrity_projection(workflow, workflow_status)
-    artifact_truth = _artifact_truth(registry)
+    artifact_truth = _artifact_truth(registry, registry_status=registry_status)
     gate_truth = _latest_gate_truth(intermediate, current_stage=current_stage)
     assessment_target = _assessment_target_projection(
         workspace=ws,
@@ -72,7 +76,11 @@ def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
         intermediate=intermediate,
     )
     finalize_truth = _finalize_truth(ws)
-    delivery_truth = _delivery_truth(ws, finalize_truth=finalize_truth)
+    delivery_truth = _delivery_truth(
+        ws,
+        finalize_truth=finalize_truth,
+        artifact_truth=artifact_truth,
+    )
     event_truth = {
         "event_log_status": event_log_status,
         "finalize_event_present": _has_finalize_event(event_records),
@@ -138,7 +146,16 @@ def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, 
     )
 
 
-def _artifact_truth(registry: Any) -> dict[str, Any]:
+def _artifact_truth(registry: Any, *, registry_status: str) -> dict[str, Any]:
+    if registry_status != "present" or not isinstance(registry, Mapping):
+        return {
+            "artifact_registry_present": False,
+            "artifact_registry_status": registry_status,
+            "artifact_registry_valid": False,
+            "invalid_or_stale": [],
+            "expected": [],
+            "findings": [f"artifact_registry_{registry_status}"],
+        }
     artifacts = registry.get("artifacts") if isinstance(registry, Mapping) else {}
     invalid_or_stale: list[dict[str, str]] = []
     expected: list[dict[str, str]] = []
@@ -157,8 +174,11 @@ def _artifact_truth(registry: Any) -> dict[str, Any]:
             expected.append(row)
     return {
         "artifact_registry_present": isinstance(registry, Mapping),
+        "artifact_registry_status": registry_status,
+        "artifact_registry_valid": True,
         "invalid_or_stale": invalid_or_stale,
         "expected": expected,
+        "findings": [],
     }
 
 
@@ -312,7 +332,12 @@ def _finalize_truth(workspace: Path) -> dict[str, Any]:
     return truth
 
 
-def _delivery_truth(workspace: Path, *, finalize_truth: Mapping[str, Any]) -> dict[str, Any]:
+def _delivery_truth(
+    workspace: Path,
+    *,
+    finalize_truth: Mapping[str, Any],
+    artifact_truth: Mapping[str, Any],
+) -> dict[str, Any]:
     delivery_dir = workspace / DELIVERY_DIR
     truth: dict[str, Any] = {
         "valid": False,
@@ -324,6 +349,12 @@ def _delivery_truth(workspace: Path, *, finalize_truth: Mapping[str, Any]) -> di
         "artifact_count": 0,
         "findings": [],
     }
+    if artifact_truth.get("artifact_registry_valid") is not True:
+        status = _clean_text(artifact_truth.get("artifact_registry_status")) or "unknown"
+        truth["status"] = "invalid_control"
+        truth["manifest_status"] = "not_checked"
+        truth["findings"].append(f"artifact_registry_{status}")
+        return truth
     report_path = workspace / INTERMEDIATE_DIR / "finalize_report.json"
     report, report_status = _read_json(report_path)
     if report_status != "present" or not isinstance(report, Mapping):
@@ -396,7 +427,25 @@ def _delivery_truth(workspace: Path, *, finalize_truth: Mapping[str, Any]) -> di
         truth["findings"].append("finalize_report_delivery_artifact_sha256_missing")
         return truth
     delivery_root = (workspace / DELIVERY_DIR).resolve()
+    report_artifacts = report.get("delivery_artifacts")
+    if not isinstance(report_artifacts, list) or not report_artifacts:
+        truth["findings"].append("finalize_report_delivery_artifacts_missing")
+        return truth
+    report_artifact_rels: set[str] = set()
+    for item in report_artifacts:
+        report_artifact_path = _resolve_workspace_path(workspace, item)
+        if report_artifact_path is None:
+            truth["findings"].append("finalize_report_delivery_artifact_path_invalid")
+            continue
+        try:
+            rel = report_artifact_path.relative_to(workspace.resolve()).as_posix()
+            report_artifact_path.relative_to(delivery_root)
+        except ValueError:
+            truth["findings"].append(f"finalize_report_delivery_artifact_outside_delivery:{item}")
+            continue
+        report_artifact_rels.add(rel)
     artifact_count = 0
+    manifest_artifact_rels: set[str] = set()
     for artifact in manifest_artifacts:
         artifact_count += 1
         if not isinstance(artifact, Mapping):
@@ -423,6 +472,7 @@ def _delivery_truth(workspace: Path, *, finalize_truth: Mapping[str, Any]) -> di
         except ValueError:
             truth["findings"].append(f"delivery_manifest_artifact_outside_delivery:{raw_path}")
             continue
+        manifest_artifact_rels.add(rel)
         if not artifact_path.exists():
             truth["findings"].append(f"delivery_artifact_missing:{rel}")
             continue
@@ -441,6 +491,10 @@ def _delivery_truth(workspace: Path, *, finalize_truth: Mapping[str, Any]) -> di
             truth["findings"].append(f"delivery_manifest_hash_mismatch:{rel}")
         elif actual_artifact_sha != sha256.strip():
             truth["findings"].append(f"delivery_artifact_hash_mismatch:{rel}")
+    for rel in sorted(report_artifact_rels - manifest_artifact_rels):
+        truth["findings"].append(f"delivery_manifest_missing_delivery_artifact:{rel}")
+    for rel in sorted(manifest_artifact_rels - report_artifact_rels):
+        truth["findings"].append(f"delivery_manifest_extra_delivery_artifact:{rel}")
     truth["artifact_count"] = artifact_count
     if truth["findings"]:
         return truth
@@ -469,6 +523,15 @@ def _next_allowed_action(
         for status in control_file_status.values()
     ):
         return "inspect_unreadable_or_missing_control_files"
+    if (
+        control_file_status.get("artifact_registry") == "missing"
+        and _completion_depends_on_artifact_registry(
+            workflow=workflow,
+            finalize_truth=finalize_truth,
+            delivery_truth=delivery_truth,
+        )
+    ):
+        return "inspect_unreadable_or_missing_control_files"
     if workflow.get("blocked") is True:
         return "stop_workflow_blocked_human_review_required"
     if workflow.get("active_repair") is True:
@@ -477,11 +540,11 @@ def _next_allowed_action(
         return "stop_run_integrity_not_clean"
     if gate_truth.get("blocking") is True:
         return "stop_resolve_blocking_gate_report"
+    if assessment_target.get("status") == "invalid_condition":
+        return "inspect_invalid_experiment_condition"
     invalid_or_stale = artifact_truth.get("invalid_or_stale")
     if isinstance(invalid_or_stale, list) and invalid_or_stale:
         return "inspect_invalid_or_stale_artifacts"
-    if assessment_target.get("status") == "invalid_condition":
-        return "inspect_invalid_experiment_condition"
     if assessment_target.get("assessment_target") == "auditable_brief":
         if assessment_target.get("target_complete") is True:
             return "register_auditable_brief_run"
@@ -557,10 +620,34 @@ def _has_finalize_event(records: list[Mapping[str, Any]]) -> bool:
             return True
         if (
             event_type == "decision_recorded"
-            and _clean_text(record.get("decision")) == "finalize_complete"
+            and (
+                _clean_text(record.get("decision")) == "finalize_complete"
+                or (
+                    _clean_text(record.get("stage_id")) == "finalize"
+                    and _clean_text(record.get("decision")) == "finalize"
+                )
+            )
         ):
             return True
     return False
+
+
+def _completion_depends_on_artifact_registry(
+    *,
+    workflow: Mapping[str, Any],
+    finalize_truth: Mapping[str, Any],
+    delivery_truth: Mapping[str, Any],
+) -> bool:
+    if _clean_text(workflow.get("current_stage")) in {"finalize", "delivery", "delivered"}:
+        return True
+    if finalize_truth.get("status") != "missing":
+        return True
+    if delivery_truth.get("delivery_dir_status") == "present":
+        return True
+    return _clean_text(delivery_truth.get("manifest_status")) not in {
+        "not_available",
+        "not_checked",
+    }
 
 
 def _resolve_workspace_path(workspace: Path, value: Any) -> Path | None:

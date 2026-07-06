@@ -5,10 +5,12 @@ from pathlib import Path
 
 from multi_agent_brief.orchestrator.runtime_state import (
     COMPLETION_PROJECTION_SCHEMA_VERSION,
+    append_event,
     build_completion_projection,
     initialize_runtime_state,
     runtime_state_paths,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
 from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
 
@@ -78,6 +80,16 @@ def _write_gate(ws: Path, *, stage: str = "finalize", status: str = "pass", bloc
     )
 
 
+def _write_registry(ws: Path, artifacts: dict[str, dict[str, object]] | None = None) -> None:
+    _write_json(
+        runtime_state_paths(ws)["artifact_registry"],
+        {
+            "schema_version": ARTIFACT_REGISTRY_SCHEMA,
+            "artifacts": artifacts or {},
+        },
+    )
+
+
 def _write_valid_delivery(ws: Path) -> None:
     delivery = ws / "output" / "delivery"
     intermediate = ws / "output" / "intermediate"
@@ -111,6 +123,7 @@ def _write_valid_delivery(ws: Path) -> None:
             "delivery_manifest_sha256": _sha256_file(manifest_path),
         },
     )
+    _write_registry(ws)
 
 
 def test_completion_projection_reports_valid_delivery_truth(tmp_path: Path) -> None:
@@ -158,6 +171,59 @@ def test_completion_projection_rejects_missing_delivery_artifact(tmp_path: Path)
 
     assert payload["delivery_truth"]["valid"] is False
     assert "delivery_artifact_missing:output/delivery/brief.md" in payload["delivery_truth"]["findings"]
+    assert payload["next_allowed_action"] == "inspect_invalid_delivery_truth"
+
+
+def test_completion_projection_requires_artifact_registry_for_valid_delivery(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="finalize")
+    _write_valid_delivery(ws)
+    runtime_state_paths(ws)["artifact_registry"].unlink()
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["control_files"]["artifact_registry"] == "missing"
+    assert payload["delivery_truth"]["valid"] is False
+    assert "artifact_registry_missing" in payload["delivery_truth"]["findings"]
+    assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
+
+
+def test_completion_projection_rejects_invalid_artifact_registry_schema(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="finalize")
+    _write_valid_delivery(ws)
+    _write_json(runtime_state_paths(ws)["artifact_registry"], {})
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["control_files"]["artifact_registry"] == "invalid_schema"
+    assert payload["delivery_truth"]["valid"] is False
+    assert "artifact_registry_invalid_schema" in payload["delivery_truth"]["findings"]
+    assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
+
+
+def test_completion_projection_rejects_manifest_missing_finalize_artifact(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="finalize")
+    _write_valid_delivery(ws)
+    extra = ws / "output" / "delivery" / "extra.md"
+    extra.write_text("# Extra\n", encoding="utf-8")
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = _read_json(report_path)
+    report["delivery_artifacts"].append(str(extra))
+    report["delivery_artifact_sha256"][str(extra)] = _sha256_file(extra)
+    _write_json(report_path, report)
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["delivery_truth"]["valid"] is False
+    assert (
+        "delivery_manifest_missing_delivery_artifact:output/delivery/extra.md"
+        in payload["delivery_truth"]["findings"]
+    )
     assert payload["next_allowed_action"] == "inspect_invalid_delivery_truth"
 
 
@@ -254,3 +320,46 @@ def test_completion_projection_stops_on_blocking_gate_result(tmp_path: Path) -> 
 
     assert payload["gate_truth"]["blocking_count"] == 2
     assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
+
+
+def test_completion_projection_prioritizes_invalid_experiment_condition(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_registry(
+        ws,
+        {
+            "audited_brief": {
+                "status": "invalid",
+                "validation_result": "schema_error",
+                "path": "output/intermediate/audited_brief.md",
+            }
+        },
+    )
+    _write_json(
+        ws / "experiment" / "080" / "condition.json",
+        {"assessment_target": ["auditable_brief"]},
+    )
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["assessment_target"]["status"] == "invalid_condition"
+    assert payload["artifacts"]["invalid_or_stale"]
+    assert payload["next_allowed_action"] == "inspect_invalid_experiment_condition"
+
+
+def test_completion_projection_detects_finalize_decision_event(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    manifest = _read_json(runtime_state_paths(ws)["runtime_manifest"])
+    append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="decision_recorded",
+        actor="cli",
+        stage_id="finalize",
+        decision="finalize",
+        reason="finalize completed",
+    )
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["event_truth"]["finalize_event_present"] is True
