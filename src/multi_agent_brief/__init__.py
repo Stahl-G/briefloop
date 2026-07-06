@@ -28,7 +28,7 @@ def _source_checkout_version() -> Optional[str]:
 
 def _installed_package_version() -> str:
     try:
-        return version("multi-agent-brief-workflow")
+        return version("briefloop")
     except PackageNotFoundError:
         return "0.0.0.dev0"
 

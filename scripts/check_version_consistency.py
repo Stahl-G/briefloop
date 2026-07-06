@@ -74,7 +74,7 @@ def main() -> int:
 
     # 2. __init__.py — must use importlib.metadata.version(), not a hardcoded string
     init = _read(ROOT / "src" / "multi_agent_brief" / "__init__.py")
-    if "importlib.metadata" in init and 'version("multi-agent-brief-workflow")' in init:
+    if "importlib.metadata" in init and 'version("briefloop")' in init:
         _ok("__init__.py (dynamic via importlib.metadata)")
     else:
         _error("__init__.py does not use importlib.metadata.version()")

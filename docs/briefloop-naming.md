@@ -27,7 +27,9 @@ The current compatibility surfaces remain:
 - `/briefloop` Claude writer command
 - `/mabw` Claude command retained as a deprecated compatibility command
 - `multi_agent_brief` Python package/module path
-- `multi-agent-brief-workflow` distribution package name
+- `briefloop` distribution package name
+- historical `multi-agent-brief-workflow` distribution references in archived
+  release notes and compatibility docs
 - existing artifact names and workspace formats
 - MABW experiment IDs such as `MABW-080`
 
@@ -44,8 +46,6 @@ of every historical or implementation name.
 These deep renames are explicitly not v1.0 blockers:
 
 - renaming the Python module path `multi_agent_brief` to `briefloop`;
-- changing the PyPI/distribution/package name
-  `multi-agent-brief-workflow`;
 - globally rewriting `mabw.*` schema ids or historical
   `multi-agent-brief-*` schema ids;
 - changing historical run IDs, archived reference runs, old release notes, or
@@ -73,7 +73,8 @@ instructions, launch claims, or recommended writer paths.
 | `/mabw` | Deprecated Claude compatibility alias | `.claude/commands/mabw.md`, compatibility docs, tests | README first screen, launch path, new-user examples |
 | `multi-agent-brief` | Compatibility CLI and script entrypoint | CLI compatibility notes, package tests, existing automation docs | Primary shell examples for new users |
 | `multi_agent_brief` | Python module compatibility surface | Python imports, packaging metadata, source tests | User-facing product name |
-| `multi-agent-brief-workflow` | Distribution/package compatibility surface | `pyproject.toml`, Homebrew formula, installer compatibility notes | Setup banners or first-run product copy |
+| `briefloop` | Distribution/package surface | `pyproject.toml`, PyPI/pipx packaging docs, release-checklist package smokes | Public install claims before a real package-index artifact is published and smoke-tested |
+| `multi-agent-brief-workflow` | Historical distribution/package compatibility reference | Old release notes, migration notes, archived install references | `pyproject.toml`, setup banners, first-run product copy, new package-index instructions |
 | `MABW-080` | Archived experiment namespace | Experiment docs, scorecards, release archives, reference-run reproduction, tests | Product workspace guidance, WorkBuddy first-user flow, launch path |
 | `BriefLoop-090` | Archived experiment/readiness label | Reference-run notes, experiment closeout, research/evaluation discussion | Product version label, CLI namespace, first-user path |
 | `mabw.*` schema ids | Old-workspace compatibility ids | Validators, schema fixtures, migration notes | New public product messaging |

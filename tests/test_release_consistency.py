@@ -272,7 +272,7 @@ def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, mo
     package_dir = root / "src" / "multi_agent_brief"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
-        'from importlib.metadata import version\n__version__ = version("multi-agent-brief-workflow")\n',
+        'from importlib.metadata import version\n__version__ = version("briefloop")\n',
         encoding="utf-8",
     )
     hermes_dir = package_dir / "hermes"
@@ -360,7 +360,7 @@ def test_check_version_consistency_accepts_previous_formula_before_tag(tmp_path,
     package_dir = root / "src" / "multi_agent_brief"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
-        'from importlib.metadata import version\n__version__ = version("multi-agent-brief-workflow")\n',
+        'from importlib.metadata import version\n__version__ = version("briefloop")\n',
         encoding="utf-8",
     )
     hermes_dir = package_dir / "hermes"
@@ -403,7 +403,7 @@ def test_check_version_consistency_rejects_current_formula_before_tag(tmp_path, 
     package_dir = root / "src" / "multi_agent_brief"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
-        'from importlib.metadata import version\n__version__ = version("multi-agent-brief-workflow")\n',
+        'from importlib.metadata import version\n__version__ = version("briefloop")\n',
         encoding="utf-8",
     )
     hermes_dir = package_dir / "hermes"
@@ -446,7 +446,7 @@ def test_check_version_consistency_accepts_formula_when_tag_exists_on_origin(tmp
     package_dir = root / "src" / "multi_agent_brief"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
-        'from importlib.metadata import version\n__version__ = version("multi-agent-brief-workflow")\n',
+        'from importlib.metadata import version\n__version__ = version("briefloop")\n',
         encoding="utf-8",
     )
     hermes_dir = package_dir / "hermes"
@@ -510,7 +510,7 @@ def test_check_version_consistency_rejects_stale_readme_en_with_pointer_sentence
     package_dir = root / "src" / "multi_agent_brief"
     package_dir.mkdir(parents=True)
     (package_dir / "__init__.py").write_text(
-        'from importlib.metadata import version\n__version__ = version("multi-agent-brief-workflow")\n',
+        'from importlib.metadata import version\n__version__ = version("briefloop")\n',
         encoding="utf-8",
     )
     hermes_dir = package_dir / "hermes"

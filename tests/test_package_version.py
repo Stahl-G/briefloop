@@ -11,7 +11,7 @@ def _write_checkout(root: Path, version: str = "9.9.9") -> Path:
     root.mkdir(parents=True)
     (root / "VERSION").write_text(f"{version}\n", encoding="utf-8")
     (root / "pyproject.toml").write_text(
-        '[project]\nname = "multi-agent-brief-workflow"\n',
+        '[project]\nname = "briefloop"\n',
         encoding="utf-8",
     )
     package_dir = root / "src" / "multi_agent_brief"
