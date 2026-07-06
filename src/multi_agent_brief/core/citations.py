@@ -10,6 +10,7 @@ from typing import Iterable, Literal
 CLAIM_ID_RE_FRAGMENT = r"[A-Za-z0-9][A-Za-z0-9_-]{1,127}"
 SRC_REF_PATTERN = re.compile(rf"\[src:({CLAIM_ID_RE_FRAGMENT})\]")
 VALID_SRC_REF_PATTERN = re.compile(rf"\[src:{CLAIM_ID_RE_FRAGMENT}\]")
+CLAIM_ID_TOKEN_RE = re.compile(rf"^{CLAIM_ID_RE_FRAGMENT}$")
 
 _BRACKETED_SOURCE_MARKER_RE = re.compile(r"\[(src|source)\s*:\s*([^\]]*)\]", re.IGNORECASE)
 _BARE_SOURCE_MARKER_RE = re.compile(
@@ -18,6 +19,7 @@ _BARE_SOURCE_MARKER_RE = re.compile(
 )
 _CLAIM_ID_BOUNDARY_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _CLAIM_ID_LEFT_CONTEXT_BLOCKERS = frozenset(":/?#&=.")
+_CLAIM_ID_RIGHT_CONTEXT_BLOCKERS = frozenset("/\\:?&#=")
 _TRAILING_PROSE_PUNCTUATION = frozenset(".,;:!\"'”’")
 
 InternalCitationKind = Literal["bracketed_source_marker", "bare_source_marker", "bare_claim_id"]
@@ -78,6 +80,8 @@ def parse_internal_citation_markers(
             candidate=match.group(2).strip(),
             end=match.end(),
         )
+        if not _is_bare_citation_candidate(candidate):
+            continue
         if _span_overlaps(match.start(), end, occupied_spans):
             continue
         markers.append(
@@ -218,24 +222,36 @@ def _normalized_bare_marker_candidate(*, candidate: str, end: int) -> tuple[str,
 
 def _iter_known_claim_id_spans(markdown: str, valid_claim_ids: set[str]):
     for claim_id in sorted(valid_claim_ids, key=len, reverse=True):
+        if not _is_bare_citation_candidate(claim_id):
+            continue
         start = 0
         while True:
             index = markdown.find(claim_id, start)
             if index < 0:
                 break
             end = index + len(claim_id)
-            if _has_claim_id_boundaries(markdown, index, end):
+            if _has_citation_token_boundaries(markdown, index, end):
                 yield index, end, claim_id
             start = index + 1
 
 
-def _has_claim_id_boundaries(markdown: str, start: int, end: int) -> bool:
+def _is_bare_citation_candidate(candidate: str) -> bool:
+    return (
+        bool(CLAIM_ID_TOKEN_RE.fullmatch(candidate))
+        and any(ch.isdigit() or ch in "_-" for ch in candidate)
+    )
+
+
+def _has_citation_token_boundaries(markdown: str, start: int, end: int) -> bool:
     before = markdown[start - 1] if start > 0 else ""
     after = markdown[end] if end < len(markdown) else ""
+    after_next = markdown[end + 1] if after == "." and end + 1 < len(markdown) else ""
     return (
         before not in _CLAIM_ID_BOUNDARY_CHARS
         and before not in _CLAIM_ID_LEFT_CONTEXT_BLOCKERS
         and after not in _CLAIM_ID_BOUNDARY_CHARS
+        and after not in _CLAIM_ID_RIGHT_CONTEXT_BLOCKERS
+        and not (after == "." and after_next and not after_next.isspace())
     )
 
 

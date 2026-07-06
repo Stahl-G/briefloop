@@ -71,8 +71,10 @@ def test_parse_internal_citation_markers_reports_empty_and_unknown_markers() -> 
 def test_parse_internal_citation_markers_preserves_prose_and_urls() -> None:
     text = (
         "Primary source: company filing.\n"
+        "Primary source:company filing.\n"
         "Source: FDA clinical registry.\n"
         "The source: company filing supports this statement.\n"
+        "URL label source:https://example.com.\n"
         "For setup visit https://example.com/source:CL-001 path.\n"
         "Legit marker source:CL-001.\n"
     )
@@ -106,28 +108,43 @@ def test_parse_internal_citation_markers_rejects_pathlike_bare_suffixes() -> Non
     markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001"})
 
     assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
-        ("source:CL-001/path", "CL-001/path", "unresolved"),
-        ("source:CL-001?x", "CL-001?x", "unresolved"),
-        ("source:CL-001#frag", "CL-001#frag", "unresolved"),
         ("source:CL-001", "CL-001", "resolved"),
     ]
     assert resolved_internal_citation_ids(text, valid_claim_ids={"CL-001"}) == ["CL-001"]
 
 
-def test_parse_internal_citation_markers_bracketed_and_bare_share_candidate_rules() -> None:
+def test_parse_internal_citation_markers_applies_candidate_rules_consistently() -> None:
     text = "[source:CL-001/path] source:CL-001/path [source:CL-001.] source:CL-001."
 
     markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001"})
 
     assert [(marker.kind, marker.claim_id, marker.status) for marker in markers] == [
         ("bracketed_source_marker", "CL-001/path", "unresolved"),
-        ("bare_source_marker", "CL-001/path", "unresolved"),
         ("bracketed_source_marker", "CL-001", "resolved"),
         ("bare_source_marker", "CL-001", "resolved"),
     ]
 
 
 def test_parse_internal_citation_markers_does_not_match_bare_id_inside_longer_token() -> None:
-    text = "CL-001-extra and CL-001A are not the claim CL-001, but (CL-001) is."
+    text = (
+        "CL-001-extra and CL-001A are not the claim CL-001, "
+        "nor are CL-001/path CL-001?x CL-001#frag CL-001.txt, "
+        "but (CL-001) and CL-001. are."
+    )
 
     assert resolved_internal_citation_ids(text, valid_claim_ids={"CL-001"}) == ["CL-001"]
+
+
+def test_parse_internal_citation_markers_keeps_source_like_prose_out_of_results() -> None:
+    text = (
+        "Primary source:company filing.\n"
+        "Source:FDA clinical registry.\n"
+        "Link source:https://example.com/report.\n"
+        "Unknown internal source:CL-404.\n"
+    )
+
+    markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001"})
+
+    assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
+        ("source:CL-404", "CL-404", "unresolved"),
+    ]
