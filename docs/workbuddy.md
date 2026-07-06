@@ -241,7 +241,8 @@ instead of interpreting multiple control JSON files itself:
 briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
-The command is a read-only adapter over the canonical completion projection.
+The command is a read-only adapter over the canonical completion projection
+with a WorkBuddy-only doctor/secret safety overlay for `next_allowed_action`.
 It reports doctor status, runtime, current stage, run integrity, blocked state,
 latest gate status, invalid/stale artifacts, finalize truth, delivery truth,
 secret-risk flags such as `.env` with nonempty keys, and the next safe action.

@@ -197,12 +197,13 @@ next_allowed_action:
 ```
 
 Read these values from `briefloop workbuddy diagnose --workspace <workspace>
---json`, which formats the canonical completion projection. Do not reconstruct
-delivery, gate, finalize, or next-action truth from `workflow_state.json`,
-`event_log.jsonl`, or file existence checks. If `delivery_truth.valid` is not
-`true`, the Run Card must not claim delivery. Say the run has a draft only when
-an actual role-owned draft artifact exists, such as
-`output/intermediate/audited_brief.md`; otherwise say no draft or delivery
+--json`, which formats the canonical completion projection and applies only
+WorkBuddy doctor/secret safety overlays to `next_allowed_action`. Do not
+reconstruct delivery, gate, finalize, or next-action truth from
+`workflow_state.json`, `event_log.jsonl`, or file existence checks. If
+`delivery_truth.valid` is not `true`, the Run Card must not claim delivery. Say
+the run has a draft only when an actual role-owned draft artifact exists, such
+as `output/intermediate/audited_brief.md`; otherwise say no draft or delivery
 exists yet.
 
 ## Hard Stop Rules

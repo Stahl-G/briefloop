@@ -16,8 +16,13 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
 
     ws = Path(workspace).expanduser().resolve()
     completion = build_completion_projection(workspace=ws)
+    doctor_payload = _doctor_payload(config_exists=(ws / "config.yaml").exists())
     secret_risk = _secret_risk_payload(ws)
-    run_card = _run_card_from_completion(completion, secret_risk=secret_risk)
+    run_card = _run_card_from_completion(
+        completion,
+        doctor=doctor_payload,
+        secret_risk=secret_risk,
+    )
 
     return {
         "ok": True,
@@ -25,7 +30,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "runtime_effect": "read_only_diagnostic",
         "workspace": str(ws),
         "run_card": run_card,
-        "doctor": _doctor_payload(config_exists=(ws / "config.yaml").exists()),
+        "doctor": doctor_payload,
         "completion_projection": completion,
         "runtime": _runtime_payload_from_completion(completion),
         "assessment_target": _mapping(completion.get("assessment_target")),
@@ -37,7 +42,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "event_truth": _mapping(completion.get("event_truth")),
         "secret_risk": secret_risk,
         "boundary": (
-            "read_only_workbuddy_run_card_formats_completion_projection_only; "
+            "read_only_workbuddy_run_card_formats_completion_projection_with_workbuddy_safety_overlay; "
             "not_gate_delivery_release_or_semantic_proof"
         ),
     }
@@ -91,6 +96,7 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
 def _run_card_from_completion(
     completion: Mapping[str, Any],
     *,
+    doctor: Mapping[str, Any],
     secret_risk: Mapping[str, Any],
 ) -> dict[str, Any]:
     workflow = _mapping(completion.get("workflow"))
@@ -115,9 +121,36 @@ def _run_card_from_completion(
         "finalize_event": "present" if event_truth.get("finalize_event_present") is True else "missing",
         "delivery_event": "present" if event_truth.get("delivery_event_present") is True else "missing",
         "share_workspace_zip_allowed": False,
-        "next_allowed_action": _clean_text(completion.get("next_allowed_action")) or "unknown",
+        "next_allowed_action": _workbuddy_next_allowed_action(
+            completion_next_allowed_action=_clean_text(completion.get("next_allowed_action")) or "unknown",
+            doctor=doctor,
+            secret_risk=secret_risk,
+        ),
         "secret_risk_present": bool(secret_risk.get("env_present") or secret_risk.get("nonempty_env_keys")),
     }
+
+
+def _workbuddy_next_allowed_action(
+    *,
+    completion_next_allowed_action: str,
+    doctor: Mapping[str, Any],
+    secret_risk: Mapping[str, Any],
+) -> str:
+    """Apply WorkBuddy-only safety stops around canonical completion action.
+
+    Completion projection owns control/finalize/delivery truth. WorkBuddy adds
+    only outer operational stops that the completion projection intentionally
+    does not know about: doctor errors and workspace-sharing secret risk.
+    """
+
+    if _clean_text(doctor.get("status")) == "error":
+        return "stop_show_full_doctor_output"
+    if (
+        completion_next_allowed_action == "inspect_status_before_delivery_or_quality"
+        and (secret_risk.get("env_present") or secret_risk.get("nonempty_env_keys"))
+    ):
+        return "do_not_share_workspace_zip_secret_risk"
+    return completion_next_allowed_action
 
 
 def _runtime_payload_from_completion(completion: Mapping[str, Any]) -> dict[str, Any]:

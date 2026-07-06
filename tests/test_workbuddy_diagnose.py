@@ -180,6 +180,24 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
 
 
+def test_workbuddy_diagnose_doctor_error_overlays_completion_next_action(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _init_runtime(ws)
+    _write_finalized_delivery(ws)
+    (ws / "config.yaml").unlink()
+
+    payload = _diagnose_json(ws, capsys)
+
+    projection = payload["completion_projection"]
+    assert projection["delivery_truth"]["valid"] is True
+    assert projection["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+    assert payload["doctor"]["status"] == "error"
+    assert payload["doctor"]["errors"] == ["config.yaml missing"]
+    assert payload["run_card"]["delivery_valid"] is True
+    assert payload["run_card"]["delivery_truth"] == projection["delivery_truth"]["status"]
+    assert payload["run_card"]["next_allowed_action"] == "stop_show_full_doctor_output"
+
+
 def test_workbuddy_diagnose_does_not_infer_delivery_from_directory(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _init_runtime(ws, current_stage="finalize")
@@ -199,6 +217,7 @@ def test_workbuddy_diagnose_does_not_infer_delivery_from_directory(tmp_path: Pat
 
 def test_workbuddy_diagnose_follows_projection_for_dirty_delivery(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
+    (ws / ".env").write_text("TAVILY_API_KEY=redacted-test-secret\n", encoding="utf-8")
     _init_runtime(ws)
     _write_finalized_delivery(ws)
     (ws / "output" / "delivery" / "brief.md").write_text("# Tampered\n", encoding="utf-8")
@@ -210,9 +229,10 @@ def test_workbuddy_diagnose_follows_projection_for_dirty_delivery(tmp_path: Path
     assert payload["run_card"]["delivery_valid"] is False
     assert payload["run_card"]["next_allowed_action"] == projection["next_allowed_action"]
     assert payload["run_card"]["next_allowed_action"] == "inspect_invalid_or_incomplete_finalize_report_delivery_truth"
+    assert payload["run_card"]["secret_risk_present"] is True
 
 
-def test_workbuddy_diagnose_secret_risk_is_separate_from_next_action(tmp_path: Path, capsys) -> None:
+def test_workbuddy_diagnose_secret_risk_overlays_only_benign_completion_action(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     secret_value = "tvly-secret-value"
     (ws / ".env").write_text(f"TAVILY_API_KEY={secret_value}\n", encoding="utf-8")
@@ -226,8 +246,9 @@ def test_workbuddy_diagnose_secret_risk_is_separate_from_next_action(tmp_path: P
     assert secret_value not in raw
     payload = json.loads(raw)
     projection = payload["completion_projection"]
-    assert payload["run_card"]["next_allowed_action"] == projection["next_allowed_action"]
-    assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+    assert projection["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+    assert payload["run_card"]["delivery_truth"] == projection["delivery_truth"]["status"]
+    assert payload["run_card"]["next_allowed_action"] == "do_not_share_workspace_zip_secret_risk"
     assert payload["run_card"]["secret_risk_present"] is True
     assert payload["run_card"]["share_workspace_zip_allowed"] is False
     assert payload["secret_risk"]["nonempty_env_keys"] == ["TAVILY_API_KEY"]
@@ -274,7 +295,7 @@ def test_workbuddy_diagnose_text_prints_projection_run_card(tmp_path: Path, caps
         assert field in output
     assert "delivery complete" not in output.lower()
     assert "delivered" not in output.lower()
-    assert "read_only_workbuddy_run_card_formats_completion_projection_only" in output
+    assert "read_only_workbuddy_run_card_formats_completion_projection_with_workbuddy_safety_overlay" in output
     assert "Doctor: not_run_read_only" in output
     assert "Output directory writable" not in output
     assert "Output directory not writable" not in output

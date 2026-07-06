@@ -53,9 +53,10 @@ next_allowed_action:
 ```
 
 Read these fields from `briefloop workbuddy diagnose --workspace <workspace>
---json`, which formats the canonical completion projection. Do not reconstruct
-delivery, gate, finalize, or next-action truth from file existence checks or
-from prose.
+--json`, which formats the canonical completion projection and applies only
+WorkBuddy doctor/secret safety overlays to `next_allowed_action`. Do not
+reconstruct delivery, gate, finalize, or next-action truth from file existence
+checks or from prose.
 
 Allowed examples:
 

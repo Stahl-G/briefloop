@@ -223,10 +223,11 @@ bundle。需要支持时，只分享人工检查过、确认不含密钥的
 briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
-这个命令是 canonical completion projection 上的只读 adapter。它报告 doctor
-状态、runtime、current stage、run integrity、blocked 状态、latest gate status、
-invalid/stale artifacts、finalize truth、delivery truth、`.env` 非空 key 等
-secret-risk flags，以及 next safe action。它不根据文件存在推断 delivery；
+这个命令是 canonical completion projection 上的只读 adapter，并且只对
+`next_allowed_action` 加 WorkBuddy-only doctor/secret safety overlay。它报告
+doctor 状态、runtime、current stage、run integrity、blocked 状态、latest gate
+status、invalid/stale artifacts、finalize truth、delivery truth、`.env` 非空 key
+等 secret-risk flags，以及 next safe action。它不根据文件存在推断 delivery；
 除非 projection 显示 `delivery_truth.valid=true`，WorkBuddy 不能把
 `output/delivery/` 或 `finalize_report.json` 存在当成交付真实状态。它不运行
 gates、不修复 artifacts、不批准 delivery、不授权 release，也不证明语义真实。
