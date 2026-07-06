@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
+from multi_agent_brief.core.citations import parse_internal_citation_markers
+
 
 FindingKind = Literal[
     "src_marker",
@@ -32,7 +34,6 @@ COUNT_KEYS = {
     "policy_forbidden_phrase": "policy_forbidden_phrase_count",
 }
 
-_SRC_MARKER_RE = re.compile(r"\[\s*(?:src|source)\s*:[^\]]*\]", re.IGNORECASE)
 _CLAIM_ID_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|CLM-\d{3,}|CL-\d{3,}|(?:[A-Z][A-Z0-9]*_)?CLAIM_[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_])"
 )
@@ -161,14 +162,11 @@ def detect_reader_residue(
             citation_table_header = None
             source_table_header = None
 
-        _collect_regex_findings(
+        _collect_source_marker_findings(
             findings,
-            kind="src_marker",
-            regex=_SRC_MARKER_RE,
             line=line,
             line_number=line_number,
             artifact=artifact,
-            message="Reader-facing output contains an internal source marker.",
         )
         _collect_regex_findings(
             findings,
@@ -383,6 +381,29 @@ def _collect_regex_findings(
                 line=line_number,
                 artifact=artifact,
                 message=message,
+            )
+        )
+
+
+def _collect_source_marker_findings(
+    findings: list[ReaderResidueFinding],
+    *,
+    line: str,
+    line_number: int,
+    artifact: str,
+) -> None:
+    for marker in parse_internal_citation_markers(
+        line,
+        valid_claim_ids=None,
+        include_bare_claim_ids=False,
+    ):
+        findings.append(
+            ReaderResidueFinding(
+                kind="src_marker",
+                text=_shorten(marker.raw),
+                line=line_number,
+                artifact=artifact,
+                message="Reader-facing output contains an internal source marker.",
             )
         )
 

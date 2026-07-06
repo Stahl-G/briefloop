@@ -45,7 +45,7 @@ def test_reader_final_gate_detects_spaced_source_markers() -> None:
     text = "\n".join(
         [
             "Claim with [source : POLICY_123456].",
-            "Claim with [ src : CL-404 ].",
+            "Claim with [src : CL-404 ].",
         ]
     )
 
@@ -55,8 +55,42 @@ def test_reader_final_gate_detects_spaced_source_markers() -> None:
     assert result.counts["src_marker_count"] == 2
     assert [finding.text for finding in result.findings if finding.kind == "src_marker"] == [
         "[source : POLICY_123456]",
-        "[ src : CL-404 ]",
+        "[src : CL-404 ]",
     ]
+
+
+def test_reader_final_gate_detects_bare_source_markers_via_shared_parser() -> None:
+    text = "\n".join(
+        [
+            "Unresolved policy marker source:POLICY_123456.",
+            "Unresolved generated marker source:SOURCEA_ABC123.",
+        ]
+    )
+
+    result = detect_reader_residue(text, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["src_marker_count"] == 2
+    assert [finding.text for finding in result.findings if finding.kind == "src_marker"] == [
+        "source:POLICY_123456",
+        "source:SOURCEA_ABC123",
+    ]
+
+
+def test_reader_final_gate_preserves_source_like_prose() -> None:
+    text = "\n".join(
+        [
+            "Primary source:company filing.",
+            "Source:FDA clinical registry.",
+            "The source: company filing supports this statement.",
+            "URL label source:https://example.com/report.",
+        ]
+    )
+
+    result = detect_reader_residue(text, artifact="output/brief.md")
+
+    assert result.status == "pass"
+    assert result.counts["src_marker_count"] == 0
 
 
 def test_reader_final_gate_detects_process_wording_in_english_and_chinese() -> None:

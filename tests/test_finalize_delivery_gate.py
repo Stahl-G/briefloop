@@ -1668,6 +1668,31 @@ def test_finalize_preserves_spaced_source_marker_as_reader_clean_failure(tmp_pat
     assert not (output_dir / "delivery").exists()
 
 
+def test_finalize_preserves_bare_source_marker_as_reader_clean_failure(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nReader content with unresolved bare marker source:SOURCEA_ABC123.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["reader_clean"]["src_marker_count"] == 1
+    assert "source:SOURCEA_ABC123" in report["reader_clean"]["sample_findings"][0]["text"]
+    assert not (output_dir / "delivery").exists()
+
+
 def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
