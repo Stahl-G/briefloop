@@ -70,21 +70,30 @@ def _write_registry(ws: Path, artifacts: dict[str, dict[str, object]] | None = N
     )
 
 
-def _write_gate(ws: Path, *, stage: str = "finalize", status: str = "pass", blocking: bool = False) -> None:
+def _write_gate(
+    ws: Path,
+    *,
+    stage: str = "finalize",
+    status: str = "pass",
+    blocking: bool = False,
+    finding_artifact_id: str = "reader_brief",
+    include_finding: bool = False,
+) -> None:
     findings = []
     gate_results = []
-    if blocking:
+    if blocking or include_finding:
         findings = [
             {
                 "finding_id": "F-001",
                 "finding_type": "coverage_gap",
-                "severity": "high",
-                "blocking_level": "blocking",
-                "blocking": True,
+                "severity": "high" if blocking else "medium",
+                "blocking_level": "blocking" if blocking else "warning",
+                "blocking": blocking,
                 "stage_id": stage,
-                "artifact_id": "reader_brief",
+                "artifact_id": finding_artifact_id,
             }
         ]
+    if blocking:
         gate_results = [
             {
                 "gate_id": "coverage_omission",
@@ -197,6 +206,27 @@ def test_completion_projection_requires_finalize_gate_before_delivery_guidance(
     assert payload["delivery_truth"]["valid"] is True
     assert payload["event_truth"]["finalize_event_present"] is True
     assert payload["next_allowed_action"] == "run_finalize_gate_or_finalize_complete"
+
+
+def test_completion_projection_validates_gate_against_configured_artifacts(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(
+        ws,
+        stage="finalize",
+        status="warning",
+        finding_artifact_id="claim_support_matrix",
+        include_finding=True,
+    )
+    _write_valid_delivery(ws)
+    _record_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["finalize_gate_truth"]["status"] == "warning"
+    assert payload["finalize_gate_truth"]["blocking"] is False
+    assert "validation_errors" not in payload["finalize_gate_truth"]
+    assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
 
 
 def test_completion_projection_rejects_delivery_dir_without_finalize_report(tmp_path: Path) -> None:

@@ -24,11 +24,16 @@ from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIF
 from multi_agent_brief.orchestrator.runtime_state.completion_gates import (
     _finalize_report_delivery_artifact_reasons,
 )
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+    load_artifact_contracts,
+    load_stage_specs,
+)
 from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.event_log import read_event_log_records_strict
 from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.paths import runtime_state_paths
 from multi_agent_brief.orchestrator.runtime_state.workflow import WORKFLOW_STATE_SCHEMA
+from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.quality_gates.contract import validate_quality_gate_report_payload
 
 
@@ -55,10 +60,17 @@ CONTROL_FILE_STOP_STATUSES = frozenset(
 )
 
 
-def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
+def build_completion_projection(
+    *,
+    workspace: str | Path,
+    repo_workdir: str | Path | None = None,
+) -> dict[str, Any]:
     """Build the canonical read-only completion projection for a workspace."""
 
     ws = Path(workspace).expanduser().resolve()
+    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
+    stages = load_stage_specs(repo)
+    artifacts = load_artifact_contracts(repo)
     intermediate = ws / INTERMEDIATE_DIR
     paths = runtime_state_paths(ws)
     workflow, workflow_status = _read_json_with_schema(
@@ -86,10 +98,17 @@ def build_completion_projection(*, workspace: str | Path) -> dict[str, Any]:
     active_repair = workflow.get("active_repair") if isinstance(workflow, Mapping) else None
     run_integrity = _run_integrity_projection(workflow, workflow_status)
     artifact_truth = _artifact_truth(registry, registry_status=registry_status)
-    gate_truth = _latest_gate_truth(intermediate, current_stage=current_stage)
+    gate_truth = _latest_gate_truth(
+        intermediate,
+        current_stage=current_stage,
+        stages=stages,
+        artifacts=artifacts,
+    )
     finalize_gate_truth = _stage_gate_truth(
         artifact_id="finalize_quality_gate_report",
         path=intermediate / "gates" / "finalize_quality_gate_report.json",
+        stages=stages,
+        artifacts=artifacts,
     )
     assessment_target = _assessment_target_projection(
         workspace=ws,
@@ -208,7 +227,13 @@ def _artifact_truth(registry: Any, *, registry_status: str) -> dict[str, Any]:
     }
 
 
-def _latest_gate_truth(intermediate: Path, *, current_stage: str) -> dict[str, Any]:
+def _latest_gate_truth(
+    intermediate: Path,
+    *,
+    current_stage: str,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
     scoped_reports = {
         "auditor_quality_gate_report": intermediate / "gates" / "auditor_quality_gate_report.json",
         "finalize_quality_gate_report": intermediate / "gates" / "finalize_quality_gate_report.json",
@@ -228,7 +253,12 @@ def _latest_gate_truth(intermediate: Path, *, current_stage: str) -> dict[str, A
         )
     for artifact_id in scan_order:
         path = scoped_reports[artifact_id]
-        truth = _stage_gate_truth(artifact_id=artifact_id, path=path)
+        truth = _stage_gate_truth(
+            artifact_id=artifact_id,
+            path=path,
+            stages=stages,
+            artifacts=artifacts,
+        )
         if truth["control_status"] == "missing":
             continue
         return truth
@@ -242,7 +272,13 @@ def _latest_gate_truth(intermediate: Path, *, current_stage: str) -> dict[str, A
     }
 
 
-def _stage_gate_truth(*, artifact_id: str, path: Path) -> dict[str, Any]:
+def _stage_gate_truth(
+    *,
+    artifact_id: str,
+    path: Path,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> dict[str, Any]:
     payload, status = _read_json(path)
     if status == "missing":
         return {
@@ -264,8 +300,8 @@ def _stage_gate_truth(*, artifact_id: str, path: Path) -> dict[str, Any]:
         }
     errors = validate_quality_gate_report_payload(
         dict(payload),
-        stages=_gate_validation_stages(),
-        artifacts=_gate_validation_artifacts(),
+        stages=stages,
+        artifacts=artifacts,
     )
     if errors:
         return {
@@ -609,43 +645,6 @@ def _blocking_gate_result_count(payload: Mapping[str, Any]) -> int:
         if isinstance(result, Mapping)
         and (result.get("blocking") is True or _clean_text(result.get("status")) == "fail")
     )
-
-
-def _gate_validation_stages() -> list[dict[str, Any]]:
-    return [
-        {"stage_id": stage}
-        for stage in (
-            "doctor",
-            "source-discovery",
-            "input-governance",
-            "scout",
-            "screener",
-            "claim-ledger",
-            "analyst",
-            "editor",
-            "auditor",
-            "finalize",
-        )
-    ]
-
-
-def _gate_validation_artifacts() -> list[dict[str, Any]]:
-    return [
-        {"artifact_id": artifact}
-        for artifact in (
-            "candidate_claims",
-            "screened_candidates",
-            "claim_drafts",
-            "claim_ledger",
-            "analyst_draft_snapshot",
-            "audited_brief",
-            "audit_report",
-            "reader_brief",
-            "auditor_quality_gate_report",
-            "finalize_quality_gate_report",
-            "quality_gate_report",
-        )
-    ]
 
 
 def _clean_text(value: Any) -> str:
