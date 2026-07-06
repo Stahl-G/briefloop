@@ -2423,7 +2423,7 @@ def test_finalize_fails_on_docx_footer_reader_residue(tmp_path: Path):
     )
 
 
-def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Path):
+def test_finalize_fails_on_process_and_local_residue_after_known_source_marker_projection(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
     intermediate.mkdir(parents=True)
@@ -2447,7 +2447,7 @@ def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Pat
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     reader_clean = report["reader_clean"]
-    assert reader_clean["src_marker_count"] == 1
+    assert reader_clean["src_marker_count"] == 0
     assert reader_clean["process_wording_count"] >= 3
     assert reader_clean["local_path_count"] == 1
     assert reader_clean["debug_residue_count"] == 1

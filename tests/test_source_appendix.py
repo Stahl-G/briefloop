@@ -54,6 +54,43 @@ def test_cited_claim_ids_dedupe_in_first_appearance_order():
     assert cited_claim_ids(markdown) == ["SYN_CLAIM_002", "SYN_CLAIM_001"]
 
 
+def test_source_appendix_and_reader_rewrite_share_internal_citation_parser(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            _claim("CL-001", source_id="SRC-001", source_url="https://example.com/source-one"),
+            _claim("CL-002", source_id="SRC-002", source_url="https://example.com/source-two"),
+            _claim(
+                "SOURCEA_ABC123",
+                source_id="SRC-003",
+                source_url="https://example.com/source-three",
+            ),
+        ],
+    )
+    audited = (
+        "Bracketed source form. [source:CL-001]\n"
+        "Compact bare source form. source:CL-002.\n"
+        "Bare ledger id form. SOURCEA_ABC123\n"
+        "Primary source: company filing.\n"
+    )
+
+    result = build_source_appendix(audited_markdown=audited, ledger_path=ledger)
+    reader = replace_claim_citations_with_labels(audited, result.citation_labels)
+
+    assert result.cited_claim_count == 3
+    assert result.resolved_claim_count == 3
+    assert result.citation_labels == {
+        "CL-001": "S1",
+        "CL-002": "S2",
+        "SOURCEA_ABC123": "S3",
+    }
+    assert "Bracketed source form. [S1]" in reader
+    assert "Compact bare source form. [S2]." in reader
+    assert "Bare ledger id form. [S3]" in reader
+    assert "Primary source: company filing." in reader
+
+
 def test_source_appendix_uses_only_cited_claims_and_dedupes_sources(tmp_path: Path):
     ledger = tmp_path / "claim_ledger.json"
     _write_ledger(

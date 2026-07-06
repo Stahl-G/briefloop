@@ -15,10 +15,13 @@ from multi_agent_brief.contracts.source_metadata import (
 )
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.core.citations import (
+    InternalCitationMarker,
+    parse_internal_citation_markers,
+)
 from multi_agent_brief.core.schemas import Claim
 
 
-_SRC_REF_RE = re.compile(r"\[src:([^\]]+)\]")
 _LOCAL_PATH_MARKERS = ("/Users/", "/home/", "/private/", "/var/folders/")
 _WINDOWS_USER_RE = re.compile(r"[A-Za-z]:\\Users\\")
 _INTERNAL_ID_RE = re.compile(
@@ -128,16 +131,28 @@ class SourceAppendixResult:
         }
 
 
-def cited_claim_ids(markdown: str) -> list[str]:
-    """Return [src:<claim_id>] references in first-appearance order."""
+def cited_claim_ids(
+    markdown: str,
+    *,
+    valid_claim_ids: set[str] | None = None,
+    include_bare_claim_ids: bool = True,
+) -> list[str]:
+    """Return internal citation references in first-appearance order."""
     seen: set[str] = set()
     claim_ids: list[str] = []
-    for match in _SRC_REF_RE.finditer(markdown):
-        claim_id = match.group(1).strip()
-        if not claim_id or claim_id in seen:
+    for marker in parse_internal_citation_markers(
+        markdown,
+        valid_claim_ids=valid_claim_ids,
+        include_bare_claim_ids=include_bare_claim_ids and valid_claim_ids is not None,
+    ):
+        if marker.status == "malformed" or not marker.claim_id:
             continue
-        seen.add(claim_id)
-        claim_ids.append(claim_id)
+        if valid_claim_ids is not None and marker.status != "resolved":
+            continue
+        if marker.claim_id in seen:
+            continue
+        seen.add(marker.claim_id)
+        claim_ids.append(marker.claim_id)
     return claim_ids
 
 
@@ -149,9 +164,20 @@ def build_source_appendix(
     workspace: str | Path | None = None,
 ) -> SourceAppendixResult:
     """Build reader-facing source appendix Markdown from cited Claim Ledger entries."""
-    claim_ids = cited_claim_ids(audited_markdown)
     warnings: list[str] = []
     ledger = ClaimLedger.import_json(ledger_path)
+    valid_claim_ids = _ledger_claim_ids(ledger)
+    citation_markers = parse_internal_citation_markers(
+        audited_markdown,
+        valid_claim_ids=valid_claim_ids,
+    )
+    unresolved_marker_count = _unresolved_source_marker_count(citation_markers)
+    if unresolved_marker_count:
+        warnings.extend(
+            ["A cited source reference could not be resolved."]
+            * unresolved_marker_count
+        )
+    claim_ids = _resolved_claim_ids_from_markers(citation_markers)
     records_by_key: dict[str, SourceAppendixRecord] = {}
     claim_source_keys: dict[str, str] = {}
     source_ids_by_key: dict[str, list[str]] = {}
@@ -213,7 +239,7 @@ def build_source_appendix(
     return SourceAppendixResult(
         status=status,
         source_count=len(records),
-        cited_claim_count=len(claim_ids),
+        cited_claim_count=len(claim_ids) + unresolved_marker_count,
         resolved_claim_count=resolved_claim_count,
         warnings=warnings,
         markdown=markdown,
@@ -234,15 +260,65 @@ def replace_claim_citations_with_labels(
 ) -> str:
     """Replace internal claim citations with reader-facing source labels."""
 
-    def _replace(match: re.Match[str]) -> str:
-        label = citation_labels.get(match.group(1).strip())
-        return f"[{label}]" if label else ""
-
-    text = _SRC_REF_RE.sub(_replace, markdown)
-    text = re.compile(r"\[src:[^\]]*\]").sub("", text)
+    valid_claim_ids = set(citation_labels)
+    markers = parse_internal_citation_markers(
+        markdown,
+        valid_claim_ids=valid_claim_ids,
+    )
+    text = _replace_internal_citation_markers(
+        markdown,
+        markers=markers,
+        citation_labels=citation_labels,
+    )
     text = re.sub(r"(\[S\d+\])(?:\s+\1)+", r"\1", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _ledger_claim_ids(ledger: ClaimLedger) -> set[str]:
+    return {claim.claim_id for claim in ledger if claim.claim_id}
+
+
+def _resolved_claim_ids_from_markers(markers: list[InternalCitationMarker]) -> list[str]:
+    seen: set[str] = set()
+    claim_ids: list[str] = []
+    for marker in markers:
+        if marker.status != "resolved" or not marker.claim_id or marker.claim_id in seen:
+            continue
+        seen.add(marker.claim_id)
+        claim_ids.append(marker.claim_id)
+    return claim_ids
+
+
+def _unresolved_source_marker_count(markers: list[InternalCitationMarker]) -> int:
+    return sum(
+        1
+        for marker in markers
+        if marker.kind in {"bracketed_source_marker", "bare_source_marker"}
+        and marker.status != "resolved"
+    )
+
+
+def _replace_internal_citation_markers(
+    markdown: str,
+    *,
+    markers: list[InternalCitationMarker],
+    citation_labels: dict[str, str],
+) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for marker in markers:
+        if marker.start < cursor:
+            continue
+        parts.append(markdown[cursor:marker.start])
+        if marker.status != "resolved":
+            cursor = marker.end
+            continue
+        label = citation_labels.get(marker.claim_id)
+        parts.append(f"[{label}]" if label else markdown[marker.start:marker.end])
+        cursor = marker.end
+    parts.append(markdown[cursor:])
+    return "".join(parts)
 
 
 def render_source_appendix(

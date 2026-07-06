@@ -26,9 +26,7 @@ from multi_agent_brief.product.policy_gate_adapter import (
     resolve_workspace_policy_gate_adapter,
 )
 from multi_agent_brief.product.template_renderer import render_reader_markdown_with_template
-from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
 
-_SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
 _INTERNAL_READER_SECTION_RE = re.compile(
     r"(?:claim\s+ledger|声明账本).{0,80}(?:coverage|覆盖情况|覆盖)",
     re.IGNORECASE,
@@ -124,7 +122,7 @@ def build_reader_projection(
     try:
         audited_markdown = audited_path.read_text(encoding="utf-8")
         reader_source = reader_projection_source_markdown(audited_markdown)
-        stripped_count = len(_SRC_MARKER_RE.findall(reader_source))
+        stripped_count = len(cited_claim_ids(reader_source, include_bare_claim_ids=False))
         formats = set(output_formats or ["markdown"])
         source_appendix_config = source_appendix_config or {}
         appendix_request = _source_appendix_request(
@@ -150,13 +148,9 @@ def build_reader_projection(
             if appendix_request["requested_by"] == "none" and appendix_result.source_count
             else str(appendix_request["requested_by"])
         )
-        reader_body_markdown = (
-            replace_claim_citations_with_labels(
-                reader_source,
-                appendix_result.citation_labels,
-            )
-            if appendix_result.citation_labels
-            else strip_claim_citations(reader_source)
+        reader_body_markdown = replace_claim_citations_with_labels(
+            reader_source,
+            appendix_result.citation_labels,
         )
         reader_markdown = reader_body_markdown
         if appendix_result.markdown and appendix_result.source_count:
