@@ -510,7 +510,6 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
             "Delivery bundle is missing delivery_artifact_sha256. Run finalize again before delivery.",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         )
-
     delivery_root = (workspace / "output" / "delivery").resolve()
     artifacts: list[Path] = []
     artifact_hashes: dict[str, str] = {}

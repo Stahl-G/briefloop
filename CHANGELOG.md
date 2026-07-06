@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Made finalize promotion transactional: reader output is rendered and checked
+  as a candidate before `output/brief.md` or `output/delivery/` are updated, and
+  successful promotion records the delivery artifacts and their sha256 hashes in
+  `finalize_report.json` (the single delivery-truth record; `deliver` and
+  finalize-complete verify those artifacts). Failed reader-clean finalization
+  writes a fail report but leaves any prior delivery bundle unchanged.
 - Changed the PyPI / package-index distribution name from
   `multi-agent-brief-workflow` to `briefloop` so the eventual published package
   can support `pipx install briefloop`. The Python import package remains
