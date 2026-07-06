@@ -272,6 +272,40 @@ def test_completion_projection_requires_artifact_registry_for_valid_delivery(tmp
     assert payload["next_allowed_action"] == "inspect_unreadable_or_missing_control_files"
 
 
+def test_completion_projection_rejects_valid_delivery_when_registry_has_stale_artifacts(
+    tmp_path: Path,
+) -> None:
+    ws = _workspace(tmp_path)
+    _set_workflow(ws, current_stage="finalize")
+    _write_gate(ws, stage="finalize")
+    _write_valid_delivery(ws)
+    _record_finalize_event(ws)
+    _write_registry(
+        ws,
+        {
+            "audited_brief": {
+                "status": "stale",
+                "validation_result": "sha_mismatch",
+                "path": "output/intermediate/audited_brief.md",
+            }
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws)
+
+    assert payload["artifacts"]["invalid_or_stale"] == [
+        {
+            "artifact_id": "audited_brief",
+            "status": "stale",
+            "validation_result": "sha_mismatch",
+        }
+    ]
+    assert payload["delivery_truth"]["valid"] is False
+    assert payload["delivery_truth"]["status"] == "not_current"
+    assert "artifact_registry_invalid_or_stale" in payload["delivery_truth"]["findings"]
+    assert payload["next_allowed_action"] == "inspect_invalid_or_stale_artifacts"
+
+
 def test_completion_projection_stops_on_contaminated_run(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _set_workflow(

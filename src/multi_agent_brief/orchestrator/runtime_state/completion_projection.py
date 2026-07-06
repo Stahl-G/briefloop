@@ -374,6 +374,12 @@ def _delivery_truth(
         truth["status"] = "invalid_control"
         truth["findings"].append(f"artifact_registry_{status}")
         return truth
+    invalid_or_stale = artifact_truth.get("invalid_or_stale")
+    if isinstance(invalid_or_stale, list) and invalid_or_stale:
+        truth["status"] = "not_current"
+        truth["findings"].append("artifact_registry_invalid_or_stale")
+        truth["invalid_or_stale_artifacts"] = invalid_or_stale
+        return truth
     report_path = workspace / INTERMEDIATE_DIR / "finalize_report.json"
     report, report_status = _read_json(report_path)
     if report_status != "present" or not isinstance(report, Mapping):
