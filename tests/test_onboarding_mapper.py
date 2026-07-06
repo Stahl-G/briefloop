@@ -274,6 +274,22 @@ def test_onboarding_explicit_none_overrides_legacy_tavily_flag():
     assert profile.search_backend == ""
 
 
+def test_onboarding_unrecognized_search_backend_does_not_suppress_legacy_tavily():
+    """Only a recognized explicit search backend should override legacy Tavily opt-in."""
+    result = OnboardingResult(
+        target="workspace",
+        company_or_org="Sample Company",
+        industry_or_theme="manufacturing",
+        search_backend_plain="yes",
+        tavily_enabled=True,
+    )
+    profile = map_onboarding_to_profile(result)
+    assert profile.tavily_enabled is True
+    assert profile.web_search_enabled is True
+    assert profile.web_search_mode == "external_api"
+    assert profile.search_backend == "tavily"
+
+
 def test_onboarding_configure_later_sets_correct_mode():
     """configure_later should set web_search_mode to configure_later."""
     result = OnboardingResult(
