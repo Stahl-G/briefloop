@@ -47,6 +47,7 @@ from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
     load_stage_specs,
 )
+from multi_agent_brief.orchestrator.active_repair import active_repair_is_open
 from multi_agent_brief.orchestrator.timing import derive_control_timing_from_path
 from multi_agent_brief.quality_gates.contract import (
     interpret_quality_gate_binding,
@@ -4492,7 +4493,7 @@ def _validate_terminal_workflow(workflow_state: dict[str, Any]) -> None:
 
 def _validate_auditable_workflow_ready(workflow_state: dict[str, Any]) -> None:
     active_repair = workflow_state.get("active_repair")
-    if isinstance(active_repair, dict):
+    if active_repair_is_open(workflow_state):
         _raise_experiment_error(
             "E_EXPERIMENT_080_ACTIVE_REPAIR_OPEN",
             "Auditable-brief registration requires no active owner-stage repair.",

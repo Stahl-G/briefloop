@@ -144,6 +144,7 @@ from multi_agent_brief.orchestrator.runtime_state.repair import (  # noqa: F401
     _workflow_after_repair_completion,
     _workflow_with_active_repair,
     _workflow_with_repair_run_integrity_effect,
+    active_repair_is_open,
     complete_repair_transaction,
     raise_if_active_repair_open,
     start_repair_transaction,

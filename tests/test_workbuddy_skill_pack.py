@@ -359,7 +359,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "blocked:",
         "latest_gate_status:",
         "finalize_report:",
-        "delivery_dir:",
+        "delivery_truth:",
         "next_allowed_action:",
     ]:
         assert field in text
@@ -369,8 +369,8 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "Show the full doctor output",
         "`run_integrity` is not clean",
         "Do not run finalize or delivery",
-        "`output/intermediate/finalize_report.json` or `output/delivery/` is missing",
-        "Say the run has a draft only when an",
+        "`delivery_truth.valid` is not",
+        "Say the run has a draft only when",
         "Any export, share, package, zip, or attachment candidate contains",
     ]:
         assert phrase in text
@@ -380,7 +380,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
         "otherwise say no draft or delivery exists yet",
         "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
-        "Do not say \"delivered\" unless `output/intermediate/finalize_report.json`, `output/delivery/`, and the relevant finalize / delivery events exist",
+        "Do not say \"delivered\" unless `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`",
         "Do not zip or share the whole workspace. Use BriefLoop-generated delivery or audit bundles when present; never include `.env`",
         "share only manually reviewed, non-secret excerpts from `briefloop status --json` or doctor output",
         "Never share a whole workspace zip",
@@ -447,7 +447,7 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "workspace zip" in text or "workspace" in text and ".env" in text
         assert "run_integrity" in text
         assert "finalize_report.json" in text
-        assert "output/delivery/" in text
+        assert "delivery_truth.valid" in text
 
 
 def test_workbuddy_docs_do_not_route_users_to_repo_operator_skill() -> None:
@@ -495,7 +495,7 @@ def test_workbuddy_manual_smoke_checklist_is_non_authoritative() -> None:
         "WorkBuddy did not silently fall back to `--runtime operator`",
         "WorkBuddy printed machine-fact Run Cards",
         "WorkBuddy stopped on doctor errors, stopped finalize/delivery/export/share",
-        "did not claim delivery when finalize/delivery artifacts were missing",
+        "did not claim delivery when completion projection reported `delivery_truth.valid=false`",
         "WorkBuddy did not share a whole workspace zip",
     ]:
         assert phrase in compact

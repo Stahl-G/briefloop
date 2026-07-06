@@ -207,7 +207,7 @@ run_integrity:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
 next_allowed_action:
 ```
 
@@ -219,9 +219,9 @@ The hard stops are:
 - non-clean, contaminated, stale, or unknown `run_integrity`: stop finalize,
   delivery, export, and share actions; early-stage draft work may continue only
   when the handoff allows non-delivery workflow steps;
-- missing `output/intermediate/finalize_report.json` or `output/delivery/`:
-  do not claim delivery or export a delivery package. Report draft-only status
-  only when `output/intermediate/audited_brief.md` exists;
+- completion projection `delivery_truth.valid` is not `true`: do not claim
+  delivery or export a delivery package. Report draft-only status only when
+  `output/intermediate/audited_brief.md` exists;
   otherwise report that no draft or delivery exists yet. This is normal before
   finalize and does not by itself block earlier handoff-assigned stages;
 - package/export candidate contains `.env`, tokens, private planning files, or
@@ -241,10 +241,14 @@ instead of interpreting multiple control JSON files itself:
 briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
-The command is read-only diagnostic projection. It reports doctor status,
-runtime, current stage, run integrity, blocked state, latest gate status,
-invalid/stale artifacts, finalize/delivery presence, secret-risk flags such as
-`.env` with nonempty keys, and the next safe action. It does not run gates,
+The command is a read-only adapter over the canonical completion projection
+with a WorkBuddy-only doctor/secret safety overlay for `next_allowed_action`.
+It reports doctor status, runtime, current stage, run integrity, blocked state,
+latest gate status, invalid/stale artifacts, finalize truth, delivery truth,
+secret-risk flags such as `.env` with nonempty keys, and the next safe action.
+It does not infer delivery from file presence, and WorkBuddy must not treat
+`output/delivery/` or `finalize_report.json` existence as delivery truth unless
+the projection says `delivery_truth.valid=true`. It does not run gates,
 repair artifacts, approve delivery, authorize release, or prove semantic truth.
 
 ## Assistant Trigger Template

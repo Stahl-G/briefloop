@@ -41,8 +41,7 @@ authority layer.
 - say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching artifact,
   event, transaction, or status output exists;
 - say `delivered`, `delivery complete`, or `交付完成` unless
-  `output/intermediate/finalize_report.json`, `output/delivery/`, and the
-  relevant finalize / delivery events exist;
+  `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`;
 - run finalize or delivery when `run_integrity` is contaminated or not clean;
 - downgrade a `doctor` error in prose; show the full output and wait for user
   confirmation;
@@ -68,8 +67,7 @@ artifact names, and handoff obligations exactly. Do not skip steps, hide
 blockers, or claim subagents ran because of translation.
 
 If a user asks to share results, use only BriefLoop-generated delivery or audit
-bundles when present. If the workspace has no `output/delivery/` or
-`finalize_report.json`, say there is only a draft when
-`output/intermediate/audited_brief.md` exists; otherwise
-say no draft or delivery exists yet. If any package candidate contains `.env`,
-stop and recommend key rotation before sharing anything.
+bundles when WorkBuddy diagnosis reports `delivery_truth.valid=true`. If it
+does not, say there is only a draft when `output/intermediate/audited_brief.md`
+exists; otherwise say no draft or delivery exists yet. If any package candidate
+contains `.env`, stop and recommend key rotation before sharing anything.

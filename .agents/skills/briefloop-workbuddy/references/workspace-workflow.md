@@ -48,13 +48,15 @@ run_integrity:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
 next_allowed_action:
 ```
 
-Read these fields from `briefloop status --workspace <workspace> --json`,
-`briefloop state check --workspace <workspace> --json`, `workflow_state.json`,
-`event_log.jsonl`, and file existence checks. Do not infer them from prose.
+Read these fields from `briefloop workbuddy diagnose --workspace <workspace>
+--json`, which formats the canonical completion projection and applies only
+WorkBuddy doctor/secret safety overlays to `next_allowed_action`. Do not
+reconstruct delivery, gate, finalize, or next-action truth from file existence
+checks or from prose.
 
 Allowed examples:
 
@@ -68,9 +70,8 @@ Quality Panel 已生成。
 Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
 artifact, event, transaction, or status output exists.
 
-Do not say `交付完成`, `delivered`, or `delivery complete` unless
-`output/intermediate/finalize_report.json`, `output/delivery/`, and the
-relevant finalize / delivery events exist.
+Do not say `交付完成`, `delivered`, or `delivery complete` unless WorkBuddy
+diagnosis reports `delivery_truth.valid=true`.
 
 ## Hard Stops
 
@@ -81,8 +82,8 @@ relevant finalize / delivery events exist.
   actions. Do not run finalize or delivery. For early-stage role work, report
   the Run Card and continue only with non-delivery workflow steps allowed by
   the handoff.
-- If finalize report or delivery directory is missing, do not claim delivery or
-  export a delivery package. Report draft-only status only when
+- If WorkBuddy diagnosis does not report `delivery_truth.valid=true`, do not
+  claim delivery or export a delivery package. Report draft-only status only when
   `output/intermediate/audited_brief.md` exists; otherwise
   report that no draft or delivery exists yet. This is normal before finalize
   and must not block earlier handoff-assigned stages by itself.
