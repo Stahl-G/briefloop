@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Changed the PyPI / package-index distribution name from
+  `multi-agent-brief-workflow` to `briefloop` so the eventual published package
+  can support `pipx install briefloop`. The Python import package remains
+  `multi_agent_brief`, the `multi-agent-brief` console script remains a
+  compatibility entrypoint, and first-user docs still must not claim
+  package-index install support until a real PyPI artifact is published and
+  smoke-tested.
 - Rewrote the experimental WorkBuddy Skill path to use `--runtime codebuddy`
   and checked-in CodeBuddy-compatible role agents for full workflow runs,
   instead of defaulting to the host-agnostic operator handoff. The main

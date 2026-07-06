@@ -68,9 +68,9 @@ def extract_pyproject_version() -> str:
 def extract_init_version() -> str:
     """Get the source package version contract without importing ambient installs."""
     text = (REPO_ROOT / "src" / "multi_agent_brief" / "__init__.py").read_text(encoding="utf-8")
-    if "importlib.metadata" in text and 'version("multi-agent-brief-workflow")' in text:
+    if "importlib.metadata" in text and 'version("briefloop")' in text:
         return extract_pyproject_version()
-    if "from importlib.metadata import" in text and 'version("multi-agent-brief-workflow")' in text:
+    if "from importlib.metadata import" in text and 'version("briefloop")' in text:
         return extract_pyproject_version()
     m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
     if m:

@@ -206,7 +206,7 @@ def test_compatibility_quarantine_classifies_remaining_legacy_names() -> None:
         "| `/mabw` | Deprecated Claude compatibility alias |",
         "| `multi-agent-brief` | Compatibility CLI and script entrypoint |",
         "| `multi_agent_brief` | Python module compatibility surface |",
-        "| `multi-agent-brief-workflow` | Distribution/package compatibility surface |",
+        "| `multi-agent-brief-workflow` | Historical distribution/package compatibility reference |",
         "| `MABW-080` | Archived experiment namespace |",
         "| `BriefLoop-090` | Archived experiment/readiness label |",
         "| `mabw.*` schema ids | Old-workspace compatibility ids |",

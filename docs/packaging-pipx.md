@@ -21,7 +21,7 @@ below.
 ## Current Packaging Surface
 
 - PyPI distribution metadata currently lives in `pyproject.toml`.
-- The current distribution name is `multi-agent-brief-workflow`.
+- The current distribution name is `briefloop`.
 - The Python import package remains `multi_agent_brief`.
 - The installed console scripts are `multi-agent-brief` and `briefloop`.
 - Source-clone setup remains the supported launch path until release notes say
@@ -34,9 +34,9 @@ remain an additive user-facing entrypoint.
 ## Before Publishing Any PyPI Artifact
 
 1. Decide the package-index distribution name explicitly.
-   If the release intends to support `pipx install briefloop`, confirm that the
-   `briefloop` distribution name is available or reserved for this project
-   before changing public install docs.
+   The intended package-index distribution name is `briefloop`. Confirm that
+   the `briefloop` distribution name is available or already reserved for this
+   project before changing public install docs.
 2. Verify the package metadata:
 
    ```bash

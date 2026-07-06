@@ -451,7 +451,7 @@ approval, release authority, semantic proof, or output-quality proof.
 | Method | Status |
 |---|---|
 | Source clone + `bash scripts/setup.sh` + `pip install -e ".[dev]"` | Supported |
-| `pip install multi-agent-brief-workflow` (PyPI) | Experimental |
+| `pip install briefloop` / `pipx install briefloop` (PyPI) | Experimental; only after a real package-index artifact is published and smoke-tested |
 | Homebrew formula source (`Formula/`) | Experimental; not a primary release path |
 | curl installer (`install.sh`) | Experimental CLI-only installer asset |
 | PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
