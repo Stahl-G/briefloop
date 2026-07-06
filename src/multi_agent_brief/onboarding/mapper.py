@@ -435,6 +435,7 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
 
     # Web search: handle search backend selection
     search_backend = getattr(result, "search_backend_plain", "").strip()
+    explicit_search_backend = bool(search_backend)
     if search_backend:
         search_backend = normalize_search_backend(search_backend)
         if search_backend == "tavily":
@@ -465,7 +466,7 @@ def map_onboarding_to_profile(result: OnboardingResult) -> InitProfile:
             profile.search_backend = search_backend
 
     # Also check the legacy tavily_enabled field
-    if getattr(result, "tavily_enabled", False):
+    if not explicit_search_backend and getattr(result, "tavily_enabled", False):
         profile.tavily_enabled = True
         profile.web_search_enabled = True
         if not profile.web_search_mode or profile.web_search_mode == "disabled":
