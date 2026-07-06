@@ -98,8 +98,10 @@ def build_reader_projection(
             "Run prepare/audit first or write output/intermediate/audited_brief.md."
         )
 
-    candidate_dir = intermediate_dir / "finalize_candidate" / _projection_transaction_id(
-        transaction_id
+    candidate_root = intermediate_dir / "finalize_candidate"
+    candidate_dir = _reader_projection_candidate_dir(
+        candidate_root=candidate_root,
+        transaction_id=transaction_id,
     )
     if candidate_dir.exists():
         shutil.rmtree(candidate_dir)
@@ -240,11 +242,33 @@ def build_reader_clean_report(
 
 def _projection_transaction_id(transaction_id: str | None) -> str:
     if transaction_id:
-        cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", transaction_id.strip())
-        if cleaned:
+        raw = transaction_id.strip()
+        cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw)
+        if (
+            cleaned
+            and cleaned not in {".", ".."}
+            and set(cleaned) != {"."}
+            and "/" not in raw
+            and "\\" not in raw
+        ):
             return cleaned[:96]
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{uuid4().hex[:12]}"
+
+
+def _reader_projection_candidate_dir(*, candidate_root: Path, transaction_id: str | None) -> Path:
+    candidate_id = _projection_transaction_id(transaction_id)
+    root = candidate_root.resolve()
+    candidate = (candidate_root / candidate_id).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Reader projection candidate path escaped finalize_candidate root: {candidate}"
+        ) from exc
+    if candidate == root:
+        raise RuntimeError("Reader projection candidate path must be below finalize_candidate root.")
+    return candidate
 
 
 def _source_appendix_request(

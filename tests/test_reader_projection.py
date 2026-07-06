@@ -83,3 +83,28 @@ def test_reader_projection_surfaces_internal_appendix_residue(tmp_path: Path) ->
     assert {"bare_claim_id", "process_wording"}.issubset(kinds)
     assert not (output_dir / "brief.md").exists()
     assert not (output_dir / "delivery").exists()
+
+
+def test_reader_projection_rejects_pathlike_transaction_id_without_deleting_intermediate(
+    tmp_path: Path,
+) -> None:
+    output_dir, intermediate = _projection_workspace(tmp_path)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    (intermediate / "finalize_candidate").mkdir()
+    sentinel = intermediate / "do_not_delete.txt"
+    sentinel.write_text("still here", encoding="utf-8")
+
+    result = build_reader_projection(
+        output_dir=output_dir,
+        output_formats=["markdown"],
+        transaction_id="..",
+    )
+
+    assert sentinel.read_text(encoding="utf-8") == "still here"
+    candidate = Path(result.candidate_dir)
+    assert candidate.parent == intermediate / "finalize_candidate"
+    assert candidate.name not in {".", ".."}
+    assert Path(result.reader_brief).exists()
