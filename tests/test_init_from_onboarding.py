@@ -60,6 +60,37 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
     assert config["selector"]["max_items"] >= config["brief_quality"]["min_items"]
 
 
+def test_init_from_onboarding_preserves_declined_online_search(tmp_path: Path):
+    onboarding = {
+        "target": "no-search-weekly",
+        "company_or_org": "ExampleCo",
+        "industry_or_theme": "manufacturing",
+        "audience_plain": "management team",
+        "source_style_plain": "llm_decide",
+        "output_style_plain": "executive brief",
+        "language_plain": "English",
+        "cadence_plain": "weekly",
+        "search_backend_plain": "none",
+        "tavily_enabled": False,
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding), encoding="utf-8")
+
+    ws = tmp_path / "no-search-weekly"
+    rc = main(["init", str(ws), "--from-onboarding", str(ob_path), "--force"])
+
+    assert rc == 0
+    sources = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["source_strategy"]["profile"] == "llm_decide"
+    assert "web_search" not in sources["source_strategy"]["enabled_providers"]
+    assert sources["web_search"]["enabled"] is False
+    assert sources["web_search"]["mode"] == "disabled"
+    assert "backend" not in sources["web_search"]
+
+    doctor_rc = main(["doctor", "--config", str(ws / "config.yaml")])
+    assert doctor_rc == 0
+
+
 def test_init_from_onboarding_cli_workspace_overrides_target(tmp_path: Path):
     onboarding = {
         "target": "onboarding-target",
