@@ -10,6 +10,10 @@ from typing import Any
 import yaml
 
 from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.delivery.artifact_policy import (
+    reader_delivery_artifact_kind,
+    reader_delivery_artifact_policy_text,
+)
 from multi_agent_brief.quality_gates.contract import (
     interpret_quality_gate_binding,
     require_quality_gate_binding_pass,
@@ -412,6 +416,12 @@ def _finalize_report_delivery_artifact_reasons(workspace: Path, report: dict[str
             )
             continue
         rel = path.resolve().relative_to(workspace.resolve()).as_posix()
+        if not reader_delivery_artifact_kind(path):
+            reasons.append(
+                f"finalize_report.json references unsupported delivery artifact: {rel}; "
+                f"{reader_delivery_artifact_policy_text()}."
+            )
+            continue
         expected_hash = _hash_for_report_artifact(
             hashes,
             raw_path=item,

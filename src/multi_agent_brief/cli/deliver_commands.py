@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryResult, DeliveryTarget
+from multi_agent_brief.delivery.artifact_policy import (
+    reader_delivery_artifact_kind,
+    reader_delivery_artifact_policy_text,
+)
 from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
 from multi_agent_brief.delivery.gws import GwsGmailDeliveryConnector
 from multi_agent_brief.orchestrator.runtime_state import (
@@ -533,6 +537,12 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
         if not resolved.is_file():
             raise DeliverCommandError(
                 f"Delivery artifact is not a file: {_workspace_relative(workspace, resolved)}",
+                error_code=E_DELIVERY_BUNDLE_MISSING,
+            )
+        if not reader_delivery_artifact_kind(resolved):
+            raise DeliverCommandError(
+                f"Unsupported delivery artifact: {_workspace_relative(workspace, resolved)}. "
+                f"{reader_delivery_artifact_policy_text()}.",
                 error_code=E_DELIVERY_BUNDLE_MISSING,
             )
         expected_hash = _hash_for_delivery_artifact(

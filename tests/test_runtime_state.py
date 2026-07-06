@@ -9265,6 +9265,32 @@ def test_finalize_complete_rejects_non_file_delivery_artifact(tmp_path):
     assert "non-file delivery artifact" in str(excinfo.value)
 
 
+def test_finalize_complete_rejects_unsupported_delivery_artifact(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    operator_file = ws / "output" / "delivery" / "operator-only.txt"
+    operator_file.write_text("not reader delivery\n", encoding="utf-8")
+    report_path = _intermediate(ws) / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    rel = "output/delivery/operator-only.txt"
+    report["delivery_artifacts"].append(rel)
+    report["delivery_artifact_sha256"][rel] = _sha256_file(operator_file)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_READER_FINAL_GATE_FAILED
+    assert "unsupported delivery artifact" in str(excinfo.value)
+
+
 def test_finalize_complete_accepts_reader_facing_quality_gate_report(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

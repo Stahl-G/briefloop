@@ -351,6 +351,27 @@ def test_deliver_rejects_non_file_delivery_artifact(tmp_path: Path, capsys) -> N
     assert _delivery_events(ws) == []
 
 
+def test_deliver_rejects_unsupported_delivery_artifact(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    operator_file = ws / "output" / "delivery" / "operator-only.txt"
+    operator_file.write_text("not reader delivery\n", encoding="utf-8")
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    rel = "output/delivery/operator-only.txt"
+    report["delivery_artifacts"].append(rel)
+    report["delivery_artifact_sha256"][rel] = _sha256_file(operator_file)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    rc = main(["deliver", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
+    assert "Unsupported delivery artifact" in payload["message"]
+    assert _delivery_events(ws) == []
+
+
 def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False, init_runtime=False)
