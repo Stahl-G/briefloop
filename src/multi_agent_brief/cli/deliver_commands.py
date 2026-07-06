@@ -615,9 +615,9 @@ def _load_delivery_manifest(workspace: Path, finalize_report: dict[str, Any]) ->
         )
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise DeliverCommandError(
-            f"delivery_manifest.json is not valid JSON: {exc}",
+            f"delivery_manifest.json is not valid UTF-8 JSON: {exc}",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         ) from exc
     if not isinstance(payload, dict):

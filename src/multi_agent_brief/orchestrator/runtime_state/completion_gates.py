@@ -428,8 +428,8 @@ def _finalize_report_delivery_manifest_reasons(workspace: Path, report: dict[str
         reasons.append("delivery_manifest.json has changed since finalize.")
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        reasons.append(f"delivery_manifest.json is invalid JSON: {exc}")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        reasons.append(f"delivery_manifest.json is invalid UTF-8 JSON: {exc}")
         return reasons
     except OSError as exc:
         reasons.append(f"delivery_manifest.json could not be read: {exc}")

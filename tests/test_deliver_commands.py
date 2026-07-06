@@ -377,6 +377,28 @@ def test_deliver_rejects_tampered_delivery_manifest(tmp_path: Path, capsys) -> N
     assert _delivery_events(ws) == []
 
 
+def test_deliver_rejects_invalid_utf8_delivery_manifest_without_traceback(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    manifest_path = ws / "output" / "intermediate" / "delivery_manifest.json"
+    manifest_path.write_bytes(b"\xff\xfe{not-json")
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_manifest_sha256"] = _sha256_file(manifest_path)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    rc = main(["deliver", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
+    assert "delivery_manifest.json is not valid UTF-8 JSON" in payload["message"]
+    assert _delivery_events(ws) == []
+
+
 def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False, init_runtime=False)

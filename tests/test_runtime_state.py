@@ -7481,6 +7481,30 @@ def test_finalize_complete_rejects_tampered_delivery_manifest(tmp_path):
     assert "delivery_manifest.json has changed since finalize" in str(excinfo.value)
 
 
+def test_finalize_complete_rejects_invalid_utf8_delivery_manifest_without_crashing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    manifest_path = _intermediate(ws) / "delivery_manifest.json"
+    manifest_path.write_bytes(b"\xff\xfe{not-json")
+    report_path = _intermediate(ws) / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_manifest_sha256"] = _sha256_file(manifest_path)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == "E_READER_FINAL_GATE_FAILED"
+    assert "delivery_manifest.json is invalid UTF-8 JSON" in str(excinfo.value)
+
+
 def test_finalize_complete_rejects_external_delivery_artifact_without_crashing(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
