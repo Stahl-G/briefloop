@@ -74,6 +74,8 @@ echo "[4/7] Checking version consistency..."
 echo "[5/7] Checking release consistency..."
 "$PYTHON" scripts/check_release_consistency.py --no-tag
 if [[ "$VERSION" =~ ^1\.0\. ]]; then
+  echo "      Checking required v1.0 RC readiness..."
+  "$PYTHON" scripts/check_v1_rc_readiness.py --require-satisfied
   echo "      Checking required v1.0 pilot evidence..."
   "$PYTHON" scripts/check_v1_pilot_evidence.py --require-satisfied
 fi
