@@ -89,10 +89,17 @@ After confirmation, choose a product entry:
 | management monthly, 管理月报, 月报 | `management-monthly` |
 | file review, PDF review, document review, 文件, PDF, 审阅 | `document-review` |
 
-Use:
+If the user enables online search, strongly recommend Tavily and use:
 
 ```bash
-briefloop new industry-weekly <workspace>
+briefloop new industry-weekly <workspace> --search-backend tavily
+briefloop run --workspace <workspace> --runtime codebuddy
+```
+
+If the user declines online search, use:
+
+```bash
+briefloop new industry-weekly <workspace> --web-search-mode disabled
 briefloop run --workspace <workspace> --runtime codebuddy
 ```
 

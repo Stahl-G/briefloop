@@ -50,6 +50,15 @@ CodeBuddy's official project Skill discovery can find BriefLoop at:
    - first-time run: explain that a BriefLoop workspace is the local folder for
      this report project, suggest a safe path, and ask for confirmation before
      creating it.
+5. When creating a workspace, make the search choice explicit:
+
+   ```bash
+   # user enables online search; strongly recommend Tavily
+   briefloop new industry-weekly <workspace> --search-backend tavily
+
+   # user declines online search
+   briefloop new industry-weekly <workspace> --web-search-mode disabled
+   ```
 
 ## Role Delegation
 

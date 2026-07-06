@@ -261,6 +261,9 @@ def test_new_report_pack_workspace_creates_tavily_search_skeleton(tmp_path: Path
     output = capsys.readouterr().out
     assert "Created BriefLoop workspace" in output
     assert "briefloop run --workspace" in output
+    assert "Online search is enabled by default via Tavily." in output
+    assert "Set TAVILY_API_KEY before running doctor or source discovery." in output
+    assert "--web-search-mode disabled" in output
     assert (workspace / "config.yaml").exists()
     assert (workspace / "sources.yaml").exists()
     assert (workspace / "report_spec.yaml").exists()
@@ -295,7 +298,8 @@ def test_new_report_pack_workspace_can_disable_web_search(tmp_path: Path, capsys
 
     assert main(["new", "industry-weekly", str(workspace), "--web-search-mode", "disabled"]) == 0
 
-    capsys.readouterr()
+    output = capsys.readouterr().out
+    assert "Online search: disabled." in output
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     assert sources["source_strategy"]["enabled_providers"] == ["manual"]
     assert sources["web_search"]["enabled"] is False

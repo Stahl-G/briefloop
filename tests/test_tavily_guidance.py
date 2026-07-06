@@ -351,6 +351,7 @@ class TestDoctorTavilyGuidance:
         error_msgs = [r.message for r in results if r.status == "ERROR"]
         assert any("TAVILY_API_KEY" in m and "missing" in m.lower() for m in error_msgs)
         assert any(".env.example" in m for m in error_msgs)
+        assert any("--web-search-mode disabled" in m for m in error_msgs)
         assert any("Do not paste" in m for m in error_msgs)
 
     def test_doctor_never_prints_key_value(self, tmp_path, monkeypatch):

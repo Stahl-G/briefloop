@@ -83,10 +83,17 @@ adapter。
 | 管理月报、月报、management monthly | `management-monthly` |
 | 文件审阅、PDF 审阅、document review、file review | `document-review` |
 
-使用：
+如果用户打开在线搜索，强烈推荐 Tavily，并使用：
 
 ```bash
-briefloop new industry-weekly <workspace>
+briefloop new industry-weekly <workspace> --search-backend tavily
+briefloop run --workspace <workspace> --runtime codebuddy
+```
+
+如果用户拒绝在线搜索，使用：
+
+```bash
+briefloop new industry-weekly <workspace> --web-search-mode disabled
 briefloop run --workspace <workspace> --runtime codebuddy
 ```
 

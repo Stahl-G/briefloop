@@ -248,7 +248,8 @@ jobs:
             --title "Smoke Brief" \
             --audience management \
             --cadence weekly \
-            --source-profile conservative
+            --source-profile conservative \
+            --web-search-mode disabled
           echo "- Manufacturing output improved as supply chain disruption eased in the latest reporting period." > /tmp/mabw-ci-smoke/input/smoke.md
 
       - name: Doctor check
@@ -308,7 +309,7 @@ jobs:
           python -m venv /tmp/mabw-wheel-smoke
           /tmp/mabw-wheel-smoke/bin/python -m pip install dist/*.whl
           cd /tmp
-          /tmp/mabw-wheel-smoke/bin/multi-agent-brief init /tmp/mabw-wheel-ws --demo --force
+          /tmp/mabw-wheel-smoke/bin/multi-agent-brief init /tmp/mabw-wheel-ws --demo --force --web-search-mode disabled
           /tmp/mabw-wheel-smoke/bin/multi-agent-brief run --workspace /tmp/mabw-wheel-ws --skip-doctor
           /tmp/mabw-wheel-smoke/bin/multi-agent-brief eval-cases run --json
 
@@ -336,7 +337,8 @@ jobs:
             --title "Sample Brief" \
             --audience management \
             --cadence weekly \
-            --source-profile llm_decide
+            --source-profile llm_decide \
+            --web-search-mode disabled
           echo "- Placeholder input" > /tmp/mabw-llm/input/placeholder.md
 
       - name: Doctor check
@@ -380,6 +382,7 @@ jobs:
             "source_style_plain": "reliable research",
             "language_plain": "English",
             "cadence_plain": "weekly",
+            "search_backend_plain": "none",
             "must_watch": ["policy", "competitors", "market"]
           }
           JSON
@@ -414,7 +417,7 @@ jobs:
         run: python -m pip install -e ".[dev,docx]"
 
       - name: Init demo workspace
-        run: multi-agent-brief init /tmp/mabw-docx --demo --force
+        run: multi-agent-brief init /tmp/mabw-docx --demo --force --web-search-mode disabled
 
       - name: Enable docx in config
         shell: python
@@ -462,7 +465,7 @@ jobs:
 
       # --- Reference demo (init --demo) ---
       - name: Init demo workspace
-        run: multi-agent-brief init /tmp/golden-demo --demo --force
+        run: multi-agent-brief init /tmp/golden-demo --demo --force --web-search-mode disabled
 
       - name: Assert reference demo prepare stays removed
         run: python scripts/ci/smoke_reference_workflow.py /tmp/golden-demo
@@ -495,6 +498,7 @@ jobs:
             "source_style_plain": "reliable research",
             "language_plain": "English",
             "cadence_plain": "weekly",
+            "search_backend_plain": "none",
             "must_watch": ["policy", "competitors", "market"]
           }
           JSON

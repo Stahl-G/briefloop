@@ -59,13 +59,24 @@ If the user asks "跑周报" and has no workspace:
      `document-review`
 5. Run `briefloop new ...` only after the user confirms the target path.
 
-Use one product entry:
+Use one product entry and make the user's search choice explicit.
+
+If the user enables online search, strongly recommend Tavily:
 
 ```bash
-briefloop new industry-weekly <workspace>
-briefloop new management-monthly <workspace>
-briefloop new document-review <workspace>
-briefloop new solar-periodic <workspace>
+briefloop new industry-weekly <workspace> --search-backend tavily
+briefloop new management-monthly <workspace> --search-backend tavily
+briefloop new document-review <workspace> --search-backend tavily
+briefloop new solar-periodic <workspace> --search-backend tavily
+```
+
+If the user declines online search, disable it explicitly:
+
+```bash
+briefloop new industry-weekly <workspace> --web-search-mode disabled
+briefloop new management-monthly <workspace> --web-search-mode disabled
+briefloop new document-review <workspace> --web-search-mode disabled
+briefloop new solar-periodic <workspace> --web-search-mode disabled
 ```
 
 `industry-weekly`, `management-monthly`, and `document-review` are the baseline

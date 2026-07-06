@@ -83,13 +83,21 @@ Before operating a workspace:
 6. Explain that a BriefLoop workspace is the local folder for this report
    project. Before creating it, ask for explicit confirmation of the target
    path.
-7. If creating a workspace, use a product entry:
+7. If creating a workspace, use a product entry and make the user's search
+   choice explicit:
 
    ```bash
-   briefloop new industry-weekly <workspace>
-   briefloop new management-monthly <workspace>
-   briefloop new document-review <workspace>
-   briefloop new solar-periodic <workspace>
+   # user enables online search; strongly recommend Tavily
+   briefloop new industry-weekly <workspace> --search-backend tavily
+   briefloop new management-monthly <workspace> --search-backend tavily
+   briefloop new document-review <workspace> --search-backend tavily
+   briefloop new solar-periodic <workspace> --search-backend tavily
+
+   # user declines online search
+   briefloop new industry-weekly <workspace> --web-search-mode disabled
+   briefloop new management-monthly <workspace> --web-search-mode disabled
+   briefloop new document-review <workspace> --web-search-mode disabled
+   briefloop new solar-periodic <workspace> --web-search-mode disabled
    ```
 
 `solar-periodic` is an experimental product entry. Say that before using it.

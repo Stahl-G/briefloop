@@ -180,7 +180,13 @@ def _frontmatter_tools(frontmatter: str) -> list[str]:
 def _check_codebuddy_handoff(checks: list[dict[str, str]]) -> None:
     with tempfile.TemporaryDirectory(prefix="briefloop-codebuddy-smoke-") as temp:
         workspace = Path(temp) / "ws"
-        new_result = _run_cli(["new", "industry-weekly", str(workspace)])
+        new_result = _run_cli([
+            "new",
+            "industry-weekly",
+            str(workspace),
+            "--web-search-mode",
+            "disabled",
+        ])
         if new_result.returncode != 0:
             _append_check(checks, "codebuddy.handoff.workspace", False, _command_detail(new_result))
             return
@@ -253,7 +259,13 @@ def _check_missing_codebuddy_assets_fail_closed(checks: list[dict[str, str]]) ->
         fake_repo = temp_path / "repo_without_codebuddy"
         _copy_contract_refs(fake_repo)
 
-        new_result = _run_cli(["new", "industry-weekly", str(workspace)])
+        new_result = _run_cli([
+            "new",
+            "industry-weekly",
+            str(workspace),
+            "--web-search-mode",
+            "disabled",
+        ])
         if new_result.returncode != 0:
             _append_check(checks, "codebuddy.missing_assets.workspace", False, _command_detail(new_result))
             return

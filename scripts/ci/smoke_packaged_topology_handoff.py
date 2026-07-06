@@ -75,6 +75,8 @@ def _init_workspace(path: Path) -> None:
         "weekly",
         "--source-profile",
         "conservative",
+        "--web-search-mode",
+        "disabled",
     )
     (path / "input" / "smoke.md").write_text(
         "- Manufacturing output improved after the latest capacity ramp.\n",

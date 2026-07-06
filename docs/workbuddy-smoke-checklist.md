@@ -49,10 +49,16 @@ or any issue/PR comment that reports the result.
    - First-time run: WorkBuddy explains that a BriefLoop workspace is the local
      folder for this report project, suggests a safe path, and waits for
      explicit confirmation before creation.
-   - For a new public-safe weekly smoke, use:
+   - For a new public-safe weekly smoke with online search enabled, use:
 
      ```bash
-     briefloop new industry-weekly <workspace>
+     briefloop new industry-weekly <workspace> --search-backend tavily
+     ```
+
+   - If the user declines online search, use:
+
+     ```bash
+     briefloop new industry-weekly <workspace> --web-search-mode disabled
      ```
 
 3. Ask WorkBuddy to run the CodeBuddy handoff.
