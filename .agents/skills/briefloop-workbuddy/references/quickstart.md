@@ -26,8 +26,9 @@ Ask the user before first source discovery:
 是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
 ```
 
-BriefLoop's product default for online search is external API search through
-Tavily. If the user enables online search, use Tavily as the default provider:
+BriefLoop recommends Tavily for online search, but generated workspaces keep
+online search in `configure_later` unless the user explicitly enables it. If the
+user enables online search, use Tavily as the recommended provider:
 
 ```text
 TAVILY_API_KEY=<user-provided-key>

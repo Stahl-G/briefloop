@@ -253,5 +253,5 @@ All backends should populate these metadata keys:
 - Search API results are not automatically verified facts.
 - Time-sensitive claims require manual verification.
 - API keys must be environment variables — never stored in config, README, examples, logs, or tests.
-- Tavily remains the default backend.
+- Tavily remains the recommended backend.
 - Exa/Brave/Firecrawl/Serper are optional enhancements.

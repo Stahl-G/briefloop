@@ -117,9 +117,10 @@ briefloop run --workspace <workspace> --runtime codebuddy
 是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
 ```
 
-BriefLoop 的在线搜索产品默认是通过 Tavily 外部 API。用户选择打开在线搜索时，
-默认先使用 Tavily，并且只验证 `TAVILY_API_KEY` 是否存在。不要显示 key 的值。
-只有用户明确要求替代 provider 时，才介绍 Exa、Brave、Firecrawl 或 Serper。
+BriefLoop 推荐在线搜索使用 Tavily，但生成的 workspace 默认保持
+`configure_later`，除非用户明确打开在线搜索。用户选择打开在线搜索时，默认先使用
+Tavily，并且只验证 `TAVILY_API_KEY` 是否存在。不要显示 key 的值。只有用户明确要求
+替代 provider 时，才介绍 Exa、Brave、Firecrawl 或 Serper。
 如果用户选择不开启在线搜索，应在来源发现前显式关闭 web search。
 
 ## 操作规则

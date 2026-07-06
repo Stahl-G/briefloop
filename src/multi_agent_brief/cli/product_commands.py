@@ -94,12 +94,12 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--web-search-mode",
         choices=["disabled", "runtime_tool", "external_api", "configure_later"],
-        help="How web search is provided. Defaults to external_api.",
+        help="How web search is provided. Defaults to configure_later.",
     )
     parser.add_argument(
         "--search-backend",
         choices=["tavily", "exa", "brave", "firecrawl", "serper"],
-        help="Search backend for --web-search-mode external_api. Defaults to tavily.",
+        help="Opt into an external API search backend, for example tavily.",
     )
 
 
@@ -460,13 +460,17 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             if web_search_mode == "external_api" and search_backend:
                 print()
                 print("Online search:")
-                if search_backend == "tavily":
-                    print("  Online search is enabled by default via Tavily.")
-                else:
-                    print(f"  Online search is enabled via {search_backend}.")
+                print(f"  Online search is enabled via {search_backend}.")
                 if search_api_key_env:
                     print(f"  Set {search_api_key_env} before running doctor or source discovery.")
                 print("  To run without online search, recreate with --web-search-mode disabled.")
+            elif web_search_mode == "configure_later":
+                print()
+                print("Online search:")
+                print("  Online search is recommended but not active by default.")
+                print("  Tavily is the recommended external API backend.")
+                print("  To enable it, recreate with --search-backend tavily and set TAVILY_API_KEY.")
+                print("  To stay offline, recreate with --web-search-mode disabled.")
             elif web_search_mode == "disabled":
                 print()
                 print("Online search: disabled.")
@@ -667,10 +671,10 @@ def _create_report_pack_workspace(*, target: Path, pack: Any, args: argparse.Nam
         selector_max_items=PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS,
         output_formats=[str(item) for item in outputs],
         source_profile="conservative",
-        tavily_enabled=True,
+        tavily_enabled=False,
         web_search_enabled=True,
-        web_search_mode="external_api",
-        search_backend="tavily",
+        web_search_mode="configure_later",
+        search_backend="",
     )
     web_search_mode = getattr(args, "web_search_mode", None)
     if web_search_mode:

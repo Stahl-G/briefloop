@@ -85,10 +85,10 @@ def _build_search_backend_choices(
     else:
         choices[later_key] = "configure_later (Add API key later)"
 
-    # Default to Tavily external API. It is the product default for online
-    # search, while configure_later and runtime_websearch remain explicit
-    # alternatives.
-    return choices, "1"
+    # Default to configure_later so local-first workspaces do not require an API
+    # key merely to run doctor or collect local evidence. Tavily remains the
+    # recommended backend when users opt into online search.
+    return choices, later_key
 
 
 def _demo_published_at() -> str:
@@ -972,9 +972,9 @@ def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
     mode = getattr(profile, "web_search_mode", "disabled")
     backend = getattr(profile, "search_backend", "")
 
-    # Legacy compatibility: if tavily_enabled is True but mode is still disabled,
-    # override to external_api with tavily backend
-    if mode == "disabled" and getattr(profile, "tavily_enabled", False):
+    # Legacy compatibility: if tavily_enabled is True but no external backend is
+    # selected yet, override to external_api with Tavily.
+    if mode in {"disabled", "configure_later"} and getattr(profile, "tavily_enabled", False):
         mode = "external_api"
         if not backend:
             backend = "tavily"
@@ -1469,7 +1469,7 @@ def _build_env_example() -> str:
         "# Only the backend configured in sources.yaml requires its key.\n"
         "# Never commit .env to version control.\n"
         "\n"
-        "# Tavily — fast AI search (default)\n"
+        "# Tavily — fast AI search (recommended)\n"
         "TAVILY_API_KEY=\n"
         "# Exa — deep research, papers, filings\n"
         "EXA_API_KEY=\n"

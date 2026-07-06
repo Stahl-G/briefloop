@@ -61,9 +61,10 @@ The agent creates an `onboarding.json` file like this:
 ```
 
 Normal users do not need to write this file manually. The agent creates it from
-the conversation. The default online-search backend is Tavily; set
-`search_backend_plain` to `none` when the user explicitly declines online
-search.
+the conversation. Online search defaults to `configure_later`; set
+`search_backend_plain` to `tavily` when the user explicitly enables the
+recommended Tavily backend, or to `none` when the user explicitly declines
+online search.
 
 ## Architecture
 

@@ -188,6 +188,7 @@ def print_search_backend_guidance(profile) -> None:
     if mode == "configure_later":
         print()
         print("Web search is marked for later configuration.")
+        print("  Recommended backend: tavily (TAVILY_API_KEY).")
         print(
             "  Supported backends: tavily, exa, brave, firecrawl, serper"
         )

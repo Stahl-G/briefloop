@@ -32,10 +32,10 @@ class InitProfile:
     source_profile: str = "llm_decide"
     source_decision_mode: str = "agent_decide"
     optional_seed_pack: str = ""  # registered pack key or empty
-    tavily_enabled: bool = True  # legacy flag, kept for backward compatibility
+    tavily_enabled: bool = False  # legacy flag, kept for backward compatibility
     web_search_enabled: bool = True
-    web_search_mode: str = "external_api"  # disabled, runtime_tool, external_api, configure_later
-    search_backend: str = "tavily"  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
+    web_search_mode: str = "configure_later"  # disabled, runtime_tool, external_api, configure_later
+    search_backend: str = ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
     initial_news_backfill_enabled: bool = False
     initial_news_backfill_days: int = 7
     initial_news_backfill_daily_max_results: int = 20

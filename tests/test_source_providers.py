@@ -1368,7 +1368,7 @@ def test_web_search_no_domains_passes_none():
     assert backend.last_domains is None
 
 
-# --- Init profiles default online search to Tavily external API ---
+# --- Init profiles recommend online search without requiring an API key ---
 
 def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     import yaml
@@ -1395,8 +1395,8 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
     assert web_search["enabled"] is True
-    assert web_search["mode"] == "external_api"
-    assert web_search["backend"] == "tavily"
+    assert web_search["mode"] == "configure_later"
+    assert "backend" not in web_search
 
 
 def test_init_custom_web_search_enabled_without_backend(tmp_path):
@@ -1424,8 +1424,8 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
     assert web_search["enabled"] is True
-    assert web_search["mode"] == "external_api"
-    assert web_search["backend"] == "tavily"
+    assert web_search["mode"] == "configure_later"
+    assert "backend" not in web_search
 
 
 def test_init_research_web_search_enabled_without_backend(tmp_path):
@@ -1453,8 +1453,8 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
     config = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
     web_search = config["web_search"]
     assert web_search["enabled"] is True
-    assert web_search["mode"] == "external_api"
-    assert web_search["backend"] == "tavily"
+    assert web_search["mode"] == "configure_later"
+    assert "backend" not in web_search
 
 
 # --- Unknown provider validation ---

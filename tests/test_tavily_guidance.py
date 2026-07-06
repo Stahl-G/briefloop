@@ -193,8 +193,8 @@ class TestSecretsImport:
 class TestInitTavilyGuidance:
     """Init wizard Tavily opt-in and setup guidance."""
 
-    def test_init_tavily_generates_config(self, tmp_path, monkeypatch):
-        """Init without flags should generate Tavily external API web_search."""
+    def test_init_defaults_to_configure_later_without_key(self, tmp_path, monkeypatch):
+        """Init without flags recommends web search without requiring an API key."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
         # Use CLI args to skip interactive prompts (no --tavily flag)
@@ -212,12 +212,35 @@ class TestInitTavilyGuidance:
         config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
         web_search = config["web_search"]
         assert web_search["enabled"] is True
+        assert web_search["mode"] == "configure_later"
+        assert "backend" not in web_search
+        assert "api_key_env" not in web_search
+
+    def test_init_explicit_tavily_generates_external_api_config(self, tmp_path, monkeypatch):
+        """Explicit Tavily selection should generate external API web_search."""
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        ws = tmp_path / "ws"
+        assert main([
+            "init", str(ws),
+            "--language", "zh-CN",
+            "--company", "Test Company",
+            "--industry", "manufacturing",
+            "--title", "Weekly Brief",
+            "--audience", "management",
+            "--cadence", "weekly",
+            "--source-profile", "research",
+            "--search-backend", "tavily",
+        ]) == 0
+        import yaml
+        config = yaml.safe_load((ws / "sources.yaml").read_text(encoding="utf-8"))
+        web_search = config["web_search"]
+        assert web_search["enabled"] is True
         assert web_search["mode"] == "external_api"
         assert web_search["backend"] == "tavily"
         assert web_search["api_key_env"] == "TAVILY_API_KEY"
 
     def test_init_can_explicitly_disable_web_search(self, tmp_path, monkeypatch):
-        """Explicit disabled mode must override the Tavily product default."""
+        """Explicit disabled mode must override the recommended search setup."""
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         ws = tmp_path / "ws"
         assert main([

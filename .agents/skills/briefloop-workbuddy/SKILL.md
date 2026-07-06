@@ -104,8 +104,9 @@ Before operating a workspace:
 
 ## Search Default
 
-BriefLoop's product default for online search is external API search through
-Tavily. At first run, ask the user:
+BriefLoop recommends Tavily for online search, but generated workspaces keep
+online search in `configure_later` unless the user explicitly enables it. At
+first run, ask the user:
 
 ```text
 是否要打开在线搜索？如果要打开搜索，强烈建议添加 Tavily API。
