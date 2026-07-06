@@ -21,6 +21,7 @@ from multi_agent_brief.orchestrator.role_topology import (
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _load_workspace_yaml,
     _read_json,
+    _sha256_file,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_INVALID,
@@ -406,6 +407,80 @@ def _finalize_report_delivery_artifact_reasons(workspace: Path, report: dict[str
     return reasons
 
 
+def _finalize_report_delivery_manifest_reasons(workspace: Path, report: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    manifest_path = _resolve_report_artifact_path(workspace, report.get("delivery_manifest"))
+    if manifest_path is None:
+        return ["finalize_report.json delivery_manifest is required before finalize-complete."]
+    expected_root = (workspace / "output" / "intermediate").resolve()
+    try:
+        manifest_path.relative_to(expected_root)
+    except ValueError:
+        reasons.append("finalize_report.json delivery_manifest must be under output/intermediate.")
+        return reasons
+    if not manifest_path.exists():
+        reasons.append(f"finalize_report.json references missing delivery_manifest: {manifest_path}.")
+        return reasons
+    expected_sha = report.get("delivery_manifest_sha256")
+    if not isinstance(expected_sha, str) or not expected_sha.strip():
+        reasons.append("finalize_report.json delivery_manifest_sha256 is required before finalize-complete.")
+    elif _sha256_file(manifest_path) != expected_sha.strip():
+        reasons.append("delivery_manifest.json has changed since finalize.")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        reasons.append(f"delivery_manifest.json is invalid JSON: {exc}")
+        return reasons
+    except OSError as exc:
+        reasons.append(f"delivery_manifest.json could not be read: {exc}")
+        return reasons
+    if not isinstance(payload, dict):
+        reasons.append("delivery_manifest.json must contain an object.")
+        return reasons
+    if payload.get("schema_version") != "briefloop.delivery_manifest.v1":
+        reasons.append("delivery_manifest.json schema_version is not supported.")
+    if payload.get("status") != "promoted":
+        reasons.append("delivery_manifest.json status must be promoted.")
+    if payload.get("reader_clean_status") != "pass":
+        reasons.append("delivery_manifest.json reader_clean_status must be pass.")
+    manifest_artifacts = payload.get("artifacts")
+    if not isinstance(manifest_artifacts, list) or not manifest_artifacts:
+        reasons.append("delivery_manifest.json artifacts must list promoted delivery artifacts.")
+        return reasons
+    manifest_hashes: dict[str, str] = {}
+    for artifact in manifest_artifacts:
+        if not isinstance(artifact, dict):
+            reasons.append("delivery_manifest.json contains an invalid artifact entry.")
+            continue
+        path = artifact.get("path")
+        sha256 = artifact.get("sha256")
+        if not isinstance(path, str) or not path.strip() or not isinstance(sha256, str) or not sha256.strip():
+            reasons.append("delivery_manifest.json artifact entries require path and sha256.")
+            continue
+        manifest_hashes[path.strip()] = sha256.strip()
+    report_hashes = report.get("delivery_artifact_sha256")
+    if not isinstance(report_hashes, dict):
+        reasons.append("finalize_report.json delivery_artifact_sha256 is required before finalize-complete.")
+        return reasons
+    for item in report.get("delivery_artifacts") or []:
+        path = _resolve_report_artifact_path(workspace, item)
+        if path is None:
+            continue
+        try:
+            rel = path.resolve().relative_to(workspace.resolve()).as_posix()
+        except ValueError:
+            continue
+        report_hash = report_hashes.get(item) or report_hashes.get(rel) or report_hashes.get(str(path.resolve()))
+        manifest_hash = manifest_hashes.get(item) or manifest_hashes.get(rel) or manifest_hashes.get(str(path.resolve()))
+        if not manifest_hash:
+            reasons.append(f"delivery_manifest.json missing delivery artifact: {rel}.")
+        elif not isinstance(report_hash, str) or not report_hash.strip():
+            reasons.append(f"finalize_report.json delivery_artifact_sha256 missing for {rel}.")
+        elif manifest_hash != report_hash.strip():
+            reasons.append(f"delivery_manifest.json hash does not match finalize_report.json for {rel}.")
+    return reasons
+
+
 def _parse_control_date(value: Any) -> date | None:
     if value is None:
         return None
@@ -601,6 +676,7 @@ def _finalize_completion_reasons(
         )
     )
     reasons.extend(_finalize_report_delivery_artifact_reasons(workspace, report))
+    reasons.extend(_finalize_report_delivery_manifest_reasons(workspace, report))
     reasons.extend(_finalize_report_auxiliary_artifact_reasons(workspace, report))
     if runtime_manifest is None:
         manifest_path = workspace / "output" / "intermediate" / "runtime_manifest.json"

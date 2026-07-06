@@ -737,6 +737,26 @@ def _write_finalize_report(
     delivery_dir.mkdir(parents=True, exist_ok=True)
     delivery_brief = delivery_dir / "brief.md"
     delivery_brief.write_text(brief_text, encoding="utf-8")
+    manifest_path = _intermediate(ws) / "delivery_manifest.json"
+    manifest = {
+        "schema_version": "briefloop.delivery_manifest.v1",
+        "status": "promoted",
+        "finalize_transaction_id": "test-finalize-transaction",
+        "reader_clean_status": reader_clean_status,
+        "delivery_dir": "output/delivery",
+        "artifacts": [
+            {
+                "path": "output/delivery/brief.md",
+                "sha256": _sha256_file(delivery_brief),
+                "kind": "reader_markdown",
+            }
+        ],
+        "semantics": "delivery_manifest_records_promoted_reader_artifacts_not_delivery_approval",
+    }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     (_intermediate(ws) / "finalize_report.json").write_text(
         json.dumps({
             "status": status,
@@ -752,6 +772,8 @@ def _write_finalize_report(
             "delivery_artifact_sha256": {
                 str(delivery_brief): _sha256_file(delivery_brief),
             },
+            "delivery_manifest": str(manifest_path),
+            "delivery_manifest_sha256": _sha256_file(manifest_path),
             "audit_binding": {
                 "status": "pass",
                 "claim_ledger_sha256": _sha256_file(
@@ -7416,6 +7438,83 @@ def test_finalize_complete_does_not_consume_delivery_snapshot(tmp_path):
 
     assert state["workflow_state"]["stage_statuses"]["finalize"]["status"] == "complete"
     assert not snapshot_dir.exists()
+
+
+def test_finalize_complete_requires_delivery_manifest(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    (_intermediate(ws) / "delivery_manifest.json").unlink()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == "E_READER_FINAL_GATE_FAILED"
+    assert "missing delivery_manifest" in str(excinfo.value)
+
+
+def test_finalize_complete_rejects_tampered_delivery_manifest(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    manifest_path = _intermediate(ws) / "delivery_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"][0]["sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == "E_READER_FINAL_GATE_FAILED"
+    assert "delivery_manifest.json has changed since finalize" in str(excinfo.value)
+
+
+def test_finalize_complete_rejects_external_delivery_artifact_without_crashing(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_finalize(ws)
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    external = tmp_path / "outside-delivery.md"
+    external.write_text("# Reader Brief\n\nExternal artifact.\n", encoding="utf-8")
+    report_path = _intermediate(ws) / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["delivery_artifacts"] = [str(external)]
+    report["delivery_artifact_sha256"] = {str(external): _sha256_file(external)}
+    manifest_path = _intermediate(ws) / "delivery_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"] = [
+        {
+            "path": str(external),
+            "sha256": _sha256_file(external),
+            "kind": "reader_markdown",
+        }
+    ]
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report["delivery_manifest_sha256"] = _sha256_file(manifest_path)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized and clean",
+        )
+
+    assert excinfo.value.error_code == "E_READER_FINAL_GATE_FAILED"
+    assert "delivery_artifacts may only reference files under output/delivery" in str(excinfo.value)
 
 
 def test_finalize_complete_requires_passing_audit_binding(tmp_path):

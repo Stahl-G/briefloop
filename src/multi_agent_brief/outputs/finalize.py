@@ -9,6 +9,7 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.outputs.naming import render_output_stem
@@ -31,6 +32,7 @@ class FinalizeResult:
     """Result of the reader-facing delivery finalization step."""
 
     status: str
+    finalize_transaction_id: str
     audited_brief: str
     reader_brief: str
     named_reader_brief: str = ""
@@ -57,6 +59,9 @@ class FinalizeResult:
     delivery_latest_dir: str = ""
     delivery_artifacts: list[str] = field(default_factory=list)
     delivery_artifact_sha256: dict[str, str] = field(default_factory=dict)
+    delivery_manifest: str = ""
+    delivery_manifest_sha256: str = ""
+    delivery_promotion: str = "not_promoted"
     delivery_snapshot_dir: str = ""
     delivery_snapshot_artifacts: list[str] = field(default_factory=list)
     delivery_snapshot_artifact_sha256: dict[str, str] = field(default_factory=dict)
@@ -107,6 +112,7 @@ _FINALIZE_REPORT_PATH_FIELDS = (
     "delivery_markdown",
     "delivery_docx",
     "delivery_latest_dir",
+    "delivery_manifest",
     "delivery_snapshot_dir",
 )
 _FINALIZE_REPORT_PATH_LIST_FIELDS = (
@@ -177,6 +183,120 @@ def _workspace_relative_value(workspace: Path, value: Any) -> str:
         return str(value)
 
 
+def _finalize_transaction_id() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{uuid4().hex[:12]}"
+
+
+def _named_reader_brief_path(
+    *,
+    output_dir: Path,
+    project_name: str,
+    output_named_outputs: bool,
+    output_filename_template: str,
+    output_filename_tokens: dict[str, str] | None,
+) -> Path | None:
+    if not output_named_outputs:
+        return None
+    tokens = dict(output_filename_tokens or {})
+    tokens.setdefault("project_name", project_name)
+    tokens.setdefault("title", project_name)
+    named_stem = render_output_stem(output_filename_template, tokens) if output_filename_template else ""
+    if not named_stem:
+        return None
+    return output_dir / f"{named_stem}.md"
+
+
+def _render_candidate_docx(
+    *,
+    requested: bool,
+    candidate_reader_path: Path,
+    candidate_docx_path: Path,
+    project_name: str,
+    output_footer: str,
+    docx_template: str,
+) -> str:
+    if not requested:
+        return "not_requested"
+    try:
+        from multi_agent_brief.outputs.ib_docx import convert
+
+        convert(
+            candidate_reader_path,
+            candidate_docx_path,
+            title=project_name,
+            footer=output_footer or None,
+            template=docx_template or "default",
+        )
+        return "generated"
+    except ImportError:
+        return "skipped_missing_dependency"
+    except Exception:
+        raise
+
+
+def _promote_reader_outputs(
+    *,
+    candidate_reader_path: Path,
+    candidate_docx_path: Path | None,
+    brief_path: Path,
+    named_brief_path: Path | None,
+    docx_path: Path,
+    named_docx_path: Path | None,
+    docx_requested: bool,
+) -> None:
+    brief_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(candidate_reader_path, brief_path)
+    if named_brief_path is not None and named_brief_path != brief_path:
+        shutil.copyfile(candidate_reader_path, named_brief_path)
+    if candidate_docx_path is not None and candidate_docx_path.exists():
+        shutil.copyfile(candidate_docx_path, docx_path)
+        if named_docx_path is not None:
+            shutil.copyfile(candidate_docx_path, named_docx_path)
+        return
+    if docx_requested:
+        for stale_docx in (docx_path, named_docx_path):
+            if stale_docx is not None and stale_docx.exists():
+                stale_docx.unlink()
+
+
+def _write_delivery_manifest(
+    path: Path,
+    result: FinalizeResult,
+    *,
+    workspace: Path,
+) -> None:
+    artifacts: list[dict[str, str]] = []
+    for raw_path in result.delivery_artifacts:
+        rel = _workspace_relative_value(workspace, raw_path)
+        sha256 = result.delivery_artifact_sha256.get(raw_path) or result.delivery_artifact_sha256.get(rel) or ""
+        artifacts.append({
+            "path": rel,
+            "sha256": sha256,
+            "kind": _delivery_artifact_kind(rel),
+        })
+    payload = {
+        "schema_version": "briefloop.delivery_manifest.v1",
+        "status": "promoted",
+        "finalize_transaction_id": result.finalize_transaction_id,
+        "reader_clean_status": (result.reader_clean or {}).get("status", "unknown"),
+        "delivery_dir": _workspace_relative_value(workspace, result.delivery_latest_dir),
+        "artifacts": artifacts,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "semantics": "delivery_manifest_records_promoted_reader_artifacts_not_delivery_approval",
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _delivery_artifact_kind(path: str) -> str:
+    suffix = Path(path).suffix.lower()
+    if suffix in {".md", ".markdown"}:
+        return "reader_markdown"
+    if suffix == ".docx":
+        return "reader_docx"
+    return "reader_artifact"
+
+
 def finalize_reader_outputs(
     *,
     output_dir: str | Path,
@@ -213,6 +333,23 @@ def finalize_reader_outputs(
         appendix_path.unlink()
     if appendix_trace_path.exists():
         appendix_trace_path.unlink()
+    finalize_transaction_id = _finalize_transaction_id()
+    brief_path = out / "brief.md"
+    docx_path = out / "brief.docx"
+    named_brief_path = _named_reader_brief_path(
+        output_dir=out,
+        project_name=project_name,
+        output_named_outputs=output_named_outputs,
+        output_filename_template=output_filename_template,
+        output_filename_tokens=output_filename_tokens,
+    )
+    named_docx_path = (
+        named_brief_path.with_suffix(".docx")
+        if named_brief_path is not None and named_brief_path.stem != "brief"
+        else None
+    )
+    report_path = intermediate_dir / "finalize_report.json"
+    manifest_path = intermediate_dir / "delivery_manifest.json"
     with tempfile.TemporaryDirectory(
         prefix=".briefloop-finalize-candidate-",
         dir=intermediate_dir,
@@ -223,177 +360,157 @@ def finalize_reader_outputs(
             source_appendix_config=source_appendix_config or {},
             workspace_dir=workspace,
             candidate_root=Path(candidate_root_text),
+            transaction_id=finalize_transaction_id,
+        )
+        audited_path = Path(projection.audited_brief)
+        candidate_reader_path = Path(projection.reader_brief)
+        candidate_docx_path = Path(projection.candidate_dir) / "brief.docx"
+        docx_status = _render_candidate_docx(
+            requested="docx" in formats,
+            candidate_reader_path=candidate_reader_path,
+            candidate_docx_path=candidate_docx_path,
+            project_name=project_name,
+            output_footer=output_footer,
+            docx_template=docx_template,
+        )
+
+        result = FinalizeResult(
+            status="pass",
+            finalize_transaction_id=finalize_transaction_id,
+            audited_brief=str(audited_path),
+            reader_brief=str(brief_path),
+            named_reader_brief=str(named_brief_path or ""),
+            reader_docx=str(docx_path) if docx_status == "generated" else "",
+            named_reader_docx=str(named_docx_path or "") if docx_status == "generated" else "",
+            docx_generation=docx_status,
+            stripped_src_marker_count=projection.stripped_src_marker_count,
+            source_appendix="",
+            source_appendix_generation=projection.source_appendix_generation,
+            source_appendix_requested_by=projection.source_appendix_requested_by,
+            source_appendix_mode=projection.source_appendix_mode,
+            source_appendix_source_count=projection.source_appendix_source_count,
+            source_appendix_cited_claim_count=projection.source_appendix_cited_claim_count,
+            source_appendix_resolved_claim_count=projection.source_appendix_resolved_claim_count,
+            source_appendix_warnings=projection.source_appendix_warnings,
+            source_appendix_claim_map=projection.source_appendix_claim_map,
+            source_appendix_trace="",
+            source_appendix_trace_generation=projection.source_appendix_trace_generation,
+            source_appendix_trace_source_count=projection.source_appendix_trace_source_count,
+            source_appendix_trace_span_count=projection.source_appendix_trace_span_count,
+            source_appendix_trace_warnings=projection.source_appendix_trace_warnings,
+            template_rendering=projection.template_rendering,
+            audit_binding=_audit_binding_report(
+                intermediate_dir=intermediate_dir,
+                audited_markdown=projection.audited_markdown,
+            ),
+            policy_gate_adapter=projection.policy_gate_adapter,
+            citation_profile=projection.citation_profile,
+            citation_profile_source=projection.citation_profile_source,
+            citation_profile_runtime_effect=projection.citation_profile_runtime_effect,
+            citation_profile_reader_citation_style=projection.citation_profile_reader_citation_style,
+            citation_profile_reader_metadata_level=projection.citation_profile_reader_metadata_level,
+            citation_profile_audit_trace_level=projection.citation_profile_audit_trace_level,
+            citation_profile_delivery_exposes_internal_ids=projection.citation_profile_delivery_exposes_internal_ids,
+            citation_profile_delivery_exposes_local_paths=projection.citation_profile_delivery_exposes_local_paths,
+            citation_profile_audit_bundle_keeps_trace=projection.citation_profile_audit_bundle_keeps_trace,
+            citation_profile_warnings=projection.citation_profile_warnings,
+            reader_clean=build_reader_clean_report(
+                markdown_paths=[
+                    path
+                    for path in (
+                        candidate_reader_path,
+                        Path(projection.source_appendix) if projection.source_appendix else None,
+                    )
+                    if path is not None and path.exists()
+                ],
+                docx_paths=[
+                    path
+                    for path in (candidate_docx_path if docx_status == "generated" else None,)
+                    if path is not None and path.exists()
+                ],
+                forbidden_phrases=policy_forbidden_phrases(projection.policy_gate_adapter),
+            ),
+        )
+        if result.audit_binding and result.audit_binding.get("status") == "fail":
+            result.status = "fail"
+            result.delivery_promotion = "skipped_audit_binding_failed"
+            _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
+            findings = result.audit_binding.get("findings") or []
+            raise RuntimeError(
+                "Audit report binding check failed: "
+                f"{len(findings)} blocking finding{'s' if len(findings) != 1 else ''}. "
+                f"See {report_path}."
+            )
+        if result.reader_clean["status"] == "fail":
+            result.status = "fail"
+            result.delivery_promotion = "skipped_reader_clean_failed"
+            _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
+            finding_count = len(result.reader_clean.get("sample_findings", []))
+            total_count = sum(
+                int(value)
+                for key, value in result.reader_clean.items()
+                if key.endswith("_count") and isinstance(value, int)
+            )
+            raise RuntimeError(
+                "Reader final output gate failed: "
+                f"{total_count or finding_count} blocking residue findings. "
+                f"See {report_path}."
+            )
+
+        _promote_reader_outputs(
+            candidate_reader_path=candidate_reader_path,
+            candidate_docx_path=candidate_docx_path if docx_status == "generated" else None,
+            brief_path=brief_path,
+            named_brief_path=named_brief_path,
+            docx_path=docx_path,
+            named_docx_path=named_docx_path,
+            docx_requested="docx" in formats,
         )
         if projection.source_appendix:
             shutil.copyfile(Path(projection.source_appendix), appendix_path)
+            result.source_appendix = str(appendix_path)
         if projection.source_appendix_trace:
             shutil.copyfile(Path(projection.source_appendix_trace), appendix_trace_path)
-    audited_path = Path(projection.audited_brief)
-    audited_markdown = projection.audited_markdown
-    stripped_count = projection.stripped_src_marker_count
-    reader_markdown = projection.reader_markdown
+            result.source_appendix_trace = str(appendix_trace_path)
+        result.report_template_conformance = project_workspace_report_template_conformance(workspace)
 
-    brief_path = out / "brief.md"
-    brief_path.write_text(reader_markdown, encoding="utf-8")
-
-    named_brief_path: Path | None = None
-    if output_named_outputs:
-        tokens = dict(output_filename_tokens or {})
-        tokens.setdefault("project_name", project_name)
-        tokens.setdefault("title", project_name)
-        named_stem = render_output_stem(output_filename_template, tokens) if output_filename_template else ""
-        if named_stem:
-            named_brief_path = out / f"{named_stem}.md"
-            if named_brief_path != brief_path:
-                named_brief_path.write_text(reader_markdown, encoding="utf-8")
-
-    docx_status = "not_requested"
-    docx_path = out / "brief.docx"
-    named_docx_path: Path | None = None
-    if "docx" in formats:
-        # Avoid leaving a stale rendered file that may still contain internal
-        # [src:<claim_id>] markers when regeneration fails or dependencies are missing.
-        if docx_path.exists():
-            docx_path.unlink()
-        if named_brief_path is not None:
-            possible_named_docx = named_brief_path.with_suffix(".docx")
-            if possible_named_docx.exists():
-                possible_named_docx.unlink()
-        try:
-            from multi_agent_brief.outputs.ib_docx import convert
-
-            convert(
-                brief_path,
-                docx_path,
-                title=project_name,
-                footer=output_footer or None,
-                template=docx_template or "default",
-            )
-            docx_status = "generated"
-            if named_brief_path is not None and named_brief_path.stem != "brief":
-                named_docx_path = named_brief_path.with_suffix(".docx")
-                shutil.copyfile(docx_path, named_docx_path)
-        except ImportError:
-            docx_status = "skipped_missing_dependency"
-        except Exception:
-            docx_status = "failed"
-            raise
-
-    result = FinalizeResult(
-        status="pass",
-        audited_brief=str(audited_path),
-        reader_brief=str(brief_path),
-        named_reader_brief=str(named_brief_path or ""),
-        reader_docx=str(docx_path) if docx_path.exists() else "",
-        named_reader_docx=str(named_docx_path or ""),
-        docx_generation=docx_status,
-        stripped_src_marker_count=stripped_count,
-        source_appendix=str(appendix_path) if projection.source_appendix and appendix_path.exists() else "",
-        source_appendix_generation=projection.source_appendix_generation,
-        source_appendix_requested_by=projection.source_appendix_requested_by,
-        source_appendix_mode=projection.source_appendix_mode,
-        source_appendix_source_count=projection.source_appendix_source_count,
-        source_appendix_cited_claim_count=projection.source_appendix_cited_claim_count,
-        source_appendix_resolved_claim_count=projection.source_appendix_resolved_claim_count,
-        source_appendix_warnings=projection.source_appendix_warnings,
-        source_appendix_claim_map=projection.source_appendix_claim_map,
-        source_appendix_trace=(
-            str(appendix_trace_path)
-            if projection.source_appendix_trace and appendix_trace_path.exists()
-            else ""
-        ),
-        source_appendix_trace_generation=projection.source_appendix_trace_generation,
-        source_appendix_trace_source_count=projection.source_appendix_trace_source_count,
-        source_appendix_trace_span_count=projection.source_appendix_trace_span_count,
-        source_appendix_trace_warnings=projection.source_appendix_trace_warnings,
-        template_rendering=projection.template_rendering,
-        audit_binding=_audit_binding_report(
-            intermediate_dir=intermediate_dir,
-            audited_markdown=audited_markdown,
-        ),
-        policy_gate_adapter=projection.policy_gate_adapter,
-        citation_profile=projection.citation_profile,
-        citation_profile_source=projection.citation_profile_source,
-        citation_profile_runtime_effect=projection.citation_profile_runtime_effect,
-        citation_profile_reader_citation_style=projection.citation_profile_reader_citation_style,
-        citation_profile_reader_metadata_level=projection.citation_profile_reader_metadata_level,
-        citation_profile_audit_trace_level=projection.citation_profile_audit_trace_level,
-        citation_profile_delivery_exposes_internal_ids=projection.citation_profile_delivery_exposes_internal_ids,
-        citation_profile_delivery_exposes_local_paths=projection.citation_profile_delivery_exposes_local_paths,
-        citation_profile_audit_bundle_keeps_trace=projection.citation_profile_audit_bundle_keeps_trace,
-        citation_profile_warnings=projection.citation_profile_warnings,
-    )
-    delivery_bundle = _build_delivery_bundle(
-        output_dir=out,
-        brief_path=brief_path,
-        docx_path=docx_path if docx_path.exists() else None,
-        named_docx_path=named_docx_path,
-    )
-    result.delivery_markdown = delivery_bundle["delivery_markdown"]
-    result.delivery_docx = delivery_bundle["delivery_docx"]
-    result.delivery_latest_dir = delivery_bundle["delivery_latest_dir"]
-    result.delivery_artifacts = delivery_bundle["delivery_artifacts"]
-    result.delivery_artifact_sha256 = delivery_bundle["delivery_artifact_sha256"]
-
-    report_path = intermediate_dir / "finalize_report.json"
-    reader_clean = build_reader_clean_report(
-        markdown_paths=[
-            path
-            for path in (
-                Path(result.delivery_markdown) if result.delivery_markdown else None,
-                appendix_path if appendix_path.exists() else None,
-            )
-            if path is not None and path.exists()
-        ],
-        docx_paths=[
-            path
-            for path in (Path(result.delivery_docx) if result.delivery_docx else None,)
-            if path is not None and path.exists()
-        ],
-        forbidden_phrases=policy_forbidden_phrases(projection.policy_gate_adapter),
-    )
-    result.reader_clean = reader_clean
-    result.report_template_conformance = project_workspace_report_template_conformance(workspace)
-    if result.audit_binding and result.audit_binding.get("status") == "fail":
-        result.status = "fail"
-        _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
-        findings = result.audit_binding.get("findings") or []
-        raise RuntimeError(
-            "Audit report binding check failed: "
-            f"{len(findings)} blocking finding{'s' if len(findings) != 1 else ''}. "
-            f"See {report_path}."
-        )
-    if reader_clean["status"] == "fail":
-        result.status = "fail"
-        _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
-        finding_count = len(reader_clean.get("sample_findings", []))
-        total_count = sum(
-            int(value)
-            for key, value in reader_clean.items()
-            if key.endswith("_count") and isinstance(value, int)
-        )
-        raise RuntimeError(
-            "Reader final output gate failed: "
-            f"{total_count or finding_count} blocking residue findings. "
-            f"See {report_path}."
-        )
-    try:
-        delivery_snapshot = _build_delivery_snapshot(
+        delivery_bundle = _build_delivery_bundle(
             output_dir=out,
-            delivery_artifacts=[Path(path) for path in result.delivery_artifacts],
+            brief_path=brief_path,
+            docx_path=docx_path if docx_status == "generated" and docx_path.exists() else None,
+            named_docx_path=named_docx_path if docx_status == "generated" else None,
         )
-    except Exception as exc:
-        result.status = "fail"
-        result.delivery_snapshot_error = f"{type(exc).__name__}: {exc}"
+        result.delivery_markdown = delivery_bundle["delivery_markdown"]
+        result.delivery_docx = delivery_bundle["delivery_docx"]
+        result.delivery_latest_dir = delivery_bundle["delivery_latest_dir"]
+        result.delivery_artifacts = delivery_bundle["delivery_artifacts"]
+        result.delivery_artifact_sha256 = delivery_bundle["delivery_artifact_sha256"]
+        result.delivery_promotion = "promoted"
+        _write_delivery_manifest(
+            manifest_path,
+            result,
+            workspace=workspace,
+        )
+        result.delivery_manifest = str(manifest_path)
+        result.delivery_manifest_sha256 = _sha256_file(manifest_path)
+
+        try:
+            delivery_snapshot = _build_delivery_snapshot(
+                output_dir=out,
+                delivery_artifacts=[Path(path) for path in result.delivery_artifacts],
+            )
+        except Exception as exc:
+            result.status = "fail"
+            result.delivery_snapshot_error = f"{type(exc).__name__}: {exc}"
+            _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
+            raise RuntimeError(
+                f"Delivery snapshot creation failed. See {report_path}."
+            ) from exc
+        result.delivery_snapshot_dir = delivery_snapshot["delivery_snapshot_dir"]
+        result.delivery_snapshot_artifacts = delivery_snapshot["delivery_snapshot_artifacts"]
+        result.delivery_snapshot_artifact_sha256 = delivery_snapshot["delivery_snapshot_artifact_sha256"]
         _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
-        raise RuntimeError(
-            f"Delivery snapshot creation failed. See {report_path}."
-        ) from exc
-    result.delivery_snapshot_dir = delivery_snapshot["delivery_snapshot_dir"]
-    result.delivery_snapshot_artifacts = delivery_snapshot["delivery_snapshot_artifacts"]
-    result.delivery_snapshot_artifact_sha256 = delivery_snapshot["delivery_snapshot_artifact_sha256"]
-    _write_finalize_report(report_path, result, output_dir=out, workspace_dir=workspace)
-    return result
+        return result
 
 
 def _build_delivery_bundle(

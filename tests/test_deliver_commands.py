@@ -60,11 +60,33 @@ def _write_bundle(
         for artifact in artifact_paths
         if Path(artifact).exists()
     }
+    manifest_path = intermediate / "delivery_manifest.json"
+    manifest = {
+        "schema_version": "briefloop.delivery_manifest.v1",
+        "status": "promoted",
+        "finalize_transaction_id": "test-finalize-transaction",
+        "reader_clean_status": reader_clean_status,
+        "delivery_dir": "output/delivery",
+        "artifacts": [
+            {
+                "path": Path(artifact).resolve().relative_to(ws).as_posix()
+                if Path(artifact).resolve().is_relative_to(ws)
+                else artifact,
+                "sha256": artifact_hashes.get(artifact, ""),
+                "kind": "reader_docx" if str(artifact).endswith(".docx") else "reader_markdown",
+            }
+            for artifact in artifact_paths
+            if Path(artifact).exists()
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     report = {
         "status": "pass",
         "reader_clean": {"status": reader_clean_status, "sample_findings": []},
         "delivery_artifacts": artifact_paths,
         "delivery_artifact_sha256": artifact_hashes,
+        "delivery_manifest": "output/intermediate/delivery_manifest.json",
+        "delivery_manifest_sha256": _sha256_file(manifest_path),
     }
     (intermediate / "finalize_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
@@ -321,6 +343,40 @@ def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path, capsys) -> None
     assert _delivery_events(ws) == []
 
 
+def test_deliver_rejects_missing_delivery_manifest(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    report_path = ws / "output" / "intermediate" / "finalize_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.pop("delivery_manifest")
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    rc = main(["deliver", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
+    assert "delivery_manifest" in payload["message"]
+    assert _delivery_events(ws) == []
+
+
+def test_deliver_rejects_tampered_delivery_manifest(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    manifest_path = ws / "output" / "intermediate" / "delivery_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"][0]["sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    rc = main(["deliver", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_ARTIFACT_MISMATCH"
+    assert "delivery_manifest.json has changed" in payload["message"]
+    assert _delivery_events(ws) == []
+
+
 def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False, init_runtime=False)
@@ -548,6 +604,11 @@ def test_deliver_gmail_draft_creates_draft_without_email_leak(tmp_path: Path, ca
     report_path = ws / "output" / "intermediate" / "finalize_report.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
     report["delivery_artifact_sha256"][str(markdown)] = _sha256_file(markdown)
+    manifest_path = ws / "output" / "intermediate" / "delivery_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifacts"][0]["sha256"] = _sha256_file(markdown)
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report["delivery_manifest_sha256"] = _sha256_file(manifest_path)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     calls: list[tuple[str, str, str, dict[str, object]]] = []
 

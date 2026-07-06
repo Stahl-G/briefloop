@@ -501,6 +501,8 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
             "Delivery bundle is missing delivery_artifact_sha256. Run finalize again before delivery.",
             error_code=E_DELIVERY_BUNDLE_MISSING,
         )
+    delivery_manifest = _load_delivery_manifest(workspace, report)
+    manifest_hashes = _delivery_manifest_artifact_sha256(delivery_manifest)
 
     delivery_root = (workspace / "output" / "delivery").resolve()
     artifacts: list[Path] = []
@@ -537,6 +539,23 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
                 f"Delivery artifact hash missing for {rel}. Run finalize again before delivery.",
                 error_code=E_DELIVERY_BUNDLE_MISSING,
             )
+        manifest_hash = _hash_for_delivery_artifact(
+            manifest_hashes,
+            raw_path=raw,
+            workspace=workspace,
+            resolved=resolved,
+        )
+        if not manifest_hash:
+            raise DeliverCommandError(
+                f"Delivery artifact missing from delivery_manifest.json: {rel}. Run finalize again before delivery.",
+                error_code=E_DELIVERY_BUNDLE_MISSING,
+            )
+        if manifest_hash != expected_hash:
+            raise DeliverCommandError(
+                f"Delivery manifest hash does not match finalize_report.json for {rel}. Run finalize again before delivery.",
+                error_code=E_DELIVERY_ARTIFACT_MISMATCH,
+                extra={"artifact": rel},
+            )
         actual_hash = _sha256_file(resolved)
         if actual_hash != expected_hash:
             raise DeliverCommandError(
@@ -556,6 +575,88 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
         docx=docx,
         artifact_sha256=artifact_hashes,
     )
+
+
+def _load_delivery_manifest(workspace: Path, finalize_report: dict[str, Any]) -> dict[str, Any]:
+    raw_path = finalize_report.get("delivery_manifest")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise DeliverCommandError(
+            "Delivery bundle is missing delivery_manifest. Run finalize again before delivery.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
+    manifest_path = Path(raw_path).expanduser()
+    if not manifest_path.is_absolute():
+        manifest_path = workspace / manifest_path
+    manifest_path = manifest_path.resolve()
+    expected_root = (workspace / "output" / "intermediate").resolve()
+    try:
+        manifest_path.relative_to(expected_root)
+    except ValueError as exc:
+        raise DeliverCommandError(
+            "delivery_manifest must be under output/intermediate.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        ) from exc
+    if not manifest_path.exists():
+        raise DeliverCommandError(
+            "delivery_manifest is missing. Run finalize again before delivery.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
+    expected_sha = finalize_report.get("delivery_manifest_sha256")
+    if not isinstance(expected_sha, str) or not expected_sha.strip():
+        raise DeliverCommandError(
+            "Delivery bundle is missing delivery_manifest_sha256. Run finalize again before delivery.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
+    actual_sha = _sha256_file(manifest_path)
+    if actual_sha != expected_sha.strip():
+        raise DeliverCommandError(
+            "delivery_manifest.json has changed since finalize. Run finalize again before delivery.",
+            error_code=E_DELIVERY_ARTIFACT_MISMATCH,
+        )
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise DeliverCommandError(
+            f"delivery_manifest.json is not valid JSON: {exc}",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        ) from exc
+    if not isinstance(payload, dict):
+        raise DeliverCommandError(
+            "delivery_manifest.json must be an object.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
+    if payload.get("schema_version") != "briefloop.delivery_manifest.v1":
+        raise DeliverCommandError(
+            "delivery_manifest.json schema_version is not supported.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
+    if payload.get("status") != "promoted" or payload.get("reader_clean_status") != "pass":
+        raise DeliverCommandError(
+            "delivery_manifest.json does not describe a promoted clean delivery.",
+            error_code=E_DELIVERY_NOT_CLEAN,
+        )
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, list) or not artifacts:
+        raise DeliverCommandError(
+            "delivery_manifest.json must list promoted delivery artifacts.",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        )
+    return payload
+
+
+def _delivery_manifest_artifact_sha256(manifest: dict[str, Any]) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, list):
+        return hashes
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        path = artifact.get("path")
+        sha256 = artifact.get("sha256")
+        if isinstance(path, str) and path.strip() and isinstance(sha256, str) and sha256.strip():
+            hashes[path.strip()] = sha256.strip()
+    return hashes
 
 
 def _hash_for_delivery_artifact(

@@ -1859,6 +1859,26 @@ def test_finalize_delivery_bundle_contains_appended_sources_without_audit_files(
         "output/delivery/brief.md": _sha256_file(delivery_markdown),
         "output/delivery/ExampleCo_2026-06-12.docx": _sha256_file(delivery_docx),
     }
+    manifest_path = intermediate / "delivery_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert report["delivery_manifest"] == "output/intermediate/delivery_manifest.json"
+    assert report["delivery_manifest_sha256"] == _sha256_file(manifest_path)
+    assert manifest["schema_version"] == "briefloop.delivery_manifest.v1"
+    assert manifest["status"] == "promoted"
+    assert manifest["finalize_transaction_id"] == report["finalize_transaction_id"]
+    assert manifest["reader_clean_status"] == "pass"
+    assert manifest["artifacts"] == [
+        {
+            "path": "output/delivery/brief.md",
+            "sha256": _sha256_file(delivery_markdown),
+            "kind": "reader_markdown",
+        },
+        {
+            "path": "output/delivery/ExampleCo_2026-06-12.docx",
+            "sha256": _sha256_file(delivery_docx),
+            "kind": "reader_docx",
+        },
+    ]
     assert result.delivery_artifact_sha256 == {
         str(delivery_markdown): _sha256_file(delivery_markdown),
         str(delivery_docx): _sha256_file(delivery_docx),
@@ -2046,6 +2066,47 @@ def test_finalize_fails_on_bare_claim_id_reader_residue(tmp_path: Path):
     assert report["reader_clean"]["status"] == "fail"
     assert report["reader_clean"]["bare_claim_id_count"] == 1
     assert report["reader_clean"]["sample_findings"][0]["artifact"].endswith("brief.md")
+
+
+def test_failed_reader_clean_does_not_overwrite_existing_delivery(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text("# Brief\n\nFirst reader-safe delivery.\n", encoding="utf-8")
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+    root_brief = output_dir / "brief.md"
+    delivery_brief = output_dir / "delivery" / "brief.md"
+    manifest_path = intermediate / "delivery_manifest.json"
+    first_root_text = root_brief.read_text(encoding="utf-8")
+    first_delivery_text = delivery_brief.read_text(encoding="utf-8")
+    first_manifest_sha = _sha256_file(manifest_path)
+
+    audited.write_text(
+        "# Brief\n\nSecond run has raw internal marker [CL-0001].\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert report["delivery_manifest"] == ""
+    assert root_brief.read_text(encoding="utf-8") == first_root_text
+    assert delivery_brief.read_text(encoding="utf-8") == first_delivery_text
+    assert _sha256_file(manifest_path) == first_manifest_sha
 
 
 def test_finalize_applies_policy_profile_forbidden_phrases(tmp_path: Path):
