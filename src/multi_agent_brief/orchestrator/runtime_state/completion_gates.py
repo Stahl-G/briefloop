@@ -21,6 +21,7 @@ from multi_agent_brief.orchestrator.role_topology import (
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _load_workspace_yaml,
     _read_json,
+    _sha256_file,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_INVALID,
@@ -387,6 +388,9 @@ def _finalize_report_delivery_artifact_reasons(workspace: Path, report: dict[str
     artifacts = report.get("delivery_artifacts")
     if not isinstance(artifacts, list) or not artifacts:
         return ["finalize_report.json delivery_artifacts must list the reader delivery bundle."]
+    hashes = report.get("delivery_artifact_sha256")
+    if not isinstance(hashes, dict) or not hashes:
+        return ["finalize_report.json delivery_artifact_sha256 is required before finalize-complete."]
     reasons: list[str] = []
     delivery_root = (workspace / "output" / "delivery").resolve()
     for item in artifacts:
@@ -397,13 +401,49 @@ def _finalize_report_delivery_artifact_reasons(workspace: Path, report: dict[str
         if not path.exists():
             reasons.append(f"finalize_report.json references missing delivery artifact: {path}.")
             continue
+        if not path.is_file():
+            reasons.append(f"finalize_report.json references non-file delivery artifact: {path}.")
+            continue
         try:
             path.relative_to(delivery_root)
         except ValueError:
             reasons.append(
                 "finalize_report.json delivery_artifacts may only reference files under output/delivery."
             )
+            continue
+        rel = path.resolve().relative_to(workspace.resolve()).as_posix()
+        expected_hash = _hash_for_report_artifact(
+            hashes,
+            raw_path=item,
+            workspace=workspace,
+            resolved=path,
+        )
+        if not expected_hash:
+            reasons.append(f"finalize_report.json delivery artifact hash missing: {rel}.")
+            continue
+        try:
+            actual_hash = _sha256_file(path)
+        except OSError as exc:
+            reasons.append(f"finalize_report.json delivery artifact could not be read: {rel}: {exc}.")
+            continue
+        if actual_hash != expected_hash:
+            reasons.append(f"finalize_report.json delivery artifact hash mismatch: {rel}.")
     return reasons
+
+
+def _hash_for_report_artifact(
+    hashes: dict[str, Any],
+    *,
+    raw_path: str,
+    workspace: Path,
+    resolved: Path,
+) -> str:
+    rel = resolved.resolve().relative_to(workspace.resolve()).as_posix()
+    for key in (raw_path, rel, resolved.as_posix(), str(resolved)):
+        value = hashes.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _parse_control_date(value: Any) -> date | None:

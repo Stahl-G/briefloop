@@ -472,6 +472,11 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
         )
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise DeliverCommandError(
+            f"finalize_report.json is not valid UTF-8: {exc}",
+            error_code=E_DELIVERY_BUNDLE_MISSING,
+        ) from exc
     except json.JSONDecodeError as exc:
         raise DeliverCommandError(
             f"finalize_report.json is not valid JSON: {exc}",
@@ -525,6 +530,11 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
                 f"Delivery artifact not found: {_workspace_relative(workspace, resolved)}",
                 error_code=E_DELIVERY_BUNDLE_MISSING,
             )
+        if not resolved.is_file():
+            raise DeliverCommandError(
+                f"Delivery artifact is not a file: {_workspace_relative(workspace, resolved)}",
+                error_code=E_DELIVERY_BUNDLE_MISSING,
+            )
         expected_hash = _hash_for_delivery_artifact(
             raw_hashes,
             raw_path=raw,
@@ -537,7 +547,13 @@ def _load_delivery_bundle(workspace: Path) -> DeliveryBundle:
                 f"Delivery artifact hash missing for {rel}. Run finalize again before delivery.",
                 error_code=E_DELIVERY_BUNDLE_MISSING,
             )
-        actual_hash = _sha256_file(resolved)
+        try:
+            actual_hash = _sha256_file(resolved)
+        except OSError as exc:
+            raise DeliverCommandError(
+                f"Delivery artifact could not be read: {rel}. Run finalize again before delivery.",
+                error_code=E_DELIVERY_BUNDLE_MISSING,
+            ) from exc
         if actual_hash != expected_hash:
             raise DeliverCommandError(
                 f"Delivery artifact has changed since finalize: {rel}. Run finalize again before delivery.",

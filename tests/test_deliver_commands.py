@@ -321,6 +321,36 @@ def test_deliver_rejects_missing_delivery_hashes(tmp_path: Path, capsys) -> None
     assert _delivery_events(ws) == []
 
 
+def test_deliver_rejects_corrupt_finalize_report_utf8(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    (ws / "output" / "intermediate" / "finalize_report.json").write_bytes(b"\xff\xfe\x00")
+
+    rc = main(["deliver", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
+    assert "valid UTF-8" in payload["message"]
+    assert _delivery_events(ws) == []
+
+
+def test_deliver_rejects_non_file_delivery_artifact(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws, include_docx=False)
+    delivery_brief = ws / "output" / "delivery" / "brief.md"
+    delivery_brief.unlink()
+    delivery_brief.mkdir()
+
+    rc = main(["deliver", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_BUNDLE_MISSING"
+    assert "not a file" in payload["message"]
+    assert _delivery_events(ws) == []
+
+
 def test_deliver_requires_existing_runtime_state(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws, include_docx=False, init_runtime=False)
