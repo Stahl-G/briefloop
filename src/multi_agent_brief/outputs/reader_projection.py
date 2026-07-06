@@ -80,6 +80,7 @@ def build_reader_projection(
     source_appendix_config: dict[str, Any] | None = None,
     workspace_dir: str | Path | None = None,
     transaction_id: str | None = None,
+    candidate_root: str | Path | None = None,
 ) -> ReaderProjectionResult:
     """Render a reader candidate without promoting delivery artifacts."""
 
@@ -97,7 +98,11 @@ def build_reader_projection(
             "Run prepare/audit first or write output/intermediate/audited_brief.md."
         )
 
-    candidate_root = intermediate_dir / "finalize_candidate"
+    candidate_root = (
+        Path(candidate_root)
+        if candidate_root is not None
+        else intermediate_dir / "finalize_candidate"
+    )
     candidate_dir = _reader_projection_candidate_dir(
         candidate_root=candidate_root,
         transaction_id=transaction_id,

@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import hashlib
+import tempfile
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -212,19 +213,24 @@ def finalize_reader_outputs(
         appendix_path.unlink()
     if appendix_trace_path.exists():
         appendix_trace_path.unlink()
-    projection = build_reader_projection(
-        output_dir=out,
-        output_formats=formats,
-        source_appendix_config=source_appendix_config or {},
-        workspace_dir=workspace,
-    )
+    with tempfile.TemporaryDirectory(
+        prefix=".briefloop-finalize-candidate-",
+        dir=intermediate_dir,
+    ) as candidate_root_text:
+        projection = build_reader_projection(
+            output_dir=out,
+            output_formats=formats,
+            source_appendix_config=source_appendix_config or {},
+            workspace_dir=workspace,
+            candidate_root=Path(candidate_root_text),
+        )
+        if projection.source_appendix:
+            shutil.copyfile(Path(projection.source_appendix), appendix_path)
+        if projection.source_appendix_trace:
+            shutil.copyfile(Path(projection.source_appendix_trace), appendix_trace_path)
     audited_path = Path(projection.audited_brief)
     audited_markdown = projection.audited_markdown
     stripped_count = projection.stripped_src_marker_count
-    if projection.source_appendix:
-        shutil.copyfile(Path(projection.source_appendix), appendix_path)
-    if projection.source_appendix_trace:
-        shutil.copyfile(Path(projection.source_appendix_trace), appendix_trace_path)
     reader_markdown = projection.reader_markdown
 
     brief_path = out / "brief.md"
