@@ -54,6 +54,22 @@ def test_cited_claim_ids_dedupe_in_first_appearance_order():
     assert cited_claim_ids(markdown) == ["SYN_CLAIM_002", "SYN_CLAIM_001"]
 
 
+def test_cited_claim_ids_uses_only_canonical_src_markers():
+    markdown = (
+        "Canonical [src:CL-001]\n"
+        "Deprecated [source:CL-002]\n"
+        "Bare src:CL-003 and source:CL-004 stay prose.\n"
+        "Raw CL-005 stays residue, not citation.\n"
+        "Malformed [src: CL-006] is not an appendix citation.\n"
+        "Ordinary Source: Q2-2026 report stays prose.\n"
+    )
+
+    assert cited_claim_ids(
+        markdown,
+        valid_claim_ids={"CL-001", "CL-002", "CL-003", "CL-004", "CL-005", "CL-006"},
+    ) == ["CL-001"]
+
+
 def test_source_appendix_uses_only_cited_claims_and_dedupes_sources(tmp_path: Path):
     ledger = tmp_path / "claim_ledger.json"
     _write_ledger(
@@ -108,6 +124,59 @@ def test_source_appendix_uses_only_cited_claims_and_dedupes_sources(tmp_path: Pa
     assert result.claim_source_map["SYN_CLAIM_001"]["source_label"] == "S1"
     assert result.claim_source_map["SYN_CLAIM_001"]["source_url"] == "https://example.com/shared"
     assert result.claim_source_map["SYN_CLAIM_001"]["source_title"] == "Shared Source"
+
+
+def test_source_appendix_ignores_noncanonical_and_prose_source_forms(tmp_path: Path):
+    ledger = tmp_path / "claim_ledger.json"
+    _write_ledger(
+        ledger,
+        [
+            _claim(
+                "CL-001",
+                source_id="SRC-001",
+                metadata={
+                    "source_title": "Canonical Source",
+                    "publisher": "Example News",
+                    "source_category": "news_media",
+                },
+            ),
+            _claim(
+                "CL-002",
+                source_id="SRC-002",
+                metadata={
+                    "source_title": "Deprecated Source",
+                    "publisher": "Example News",
+                    "source_category": "news_media",
+                },
+            ),
+            _claim(
+                "CL-003",
+                source_id="SRC-003",
+                metadata={
+                    "source_title": "Bare Source",
+                    "publisher": "Example News",
+                    "source_category": "news_media",
+                },
+            ),
+        ],
+    )
+    audited = (
+        "Canonical claim. [src:CL-001]\n"
+        "Deprecated marker. [source:CL-002]\n"
+        "Bare marker. source:CL-003\n"
+        "Primary source:10-K filing.\n"
+    )
+
+    result = build_source_appendix(audited_markdown=audited, ledger_path=ledger)
+
+    assert result.source_count == 1
+    assert result.cited_claim_count == 1
+    assert result.resolved_claim_count == 1
+    assert result.citation_labels == {"CL-001": "S1"}
+    assert "Canonical Source" in result.markdown
+    assert "Deprecated Source" not in result.markdown
+    assert "Bare Source" not in result.markdown
+    assert result.warnings == []
 
 
 def test_replace_claim_citations_with_reader_source_labels():
