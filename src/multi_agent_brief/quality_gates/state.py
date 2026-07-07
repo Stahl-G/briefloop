@@ -65,6 +65,7 @@ from multi_agent_brief.quality_gates.contract import (
 
 
 GATE_EVENT_ACTOR = "cli"
+GATE_SCOPED_STAGES = {"auditor", "finalize"}
 CURRENT_WORDS = re.compile(r"\b(this week|current|latest|newly|本周|本期|当前|最新|新增)\b", re.IGNORECASE)
 ANALYST_DRAFT_SNAPSHOT_FILE = "output/intermediate/analyst_draft_snapshot.md"
 FACT_NUMBER_RE = re.compile(
@@ -2477,9 +2478,16 @@ def _blocking_repair_guidance(
             if workflow_path.exists()
             else {}
         )
-        gate_stage_id = str(workflow.get("current_stage") or "")
-        gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)
-        if not _current_stage_gate_report_has_blocker(workspace, gate_stage_id):
+        current_stage_id = str(workflow.get("current_stage") or "")
+        gate_scope = _current_gate_scope_for_stage(current_stage_id)
+        if gate_scope is None:
+            return _stale_quality_gate_blocker_guidance(
+                workspace=workspace,
+                gate_stage_id=current_stage_id,
+                gate_artifact_id="",
+            )
+        gate_stage_id, gate_artifact_id = gate_scope
+        if not _current_stage_gate_report_has_blocker(workspace, gate_stage_id, gate_artifact_id):
             if (
                 _validation_uses_only_legacy_gate_projection(validation)
                 and _legacy_quality_gate_report_has_blocker(workspace)
@@ -2565,10 +2573,28 @@ def _blocking_repair_guidance(
     }
 
 
-def _current_stage_gate_report_has_blocker(workspace: Path, gate_stage_id: str) -> bool:
+def _current_gate_scope_for_stage(stage_id: str | None) -> tuple[str, str] | None:
+    stage = str(stage_id or "")
+    if stage not in GATE_SCOPED_STAGES:
+        return None
+    return stage, quality_gate_report_key_for_stage(stage)
+
+
+def _current_stage_gate_report_has_blocker(
+    workspace: Path,
+    gate_stage_id: str,
+    gate_artifact_id: str,
+) -> bool:
     try:
         report = load_quality_gate_report_for_stage(workspace, gate_stage_id, allow_legacy=False)
     except Exception:
+        return False
+    if not isinstance(report, dict):
+        return False
+    metadata = report.get("metadata") if isinstance(report.get("metadata"), dict) else {}
+    actual_stage = str(metadata.get("gate_stage_id") or metadata.get("stage_id") or "")
+    actual_artifact = str(metadata.get("gate_artifact_id") or "")
+    if actual_stage != gate_stage_id or actual_artifact != gate_artifact_id:
         return False
     return _quality_gate_report_payload_has_blocker(report)
 

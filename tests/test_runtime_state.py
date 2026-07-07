@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from functools import partial
 from pathlib import Path
@@ -750,7 +751,7 @@ def _write_finalize_human_gate_report(ws: Path) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _write_editor_repair_audit_report(ws: Path) -> None:
+def _write_editor_repair_audit_report(ws: Path, *, finding_id: str = "AUD_EDITOR_001") -> None:
     (_intermediate(ws) / "audit_report.json").write_text(
         json.dumps(
             {
@@ -760,7 +761,7 @@ def _write_editor_repair_audit_report(ws: Path) -> None:
                 "recommendation": "repair",
                 "findings": [
                     {
-                        "finding_id": "AUD_EDITOR_001",
+                        "finding_id": finding_id,
                         "finding_type": "unsupported_claim",
                         "severity": "high",
                         "artifact_id": "audited_brief",
@@ -3477,9 +3478,56 @@ def test_state_decide_delegate_repair_preserves_selected_non_gate_repair_route(t
     assert details["repair_route"]["source"]["kind"] == "audit_report"
     assert details["repair_route"]["source"]["finding_id"] == "AUD_EDITOR_001"
     assert any(command == f"multi-agent-brief repair route --workspace {ws} --json" for command in commands)
-    assert any("--finding-id AUD_EDITOR_001" in command for command in commands if "repair start" in command)
+    assert any("--route-index 0" in command for command in commands if "repair start" in command)
+    assert not any("--finding-id" in command for command in commands if "repair start" in command)
     assert not any("--gate-stage" in command for command in commands if "repair start" in command)
     assert not any(command == f"multi-agent-brief repair start --workspace {ws}" for command in commands)
+
+
+def test_state_decide_delegate_repair_non_gate_uses_route_index_for_duplicate_finding_ids(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_current_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_current_gate_finding(
+            "DUPLICATE_001",
+            repair_owner="human",
+            repair_stage_id="editor",
+        ),
+    )
+    _write_editor_repair_audit_report(ws, finding_id="DUPLICATE_001")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair selected non-gate finding",
+        )
+
+    details = excinfo.value.details
+    commands = details["required_commands"]
+    start_command = next(command for command in commands if " repair start " in command)
+    assert "--route-index " in start_command
+    assert "--finding-id" not in start_command
+    route_index = int(re.search(r"--route-index\s+(\d+)", start_command).group(1))  # type: ignore[union-attr]
+    assert details["repair_route"]["source"]["kind"] == "audit_report"
+    assert details["repair_route"]["source"]["finding_id"] == "DUPLICATE_001"
+    assert details["repair_route"]["route_rank"] == route_index
+
+    state = start_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        route_index=route_index,
+    )
+
+    repair = state["workflow_state"]["active_repair"]
+    assert repair["source"]["kind"] == "audit_report"
+    assert repair["source"]["finding_id"] == "DUPLICATE_001"
+    assert repair["repair_owner"] == "editor"
 
 
 def test_stage_complete_records_transaction_event_and_advances(tmp_path):
@@ -6742,6 +6790,32 @@ def test_scoped_repair_start_rejects_requested_gate_stage_mismatch_before_routin
     assert excinfo.value.details["requested_gate_artifact_id"] == "finalize_quality_gate_report"
     assert excinfo.value.details["current_stage"] == "auditor"
     assert excinfo.value.details["expected_gate_artifact_id"] == "auditor_quality_gate_report"
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
+
+
+def test_scoped_repair_start_rejects_non_gate_current_stage_before_routing(tmp_path, monkeypatch):
+    ws = _prepare_scoped_repair_workspace(tmp_path, current_stage="editor")
+
+    def fail_route_for_gate(**kwargs):
+        raise AssertionError("route_repair_for_gate should not be called for non-gate current stages")
+
+    monkeypatch.setattr(repair_router, "route_repair_for_gate", fail_route_for_gate)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            gate_stage_id="editor",
+            gate_artifact_id="auditor_quality_gate_report",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert "only valid for auditor/finalize" in str(excinfo.value)
+    assert excinfo.value.details["requested_gate_stage_id"] == "editor"
+    assert excinfo.value.details["requested_gate_artifact_id"] == "auditor_quality_gate_report"
+    assert excinfo.value.details["current_stage"] == "editor"
+    assert excinfo.value.details["gate_scoped_stages"] == ["auditor", "finalize"]
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert "active_repair" not in workflow
 

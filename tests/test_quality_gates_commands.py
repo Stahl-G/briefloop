@@ -935,6 +935,52 @@ def test_quality_gate_guidance_does_not_route_stale_downstream_blocker(tmp_path)
     ]
 
 
+def test_quality_gate_guidance_does_not_scope_non_gate_current_stage(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "editor")
+    _write_stage_gate_report(
+        ws,
+        stage_id="auditor",
+        finding={
+            "finding_id": "QG_STALE_AUDITOR_001",
+            "finding_type": "unsupported_claim",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "blocking": True,
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Stale auditor gate must not become editor scoped guidance.",
+        },
+    )
+
+    def fail_route_for_gate(**kwargs):
+        raise AssertionError("route_repair_for_gate should not be called for non-gate current stages")
+
+    monkeypatch.setattr(repair_router, "route_repair_for_gate", fail_route_for_gate)
+
+    guidance = quality_gate_state._blocking_repair_guidance(
+        workspace=ws.resolve(),
+        validation={"blocking_count": 1, "statuses": {"auditor_quality_gate_report": "fail"}},
+        repo_workdir=ROOT,
+    )
+
+    assert guidance["repair_route"]["route_kind"] == "none"
+    assert guidance["repair_route"]["repair_owner"] == "none"
+    assert guidance["repair_route"]["source"] == {"stage_id": "editor", "kind": ""}
+    assert guidance["required_commands"] == []
+    assert not any(" repair start " in command for command in guidance["required_commands"])
+    assert not any(" request_human_review " in command for command in guidance["required_commands"])
+    assert not any(" block_run " in command for command in guidance["required_commands"])
+    assert guidance["repair_steps"] == [
+        "Blocking quality-gate reports exist outside the current workflow stage.",
+        "Do not start repair from stale downstream reports.",
+        "Rerun the current or downstream gates, or inspect stage_quality_gate_reports to locate the blocking report.",
+    ]
+
+
 def test_quality_gate_guidance_materializes_legacy_current_gate_blocker(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)

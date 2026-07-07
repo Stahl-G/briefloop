@@ -91,6 +91,7 @@ QUALITY_GATE_ROUTE_SOURCES = {
     "finalize_quality_gate_report",
     "quality_gate_report",
 }
+GATE_SCOPED_STAGES = {"auditor", "finalize"}
 NON_GATE_ROUTE_SOURCES = {
     "audit_report",
     "finalize_report",
@@ -162,18 +163,26 @@ def _delegate_repair_transaction_required_error(
     decision: str,
     repo_workdir: str | Path | None = None,
 ) -> RuntimeStateError:
-    gate_artifact_id = quality_gate_report_key_for_stage(stage_id)
-    try:
-        from multi_agent_brief.repair.router import route_repair_for_gate
+    gate_artifact_id = _gate_scoped_artifact_id_for_stage(stage_id)
+    if gate_artifact_id is not None:
+        try:
+            from multi_agent_brief.repair.router import route_repair_for_gate
 
-        scoped_route = route_repair_for_gate(
-            workspace=workspace,
-            gate_stage_id=stage_id,
-            gate_artifact_id=gate_artifact_id,
-            repo_workdir=repo_workdir,
-        )
-    except Exception as exc:  # pragma: no cover - defensive best-effort diagnostics
-        scoped_route = {"ok": False, "error": str(exc)}
+            scoped_route = route_repair_for_gate(
+                workspace=workspace,
+                gate_stage_id=stage_id,
+                gate_artifact_id=gate_artifact_id,
+                repo_workdir=repo_workdir,
+            )
+        except Exception as exc:  # pragma: no cover - defensive best-effort diagnostics
+            scoped_route = {"ok": False, "error": str(exc)}
+    else:
+        scoped_route = {
+            "ok": True,
+            "route_kind": "none",
+            "repair_owner": "none",
+            "reason": "Current workflow stage has no scoped quality-gate repair route.",
+        }
 
     if _is_owner_stage_repair_route(scoped_route):
         return _repair_transaction_required_error(
@@ -214,7 +223,7 @@ def _delegate_repair_transaction_required_error(
                 ],
                 repair_steps=[
                     "Workspace-wide non-gate repair route is available.",
-                    "Start the selected route with --finding-id or --route-index from repair route output.",
+                    "Start the selected route with --route-index from repair route output.",
                     "Do not use bare repair start.",
                     "Delegate only the reported repair_owner role.",
                     "Allow edits only to repair_route.allowed_artifacts.",
@@ -283,7 +292,7 @@ def _non_gate_workspace_repair_route(workspace: Path) -> dict[str, Any] | None:
     except Exception:  # pragma: no cover - defensive best-effort diagnostics
         return None
     candidates = payload.get("routes") if isinstance(payload.get("routes"), list) else []
-    for route in candidates:
+    for fallback_index, route in enumerate(candidates):
         if not isinstance(route, dict) or not _is_owner_stage_repair_route(route):
             continue
         source = route.get("source") if isinstance(route.get("source"), dict) else {}
@@ -298,6 +307,7 @@ def _non_gate_workspace_repair_route(workspace: Path) -> dict[str, Any] | None:
             "ok": True,
             "workspace": str(workspace),
             **route,
+            "selected_route_index": route.get("route_rank", fallback_index),
             "routes": candidates,
             "finding_count": payload.get("finding_count"),
         }
@@ -305,10 +315,12 @@ def _non_gate_workspace_repair_route(workspace: Path) -> dict[str, Any] | None:
 
 
 def _repair_start_selector_for_route(route: dict[str, Any]) -> str:
-    source = route.get("source") if isinstance(route.get("source"), dict) else {}
-    finding_id = str(source.get("finding_id") or "")
-    if finding_id:
-        return f"--finding-id {shlex.quote(finding_id)}"
+    selected_route_index = route.get("selected_route_index")
+    if selected_route_index is not None:
+        try:
+            return f"--route-index {int(selected_route_index)}"
+        except (TypeError, ValueError):
+            pass
     route_rank = route.get("route_rank")
     if route_rank is not None:
         try:
@@ -316,6 +328,13 @@ def _repair_start_selector_for_route(route: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             pass
     return "--route-index 0"
+
+
+def _gate_scoped_artifact_id_for_stage(stage_id: str | None) -> str | None:
+    stage = str(stage_id or "")
+    if stage not in GATE_SCOPED_STAGES:
+        return None
+    return quality_gate_report_key_for_stage(stage)
 
 
 def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
@@ -522,7 +541,18 @@ def start_repair_transaction(
         )
     if scoped_gate_requested:
         current_gate_stage_id = str(workflow.get("current_stage") or "")
-        current_gate_artifact_id = quality_gate_report_key_for_stage(current_gate_stage_id)
+        current_gate_artifact_id = _gate_scoped_artifact_id_for_stage(current_gate_stage_id)
+        if current_gate_artifact_id is None:
+            raise RuntimeStateError(
+                "Scoped repair start is only valid for auditor/finalize quality-gate stages.",
+                details={
+                    "requested_gate_stage_id": gate_stage_id,
+                    "requested_gate_artifact_id": gate_artifact_id,
+                    "current_stage": current_gate_stage_id,
+                    "gate_scoped_stages": sorted(GATE_SCOPED_STAGES),
+                },
+                error_code=E_ILLEGAL_TRANSITION,
+            )
         if gate_stage_id != current_gate_stage_id or gate_artifact_id != current_gate_artifact_id:
             raise RuntimeStateError(
                 "Scoped repair start gate must match the current workflow stage.",
