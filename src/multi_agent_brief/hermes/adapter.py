@@ -22,7 +22,11 @@ REPAIR_GUIDANCE_NOTE = (
     "owner-stage artifact repair, run `briefloop gates show --workspace <workspace> "
     "--json` and follow its required_commands. Current-gate repair start must be "
     "scoped with `--gate-stage` and `--gate-artifact`; do not use unscoped repair "
-    "start for current-gate blockers. After the owner edits only allowed_artifacts, "
+    "start for current-gate blockers. For non-gate owner-stage repair routes from "
+    "audit_report, finalize_report, artifact_registry, or transaction_integrity, run "
+    "`briefloop repair route --workspace <workspace> --json`, then start the selected "
+    "route with `--finding-id <finding_id>` or `--route-index <route_index>`; do not "
+    "use bare `repair start --workspace <workspace>`. After the owner edits only allowed_artifacts, "
     "run `briefloop repair complete --workspace <workspace> --reason \"<reason>\"` "
     "and rerun downstream stages from must_rerun_from."
 )
@@ -691,7 +695,7 @@ As the Hermes Orchestrator main agent, execute:
 20. If state is not blocked, record the auditor completion:
     briefloop state stage-complete --workspace {workspace} --stage auditor --reason "Audit and quality gates passed."
 
-21. If state is blocked by owner-stage artifact repair, run `briefloop gates show --workspace {workspace} --json` and follow its required_commands. Current-gate repair start must be scoped with `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers. Delegate only the repair_owner role and allow edits only to allowed_artifacts, then run `briefloop repair complete --workspace {workspace} --reason "<reason>"` and rerun downstream stages from must_rerun_from. Otherwise choose request_human_review or block_run. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
+21. If state is blocked by current quality-gate owner-stage artifact repair, run `briefloop gates show --workspace {workspace} --json` and follow its required_commands. Current-gate repair start must be scoped with `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers. For non-gate owner-stage repair routes from audit_report, finalize_report, artifact_registry, or transaction_integrity, run `briefloop repair route --workspace {workspace} --json`, then start the selected route with `--finding-id <finding_id>` or `--route-index <route_index>`; do not use bare `repair start --workspace {workspace}`. Delegate only the repair_owner role and allow edits only to allowed_artifacts, then run `briefloop repair complete --workspace {workspace} --reason "<reason>"` and rerun downstream stages from must_rerun_from. Otherwise choose request_human_review or block_run. Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Do not finalize.
 
 22. Run finalize only after the gates/state completion path passes. finalize is not a quality-gate executor:
     briefloop finalize --config {workspace}/config.yaml

@@ -231,12 +231,24 @@ frozen snapshot.
 
 ## Repair And Contamination
 
-If gates or audit block the run, use:
+If the current quality gate blocks the run, inspect scoped gate guidance:
+
+```bash
+multi-agent-brief gates show --workspace <workspace> --json
+```
+
+Follow `required_commands`; current-gate repair start must include
+`--gate-stage` and `--gate-artifact`. If a non-gate blocker from
+`audit_report`, `finalize_report`, `artifact_registry`, or
+`transaction_integrity` needs repair, inspect the workspace route:
 
 ```bash
 multi-agent-brief repair route --workspace <workspace> --json
-multi-agent-brief repair start --workspace <workspace>
 ```
+
+Start the selected non-gate route with `--finding-id <finding_id>` or
+`--route-index <route_index>`. Do not use bare
+`repair start --workspace <workspace>`.
 
 Delegate only the reported `repair_owner` role. Only `allowed_artifacts` may be
 edited. After the owner repair, run:

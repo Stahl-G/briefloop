@@ -18,6 +18,19 @@ Use the scoped repair start command from `gates show`. Current-gate repair
 start must include `--gate-stage` and `--gate-artifact`; do not use unscoped
 repair start for current-gate blockers.
 
+## Start Non-Gate Repair
+
+For non-gate owner-stage repair routes from audit_report, finalize_report,
+artifact_registry, or transaction_integrity, inspect:
+
+```bash
+multi-agent-brief repair route --workspace <workspace> --json
+```
+
+Start the selected non-gate route with `--finding-id <finding_id>` or
+`--route-index <route_index>`. Do not use bare
+`repair start --workspace <workspace>`.
+
 After this transaction, edit only the artifacts allowed by the active repair
 record and only for the repair owner/stage shown by BriefLoop.
 

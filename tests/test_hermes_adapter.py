@@ -65,11 +65,16 @@ def _assert_scoped_repair_guidance(text: str, workspace: str) -> None:
     assert "follow its required_commands" in text
     assert "--gate-stage" in text
     assert "--gate-artifact" in text
+    assert f"briefloop repair route --workspace {workspace} --json" in text
+    assert "--finding-id <finding_id>" in text
+    assert "--route-index <route_index>" in text
     assert "do not use unscoped repair start for current-gate blockers" in text
-    unscoped_start = re.compile(
-        rf"briefloop repair start --workspace {re.escape(workspace)}(?![^\n`]*--gate-stage)"
+    bare_start = re.compile(
+        rf"briefloop repair start --workspace {re.escape(workspace)}"
+        r"(?![^\n`]*(?:--gate-stage|--finding-id|--route-index))"
     )
-    assert not unscoped_start.search(text)
+    offenders = [line for line in text.splitlines() if bare_start.search(line) and "do not use bare" not in line]
+    assert offenders == []
 
 
 # ---------------------------------------------------------------------------

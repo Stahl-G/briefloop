@@ -671,17 +671,19 @@ def _write_editor_repair_gate_report(ws: Path) -> None:
         "status": "fail",
         "gate_results": [
             {
-                "gate_id": "material_fact",
-                "status": "fail",
-                "blocking": True,
-                "finding_ids": ["QG_EDITOR_REPAIR_001"],
+                "gate_id": gate_id,
+                "status": "fail" if gate_id == "material_fact" else "pass",
+                "blocking": gate_id == "material_fact",
+                "finding_ids": ["QG_EDITOR_REPAIR_001"] if gate_id == "material_fact" else [],
             }
+            for gate_id in ("coverage_omission", "freshness", "material_fact", "target_relevance")
         ],
         "findings": [
             {
                 "finding_id": "QG_EDITOR_REPAIR_001",
                 "finding_type": "unsupported_claim",
                 "severity": "high",
+                "blocking_level": "blocking",
                 "blocking": True,
                 "artifact_id": "audited_brief",
                 "repair_owner": "editor",
@@ -701,6 +703,81 @@ def _write_editor_repair_gate_report(ws: Path) -> None:
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     path.write_text(text, encoding="utf-8")
     (_intermediate(ws) / "quality_gate_report.json").write_text(text, encoding="utf-8")
+
+
+def _write_finalize_human_gate_report(ws: Path) -> None:
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "multi-agent-brief-quality-gates/v1",
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "updated_at": "2026-06-11T00:00:00+00:00",
+        "workspace": ".",
+        "report_date": "2026-06-11",
+        "policy_pack": "default",
+        "status": "fail",
+        "gate_results": [
+            {
+                "gate_id": gate_id,
+                "status": "fail" if gate_id == "target_relevance" else "pass",
+                "blocking": gate_id == "target_relevance",
+                "finding_ids": ["QG_STALE_HUMAN_001"] if gate_id == "target_relevance" else [],
+            }
+            for gate_id in ("coverage_omission", "freshness", "material_fact", "target_relevance")
+        ],
+        "findings": [
+            {
+                "finding_id": "QG_STALE_HUMAN_001",
+                "finding_type": "target_mapping_ambiguous",
+                "severity": "high",
+                "blocking_level": "blocking",
+                "blocking": True,
+                "artifact_id": "audited_brief",
+                "repair_owner": "human",
+                "repair_stage_id": "editor",
+                "repair_artifact_id": "audited_brief",
+                "message": "Stale finalize target mapping requires human review.",
+            }
+        ],
+        "metadata": {
+            "brief": "output/brief.md",
+            "ledger": "output/intermediate/claim_ledger.json",
+            "stage_id": "finalize",
+            "gate_stage_id": "finalize",
+            "gate_artifact_id": "finalize_quality_gate_report",
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_editor_repair_audit_report(ws: Path) -> None:
+    (_intermediate(ws) / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "audit_status": "fail",
+                "audit_score": 40,
+                "passed": False,
+                "recommendation": "repair",
+                "findings": [
+                    {
+                        "finding_id": "AUD_EDITOR_001",
+                        "finding_type": "unsupported_claim",
+                        "severity": "high",
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Audited brief needs editor repair from audit report.",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _current_gate_finding(
@@ -3302,12 +3379,16 @@ def test_state_decide_delegate_repair_requires_repair_transaction_without_mutati
 
     assert excinfo.value.error_code == runtime_state.operations.E_REPAIR_TRANSACTION_REQUIRED
     details = excinfo.value.details
-    assert "multi-agent-brief repair route" in "\n".join(details["required_commands"])
-    assert "multi-agent-brief repair start" in "\n".join(details["required_commands"])
+    commands = "\n".join(details["required_commands"])
+    assert "multi-agent-brief gates show" in commands
+    assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in commands
     assert "multi-agent-brief repair complete" in "\n".join(details["required_commands"])
+    assert f"multi-agent-brief repair start --workspace {ws}" not in details["required_commands"]
     assert "Delegate only the reported repair_owner role." in details["repair_steps"]
     assert "Allow edits only to repair_route.allowed_artifacts." in details["repair_steps"]
     assert details["repair_route"]["repair_owner"] == "editor"
+    assert details["repair_route"]["source"]["kind"] == "auditor_quality_gate_report"
+    assert details["repair_route"]["source"]["finding_id"] == "QG_EDITOR_REPAIR_001"
     assert details["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert details["repair_route"]["must_rerun_from"] == "auditor"
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
@@ -3341,14 +3422,64 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "multi-agent-brief repair route" in out
     assert "multi-agent-brief repair start" in out
+    assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in out
     assert "multi-agent-brief repair complete" in out
     assert "[state] repair_steps:" in out
     assert "Delegate only the reported repair_owner role." in out
     assert "[state] repair_owner: editor" in out
     assert "[state] must_rerun_from: auditor" in out
     assert "output/intermediate/audited_brief.md" in out
+
+
+def test_state_decide_delegate_repair_uses_current_gate_over_stale_gate(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_editor_repair_gate_report(ws)
+    _write_finalize_human_gate_report(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair current auditor gate",
+        )
+
+    details = excinfo.value.details
+    commands = details["required_commands"]
+    assert details["repair_route"]["source"]["kind"] == "auditor_quality_gate_report"
+    assert details["repair_route"]["source"]["finding_id"] == "QG_EDITOR_REPAIR_001"
+    assert any("--gate-stage auditor --gate-artifact auditor_quality_gate_report" in command for command in commands)
+    assert not any("finalize_quality_gate_report" in command for command in commands)
+    assert not any(command == f"multi-agent-brief repair start --workspace {ws}" for command in commands)
+
+
+def test_state_decide_delegate_repair_preserves_selected_non_gate_repair_route(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_editor_repair_audit_report(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair non-gate audit finding",
+        )
+
+    details = excinfo.value.details
+    commands = details["required_commands"]
+    assert details["repair_route"]["source"]["kind"] == "audit_report"
+    assert details["repair_route"]["source"]["finding_id"] == "AUD_EDITOR_001"
+    assert any(command == f"multi-agent-brief repair route --workspace {ws} --json" for command in commands)
+    assert any("--finding-id AUD_EDITOR_001" in command for command in commands if "repair start" in command)
+    assert not any("--gate-stage" in command for command in commands if "repair start" in command)
+    assert not any(command == f"multi-agent-brief repair start --workspace {ws}" for command in commands)
 
 
 def test_stage_complete_records_transaction_event_and_advances(tmp_path):

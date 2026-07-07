@@ -126,7 +126,8 @@ briefloop state stage-complete --workspace <workspace> --stage auditor --reason 
 
 Do not call `briefloop run` again mid-pipeline to refresh handoff or state. Use `briefloop status`, `state show`, `gates check`, `state check`, and repair commands instead.
 
-If state is blocked by owner-stage artifact repair, do not use `state decide delegate_repair`. Run:
+If state is blocked by current quality-gate owner-stage artifact repair, do not
+use `state decide delegate_repair`. Run:
 
 ```bash
 briefloop gates show --workspace <workspace> --json
@@ -141,7 +142,18 @@ edits only to allowed_artifacts, then run:
 briefloop repair complete --workspace <workspace> --reason "<reason>"
 ```
 
-Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Use `gates show` required_commands and scoped repair start before current-gate owner-stage edits, or choose `request_human_review` / `block_run` when no deterministic route exists.
+For non-gate owner-stage repair routes from audit_report, finalize_report,
+artifact_registry, or transaction_integrity, inspect:
+
+```bash
+briefloop repair route --workspace <workspace> --json
+```
+
+Start the selected non-gate route with `--finding-id <finding_id>` or
+`--route-index <route_index>`. Do not use bare
+`repair start --workspace <workspace>`.
+
+Audit warnings, overstatement findings, support-calibration findings, and quality-gate findings do not authorize direct edits to frozen artifacts. Use `gates show` required_commands and scoped repair start before current-gate owner-stage edits, use selected repair route/start for non-gate owner-stage repair, or choose `request_human_review` / `block_run` when no deterministic route exists.
 
 After repair-complete, rerun downstream stages from must_rerun_from. For non-repair blocks, choose `request_human_review` or `block_run`; do not finalize. `finalize` is not a quality-gate executor. Formatter/finalize may write only reader-facing delivery artifacts and finalize control records; it must not edit `output/intermediate/audited_brief.md`, `output/intermediate/audit_report.json`, artifact registry, or workflow state. If reader-clean requires wording changes to the audited brief, stop and route repair to Editor before rerunning downstream stages.
 

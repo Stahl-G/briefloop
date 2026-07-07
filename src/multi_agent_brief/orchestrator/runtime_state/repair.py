@@ -86,6 +86,18 @@ from multi_agent_brief.orchestrator.run_integrity import (
 )
 from multi_agent_brief.quality_gates.contract import quality_gate_report_key_for_stage
 
+QUALITY_GATE_ROUTE_SOURCES = {
+    "auditor_quality_gate_report",
+    "finalize_quality_gate_report",
+    "quality_gate_report",
+}
+NON_GATE_ROUTE_SOURCES = {
+    "audit_report",
+    "finalize_report",
+    "artifact_registry",
+    "transaction_integrity",
+}
+
 
 def _active_repair_blocking_error(
     workspace: Path, workflow: dict[str, Any]
@@ -144,14 +156,98 @@ def _repair_route_error(payload: dict[str, Any]) -> RuntimeStateError:
 
 
 def _delegate_repair_transaction_required_error(
-    *, workspace: Path, stage_id: str, decision: str
+    *,
+    workspace: Path,
+    stage_id: str,
+    decision: str,
+    repo_workdir: str | Path | None = None,
 ) -> RuntimeStateError:
+    gate_artifact_id = quality_gate_report_key_for_stage(stage_id)
     try:
-        from multi_agent_brief.repair.router import route_repair
+        from multi_agent_brief.repair.router import route_repair_for_gate
 
-        repair_route = route_repair(workspace=workspace)
+        scoped_route = route_repair_for_gate(
+            workspace=workspace,
+            gate_stage_id=stage_id,
+            gate_artifact_id=gate_artifact_id,
+            repo_workdir=repo_workdir,
+        )
     except Exception as exc:  # pragma: no cover - defensive best-effort diagnostics
-        repair_route = {"ok": False, "error": str(exc)}
+        scoped_route = {"ok": False, "error": str(exc)}
+
+    if _is_owner_stage_repair_route(scoped_route):
+        return _repair_transaction_required_error(
+            workspace=workspace,
+            stage_id=stage_id,
+            decision=decision,
+            repair_route=scoped_route,
+            required_commands=[
+                f"multi-agent-brief gates show --workspace {workspace} --json",
+                (
+                    f"multi-agent-brief repair start --workspace {workspace} "
+                    f"--gate-stage {stage_id} --gate-artifact {gate_artifact_id} --json"
+                ),
+                f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>" --json',
+            ],
+            repair_steps=[
+                "Current gate has an owner-stage repair route.",
+                "Use scoped repair start; do not use workspace-wide bare repair start.",
+                "Delegate only the reported repair_owner role.",
+                "Allow edits only to repair_route.allowed_artifacts.",
+                "Run repair complete after the owner edits.",
+            ],
+        )
+
+    if scoped_route.get("ok") and scoped_route.get("route_kind") == "none":
+        workspace_route = _non_gate_workspace_repair_route(workspace)
+        if workspace_route is not None:
+            selector = _repair_start_selector_for_route(workspace_route)
+            return _repair_transaction_required_error(
+                workspace=workspace,
+                stage_id=stage_id,
+                decision=decision,
+                repair_route=workspace_route,
+                required_commands=[
+                    f"multi-agent-brief repair route --workspace {workspace} --json",
+                    f"multi-agent-brief repair start --workspace {workspace} {selector} --json",
+                    f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>" --json',
+                ],
+                repair_steps=[
+                    "Workspace-wide non-gate repair route is available.",
+                    "Start the selected route with --finding-id or --route-index from repair route output.",
+                    "Do not use bare repair start.",
+                    "Delegate only the reported repair_owner role.",
+                    "Allow edits only to repair_route.allowed_artifacts.",
+                    "Run repair complete after the owner edits.",
+                ],
+            )
+
+    repair_route = scoped_route if scoped_route.get("ok") else {"ok": False, **scoped_route}
+    return _repair_transaction_required_error(
+        workspace=workspace,
+        stage_id=stage_id,
+        decision=decision,
+        repair_route=repair_route,
+        required_commands=[
+            f"multi-agent-brief gates show --workspace {workspace} --json",
+        ],
+        repair_steps=[
+            "delegate_repair cannot be recorded through state decide.",
+            "Use gates show for current-gate blockers, or repair route for non-gate blockers.",
+            "Do not use bare repair start.",
+        ],
+    )
+
+
+def _repair_transaction_required_error(
+    *,
+    workspace: Path,
+    stage_id: str,
+    decision: str,
+    repair_route: dict[str, Any],
+    required_commands: list[str],
+    repair_steps: list[str],
+) -> RuntimeStateError:
     return RuntimeStateError(
         (
             "Decision 'delegate_repair' requires `multi-agent-brief repair start`; "
@@ -160,22 +256,66 @@ def _delegate_repair_transaction_required_error(
         details={
             "stage_id": stage_id,
             "decision": decision,
-            "required_commands": [
-                f"multi-agent-brief repair route --workspace {workspace}",
-                f"multi-agent-brief repair start --workspace {workspace}",
-                f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>"',
-            ],
-            "repair_steps": [
-                "Run repair start to open an owner-stage repair transaction.",
-                "Delegate only the reported repair_owner role.",
-                "Allow edits only to repair_route.allowed_artifacts.",
-                "Run repair complete after the owner edits.",
-            ],
+            "required_commands": required_commands,
+            "repair_steps": repair_steps,
             "fallback_decisions": ["request_human_review", "block_run"],
             "repair_route": repair_route,
         },
         error_code=E_REPAIR_TRANSACTION_REQUIRED,
     )
+
+
+def _is_owner_stage_repair_route(route: dict[str, Any]) -> bool:
+    return bool(
+        route.get("ok", True)
+        and route.get("route_kind") == "owner_stage_repair"
+        and route.get("repair_owner") not in {None, "", "none", "human"}
+        and route.get("allowed_artifacts")
+        and route.get("must_rerun_from")
+    )
+
+
+def _non_gate_workspace_repair_route(workspace: Path) -> dict[str, Any] | None:
+    try:
+        from multi_agent_brief.repair.router import route_repair
+
+        payload = route_repair(workspace=workspace)
+    except Exception:  # pragma: no cover - defensive best-effort diagnostics
+        return None
+    candidates = payload.get("routes") if isinstance(payload.get("routes"), list) else []
+    for route in candidates:
+        if not isinstance(route, dict) or not _is_owner_stage_repair_route(route):
+            continue
+        source = route.get("source") if isinstance(route.get("source"), dict) else {}
+        source_kind = str(source.get("kind") or "")
+        if source_kind in QUALITY_GATE_ROUTE_SOURCES:
+            continue
+        if source_kind not in NON_GATE_ROUTE_SOURCES:
+            continue
+        if route.get("is_imported_fact_layer_forbidden") is True:
+            continue
+        return {
+            "ok": True,
+            "workspace": str(workspace),
+            **route,
+            "routes": candidates,
+            "finding_count": payload.get("finding_count"),
+        }
+    return None
+
+
+def _repair_start_selector_for_route(route: dict[str, Any]) -> str:
+    source = route.get("source") if isinstance(route.get("source"), dict) else {}
+    finding_id = str(source.get("finding_id") or "")
+    if finding_id:
+        return f"--finding-id {shlex.quote(finding_id)}"
+    route_rank = route.get("route_rank")
+    if route_rank is not None:
+        try:
+            return f"--route-index {int(route_rank)}"
+        except (TypeError, ValueError):
+            pass
+    return "--route-index 0"
 
 
 def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:

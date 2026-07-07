@@ -136,10 +136,15 @@ roles:
       `briefloop gates show --workspace <workspace> --json` and follow its
       required_commands. Current-gate repair start must use `--gate-stage` and
       `--gate-artifact`; do not use unscoped repair start for current-gate
-      blockers. Delegate only the repair_owner role and finish with `briefloop
-      repair complete --workspace <workspace> --reason "<reason>"`; if any
-      command rejects the decision, completion, or repair, stop and correct the
-      stage state.
+      blockers. For non-gate owner-stage repair routes from audit_report,
+      finalize_report, artifact_registry, or transaction_integrity, run
+      `briefloop repair route --workspace <workspace> --json`, then start the
+      selected route with `--finding-id <finding_id>` or `--route-index
+      <route_index>`; do not use bare `repair start --workspace <workspace>`.
+      Delegate only the repair_owner role and finish with `briefloop repair
+      complete --workspace <workspace> --reason "<reason>"`; if any command
+      rejects the decision, completion, or repair, stop and correct the stage
+      state.
     - Before finalize, after Auditor completes, run gates check with
       `--stage auditor` and strict state check. If blocking findings exist,
       do not finalize; use feedback plus the deterministic repair transaction,
@@ -158,8 +163,10 @@ roles:
     - Audit warnings, overstatement findings, support-calibration findings, and
       quality-gate findings do not authorize direct edits to frozen artifacts.
       Route current-gate owner-stage repair through `gates show` required_commands
-      and scoped repair start, or choose request_human_review or block_run when
-      no deterministic route exists.
+      and scoped repair start. Route non-gate owner-stage repair through
+      `repair route --json` and selected `repair start` with `--finding-id` or
+      `--route-index`. Choose request_human_review or block_run when no
+      deterministic route exists.
     - Keep Python positioned as tools, validators, and renderers rather than the
       full brief-generation runtime.
     - Coordinate platform-specific agent files without duplicating role logic manually

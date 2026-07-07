@@ -134,6 +134,7 @@ def record_decision(
             workspace=ws,
             stage_id=stage_id,
             decision=decision,
+            repo_workdir=repo_workdir,
         )
 
     if decision in {"continue", "finalize"}:

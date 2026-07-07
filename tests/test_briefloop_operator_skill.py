@@ -126,13 +126,13 @@ def test_experiment_reference_uses_formal_blind_command_loop() -> None:
 def test_repair_reference_requires_transaction_path() -> None:
     text = _read(CANONICAL / "references" / "repair-protocol.md")
     assert "briefloop gates show --workspace <workspace> --json" in text
+    assert "briefloop repair route --workspace <workspace> --json" in text
     assert "--gate-stage" in text
     assert "--gate-artifact" in text
+    assert "--finding-id <finding_id>" in text
+    assert "--route-index <route_index>" in text
     assert "do not use unscoped repair" in text
-    assert not re.search(
-        r"briefloop\s+repair\s+start\s+--workspace\s+<workspace>(?![^\n`]*--gate-stage)",
-        text,
-    )
+    assert "Do not use bare" in text
     assert "briefloop repair complete" in text
     assert "allowed_artifacts" in text
     assert "does not make a contaminated run clean" in text

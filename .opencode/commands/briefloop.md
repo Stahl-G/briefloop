@@ -118,6 +118,8 @@ Stage sequence:
     - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.
     - Run: `briefloop gates show --workspace $ARGUMENTS --json` and follow its required_commands.
     - Current-gate repair start must be scoped with `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers.
+    - For non-gate owner-stage repair routes from audit_report, finalize_report, artifact_registry, or transaction_integrity, run: `briefloop repair route --workspace $ARGUMENTS --json`.
+    - Start the selected non-gate route with `--finding-id <finding_id>` or `--route-index <route_index>`; do not use bare `repair start --workspace $ARGUMENTS`.
     - If the current gate has an owner-stage repair route:
       1. Run the scoped repair start command from `gates show` required_commands.
       2. Delegate only the reported repair_owner role.

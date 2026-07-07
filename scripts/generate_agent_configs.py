@@ -918,6 +918,8 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "    - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.\n"
         "    - Run: `briefloop gates show --workspace $ARGUMENTS --json` and follow its required_commands.\n"
         "    - Current-gate repair start must be scoped with `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers.\n"
+        "    - For non-gate owner-stage repair routes from audit_report, finalize_report, artifact_registry, or transaction_integrity, run: `briefloop repair route --workspace $ARGUMENTS --json`.\n"
+        "    - Start the selected non-gate route with `--finding-id <finding_id>` or `--route-index <route_index>`; do not use bare `repair start --workspace $ARGUMENTS`.\n"
         "    - If the current gate has an owner-stage repair route:\n"
         "      1. Run the scoped repair start command from `gates show` required_commands.\n"
         "      2. Delegate only the reported repair_owner role.\n"

@@ -1091,20 +1091,29 @@ def test_runtime_repair_instructions_use_scoped_current_gate_start() -> None:
                 if path.is_file() and path.suffix in {".md", ".toml", ".yaml", ".yml", ".py"}
             )
     instruction_files = sorted(set(instruction_files))
-    unscoped_start = re.compile(
+    bare_start = re.compile(
         r"(?:briefloop|multi-agent-brief)\s+repair\s+start\s+--workspace\s+"
-        r"(?:<workspace>|\{workspace\}|\$ARGUMENTS)(?![^`\n]*--gate-stage)"
+        r"(?:<workspace>|\{workspace\}|\$ARGUMENTS)"
+        r"(?![^`\n]*(?:--gate-stage|--finding-id|--route-index))"
     )
     combined_text = ""
 
     for path in instruction_files:
         text = path.read_text(encoding="utf-8")
         combined_text += f"\n# {path}\n{text}"
-        assert not unscoped_start.search(text), path
+        offenders = [
+            line
+            for line in text.splitlines()
+            if bare_start.search(line) and "do not use bare" not in line and "Do not use bare" not in line
+        ]
+        assert offenders == [], path
 
     assert "gates show --workspace" in combined_text
+    assert "repair route --workspace" in combined_text
     assert "--gate-stage" in combined_text
     assert "--gate-artifact" in combined_text
+    assert "--finding-id" in combined_text
+    assert "--route-index" in combined_text
     assert "do not use unscoped repair start for current-gate blockers" in combined_text
 
 
