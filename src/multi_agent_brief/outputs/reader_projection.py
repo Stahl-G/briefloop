@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from multi_agent_brief.core.citations import parse_internal_citation_markers
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -26,9 +27,7 @@ from multi_agent_brief.product.policy_gate_adapter import (
     resolve_workspace_policy_gate_adapter,
 )
 from multi_agent_brief.product.template_renderer import render_reader_markdown_with_template
-from multi_agent_brief.tools.draft_cleanup import strip_claim_citations
 
-_SRC_MARKER_RE = re.compile(r"\[src:[^\]]*\]")
 _INTERNAL_READER_SECTION_RE = re.compile(
     r"(?:claim\s+ledger|声明账本).{0,80}(?:coverage|覆盖情况|覆盖)",
     re.IGNORECASE,
@@ -42,6 +41,44 @@ class ReaderProjectionSourceError(ValueError):
 
 
 @dataclass(frozen=True)
+class ReaderProjectionResidueFinding:
+    kind: str
+    raw: str
+    claim_id: str
+    status: str
+    start: int
+    end: int
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "raw": self.raw,
+            "claim_id": self.claim_id,
+            "status": self.status,
+            "start": self.start,
+            "end": self.end,
+            "message": self.message,
+        }
+
+
+@dataclass(frozen=True)
+class ReaderProjectionResidueReport:
+    status: str
+    unresolved_src_marker_count: int = 0
+    malformed_src_marker_count: int = 0
+    findings: list[ReaderProjectionResidueFinding] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "unresolved_src_marker_count": self.unresolved_src_marker_count,
+            "malformed_src_marker_count": self.malformed_src_marker_count,
+            "findings": [finding.to_dict() for finding in self.findings],
+        }
+
+
+@dataclass(frozen=True)
 class ReaderProjectionResult:
     """Candidate reader projection rendered from frozen audit artifacts."""
 
@@ -51,6 +88,7 @@ class ReaderProjectionResult:
     reader_brief: str
     reader_markdown: str
     stripped_src_marker_count: int = 0
+    reader_projection_residue: dict[str, Any] = field(default_factory=dict)
     source_appendix: str = ""
     source_appendix_generation: str = "not_requested"
     source_appendix_requested_by: str = "none"
@@ -124,7 +162,6 @@ def build_reader_projection(
     try:
         audited_markdown = audited_path.read_text(encoding="utf-8")
         reader_source = reader_projection_source_markdown(audited_markdown)
-        stripped_count = len(_SRC_MARKER_RE.findall(reader_source))
         formats = set(output_formats or ["markdown"])
         source_appendix_config = source_appendix_config or {}
         appendix_request = _source_appendix_request(
@@ -150,13 +187,17 @@ def build_reader_projection(
             if appendix_request["requested_by"] == "none" and appendix_result.source_count
             else str(appendix_request["requested_by"])
         )
-        reader_body_markdown = (
-            replace_claim_citations_with_labels(
-                reader_source,
-                appendix_result.citation_labels,
-            )
-            if appendix_result.citation_labels
-            else strip_claim_citations(reader_source)
+        residue_report = _reader_projection_residue_report(
+            reader_source,
+            citation_labels=appendix_result.citation_labels,
+        )
+        stripped_count = _resolved_projection_count(
+            reader_source,
+            citation_labels=appendix_result.citation_labels,
+        )
+        reader_body_markdown = replace_claim_citations_with_labels(
+            reader_source,
+            appendix_result.citation_labels,
         )
         reader_markdown = reader_body_markdown
         if appendix_result.markdown and appendix_result.source_count:
@@ -178,6 +219,11 @@ def build_reader_projection(
             docx_paths=[],
             forbidden_phrases=policy_forbidden_phrases(policy_gate_adapter),
         )
+        reader_clean = merge_projection_residue_into_reader_clean(
+            reader_clean,
+            residue_report,
+            artifact=str(reader_path),
+        )
 
         return ReaderProjectionResult(
             candidate_dir=str(candidate_dir),
@@ -186,6 +232,7 @@ def build_reader_projection(
             reader_brief=str(reader_path),
             reader_markdown=reader_markdown,
             stripped_src_marker_count=stripped_count,
+            reader_projection_residue=residue_report.to_dict(),
             source_appendix=str(appendix_path) if appendix_result.markdown and appendix_path.exists() else "",
             source_appendix_generation=appendix_result.status,
             source_appendix_requested_by=appendix_requested_by,
@@ -256,6 +303,104 @@ def build_reader_clean_report(
         for path in docx_paths
     )
     return combine_reader_final_gate_results(results).to_report_dict()
+
+
+def merge_projection_residue_into_reader_clean(
+    reader_clean: dict[str, Any],
+    residue_report: ReaderProjectionResidueReport | dict[str, Any],
+    *,
+    artifact: str,
+) -> dict[str, Any]:
+    """Merge parser-backed projection residue facts into a reader-clean report."""
+
+    report = (
+        residue_report.to_dict()
+        if isinstance(residue_report, ReaderProjectionResidueReport)
+        else dict(residue_report or {})
+    )
+    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+    unresolved_count = int(report.get("unresolved_src_marker_count") or 0)
+    malformed_count = int(report.get("malformed_src_marker_count") or 0)
+    if not findings and unresolved_count == 0 and malformed_count == 0:
+        return reader_clean
+
+    merged = dict(reader_clean)
+    merged["status"] = "fail"
+    merged["reader_projection_unresolved_src_marker_count"] = unresolved_count
+    merged["reader_projection_malformed_src_marker_count"] = malformed_count
+    sample_findings = list(merged.get("sample_findings") or [])
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        status = str(finding.get("status") or "unknown")
+        raw = str(finding.get("raw") or "")
+        message = str(finding.get("message") or "Reader projection contains unresolved citation residue.")
+        sample_findings.append(
+            {
+                "kind": f"reader_projection_{status}_src_marker",
+                "text": raw,
+                "line": None,
+                "artifact": artifact,
+                "message": message,
+                "claim_id": str(finding.get("claim_id") or ""),
+            }
+        )
+    merged["sample_findings"] = sample_findings[:10]
+    return merged
+
+
+def _reader_projection_residue_report(
+    markdown: str,
+    *,
+    citation_labels: dict[str, str],
+) -> ReaderProjectionResidueReport:
+    findings: list[ReaderProjectionResidueFinding] = []
+    unresolved_count = 0
+    malformed_count = 0
+    for marker in parse_internal_citation_markers(
+        markdown,
+        valid_claim_ids=set(citation_labels),
+        include_bare_claim_ids=False,
+    ):
+        if marker.status == "resolved":
+            continue
+        if marker.status == "malformed":
+            malformed_count += 1
+        else:
+            unresolved_count += 1
+        findings.append(
+            ReaderProjectionResidueFinding(
+                kind=f"{marker.status}_src_marker",
+                raw=marker.raw,
+                claim_id=marker.claim_id,
+                status=marker.status,
+                start=marker.start,
+                end=marker.end,
+                message=marker.message,
+            )
+        )
+    return ReaderProjectionResidueReport(
+        status="fail" if findings else "pass",
+        unresolved_src_marker_count=unresolved_count,
+        malformed_src_marker_count=malformed_count,
+        findings=findings,
+    )
+
+
+def _resolved_projection_count(
+    markdown: str,
+    *,
+    citation_labels: dict[str, str],
+) -> int:
+    return sum(
+        1
+        for marker in parse_internal_citation_markers(
+            markdown,
+            valid_claim_ids=set(citation_labels),
+            include_bare_claim_ids=False,
+        )
+        if marker.status == "resolved"
+    )
 
 
 def _projection_transaction_id(transaction_id: str | None) -> str:

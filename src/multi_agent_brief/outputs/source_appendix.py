@@ -243,12 +243,19 @@ def replace_claim_citations_with_labels(
 ) -> str:
     """Replace internal claim citations with reader-facing source labels."""
 
-    def _replace(match: re.Match[str]) -> str:
-        label = citation_labels.get(match.group(1).strip())
-        return f"[{label}]" if label else ""
-
-    text = _SRC_REF_RE.sub(_replace, markdown)
-    text = re.compile(r"\[src:[^\]]*\]").sub("", text)
+    parts: list[str] = []
+    cursor = 0
+    for marker in parse_internal_citation_markers(
+        markdown,
+        valid_claim_ids=set(citation_labels),
+        include_bare_claim_ids=False,
+    ):
+        parts.append(markdown[cursor:marker.start])
+        label = citation_labels.get(marker.claim_id) if marker.status == "resolved" else None
+        parts.append(f"[{label}]" if label else marker.raw)
+        cursor = marker.end
+    parts.append(markdown[cursor:])
+    text = "".join(parts)
     text = re.sub(r"(\[S\d+\])(?:\s+\1)+", r"\1", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

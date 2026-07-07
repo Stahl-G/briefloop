@@ -501,13 +501,48 @@ def test_manual_provider_blocks_feedback_instruction_context_paths(tmp_path: Pat
 
 
 # ────────────────────────────────────────────────────────────────────
-# Test 6: finalize still strips [src:] markers
+# Test 6: finalize projects resolved [src:] markers
 # ────────────────────────────────────────────────────────────────────
 
 def test_finalize_reader_outputs_strip_src_markers(tmp_path: Path):
     ws = _write_workspace(tmp_path)
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True)
+    (intermediate / "claim_ledger.json").write_text(
+        json.dumps(
+            [
+                {
+                    "claim_id": "CLM_001",
+                    "statement": "The company announced a new product.",
+                    "source_id": "SRC-001",
+                    "evidence_text": "The company announced a new product.",
+                    "source_url": "https://example.com/product",
+                    "source_type": "web_search",
+                    "metadata": {
+                        "source_title": "Product Announcement",
+                        "publisher": "Example News",
+                        "source_category": "news_media",
+                    },
+                },
+                {
+                    "claim_id": "CLM_002",
+                    "statement": "More details followed.",
+                    "source_id": "SRC-002",
+                    "evidence_text": "More details followed.",
+                    "source_url": "https://example.com/details",
+                    "source_type": "web_search",
+                    "metadata": {
+                        "source_title": "Product Details",
+                        "publisher": "Example News",
+                        "source_category": "news_media",
+                    },
+                },
+            ],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     audited = intermediate / "audited_brief.md"
     audited.write_text(
@@ -526,4 +561,5 @@ def test_finalize_reader_outputs_strip_src_markers(tmp_path: Path):
     assert reader.exists(), f"brief.md not created. Files in output: {list((ws/'output').iterdir())}"
     content = reader.read_text(encoding="utf-8")
     assert "[src:" not in content, f"Found [src:] in reader output:\n{content}"
+    assert "[S1]" in content
     assert "The company announced" in content

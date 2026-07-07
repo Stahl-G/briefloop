@@ -17,6 +17,7 @@ from multi_agent_brief.outputs.reader_projection import (
     ReaderProjectionSourceError,
     build_reader_clean_report,
     build_reader_projection,
+    merge_projection_residue_into_reader_clean,
 )
 from multi_agent_brief.outputs.source_appendix import cited_claim_ids
 from multi_agent_brief.product.policy_gate_adapter import policy_forbidden_phrases
@@ -41,6 +42,7 @@ class FinalizeResult:
     named_reader_docx: str = ""
     docx_generation: str = "not_requested"
     stripped_src_marker_count: int = 0
+    reader_projection_residue: dict[str, Any] = field(default_factory=dict)
     source_appendix: str = ""
     source_appendix_generation: str = "not_requested"
     source_appendix_requested_by: str = "none"
@@ -587,6 +589,7 @@ def finalize_reader_outputs(
             named_reader_docx=str(named_docx_path or "") if docx_status == "generated" else "",
             docx_generation=docx_status,
             stripped_src_marker_count=projection.stripped_src_marker_count,
+            reader_projection_residue=projection.reader_projection_residue,
             source_appendix="",
             source_appendix_generation=projection.source_appendix_generation,
             source_appendix_requested_by=projection.source_appendix_requested_by,
@@ -617,21 +620,25 @@ def finalize_reader_outputs(
             citation_profile_delivery_exposes_local_paths=projection.citation_profile_delivery_exposes_local_paths,
             citation_profile_audit_bundle_keeps_trace=projection.citation_profile_audit_bundle_keeps_trace,
             citation_profile_warnings=projection.citation_profile_warnings,
-            reader_clean=build_reader_clean_report(
-                markdown_paths=[
-                    path
-                    for path in (
-                        candidate_reader_path,
-                        Path(projection.source_appendix) if projection.source_appendix else None,
-                    )
-                    if path is not None and path.exists()
-                ],
-                docx_paths=[
-                    path
-                    for path in (candidate_docx_path if docx_status == "generated" else None,)
-                    if path is not None and path.exists()
-                ],
-                forbidden_phrases=policy_forbidden_phrases(projection.policy_gate_adapter),
+            reader_clean=merge_projection_residue_into_reader_clean(
+                build_reader_clean_report(
+                    markdown_paths=[
+                        path
+                        for path in (
+                            candidate_reader_path,
+                            Path(projection.source_appendix) if projection.source_appendix else None,
+                        )
+                        if path is not None and path.exists()
+                    ],
+                    docx_paths=[
+                        path
+                        for path in (candidate_docx_path if docx_status == "generated" else None,)
+                        if path is not None and path.exists()
+                    ],
+                    forbidden_phrases=policy_forbidden_phrases(projection.policy_gate_adapter),
+                ),
+                projection.reader_projection_residue,
+                artifact=str(candidate_reader_path),
             ),
         )
         if result.audit_binding and result.audit_binding.get("status") == "fail":

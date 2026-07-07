@@ -103,6 +103,59 @@ def test_reader_projection_uses_canonical_source_for_body_and_appendix(tmp_path:
     assert "ExampleCo Source 2" not in appendix
 
 
+def test_reader_projection_preserves_unresolved_src_markers_as_residue(
+    tmp_path: Path,
+) -> None:
+    output_dir, intermediate = _projection_workspace(tmp_path)
+    _write_claim_ledger(intermediate / "claim_ledger.json", ["CL-001"])
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Known claim. [src:CL-001]\n"
+        "Unknown claim. [src:CL-404]\n",
+        encoding="utf-8",
+    )
+
+    result = build_reader_projection(
+        output_dir=output_dir,
+        output_formats=["markdown", "source_appendix"],
+        transaction_id="tx-unresolved-src",
+    )
+
+    assert "Known claim. [S1]" in result.reader_markdown
+    assert "Unknown claim. [src:CL-404]" in result.reader_markdown
+    assert result.reader_projection_residue["status"] == "fail"
+    assert result.reader_projection_residue["unresolved_src_marker_count"] == 1
+    assert result.reader_projection_residue["malformed_src_marker_count"] == 0
+    assert result.reader_projection_residue["findings"][0]["claim_id"] == "CL-404"
+    assert result.reader_clean["status"] == "fail"
+    assert result.reader_clean["reader_projection_unresolved_src_marker_count"] == 1
+
+
+def test_reader_projection_preserves_malformed_src_markers_as_residue(
+    tmp_path: Path,
+) -> None:
+    output_dir, intermediate = _projection_workspace(tmp_path)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Malformed empty marker. [src:]\n"
+        "Malformed whitespace marker. [src: CL-001]\n",
+        encoding="utf-8",
+    )
+
+    result = build_reader_projection(
+        output_dir=output_dir,
+        output_formats=["markdown"],
+        transaction_id="tx-malformed-src",
+    )
+
+    assert "[src:]" in result.reader_markdown
+    assert "[src: CL-001]" in result.reader_markdown
+    assert result.reader_projection_residue["status"] == "fail"
+    assert result.reader_projection_residue["malformed_src_marker_count"] == 2
+    assert result.reader_clean["status"] == "fail"
+    assert result.reader_clean["reader_projection_malformed_src_marker_count"] == 2
+
+
 def test_reader_projection_canonical_source_strips_internal_sections_before_appendix(
     tmp_path: Path,
 ) -> None:

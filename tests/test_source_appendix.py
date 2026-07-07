@@ -193,8 +193,16 @@ def test_replace_claim_citations_with_reader_source_labels():
 
     assert "Alpha [S1]" in reader
     assert "Gamma [S2]" in reader
-    assert "[src:" not in reader
-    assert "claim-missing" not in reader
+    assert "Beta [src:claim-missing]" in reader
+
+
+def test_replace_claim_citations_preserves_malformed_markers_for_residue_gate():
+    markdown = "Empty [src:]\nWhitespace [src: claim-001]\n"
+
+    reader = replace_claim_citations_with_labels(markdown, {"claim-001": "S1"})
+
+    assert "[src:]" in reader
+    assert "[src: claim-001]" in reader
 
 
 def test_replace_claim_citations_dedupes_adjacent_reader_source_labels():
