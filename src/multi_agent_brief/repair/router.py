@@ -111,9 +111,11 @@ IMPORTED_FACT_LAYER_FORBIDDEN_ARTIFACTS = {
 IMPORTED_FACT_LAYER_FORBIDDEN_PREFIXES = (
     "input/sources/",
 )
-CONTROL_CONTEXT_SCHEMAS = {
+REQUIRED_CONTROL_CONTEXT_SCHEMAS = {
     "runtime_manifest": RUNTIME_MANIFEST_SCHEMA,
     "workflow_state": WORKFLOW_STATE_SCHEMA,
+}
+OPTIONAL_CONTROL_CONTEXT_SCHEMAS = {
     "artifact_registry": ARTIFACT_REGISTRY_SCHEMA,
 }
 
@@ -349,39 +351,70 @@ def _control_payloads_for_route_context(workspace: Path) -> tuple[dict[str, dict
     payloads: dict[str, dict[str, Any]] = {}
     input_errors: list[dict[str, str]] = []
     input_paths = _input_paths(workspace)
-    for label, expected_schema in CONTROL_CONTEXT_SCHEMAS.items():
-        path = input_paths[label]
-        payload, error = _read_json_object(path)
-        if error:
-            input_errors.append({"source": label, "path": _workspace_relative(workspace, path), "error": error})
-            continue
-        if payload is None:
+    for label, expected_schema in REQUIRED_CONTROL_CONTEXT_SCHEMAS.items():
+        _read_control_context_payload(
+            workspace=workspace,
+            path=input_paths[label],
+            label=label,
+            expected_schema=expected_schema,
+            required=True,
+            payloads=payloads,
+            input_errors=input_errors,
+        )
+    for label, expected_schema in OPTIONAL_CONTROL_CONTEXT_SCHEMAS.items():
+        _read_control_context_payload(
+            workspace=workspace,
+            path=input_paths[label],
+            label=label,
+            expected_schema=expected_schema,
+            required=False,
+            payloads=payloads,
+            input_errors=input_errors,
+        )
+    return payloads, input_errors
+
+
+def _read_control_context_payload(
+    *,
+    workspace: Path,
+    path: Path,
+    label: str,
+    expected_schema: str,
+    required: bool,
+    payloads: dict[str, dict[str, Any]],
+    input_errors: list[dict[str, str]],
+) -> None:
+    payload, error = _read_json_object(path)
+    if error:
+        input_errors.append({"source": label, "path": _workspace_relative(workspace, path), "error": error})
+        return
+    if payload is None:
+        if required:
             input_errors.append({
                 "source": label,
                 "path": _workspace_relative(workspace, path),
                 "error": f"{label} required control context file is missing.",
             })
-            continue
-        schema_version = payload.get("schema_version")
-        if not schema_version:
-            input_errors.append({
-                "source": label,
-                "path": _workspace_relative(workspace, path),
-                "error": f"{label} missing schema_version.",
-            })
-            continue
-        if schema_version != expected_schema:
-            input_errors.append({
-                "source": label,
-                "path": _workspace_relative(workspace, path),
-                "error": (
-                    f"{label} schema_version must be {expected_schema}; "
-                    f"got {schema_version!r}."
-                ),
-            })
-            continue
-        payloads[label] = payload
-    return payloads, input_errors
+        return
+    schema_version = payload.get("schema_version")
+    if not schema_version:
+        input_errors.append({
+            "source": label,
+            "path": _workspace_relative(workspace, path),
+            "error": f"{label} missing schema_version.",
+        })
+        return
+    if schema_version != expected_schema:
+        input_errors.append({
+            "source": label,
+            "path": _workspace_relative(workspace, path),
+            "error": (
+                f"{label} schema_version must be {expected_schema}; "
+                f"got {schema_version!r}."
+            ),
+        })
+        return
+    payloads[label] = payload
 
 
 def _current_gate_report_validation_errors(

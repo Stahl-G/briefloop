@@ -13,7 +13,6 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
     utc_now,
 )
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
 from multi_agent_brief.repair.router import route_repair, route_repair_for_gate
 from tests.helpers import write_minimal_workspace_under
 
@@ -74,21 +73,6 @@ def _write_stage_quality_gate_report(
     status: str = "fail",
     blocking: bool = True,
 ) -> None:
-    registry_path = runtime_state_paths(ws)["artifact_registry"]
-    if not registry_path.exists():
-        registry_path.parent.mkdir(parents=True, exist_ok=True)
-        registry_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": ARTIFACT_REGISTRY_SCHEMA,
-                    "artifacts": {},
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
     artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
     path = _intermediate(ws) / "gates" / f"{artifact_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1204,7 +1188,6 @@ def test_repair_route_for_gate_rejects_malformed_current_gate(tmp_path):
     [
         ("runtime_manifest", "runtime_manifest"),
         ("workflow_state", "workflow_state"),
-        ("artifact_registry", "artifact_registry"),
     ],
 )
 @pytest.mark.parametrize(
@@ -1217,7 +1200,7 @@ def test_repair_route_for_gate_rejects_malformed_current_gate(tmp_path):
         (json.dumps({"schema_version": "wrong-schema"}, ensure_ascii=False) + "\n", "schema_version must be"),
     ],
 )
-def test_repair_route_for_gate_rejects_invalid_control_context(
+def test_repair_route_for_gate_rejects_invalid_required_control_context(
     tmp_path,
     state_key,
     expected_source,
@@ -1250,6 +1233,66 @@ def test_repair_route_for_gate_rejects_invalid_control_context(
     assert payload["gate_artifact_id"] == "finalize_quality_gate_report"
     assert payload["input_errors"][0]["source"] == expected_source
     assert expected_error in payload["input_errors"][0]["error"]
+
+
+@pytest.mark.parametrize(
+    ("payload_text", "expected_error"),
+    [
+        ("{broken", "invalid JSON"),
+        ("[]\n", "JSON payload must be an object"),
+        (json.dumps({"run_id": "run-test"}, ensure_ascii=False) + "\n", "missing schema_version"),
+        (json.dumps({"schema_version": "wrong-schema"}, ensure_ascii=False) + "\n", "schema_version must be"),
+    ],
+)
+def test_repair_route_for_gate_rejects_invalid_present_artifact_registry(
+    tmp_path,
+    payload_text,
+    expected_error,
+):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    runtime_state_paths(ws)["artifact_registry"].write_text(payload_text, encoding="utf-8")
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["route_kind"] == "none"
+    assert payload["input_errors"][0]["source"] == "artifact_registry"
+    assert expected_error in payload["input_errors"][0]["error"]
+
+
+def test_repair_route_for_gate_allows_missing_artifact_registry_for_fresh_gate(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    runtime_state_paths(ws)["artifact_registry"].unlink(missing_ok=True)
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is True
+    assert payload["route_kind"] == "owner_stage_repair"
+    assert payload["repair_owner"] == "editor"
+    assert payload["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
 
 
 def test_repair_route_for_gate_accepts_finalize_delivery_markdown_brief_metadata(tmp_path):
