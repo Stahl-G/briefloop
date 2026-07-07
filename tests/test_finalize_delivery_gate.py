@@ -1143,6 +1143,73 @@ def test_finalize_auto_renders_source_labels_for_markdown_only_output(tmp_path: 
     assert report["reader_clean"]["blank_citation_row_count"] == 0
 
 
+def test_finalize_counts_bare_ledger_id_in_audit_binding(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. SOURCEA_ABC123\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="SOURCEA_ABC123")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            _passing_audit_payload(summary="Current audit is ready for delivery."),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+
+    assert result.status == "pass"
+    assert result.audit_binding["status"] == "pass"
+    assert result.audit_binding["audited_brief_cited_claim_count"] == 1
+    assert report["source_appendix_claim_map"]["SOURCEA_ABC123"]["source_label"] == "S1"
+    assert "SOURCEA_ABC123" not in reader
+    assert "[S1]" in reader
+
+
+def test_finalize_blocks_bare_ledger_id_when_claim_ledger_is_malformed(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. SOURCEA_ABC123\n",
+        encoding="utf-8",
+    )
+    (intermediate / "claim_ledger.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_audit_binding_failed"
+    assert report["source_appendix_generation"] == "skipped_malformed_ledger"
+    assert report["audit_binding"]["status"] == "fail"
+    assert any(
+        finding["kind"] == "malformed_claim_ledger"
+        for finding in report["audit_binding"]["findings"]
+    )
+    assert not (output_dir / "delivery").exists()
+
+
 def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
@@ -1940,7 +2007,7 @@ def test_finalize_legacy_malformed_ledger_preserves_stale_source_appendix_on_fai
     assert (output_dir / "source_appendix.md").exists()
     ledger.write_text("{not json", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
         finalize_reader_outputs(
             output_dir=output_dir,
             project_name="ExampleCo Brief",
@@ -1950,7 +2017,13 @@ def test_finalize_legacy_malformed_ledger_preserves_stale_source_appendix_on_fai
 
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     assert report["status"] == "fail"
+    assert report["delivery_promotion"] == "skipped_audit_binding_failed"
     assert report["source_appendix_generation"] == "skipped_malformed_ledger"
+    assert report["audit_binding"]["status"] == "fail"
+    assert any(
+        finding["kind"] == "malformed_claim_ledger"
+        for finding in report["audit_binding"]["findings"]
+    )
     assert (output_dir / "source_appendix.md").exists()
 
 

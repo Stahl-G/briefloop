@@ -340,8 +340,10 @@ def _maybe_generate_source_appendix(
         try:
             ledger = ClaimLedger.import_json(ledger_path)
         except (json.JSONDecodeError, TypeError, ValueError):
-            if not unresolved_explicit_marker_ids:
-                return SourceAppendixResult(status="not_requested")
+            return SourceAppendixResult(
+                status="skipped_malformed_ledger",
+                warnings=["Source appendix skipped because claim_ledger.json was malformed."],
+            )
         else:
             valid_claim_ids = {claim.claim_id for claim in ledger if claim.claim_id}
             cited_ids = cited_claim_ids(

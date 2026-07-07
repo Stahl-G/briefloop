@@ -1096,7 +1096,6 @@ def _audit_binding_report(
     ledger_path = intermediate_dir / "claim_ledger.json"
     audited_brief_path = intermediate_dir / "audited_brief.md"
     audit_report_path = intermediate_dir / "audit_report.json"
-    cited_ids = cited_claim_ids(audited_markdown)
     ledger_ids: set[str] = set()
     ledger_sha = ""
     audited_brief_sha = _sha256_file(audited_brief_path) if audited_brief_path.exists() else ""
@@ -1115,6 +1114,10 @@ def _audit_binding_report(
                     "message": f"Claim Ledger could not be read for audit binding: {exc}",
                 }
             )
+    cited_ids = cited_claim_ids(
+        audited_markdown,
+        valid_claim_ids=ledger_ids if ledger_ids else None,
+    )
     if audit_report_path.exists():
         audit_sha = _sha256_file(audit_report_path)
 
@@ -1130,7 +1133,7 @@ def _audit_binding_report(
     }
 
     if not audit_report_path.exists():
-        report["status"] = "not_checked"
+        report["status"] = "fail" if findings else "not_checked"
         return report
 
     try:
