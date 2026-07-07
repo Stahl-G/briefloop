@@ -331,10 +331,33 @@ def start_repair_transaction(
     actor: str = "orchestrator",
     route_index: int | None = None,
     finding_id: str | None = None,
+    gate_stage_id: str | None = None,
+    gate_artifact_id: str | None = None,
 ) -> dict[str, Any]:
     """Start an explicit owner-stage repair transaction from the deterministic route."""
 
     ws = _require_workspace(workspace)
+    scoped_gate_requested = gate_stage_id is not None or gate_artifact_id is not None
+    if scoped_gate_requested and not (gate_stage_id and gate_artifact_id):
+        raise RuntimeStateError(
+            "Scoped repair start requires both gate_stage_id and gate_artifact_id.",
+            details={
+                "gate_stage_id": gate_stage_id,
+                "gate_artifact_id": gate_artifact_id,
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    if scoped_gate_requested and (route_index is not None or finding_id is not None):
+        raise RuntimeStateError(
+            "Use either scoped gate selection or route_index/finding_id, not both.",
+            details={
+                "gate_stage_id": gate_stage_id,
+                "gate_artifact_id": gate_artifact_id,
+                "route_index": route_index,
+                "finding_id": finding_id,
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
     paths = runtime_state_paths(ws)
     _preflight_transaction_files(paths)
     if not paths["event_log"].exists():
@@ -376,9 +399,17 @@ def start_repair_transaction(
             error_code=E_ILLEGAL_TRANSITION,
         )
 
-    from multi_agent_brief.repair.router import route_repair
+    from multi_agent_brief.repair.router import route_repair, route_repair_for_gate
 
-    route = route_repair(workspace=ws, route_index=route_index, finding_id=finding_id)
+    if scoped_gate_requested:
+        route = route_repair_for_gate(
+            workspace=ws,
+            gate_stage_id=gate_stage_id,
+            gate_artifact_id=gate_artifact_id,
+            repo_workdir=repo_workdir,
+        )
+    else:
+        route = route_repair(workspace=ws, route_index=route_index, finding_id=finding_id)
     if not route.get("ok"):
         raise _repair_route_error(route)
     if route.get("route_kind") == "human_review":

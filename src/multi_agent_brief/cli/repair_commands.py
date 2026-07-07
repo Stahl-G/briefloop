@@ -59,6 +59,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--finding-id",
         help="Finding ID from `repair route --json` to start explicitly.",
     )
+    start_parser.add_argument(
+        "--gate-stage",
+        help="Current quality-gate stage ID for scoped repair start.",
+    )
+    start_parser.add_argument(
+        "--gate-artifact",
+        help="Current quality-gate report artifact ID for scoped repair start.",
+    )
     start_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     complete_parser = actions.add_parser(
         "complete",
@@ -99,6 +107,8 @@ def handle(args: argparse.Namespace) -> int:
                 actor=getattr(args, "actor", "orchestrator"),
                 route_index=getattr(args, "route_index", None),
                 finding_id=getattr(args, "finding_id", None),
+                gate_stage_id=getattr(args, "gate_stage", None),
+                gate_artifact_id=getattr(args, "gate_artifact", None),
             )
             if getattr(args, "json", False):
                 print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))

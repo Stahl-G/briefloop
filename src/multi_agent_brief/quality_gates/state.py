@@ -2444,7 +2444,7 @@ def show_quality_gates(
         "stage_quality_gate_reports": stage_reports,
         "validation": validation,
     }
-    state.update(_blocking_repair_guidance(workspace=ws, validation=validation))
+    state.update(_blocking_repair_guidance(workspace=ws, validation=validation, repo_workdir=repo_workdir))
     return state
 
 
@@ -2458,17 +2458,36 @@ def validate_quality_gates_workspace(
     return validate_quality_gate_workspace(workspace=ws, stages=stages, artifacts=artifacts)
 
 
-def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) -> dict[str, Any]:
+def _blocking_repair_guidance(
+    *,
+    workspace: Path,
+    validation: dict[str, Any],
+    repo_workdir: str | Path | None = None,
+) -> dict[str, Any]:
     if int(validation.get("blocking_count") or 0) <= 0:
         return {}
 
-    route_command = f"multi-agent-brief repair route --workspace {workspace} --json"
-    required_commands = [route_command]
+    required_commands: list[str] = []
     try:
-        from multi_agent_brief.repair.router import route_repair
+        from multi_agent_brief.repair.router import route_repair_for_gate
 
-        repair_route = route_repair(workspace=workspace)
+        workflow_path = runtime_state_paths(workspace)["workflow_state"]
+        workflow = (
+            json.loads(workflow_path.read_text(encoding="utf-8"))
+            if workflow_path.exists()
+            else {}
+        )
+        gate_stage_id = str(workflow.get("current_stage") or "")
+        gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)
+        repair_route = route_repair_for_gate(
+            workspace=workspace,
+            gate_stage_id=gate_stage_id,
+            gate_artifact_id=gate_artifact_id,
+            repo_workdir=repo_workdir,
+        )
     except Exception as exc:  # pragma: no cover - defensive CLI guidance path.
+        gate_stage_id = ""
+        gate_artifact_id = ""
         repair_route = {
             "ok": False,
             "error_code": "E_REPAIR_ROUTE_UNAVAILABLE",
@@ -2476,6 +2495,9 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
             "workspace": str(workspace),
         }
 
+    route_source = repair_route.get("source") if isinstance(repair_route.get("source"), dict) else {}
+    gate_stage_for_command = str(route_source.get("stage_id") or gate_stage_id)
+    gate_artifact_for_command = str(route_source.get("kind") or gate_artifact_id)
     route_kind = repair_route.get("route_kind")
     repair_owner = repair_route.get("repair_owner")
     is_owner_stage_repair = (
@@ -2487,11 +2509,14 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
     )
     if is_owner_stage_repair:
         required_commands.extend([
-            f"multi-agent-brief repair start --workspace {workspace} --json",
+            (
+                f"multi-agent-brief repair start --workspace {workspace} "
+                f"--gate-stage {gate_stage_for_command} --gate-artifact {gate_artifact_for_command} --json"
+            ),
             f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
         ])
         repair_steps = [
-            "Run repair start to open an owner-stage repair transaction.",
+            "Current gate has an owner-stage repair route. Scoped repair start is handled by the repair transaction.",
             "Delegate only the reported repair_owner role.",
             "Allow edits only to repair_route.allowed_artifacts.",
             "Run repair complete after the owner edits.",
