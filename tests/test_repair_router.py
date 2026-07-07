@@ -13,7 +13,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
     utc_now,
 )
-from multi_agent_brief.repair.router import route_repair
+from multi_agent_brief.repair.router import route_repair, route_repair_for_gate
 from tests.helpers import write_minimal_workspace_under
 
 
@@ -63,6 +63,124 @@ def _write_quality_gate_report(ws: Path, finding: dict[str, object]) -> None:
         + "\n",
         encoding="utf-8",
     )
+
+
+def _write_stage_quality_gate_report(
+    ws: Path,
+    *,
+    stage_id: str,
+    finding: dict[str, object] | None,
+    status: str = "fail",
+    blocking: bool = True,
+) -> None:
+    artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
+    path = _intermediate(ws) / "gates" / f"{artifact_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    findings = [finding] if finding is not None else []
+    finding_ids = [str(finding["finding_id"])] if finding is not None and blocking else []
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "created_at": "2026-07-07T00:00:00+00:00",
+                "updated_at": "2026-07-07T00:00:00+00:00",
+                "workspace": ".",
+                "report_date": "2026-07-07",
+                "policy_pack": "default",
+                "status": status,
+                "gate_results": [
+                    {
+                        "gate_id": gate_id,
+                        "status": "fail" if blocking and gate_id == "target_relevance" else "pass",
+                        "blocking": blocking and gate_id == "target_relevance",
+                        "finding_ids": finding_ids if blocking and gate_id == "target_relevance" else [],
+                    }
+                    for gate_id in ("coverage_omission", "freshness", "material_fact", "target_relevance")
+                ],
+                "findings": findings,
+                "metadata": {
+                    "stage_id": stage_id,
+                    "gate_stage_id": stage_id,
+                    "gate_artifact_id": artifact_id,
+                    "brief": "output/brief.md" if stage_id == "finalize" else "output/intermediate/audited_brief.md",
+                    "ledger": "output/intermediate/claim_ledger.json",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _replace_stage_gate_findings(
+    ws: Path,
+    *,
+    stage_id: str,
+    findings: list[dict[str, object]],
+    blocking_finding_ids: list[str],
+) -> None:
+    artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
+    path = _intermediate(ws) / "gates" / f"{artifact_id}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["findings"] = findings
+    for result in payload["gate_results"]:
+        if result["gate_id"] == "target_relevance":
+            result["status"] = "fail" if blocking_finding_ids else "pass"
+            result["blocking"] = bool(blocking_finding_ids)
+            result["finding_ids"] = blocking_finding_ids
+        else:
+            result["status"] = "pass"
+            result["blocking"] = False
+            result["finding_ids"] = []
+    payload["status"] = "fail" if blocking_finding_ids else "warning"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _editor_gate_finding(finding_id: str, *, blocking: bool = True) -> dict[str, object]:
+    return {
+        "finding_id": finding_id,
+        "finding_type": "target_relevance_gap",
+        "severity": "high" if blocking else "medium",
+        "blocking_level": "blocking" if blocking else "warning",
+        "blocking": blocking,
+        "artifact_id": "audited_brief",
+        "repair_owner": "editor",
+        "repair_stage_id": "editor",
+        "repair_artifact_id": "audited_brief",
+        "message": "Editor-owned target relevance finding.",
+    }
+
+
+def _human_gate_finding(finding_id: str, *, blocking: bool = True) -> dict[str, object]:
+    return {
+        "finding_id": finding_id,
+        "finding_type": "target_mapping_ambiguous",
+        "severity": "high" if blocking else "medium",
+        "blocking_level": "blocking" if blocking else "warning",
+        "blocking": blocking,
+        "artifact_id": "audited_brief",
+        "repair_owner": "human",
+        "repair_stage_id": "editor",
+        "repair_artifact_id": "audited_brief",
+        "message": "Target mapping requires human review.",
+    }
+
+
+def _claim_ledger_gate_finding(finding_id: str, *, blocking: bool = True) -> dict[str, object]:
+    return {
+        "finding_id": finding_id,
+        "finding_type": "claim_ledger_support_gap",
+        "severity": "high" if blocking else "medium",
+        "blocking_level": "blocking" if blocking else "warning",
+        "blocking": blocking,
+        "artifact_id": "claim_ledger",
+        "repair_owner": "claim-ledger",
+        "repair_stage_id": "claim-ledger",
+        "repair_artifact_id": "claim_ledger",
+        "message": "Claim Ledger support issue.",
+    }
 
 
 def _write_finalize_report_with_reader_clean_failure(ws: Path) -> None:
@@ -896,6 +1014,379 @@ def test_repair_route_prioritizes_blocking_human_review_over_warning_repair(tmp_
     assert len(warning_routes) == 1
     assert warning_routes[0]["route_kind"] == "owner_stage_repair"
     assert warning_routes[0]["default_selected"] is False
+
+
+def test_repair_route_for_gate_uses_current_finalize_gate_over_stale_auditor_gate(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="auditor",
+        finding=_human_gate_finding("QG_STALE_HUMAN_001"),
+    )
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is True
+    assert payload["route_kind"] == "owner_stage_repair"
+    assert payload["repair_owner"] == "editor"
+    assert payload["source"]["kind"] == "finalize_quality_gate_report"
+    assert payload["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
+    assert all(route["source"]["kind"] == "finalize_quality_gate_report" for route in payload["routes"])
+
+    default_payload = route_repair(workspace=ws)
+    assert default_payload["ok"] is True
+    assert default_payload["route_kind"] == "human_review"
+    assert default_payload["source"]["kind"] == "auditor_quality_gate_report"
+    assert default_payload["source"]["finding_id"] == "QG_STALE_HUMAN_001"
+
+
+def test_repair_route_for_gate_returns_human_review_for_current_human_gate(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_human_gate_finding("QG_CURRENT_HUMAN_001"),
+    )
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is True
+    assert payload["route_kind"] == "human_review"
+    assert payload["repair_owner"] == "none"
+    assert payload["review_owner"] == "human"
+    assert payload["source"]["finding_id"] == "QG_CURRENT_HUMAN_001"
+
+
+def test_repair_route_for_gate_selects_blocking_editor_with_nonblocking_findings_present(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    blocking_editor = _editor_gate_finding("QG_BLOCKING_EDITOR_001")
+    nonblocking_claim_ledger = _claim_ledger_gate_finding("QG_WARNING_CLAIM_LEDGER_001", blocking=False)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=blocking_editor,
+    )
+    _replace_stage_gate_findings(
+        ws,
+        stage_id="finalize",
+        findings=[blocking_editor, nonblocking_claim_ledger],
+        blocking_finding_ids=["QG_BLOCKING_EDITOR_001"],
+    )
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is True
+    assert payload["route_kind"] == "owner_stage_repair"
+    assert payload["repair_owner"] == "editor"
+    assert payload["source"]["finding_id"] == "QG_BLOCKING_EDITOR_001"
+    assert [route["source"]["finding_id"] for route in payload["routes"]] == ["QG_BLOCKING_EDITOR_001"]
+
+
+def test_repair_route_for_gate_does_not_fall_back_to_nonblocking_legal_route(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _mark_fact_layer_imported(ws)
+    blocking_claim_ledger = _claim_ledger_gate_finding("QG_BLOCKING_CLAIM_LEDGER_001")
+    nonblocking_editor = _editor_gate_finding("QG_WARNING_EDITOR_001", blocking=False)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=blocking_claim_ledger,
+    )
+    _replace_stage_gate_findings(
+        ws,
+        stage_id="finalize",
+        findings=[blocking_claim_ledger, nonblocking_editor],
+        blocking_finding_ids=["QG_BLOCKING_CLAIM_LEDGER_001"],
+    )
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_NO_LEGAL_ROUTE"
+    assert payload["repair_owner"] == "none"
+    assert [route["source"]["finding_id"] for route in payload["routes"]] == ["QG_BLOCKING_CLAIM_LEDGER_001"]
+    assert payload["routes"][0]["is_imported_fact_layer_forbidden"] is True
+
+
+def test_repair_route_for_gate_returns_none_for_nonblocking_current_gate(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_WARNING_EDITOR_001", blocking=False),
+        status="warning",
+        blocking=False,
+    )
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is True
+    assert payload["route_kind"] == "none"
+    assert payload["repair_owner"] == "none"
+    assert payload["recommended_action"] == ""
+    assert payload["reason"] == "No blocking current gate requires repair routing."
+    assert payload["routes"] == []
+    assert payload["finding_count"] == 0
+
+
+def test_repair_route_for_gate_rejects_malformed_current_gate(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{broken", encoding="utf-8")
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["gate_artifact_id"] == "finalize_quality_gate_report"
+
+
+@pytest.mark.parametrize(
+    ("state_key", "expected_source"),
+    [
+        ("runtime_manifest", "runtime_manifest"),
+        ("workflow_state", "workflow_state"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("payload_text", "expected_error"),
+    [
+        (None, "required control context file is missing"),
+        ("{broken", "invalid JSON"),
+        ("[]\n", "JSON payload must be an object"),
+        (json.dumps({"run_id": "run-test"}, ensure_ascii=False) + "\n", "missing schema_version"),
+        (json.dumps({"schema_version": "wrong-schema"}, ensure_ascii=False) + "\n", "schema_version must be"),
+    ],
+)
+def test_repair_route_for_gate_rejects_invalid_required_control_context(
+    tmp_path,
+    state_key,
+    expected_source,
+    payload_text,
+    expected_error,
+):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    path = runtime_state_paths(ws)[state_key]
+    if payload_text is None:
+        path.unlink()
+    else:
+        path.write_text(payload_text, encoding="utf-8")
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["route_kind"] == "none"
+    assert payload["gate_artifact_id"] == "finalize_quality_gate_report"
+    assert payload["input_errors"][0]["source"] == expected_source
+    assert expected_error in payload["input_errors"][0]["error"]
+
+
+@pytest.mark.parametrize(
+    ("payload_text", "expected_error"),
+    [
+        ("{broken", "invalid JSON"),
+        ("[]\n", "JSON payload must be an object"),
+        (json.dumps({"run_id": "run-test"}, ensure_ascii=False) + "\n", "missing schema_version"),
+        (json.dumps({"schema_version": "wrong-schema"}, ensure_ascii=False) + "\n", "schema_version must be"),
+    ],
+)
+def test_repair_route_for_gate_rejects_invalid_present_artifact_registry(
+    tmp_path,
+    payload_text,
+    expected_error,
+):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    runtime_state_paths(ws)["artifact_registry"].write_text(payload_text, encoding="utf-8")
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["route_kind"] == "none"
+    assert payload["input_errors"][0]["source"] == "artifact_registry"
+    assert expected_error in payload["input_errors"][0]["error"]
+
+
+def test_repair_route_for_gate_allows_missing_artifact_registry_for_fresh_gate(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    runtime_state_paths(ws)["artifact_registry"].unlink(missing_ok=True)
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is True
+    assert payload["route_kind"] == "owner_stage_repair"
+    assert payload["repair_owner"] == "editor"
+    assert payload["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
+
+
+def test_repair_route_for_gate_accepts_finalize_delivery_markdown_brief_metadata(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["metadata"]["brief"] = "output/delivery/brief.md"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    route = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert route["ok"] is True
+    assert route["route_kind"] == "owner_stage_repair"
+    assert route["repair_owner"] == "editor"
+    assert route["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
+
+
+@pytest.mark.parametrize(
+    "brief_ref",
+    [
+        "output/intermediate/audited_brief.md",
+        "output/delivery/brief.txt",
+        "output/delivery/nested/brief.md",
+    ],
+)
+def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path, brief_ref):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["metadata"]["brief"] = brief_ref
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    route = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert route["ok"] is False
+    assert route["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert any(
+        "brief metadata must be output/brief.md or output/delivery/*.md" in error["error"]
+        for error in route["input_errors"]
+    )
+
+
+def test_repair_route_for_gate_rejects_missing_required_gate_results(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["gate_results"] = [
+        result
+        for result in payload["gate_results"]
+        if result["gate_id"] == "target_relevance"
+    ]
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    route = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert route["ok"] is False
+    assert route["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert any("must include" in error["error"] for error in route["input_errors"])
 
 
 def _write_imported_claim_ledger_audit_warning(ws: Path) -> None:
