@@ -5,9 +5,9 @@ Advisory by default (prints readiness, exit 0). Pass ``--require-satisfied`` on 
 actual v1.0 release path to make an unsatisfied item fail with a non-zero exit.
 
 Current check: ``single_citation_parser`` — a structural guard enforcing that only
-the canonical citation home defines the internal source/claim marker parser. It
-prevents a new module from hand-rolling its own ``[src:...]`` / ``src:`` marker regex
-or enumerating claim-id families (CL-/CLM-/CLAIM_/SYN_CLAIM) in a direct ``re.*``
+the canonical citation home defines the projectable internal citation parser. It
+prevents a new module from hand-rolling its own ``[src:...]`` marker regex or
+enumerating claim-id families (CL-/CLM-/CLAIM_/SYN_CLAIM) in a direct ``re.*``
 pattern call. The scanner covers static direct ``re.*`` patterns and simple
 module/function/class string constants; it does not attempt to prove arbitrary
 dynamic regex construction or aliased imports.
@@ -58,16 +58,12 @@ _RE_PATTERN_FUNCTIONS = {
 # classifying so an exclusion is not mistaken for a parser. Positive
 # lookarounds are parser syntax and must remain visible to the classifier.
 _NEGATIVE_LOOKAROUND_RE = re.compile(r"\(\?(?:!|<!)[^)]*\)")
-_BRACKETED_SOURCE_MARKER_RE = re.compile(
-    r"\\?\[\s*(?:src|source)\s*:",
+_BRACKETED_SRC_MARKER_RE = re.compile(
+    r"\\?\[\s*src\s*:",
     re.IGNORECASE,
 )
 _BRACKETED_SOURCE_MARKER_ALTERNATION_RE = re.compile(
     r"\\?\[\s*\(\?:\s*(?:src\|source|source\|src)\s*\)\s*:",
-    re.IGNORECASE,
-)
-_BARE_SOURCE_MARKER_ALTERNATION_RE = re.compile(
-    r"\(\?:\s*(?:src\|source|source\|src)\s*\)\s*:",
     re.IGNORECASE,
 )
 
@@ -160,9 +156,8 @@ def _classify(pattern: str) -> str | None:
 
 def _has_source_marker_syntax(pattern: str) -> bool:
     return bool(
-        _BRACKETED_SOURCE_MARKER_RE.search(pattern)
+        _BRACKETED_SRC_MARKER_RE.search(pattern)
         or _BRACKETED_SOURCE_MARKER_ALTERNATION_RE.search(pattern)
-        or _BARE_SOURCE_MARKER_ALTERNATION_RE.search(pattern)
     )
 
 
