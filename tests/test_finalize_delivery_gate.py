@@ -2480,6 +2480,7 @@ def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Pat
     report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
     reader_clean = report["reader_clean"]
     assert reader_clean["src_marker_count"] == 1
+    assert reader_clean["bare_claim_id_count"] == 1
     assert reader_clean["process_wording_count"] >= 3
     assert reader_clean["local_path_count"] == 1
     assert reader_clean["debug_residue_count"] == 1

@@ -17,8 +17,8 @@ from multi_agent_brief.outputs.reader_projection import (
     ReaderProjectionSourceError,
     build_reader_clean_report,
     build_reader_projection,
-    merge_projection_residue_into_reader_clean,
 )
+from multi_agent_brief.outputs.reader_final_gate import merge_projection_residue_into_reader_clean
 from multi_agent_brief.outputs.source_appendix import cited_claim_ids
 from multi_agent_brief.product.policy_gate_adapter import policy_forbidden_phrases
 from multi_agent_brief.product.quality_closeout import quality_panel_closeout_projection

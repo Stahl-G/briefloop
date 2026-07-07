@@ -14,6 +14,7 @@ from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
     detect_reader_residue_in_docx,
+    merge_projection_residue_into_reader_clean,
 )
 from multi_agent_brief.outputs.source_appendix import (
     SourceAppendixResult,
@@ -303,50 +304,6 @@ def build_reader_clean_report(
         for path in docx_paths
     )
     return combine_reader_final_gate_results(results).to_report_dict()
-
-
-def merge_projection_residue_into_reader_clean(
-    reader_clean: dict[str, Any],
-    residue_report: ReaderProjectionResidueReport | dict[str, Any],
-    *,
-    artifact: str,
-) -> dict[str, Any]:
-    """Merge parser-backed projection residue facts into a reader-clean report."""
-
-    report = (
-        residue_report.to_dict()
-        if isinstance(residue_report, ReaderProjectionResidueReport)
-        else dict(residue_report or {})
-    )
-    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
-    unresolved_count = int(report.get("unresolved_src_marker_count") or 0)
-    malformed_count = int(report.get("malformed_src_marker_count") or 0)
-    if not findings and unresolved_count == 0 and malformed_count == 0:
-        return reader_clean
-
-    merged = dict(reader_clean)
-    merged["status"] = "fail"
-    merged["reader_projection_unresolved_src_marker_count"] = unresolved_count
-    merged["reader_projection_malformed_src_marker_count"] = malformed_count
-    sample_findings = list(merged.get("sample_findings") or [])
-    for finding in findings:
-        if not isinstance(finding, dict):
-            continue
-        status = str(finding.get("status") or "unknown")
-        raw = str(finding.get("raw") or "")
-        message = str(finding.get("message") or "Reader projection contains unresolved citation residue.")
-        sample_findings.append(
-            {
-                "kind": f"reader_projection_{status}_src_marker",
-                "text": raw,
-                "line": None,
-                "artifact": artifact,
-                "message": message,
-                "claim_id": str(finding.get("claim_id") or ""),
-            }
-        )
-    merged["sample_findings"] = sample_findings[:10]
-    return merged
 
 
 def _reader_projection_residue_report(
