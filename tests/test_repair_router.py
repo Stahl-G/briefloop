@@ -1081,6 +1081,42 @@ def test_repair_route_for_gate_rejects_malformed_current_gate(tmp_path):
     assert payload["gate_artifact_id"] == "finalize_quality_gate_report"
 
 
+@pytest.mark.parametrize(
+    ("state_key", "expected_source"),
+    [
+        ("runtime_manifest", "runtime_manifest"),
+        ("workflow_state", "workflow_state"),
+        ("artifact_registry", "artifact_registry"),
+    ],
+)
+def test_repair_route_for_gate_rejects_malformed_control_files(
+    tmp_path,
+    state_key,
+    expected_source,
+):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    runtime_state_paths(ws)[state_key].write_text("{broken", encoding="utf-8")
+
+    payload = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["route_kind"] == "none"
+    assert payload["gate_artifact_id"] == "finalize_quality_gate_report"
+    assert payload["input_errors"][0]["source"] == expected_source
+
+
 def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
@@ -1105,6 +1141,36 @@ def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path):
     assert route["ok"] is False
     assert route["error_code"] == "E_REPAIR_INPUT_INVALID"
     assert any("brief metadata must be output/brief.md" in error["error"] for error in route["input_errors"])
+
+
+def test_repair_route_for_gate_rejects_missing_required_gate_results(tmp_path):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["gate_results"] = [
+        result
+        for result in payload["gate_results"]
+        if result["gate_id"] == "target_relevance"
+    ]
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    route = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert route["ok"] is False
+    assert route["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert any("must include" in error["error"] for error in route["input_errors"])
 
 
 def _write_imported_claim_ledger_audit_warning(ws: Path) -> None:
