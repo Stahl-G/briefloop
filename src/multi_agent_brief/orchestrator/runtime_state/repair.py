@@ -18,6 +18,7 @@ from multi_agent_brief.feedback.feedback_contract import current_stage_feedback_
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _read_json_if_exists,
     _restore_state_files,
+    _sha256_file,
     _snapshot_state_files,
     _write_json_atomic,
 )
@@ -750,6 +751,451 @@ def start_repair_transaction(
         "decision": "repair_start",
     }
     return state
+
+
+def supersede_stage_artifact_transaction(
+    *,
+    workspace: str | Path,
+    stage_id: str,
+    artifact: str,
+    reason: str,
+    repo_workdir: str | Path | None = None,
+    actor: str = "orchestrator",
+) -> dict[str, Any]:
+    """Record a contaminated owner-stage artifact revision without restoring clean status."""
+
+    ws = _require_workspace(workspace)
+    paths = runtime_state_paths(ws)
+    event_records = _preflight_transaction_files(paths)
+    if not paths["event_log"].exists():
+        raise RuntimeStateError(
+            "Stage supersede requires an existing event_log.jsonl control trace.",
+            details={"path": str(paths["event_log"])},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    ws, paths, manifest, workflow = _load_manifest_and_workflow(ws)
+    if _workflow_is_finalized(workflow) or workflow.get("current_stage") is None:
+        raise RuntimeStateError(
+            "Cannot supersede a finalized workflow; create a new run instead.",
+            details={"current_stage": workflow.get("current_stage")},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    if active_repair_is_open(workflow):
+        raise RuntimeStateError(
+            "Cannot supersede while a repair transaction is already active.",
+            details={"active_repair": workflow.get("active_repair")},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
+    if integrity.get("status") == RUN_INTEGRITY_CLEAN:
+        raise RuntimeStateError(
+            "Stage supersede is only allowed after run integrity contamination has been recorded.",
+            details={"run_integrity": integrity},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    contamination_events = _run_integrity_contamination_events(event_records)
+    if not contamination_events:
+        raise RuntimeStateError(
+            "Stage supersede requires a recorded run_integrity_contaminated event.",
+            details={"run_integrity": integrity},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+
+    repo = resolve_repo_workdir(repo_workdir, workspace=ws)
+    stages = load_stage_specs(repo)
+    stage_ids = _stage_ids(stages)
+    if stage_id not in stage_ids:
+        raise RuntimeStateError(
+            f"Unknown supersede stage: {stage_id}",
+            details={"stage_id": stage_id, "known_stages": stage_ids},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    if not _stage_status_is_complete(workflow, stage_id):
+        raise RuntimeStateError(
+            "Stage supersede requires the owner stage to be complete.",
+            details={"stage_id": stage_id},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+
+    artifacts = load_artifact_contracts(repo)
+    artifact_ref = _normalize_artifact_reference(ws, artifact)
+    artifact_contract = _artifact_contract_for_supersede(
+        artifacts=artifacts,
+        stage_id=stage_id,
+        artifact_ref=artifact_ref,
+    )
+    artifact_id = str(artifact_contract.get("artifact_id") or "")
+    artifact_path = str(artifact_contract.get("path") or artifact_ref)
+    target_path = ws / artifact_path
+    if not target_path.exists() or not target_path.is_file():
+        raise RuntimeStateError(
+            "Stage supersede artifact is missing.",
+            details={"stage_id": stage_id, "artifact": artifact_path},
+            error_code=E_REQUIRED_ARTIFACT_MISSING,
+        )
+
+    old_registry = _read_json_if_exists(paths["artifact_registry"])
+    old_records = (old_registry or {}).get("artifacts") if isinstance(old_registry, dict) else None
+    old_record = old_records.get(artifact_id) if isinstance(old_records, dict) else None
+    if not isinstance(old_record, dict) or not old_record.get("sha256"):
+        raise RuntimeStateError(
+            "Stage supersede requires a frozen artifact hash in artifact_registry.json.",
+            details={"stage_id": stage_id, "artifact_id": artifact_id, "artifact": artifact_path},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    old_registered_sha256 = str(old_record["sha256"])
+    current_bytes_sha256 = _sha256_file(target_path)
+    if current_bytes_sha256 == old_registered_sha256:
+        raise RuntimeStateError(
+            "Stage supersede artifact bytes match the registered frozen hash.",
+            details={
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "artifact": artifact_path,
+                "registered_sha256": old_registered_sha256,
+                "current_sha256": current_bytes_sha256,
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+
+    transaction_id = uuid.uuid4().hex
+    now = utc_now()
+    next_workflow = _workflow_after_stage_supersede(
+        workflow=workflow,
+        stages=stages,
+        stage_id=stage_id,
+        artifact_id=artifact_id,
+        artifact_path=artifact_path,
+        reason=reason,
+        now=now,
+        transaction_id=transaction_id,
+        old_registered_sha256=old_registered_sha256,
+        current_bytes_sha256=current_bytes_sha256,
+        baseline_records=old_records,
+    )
+    run_id = str(manifest["run_id"])
+    registry = _build_artifact_registry(
+        workspace=ws,
+        run_id=run_id,
+        artifacts=artifacts,
+        workflow=next_workflow,
+        updated_at=now,
+    )
+    frozen_verdict = interpret_frozen_artifact_integrity(
+        old_registry=old_registry,
+        registry=registry,
+        workflow=workflow,
+        artifacts=artifacts,
+        stages=stages,
+        mutating_stage=stage_id,
+    )
+    frozen_reasons = require_frozen_artifact_integrity_pass(frozen_verdict)
+    if frozen_reasons:
+        raise RuntimeStateError(
+            "Stage supersede cannot proceed because frozen artifact integrity could not be verified.",
+            details={"stage_id": stage_id, "reasons": frozen_reasons},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    new_record = ((registry.get("artifacts") or {}).get(artifact_id) or {})
+    if new_record.get("sha256") != current_bytes_sha256:
+        raise RuntimeStateError(
+            "Stage supersede registry did not bind the current artifact bytes.",
+            details={
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "artifact": artifact_path,
+                "expected_sha256": current_bytes_sha256,
+                "actual_sha256": new_record.get("sha256"),
+            },
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    artifact_events = _changed_artifact_events(
+        old_registry=old_registry,
+        registry=registry,
+    )
+
+    state_snapshots = _snapshot_state_files(
+        paths, ("artifact_registry", "workflow_state", "event_log")
+    )
+    state_written = False
+    try:
+        _write_json_atomic(paths["artifact_registry"], registry)
+        state_written = True
+        _write_json_atomic(paths["workflow_state"], next_workflow)
+    except RuntimeStateError as exc:
+        try:
+            _restore_state_files(paths, state_snapshots)
+        except RuntimeStateError as rollback_exc:
+            raise RuntimeStateError(
+                "Stage supersede partially wrote files and failed rollback.",
+                details={
+                    "transaction_id": transaction_id,
+                    "stage_id": stage_id,
+                    "state_error": str(exc),
+                    "rollback_error": str(rollback_exc),
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from rollback_exc
+        code = E_TRANSACTION_PARTIAL_WRITE if state_written else exc.error_code
+        raise RuntimeStateError(
+            "Stage supersede failed while writing state files; control files were restored.",
+            details={
+                "transaction_id": transaction_id,
+                "stage_id": stage_id,
+                "state_error": str(exc),
+                "state_details": exc.details,
+                "restored": True,
+            },
+            error_code=code,
+        ) from exc
+
+    try:
+        for event in artifact_events:
+            append_event(
+                workspace=ws,
+                run_id=run_id,
+                event_type=str(event["event_type"]),
+                actor=actor,
+                artifact_id=event.get("artifact_id"),
+                reason=str(event.get("reason") or ""),
+                metadata={
+                    **(event.get("metadata") or {}),
+                    "transaction_id": transaction_id,
+                    "supersede_stage": stage_id,
+                },
+            )
+        append_event(
+            workspace=ws,
+            run_id=run_id,
+            event_type="repair_stage_superseded",
+            actor=actor,
+            stage_id=stage_id,
+            artifact_id=artifact_id,
+            reason=reason,
+            metadata={
+                "transaction_id": transaction_id,
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "artifact_path": artifact_path,
+                "old_registered_sha256": old_registered_sha256,
+                "current_bytes_sha256": current_bytes_sha256,
+                "next_stage": next_workflow.get("current_stage"),
+                "reference_eligible": False,
+                "run_integrity_status": (next_workflow.get("run_integrity") or {}).get("status"),
+                "contamination_event_count": len(contamination_events),
+            },
+        )
+    except RuntimeStateError as exc:
+        try:
+            _restore_state_files(paths, state_snapshots)
+        except RuntimeStateError as rollback_exc:
+            raise RuntimeStateError(
+                "Stage supersede partially wrote files and failed rollback after event append failure.",
+                details={
+                    "transaction_id": transaction_id,
+                    "stage_id": stage_id,
+                    "event_error": str(exc),
+                    "rollback_error": str(rollback_exc),
+                },
+                error_code=E_TRANSACTION_PARTIAL_WRITE,
+            ) from rollback_exc
+        raise RuntimeStateError(
+            "Stage supersede event append failed; control files were restored.",
+            details={
+                "transaction_id": transaction_id,
+                "stage_id": stage_id,
+                "event_error": str(exc),
+                "event_details": exc.details,
+            },
+            error_code=E_TRANSACTION_PARTIAL_WRITE,
+        ) from exc
+
+    state = show_runtime_state(workspace=ws)
+    state["repair"] = {
+        "superseded": True,
+        "stage_id": stage_id,
+        "artifact_id": artifact_id,
+        "artifact": artifact_path,
+        "old_registered_sha256": old_registered_sha256,
+        "current_bytes_sha256": current_bytes_sha256,
+        "next_stage": next_workflow.get("current_stage"),
+        "reference_eligible": False,
+    }
+    state["transaction"] = {
+        "transaction_id": transaction_id,
+        "stage_id": stage_id,
+        "decision": "supersede_stage",
+    }
+    return state
+
+
+def _run_integrity_contamination_events(event_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in event_records
+        if isinstance(event, dict) and event.get("event_type") == "run_integrity_contaminated"
+    ]
+
+
+def _stage_status_is_complete(workflow: dict[str, Any], stage_id: str) -> bool:
+    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
+    status = statuses.get(stage_id) if isinstance(statuses.get(stage_id), dict) else {}
+    return status.get("status") == STAGE_COMPLETE
+
+
+def _normalize_artifact_reference(workspace: Path, artifact: str) -> str:
+    raw = str(artifact or "").strip()
+    if not raw:
+        raise RuntimeStateError(
+            "Stage supersede requires an artifact path.",
+            details={"artifact": artifact},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(workspace).as_posix()
+        except ValueError as exc:
+            raise RuntimeStateError(
+                "Stage supersede artifact must be inside the workspace.",
+                details={"artifact": raw, "workspace": str(workspace)},
+                error_code=E_ILLEGAL_TRANSITION,
+            ) from exc
+    normalized = raw.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    target = (workspace / normalized).resolve()
+    try:
+        target.relative_to(workspace)
+    except ValueError as exc:
+        raise RuntimeStateError(
+            "Stage supersede artifact must be inside the workspace.",
+            details={"artifact": raw, "workspace": str(workspace)},
+            error_code=E_ILLEGAL_TRANSITION,
+        ) from exc
+    return normalized
+
+
+def _artifact_contract_for_supersede(
+    *,
+    artifacts: list[dict[str, Any]],
+    stage_id: str,
+    artifact_ref: str,
+) -> dict[str, Any]:
+    for item in artifacts:
+        artifact_id = str(item.get("artifact_id") or "")
+        path = str(item.get("path") or "")
+        if artifact_ref not in {artifact_id, path}:
+            continue
+        producer_stage = str(item.get("producer_stage") or "")
+        if producer_stage != stage_id:
+            raise RuntimeStateError(
+                "Stage supersede artifact is not produced by the requested stage.",
+                details={
+                    "stage_id": stage_id,
+                    "artifact": artifact_ref,
+                    "artifact_id": artifact_id,
+                    "producer_stage": producer_stage,
+                },
+                error_code=E_ILLEGAL_TRANSITION,
+            )
+        return item
+    raise RuntimeStateError(
+        "Stage supersede artifact is not a known workflow artifact.",
+        details={"stage_id": stage_id, "artifact": artifact_ref},
+        error_code=E_ILLEGAL_TRANSITION,
+    )
+
+
+def _workflow_after_stage_supersede(
+    *,
+    workflow: dict[str, Any],
+    stages: list[dict[str, Any]],
+    stage_id: str,
+    artifact_id: str,
+    artifact_path: str,
+    reason: str,
+    now: str,
+    transaction_id: str,
+    old_registered_sha256: str,
+    current_bytes_sha256: str,
+    baseline_records: dict[str, Any],
+) -> dict[str, Any]:
+    stage_ids = _stage_ids(stages)
+    stage_index = stage_ids.index(stage_id)
+    stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
+    rerun_stage = _next_stage_id(stages, stage_id)
+    if rerun_stage is None:
+        raise RuntimeStateError(
+            "Stage supersede requires a downstream stage to rerun.",
+            details={"stage_id": stage_id},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    statuses = dict(workflow.get("stage_statuses") or {})
+    statuses[stage_id] = _status_entry(
+        STAGE_COMPLETE,
+        reason,
+        now,
+        metadata={
+            "superseded": True,
+            "supersede_transaction_id": transaction_id,
+            "artifact_id": artifact_id,
+            "artifact_path": artifact_path,
+            "old_registered_sha256": old_registered_sha256,
+            "current_bytes_sha256": current_bytes_sha256,
+        },
+    )
+    for downstream_stage_id in stage_ids[stage_index + 1 :]:
+        stale_artifact_baselines = _stale_artifact_baselines_for_stage(
+            stage=stage_by_id.get(downstream_stage_id) or {},
+            baseline_records=baseline_records,
+        )
+        metadata = {
+            "stale_after_supersede": True,
+            "supersede_transaction_id": transaction_id,
+            "supersede_stage": stage_id,
+            "supersede_artifact": artifact_path,
+        }
+        if stale_artifact_baselines:
+            metadata["stale_artifact_baselines"] = stale_artifact_baselines
+        if downstream_stage_id == rerun_stage:
+            statuses[downstream_stage_id] = _status_entry(
+                STAGE_READY,
+                "Ready after owner-stage supersede.",
+                now,
+                metadata=metadata,
+            )
+        else:
+            statuses[downstream_stage_id] = _status_entry(
+                STAGE_PENDING,
+                "Pending rerun after owner-stage supersede.",
+                now,
+                metadata=metadata,
+            )
+    updated = dict(workflow)
+    updated.pop("active_repair", None)
+    updated["updated_at"] = now
+    updated["current_stage"] = rerun_stage
+    updated["blocked"] = False
+    updated["blocking_reason"] = ""
+    updated["stage_statuses"] = statuses
+    updated["last_decision"] = {
+        "stage_id": stage_id,
+        "decision": "supersede_stage",
+        "reason": reason,
+        "created_at": now,
+    }
+    updated["last_repair_transaction"] = {
+        "transaction_id": transaction_id,
+        "stage_id": stage_id,
+        "decision": "supersede_stage",
+        "reason": reason,
+        "created_at": now,
+    }
+    updated["next_allowed_decisions"] = _allowed_decisions_for_stage(
+        stages, rerun_stage
+    )
+    return updated
 
 
 def _artifact_path_matches(pattern: str, path: str) -> bool:

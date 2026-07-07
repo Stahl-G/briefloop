@@ -39,10 +39,25 @@ stage-scoped report first: run `briefloop gates check --workspace <workspace>
 --stage <current_stage>`, then rerun `briefloop gates show --workspace
 <workspace> --json`.
 
+If a frozen owner-stage artifact was edited outside an active repair and the
+run is already contaminated, do not clear the contamination or edit
+`artifact_registry.json`. When the operator/human decision is to accept the
+current bytes as a new owner-stage revision, record that recovery transaction:
+
+```bash
+briefloop repair supersede-stage --workspace <workspace> --stage <owner_stage> --artifact <artifact_path> --reason "<reason>" --json
+```
+
+This records the old registered hash, current bytes hash, and reason, preserves
+the original contamination event, keeps `reference_eligible=false`, and requires
+downstream stages to rerun.
+
 ## Boundaries
 
 - `repair route` is read-only.
 - `repair start` creates `workflow_state.active_repair`.
+- `repair supersede-stage` records a contaminated owner-stage revision; it does
+  not make the run clean or reference-eligible.
 - Workspace-wide `repair route` is for non-gate route inspection; bare
   `repair start --workspace <workspace>` is not a legal current-gate or
   non-gate repair command.

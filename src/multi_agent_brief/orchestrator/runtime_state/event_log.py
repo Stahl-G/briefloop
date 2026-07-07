@@ -46,6 +46,7 @@ EVENT_TYPES = {
     "repair_plan_completed",
     "repair_started",
     "repair_completed",
+    "repair_stage_superseded",
     "quality_gate_checked",
     "quality_gate_blocked",
     "quality_gate_passed",

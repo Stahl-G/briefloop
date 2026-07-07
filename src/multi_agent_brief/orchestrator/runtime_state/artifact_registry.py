@@ -1542,15 +1542,25 @@ def _artifact_record(
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
     sha256 = _sha256_file(path) if path.exists() and path.is_file() else None
-    stale_metadata = _producer_stage_stale_after_repair(workflow, producer_stage)
+    stale_metadata = _producer_stage_stale_after_owner_revision(workflow, producer_stage)
     if stale_metadata and path.exists() and path.is_file():
         status = ARTIFACT_STALE
-        validation_result = "stale_after_repair"
-        repair_tx = stale_metadata.get("repair_transaction_id") or "<unknown>"
-        repair_owner = stale_metadata.get("repair_owner") or "<unknown>"
+        stale_after_supersede = stale_metadata.get("stale_after_supersede") is True
+        validation_result = "stale_after_supersede" if stale_after_supersede else "stale_after_repair"
+        revision_tx = (
+            stale_metadata.get("supersede_transaction_id")
+            or stale_metadata.get("repair_transaction_id")
+            or "<unknown>"
+        )
+        revision_owner = (
+            stale_metadata.get("supersede_stage")
+            or stale_metadata.get("repair_owner")
+            or "<unknown>"
+        )
+        revision_kind = "supersede" if stale_after_supersede else "repair"
         blocking_reason = (
-            f"Artifact '{rel_path}' was produced before owner-stage repair "
-            f"{repair_tx} by '{repair_owner}'; rerun producer stage '{producer_stage}' "
+            f"Artifact '{rel_path}' was produced before owner-stage {revision_kind} "
+            f"{revision_tx} by '{revision_owner}'; rerun producer stage '{producer_stage}' "
             "before consuming it."
         )
     stale_baseline_sha256 = None
@@ -1587,14 +1597,14 @@ def _artifact_record(
     return record
 
 
-def _producer_stage_stale_after_repair(
+def _producer_stage_stale_after_owner_revision(
     workflow: dict[str, Any],
     producer_stage: str,
 ) -> dict[str, Any] | None:
     statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
     stage_status = statuses.get(producer_stage) if isinstance(statuses.get(producer_stage), dict) else {}
     metadata = stage_status.get("metadata") if isinstance(stage_status.get("metadata"), dict) else {}
-    if metadata.get("stale_after_repair") is True:
+    if metadata.get("stale_after_repair") is True or metadata.get("stale_after_supersede") is True:
         return metadata
     return None
 
