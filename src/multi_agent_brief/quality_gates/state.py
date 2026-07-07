@@ -2480,6 +2480,15 @@ def _blocking_repair_guidance(
         gate_stage_id = str(workflow.get("current_stage") or "")
         gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)
         if not _current_stage_gate_report_has_blocker(workspace, gate_stage_id):
+            if (
+                _validation_uses_only_legacy_gate_projection(validation)
+                and _legacy_quality_gate_report_has_blocker(workspace)
+            ):
+                return _legacy_quality_gate_materialization_guidance(
+                    workspace=workspace,
+                    gate_stage_id=gate_stage_id,
+                    gate_artifact_id=gate_artifact_id,
+                )
             return _stale_quality_gate_blocker_guidance(
                 workspace=workspace,
                 gate_stage_id=gate_stage_id,
@@ -2561,6 +2570,26 @@ def _current_stage_gate_report_has_blocker(workspace: Path, gate_stage_id: str) 
         report = load_quality_gate_report_for_stage(workspace, gate_stage_id, allow_legacy=False)
     except Exception:
         return False
+    return _quality_gate_report_payload_has_blocker(report)
+
+
+def _legacy_quality_gate_report_has_blocker(workspace: Path) -> bool:
+    try:
+        report = load_quality_gate_report(workspace)
+    except Exception:
+        return False
+    return _quality_gate_report_payload_has_blocker(report)
+
+
+def _validation_uses_only_legacy_gate_projection(validation: dict[str, Any]) -> bool:
+    statuses = validation.get("statuses")
+    if not isinstance(statuses, dict):
+        return False
+    keys = {str(key) for key in statuses}
+    return keys == {"quality_gate_report"}
+
+
+def _quality_gate_report_payload_has_blocker(report: Any) -> bool:
     if not isinstance(report, dict):
         return False
     if report.get("status") == "fail":
@@ -2580,6 +2609,45 @@ def _current_stage_gate_report_has_blocker(workspace: Path, gate_stage_id: str) 
             if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
                 return True
     return False
+
+
+def _legacy_quality_gate_materialization_guidance(
+    *,
+    workspace: Path,
+    gate_stage_id: str,
+    gate_artifact_id: str,
+) -> dict[str, Any]:
+    return {
+        "required_commands": [
+            f"multi-agent-brief gates check --workspace {workspace} --stage {gate_stage_id} --json",
+            f"multi-agent-brief gates show --workspace {workspace} --json",
+        ],
+        "repair_steps": [
+            "Legacy quality_gate_report.json has blocking findings, but no current-stage scoped gate report is available.",
+            "Rerun gates check for workflow.current_stage to materialize a stage-scoped report.",
+            "Then rerun gates show and follow required_commands.",
+        ],
+        "repair_route": {
+            "ok": True,
+            "route_kind": "none",
+            "repair_owner": "none",
+            "review_owner": "",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "recommended_action": "",
+            "reason": "Legacy gate projection must be materialized as a current-stage scoped gate report.",
+            "source": {
+                "stage_id": gate_stage_id,
+                "kind": gate_artifact_id,
+                "legacy_projection": "quality_gate_report",
+            },
+        },
+        "repair_warnings": [
+            "Do not edit frozen artifacts directly.",
+            "Direct edits will mark the run contaminated and non-reference-eligible.",
+            "Never manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields.",
+        ],
+    }
 
 
 def _stale_quality_gate_blocker_guidance(

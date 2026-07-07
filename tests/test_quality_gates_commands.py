@@ -913,10 +913,11 @@ def test_quality_gate_guidance_does_not_route_stale_downstream_blocker(tmp_path)
             "message": "Stale finalize gate should not route current auditor repair.",
         },
     )
+    _report_path(ws).write_text(_finalize_report_path(ws).read_text(encoding="utf-8"), encoding="utf-8")
 
     guidance = quality_gate_state._blocking_repair_guidance(
         workspace=ws.resolve(),
-        validation={"blocking_count": 1},
+        validation={"blocking_count": 1, "statuses": {"finalize_quality_gate_report": "fail"}},
         repo_workdir=ROOT,
     )
 
@@ -931,6 +932,81 @@ def test_quality_gate_guidance_does_not_route_stale_downstream_blocker(tmp_path)
         "Blocking quality-gate reports exist outside the current workflow stage.",
         "Do not start repair from stale downstream reports.",
         "Rerun the current or downstream gates, or inspect stage_quality_gate_reports to locate the blocking report.",
+    ]
+
+
+def test_quality_gate_guidance_materializes_legacy_current_gate_blocker(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "auditor")
+    _report_path(ws).write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "created_at": "2026-07-07T00:00:00+00:00",
+                "updated_at": "2026-07-07T00:00:00+00:00",
+                "workspace": ".",
+                "report_date": "2026-07-07",
+                "policy_pack": "default",
+                "status": "fail",
+                "gate_results": [
+                    {
+                        "gate_id": gate_id,
+                        "status": "fail" if gate_id == "target_relevance" else "pass",
+                        "blocking": gate_id == "target_relevance",
+                        "finding_ids": ["QG_LEGACY_001"] if gate_id == "target_relevance" else [],
+                    }
+                    for gate_id in ("coverage_omission", "freshness", "material_fact", "target_relevance")
+                ],
+                "findings": [
+                    {
+                        "finding_id": "QG_LEGACY_001",
+                        "finding_type": "target_relevance_gap",
+                        "severity": "high",
+                        "blocking_level": "blocking",
+                        "blocking": True,
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Legacy projection blocker needs stage-scoped materialization.",
+                    }
+                ],
+                "metadata": {
+                    "brief": "output/intermediate/audited_brief.md",
+                    "ledger": "output/intermediate/claim_ledger.json",
+                    "stage_id": "auditor",
+                    "gate_stage_id": "auditor",
+                    "gate_artifact_id": "auditor_quality_gate_report",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    guidance = quality_gate_state._blocking_repair_guidance(
+        workspace=ws.resolve(),
+        validation={"blocking_count": 1, "statuses": {"quality_gate_report": "fail"}},
+        repo_workdir=ROOT,
+    )
+
+    commands = guidance["required_commands"]
+    assert commands == [
+        f"multi-agent-brief gates check --workspace {ws.resolve()} --stage auditor --json",
+        f"multi-agent-brief gates show --workspace {ws.resolve()} --json",
+    ]
+    assert guidance["repair_route"]["route_kind"] == "none"
+    assert guidance["repair_route"]["source"]["legacy_projection"] == "quality_gate_report"
+    assert not any(" repair start " in command for command in commands)
+    assert not any(" request_human_review " in command for command in commands)
+    assert not any(" block_run " in command for command in commands)
+    assert guidance["repair_steps"] == [
+        "Legacy quality_gate_report.json has blocking findings, but no current-stage scoped gate report is available.",
+        "Rerun gates check for workflow.current_stage to materialize a stage-scoped report.",
+        "Then rerun gates show and follow required_commands.",
     ]
 
 
@@ -1006,6 +1082,7 @@ def test_runtime_repair_instructions_use_scoped_current_gate_start() -> None:
         ROOT / ".opencode",
         ROOT / "docs/agents",
         ROOT / "integrations/hermes-plugin",
+        ROOT / "integrations/workbuddy",
     ):
         if directory.exists():
             instruction_files.extend(

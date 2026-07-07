@@ -3,19 +3,20 @@
 Repairs are deterministic transactions around owner-stage artifact edits.
 WorkBuddy must not invent a repair by editing control files.
 
-## Inspect The Route
+## Inspect Current-Gate Guidance
 
 ```bash
-multi-agent-brief repair route --workspace <workspace>
+multi-agent-brief gates show --workspace <workspace> --json
 ```
 
-If no route exists, report that result. Do not start an unowned repair.
+Follow the emitted `required_commands`. If no route exists, report that result.
+Do not start an unowned repair.
 
-## Start Repair
+## Start Current-Gate Repair
 
-```bash
-multi-agent-brief repair start --workspace <workspace>
-```
+Use the scoped repair start command from `gates show`. Current-gate repair
+start must include `--gate-stage` and `--gate-artifact`; do not use unscoped
+repair start for current-gate blockers.
 
 After this transaction, edit only the artifacts allowed by the active repair
 record and only for the repair owner/stage shown by BriefLoop.

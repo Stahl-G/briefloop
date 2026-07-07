@@ -82,6 +82,10 @@ def _all_skill_text() -> str:
     return "\n".join(_read(path) for path in sorted(WORKBUDDY_SKILL.rglob("*.md")))
 
 
+def _all_legacy_workbuddy_text() -> str:
+    return "\n".join(_read(path) for path in sorted(LEGACY_WORKBUDDY_SKILL.rglob("*.md")))
+
+
 def _compact(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
@@ -283,6 +287,20 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         "multi-agent-brief repair complete --workspace <workspace> --reason",
     ]:
         assert phrase in text
+    assert "do not use unscoped repair start for current-gate blockers" in compact
+    assert not re.search(
+        r"multi-agent-brief\s+repair\s+start\s+--workspace\s+<workspace>(?![^\n`]*--gate-stage)",
+        text,
+    )
+
+
+def test_legacy_workbuddy_mirror_uses_scoped_repair_contract() -> None:
+    text = _all_legacy_workbuddy_text()
+    compact = _compact(text)
+
+    assert "multi-agent-brief gates show --workspace <workspace> --json" in text
+    assert "--gate-stage" in text
+    assert "--gate-artifact" in text
     assert "do not use unscoped repair start for current-gate blockers" in compact
     assert not re.search(
         r"multi-agent-brief\s+repair\s+start\s+--workspace\s+<workspace>(?![^\n`]*--gate-stage)",
