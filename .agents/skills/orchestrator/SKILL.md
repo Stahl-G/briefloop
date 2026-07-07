@@ -75,8 +75,8 @@ when the user explicitly asks for repo-development work.
   `external_api`.
 - Check expected artifacts after each delegated stage.
 - Make stage decisions with completion transactions for successful progress, `multi-agent-brief state decide` for `retry_stage`, `request_human_review`, or `block_run`, and the deterministic repair transaction for `delegate_repair`.
-- Record successful delegated stage completion with `multi-agent-brief state stage-complete --workspace <workspace> --stage <stage_id> --reason "<reason>"` before moving to the next stage. Use `multi-agent-brief state decide` only for retry, human review, or block decisions; for owner-stage artifact repair, run `multi-agent-brief repair route --workspace <workspace>`, then `multi-agent-brief repair start --workspace <workspace>`, delegate only the repair owner role, and finish with `multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"`. If any command rejects the decision, completion, or repair, stop and correct the stage state.
-- Before finalize, after Auditor completes, run `multi-agent-brief gates check --workspace <workspace> --stage auditor` and `multi-agent-brief state check --workspace <workspace> --strict`. If blocking findings exist, do not finalize; use feedback plus `repair route/start`, `request_human_review`, or `block_run`. Record auditor completion with `state stage-complete --stage auditor` only when audit readiness and quality gates pass.
+- Record successful delegated stage completion with `multi-agent-brief state stage-complete --workspace <workspace> --stage <stage_id> --reason "<reason>"` before moving to the next stage. Use `multi-agent-brief state decide` only for retry, human review, or block decisions; for owner-stage artifact repair from a current quality gate, run `multi-agent-brief gates show --workspace <workspace> --json` and follow its required_commands. Current-gate repair start must use `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers. Delegate only the repair owner role, and finish with `multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"`. If any command rejects the decision, completion, or repair, stop and correct the stage state.
+- Before finalize, after Auditor completes, run `multi-agent-brief gates check --workspace <workspace> --stage auditor` and `multi-agent-brief state check --workspace <workspace> --strict`. If blocking findings exist, do not finalize; use `gates show` required_commands, `request_human_review`, or `block_run`. Record auditor completion with `state stage-complete --stage auditor` only when audit readiness and quality gates pass.
 - After `multi-agent-brief finalize` writes reader-facing artifacts, run `multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md`, then verify completion with `multi-agent-brief state finalize-complete --workspace <workspace> --reason "<reason>"` before reporting the run complete.
 - Treat repair guidance as bounded runtime guidance: repeated retry/repair
   budgets are enforced by `workflow_state.json.next_allowed_decisions` after
@@ -86,9 +86,10 @@ when the user explicitly asks for repo-development work.
   human review.
 - Audit warnings, overstatement findings, support-calibration findings, and
   quality-gate findings do not authorize direct edits to frozen artifacts. Run
-  `multi-agent-brief repair route` and `multi-agent-brief repair start` before
-  delegating owner-stage edits, or choose `request_human_review` / `block_run`
-  when no deterministic route exists.
+  `multi-agent-brief gates show --workspace <workspace> --json` and follow its
+  required_commands before delegating owner-stage edits. Current-gate repair
+  start must be scoped with `--gate-stage` and `--gate-artifact`; choose
+  `request_human_review` / `block_run` when no deterministic route exists.
 - Keep Python positioned as tools, validators, and renderers.
 - Keep control selections separate from execution; selection is not execution.
 - In repo-development mode only, update generation sources when generated platform

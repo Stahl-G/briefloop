@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import re
 from functools import partial
 from pathlib import Path
 
@@ -892,10 +893,67 @@ def test_quality_gate_guidance_uses_current_gate_route_for_scoped_start(tmp_path
     assert f"multi-agent-brief repair start --workspace {ws.resolve()} --json" not in commands
 
 
+def test_quality_gate_guidance_does_not_route_stale_downstream_blocker(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "auditor")
+    _write_stage_gate_report(
+        ws,
+        stage_id="finalize",
+        finding={
+            "finding_id": "QG_STALE_FINALIZE_001",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "blocking": True,
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Stale finalize gate should not route current auditor repair.",
+        },
+    )
+
+    guidance = quality_gate_state._blocking_repair_guidance(
+        workspace=ws.resolve(),
+        validation={"blocking_count": 1},
+        repo_workdir=ROOT,
+    )
+
+    assert guidance["repair_route"]["route_kind"] == "none"
+    assert guidance["repair_route"]["repair_owner"] == "none"
+    assert guidance["repair_route"]["recommended_action"] == ""
+    assert guidance["required_commands"] == []
+    assert not any(" repair start " in command for command in guidance["required_commands"])
+    assert not any(" request_human_review " in command for command in guidance["required_commands"])
+    assert not any(" block_run " in command for command in guidance["required_commands"])
+    assert guidance["repair_steps"] == [
+        "Blocking quality-gate reports exist outside the current workflow stage.",
+        "Do not start repair from stale downstream reports.",
+        "Rerun the current or downstream gates, or inspect stage_quality_gate_reports to locate the blocking report.",
+    ]
+
+
 def test_quality_gate_guidance_uses_workflow_scope_for_scoped_start_command(tmp_path, monkeypatch):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _set_current_stage(ws, "finalize")
+    _write_stage_gate_report(
+        ws,
+        stage_id="finalize",
+        finding={
+            "finding_id": "QG_CURRENT_EDITOR_001",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "blocking": True,
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Current finalize gate needs editor repair.",
+        },
+    )
     seen: dict[str, object] = {}
 
     def fake_route_for_gate(**kwargs):
@@ -930,6 +988,22 @@ def test_quality_gate_guidance_uses_workflow_scope_for_scoped_start_command(tmp_
         "--gate-stage finalize --gate-artifact finalize_quality_gate_report --json"
     ) in commands
     assert not any("--gate-stage auditor --gate-artifact auditor_quality_gate_report" in command for command in commands)
+
+
+def test_runtime_repair_instructions_use_scoped_current_gate_start() -> None:
+    instruction_files = [
+        ROOT / "src/multi_agent_brief/orchestrator/handoff.py",
+        ROOT / "src/multi_agent_brief/hermes/adapter.py",
+        ROOT / ".agents/skills/orchestrator/SKILL.md",
+    ]
+    unscoped_start = re.compile(
+        r"(?:briefloop|multi-agent-brief) repair start --workspace (?:<workspace>|\{workspace\})(?![^`\n]*--gate-stage)"
+    )
+
+    for path in instruction_files:
+        text = path.read_text(encoding="utf-8")
+        assert "gates show --workspace" in text
+        assert not unscoped_start.search(text), path
 
 
 def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):

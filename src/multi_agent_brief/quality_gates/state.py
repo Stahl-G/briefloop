@@ -2479,6 +2479,12 @@ def _blocking_repair_guidance(
         )
         gate_stage_id = str(workflow.get("current_stage") or "")
         gate_artifact_id = quality_gate_report_key_for_stage(gate_stage_id)
+        if not _current_stage_gate_report_has_blocker(workspace, gate_stage_id):
+            return _stale_quality_gate_blocker_guidance(
+                workspace=workspace,
+                gate_stage_id=gate_stage_id,
+                gate_artifact_id=gate_artifact_id,
+            )
         repair_route = route_repair_for_gate(
             workspace=workspace,
             gate_stage_id=gate_stage_id,
@@ -2542,6 +2548,67 @@ def _blocking_repair_guidance(
         "required_commands": required_commands,
         "repair_steps": repair_steps,
         "repair_route": repair_route,
+        "repair_warnings": [
+            "Do not edit frozen artifacts directly.",
+            "Direct edits will mark the run contaminated and non-reference-eligible.",
+            "Never manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields.",
+        ],
+    }
+
+
+def _current_stage_gate_report_has_blocker(workspace: Path, gate_stage_id: str) -> bool:
+    try:
+        report = load_quality_gate_report_for_stage(workspace, gate_stage_id, allow_legacy=False)
+    except Exception:
+        return False
+    if not isinstance(report, dict):
+        return False
+    if report.get("status") == "fail":
+        return True
+    gate_results = report.get("gate_results")
+    if isinstance(gate_results, list):
+        for result in gate_results:
+            if not isinstance(result, dict):
+                continue
+            if result.get("status") == "fail" or result.get("blocking") is True:
+                return True
+    findings = report.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
+                return True
+    return False
+
+
+def _stale_quality_gate_blocker_guidance(
+    *,
+    workspace: Path,
+    gate_stage_id: str,
+    gate_artifact_id: str,
+) -> dict[str, Any]:
+    return {
+        "required_commands": [],
+        "repair_steps": [
+            "Blocking quality-gate reports exist outside the current workflow stage.",
+            "Do not start repair from stale downstream reports.",
+            "Rerun the current or downstream gates, or inspect stage_quality_gate_reports to locate the blocking report.",
+        ],
+        "repair_route": {
+            "ok": True,
+            "route_kind": "none",
+            "repair_owner": "none",
+            "review_owner": "",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "recommended_action": "",
+            "reason": "No blocking current gate requires repair routing.",
+            "source": {
+                "stage_id": gate_stage_id,
+                "kind": gate_artifact_id,
+            },
+        },
         "repair_warnings": [
             "Do not edit frozen artifacts directly.",
             "Direct edits will mark the run contaminated and non-reference-eligible.",
