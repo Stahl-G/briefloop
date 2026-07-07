@@ -1,8 +1,8 @@
 """Tests for the v1.0 RC readiness structural guard.
 
-The guard enforces one canonical citation/claim marker parser: no module outside
-the allowlisted canonical home may define its own `[src:...]` / `src:` marker regex
-or enumerate claim-id families (CL-/CLM-/CLAIM_/SYN_CLAIM) in a direct `re.*`
+The guard enforces one canonical projectable citation parser: no module outside
+the allowlisted canonical home may define its own `[src:...]` marker regex or
+enumerate claim-id families (CL-/CLM-/CLAIM_/SYN_CLAIM) in a direct `re.*`
 pattern call. The scanner covers static direct `re.*` patterns and simple
 module/function/class string constants; dynamic construction and aliased imports
 are out of scope.
@@ -211,6 +211,11 @@ def test_ignores_internal_id_scanner_with_src_source_alternation(tmp_path: Path)
 
 def test_ignores_plain_source_label_regex(tmp_path: Path) -> None:
     _write(tmp_path, "pkg/prose.py", 'SOURCE_LABEL_RE = re.compile(r"Source:\\s+(.+)")\n')
+    assert _violation_paths(tmp_path, allowlist=set()) == set()
+
+
+def test_ignores_noncanonical_source_marker_residue_detector(tmp_path: Path) -> None:
+    _write(tmp_path, "pkg/residue.py", 'SOURCE_RE = re.compile(r"\\[source:[^\\]]+\\]")\n')
     assert _violation_paths(tmp_path, allowlist=set()) == set()
 
 
