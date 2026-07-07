@@ -259,6 +259,7 @@ def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default(
 
 def test_workbuddy_skill_includes_required_cli_surface() -> None:
     text = _all_skill_text()
+    compact = _compact(text)
     for phrase in [
         'BRIEFLOOP_CLI="$(command -v briefloop)"',
         'test -n "$BRIEFLOOP_CLI"',
@@ -279,10 +280,10 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         "multi-agent-brief gates show --workspace <workspace> --json",
         "--gate-stage",
         "--gate-artifact",
-        "do not use unscoped repair start for current-gate blockers",
         "multi-agent-brief repair complete --workspace <workspace> --reason",
     ]:
         assert phrase in text
+    assert "do not use unscoped repair start for current-gate blockers" in compact
     assert not re.search(
         r"multi-agent-brief\s+repair\s+start\s+--workspace\s+<workspace>(?![^\n`]*--gate-stage)",
         text,
