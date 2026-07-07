@@ -437,6 +437,23 @@ jobs:
         run: |
           mkdir -p /tmp/mabw-docx/output/intermediate
           printf '# Smoke Brief\n\nSubagents produced this audited statement [src:CLM-1].\n' > /tmp/mabw-docx/output/intermediate/audited_brief.md
+          cat > /tmp/mabw-docx/output/intermediate/claim_ledger.json <<'JSON'
+          [
+            {
+              "claim_id": "CLM-1",
+              "statement": "Subagents produced this audited statement.",
+              "source_id": "SRC-1",
+              "evidence_text": "Subagents produced this audited statement.",
+              "source_url": "https://example.com/docx-smoke",
+              "source_type": "web_search",
+              "metadata": {
+                "source_title": "DOCX Smoke Source",
+                "publisher": "Example Publisher",
+                "source_category": "news_media"
+              }
+            }
+          ]
+          JSON
 
       - name: Finalize reader outputs
         run: multi-agent-brief finalize --config /tmp/mabw-docx/config.yaml
