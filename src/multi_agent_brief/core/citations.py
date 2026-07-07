@@ -155,6 +155,42 @@ def unresolved_internal_citation_markers(
     ]
 
 
+def claim_id_mentions_for_ledger(markdown: str, *, valid_claim_ids: Iterable[str]) -> list[str]:
+    """Return claim-id mentions that can be judged against the current ledger.
+
+    This is for control text such as ``audit_report.json`` where a stale report
+    can mention an old generated ID without source-marker syntax. The current
+    ledger remains the authority: exact current IDs resolve, and unknown
+    generated IDs are considered mentions only when they share an ID stem with a
+    current ledger entry.
+    """
+
+    valid_ids = _normalized_claim_id_set(valid_claim_ids) or set()
+    stems = _ledger_claim_id_stems(valid_ids)
+    seen: set[str] = set()
+    mentions: list[str] = []
+
+    def add(candidate: str) -> None:
+        if not candidate or not CLAIM_ID_TOKEN_RE.fullmatch(candidate) or candidate in seen:
+            return
+        seen.add(candidate)
+        mentions.append(candidate)
+
+    for marker in parse_internal_citation_markers(
+        markdown,
+        valid_claim_ids=valid_ids,
+        include_bare_claim_ids=True,
+    ):
+        add(marker.claim_id)
+
+    for start, end, candidate in _iter_claim_id_like_spans(markdown):
+        if candidate in valid_ids or any(candidate.startswith(stem) for stem in stems):
+            if _has_citation_token_boundaries(markdown, start, end):
+                add(candidate)
+
+    return mentions
+
+
 def _marker_from_candidate(
     *,
     kind: InternalCitationKind,
@@ -302,6 +338,35 @@ def _has_bare_source_marker_left_boundary(markdown: str, marker_start: int) -> b
     return before not in _CLAIM_ID_BOUNDARY_CHARS and before not in _CLAIM_ID_LEFT_CONTEXT_BLOCKERS
 
 
+def _iter_claim_id_like_spans(markdown: str):
+    start: int | None = None
+    for index, char in enumerate(markdown):
+        if char.isascii() and (char.isalnum() or char in "_-"):
+            if start is None:
+                start = index
+            continue
+        if start is not None:
+            yield start, index, markdown[start:index]
+            start = None
+    if start is not None:
+        yield start, len(markdown), markdown[start:]
+
+
+def _ledger_claim_id_stems(valid_claim_ids: set[str]) -> set[str]:
+    stems: set[str] = set()
+    for claim_id in valid_claim_ids:
+        for separator in ("_", "-"):
+            position = claim_id.rfind(separator)
+            if position <= 0:
+                continue
+            suffix = claim_id[position + 1 :]
+            if not any(char.isdigit() for char in suffix):
+                continue
+            stems.add(claim_id[: position + 1])
+            break
+    return stems
+
+
 def _is_free_standing_bare_claim_candidate(candidate: str) -> bool:
     if not CLAIM_ID_TOKEN_RE.fullmatch(candidate):
         return False
@@ -329,7 +394,12 @@ def _has_citation_token_boundaries(markdown: str, start: int, end: int) -> bool:
         and before not in _CLAIM_ID_LEFT_CONTEXT_BLOCKERS
         and after not in _CLAIM_ID_BOUNDARY_CHARS
         and after not in _CLAIM_ID_RIGHT_CONTEXT_BLOCKERS
-        and not (after == "." and after_next and not after_next.isspace())
+        and not (
+            after == "."
+            and after_next
+            and not after_next.isspace()
+            and after_next not in _TRAILING_PROSE_PUNCTUATION
+        )
     )
 
 

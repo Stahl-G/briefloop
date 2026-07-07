@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
+from multi_agent_brief.core.citations import claim_id_mentions_for_ledger
 from multi_agent_brief.outputs.naming import render_output_stem
 from multi_agent_brief.outputs.reader_projection import (
     ReaderProjectionSourceError,
@@ -22,10 +23,6 @@ from multi_agent_brief.outputs.source_appendix import cited_claim_ids
 from multi_agent_brief.product.policy_gate_adapter import policy_forbidden_phrases
 from multi_agent_brief.product.quality_closeout import quality_panel_closeout_projection
 from multi_agent_brief.product.template_conformance import project_workspace_report_template_conformance
-
-_AUDIT_CLAIM_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:CL-\d{3,}|CLM-\d{3,}|SYN_CLAIM_[A-Z0-9_-]+|CLAIM_[A-Z0-9_-]+)(?![A-Za-z0-9_])"
-)
 
 
 @dataclass
@@ -1250,7 +1247,12 @@ def _audit_binding_report(
         current_audit_report_sha256=audit_sha,
     )
 
-    mentioned_ids = set(_AUDIT_CLAIM_ID_RE.findall(json.dumps(payload, ensure_ascii=False)))
+    mentioned_ids = set(
+        claim_id_mentions_for_ledger(
+            json.dumps(payload, ensure_ascii=False),
+            valid_claim_ids=ledger_ids,
+        )
+    )
     unknown_ids = sorted(mentioned_ids - ledger_ids)
     if unknown_ids:
         findings.append(

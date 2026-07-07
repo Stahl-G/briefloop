@@ -1250,6 +1250,46 @@ def test_finalize_fails_when_audit_report_mentions_stale_claim_ids(tmp_path: Pat
     )
 
 
+def test_finalize_fails_when_audit_report_mentions_stale_generated_claim_id(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. SOURCEA_ABC123\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json", claim_id="SOURCEA_ABC123")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            _passing_audit_payload(summary="Audited stale generated claim SOURCEA_OLD999."),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    with pytest.raises(RuntimeError, match="Audit report binding check failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    audit_binding = report["audit_binding"]
+    assert report["delivery_promotion"] == "skipped_audit_binding_failed"
+    assert audit_binding["status"] == "fail"
+    assert audit_binding["audited_brief_cited_claim_count"] == 1
+    assert any(
+        finding["kind"] == "audit_mentions_unknown_claim_ids"
+        and finding["claim_ids"] == ["SOURCEA_OLD999"]
+        for finding in audit_binding["findings"]
+    )
+    assert not (output_dir / "delivery").exists()
+
+
 def test_finalize_allows_non_real_claim_placeholder_in_audit_report_text(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"

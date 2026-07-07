@@ -240,7 +240,7 @@ def test_real_tree_currently_has_scattered_parsers(tmp_path: Path) -> None:
     guard = _load_guard()
     item = guard.check_single_citation_parser(ROOT)
     offenders = {v.path for v in item.violations}
-    assert "src/multi_agent_brief/outputs/finalize.py" in offenders
+    assert "src/multi_agent_brief/outputs/finalize.py" not in offenders
     assert "src/multi_agent_brief/outputs/reader_final_gate.py" in offenders
     assert item.satisfied is False
     # The canonical home must never be reported as a violation.

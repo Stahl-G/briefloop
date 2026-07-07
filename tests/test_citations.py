@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from multi_agent_brief.core.citations import (
+    claim_id_mentions_for_ledger,
     parse_internal_citation_markers,
     resolved_internal_citation_ids,
     unresolved_internal_citation_markers,
@@ -227,3 +228,20 @@ def test_parse_internal_citation_markers_keeps_source_like_prose_out_of_results(
     assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
         ("source:CL-404", "CL-404", "unresolved"),
     ]
+
+
+def test_claim_id_mentions_for_ledger_uses_ledger_stems_without_placeholder_false_positives() -> None:
+    text = (
+        "Current SOURCEA_ABC123 was audited. "
+        "Stale SOURCEA_OLD999 should be caught. "
+        "Explicit unknown [src:SOURCEA_MISSING777] should be caught. "
+        "Template [src:<claim_id>] is documentation, not a claim. "
+        "Unrelated Q2-2026 and check_id citation_format are not claim IDs."
+    )
+
+    assert set(
+        claim_id_mentions_for_ledger(
+            text,
+            valid_claim_ids={"SOURCEA_ABC123"},
+        )
+    ) == {"SOURCEA_ABC123", "SOURCEA_OLD999", "SOURCEA_MISSING777"}
