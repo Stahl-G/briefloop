@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+from multi_agent_brief.core.citations import parse_internal_citation_markers
 
 
 FindingKind = Literal[
@@ -32,7 +34,6 @@ COUNT_KEYS = {
     "policy_forbidden_phrase": "policy_forbidden_phrase_count",
 }
 
-_SRC_MARKER_RE = re.compile(r"\[(?:src|source):[^\]]+\]", re.IGNORECASE)
 _CLAIM_ID_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:\[(?:CLM-\d{3,}|CL-\d{3,})\]|CLM-\d{3,}|CL-\d{3,}|(?:[A-Z][A-Z0-9]*_)?CLAIM_[A-Z0-9][A-Z0-9_-]*)(?![A-Za-z0-9_])"
 )
@@ -161,14 +162,11 @@ def detect_reader_residue(
             citation_table_header = None
             source_table_header = None
 
-        _collect_regex_findings(
+        _collect_source_marker_residue_findings(
             findings,
-            kind="src_marker",
-            regex=_SRC_MARKER_RE,
             line=line,
             line_number=line_number,
             artifact=artifact,
-            message="Reader-facing output contains an internal source marker.",
         )
         _collect_regex_findings(
             findings,
@@ -299,6 +297,50 @@ def detect_reader_residue(
     )
 
 
+def merge_projection_residue_into_reader_clean(
+    reader_clean: dict[str, Any],
+    residue_report: Any,
+    *,
+    artifact: str,
+) -> dict[str, Any]:
+    """Merge parser-backed projection residue facts into a reader-clean report."""
+
+    report = (
+        residue_report.to_dict()
+        if hasattr(residue_report, "to_dict")
+        else dict(residue_report or {})
+    )
+    findings = report.get("findings") if isinstance(report.get("findings"), list) else []
+    unresolved_count = int(report.get("unresolved_src_marker_count") or 0)
+    malformed_count = int(report.get("malformed_src_marker_count") or 0)
+    if not findings and unresolved_count == 0 and malformed_count == 0:
+        return reader_clean
+
+    merged = dict(reader_clean)
+    merged["status"] = "fail"
+    merged["reader_projection_unresolved_src_marker_count"] = unresolved_count
+    merged["reader_projection_malformed_src_marker_count"] = malformed_count
+    sample_findings = list(merged.get("sample_findings") or [])
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        status = str(finding.get("status") or "unknown")
+        raw = str(finding.get("raw") or "")
+        message = str(finding.get("message") or "Reader projection contains unresolved citation residue.")
+        sample_findings.append(
+            {
+                "kind": f"reader_projection_{status}_src_marker",
+                "text": raw,
+                "line": None,
+                "artifact": artifact,
+                "message": message,
+                "claim_id": str(finding.get("claim_id") or ""),
+            }
+        )
+    merged["sample_findings"] = sample_findings[:10]
+    return merged
+
+
 def detect_reader_residue_in_docx(
     path: Path,
     *,
@@ -385,6 +427,62 @@ def _collect_regex_findings(
                 message=message,
             )
         )
+
+
+def _collect_source_marker_residue_findings(
+    findings: list[ReaderResidueFinding],
+    *,
+    line: str,
+    line_number: int,
+    artifact: str,
+) -> None:
+    occupied_spans: set[tuple[int, int]] = set()
+    for marker in parse_internal_citation_markers(
+        line,
+        valid_claim_ids=None,
+        include_bare_claim_ids=False,
+    ):
+        occupied_spans.add((marker.start, marker.end))
+        findings.append(
+            ReaderResidueFinding(
+                kind="src_marker",
+                text=_shorten(marker.raw),
+                line=line_number,
+                artifact=artifact,
+                message=marker.message or "Reader-facing output contains an internal source marker.",
+            )
+        )
+    for start, end, raw in _iter_bracketed_source_marker_residue(line):
+        if (start, end) in occupied_spans:
+            continue
+        findings.append(
+            ReaderResidueFinding(
+                kind="src_marker",
+                text=_shorten(raw),
+                line=line_number,
+                artifact=artifact,
+                message="Reader-facing output contains unsupported legacy source marker syntax.",
+            )
+        )
+
+
+def _iter_bracketed_source_marker_residue(line: str):
+    start = 0
+    lower = line.lower()
+    while True:
+        marker_start = lower.find("[", start)
+        if marker_start < 0:
+            return
+        cursor = marker_start + 1
+        while cursor < len(line) and line[cursor].isspace():
+            cursor += 1
+        if lower.startswith("src:", cursor) or lower.startswith("source:", cursor):
+            close = line.find("]", cursor)
+            end = close + 1 if close >= 0 else len(line)
+            yield marker_start, end, line[marker_start:end]
+            start = end
+            continue
+        start = marker_start + 1
 
 
 def _collect_process_wording_findings(

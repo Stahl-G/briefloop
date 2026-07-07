@@ -7,6 +7,7 @@ import pytest
 from multi_agent_brief.outputs.reader_final_gate import (
     detect_reader_residue,
     detect_reader_residue_in_docx,
+    merge_projection_residue_into_reader_clean,
 )
 
 
@@ -14,7 +15,7 @@ def _kinds(text: str) -> list[str]:
     return [finding.kind for finding in detect_reader_residue(text, artifact="output/brief.md").findings]
 
 
-def test_reader_final_gate_detects_source_markers_and_claim_ids() -> None:
+def test_reader_final_gate_detects_source_marker_raw_claim_and_source_id_residue() -> None:
     text = "\n".join(
         [
             "Claim with [src:CL-0001].",
@@ -39,6 +40,86 @@ def test_reader_final_gate_detects_source_markers_and_claim_ids() -> None:
     assert result.counts["source_id_count"] == 4
     assert result.findings[0].artifact == "output/brief.md"
     assert result.findings[0].line == 1
+
+
+def test_reader_final_gate_blocks_direct_source_marker_scans_without_claim_shape() -> None:
+    text = "\n".join(
+        [
+            "Template leak [src:].",
+            "Footer leak [src:bad id].",
+            "Legacy leak [source:internal].",
+            "Uppercase leak [SRC:].",
+            "Mixed-case leak [Src:bad id].",
+        ]
+    )
+
+    result = detect_reader_residue(text, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["src_marker_count"] == 5
+    assert result.counts["bare_claim_id_count"] == 0
+    assert [finding.text for finding in result.findings] == [
+        "[src:]",
+        "[src:bad id]",
+        "[source:internal]",
+        "[SRC:]",
+        "[Src:bad id]",
+    ]
+
+
+def test_reader_final_gate_keeps_ordinary_source_prose_outside_citation_grammar() -> None:
+    text = "\n".join(
+        [
+            "Primary source:10-K filing.",
+            "Source:Q2-2026 report.",
+            "source:https://example.com/report",
+        ]
+    )
+
+    result = detect_reader_residue(text, artifact="output/brief.md")
+
+    assert result.status == "pass"
+    assert result.counts["src_marker_count"] == 0
+
+
+def test_reader_final_gate_consumes_projection_residue_facts() -> None:
+    reader_clean = detect_reader_residue("Reader-safe body.", artifact="output/brief.md").to_report_dict()
+    residue_report = {
+        "status": "fail",
+        "unresolved_src_marker_count": 1,
+        "malformed_src_marker_count": 1,
+        "findings": [
+            {
+                "kind": "unresolved_src_marker",
+                "raw": "[src:CL-404]",
+                "claim_id": "CL-404",
+                "status": "unresolved",
+                "message": "source marker does not resolve to a Claim Ledger entry",
+            },
+            {
+                "kind": "malformed_src_marker",
+                "raw": "[src:]",
+                "claim_id": "",
+                "status": "malformed",
+                "message": "source marker has an empty claim id",
+            },
+        ],
+    }
+
+    merged = merge_projection_residue_into_reader_clean(
+        reader_clean,
+        residue_report,
+        artifact="output/intermediate/finalize_candidate/tx/reader_brief.md",
+    )
+
+    assert merged["status"] == "fail"
+    assert merged["src_marker_count"] == 0
+    assert merged["reader_projection_unresolved_src_marker_count"] == 1
+    assert merged["reader_projection_malformed_src_marker_count"] == 1
+    assert [finding["kind"] for finding in merged["sample_findings"]] == [
+        "reader_projection_unresolved_src_marker",
+        "reader_projection_malformed_src_marker",
+    ]
 
 
 def test_reader_final_gate_detects_process_wording_in_english_and_chinese() -> None:
