@@ -994,16 +994,41 @@ def test_runtime_repair_instructions_use_scoped_current_gate_start() -> None:
     instruction_files = [
         ROOT / "src/multi_agent_brief/orchestrator/handoff.py",
         ROOT / "src/multi_agent_brief/hermes/adapter.py",
+        ROOT / "configs/agent_roles.yaml",
+        ROOT / "scripts/generate_agent_configs.py",
         ROOT / ".agents/skills/orchestrator/SKILL.md",
     ]
+    for directory in (
+        ROOT / ".agents/skills",
+        ROOT / ".agents/hermes-skills",
+        ROOT / ".codex",
+        ROOT / ".claude",
+        ROOT / ".opencode",
+        ROOT / "docs/agents",
+        ROOT / "integrations/hermes-plugin",
+    ):
+        if directory.exists():
+            instruction_files.extend(
+                path
+                for path in directory.rglob("*")
+                if path.is_file() and path.suffix in {".md", ".toml", ".yaml", ".yml", ".py"}
+            )
+    instruction_files = sorted(set(instruction_files))
     unscoped_start = re.compile(
-        r"(?:briefloop|multi-agent-brief) repair start --workspace (?:<workspace>|\{workspace\})(?![^`\n]*--gate-stage)"
+        r"(?:briefloop|multi-agent-brief)\s+repair\s+start\s+--workspace\s+"
+        r"(?:<workspace>|\{workspace\}|\$ARGUMENTS)(?![^`\n]*--gate-stage)"
     )
+    combined_text = ""
 
     for path in instruction_files:
         text = path.read_text(encoding="utf-8")
-        assert "gates show --workspace" in text
+        combined_text += f"\n# {path}\n{text}"
         assert not unscoped_start.search(text), path
+
+    assert "gates show --workspace" in combined_text
+    assert "--gate-stage" in combined_text
+    assert "--gate-artifact" in combined_text
+    assert "do not use unscoped repair start for current-gate blockers" in combined_text
 
 
 def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):

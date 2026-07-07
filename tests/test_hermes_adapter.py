@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import partial
 from pathlib import Path
 
@@ -57,6 +58,18 @@ def _assert_atomic_graph_boundary(text: str) -> None:
     assert "Do not cite atom IDs" in normalized or "do not cite atom IDs" in normalized
     assert "create, edit, rewrite, repair, or extend" in normalized or "create/edit/repair/extend" in normalized
     assert "material atoms absent" in normalized
+
+
+def _assert_scoped_repair_guidance(text: str, workspace: str) -> None:
+    assert f"briefloop gates show --workspace {workspace} --json" in text
+    assert "follow its required_commands" in text
+    assert "--gate-stage" in text
+    assert "--gate-artifact" in text
+    assert "do not use unscoped repair start for current-gate blockers" in text
+    unscoped_start = re.compile(
+        rf"briefloop repair start --workspace {re.escape(workspace)}(?![^\n`]*--gate-stage)"
+    )
+    assert not unscoped_start.search(text)
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +301,7 @@ def test_hermes_prompt_contains_atomic_graph_boundary():
     assert prompt.index(claim_ledger_complete) < prompt.index('Goal: "Draft the audited BriefLoop brief"')
     assert f"briefloop state stage-complete --workspace {resolved_ws} --stage auditor" in prompt
     assert f"briefloop state finalize-complete --workspace {resolved_ws}" in prompt
-    assert f"briefloop repair route --workspace {resolved_ws}" in prompt
-    assert f"briefloop repair start --workspace {resolved_ws}" in prompt
+    _assert_scoped_repair_guidance(prompt, resolved_ws)
     assert f"briefloop repair complete --workspace {resolved_ws}" in prompt
     assert "Audit warnings, overstatement findings, support-calibration findings" in prompt
     assert "do not authorize direct edits to frozen artifacts" in prompt

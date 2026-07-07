@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import partial
 from pathlib import Path
 
@@ -262,6 +263,18 @@ def _assert_atomic_graph_boundary(text: str) -> None:
     assert "material atoms absent" in normalized
 
 
+def _assert_scoped_repair_guidance(text: str) -> None:
+    assert "briefloop gates show --workspace <workspace> --json" in text
+    assert "follow its required_commands" in text
+    assert "--gate-stage" in text
+    assert "--gate-artifact" in text
+    assert "do not use unscoped repair start for current-gate blockers" in text
+    unscoped_start = re.compile(
+        r"briefloop repair start --workspace <workspace>(?![^\n`]*--gate-stage)"
+    )
+    assert not unscoped_start.search(text)
+
+
 def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     text = "\n".join(
         str(data.get(key, ""))
@@ -419,8 +432,7 @@ def _assert_orchestrator_contract_handoff(data: dict[str, object]) -> None:
     assert "briefloop state stage-complete --workspace <workspace>" in text
     assert "briefloop state finalize-complete --workspace <workspace>" in text
     assert "state decide" in text
-    assert "briefloop repair route --workspace <workspace>" in text
-    assert "briefloop repair start --workspace <workspace>" in text
+    _assert_scoped_repair_guidance(text)
     assert "briefloop repair complete --workspace <workspace>" in text
     assert "next_allowed_decisions" in text
     assert "Stage completion protocol" in text

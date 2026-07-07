@@ -192,15 +192,16 @@ your editorial judgment.
     - If the transaction fails, stop and report the failure. Do not invoke formatter/finalize.
     - If state is blocked, do not edit artifacts directly and do not finalize.
     - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.
-    - First run `briefloop repair route --workspace $ARGUMENTS --json`.
-    - If the route is ok:
-      1. Run `briefloop repair start --workspace $ARGUMENTS --json`.
+    - Run `briefloop gates show --workspace $ARGUMENTS --json` and follow its required_commands.
+    - Current-gate repair start must be scoped with `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers.
+    - If the current gate has an owner-stage repair route:
+      1. Run the scoped repair start command from `gates show` required_commands.
       2. Delegate only the reported `repair_owner` role.
       3. Allow edits only to the reported `allowed_artifacts`.
       4. Do not edit `blocked_direct_edits` or any frozen artifact outside `allowed_artifacts`.
       5. After the owner role finishes, run `briefloop repair complete --workspace $ARGUMENTS --reason "<reason>" --json`.
       6. Resume from `must_rerun_from`. If `must_rerun_from` is `auditor`, rerun Auditor and then gates/state check.
-    - If `repair route` is not ok, choose `request_human_review` or `block_run`.
+    - If no deterministic current-gate repair route is available, choose `request_human_review` or `block_run`.
     - Never use `state decide delegate_repair` to authorize artifact edits.
     - Never manually update `artifact_registry.json` or frozen hashes.
     - Repair guidance is bounded runtime guidance, not an automatic trajectory regulator: if the same stage has already needed roughly three retry/repair rounds, prefer `request_human_review` or `block_run`; if a repair would touch more than two sections, narrow the scope before delegating or request human review.
