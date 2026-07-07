@@ -41,6 +41,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "delivery": _delivery_payload_from_completion(completion),
         "delivery_truth": _mapping(completion.get("delivery_truth")),
         "event_truth": _mapping(completion.get("event_truth")),
+        "repair_route": _mapping(completion.get("repair_route")),
         "secret_risk": secret_risk,
         "boundary": (
             "read_only_workbuddy_run_card_formats_completion_projection_with_workbuddy_safety_overlay; "
@@ -62,6 +63,9 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
         "run_integrity",
         "blocked",
         "latest_gate_status",
+        "repair_route",
+        "repair_owner",
+        "repair_must_rerun_from",
         "finalize_report",
         "delivery_truth",
         "finalize_event",
@@ -103,6 +107,7 @@ def _run_card_from_completion(
     workflow = _mapping(completion.get("workflow"))
     runtime = _mapping(completion.get("runtime"))
     gate_truth = _mapping(completion.get("gate_truth"))
+    repair_route = _mapping(completion.get("repair_route"))
     finalize_truth = _mapping(completion.get("finalize_truth"))
     delivery_truth = _mapping(completion.get("delivery_truth"))
     event_truth = _mapping(completion.get("event_truth"))
@@ -116,6 +121,9 @@ def _run_card_from_completion(
         "run_integrity": _clean_text(run_integrity.get("status")) or "unknown",
         "blocked": bool(workflow.get("blocked")),
         "latest_gate_status": _gate_status_text(gate_truth),
+        "repair_route": _repair_route_status_text(repair_route),
+        "repair_owner": _clean_text(repair_route.get("repair_owner")) or "none",
+        "repair_must_rerun_from": _clean_text(repair_route.get("must_rerun_from")) or "none",
         "finalize_report": _clean_text(finalize_truth.get("status")) or "unknown",
         "delivery_truth": _clean_text(delivery_truth.get("status")) or "unknown",
         "delivery_valid": delivery_truth.get("valid") is True,
@@ -211,6 +219,12 @@ def _gate_status_text(gate_truth: Mapping[str, Any]) -> str:
     if not isinstance(blocking_count, int):
         blocking_count = 0
     return f"{artifact_id}:{status}:blocking_findings={blocking_count}"
+
+
+def _repair_route_status_text(repair_route: Mapping[str, Any]) -> str:
+    route_kind = _clean_text(repair_route.get("route_kind")) or "none"
+    status = _clean_text(repair_route.get("status")) or "none"
+    return f"{route_kind}:{status}"
 
 
 def _doctor_payload(*, config_exists: bool) -> dict[str, Any]:

@@ -192,6 +192,61 @@ def _write_gate_report(
     return payload
 
 
+def _write_blocking_finalize_gate_report(ws: Path, finding: dict[str, object]) -> dict:
+    payload = _write_gate_report(ws, stage_id="finalize", status="fail", blocking=False)
+    finding_id = str(finding.get("finding_id") or "QG-001")
+    item = {
+        "finding_id": finding_id,
+        "finding_type": "target_relevance_gap",
+        "severity": "high",
+        "blocking_level": "blocking",
+        "blocking": True,
+        "stage_id": "editor",
+        "gate_stage_id": "finalize",
+        "artifact_id": "audited_brief",
+        "gate_artifact_id": "finalize_quality_gate_report",
+        "repair_stage_id": "editor",
+        "repair_artifact_id": "audited_brief",
+        "repair_owner": "editor",
+        "message": "Synthetic blocking finding.",
+        "metadata": {},
+    }
+    item.update(finding)
+    payload["gate_results"][-1] = {
+        "gate_id": "target_relevance",
+        "status": "fail",
+        "blocking": True,
+        "finding_ids": [finding_id],
+    }
+    payload["findings"] = [item]
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", payload)
+    return payload
+
+
+def _write_nonblocking_repairable_gate_report(ws: Path) -> dict:
+    payload = _write_gate_report(ws, stage_id="finalize", status="pass", blocking=False)
+    payload["findings"] = [
+        {
+            "finding_id": "QG_WARNING_001",
+            "finding_type": "unsupported_claim",
+            "severity": "medium",
+            "blocking_level": "warning",
+            "blocking": False,
+            "stage_id": "editor",
+            "gate_stage_id": "finalize",
+            "artifact_id": "audited_brief",
+            "gate_artifact_id": "finalize_quality_gate_report",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "message": "A nonblocking editor warning remains.",
+            "metadata": {},
+        }
+    ]
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", payload)
+    return payload
+
+
 def _append_finalize_event(ws: Path) -> None:
     manifest = _load_json(_intermediate(ws) / "runtime_manifest.json")
     append_event(
@@ -326,6 +381,112 @@ def test_completion_projection_blocks_blocking_gate_report(tmp_path: Path) -> No
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["gate_truth"]["blocking"] is True
+    assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
+
+
+def test_completion_projection_projects_owner_stage_repair_conservatively(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_blocking_finalize_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+        },
+    )
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["blocking"] is True
+    assert payload["repair_route"]["route_kind"] == "owner_stage_repair"
+    assert payload["repair_route"]["repair_owner"] == "editor"
+    assert payload["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert payload["next_allowed_action"] == "inspect_repair_route_for_blocking_gate"
+
+
+def test_completion_projection_hides_repair_route_for_nonblocking_gate(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_nonblocking_repairable_gate_report(ws)
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["status"] == "pass"
+    assert payload["gate_truth"]["blocking"] is False
+    assert payload["repair_route"]["route_kind"] == "none"
+    assert payload["repair_route"]["repair_owner"] == "none"
+    assert payload["repair_route"]["reason"] == "Current gate is not blocking."
+    assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_completion_projection_projects_human_review_for_human_owned_gate(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_blocking_finalize_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_MAPPING_001",
+            "finding_type": "target_mapping_ambiguous",
+            "repair_owner": "human",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+        },
+    )
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["blocking"] is True
+    assert payload["repair_route"]["route_kind"] == "human_review"
+    assert payload["repair_route"]["repair_owner"] == "none"
+    assert payload["next_allowed_action"] == "request_human_review_for_blocking_gate"
+
+
+def test_completion_projection_does_not_route_from_invalid_gate_report(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_json(
+        _intermediate(ws) / "gates" / "finalize_quality_gate_report.json",
+        {
+            "schema_version": "multi-agent-brief-quality-gates/v1",
+            "status": "fail",
+            "metadata": {
+                "stage_id": "finalize",
+                "gate_stage_id": "finalize",
+                "gate_artifact_id": "finalize_quality_gate_report",
+            },
+            "findings": [
+                {
+                    "finding_id": "QG_SPOOFED_001",
+                    "finding_type": "target_relevance_gap",
+                    "blocking": True,
+                    "artifact_id": "audited_brief",
+                    "repair_owner": "editor",
+                    "repair_stage_id": "editor",
+                    "repair_artifact_id": "audited_brief",
+                }
+            ],
+        },
+    )
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["status"] == "invalid"
+    assert payload["repair_route"]["route_kind"] == "none"
+    assert payload["repair_route"]["status"] == "unavailable_invalid_gate"
     assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
 
 

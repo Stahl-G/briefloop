@@ -95,6 +95,7 @@ def build_completion_projection(
         stages=stages,
         artifacts=artifacts,
     )
+    repair_route = _repair_route_projection(workspace=ws, gate_truth=gate_truth)
     finalize_report, finalize_report_status = _read_json(intermediate / "finalize_report.json")
     finalize_truth = _finalize_truth(finalize_report, finalize_report_status)
     finalize_completion_reasons = _finalize_completion_blocking_reasons(
@@ -126,6 +127,7 @@ def build_completion_projection(
         run_integrity=run_integrity,
         artifact_truth=artifact_truth,
         gate_truth=gate_truth,
+        repair_route=repair_route,
         finalize_truth=finalize_truth,
         delivery_truth=delivery_truth,
         event_truth=event_truth,
@@ -148,6 +150,7 @@ def build_completion_projection(
         "run_integrity": run_integrity,
         "artifacts": artifact_truth,
         "gate_truth": gate_truth,
+        "repair_route": repair_route,
         "finalize_truth": finalize_truth,
         "delivery_truth": delivery_truth,
         "event_truth": event_truth,
@@ -345,6 +348,90 @@ def _delivery_truth(
     }
 
 
+def _repair_route_projection(*, workspace: Path, gate_truth: Mapping[str, Any]) -> dict[str, Any]:
+    if gate_truth.get("status") == "invalid" and not _gate_truth_allows_repair_route(gate_truth):
+        return {
+            "status": "unavailable_invalid_gate",
+            "route_kind": "none",
+            "repair_owner": "none",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "reason": "Current gate report is invalid; repair routing cannot use its findings as authority.",
+            "source": {},
+        }
+    if gate_truth.get("status") == "missing":
+        return {
+            "status": "none",
+            "route_kind": "none",
+            "repair_owner": "none",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "reason": "No current gate report is available for repair routing.",
+            "source": {},
+        }
+    if gate_truth.get("blocking") is not True and gate_truth.get("status") != "fail":
+        return {
+            "status": "none",
+            "route_kind": "none",
+            "repair_owner": "none",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "reason": "Current gate is not blocking.",
+            "source": {},
+        }
+    try:
+        from multi_agent_brief.repair.router import route_repair
+
+        payload = route_repair(workspace=workspace)
+    except Exception as exc:  # pragma: no cover - defensive projection boundary
+        return {
+            "status": "invalid",
+            "route_kind": "none",
+            "repair_owner": "none",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "error": str(exc),
+            "source": {},
+        }
+    if payload.get("ok") is not True:
+        return {
+            "status": "invalid",
+            "route_kind": "none",
+            "repair_owner": "none",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "error_code": _clean_text(payload.get("error_code")),
+            "message": _clean_text(payload.get("message") or payload.get("error")),
+            "source": {},
+        }
+    route_kind = _clean_text(payload.get("route_kind")) or "none"
+    status = {
+        "owner_stage_repair": "owner_stage_repair",
+        "human_review": "human_review_required",
+        "none": "none",
+    }.get(route_kind, "none")
+    return {
+        "status": status,
+        "route_kind": route_kind if route_kind in {"owner_stage_repair", "human_review"} else "none",
+        "repair_owner": _clean_text(payload.get("repair_owner")) or "none",
+        "allowed_artifacts": payload.get("allowed_artifacts") if isinstance(payload.get("allowed_artifacts"), list) else [],
+        "must_rerun_from": _clean_text(payload.get("must_rerun_from")),
+        "reason": _clean_text(payload.get("reason")),
+        "recommended_action": _clean_text(payload.get("recommended_action")),
+        "source": dict(payload.get("source")) if isinstance(payload.get("source"), Mapping) else {},
+    }
+
+
+def _gate_truth_allows_repair_route(gate_truth: Mapping[str, Any]) -> bool:
+    errors = gate_truth.get("validation_errors")
+    if not isinstance(errors, list):
+        return False
+    return bool(errors) and all(
+        isinstance(error, str) and error == "Quality gate report status is fail."
+        for error in errors
+    )
+
+
 def _finalize_completion_blocking_reasons(
     *,
     workspace: Path,
@@ -427,6 +514,7 @@ def _next_allowed_action(
     run_integrity: Mapping[str, Any],
     artifact_truth: Mapping[str, Any],
     gate_truth: Mapping[str, Any],
+    repair_route: Mapping[str, Any],
     finalize_truth: Mapping[str, Any],
     delivery_truth: Mapping[str, Any],
     event_truth: Mapping[str, Any],
@@ -450,6 +538,11 @@ def _next_allowed_action(
             return "inspect_auditable_brief_target_status"
         return "continue_current_stage_or_handoff_workflow"
     if gate_truth.get("blocking") is True or gate_truth.get("status") == "fail":
+        route_kind = _clean_text(repair_route.get("route_kind"))
+        if route_kind == "human_review":
+            return "request_human_review_for_blocking_gate"
+        if route_kind == "owner_stage_repair":
+            return "inspect_repair_route_for_blocking_gate"
         return "stop_resolve_blocking_gate_report"
     if artifact_truth.get("invalid_or_stale"):
         return "inspect_invalid_or_stale_artifacts"

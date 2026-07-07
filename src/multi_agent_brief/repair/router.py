@@ -457,7 +457,10 @@ def _route_for_finding(finding: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _explicit_repair_route(finding: dict[str, Any]) -> dict[str, Any] | None:
-    owner = _normalize_owner(finding.get("repair_stage_id") or finding.get("repair_owner"))
+    explicit_owner = _normalize_owner(finding.get("repair_owner"))
+    if explicit_owner == "human":
+        return _human_review_route(finding)
+    owner = _normalize_owner(finding.get("repair_stage_id")) or explicit_owner
     if owner is None:
         return None
     repair_artifact = _repair_artifact_path(finding.get("repair_artifact_id"))
@@ -526,6 +529,7 @@ def _is_input_limitation_finding(finding: dict[str, Any]) -> bool:
 
 def _input_limitation_route(finding: dict[str, Any]) -> dict[str, Any]:
     return {
+        "route_kind": "human_review",
         "repair_owner": "none",
         "allowed_artifacts": [],
         "must_rerun_from": "",
@@ -549,6 +553,32 @@ def _input_limitation_route(finding: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _human_review_route(finding: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "route_kind": "human_review",
+        "repair_owner": "none",
+        "review_owner": "human",
+        "allowed_artifacts": [],
+        "must_rerun_from": "",
+        "blocked_direct_edits": [],
+        "reason": _reason(finding, "human review required"),
+        "recommended_action": "request_human_review_for_blocking_gate",
+        "run_integrity_effect": None,
+        "source": {
+            "file": finding.get("_source_path"),
+            "kind": finding.get("_source"),
+            "stage_id": finding.get("_source_stage_id") or finding.get("gate_stage_id") or finding.get("stage_id"),
+            "finding_id": finding.get("finding_id") or finding.get("id"),
+            "finding_type": finding.get("finding_type") or finding.get("category"),
+            "artifact_id": finding.get("artifact_id"),
+            "requested_owner": "human",
+            "severity": finding.get("severity"),
+            "status": finding.get("_report_status") or finding.get("status") or finding.get("audit_status"),
+            "blocking": finding.get("blocking"),
+        },
+    }
+
+
 def _is_audited_brief_binding_issue(finding_type: str, artifact_id: str) -> bool:
     return (
         finding_type in {"unsupported_claim", "claim_binding_imprecise"}
@@ -566,6 +596,7 @@ def _route(
     source: dict[str, Any],
 ) -> dict[str, Any]:
     return {
+        "route_kind": "owner_stage_repair",
         "repair_owner": repair_owner,
         "allowed_artifacts": allowed_artifacts,
         "must_rerun_from": must_rerun_from,
@@ -589,6 +620,7 @@ def _route(
 
 def _no_route() -> dict[str, Any]:
     return {
+        "route_kind": "none",
         "repair_owner": "none",
         "allowed_artifacts": [],
         "must_rerun_from": "",
@@ -693,11 +725,19 @@ def _default_selected_route(routes: list[dict[str, Any]]) -> dict[str, Any] | No
     if source.get("route_classification") == "input_limitation":
         return first
     for route in routes:
+        if route.get("route_kind") == "human_review" and _route_is_blocking(route):
+            return route
+    for route in routes:
+        if route.get("route_kind") != "owner_stage_repair":
+            continue
         if route.get("repair_owner") in {None, "", "none"}:
             continue
         if route.get("is_imported_fact_layer_forbidden") is True:
             continue
         return route
+    for route in routes:
+        if route.get("route_kind") == "human_review":
+            return route
     return None
 
 
@@ -706,9 +746,11 @@ def _route_priority(route: dict[str, Any]) -> tuple[int, int, int, str, str]:
     kind = str(source.get("kind") or "")
     finding_type = str(source.get("finding_type") or "")
     repair_owner = str(route.get("repair_owner") or "")
+    route_kind = str(route.get("route_kind") or "")
     if source.get("route_classification") == "input_limitation":
         return (0, 0, 0, kind, finding_type)
-    blocking_priority = 0 if _route_is_blocking(route) else 1
+    is_blocking = _route_is_blocking(route)
+    blocking_priority = 0 if is_blocking else 1
     kind_priority = {
         "transaction_integrity": 0,
         "auditor_quality_gate_report": 1,
@@ -720,7 +762,9 @@ def _route_priority(route: dict[str, Any]) -> tuple[int, int, int, str, str]:
     }.get(kind, 20)
     if finding_type == "frozen_artifact_changed":
         kind_priority = 0
-    if repair_owner == "none":
+    if route_kind == "human_review":
+        kind_priority = -1 if is_blocking else 90
+    elif repair_owner == "none":
         kind_priority = 90
     finding_id = str(source.get("finding_id") or "")
     return (1, blocking_priority, kind_priority, finding_id, finding_type)

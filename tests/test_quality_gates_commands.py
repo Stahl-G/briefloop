@@ -664,6 +664,136 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert payload["details"]["required_command"] == "stage-complete"
 
 
+def test_quality_gate_guidance_does_not_start_human_review_route(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    path = _auditor_report_path(ws)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "fail",
+                "metadata": {"gate_stage_id": "auditor", "gate_artifact_id": "auditor_quality_gate_report"},
+                "gate_results": [
+                    {
+                        "gate_id": "target_relevance",
+                        "status": "fail",
+                        "blocking": True,
+                        "finding_ids": ["QG_TARGET_RELEVANCE_001"],
+                    }
+                ],
+                "findings": [
+                    {
+                        "finding_id": "QG_TARGET_RELEVANCE_001",
+                        "finding_type": "target_mapping_ambiguous",
+                        "severity": "high",
+                        "blocking_level": "blocking",
+                        "blocking": True,
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "human",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Target entity or topic could not be derived.",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = quality_gate_state._blocking_repair_guidance(
+        workspace=ws,
+        validation={"blocking_count": 1},
+    )
+
+    assert payload["repair_route"]["route_kind"] == "human_review"
+    assert payload["repair_route"]["repair_owner"] == "none"
+    assert all("repair start" not in command for command in payload["required_commands"])
+    assert all("repair complete" not in command for command in payload["required_commands"])
+    assert any("request_human_review" in command for command in payload["required_commands"])
+    assert any("block_run" in command for command in payload["required_commands"])
+    assert payload["repair_steps"] == [
+        "No deterministic owner-stage repair route is available.",
+        "Use request_human_review or block_run instead of editing artifacts directly.",
+    ]
+
+
+def test_quality_gate_guidance_prioritizes_blocking_human_review_over_warning_repair(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    path = _auditor_report_path(ws)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "fail",
+                "metadata": {"gate_stage_id": "auditor", "gate_artifact_id": "auditor_quality_gate_report"},
+                "gate_results": [
+                    {
+                        "gate_id": "target_relevance",
+                        "status": "fail",
+                        "blocking": True,
+                        "finding_ids": ["QG_TARGET_MAPPING_001"],
+                    },
+                    {
+                        "gate_id": "material_fact",
+                        "status": "warning",
+                        "blocking": False,
+                        "finding_ids": ["QG_WARNING_001"],
+                    },
+                ],
+                "findings": [
+                    {
+                        "finding_id": "QG_TARGET_MAPPING_001",
+                        "finding_type": "target_mapping_ambiguous",
+                        "severity": "high",
+                        "blocking_level": "blocking",
+                        "blocking": True,
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "human",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Target entity or topic could not be derived.",
+                    },
+                    {
+                        "finding_id": "QG_WARNING_001",
+                        "finding_type": "unsupported_claim",
+                        "severity": "medium",
+                        "blocking_level": "warning",
+                        "blocking": False,
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "A nonblocking editor warning remains.",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = quality_gate_state._blocking_repair_guidance(
+        workspace=ws,
+        validation={"blocking_count": 1},
+    )
+
+    assert payload["repair_route"]["route_kind"] == "human_review"
+    assert payload["repair_route"]["source"]["finding_id"] == "QG_TARGET_MAPPING_001"
+    assert all("repair start" not in command for command in payload["required_commands"])
+    assert all("repair complete" not in command for command in payload["required_commands"])
+    assert any("request_human_review" in command for command in payload["required_commands"])
+    assert any("block_run" in command for command in payload["required_commands"])
+
+
 def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):
     ws = _write_workspace(tmp_path)
     _write_ledger(ws, [])
@@ -1039,6 +1169,9 @@ def test_quality_gates_warn_on_unsupported_strategic_implication(tmp_path):
     assert strategic[0]["blocking"] is False
     assert strategic[0]["category"] == "strategic_overreach"
     assert strategic[0]["metadata"]["support_check"] == "lexical_phrase_absent_from_claim_ledger"
+    assert "requires_content_edit" not in strategic[0]["metadata"]
+    assert "post_freeze_action" not in strategic[0]["metadata"]
+    assert "delivery_effect" not in strategic[0]["metadata"]
 
 
 def test_quality_gates_warn_when_strategic_implication_only_appears_in_limitations(tmp_path):
@@ -2006,6 +2139,10 @@ def test_policy_profile_strict_target_relevance_tightens_existing_gate(tmp_path,
     assert finding["finding_type"] == "target_relevance_gap"
     assert finding["blocking_level"] == "blocking"
     assert finding["metadata"]["strict"] is True
+    assert finding["metadata"]["requires_content_edit"] is True
+    assert finding["metadata"]["owner_stage"] == "editor"
+    assert finding["metadata"]["post_freeze_action"] == "open_editor_repair"
+    assert finding["metadata"]["delivery_effect"] == "blocks_until_repaired"
 
 
 def test_quality_gates_enabled_blocks_required_stage_when_report_missing(tmp_path, capsys):

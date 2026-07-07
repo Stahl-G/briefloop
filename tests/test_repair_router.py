@@ -662,9 +662,107 @@ def test_repair_route_prefers_target_relevance_metadata(tmp_path, capsys):
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload["route_kind"] == "owner_stage_repair"
     assert payload["repair_owner"] == "editor"
     assert payload["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert payload["must_rerun_from"] == "auditor"
+
+
+def test_repair_route_treats_explicit_human_owner_as_human_review(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_mapping_ambiguous",
+            "severity": "high",
+            "blocking": True,
+            "blocking_level": "blocking",
+            "artifact_id": "audited_brief",
+            "repair_owner": "human",
+            # Production target ambiguity findings may still carry the owner
+            # stage in repair_stage_id; repair_owner=human must win.
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Target entity or topic could not be derived.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["route_kind"] == "human_review"
+    assert payload["repair_owner"] == "none"
+    assert payload["review_owner"] == "human"
+    assert payload["source"]["requested_owner"] == "human"
+    assert payload["allowed_artifacts"] == []
+    assert payload["recommended_action"] == "request_human_review_for_blocking_gate"
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    start_payload = json.loads(capsys.readouterr().out)
+    assert start_payload["ok"] is False
+    assert "requires human review" in start_payload["error"]
+
+
+def test_repair_route_prioritizes_blocking_human_review_over_warning_repair(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "fail",
+                "metadata": {"gate_stage_id": "auditor"},
+                "findings": [
+                    {
+                        "finding_id": "QG_TARGET_MAPPING_001",
+                        "finding_type": "target_mapping_ambiguous",
+                        "severity": "high",
+                        "blocking": True,
+                        "blocking_level": "blocking",
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "human",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Target entity or topic could not be derived.",
+                    },
+                    {
+                        "finding_id": "QG_WARNING_001",
+                        "finding_type": "unsupported_claim",
+                        "severity": "medium",
+                        "blocking": False,
+                        "blocking_level": "warning",
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "A nonblocking editor warning remains.",
+                    },
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["route_kind"] == "human_review"
+    assert payload["repair_owner"] == "none"
+    assert payload["source"]["finding_id"] == "QG_TARGET_MAPPING_001"
+    warning_route = next(route for route in payload["routes"] if route["source"]["finding_id"] == "QG_WARNING_001")
+    assert warning_route["route_kind"] == "owner_stage_repair"
+    assert warning_route["default_selected"] is False
 
 
 def test_repair_route_prefers_target_priority_metadata(tmp_path, capsys):
@@ -790,6 +888,7 @@ def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, c
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["repair_owner"] == "none"
+    assert payload["route_kind"] == "human_review"
     assert payload["allowed_artifacts"] == []
     assert payload["source"]["route_classification"] == "input_limitation"
     assert payload["recommended_action"] == "request_human_review_or_start_fresh_workspace"
@@ -1179,6 +1278,7 @@ def test_repair_route_no_match_is_read_only_none_route(tmp_path, capsys):
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["repair_owner"] == "none"
+    assert payload["route_kind"] == "none"
     assert payload["routes"] == []
     assert payload["reason"] == "No deterministic repair route found."
 

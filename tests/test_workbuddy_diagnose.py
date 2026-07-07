@@ -156,6 +156,58 @@ def _gate_report(status: str) -> dict[str, object]:
     }
 
 
+def _write_blocking_gate_report(ws: Path) -> None:
+    report = _gate_report("fail")
+    report["gate_results"][-1] = {
+        "gate_id": "target_relevance",
+        "status": "fail",
+        "blocking": True,
+        "finding_ids": ["QG_TARGET_RELEVANCE_001"],
+    }
+    report["findings"] = [
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "blocking": True,
+            "stage_id": "editor",
+            "gate_stage_id": "finalize",
+            "artifact_id": "audited_brief",
+            "gate_artifact_id": "finalize_quality_gate_report",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "message": "Executive summary does not mention the configured target.",
+            "metadata": {},
+        }
+    ]
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", report)
+
+
+def _write_nonblocking_repairable_gate_report(ws: Path) -> None:
+    report = _gate_report("pass")
+    report["findings"] = [
+        {
+            "finding_id": "QG_WARNING_001",
+            "finding_type": "unsupported_claim",
+            "severity": "medium",
+            "blocking_level": "warning",
+            "blocking": False,
+            "stage_id": "editor",
+            "gate_stage_id": "finalize",
+            "artifact_id": "audited_brief",
+            "gate_artifact_id": "finalize_quality_gate_report",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "message": "A nonblocking editor warning remains.",
+            "metadata": {},
+        }
+    ]
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", report)
+
+
 def _diagnose_json(ws: Path, capsys) -> dict:
     rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
     assert rc == 0
@@ -179,6 +231,40 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     assert payload["delivery_truth"]["valid"] is True
     assert payload["delivery"]["truth"] == projection["delivery_truth"]
     assert payload["finalize"]["truth"] == projection["finalize_truth"]
+    assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_workbuddy_diagnose_repeats_repair_route_projection(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _init_runtime(ws)
+    _write_finalized_delivery(ws)
+    _write_blocking_gate_report(ws)
+
+    payload = _diagnose_json(ws, capsys)
+
+    projection = payload["completion_projection"]
+    assert projection["repair_route"]["route_kind"] == "owner_stage_repair"
+    assert payload["repair_route"] == projection["repair_route"]
+    assert payload["run_card"]["repair_route"] == "owner_stage_repair:owner_stage_repair"
+    assert payload["run_card"]["repair_owner"] == "editor"
+    assert payload["run_card"]["repair_must_rerun_from"] == "auditor"
+    assert payload["run_card"]["next_allowed_action"] == "inspect_repair_route_for_blocking_gate"
+
+
+def test_workbuddy_diagnose_does_not_show_repair_route_for_nonblocking_gate(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _init_runtime(ws)
+    _write_finalized_delivery(ws)
+    _write_nonblocking_repairable_gate_report(ws)
+
+    payload = _diagnose_json(ws, capsys)
+
+    projection = payload["completion_projection"]
+    assert projection["gate_truth"]["blocking"] is False
+    assert projection["repair_route"]["route_kind"] == "none"
+    assert payload["repair_route"] == projection["repair_route"]
+    assert payload["run_card"]["repair_route"] == "none:none"
+    assert payload["run_card"]["repair_owner"] == "none"
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
 
 

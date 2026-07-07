@@ -626,6 +626,18 @@ def _finding(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rule = _finding_rule(finding_type=finding_type, gate_id=gate_id)
+    finding_metadata = dict(metadata or {})
+    if (
+        blocking_level == "blocking"
+        and repair_owner == "editor"
+        and artifact_id == "audited_brief"
+    ):
+        finding_metadata.update({
+            "requires_content_edit": True,
+            "owner_stage": "editor",
+            "post_freeze_action": "open_editor_repair",
+            "delivery_effect": "blocks_until_repaired",
+        })
     return {
         "finding_id": finding_id,
         "gate_id": gate_id,
@@ -650,7 +662,7 @@ def _finding(
         "docs_anchor": rule["docs_anchor"],
         "summary": description,
         "evidence_ref": evidence_ref,
-        "metadata": metadata or {},
+        "metadata": finding_metadata,
     }
 
 
@@ -2464,7 +2476,13 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
             "workspace": str(workspace),
         }
 
-    if repair_route.get("ok") and repair_route.get("repair_owner") != "none":
+    if (
+        repair_route.get("ok")
+        and repair_route.get("route_kind") == "owner_stage_repair"
+        and repair_route.get("repair_owner") not in {"", "none", "human"}
+        and repair_route.get("allowed_artifacts")
+        and repair_route.get("must_rerun_from")
+    ):
         required_commands.extend([
             f"multi-agent-brief repair start --workspace {workspace} --json",
             f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
