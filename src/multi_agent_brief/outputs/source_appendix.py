@@ -5,7 +5,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urlparse
 
 from multi_agent_brief.contracts.source_metadata import (
@@ -15,6 +15,7 @@ from multi_agent_brief.contracts.source_metadata import (
 )
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.core.citations import parse_internal_citation_markers
 from multi_agent_brief.core.schemas import Claim
 
 
@@ -128,16 +129,23 @@ class SourceAppendixResult:
         }
 
 
-def cited_claim_ids(markdown: str) -> list[str]:
+def cited_claim_ids(
+    markdown: str,
+    *,
+    valid_claim_ids: Iterable[str] | None = None,
+) -> list[str]:
     """Return [src:<claim_id>] references in first-appearance order."""
     seen: set[str] = set()
     claim_ids: list[str] = []
-    for match in _SRC_REF_RE.finditer(markdown):
-        claim_id = match.group(1).strip()
-        if not claim_id or claim_id in seen:
+    for marker in parse_internal_citation_markers(
+        markdown,
+        valid_claim_ids=valid_claim_ids,
+        include_bare_claim_ids=False,
+    ):
+        if marker.status == "malformed" or not marker.claim_id or marker.claim_id in seen:
             continue
-        seen.add(claim_id)
-        claim_ids.append(claim_id)
+        seen.add(marker.claim_id)
+        claim_ids.append(marker.claim_id)
     return claim_ids
 
 
@@ -149,9 +157,10 @@ def build_source_appendix(
     workspace: str | Path | None = None,
 ) -> SourceAppendixResult:
     """Build reader-facing source appendix Markdown from cited Claim Ledger entries."""
-    claim_ids = cited_claim_ids(audited_markdown)
     warnings: list[str] = []
     ledger = ClaimLedger.import_json(ledger_path)
+    ledger_ids = {claim.claim_id.strip() for claim in ledger if claim.claim_id.strip()}
+    claim_ids = cited_claim_ids(audited_markdown, valid_claim_ids=ledger_ids)
     records_by_key: dict[str, SourceAppendixRecord] = {}
     claim_source_keys: dict[str, str] = {}
     source_ids_by_key: dict[str, list[str]] = {}
