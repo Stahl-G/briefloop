@@ -291,11 +291,12 @@ def route_repair_for_gate(
         }
 
     findings = _findings_from_payload(payload, source=artifact_id, path=_workspace_relative(ws, path))
-    routes = [_route_for_finding(finding) for finding in findings]
+    route_findings = _blocking_findings_from_current_gate_payload(payload, findings)
+    routes = [_route_for_finding(finding) for finding in route_findings]
     routes = [route for route in routes if route is not None]
     routes = sorted(routes, key=_route_priority)
     routes = _annotated_routes(routes, imported_fact_layer=_workspace_has_fact_layer_import(payloads))
-    selected = _select_route(routes, route_index=None, finding_id=None)
+    selected = _select_route(routes, route_index=None, finding_id=None) if routes else _no_legal_route()
     if not selected.get("ok", True):
         return {
             "ok": False,
@@ -303,7 +304,7 @@ def route_repair_for_gate(
             "gate_stage_id": stage_id,
             "gate_artifact_id": artifact_id,
             "routes": routes,
-            "finding_count": len(findings),
+            "finding_count": len(route_findings),
             **selected,
         }
     selected = _with_run_integrity_context(selected, payloads.get("workflow_state"))
@@ -314,7 +315,7 @@ def route_repair_for_gate(
         "gate_artifact_id": artifact_id,
         **selected,
         "routes": routes,
-        "finding_count": len(findings),
+        "finding_count": len(route_findings),
     }
 
 
@@ -471,6 +472,53 @@ def _gate_report_is_blocking(payload: dict[str, Any]) -> bool:
             if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
                 return True
     return False
+
+
+def _blocking_findings_from_current_gate_payload(
+    payload: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    fallback_finding_ids = _blocking_gate_result_finding_ids(payload)
+    return [
+        finding for finding in findings
+        if _finding_is_blocking_for_current_gate(finding, fallback_finding_ids)
+    ]
+
+
+def _blocking_gate_result_finding_ids(payload: dict[str, Any]) -> set[str]:
+    gate_results = payload.get("gate_results")
+    if not isinstance(gate_results, list):
+        return set()
+    finding_ids: set[str] = set()
+    for result in gate_results:
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "").lower()
+        if result.get("blocking") is not True and status not in {"fail", "failed", "block", "blocked", "blocking"}:
+            continue
+        raw_ids = result.get("finding_ids")
+        if not isinstance(raw_ids, list):
+            continue
+        finding_ids.update(str(item) for item in raw_ids if item)
+    return finding_ids
+
+
+def _finding_is_blocking_for_current_gate(
+    finding: dict[str, Any],
+    fallback_finding_ids: set[str],
+) -> bool:
+    blocking = finding.get("blocking")
+    if blocking is True:
+        return True
+    if blocking is False:
+        return False
+    blocking_level = str(finding.get("blocking_level") or "").lower()
+    if blocking_level == "blocking":
+        return True
+    if blocking_level:
+        return False
+    finding_id = str(finding.get("finding_id") or finding.get("id") or "")
+    return bool(finding_id and finding_id in fallback_finding_ids)
 
 
 def _current_workflow_stage(workflow_state: dict[str, Any] | None) -> str:
