@@ -184,7 +184,7 @@ def claim_id_mentions_for_ledger(markdown: str, *, valid_claim_ids: Iterable[str
         add(marker.claim_id)
 
     for start, end, candidate in _iter_claim_id_like_spans(markdown):
-        if candidate in valid_ids or any(candidate.startswith(stem) for stem in stems):
+        if candidate in valid_ids or _matches_ledger_claim_id_stem(candidate, stems):
             if _has_citation_token_boundaries(markdown, start, end):
                 add(candidate)
 
@@ -365,6 +365,16 @@ def _ledger_claim_id_stems(valid_claim_ids: set[str]) -> set[str]:
             stems.add(claim_id[: position + 1])
             break
     return stems
+
+
+def _matches_ledger_claim_id_stem(candidate: str, stems: set[str]) -> bool:
+    for stem in stems:
+        if not candidate.startswith(stem):
+            continue
+        suffix = candidate[len(stem) :]
+        if suffix and any(char.isdigit() for char in suffix):
+            return True
+    return False
 
 
 def _is_free_standing_bare_claim_candidate(candidate: str) -> bool:

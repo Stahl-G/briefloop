@@ -1365,6 +1365,49 @@ def test_finalize_allows_non_real_claim_placeholder_in_audit_report_text(tmp_pat
     )
 
 
+def test_finalize_allows_audit_report_control_ids_that_share_claim_prefix(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(intermediate / "claim_ledger.json")
+    (intermediate / "audit_report.json").write_text(
+        json.dumps(
+            _passing_audit_payload(
+                summary="Audited CL-001.",
+                findings=[
+                    {
+                        "finding_id": "CL-COVERAGE",
+                        "severity": "low",
+                        "finding_type": "coverage",
+                        "description": "CL-format coverage note is not a Claim Ledger reference.",
+                    }
+                ],
+            ),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    _write_audit_control_chain(intermediate)
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+
+    assert result.audit_binding["status"] == "pass"
+    assert not any(
+        finding["kind"] == "audit_mentions_unknown_claim_ids"
+        for finding in result.audit_binding["findings"]
+    )
+
+
 @pytest.mark.parametrize(
     ("audit_status", "audit_score", "finding_severity", "expected_kind"),
     [

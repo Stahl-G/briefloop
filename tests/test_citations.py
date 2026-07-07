@@ -245,3 +245,17 @@ def test_claim_id_mentions_for_ledger_uses_ledger_stems_without_placeholder_fals
             valid_claim_ids={"SOURCEA_ABC123"},
         )
     ) == {"SOURCEA_ABC123", "SOURCEA_OLD999", "SOURCEA_MISSING777"}
+
+
+def test_claim_id_mentions_for_ledger_does_not_treat_control_ids_as_stale_claims() -> None:
+    text = (
+        "Audited CL-001 and stale CL-002. "
+        "Finding CL-COVERAGE and CL-format describe the audit checklist, not claims."
+    )
+
+    assert set(
+        claim_id_mentions_for_ledger(
+            text,
+            valid_claim_ids={"CL-001"},
+        )
+    ) == {"CL-001", "CL-002"}
