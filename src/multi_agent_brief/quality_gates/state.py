@@ -626,6 +626,18 @@ def _finding(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     rule = _finding_rule(finding_type=finding_type, gate_id=gate_id)
+    resolved_metadata = dict(metadata or {})
+    if (
+        blocking_level == "blocking"
+        and repair_owner == "editor"
+        and artifact_id == "audited_brief"
+    ):
+        resolved_metadata.update({
+            "requires_content_edit": True,
+            "owner_stage": "editor",
+            "post_freeze_action": "open_editor_repair",
+            "delivery_effect": "blocks_until_repaired",
+        })
     return {
         "finding_id": finding_id,
         "gate_id": gate_id,
@@ -650,7 +662,7 @@ def _finding(
         "docs_anchor": rule["docs_anchor"],
         "summary": description,
         "evidence_ref": evidence_ref,
-        "metadata": metadata or {},
+        "metadata": resolved_metadata,
     }
 
 
@@ -2464,7 +2476,16 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
             "workspace": str(workspace),
         }
 
-    if repair_route.get("ok") and repair_route.get("repair_owner") != "none":
+    route_kind = repair_route.get("route_kind")
+    repair_owner = repair_route.get("repair_owner")
+    is_owner_stage_repair = (
+        repair_route.get("ok")
+        and route_kind == "owner_stage_repair"
+        and repair_owner not in {None, "", "none", "human"}
+        and bool(repair_route.get("allowed_artifacts"))
+        and bool(repair_route.get("must_rerun_from"))
+    )
+    if is_owner_stage_repair:
         required_commands.extend([
             f"multi-agent-brief repair start --workspace {workspace} --json",
             f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
@@ -2475,6 +2496,15 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
             "Allow edits only to repair_route.allowed_artifacts.",
             "Run repair complete after the owner edits.",
             "Rerun downstream stages from repair_route.must_rerun_from.",
+        ]
+    elif repair_route.get("ok") and route_kind == "human_review":
+        required_commands.extend([
+            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
+            f"multi-agent-brief state decide --workspace {workspace} --stage <stage> --decision block_run --reason \"<reason>\" --json",
+        ])
+        repair_steps = [
+            "This blocking gate requires human review before deterministic repair can proceed.",
+            "Use request_human_review or block_run instead of starting owner-stage repair.",
         ]
     else:
         required_commands.extend([
