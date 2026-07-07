@@ -381,6 +381,12 @@ def start_repair_transaction(
     route = route_repair(workspace=ws, route_index=route_index, finding_id=finding_id)
     if not route.get("ok"):
         raise _repair_route_error(route)
+    if route.get("route_kind") == "human_review":
+        raise RuntimeStateError(
+            "Repair start is blocked because the selected route requires human review.",
+            details=route,
+            error_code=E_ILLEGAL_TRANSITION,
+        )
     if route.get("is_imported_fact_layer_forbidden") is True:
         raise RuntimeStateError(
             (

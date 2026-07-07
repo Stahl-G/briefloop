@@ -592,7 +592,12 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     assert blocker["artifact_id"] == "audited_brief"
     assert blocker["repair_stage_id"] == "editor"
     assert blocker["repair_artifact_id"] == "audited_brief"
+    assert blocker["metadata"]["requires_content_edit"] is True
+    assert blocker["metadata"]["owner_stage"] == "editor"
+    assert blocker["metadata"]["post_freeze_action"] == "open_editor_repair"
+    assert blocker["metadata"]["delivery_effect"] == "blocks_until_repaired"
     assert payload["repair_route"]["repair_owner"] == "editor"
+    assert payload["repair_route"]["route_kind"] == "owner_stage_repair"
     assert payload["repair_route"]["must_rerun_from"] == "auditor"
     assert payload["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert "output/intermediate/audit_report.json" in payload["repair_route"]["blocked_direct_edits"]
@@ -662,6 +667,68 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
     assert payload["details"]["required_command"] == "stage-complete"
+
+
+@pytest.mark.parametrize("repair_owner", ["human", "human_review", "human-review"])
+def test_quality_gate_guidance_does_not_start_human_review_route(tmp_path, repair_owner):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
+    _auditor_report_path(ws).write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "fail",
+                "findings": [
+                    {
+                        "finding_id": "QG_HUMAN_001",
+                        "finding_type": "target_mapping_ambiguous",
+                        "severity": "high",
+                        "blocking": True,
+                        "artifact_id": "audited_brief",
+                        "repair_owner": repair_owner,
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Target mapping is ambiguous and requires human review.",
+                    },
+                    {
+                        "finding_id": "QG_WARN_REPAIR_001",
+                        "finding_type": "unsupported_claim",
+                        "severity": "medium",
+                        "blocking": False,
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Warning-only editor finding should not outrank the blocker.",
+                    },
+                ],
+                "metadata": {"gate_stage_id": "auditor"},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    guidance = quality_gate_state._blocking_repair_guidance(
+        workspace=ws.resolve(),
+        validation={"blocking_count": 1},
+    )
+
+    assert guidance["repair_route"]["route_kind"] == "human_review"
+    assert guidance["repair_route"]["repair_owner"] == "none"
+    assert guidance["repair_route"]["recommended_action"] == "request_human_review_for_blocking_gate"
+    commands = guidance["required_commands"]
+    assert not any(" repair start " in command for command in commands)
+    assert not any(" repair complete " in command for command in commands)
+    assert any(" request_human_review " in command for command in commands)
+    assert any(" block_run " in command for command in commands)
+    assert guidance["repair_steps"] == [
+        "This blocking gate requires human review before deterministic repair can proceed.",
+        "Use request_human_review or block_run instead of starting owner-stage repair.",
+    ]
 
 
 def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):
@@ -1039,6 +1106,9 @@ def test_quality_gates_warn_on_unsupported_strategic_implication(tmp_path):
     assert strategic[0]["blocking"] is False
     assert strategic[0]["category"] == "strategic_overreach"
     assert strategic[0]["metadata"]["support_check"] == "lexical_phrase_absent_from_claim_ledger"
+    assert "requires_content_edit" not in strategic[0]["metadata"]
+    assert "post_freeze_action" not in strategic[0]["metadata"]
+    assert "delivery_effect" not in strategic[0]["metadata"]
 
 
 def test_quality_gates_warn_when_strategic_implication_only_appears_in_limitations(tmp_path):
