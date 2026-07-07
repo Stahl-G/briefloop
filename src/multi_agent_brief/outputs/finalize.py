@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
+from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.citations import claim_id_mentions_for_ledger
 from multi_agent_brief.outputs.naming import render_output_stem
 from multi_agent_brief.outputs.reader_projection import (
@@ -1270,21 +1271,8 @@ def _audit_binding_report(
 
 
 def _claim_ids_from_ledger(path: Path) -> set[str]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(data, dict):
-        raw_claims = data.get("claims") or data.get("items") or []
-    else:
-        raw_claims = data
-    if not isinstance(raw_claims, list):
-        raise ValueError("Claim Ledger must be a list or object with claims/items.")
-    claim_ids: set[str] = set()
-    for item in raw_claims:
-        if not isinstance(item, dict):
-            continue
-        claim_id = item.get("claim_id")
-        if isinstance(claim_id, str) and claim_id.strip():
-            claim_ids.add(claim_id.strip())
-    return claim_ids
+    ledger = ClaimLedger.import_json(path)
+    return {claim.claim_id.strip() for claim in ledger if claim.claim_id.strip()}
 
 
 def _read_json_object_for_binding(
