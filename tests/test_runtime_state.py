@@ -14,9 +14,13 @@ import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment as claim_metadata_enrichment
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
+from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry import interpret_frozen_artifact_integrity
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
+    ARTIFACT_REGISTRY_SCHEMA,
+    interpret_frozen_artifact_integrity,
+)
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     build_semantic_assessment_checked_inputs,
     validate_semantic_assessment_report_against_artifacts,
@@ -766,9 +770,26 @@ def _write_current_gate_report(
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _write_minimal_artifact_registry(ws: Path) -> None:
+    _state_file(ws, "artifact_registry").write_text(
+        json.dumps(
+            {
+                "schema_version": ARTIFACT_REGISTRY_SCHEMA,
+                "artifacts": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _prepare_scoped_repair_workspace(tmp_path: Path, *, current_stage: str = "finalize") -> Path:
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_minimal_artifact_registry(ws)
     _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     (_intermediate(ws) / "audited_brief.md").write_text(
         "# Brief\n\nEditor draft. [src:CL-001]\n",
@@ -6564,13 +6585,17 @@ def test_scoped_repair_start_rejects_invalid_current_gate_route(tmp_path):
     assert "active_repair" not in workflow
 
 
-def test_scoped_repair_start_rejects_route_source_stage_mismatch(tmp_path):
+def test_scoped_repair_start_rejects_requested_gate_stage_mismatch_before_routing(tmp_path, monkeypatch):
     ws = _prepare_scoped_repair_workspace(tmp_path, current_stage="auditor")
     _write_current_gate_report(
         ws,
         stage_id="finalize",
         finding=_current_gate_finding("QG_CURRENT_EDITOR_001"),
     )
+    def fail_route_for_gate(**kwargs):
+        raise AssertionError("route_repair_for_gate should not be called for mismatched scoped gates")
+
+    monkeypatch.setattr(repair_router, "route_repair_for_gate", fail_route_for_gate)
 
     with pytest.raises(RuntimeStateError) as excinfo:
         start_repair_transaction(
@@ -6581,9 +6606,11 @@ def test_scoped_repair_start_rejects_route_source_stage_mismatch(tmp_path):
         )
 
     assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
-    assert "source stage does not match" in str(excinfo.value)
-    assert excinfo.value.details["route_stage_id"] == "finalize"
+    assert "gate must match the current workflow stage" in str(excinfo.value)
+    assert excinfo.value.details["requested_gate_stage_id"] == "finalize"
+    assert excinfo.value.details["requested_gate_artifact_id"] == "finalize_quality_gate_report"
     assert excinfo.value.details["current_stage"] == "auditor"
+    assert excinfo.value.details["expected_gate_artifact_id"] == "auditor_quality_gate_report"
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert "active_repair" not in workflow
 

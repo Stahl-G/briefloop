@@ -84,6 +84,7 @@ from multi_agent_brief.orchestrator.run_integrity import (
     contamination_event_metadata as _run_integrity_contamination_event_metadata,
     contaminate_run_integrity_with_event_flag as _contaminate_run_integrity_with_event_flag,
 )
+from multi_agent_brief.quality_gates.contract import quality_gate_report_key_for_stage
 
 
 def _active_repair_blocking_error(
@@ -379,6 +380,20 @@ def start_repair_transaction(
             details={"active_repair": workflow.get("active_repair")},
             error_code=E_ILLEGAL_TRANSITION,
         )
+    if scoped_gate_requested:
+        current_gate_stage_id = str(workflow.get("current_stage") or "")
+        current_gate_artifact_id = quality_gate_report_key_for_stage(current_gate_stage_id)
+        if gate_stage_id != current_gate_stage_id or gate_artifact_id != current_gate_artifact_id:
+            raise RuntimeStateError(
+                "Scoped repair start gate must match the current workflow stage.",
+                details={
+                    "requested_gate_stage_id": gate_stage_id,
+                    "requested_gate_artifact_id": gate_artifact_id,
+                    "current_stage": current_gate_stage_id,
+                    "expected_gate_artifact_id": current_gate_artifact_id,
+                },
+                error_code=E_ILLEGAL_TRANSITION,
+            )
     run_id = str(manifest["run_id"])
     event_records = _read_event_log_records(paths["event_log"])
     existing_narrowing = _trajectory_decision_narrowing(

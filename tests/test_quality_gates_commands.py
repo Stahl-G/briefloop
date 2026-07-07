@@ -17,6 +17,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     check_runtime_state,
     initialize_runtime_state,
 )
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.workflow import _allowed_decisions_for_stage
 from multi_agent_brief.quality_gates import state as quality_gate_state
 from multi_agent_brief.quality_gates.contract import (
@@ -25,6 +26,7 @@ from multi_agent_brief.quality_gates.contract import (
     quality_gate_report_path_for_stage,
     require_quality_gate_binding_pass,
 )
+from multi_agent_brief.repair import router as repair_router
 from tests.helpers import write_workspace_files_under
 
 
@@ -549,6 +551,7 @@ def _set_current_stage(ws: Path, stage_id: str) -> None:
 
 def _advance_to_auditor(ws: Path) -> None:
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_minimal_artifact_registry(ws)
     _write_json(ws, "candidate_claims.json")
     _write_json(ws, "screened_candidates.json")
     if not (_intermediate(ws) / "claim_ledger.json").exists():
@@ -562,12 +565,32 @@ def _write_json(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
 
 
+def _write_minimal_artifact_registry(ws: Path) -> None:
+    path = runtime_state.runtime_state_paths(ws)["artifact_registry"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": ARTIFACT_REGISTRY_SCHEMA,
+                "artifacts": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_stage_gate_report(
     ws: Path,
     *,
     stage_id: str,
     finding: dict[str, object],
 ) -> None:
+    if not runtime_state.runtime_state_paths(ws)["artifact_registry"].exists():
+        _write_minimal_artifact_registry(ws)
     artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
     report_path = _finalize_report_path(ws) if stage_id == "finalize" else _auditor_report_path(ws)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -726,6 +749,7 @@ def test_real_gate_check_blocks_current_auditor_but_keeps_repair_target(tmp_path
 def test_quality_gate_guidance_does_not_start_human_review_route(tmp_path, repair_owner):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_minimal_artifact_registry(ws)
     _set_current_stage(ws, "auditor")
     _auditor_report_path(ws).parent.mkdir(parents=True, exist_ok=True)
     _auditor_report_path(ws).write_text(
@@ -866,6 +890,46 @@ def test_quality_gate_guidance_uses_current_gate_route_for_scoped_start(tmp_path
         for command in commands
     )
     assert f"multi-agent-brief repair start --workspace {ws.resolve()} --json" not in commands
+
+
+def test_quality_gate_guidance_uses_workflow_scope_for_scoped_start_command(tmp_path, monkeypatch):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "finalize")
+    seen: dict[str, object] = {}
+
+    def fake_route_for_gate(**kwargs):
+        seen.update(kwargs)
+        return {
+            "ok": True,
+            "route_kind": "owner_stage_repair",
+            "repair_owner": "editor",
+            "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+            "must_rerun_from": "auditor",
+            "blocked_direct_edits": [],
+            "source": {
+                "stage_id": "auditor",
+                "kind": "auditor_quality_gate_report",
+                "finding_id": "QG_STALE_AUDITOR_001",
+            },
+        }
+
+    monkeypatch.setattr(repair_router, "route_repair_for_gate", fake_route_for_gate)
+
+    guidance = quality_gate_state._blocking_repair_guidance(
+        workspace=ws.resolve(),
+        validation={"blocking_count": 1},
+        repo_workdir=ROOT,
+    )
+
+    assert seen["gate_stage_id"] == "finalize"
+    assert seen["gate_artifact_id"] == "finalize_quality_gate_report"
+    commands = guidance["required_commands"]
+    assert (
+        f"multi-agent-brief repair start --workspace {ws.resolve()} "
+        "--gate-stage finalize --gate-artifact finalize_quality_gate_report --json"
+    ) in commands
+    assert not any("--gate-stage auditor --gate-artifact auditor_quality_gate_report" in command for command in commands)
 
 
 def test_evaluate_quality_gate_findings_is_read_only_and_matches_report(tmp_path, capsys):

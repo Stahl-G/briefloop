@@ -2495,9 +2495,6 @@ def _blocking_repair_guidance(
             "workspace": str(workspace),
         }
 
-    route_source = repair_route.get("source") if isinstance(repair_route.get("source"), dict) else {}
-    gate_stage_for_command = str(route_source.get("stage_id") or gate_stage_id)
-    gate_artifact_for_command = str(route_source.get("kind") or gate_artifact_id)
     route_kind = repair_route.get("route_kind")
     repair_owner = repair_route.get("repair_owner")
     is_owner_stage_repair = (
@@ -2511,7 +2508,7 @@ def _blocking_repair_guidance(
         required_commands.extend([
             (
                 f"multi-agent-brief repair start --workspace {workspace} "
-                f"--gate-stage {gate_stage_for_command} --gate-artifact {gate_artifact_for_command} --json"
+                f"--gate-stage {gate_stage_id} --gate-artifact {gate_artifact_id} --json"
             ),
             f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
         ])
