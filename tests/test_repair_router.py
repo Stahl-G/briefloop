@@ -1150,7 +1150,7 @@ def test_repair_route_for_gate_rejects_invalid_control_context(
     assert expected_error in payload["input_errors"][0]["error"]
 
 
-def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path):
+def test_repair_route_for_gate_accepts_finalize_delivery_markdown_brief_metadata(tmp_path):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
     path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
@@ -1161,7 +1161,42 @@ def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path):
         finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
     )
     payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["metadata"]["brief"] = "output/intermediate/audited_brief.md"
+    payload["metadata"]["brief"] = "output/delivery/brief.md"
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    route = route_repair_for_gate(
+        workspace=ws,
+        gate_stage_id="finalize",
+        gate_artifact_id="finalize_quality_gate_report",
+        repo_workdir=Path(__file__).resolve().parent.parent,
+    )
+
+    assert route["ok"] is True
+    assert route["route_kind"] == "owner_stage_repair"
+    assert route["repair_owner"] == "editor"
+    assert route["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
+
+
+@pytest.mark.parametrize(
+    "brief_ref",
+    [
+        "output/intermediate/audited_brief.md",
+        "output/delivery/brief.txt",
+        "output/delivery/nested/brief.md",
+    ],
+)
+def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path, brief_ref):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_stage_quality_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["metadata"]["brief"] = brief_ref
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     route = route_repair_for_gate(
@@ -1173,7 +1208,10 @@ def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path):
 
     assert route["ok"] is False
     assert route["error_code"] == "E_REPAIR_INPUT_INVALID"
-    assert any("brief metadata must be output/brief.md" in error["error"] for error in route["input_errors"])
+    assert any(
+        "brief metadata must be output/brief.md or output/delivery/*.md" in error["error"]
+        for error in route["input_errors"]
+    )
 
 
 def test_repair_route_for_gate_rejects_missing_required_gate_results(tmp_path):

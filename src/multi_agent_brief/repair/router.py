@@ -422,9 +422,9 @@ def _current_gate_report_validation_errors(
             f"Quality gate report artifact must be {expected_artifact_id}; "
             f"got {gate_artifact_id or '<missing>'}."
         )
-    expected_brief = "output/brief.md" if stage_id == "finalize" else "output/intermediate/audited_brief.md"
     brief_ref = str(metadata.get("brief") or metadata.get("audited_brief") or "")
-    if brief_ref != expected_brief:
+    if not _brief_metadata_matches_gate_stage(stage_id, brief_ref):
+        expected_brief = _expected_brief_metadata_description(stage_id)
         errors.append(f"Quality gate report brief metadata must be {expected_brief}; got {brief_ref}.")
     ledger_ref = str(metadata.get("ledger") or metadata.get("claim_ledger") or "")
     if ledger_ref != "output/intermediate/claim_ledger.json":
@@ -433,6 +433,24 @@ def _current_gate_report_validation_errors(
             f"got {ledger_ref}."
         )
     return errors
+
+
+def _expected_brief_metadata_description(stage_id: str) -> str:
+    if stage_id == "finalize":
+        return "output/brief.md or output/delivery/*.md"
+    return "output/intermediate/audited_brief.md"
+
+
+def _brief_metadata_matches_gate_stage(stage_id: str, brief_ref: str) -> bool:
+    if stage_id != "finalize":
+        return brief_ref == "output/intermediate/audited_brief.md"
+    if brief_ref == "output/brief.md":
+        return True
+    prefix = "output/delivery/"
+    if not brief_ref.startswith(prefix):
+        return False
+    filename = brief_ref[len(prefix):]
+    return bool(filename) and "/" not in filename and "\\" not in filename and filename.endswith(".md")
 
 
 def _gate_report_is_blocking(payload: dict[str, Any]) -> bool:
