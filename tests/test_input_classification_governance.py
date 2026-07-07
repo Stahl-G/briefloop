@@ -501,10 +501,10 @@ def test_manual_provider_blocks_feedback_instruction_context_paths(tmp_path: Pat
 
 
 # ────────────────────────────────────────────────────────────────────
-# Test 6: finalize still strips [src:] markers
+# Test 6: finalize still projects resolved [src:] markers
 # ────────────────────────────────────────────────────────────────────
 
-def test_finalize_reader_outputs_strip_src_markers(tmp_path: Path):
+def test_finalize_reader_outputs_projects_resolved_src_markers(tmp_path: Path):
     ws = _write_workspace(tmp_path)
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True)
@@ -513,6 +513,33 @@ def test_finalize_reader_outputs_strip_src_markers(tmp_path: Path):
     audited.write_text(
         "# Test Brief\n\nThe company announced a new product. [src:CLM_001]\n\n"
         "More details followed. [src:CLM_002]",
+        encoding="utf-8",
+    )
+    (intermediate / "claim_ledger.json").write_text(
+        json.dumps(
+            [
+                {
+                    "claim_id": "CLM_001",
+                    "statement": "The company announced a new product.",
+                    "source_id": "SRC_001",
+                    "evidence_text": "The company announced a new product.",
+                    "source_url": "https://example.com/product",
+                    "source_type": "web_search",
+                    "metadata": {"source_title": "Product announcement"},
+                },
+                {
+                    "claim_id": "CLM_002",
+                    "statement": "More details followed.",
+                    "source_id": "SRC_002",
+                    "evidence_text": "More details followed.",
+                    "source_url": "https://example.com/details",
+                    "source_type": "web_search",
+                    "metadata": {"source_title": "Product details"},
+                },
+            ],
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
 
@@ -526,4 +553,6 @@ def test_finalize_reader_outputs_strip_src_markers(tmp_path: Path):
     assert reader.exists(), f"brief.md not created. Files in output: {list((ws/'output').iterdir())}"
     content = reader.read_text(encoding="utf-8")
     assert "[src:" not in content, f"Found [src:] in reader output:\n{content}"
+    assert "[S1]" in content
+    assert "[S2]" in content
     assert "The company announced" in content

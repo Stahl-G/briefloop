@@ -131,7 +131,8 @@ def test_reader_projection_auto_appendix_resolves_markdown_formatted_bare_marker
     (intermediate / "audited_brief.md").write_text(
         "# Brief\n\n"
         "ExampleCo opened a public demo facility. `source:SOURCEA_ABC123`\n"
-        "ExampleCo announced a second milestone. **source:SOURCEA_ABC123**\n",
+        "ExampleCo announced a second milestone. **source:SOURCEA_ABC123**\n"
+        "ExampleCo announced a third milestone. _source:SOURCEA_ABC123_\n",
         encoding="utf-8",
     )
 
@@ -148,6 +149,7 @@ def test_reader_projection_auto_appendix_resolves_markdown_formatted_bare_marker
     assert "source:SOURCEA_ABC123" not in result.reader_markdown
     assert "`[S1]`" in result.reader_markdown
     assert "**[S1]**" in result.reader_markdown
+    assert "_[S1]_" in result.reader_markdown
 
 
 def test_reader_projection_canonical_source_strips_internal_sections_before_appendix(

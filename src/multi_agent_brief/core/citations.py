@@ -13,10 +13,7 @@ VALID_SRC_REF_PATTERN = re.compile(rf"\[src:{CLAIM_ID_RE_FRAGMENT}\]")
 CLAIM_ID_TOKEN_RE = re.compile(rf"^{CLAIM_ID_RE_FRAGMENT}$")
 
 _BRACKETED_SOURCE_MARKER_RE = re.compile(r"\[(src|source)\s*:\s*([^\]\[\r\n]*)\]", re.IGNORECASE)
-_BARE_SOURCE_MARKER_PREFIX_RE = re.compile(
-    r"(?<![A-Za-z0-9_/:?&=#.-])\b(src|source):",
-    re.IGNORECASE,
-)
+_BARE_SOURCE_MARKER_PREFIX_RE = re.compile(r"(?:(?<=_)|\b)(src|source):", re.IGNORECASE)
 _CLAIM_ID_BOUNDARY_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-")
 _CLAIM_ID_LEFT_CONTEXT_BLOCKERS = frozenset(":/?#&=.")
 _CLAIM_ID_RIGHT_CONTEXT_BLOCKERS = frozenset("/\\:?&#=")
@@ -77,7 +74,14 @@ def parse_internal_citation_markers(
         occupied_spans.append((match.start(), match.end()))
 
     for match in _BARE_SOURCE_MARKER_PREFIX_RE.finditer(markdown):
-        candidate, end = _bare_marker_candidate_at(markdown, match.end())
+        opening_underscore_count = _opening_markdown_underscore_count(markdown, match.start())
+        if not opening_underscore_count and not _has_bare_source_marker_left_boundary(markdown, match.start()):
+            continue
+        candidate, end = _bare_marker_candidate_at(
+            markdown,
+            match.end(),
+            opening_underscore_count=opening_underscore_count,
+        )
         if valid_ids is None or candidate not in valid_ids:
             if not _is_explicit_source_marker_candidate(candidate):
                 continue
@@ -212,14 +216,35 @@ def _normalized_marker_candidate(candidate: str) -> str:
     return candidate
 
 
-def _normalized_bare_marker_candidate(*, candidate: str, end: int) -> tuple[str, int]:
-    while candidate and candidate[-1] in _TRAILING_PROSE_PUNCTUATION:
-        candidate = candidate[:-1].rstrip()
-        end -= 1
+def _normalized_bare_marker_candidate(
+    *,
+    candidate: str,
+    end: int,
+    opening_underscore_count: int = 0,
+) -> tuple[str, int]:
+    while candidate:
+        if candidate[-1] in _TRAILING_PROSE_PUNCTUATION:
+            candidate = candidate[:-1].rstrip()
+            end -= 1
+            continue
+        if (
+            opening_underscore_count
+            and len(candidate) > opening_underscore_count
+            and candidate.endswith("_" * opening_underscore_count)
+        ):
+            candidate = candidate[:-opening_underscore_count].rstrip()
+            end -= opening_underscore_count
+            continue
+        break
     return candidate, end
 
 
-def _bare_marker_candidate_at(markdown: str, start: int) -> tuple[str, int]:
+def _bare_marker_candidate_at(
+    markdown: str,
+    start: int,
+    *,
+    opening_underscore_count: int = 0,
+) -> tuple[str, int]:
     end = start
     while end < len(markdown):
         char = markdown[end]
@@ -231,6 +256,7 @@ def _bare_marker_candidate_at(markdown: str, start: int) -> tuple[str, int]:
     return _normalized_bare_marker_candidate(
         candidate=markdown[start:end].strip(),
         end=end,
+        opening_underscore_count=opening_underscore_count,
     )
 
 
@@ -255,6 +281,25 @@ def _iter_known_claim_id_spans(markdown: str, valid_claim_ids: set[str]):
             if _has_citation_token_boundaries(markdown, index, end):
                 yield index, end, claim_id
             start = index + 1
+
+
+def _opening_markdown_underscore_count(markdown: str, marker_start: int) -> int:
+    index = marker_start - 1
+    count = 0
+    while index >= 0 and markdown[index] == "_":
+        count += 1
+        index -= 1
+    if not count:
+        return 0
+    before = markdown[index] if index >= 0 else ""
+    if before and (before in _CLAIM_ID_BOUNDARY_CHARS or before in _CLAIM_ID_LEFT_CONTEXT_BLOCKERS):
+        return 0
+    return count
+
+
+def _has_bare_source_marker_left_boundary(markdown: str, marker_start: int) -> bool:
+    before = markdown[marker_start - 1] if marker_start > 0 else ""
+    return before not in _CLAIM_ID_BOUNDARY_CHARS and before not in _CLAIM_ID_LEFT_CONTEXT_BLOCKERS
 
 
 def _is_free_standing_bare_claim_candidate(candidate: str) -> bool:
