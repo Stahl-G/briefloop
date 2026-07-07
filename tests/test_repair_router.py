@@ -1089,10 +1089,21 @@ def test_repair_route_for_gate_rejects_malformed_current_gate(tmp_path):
         ("artifact_registry", "artifact_registry"),
     ],
 )
-def test_repair_route_for_gate_rejects_malformed_control_files(
+@pytest.mark.parametrize(
+    ("payload_text", "expected_error"),
+    [
+        ("{broken", "invalid JSON"),
+        ("[]\n", "JSON payload must be an object"),
+        (json.dumps({"run_id": "run-test"}, ensure_ascii=False) + "\n", "missing schema_version"),
+        (json.dumps({"schema_version": "wrong-schema"}, ensure_ascii=False) + "\n", "schema_version must be"),
+    ],
+)
+def test_repair_route_for_gate_rejects_invalid_control_context(
     tmp_path,
     state_key,
     expected_source,
+    payload_text,
+    expected_error,
 ):
     ws = _workspace(tmp_path)
     initialize_runtime_state(workspace=ws)
@@ -1101,7 +1112,7 @@ def test_repair_route_for_gate_rejects_malformed_control_files(
         stage_id="finalize",
         finding=_editor_gate_finding("QG_CURRENT_EDITOR_001"),
     )
-    runtime_state_paths(ws)[state_key].write_text("{broken", encoding="utf-8")
+    runtime_state_paths(ws)[state_key].write_text(payload_text, encoding="utf-8")
 
     payload = route_repair_for_gate(
         workspace=ws,
@@ -1115,6 +1126,7 @@ def test_repair_route_for_gate_rejects_malformed_control_files(
     assert payload["route_kind"] == "none"
     assert payload["gate_artifact_id"] == "finalize_quality_gate_report"
     assert payload["input_errors"][0]["source"] == expected_source
+    assert expected_error in payload["input_errors"][0]["error"]
 
 
 def test_repair_route_for_gate_rejects_binding_invalid_current_gate(tmp_path):

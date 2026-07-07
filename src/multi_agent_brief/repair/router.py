@@ -18,7 +18,12 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
     utc_now,
 )
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry import _build_artifact_registry
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
+    ARTIFACT_REGISTRY_SCHEMA,
+    _build_artifact_registry,
+)
+from multi_agent_brief.orchestrator.runtime_state.manifest import RUNTIME_MANIFEST_SCHEMA
+from multi_agent_brief.orchestrator.runtime_state.workflow import WORKFLOW_STATE_SCHEMA
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.quality_gates.contract import (
     STAGE_COMPLETION_REQUIRED_GATE_IDS,
@@ -106,6 +111,11 @@ IMPORTED_FACT_LAYER_FORBIDDEN_ARTIFACTS = {
 IMPORTED_FACT_LAYER_FORBIDDEN_PREFIXES = (
     "input/sources/",
 )
+CONTROL_CONTEXT_SCHEMAS = {
+    "runtime_manifest": RUNTIME_MANIFEST_SCHEMA,
+    "workflow_state": WORKFLOW_STATE_SCHEMA,
+    "artifact_registry": ARTIFACT_REGISTRY_SCHEMA,
+}
 
 
 def route_repair(
@@ -338,14 +348,33 @@ def _control_payloads_for_route_context(workspace: Path) -> tuple[dict[str, dict
     payloads: dict[str, dict[str, Any]] = {}
     input_errors: list[dict[str, str]] = []
     input_paths = _input_paths(workspace)
-    for label in ("runtime_manifest", "workflow_state", "artifact_registry"):
+    for label, expected_schema in CONTROL_CONTEXT_SCHEMAS.items():
         path = input_paths[label]
         payload, error = _read_json_object(path)
         if error:
             input_errors.append({"source": label, "path": _workspace_relative(workspace, path), "error": error})
             continue
-        if isinstance(payload, dict):
-            payloads[label] = payload
+        if payload is None:
+            continue
+        schema_version = payload.get("schema_version")
+        if not schema_version:
+            input_errors.append({
+                "source": label,
+                "path": _workspace_relative(workspace, path),
+                "error": f"{label} missing schema_version.",
+            })
+            continue
+        if schema_version != expected_schema:
+            input_errors.append({
+                "source": label,
+                "path": _workspace_relative(workspace, path),
+                "error": (
+                    f"{label} schema_version must be {expected_schema}; "
+                    f"got {schema_version!r}."
+                ),
+            })
+            continue
+        payloads[label] = payload
     return payloads, input_errors
 
 
