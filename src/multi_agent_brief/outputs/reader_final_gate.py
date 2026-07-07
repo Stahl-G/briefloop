@@ -43,7 +43,16 @@ _SOURCE_ID_RE = re.compile(
 _CONTEXTUAL_SRC_ID_RE = re.compile(
     r"(?i)(?:source[_\s-]*id|source\s+ref(?:erence)?|来源\s*ID|源\s*ID)[:：\s`'\"]*(SRC-\d{3,})"
 )
-_LOCAL_PATH_RE = re.compile(r"(?:/Users/[^\s)]+|/mnt/data/[^\s)]+|file://[^\s)]+|[A-Za-z]:\\[^\s)]+)")
+_LOCAL_PATH_RE = re.compile(
+    r"(?:"
+    r"/Users/[^\s)]+"
+    r"|/mnt/data/[^\s)]+"
+    r"|file://[^\s)]+"
+    r"|[A-Za-z]:\\[^\s)]+"
+    r"|(?<![A-Za-z0-9_/:?&=#.-])"
+    r"(?:input[\\/]sources|output[\\/]intermediate|output[\\/]delivery)[\\/][^\s)]+"
+    r")"
+)
 _DEBUG_RE = re.compile(r"\b(?:DEBUG|TRACE)\b")
 _ATOM_ID_RE = re.compile(r"(?<![A-Za-z0-9_])AC-\d{4}-\d{2}(?![A-Za-z0-9_])")
 _SPAN_ID_RE = re.compile(r"(?<![A-Za-z0-9_])ESP-\d{3,4}-\d{2}(?![A-Za-z0-9_])")
@@ -202,7 +211,7 @@ def detect_reader_residue(
             line=line,
             line_number=line_number,
             artifact=artifact,
-            message="Reader-facing output contains a local or file URL path.",
+            message="Reader-facing output contains a local, file URL, or internal workspace path.",
         )
         _collect_regex_findings(
             findings,

@@ -20,7 +20,10 @@ from multi_agent_brief.outputs.finalize import (
     interpret_finalize_audit_binding,
     require_finalize_audit_binding_pass,
 )
-from multi_agent_brief.outputs.reader_projection import PROJECTABLE_READER_BLOCK_START
+from multi_agent_brief.outputs.reader_projection import (
+    PROJECTABLE_READER_BLOCK_END,
+    PROJECTABLE_READER_BLOCK_START,
+)
 from multi_agent_brief.outputs import finalize as finalize_module
 from tests.helpers import sha256_file as _sha256_file
 
@@ -86,14 +89,19 @@ def _write_claim_ledger(path: Path) -> None:
     path.write_text(json.dumps(claims, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _write_single_claim_ledger(path: Path, *, claim_id: str = "CL-001") -> None:
+def _write_single_claim_ledger(
+    path: Path,
+    *,
+    claim_id: str = "CL-001",
+    source_url: str = "https://example.com/exampleco-demo",
+) -> None:
     claims = [
         {
             "claim_id": claim_id,
             "statement": "ExampleCo opened a public demo facility in June 2026.",
             "source_id": "SRC-001",
             "evidence_text": "ExampleCo opened a public demo facility in June 2026.",
-            "source_url": "https://example.com/exampleco-demo",
+            "source_url": source_url,
             "source_type": "web_search",
             "metadata": {
                 "source_title": "ExampleCo Opens Demo Facility",
@@ -949,6 +957,38 @@ def test_finalize_generates_reader_facing_source_appendix_for_explicit_request(t
     assert report["delivery_artifacts"] == ["output/delivery/brief.md"]
     assert not (output_dir / "delivery" / "source_appendix.md").exists()
     assert not (output_dir / "delivery" / "claim_ledger.json").exists()
+
+
+def test_finalize_allows_public_source_url_with_internal_path_segment(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "ExampleCo opened a public demo facility. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    _write_single_claim_ledger(
+        intermediate / "claim_ledger.json",
+        source_url="https://example.com/output/intermediate/report",
+    )
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown", "source_appendix"],
+        output_named_outputs=False,
+    )
+
+    appendix = (output_dir / "source_appendix.md").read_text(encoding="utf-8")
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+
+    assert result.source_appendix_generation == "generated"
+    assert report["status"] == "pass"
+    assert reader_clean["status"] == "pass"
+    assert reader_clean["local_path_count"] == 0
+    assert "https://example.com/output/intermediate/report" in appendix
 
 
 def test_finalize_records_citation_profile_override_without_reader_internal_ids(tmp_path: Path):
@@ -2484,6 +2524,65 @@ def test_finalize_fails_on_source_marker_process_and_local_residue(tmp_path: Pat
     assert reader_clean["process_wording_count"] >= 3
     assert reader_clean["local_path_count"] == 1
     assert reader_clean["debug_residue_count"] == 1
+
+
+def test_finalize_fails_on_relative_internal_source_path_residue(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Reader-visible unmarked appendix leaks input/sources/source-001.md.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="Reader final output gate failed"):
+        finalize_reader_outputs(
+            output_dir=output_dir,
+            project_name="ExampleCo Brief",
+            output_formats=["markdown"],
+            output_named_outputs=False,
+        )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader_clean = report["reader_clean"]
+    assert report["delivery_promotion"] == "skipped_reader_clean_failed"
+    assert reader_clean["local_path_count"] == 1
+    assert any(
+        "input/sources/source-001.md" in finding["text"]
+        for finding in reader_clean["sample_findings"]
+    )
+
+
+def test_finalize_allows_marked_claim_ledger_disclaimer_without_rewriting_audited_brief(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    audited = intermediate / "audited_brief.md"
+    audited.write_text(
+        "# Brief\n\n"
+        "Reader-safe business summary.\n\n"
+        f"{PROJECTABLE_READER_BLOCK_START}\n"
+        "This brief was generated from the Claim Ledger and must not be distributed before review.\n"
+        f"{PROJECTABLE_READER_BLOCK_END}\n",
+        encoding="utf-8",
+    )
+    audited_sha_before = _sha256_file(audited)
+
+    finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    assert report["status"] == "pass"
+    assert report["reader_clean"]["status"] == "pass"
+    assert "Reader-safe business summary." in reader
+    assert "Claim Ledger" not in reader
+    assert _sha256_file(audited) == audited_sha_before
 
 
 def test_finalize_fails_on_blank_source_index_row(tmp_path: Path):

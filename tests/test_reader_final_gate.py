@@ -154,6 +154,11 @@ def test_reader_final_gate_detects_local_paths_and_debug_residue() -> None:
             "File URL: file:///tmp/private.md",
             "Windows path: C:\\Users\\example\\source.md",
             "Notebook path: /mnt/data/output.md",
+            "Workspace source path: input/sources/source-001.md",
+            "Intermediate control path: output/intermediate/claim_ledger.json",
+            "Windows workspace source path: input\\sources\\source-001.md",
+            "Windows intermediate path: output\\intermediate\\claim_ledger.json",
+            "Windows delivery path: output\\delivery\\brief.md",
             "DEBUG this must not ship.",
             "TRACE this must not ship.",
         ]
@@ -162,8 +167,39 @@ def test_reader_final_gate_detects_local_paths_and_debug_residue() -> None:
     result = detect_reader_residue(text, artifact="output/brief.md")
 
     assert result.status == "fail"
-    assert result.counts["local_path_count"] == 4
+    assert result.counts["local_path_count"] == 9
     assert result.counts["debug_residue_count"] == 2
+
+
+def test_reader_final_gate_allows_public_urls_with_internal_path_segments() -> None:
+    text = "\n".join(
+        [
+            "Source: https://example.com/output/intermediate/report",
+            "Dataset: https://example.com/input/sources/source-001.md",
+            "Archive: https://example.com/output/delivery/brief.md",
+        ]
+    )
+
+    result = detect_reader_residue(text, artifact="output/source_appendix.md")
+
+    assert result.status == "pass"
+    assert result.counts["local_path_count"] == 0
+
+
+def test_reader_final_gate_blocks_unmarked_source_appendix_internal_residue() -> None:
+    text = "\n".join(
+        [
+            "## 来源附录",
+            "Claim Ledger 条目 CL-001 来自 input/sources/source-001.md。",
+        ]
+    )
+
+    result = detect_reader_residue(text, artifact="output/brief.md")
+
+    assert result.status == "fail"
+    assert result.counts["bare_claim_id_count"] == 1
+    assert result.counts["process_wording_count"] == 1
+    assert result.counts["local_path_count"] == 1
 
 
 def test_reader_final_gate_detects_blank_rows_only_inside_source_sections() -> None:
