@@ -191,13 +191,13 @@ def _parse_src_marker_at(
         return InternalCitationMarker(
             kind="src_marker",
             raw=raw,
-            claim_id=markdown[candidate_start:malformed_end].strip(),
+            claim_id=markdown[candidate_start:malformed_end],
             start=marker_start,
             end=malformed_end,
             status="malformed",
             message="source marker is missing a closing bracket",
         )
-    candidate = markdown[candidate_start:close].strip()
+    candidate = markdown[candidate_start:close]
     raw = markdown[marker_start : close + 1]
     return _marker_from_candidate(
         raw=raw,

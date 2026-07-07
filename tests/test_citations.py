@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from multi_agent_brief.core.citations import (
+    extract_src_ref_ids,
     parse_internal_citation_markers,
     resolved_internal_citation_ids,
     unresolved_internal_citation_markers,
@@ -25,6 +26,7 @@ def test_parse_internal_citation_markers_resolves_only_canonical_src_markers() -
         ("src_marker", "[src:CL-001]", "CL-001", "resolved"),
         ("src_marker", "[src:SYN_CLAIM_001]", "SYN_CLAIM_001", "resolved"),
     ]
+    assert extract_src_ref_ids(text) == ["CL-001", "SYN_CLAIM_001"]
 
 
 def test_parse_internal_citation_markers_uses_ledger_membership_not_id_family() -> None:
@@ -53,14 +55,18 @@ def test_parse_internal_citation_markers_reports_empty_and_unknown_src_markers()
 
 
 def test_parse_internal_citation_markers_reports_malformed_src_claim_id() -> None:
-    text = "Malformed [src:CL-001/path] and [src:CL 001]."
+    text = "Malformed [src:CL-001/path], [src:CL 001], [src: CL-001], [src:CL-001 ], and [src:\tCL-001]."
 
     unresolved = unresolved_internal_citation_markers(text, valid_claim_ids={"CL-001"})
 
     assert [(marker.raw, marker.claim_id, marker.status) for marker in unresolved] == [
         ("[src:CL-001/path]", "CL-001/path", "malformed"),
         ("[src:CL 001]", "CL 001", "malformed"),
+        ("[src: CL-001]", " CL-001", "malformed"),
+        ("[src:CL-001 ]", "CL-001 ", "malformed"),
+        ("[src:\tCL-001]", "\tCL-001", "malformed"),
     ]
+    assert extract_src_ref_ids(text) == []
 
 
 def test_parse_internal_citation_markers_does_not_let_broken_marker_hide_later_citation() -> None:
@@ -81,7 +87,7 @@ def test_parse_internal_citation_markers_reports_nested_marker_without_consuming
     markers = parse_internal_citation_markers(text, valid_claim_ids={"CL-001"})
 
     assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
-        ("[src:CL-404 ", "CL-404", "malformed"),
+        ("[src:CL-404 ", "CL-404 ", "malformed"),
         ("[src:CL-001]", "CL-001", "resolved"),
     ]
 
