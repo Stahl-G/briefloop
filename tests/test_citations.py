@@ -63,7 +63,10 @@ def test_parse_internal_citation_markers_resolves_explicit_alpha_ledger_id() -> 
 
 
 def test_parse_internal_citation_markers_reports_alpha_only_explicit_marker_without_ledger() -> None:
-    text = "Explicit unresolved marker source:ALPHACLAIM, but prose Source:FDA and source:company stay text."
+    text = (
+        "Explicit unresolved marker source:ALPHACLAIM, "
+        "but prose Source:FDA, source:company, source:10-K, and Source:Q2-2026 stay text."
+    )
 
     markers = parse_internal_citation_markers(text, valid_claim_ids=None)
 

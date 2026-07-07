@@ -309,9 +309,15 @@ def _is_free_standing_bare_claim_candidate(candidate: str) -> bool:
 
 
 def _is_explicit_source_marker_candidate(candidate: str) -> bool:
-    if _is_free_standing_bare_claim_candidate(candidate):
+    if not CLAIM_ID_TOKEN_RE.fullmatch(candidate):
+        return False
+    if candidate.lower().startswith("claim-"):
         return True
-    return bool(CLAIM_ID_TOKEN_RE.fullmatch(candidate)) and candidate.isalpha() and candidate.isupper() and len(candidate) >= 6
+    if candidate.startswith(("CL-", "CLM-")):
+        return True
+    if "_" in candidate and candidate.upper() == candidate:
+        return True
+    return candidate.isalpha() and candidate.isupper() and len(candidate) >= 6
 
 
 def _has_citation_token_boundaries(markdown: str, start: int, end: int) -> bool:

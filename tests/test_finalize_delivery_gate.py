@@ -1697,6 +1697,32 @@ def test_finalize_preserves_bare_source_marker_as_reader_clean_failure(tmp_path:
     assert not (output_dir / "delivery").exists()
 
 
+def test_finalize_allows_plain_source_prose_without_ledger(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    intermediate = output_dir / "intermediate"
+    intermediate.mkdir(parents=True)
+    (intermediate / "audited_brief.md").write_text(
+        "# Brief\n\n"
+        "Primary source:10-K filing.\n"
+        "Source:Q2-2026 report.\n",
+        encoding="utf-8",
+    )
+
+    result = finalize_reader_outputs(
+        output_dir=output_dir,
+        project_name="ExampleCo Brief",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+    )
+
+    report = json.loads((intermediate / "finalize_report.json").read_text(encoding="utf-8"))
+    reader = (output_dir / "brief.md").read_text(encoding="utf-8")
+    assert result.status == "pass"
+    assert report["reader_clean"]["status"] == "pass"
+    assert "Primary source:10-K filing." in reader
+    assert "Source:Q2-2026 report." in reader
+
+
 def test_finalize_explicit_source_appendix_fails_on_missing_ledger(tmp_path: Path):
     output_dir = tmp_path / "output"
     intermediate = output_dir / "intermediate"
