@@ -21,6 +21,7 @@ _CLAIM_ID_BOUNDARY_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnop
 _CLAIM_ID_LEFT_CONTEXT_BLOCKERS = frozenset(":/?#&=.")
 _CLAIM_ID_RIGHT_CONTEXT_BLOCKERS = frozenset("/\\:?&#=")
 _TRAILING_PROSE_PUNCTUATION = frozenset(".,;:!\"'”’。．，、；：！？）】》」』")
+_MARKDOWN_FORMATTING_DELIMITERS = frozenset("`*~")
 
 InternalCitationKind = Literal["bracketed_source_marker", "bare_source_marker", "bare_claim_id"]
 InternalCitationStatus = Literal["resolved", "unresolved", "malformed"]
@@ -222,7 +223,7 @@ def _bare_marker_candidate_at(markdown: str, start: int) -> tuple[str, int]:
     end = start
     while end < len(markdown):
         char = markdown[end]
-        if char.isspace() or char in "][(){}<>":
+        if char.isspace() or char in "][(){}<>" or char in _MARKDOWN_FORMATTING_DELIMITERS:
             break
         if char in _TRAILING_PROSE_PUNCTUATION and _is_bare_marker_delimiter(markdown, end):
             break

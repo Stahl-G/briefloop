@@ -149,6 +149,25 @@ def test_parse_internal_citation_markers_treats_trailing_punctuation_as_delimite
     ]
 
 
+def test_parse_internal_citation_markers_treats_markdown_formatting_as_delimiter() -> None:
+    text = (
+        "Code marker `source:SOURCEA_ABC123` and "
+        "bold marker **source:SOURCEA_ABC123** and "
+        "strike marker ~~source:SOURCEA_ABC123~~."
+    )
+
+    markers = parse_internal_citation_markers(
+        text,
+        valid_claim_ids={"SOURCEA_ABC123"},
+    )
+
+    assert [(marker.raw, marker.claim_id, marker.status) for marker in markers] == [
+        ("source:SOURCEA_ABC123", "SOURCEA_ABC123", "resolved"),
+        ("source:SOURCEA_ABC123", "SOURCEA_ABC123", "resolved"),
+        ("source:SOURCEA_ABC123", "SOURCEA_ABC123", "resolved"),
+    ]
+
+
 def test_parse_internal_citation_markers_rejects_pathlike_bare_suffixes() -> None:
     text = (
         "Path suffix source:CL-001/path "
