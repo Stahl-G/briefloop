@@ -20,7 +20,11 @@ from multi_agent_brief.orchestrator.runtime_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import _build_artifact_registry
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
-from multi_agent_brief.quality_gates.contract import quality_gate_paths
+from multi_agent_brief.quality_gates.contract import (
+    quality_gate_paths,
+    quality_gate_report_key_for_stage,
+    validate_quality_gate_report_payload,
+)
 
 
 INTERMEDIATE_DIR = Path("output/intermediate")
@@ -157,6 +161,139 @@ def route_repair(
     }
 
 
+def route_repair_for_gate(
+    *,
+    workspace: str | Path,
+    gate_stage_id: str | None,
+    gate_artifact_id: str | None,
+    repo_workdir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Route repair for one current gate report without consuming stale reports."""
+
+    ws = Path(workspace).expanduser().resolve()
+    if not (ws / "config.yaml").exists():
+        return {
+            "ok": False,
+            "error_code": "E_REPAIR_WORKSPACE_MISSING",
+            "message": f"Workspace config.yaml not found: {ws / 'config.yaml'}",
+            "workspace": str(ws),
+        }
+
+    stage_id = str(gate_stage_id or "")
+    artifact_id = str(gate_artifact_id or quality_gate_report_key_for_stage(stage_id))
+    gate_paths = quality_gate_paths(ws)
+    path = gate_paths.get(artifact_id)
+    if path is None:
+        return {
+            "ok": False,
+            "error_code": "E_REPAIR_ROUTE_SELECTION_INVALID",
+            "message": f"Unsupported gate artifact for repair routing: {artifact_id or '<missing>'}.",
+            "workspace": str(ws),
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+        }
+    expected_artifact_id = quality_gate_report_key_for_stage(stage_id)
+    if artifact_id != expected_artifact_id:
+        return {
+            "ok": False,
+            "error_code": "E_REPAIR_ROUTE_SELECTION_INVALID",
+            "message": (
+                f"Gate artifact {artifact_id} does not match gate stage "
+                f"{stage_id or '<missing>'}; expected {expected_artifact_id}."
+            ),
+            "workspace": str(ws),
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+        }
+
+    payload, error = _read_json_object(path)
+    if error:
+        return {
+            "ok": False,
+            "error_code": "E_REPAIR_INPUT_INVALID",
+            "message": "Current gate report is invalid or unreadable.",
+            "workspace": str(ws),
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+            "input_errors": [{"source": artifact_id, "path": _workspace_relative(ws, path), "error": error}],
+        }
+    payloads = _control_payloads_for_route_context(ws)
+    if payload is None:
+        selected = _neutral_no_gate_repair_route()
+        return {
+            "ok": True,
+            "workspace": str(ws),
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+            **selected,
+            "routes": [],
+            "finding_count": 0,
+        }
+
+    validation_errors = _current_gate_report_validation_errors(
+        workspace=ws,
+        payload=payload,
+        stage_id=stage_id,
+        repo_workdir=repo_workdir,
+    )
+    if validation_errors:
+        return {
+            "ok": False,
+            "error_code": "E_REPAIR_INPUT_INVALID",
+            "message": "Current gate report is invalid for repair routing.",
+            "workspace": str(ws),
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+            "input_errors": [
+                {
+                    "source": artifact_id,
+                    "path": _workspace_relative(ws, path),
+                    "error": error,
+                }
+                for error in validation_errors
+            ],
+        }
+
+    if not _gate_report_is_blocking(payload):
+        selected = _neutral_no_gate_repair_route()
+        return {
+            "ok": True,
+            "workspace": str(ws),
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+            **selected,
+            "routes": [],
+            "finding_count": 0,
+        }
+
+    findings = _findings_from_payload(payload, source=artifact_id, path=_workspace_relative(ws, path))
+    routes = [_route_for_finding(finding) for finding in findings]
+    routes = [route for route in routes if route is not None]
+    routes = sorted(routes, key=_route_priority)
+    routes = _annotated_routes(routes, imported_fact_layer=_workspace_has_fact_layer_import(payloads))
+    selected = _select_route(routes, route_index=None, finding_id=None)
+    if not selected.get("ok", True):
+        return {
+            "ok": False,
+            "workspace": str(ws),
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+            "routes": routes,
+            "finding_count": len(findings),
+            **selected,
+        }
+    selected = _with_run_integrity_context(selected, payloads.get("workflow_state"))
+    return {
+        "ok": True,
+        "workspace": str(ws),
+        "gate_stage_id": stage_id,
+        "gate_artifact_id": artifact_id,
+        **selected,
+        "routes": routes,
+        "finding_count": len(findings),
+    }
+
+
 def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[str, str]], dict[str, dict[str, Any]]]:
     findings: list[dict[str, Any]] = []
     input_errors: list[dict[str, str]] = []
@@ -181,6 +318,76 @@ def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[
     findings.extend(_findings_from_artifact_registry(registry))
     findings.extend(_findings_from_frozen_artifact_integrity(workspace, payloads))
     return _dedupe_findings(findings), input_errors, payloads
+
+
+def _control_payloads_for_route_context(workspace: Path) -> dict[str, dict[str, Any]]:
+    payloads: dict[str, dict[str, Any]] = {}
+    input_paths = _input_paths(workspace)
+    for label in ("runtime_manifest", "workflow_state", "artifact_registry"):
+        payload, _error = _read_json_object(input_paths[label])
+        if isinstance(payload, dict):
+            payloads[label] = payload
+    return payloads
+
+
+def _current_gate_report_validation_errors(
+    *,
+    workspace: Path,
+    payload: dict[str, Any],
+    stage_id: str,
+    repo_workdir: str | Path | None,
+) -> list[str]:
+    repo = resolve_repo_workdir(repo_workdir, workspace=workspace)
+    stages = load_stage_specs(repo)
+    artifacts = load_artifact_contracts(repo)
+    errors = validate_quality_gate_report_payload(payload, stages=stages, artifacts=artifacts)
+    if errors:
+        return errors
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+    gate_stage_id = str(metadata.get("gate_stage_id") or metadata.get("stage_id") or "")
+    if gate_stage_id != stage_id:
+        errors.append(
+            f"Quality gate report must be generated for {stage_id}; "
+            f"got {gate_stage_id or '<missing>'}."
+        )
+    expected_artifact_id = quality_gate_report_key_for_stage(stage_id)
+    gate_artifact_id = str(metadata.get("gate_artifact_id") or "")
+    if gate_artifact_id != expected_artifact_id:
+        errors.append(
+            f"Quality gate report artifact must be {expected_artifact_id}; "
+            f"got {gate_artifact_id or '<missing>'}."
+        )
+    expected_brief = "output/brief.md" if stage_id == "finalize" else "output/intermediate/audited_brief.md"
+    brief_ref = str(metadata.get("brief") or metadata.get("audited_brief") or "")
+    if brief_ref != expected_brief:
+        errors.append(f"Quality gate report brief metadata must be {expected_brief}; got {brief_ref}.")
+    ledger_ref = str(metadata.get("ledger") or metadata.get("claim_ledger") or "")
+    if ledger_ref != "output/intermediate/claim_ledger.json":
+        errors.append(
+            "Quality gate report ledger metadata must be output/intermediate/claim_ledger.json; "
+            f"got {ledger_ref}."
+        )
+    return errors
+
+
+def _gate_report_is_blocking(payload: dict[str, Any]) -> bool:
+    if str(payload.get("status") or "").lower() == "fail":
+        return True
+    gate_results = payload.get("gate_results")
+    if isinstance(gate_results, list):
+        for result in gate_results:
+            if not isinstance(result, dict):
+                continue
+            if result.get("blocking") is True or str(result.get("status") or "").lower() == "fail":
+                return True
+    findings = payload.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
+                return True
+    return False
 
 
 def _current_workflow_stage(workflow_state: dict[str, Any] | None) -> str:
@@ -630,6 +837,20 @@ def _no_route() -> dict[str, Any]:
         "blocked_direct_edits": [],
         "reason": "No deterministic repair route found.",
         "recommended_action": "start_fresh_workspace_or_request_human_review",
+        "run_integrity_effect": None,
+        "source": {},
+    }
+
+
+def _neutral_no_gate_repair_route() -> dict[str, Any]:
+    return {
+        "route_kind": "none",
+        "repair_owner": "none",
+        "allowed_artifacts": [],
+        "must_rerun_from": "",
+        "blocked_direct_edits": [],
+        "reason": "No blocking current gate requires repair routing.",
+        "recommended_action": "",
         "run_integrity_effect": None,
         "source": {},
     }
