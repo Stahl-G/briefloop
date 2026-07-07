@@ -47,8 +47,16 @@ def _assert_generate_brief_repair_transaction(path: str) -> None:
     normalized = " ".join(text.replace("`", "").split())
 
     assert "Do not call briefloop run again mid-pipeline" in normalized, path
+    assert "briefloop gates show --workspace $ARGUMENTS --json" in normalized, path
+    assert "follow its required_commands" in normalized, path
+    assert "--gate-stage" in normalized, path
+    assert "--gate-artifact" in normalized, path
     assert "briefloop repair route --workspace $ARGUMENTS --json" in normalized, path
-    assert "briefloop repair start --workspace $ARGUMENTS --json" in normalized, path
+    assert "--finding-id <finding_id>" in normalized, path
+    assert "--route-index <route_index>" in normalized, path
+    assert "do not use unscoped repair start for current-gate blockers" in normalized, path
+    assert "scoped repair start command from gates show required_commands" in normalized, path
+    assert "do not use bare repair start --workspace $ARGUMENTS" in normalized, path
     assert "briefloop repair complete --workspace $ARGUMENTS --reason" in normalized, path
     assert "do not edit artifacts directly" in normalized.lower(), path
     assert "Do not edit frozen artifacts directly" in normalized, path

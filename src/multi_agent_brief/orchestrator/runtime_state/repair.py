@@ -84,6 +84,20 @@ from multi_agent_brief.orchestrator.run_integrity import (
     contamination_event_metadata as _run_integrity_contamination_event_metadata,
     contaminate_run_integrity_with_event_flag as _contaminate_run_integrity_with_event_flag,
 )
+from multi_agent_brief.quality_gates.contract import quality_gate_report_key_for_stage
+
+QUALITY_GATE_ROUTE_SOURCES = {
+    "auditor_quality_gate_report",
+    "finalize_quality_gate_report",
+    "quality_gate_report",
+}
+GATE_SCOPED_STAGES = {"auditor", "finalize"}
+NON_GATE_ROUTE_SOURCES = {
+    "audit_report",
+    "finalize_report",
+    "artifact_registry",
+    "transaction_integrity",
+}
 
 
 def _active_repair_blocking_error(
@@ -143,14 +157,106 @@ def _repair_route_error(payload: dict[str, Any]) -> RuntimeStateError:
 
 
 def _delegate_repair_transaction_required_error(
-    *, workspace: Path, stage_id: str, decision: str
+    *,
+    workspace: Path,
+    stage_id: str,
+    decision: str,
+    repo_workdir: str | Path | None = None,
 ) -> RuntimeStateError:
-    try:
-        from multi_agent_brief.repair.router import route_repair
+    gate_artifact_id = _gate_scoped_artifact_id_for_stage(stage_id)
+    if gate_artifact_id is not None:
+        try:
+            from multi_agent_brief.repair.router import route_repair_for_gate
 
-        repair_route = route_repair(workspace=workspace)
-    except Exception as exc:  # pragma: no cover - defensive best-effort diagnostics
-        repair_route = {"ok": False, "error": str(exc)}
+            scoped_route = route_repair_for_gate(
+                workspace=workspace,
+                gate_stage_id=stage_id,
+                gate_artifact_id=gate_artifact_id,
+                repo_workdir=repo_workdir,
+            )
+        except Exception as exc:  # pragma: no cover - defensive best-effort diagnostics
+            scoped_route = {"ok": False, "error": str(exc)}
+    else:
+        scoped_route = {
+            "ok": True,
+            "route_kind": "none",
+            "repair_owner": "none",
+            "reason": "Current workflow stage has no scoped quality-gate repair route.",
+        }
+
+    if _is_owner_stage_repair_route(scoped_route):
+        return _repair_transaction_required_error(
+            workspace=workspace,
+            stage_id=stage_id,
+            decision=decision,
+            repair_route=scoped_route,
+            required_commands=[
+                f"multi-agent-brief gates show --workspace {workspace} --json",
+                (
+                    f"multi-agent-brief repair start --workspace {workspace} "
+                    f"--gate-stage {stage_id} --gate-artifact {gate_artifact_id} --json"
+                ),
+                f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>" --json',
+            ],
+            repair_steps=[
+                "Current gate has an owner-stage repair route.",
+                "Use scoped repair start; do not use workspace-wide bare repair start.",
+                "Delegate only the reported repair_owner role.",
+                "Allow edits only to repair_route.allowed_artifacts.",
+                "Run repair complete after the owner edits.",
+            ],
+        )
+
+    if scoped_route.get("ok") and scoped_route.get("route_kind") == "none":
+        workspace_route = _non_gate_workspace_repair_route(workspace)
+        if workspace_route is not None:
+            selector = _repair_start_selector_for_route(workspace_route)
+            return _repair_transaction_required_error(
+                workspace=workspace,
+                stage_id=stage_id,
+                decision=decision,
+                repair_route=workspace_route,
+                required_commands=[
+                    f"multi-agent-brief repair route --workspace {workspace} --json",
+                    f"multi-agent-brief repair start --workspace {workspace} {selector} --json",
+                    f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>" --json',
+                ],
+                repair_steps=[
+                    "Workspace-wide non-gate repair route is available.",
+                    "Start the selected route with --route-index from repair route output.",
+                    "Do not use bare repair start.",
+                    "Delegate only the reported repair_owner role.",
+                    "Allow edits only to repair_route.allowed_artifacts.",
+                    "Run repair complete after the owner edits.",
+                ],
+            )
+
+    repair_route = scoped_route if scoped_route.get("ok") else {"ok": False, **scoped_route}
+    return _repair_transaction_required_error(
+        workspace=workspace,
+        stage_id=stage_id,
+        decision=decision,
+        repair_route=repair_route,
+        required_commands=[
+            f"multi-agent-brief gates show --workspace {workspace} --json",
+        ],
+        repair_steps=[
+            "delegate_repair cannot be recorded through state decide.",
+            "Use gates show for current-gate blockers, or repair route for non-gate blockers.",
+            "Do not use bare repair start.",
+        ],
+    )
+
+
+def _repair_transaction_required_error(
+    *,
+    workspace: Path,
+    stage_id: str,
+    decision: str,
+    repair_route: dict[str, Any],
+    required_commands: list[str],
+    repair_steps: list[str],
+) -> RuntimeStateError:
     return RuntimeStateError(
         (
             "Decision 'delegate_repair' requires `multi-agent-brief repair start`; "
@@ -159,22 +265,76 @@ def _delegate_repair_transaction_required_error(
         details={
             "stage_id": stage_id,
             "decision": decision,
-            "required_commands": [
-                f"multi-agent-brief repair route --workspace {workspace}",
-                f"multi-agent-brief repair start --workspace {workspace}",
-                f'multi-agent-brief repair complete --workspace {workspace} --reason "<reason>"',
-            ],
-            "repair_steps": [
-                "Run repair start to open an owner-stage repair transaction.",
-                "Delegate only the reported repair_owner role.",
-                "Allow edits only to repair_route.allowed_artifacts.",
-                "Run repair complete after the owner edits.",
-            ],
+            "required_commands": required_commands,
+            "repair_steps": repair_steps,
             "fallback_decisions": ["request_human_review", "block_run"],
             "repair_route": repair_route,
         },
         error_code=E_REPAIR_TRANSACTION_REQUIRED,
     )
+
+
+def _is_owner_stage_repair_route(route: dict[str, Any]) -> bool:
+    return bool(
+        route.get("ok", True)
+        and route.get("route_kind") == "owner_stage_repair"
+        and route.get("repair_owner") not in {None, "", "none", "human"}
+        and route.get("allowed_artifacts")
+        and route.get("must_rerun_from")
+    )
+
+
+def _non_gate_workspace_repair_route(workspace: Path) -> dict[str, Any] | None:
+    try:
+        from multi_agent_brief.repair.router import route_repair
+
+        payload = route_repair(workspace=workspace)
+    except Exception:  # pragma: no cover - defensive best-effort diagnostics
+        return None
+    candidates = payload.get("routes") if isinstance(payload.get("routes"), list) else []
+    for fallback_index, route in enumerate(candidates):
+        if not isinstance(route, dict) or not _is_owner_stage_repair_route(route):
+            continue
+        source = route.get("source") if isinstance(route.get("source"), dict) else {}
+        source_kind = str(source.get("kind") or "")
+        if source_kind in QUALITY_GATE_ROUTE_SOURCES:
+            continue
+        if source_kind not in NON_GATE_ROUTE_SOURCES:
+            continue
+        if route.get("is_imported_fact_layer_forbidden") is True:
+            continue
+        return {
+            "ok": True,
+            "workspace": str(workspace),
+            **route,
+            "selected_route_index": route.get("route_rank", fallback_index),
+            "routes": candidates,
+            "finding_count": payload.get("finding_count"),
+        }
+    return None
+
+
+def _repair_start_selector_for_route(route: dict[str, Any]) -> str:
+    selected_route_index = route.get("selected_route_index")
+    if selected_route_index is not None:
+        try:
+            return f"--route-index {int(selected_route_index)}"
+        except (TypeError, ValueError):
+            pass
+    route_rank = route.get("route_rank")
+    if route_rank is not None:
+        try:
+            return f"--route-index {int(route_rank)}"
+        except (TypeError, ValueError):
+            pass
+    return "--route-index 0"
+
+
+def _gate_scoped_artifact_id_for_stage(stage_id: str | None) -> str | None:
+    stage = str(stage_id or "")
+    if stage not in GATE_SCOPED_STAGES:
+        return None
+    return quality_gate_report_key_for_stage(stage)
 
 
 def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
@@ -331,10 +491,33 @@ def start_repair_transaction(
     actor: str = "orchestrator",
     route_index: int | None = None,
     finding_id: str | None = None,
+    gate_stage_id: str | None = None,
+    gate_artifact_id: str | None = None,
 ) -> dict[str, Any]:
     """Start an explicit owner-stage repair transaction from the deterministic route."""
 
     ws = _require_workspace(workspace)
+    scoped_gate_requested = gate_stage_id is not None or gate_artifact_id is not None
+    if scoped_gate_requested and not (gate_stage_id and gate_artifact_id):
+        raise RuntimeStateError(
+            "Scoped repair start requires both gate_stage_id and gate_artifact_id.",
+            details={
+                "gate_stage_id": gate_stage_id,
+                "gate_artifact_id": gate_artifact_id,
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    if scoped_gate_requested and (route_index is not None or finding_id is not None):
+        raise RuntimeStateError(
+            "Use either scoped gate selection or route_index/finding_id, not both.",
+            details={
+                "gate_stage_id": gate_stage_id,
+                "gate_artifact_id": gate_artifact_id,
+                "route_index": route_index,
+                "finding_id": finding_id,
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
     paths = runtime_state_paths(ws)
     _preflight_transaction_files(paths)
     if not paths["event_log"].exists():
@@ -356,6 +539,31 @@ def start_repair_transaction(
             details={"active_repair": workflow.get("active_repair")},
             error_code=E_ILLEGAL_TRANSITION,
         )
+    if scoped_gate_requested:
+        current_gate_stage_id = str(workflow.get("current_stage") or "")
+        current_gate_artifact_id = _gate_scoped_artifact_id_for_stage(current_gate_stage_id)
+        if current_gate_artifact_id is None:
+            raise RuntimeStateError(
+                "Scoped repair start is only valid for auditor/finalize quality-gate stages.",
+                details={
+                    "requested_gate_stage_id": gate_stage_id,
+                    "requested_gate_artifact_id": gate_artifact_id,
+                    "current_stage": current_gate_stage_id,
+                    "gate_scoped_stages": sorted(GATE_SCOPED_STAGES),
+                },
+                error_code=E_ILLEGAL_TRANSITION,
+            )
+        if gate_stage_id != current_gate_stage_id or gate_artifact_id != current_gate_artifact_id:
+            raise RuntimeStateError(
+                "Scoped repair start gate must match the current workflow stage.",
+                details={
+                    "requested_gate_stage_id": gate_stage_id,
+                    "requested_gate_artifact_id": gate_artifact_id,
+                    "current_stage": current_gate_stage_id,
+                    "expected_gate_artifact_id": current_gate_artifact_id,
+                },
+                error_code=E_ILLEGAL_TRANSITION,
+            )
     run_id = str(manifest["run_id"])
     event_records = _read_event_log_records(paths["event_log"])
     existing_narrowing = _trajectory_decision_narrowing(
@@ -376,9 +584,17 @@ def start_repair_transaction(
             error_code=E_ILLEGAL_TRANSITION,
         )
 
-    from multi_agent_brief.repair.router import route_repair
+    from multi_agent_brief.repair.router import route_repair, route_repair_for_gate
 
-    route = route_repair(workspace=ws, route_index=route_index, finding_id=finding_id)
+    if scoped_gate_requested:
+        route = route_repair_for_gate(
+            workspace=ws,
+            gate_stage_id=gate_stage_id,
+            gate_artifact_id=gate_artifact_id,
+            repo_workdir=repo_workdir,
+        )
+    else:
+        route = route_repair(workspace=ws, route_index=route_index, finding_id=finding_id)
     if not route.get("ok"):
         raise _repair_route_error(route)
     if route.get("route_kind") == "human_review":

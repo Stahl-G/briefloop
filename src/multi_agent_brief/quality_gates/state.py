@@ -65,6 +65,7 @@ from multi_agent_brief.quality_gates.contract import (
 
 
 GATE_EVENT_ACTOR = "cli"
+GATE_SCOPED_STAGES = {"auditor", "finalize"}
 CURRENT_WORDS = re.compile(r"\b(this week|current|latest|newly|本周|本期|当前|最新|新增)\b", re.IGNORECASE)
 ANALYST_DRAFT_SNAPSHOT_FILE = "output/intermediate/analyst_draft_snapshot.md"
 FACT_NUMBER_RE = re.compile(
@@ -2444,7 +2445,7 @@ def show_quality_gates(
         "stage_quality_gate_reports": stage_reports,
         "validation": validation,
     }
-    state.update(_blocking_repair_guidance(workspace=ws, validation=validation))
+    state.update(_blocking_repair_guidance(workspace=ws, validation=validation, repo_workdir=repo_workdir))
     return state
 
 
@@ -2458,17 +2459,58 @@ def validate_quality_gates_workspace(
     return validate_quality_gate_workspace(workspace=ws, stages=stages, artifacts=artifacts)
 
 
-def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) -> dict[str, Any]:
+def _blocking_repair_guidance(
+    *,
+    workspace: Path,
+    validation: dict[str, Any],
+    repo_workdir: str | Path | None = None,
+) -> dict[str, Any]:
     if int(validation.get("blocking_count") or 0) <= 0:
         return {}
 
-    route_command = f"multi-agent-brief repair route --workspace {workspace} --json"
-    required_commands = [route_command]
+    required_commands: list[str] = []
     try:
-        from multi_agent_brief.repair.router import route_repair
+        from multi_agent_brief.repair.router import route_repair_for_gate
 
-        repair_route = route_repair(workspace=workspace)
+        workflow_path = runtime_state_paths(workspace)["workflow_state"]
+        workflow = (
+            json.loads(workflow_path.read_text(encoding="utf-8"))
+            if workflow_path.exists()
+            else {}
+        )
+        current_stage_id = str(workflow.get("current_stage") or "")
+        gate_scope = _current_gate_scope_for_stage(current_stage_id)
+        if gate_scope is None:
+            return _stale_quality_gate_blocker_guidance(
+                workspace=workspace,
+                gate_stage_id=current_stage_id,
+                gate_artifact_id="",
+            )
+        gate_stage_id, gate_artifact_id = gate_scope
+        if not _current_stage_gate_report_has_blocker(workspace, gate_stage_id, gate_artifact_id):
+            if (
+                _validation_uses_only_legacy_gate_projection(validation)
+                and _legacy_quality_gate_report_has_blocker(workspace)
+            ):
+                return _legacy_quality_gate_materialization_guidance(
+                    workspace=workspace,
+                    gate_stage_id=gate_stage_id,
+                    gate_artifact_id=gate_artifact_id,
+                )
+            return _stale_quality_gate_blocker_guidance(
+                workspace=workspace,
+                gate_stage_id=gate_stage_id,
+                gate_artifact_id=gate_artifact_id,
+            )
+        repair_route = route_repair_for_gate(
+            workspace=workspace,
+            gate_stage_id=gate_stage_id,
+            gate_artifact_id=gate_artifact_id,
+            repo_workdir=repo_workdir,
+        )
     except Exception as exc:  # pragma: no cover - defensive CLI guidance path.
+        gate_stage_id = ""
+        gate_artifact_id = ""
         repair_route = {
             "ok": False,
             "error_code": "E_REPAIR_ROUTE_UNAVAILABLE",
@@ -2487,11 +2529,14 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
     )
     if is_owner_stage_repair:
         required_commands.extend([
-            f"multi-agent-brief repair start --workspace {workspace} --json",
+            (
+                f"multi-agent-brief repair start --workspace {workspace} "
+                f"--gate-stage {gate_stage_id} --gate-artifact {gate_artifact_id} --json"
+            ),
             f"multi-agent-brief repair complete --workspace {workspace} --reason \"<reason>\" --json",
         ])
         repair_steps = [
-            "Run repair start to open an owner-stage repair transaction.",
+            "Current gate has an owner-stage repair route. Scoped repair start is handled by the repair transaction.",
             "Delegate only the reported repair_owner role.",
             "Allow edits only to repair_route.allowed_artifacts.",
             "Run repair complete after the owner edits.",
@@ -2520,6 +2565,144 @@ def _blocking_repair_guidance(*, workspace: Path, validation: dict[str, Any]) ->
         "required_commands": required_commands,
         "repair_steps": repair_steps,
         "repair_route": repair_route,
+        "repair_warnings": [
+            "Do not edit frozen artifacts directly.",
+            "Direct edits will mark the run contaminated and non-reference-eligible.",
+            "Never manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields.",
+        ],
+    }
+
+
+def _current_gate_scope_for_stage(stage_id: str | None) -> tuple[str, str] | None:
+    stage = str(stage_id or "")
+    if stage not in GATE_SCOPED_STAGES:
+        return None
+    return stage, quality_gate_report_key_for_stage(stage)
+
+
+def _current_stage_gate_report_has_blocker(
+    workspace: Path,
+    gate_stage_id: str,
+    gate_artifact_id: str,
+) -> bool:
+    try:
+        report = load_quality_gate_report_for_stage(workspace, gate_stage_id, allow_legacy=False)
+    except Exception:
+        return False
+    if not isinstance(report, dict):
+        return False
+    metadata = report.get("metadata") if isinstance(report.get("metadata"), dict) else {}
+    actual_stage = str(metadata.get("gate_stage_id") or metadata.get("stage_id") or "")
+    actual_artifact = str(metadata.get("gate_artifact_id") or "")
+    if actual_stage != gate_stage_id or actual_artifact != gate_artifact_id:
+        return False
+    return _quality_gate_report_payload_has_blocker(report)
+
+
+def _legacy_quality_gate_report_has_blocker(workspace: Path) -> bool:
+    try:
+        report = load_quality_gate_report(workspace)
+    except Exception:
+        return False
+    return _quality_gate_report_payload_has_blocker(report)
+
+
+def _validation_uses_only_legacy_gate_projection(validation: dict[str, Any]) -> bool:
+    statuses = validation.get("statuses")
+    if not isinstance(statuses, dict):
+        return False
+    keys = {str(key) for key in statuses}
+    return keys == {"quality_gate_report"}
+
+
+def _quality_gate_report_payload_has_blocker(report: Any) -> bool:
+    if not isinstance(report, dict):
+        return False
+    if report.get("status") == "fail":
+        return True
+    gate_results = report.get("gate_results")
+    if isinstance(gate_results, list):
+        for result in gate_results:
+            if not isinstance(result, dict):
+                continue
+            if result.get("status") == "fail" or result.get("blocking") is True:
+                return True
+    findings = report.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            if finding.get("blocking") is True or finding.get("blocking_level") == "blocking":
+                return True
+    return False
+
+
+def _legacy_quality_gate_materialization_guidance(
+    *,
+    workspace: Path,
+    gate_stage_id: str,
+    gate_artifact_id: str,
+) -> dict[str, Any]:
+    return {
+        "required_commands": [
+            f"multi-agent-brief gates check --workspace {workspace} --stage {gate_stage_id} --json",
+            f"multi-agent-brief gates show --workspace {workspace} --json",
+        ],
+        "repair_steps": [
+            "Legacy quality_gate_report.json has blocking findings, but no current-stage scoped gate report is available.",
+            "Rerun gates check for workflow.current_stage to materialize a stage-scoped report.",
+            "Then rerun gates show and follow required_commands.",
+        ],
+        "repair_route": {
+            "ok": True,
+            "route_kind": "none",
+            "repair_owner": "none",
+            "review_owner": "",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "recommended_action": "",
+            "reason": "Legacy gate projection must be materialized as a current-stage scoped gate report.",
+            "source": {
+                "stage_id": gate_stage_id,
+                "kind": gate_artifact_id,
+                "legacy_projection": "quality_gate_report",
+            },
+        },
+        "repair_warnings": [
+            "Do not edit frozen artifacts directly.",
+            "Direct edits will mark the run contaminated and non-reference-eligible.",
+            "Never manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields.",
+        ],
+    }
+
+
+def _stale_quality_gate_blocker_guidance(
+    *,
+    workspace: Path,
+    gate_stage_id: str,
+    gate_artifact_id: str,
+) -> dict[str, Any]:
+    return {
+        "required_commands": [],
+        "repair_steps": [
+            "Blocking quality-gate reports exist outside the current workflow stage.",
+            "Do not start repair from stale downstream reports.",
+            "Rerun the current or downstream gates, or inspect stage_quality_gate_reports to locate the blocking report.",
+        ],
+        "repair_route": {
+            "ok": True,
+            "route_kind": "none",
+            "repair_owner": "none",
+            "review_owner": "",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "recommended_action": "",
+            "reason": "No blocking current gate requires repair routing.",
+            "source": {
+                "stage_id": gate_stage_id,
+                "kind": gate_artifact_id,
+            },
+        },
         "repair_warnings": [
             "Do not edit frozen artifacts directly.",
             "Direct edits will mark the run contaminated and non-reference-eligible.",

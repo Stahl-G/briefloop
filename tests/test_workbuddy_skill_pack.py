@@ -82,8 +82,16 @@ def _all_skill_text() -> str:
     return "\n".join(_read(path) for path in sorted(WORKBUDDY_SKILL.rglob("*.md")))
 
 
+def _all_legacy_workbuddy_text() -> str:
+    return "\n".join(_read(path) for path in sorted(LEGACY_WORKBUDDY_SKILL.rglob("*.md")))
+
+
 def _compact(text: str) -> str:
     return re.sub(r"\s+", " ", text)
+
+
+def _compact_without_code_ticks(text: str) -> str:
+    return _compact(text.replace("`", ""))
 
 
 def test_workbuddy_skill_bundle_has_required_files() -> None:
@@ -259,6 +267,8 @@ def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default(
 
 def test_workbuddy_skill_includes_required_cli_surface() -> None:
     text = _all_skill_text()
+    compact = _compact(text)
+    normalized = _compact_without_code_ticks(text)
     for phrase in [
         'BRIEFLOOP_CLI="$(command -v briefloop)"',
         'test -n "$BRIEFLOOP_CLI"',
@@ -276,11 +286,42 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         "multi-agent-brief status --workspace <workspace>",
         "multi-agent-brief state check --workspace <workspace>",
         "multi-agent-brief quality summarize --workspace <workspace>",
-        "multi-agent-brief repair route --workspace <workspace>",
-        "multi-agent-brief repair start --workspace <workspace>",
+        "multi-agent-brief gates show --workspace <workspace> --json",
+        "multi-agent-brief repair route --workspace <workspace> --json",
+        "--gate-stage",
+        "--gate-artifact",
+        "--finding-id <finding_id>",
+        "--route-index <route_index>",
         "multi-agent-brief repair complete --workspace <workspace> --reason",
     ]:
         assert phrase in text
+    assert "do not use unscoped repair start for current-gate blockers" in compact
+    assert "do not use bare repair start --workspace <workspace>" in normalized.lower()
+    assert _bare_repair_start_offenders(text) == []
+
+
+def _bare_repair_start_offenders(text: str) -> list[str]:
+    bare_start = re.compile(
+        r"multi-agent-brief\s+repair\s+start\s+--workspace\s+<workspace>"
+        r"(?![^\n`]*(?:--gate-stage|--finding-id|--route-index))"
+    )
+    return [line for line in text.splitlines() if bare_start.search(line) and "Do not use bare" not in line]
+
+
+def test_legacy_workbuddy_mirror_uses_scoped_repair_contract() -> None:
+    text = _all_legacy_workbuddy_text()
+    compact = _compact(text)
+    normalized = _compact_without_code_ticks(text)
+
+    assert "multi-agent-brief gates show --workspace <workspace> --json" in text
+    assert "multi-agent-brief repair route --workspace <workspace> --json" in text
+    assert "--gate-stage" in text
+    assert "--gate-artifact" in text
+    assert "--finding-id <finding_id>" in text
+    assert "--route-index <route_index>" in text
+    assert "do not use unscoped repair start for current-gate blockers" in compact
+    assert "do not use bare repair start --workspace <workspace>" in normalized.lower()
+    assert _bare_repair_start_offenders(text) == []
 
 
 def test_workbuddy_skill_preserves_control_boundaries() -> None:

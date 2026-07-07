@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from functools import partial
 from pathlib import Path
@@ -14,9 +15,13 @@ import multi_agent_brief.orchestrator.runtime_state as runtime_state
 import multi_agent_brief.orchestrator.runtime_state.claim_metadata_enrichment as claim_metadata_enrichment
 import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_log
 import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
+from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry import interpret_frozen_artifact_integrity
+from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
+    ARTIFACT_REGISTRY_SCHEMA,
+    interpret_frozen_artifact_integrity,
+)
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     build_semantic_assessment_checked_inputs,
     validate_semantic_assessment_report_against_artifacts,
@@ -667,17 +672,19 @@ def _write_editor_repair_gate_report(ws: Path) -> None:
         "status": "fail",
         "gate_results": [
             {
-                "gate_id": "material_fact",
-                "status": "fail",
-                "blocking": True,
-                "finding_ids": ["QG_EDITOR_REPAIR_001"],
+                "gate_id": gate_id,
+                "status": "fail" if gate_id == "material_fact" else "pass",
+                "blocking": gate_id == "material_fact",
+                "finding_ids": ["QG_EDITOR_REPAIR_001"] if gate_id == "material_fact" else [],
             }
+            for gate_id in ("coverage_omission", "freshness", "material_fact", "target_relevance")
         ],
         "findings": [
             {
                 "finding_id": "QG_EDITOR_REPAIR_001",
                 "finding_type": "unsupported_claim",
                 "severity": "high",
+                "blocking_level": "blocking",
                 "blocking": True,
                 "artifact_id": "audited_brief",
                 "repair_owner": "editor",
@@ -697,6 +704,180 @@ def _write_editor_repair_gate_report(ws: Path) -> None:
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     path.write_text(text, encoding="utf-8")
     (_intermediate(ws) / "quality_gate_report.json").write_text(text, encoding="utf-8")
+
+
+def _write_finalize_human_gate_report(ws: Path) -> None:
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_version": "multi-agent-brief-quality-gates/v1",
+        "created_at": "2026-06-11T00:00:00+00:00",
+        "updated_at": "2026-06-11T00:00:00+00:00",
+        "workspace": ".",
+        "report_date": "2026-06-11",
+        "policy_pack": "default",
+        "status": "fail",
+        "gate_results": [
+            {
+                "gate_id": gate_id,
+                "status": "fail" if gate_id == "target_relevance" else "pass",
+                "blocking": gate_id == "target_relevance",
+                "finding_ids": ["QG_STALE_HUMAN_001"] if gate_id == "target_relevance" else [],
+            }
+            for gate_id in ("coverage_omission", "freshness", "material_fact", "target_relevance")
+        ],
+        "findings": [
+            {
+                "finding_id": "QG_STALE_HUMAN_001",
+                "finding_type": "target_mapping_ambiguous",
+                "severity": "high",
+                "blocking_level": "blocking",
+                "blocking": True,
+                "artifact_id": "audited_brief",
+                "repair_owner": "human",
+                "repair_stage_id": "editor",
+                "repair_artifact_id": "audited_brief",
+                "message": "Stale finalize target mapping requires human review.",
+            }
+        ],
+        "metadata": {
+            "brief": "output/brief.md",
+            "ledger": "output/intermediate/claim_ledger.json",
+            "stage_id": "finalize",
+            "gate_stage_id": "finalize",
+            "gate_artifact_id": "finalize_quality_gate_report",
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_editor_repair_audit_report(ws: Path, *, finding_id: str = "AUD_EDITOR_001") -> None:
+    (_intermediate(ws) / "audit_report.json").write_text(
+        json.dumps(
+            {
+                "audit_status": "fail",
+                "audit_score": 40,
+                "passed": False,
+                "recommendation": "repair",
+                "findings": [
+                    {
+                        "finding_id": finding_id,
+                        "finding_type": "unsupported_claim",
+                        "severity": "high",
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                        "message": "Audited brief needs editor repair from audit report.",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _current_gate_finding(
+    finding_id: str,
+    *,
+    repair_owner: str = "editor",
+    repair_stage_id: str = "editor",
+    blocking: bool = True,
+) -> dict[str, object]:
+    return {
+        "finding_id": finding_id,
+        "finding_type": "target_relevance_gap",
+        "severity": "high" if blocking else "medium",
+        "blocking_level": "blocking" if blocking else "warning",
+        "blocking": blocking,
+        "artifact_id": "audited_brief",
+        "repair_owner": repair_owner,
+        "repair_stage_id": repair_stage_id,
+        "repair_artifact_id": "audited_brief",
+        "message": "Current gate fixture finding.",
+    }
+
+
+def _write_current_gate_report(
+    ws: Path,
+    *,
+    stage_id: str,
+    finding: dict[str, object] | None,
+    status: str = "fail",
+    blocking: bool = True,
+    malformed: bool = False,
+) -> None:
+    artifact_id = "finalize_quality_gate_report" if stage_id == "finalize" else "auditor_quality_gate_report"
+    path = _intermediate(ws) / "gates" / f"{artifact_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if malformed:
+        path.write_text("{broken", encoding="utf-8")
+        return
+    findings = [finding] if finding is not None else []
+    finding_ids = [str(finding["finding_id"])] if finding is not None and blocking else []
+    payload = {
+        "schema_version": "multi-agent-brief-quality-gates/v1",
+        "created_at": "2026-07-07T00:00:00+00:00",
+        "updated_at": "2026-07-07T00:00:00+00:00",
+        "workspace": ".",
+        "report_date": "2026-07-07",
+        "policy_pack": "default",
+        "status": status,
+        "gate_results": [
+            {
+                "gate_id": gate_id,
+                "status": "fail" if blocking and gate_id == "target_relevance" else "pass",
+                "blocking": blocking and gate_id == "target_relevance",
+                "finding_ids": finding_ids if blocking and gate_id == "target_relevance" else [],
+            }
+            for gate_id in ("coverage_omission", "freshness", "material_fact", "target_relevance")
+        ],
+        "findings": findings,
+        "metadata": {
+            "brief": "output/brief.md" if stage_id == "finalize" else "output/intermediate/audited_brief.md",
+            "ledger": "output/intermediate/claim_ledger.json",
+            "stage_id": stage_id,
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": artifact_id,
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_minimal_artifact_registry(ws: Path) -> None:
+    _state_file(ws, "artifact_registry").write_text(
+        json.dumps(
+            {
+                "schema_version": ARTIFACT_REGISTRY_SCHEMA,
+                "artifacts": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _prepare_scoped_repair_workspace(tmp_path: Path, *, current_stage: str = "finalize") -> Path:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_minimal_artifact_registry(ws)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    (_intermediate(ws) / "audited_brief.md").write_text(
+        "# Brief\n\nEditor draft. [src:CL-001]\n",
+        encoding="utf-8",
+    )
+    output = ws / "output"
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "brief.md").write_text("# Reader Brief\n\nReader draft. [S1]\n", encoding="utf-8")
+    _set_current_stage(ws, current_stage)
+    return ws
 
 
 def _start_active_editor_repair(tmp_path: Path) -> Path:
@@ -3199,12 +3380,16 @@ def test_state_decide_delegate_repair_requires_repair_transaction_without_mutati
 
     assert excinfo.value.error_code == runtime_state.operations.E_REPAIR_TRANSACTION_REQUIRED
     details = excinfo.value.details
-    assert "multi-agent-brief repair route" in "\n".join(details["required_commands"])
-    assert "multi-agent-brief repair start" in "\n".join(details["required_commands"])
+    commands = "\n".join(details["required_commands"])
+    assert "multi-agent-brief gates show" in commands
+    assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in commands
     assert "multi-agent-brief repair complete" in "\n".join(details["required_commands"])
+    assert f"multi-agent-brief repair start --workspace {ws}" not in details["required_commands"]
     assert "Delegate only the reported repair_owner role." in details["repair_steps"]
     assert "Allow edits only to repair_route.allowed_artifacts." in details["repair_steps"]
     assert details["repair_route"]["repair_owner"] == "editor"
+    assert details["repair_route"]["source"]["kind"] == "auditor_quality_gate_report"
+    assert details["repair_route"]["source"]["finding_id"] == "QG_EDITOR_REPAIR_001"
     assert details["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
     assert details["repair_route"]["must_rerun_from"] == "auditor"
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
@@ -3238,14 +3423,111 @@ def test_state_decide_delegate_repair_human_output_points_to_repair_transaction(
 
     assert rc == 1
     out = capsys.readouterr().out
-    assert "multi-agent-brief repair route" in out
     assert "multi-agent-brief repair start" in out
+    assert "--gate-stage auditor --gate-artifact auditor_quality_gate_report" in out
     assert "multi-agent-brief repair complete" in out
     assert "[state] repair_steps:" in out
     assert "Delegate only the reported repair_owner role." in out
     assert "[state] repair_owner: editor" in out
     assert "[state] must_rerun_from: auditor" in out
     assert "output/intermediate/audited_brief.md" in out
+
+
+def test_state_decide_delegate_repair_uses_current_gate_over_stale_gate(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_editor_repair_gate_report(ws)
+    _write_finalize_human_gate_report(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair current auditor gate",
+        )
+
+    details = excinfo.value.details
+    commands = details["required_commands"]
+    assert details["repair_route"]["source"]["kind"] == "auditor_quality_gate_report"
+    assert details["repair_route"]["source"]["finding_id"] == "QG_EDITOR_REPAIR_001"
+    assert any("--gate-stage auditor --gate-artifact auditor_quality_gate_report" in command for command in commands)
+    assert not any("finalize_quality_gate_report" in command for command in commands)
+    assert not any(command == f"multi-agent-brief repair start --workspace {ws}" for command in commands)
+
+
+def test_state_decide_delegate_repair_preserves_selected_non_gate_repair_route(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_editor_repair_audit_report(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair non-gate audit finding",
+        )
+
+    details = excinfo.value.details
+    commands = details["required_commands"]
+    assert details["repair_route"]["source"]["kind"] == "audit_report"
+    assert details["repair_route"]["source"]["finding_id"] == "AUD_EDITOR_001"
+    assert any(command == f"multi-agent-brief repair route --workspace {ws} --json" for command in commands)
+    assert any("--route-index 0" in command for command in commands if "repair start" in command)
+    assert not any("--finding-id" in command for command in commands if "repair start" in command)
+    assert not any("--gate-stage" in command for command in commands if "repair start" in command)
+    assert not any(command == f"multi-agent-brief repair start --workspace {ws}" for command in commands)
+
+
+def test_state_decide_delegate_repair_non_gate_uses_route_index_for_duplicate_finding_ids(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _advance_to_auditor(ws)
+    _write_current_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_current_gate_finding(
+            "DUPLICATE_001",
+            repair_owner="human",
+            repair_stage_id="editor",
+        ),
+    )
+    _write_editor_repair_audit_report(ws, finding_id="DUPLICATE_001")
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        record_decision(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            decision="delegate_repair",
+            reason="repair selected non-gate finding",
+        )
+
+    details = excinfo.value.details
+    commands = details["required_commands"]
+    start_command = next(command for command in commands if " repair start " in command)
+    assert "--route-index " in start_command
+    assert "--finding-id" not in start_command
+    route_index = int(re.search(r"--route-index\s+(\d+)", start_command).group(1))  # type: ignore[union-attr]
+    assert details["repair_route"]["source"]["kind"] == "audit_report"
+    assert details["repair_route"]["source"]["finding_id"] == "DUPLICATE_001"
+    assert details["repair_route"]["route_rank"] == route_index
+
+    state = start_repair_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        route_index=route_index,
+    )
+
+    repair = state["workflow_state"]["active_repair"]
+    assert repair["source"]["kind"] == "audit_report"
+    assert repair["source"]["finding_id"] == "DUPLICATE_001"
+    assert repair["repair_owner"] == "editor"
 
 
 def test_stage_complete_records_transaction_event_and_advances(tmp_path):
@@ -6357,6 +6639,185 @@ def test_analyst_snapshot_mutation_after_analyst_complete_contaminates(tmp_path)
     workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
     assert workflow["run_integrity"]["status"] == "contaminated"
     assert workflow["run_integrity"]["reasons"][0]["reason_code"] == "frozen_artifact_changed"
+
+
+def test_scoped_repair_start_uses_current_finalize_route_over_stale_auditor(tmp_path, capsys):
+    ws = _prepare_scoped_repair_workspace(tmp_path)
+    _write_current_gate_report(
+        ws,
+        stage_id="auditor",
+        finding=_current_gate_finding(
+            "QG_STALE_HUMAN_001",
+            repair_owner="human",
+            repair_stage_id="editor",
+        ),
+    )
+    _write_current_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_current_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert "human review" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
+
+    rc = main([
+        "repair",
+        "start",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--gate-stage",
+        "finalize",
+        "--gate-artifact",
+        "finalize_quality_gate_report",
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    repair = payload["workflow_state"]["active_repair"]
+    assert repair["repair_owner"] == "editor"
+    assert repair["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert repair["source"]["kind"] == "finalize_quality_gate_report"
+    assert repair["source"]["stage_id"] == "finalize"
+    assert repair["source"]["finding_id"] == "QG_CURRENT_EDITOR_001"
+    assert payload["transaction"]["stage_id"] == "editor"
+
+
+def test_scoped_repair_start_rejects_current_human_review_route(tmp_path):
+    ws = _prepare_scoped_repair_workspace(tmp_path)
+    _write_current_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_current_gate_finding(
+            "QG_CURRENT_HUMAN_001",
+            repair_owner="human",
+            repair_stage_id="editor",
+        ),
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            gate_stage_id="finalize",
+            gate_artifact_id="finalize_quality_gate_report",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert excinfo.value.details["route_kind"] == "human_review"
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
+
+
+def test_scoped_repair_start_rejects_current_neutral_none_route(tmp_path):
+    ws = _prepare_scoped_repair_workspace(tmp_path)
+    _write_current_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_current_gate_finding("QG_WARNING_EDITOR_001", blocking=False),
+        status="warning",
+        blocking=False,
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            gate_stage_id="finalize",
+            gate_artifact_id="finalize_quality_gate_report",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert excinfo.value.details["route_kind"] == "none"
+    assert excinfo.value.details["reason"] == "No blocking current gate requires repair routing."
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
+
+
+def test_scoped_repair_start_rejects_invalid_current_gate_route(tmp_path):
+    ws = _prepare_scoped_repair_workspace(tmp_path)
+    _write_current_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=None,
+        malformed=True,
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            gate_stage_id="finalize",
+            gate_artifact_id="finalize_quality_gate_report",
+        )
+
+    assert excinfo.value.error_code == "E_REPAIR_INPUT_INVALID"
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
+
+
+def test_scoped_repair_start_rejects_requested_gate_stage_mismatch_before_routing(tmp_path, monkeypatch):
+    ws = _prepare_scoped_repair_workspace(tmp_path, current_stage="auditor")
+    _write_current_gate_report(
+        ws,
+        stage_id="finalize",
+        finding=_current_gate_finding("QG_CURRENT_EDITOR_001"),
+    )
+    def fail_route_for_gate(**kwargs):
+        raise AssertionError("route_repair_for_gate should not be called for mismatched scoped gates")
+
+    monkeypatch.setattr(repair_router, "route_repair_for_gate", fail_route_for_gate)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            gate_stage_id="finalize",
+            gate_artifact_id="finalize_quality_gate_report",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert "gate must match the current workflow stage" in str(excinfo.value)
+    assert excinfo.value.details["requested_gate_stage_id"] == "finalize"
+    assert excinfo.value.details["requested_gate_artifact_id"] == "finalize_quality_gate_report"
+    assert excinfo.value.details["current_stage"] == "auditor"
+    assert excinfo.value.details["expected_gate_artifact_id"] == "auditor_quality_gate_report"
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
+
+
+def test_scoped_repair_start_rejects_non_gate_current_stage_before_routing(tmp_path, monkeypatch):
+    ws = _prepare_scoped_repair_workspace(tmp_path, current_stage="editor")
+
+    def fail_route_for_gate(**kwargs):
+        raise AssertionError("route_repair_for_gate should not be called for non-gate current stages")
+
+    monkeypatch.setattr(repair_router, "route_repair_for_gate", fail_route_for_gate)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        start_repair_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            gate_stage_id="editor",
+            gate_artifact_id="auditor_quality_gate_report",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert "only valid for auditor/finalize" in str(excinfo.value)
+    assert excinfo.value.details["requested_gate_stage_id"] == "editor"
+    assert excinfo.value.details["requested_gate_artifact_id"] == "auditor_quality_gate_report"
+    assert excinfo.value.details["current_stage"] == "editor"
+    assert excinfo.value.details["gate_scoped_stages"] == ["auditor", "finalize"]
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert "active_repair" not in workflow
 
 
 def test_repair_start_records_editor_owner_transaction(tmp_path):
