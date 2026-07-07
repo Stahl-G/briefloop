@@ -37,6 +37,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "workflow": _workflow_payload_from_completion(completion),
         "control_files": _mapping(completion.get("control_files")),
         "artifacts": _mapping(completion.get("artifacts")),
+        "repair_route": _mapping(completion.get("repair_route")),
         "finalize": _finalize_payload_from_completion(completion),
         "delivery": _delivery_payload_from_completion(completion),
         "delivery_truth": _mapping(completion.get("delivery_truth")),
@@ -62,6 +63,11 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
         "run_integrity",
         "blocked",
         "latest_gate_status",
+        "repair_route_status",
+        "repair_route_kind",
+        "repair_route_startable",
+        "repair_owner",
+        "repair_must_rerun_from",
         "finalize_report",
         "delivery_truth",
         "finalize_event",
@@ -108,6 +114,7 @@ def _run_card_from_completion(
     event_truth = _mapping(completion.get("event_truth"))
     assessment_target = _mapping(completion.get("assessment_target"))
     run_integrity = _mapping(completion.get("run_integrity"))
+    repair_route = _mapping(completion.get("repair_route"))
     return {
         "runtime": _clean_text(runtime.get("runtime")) or "unknown",
         "current_stage": _clean_text(workflow.get("current_stage")) or "unknown",
@@ -116,6 +123,11 @@ def _run_card_from_completion(
         "run_integrity": _clean_text(run_integrity.get("status")) or "unknown",
         "blocked": bool(workflow.get("blocked")),
         "latest_gate_status": _gate_status_text(gate_truth),
+        "repair_route_status": _clean_text(repair_route.get("status")) or "unknown",
+        "repair_route_kind": _clean_text(repair_route.get("route_kind")) or "unknown",
+        "repair_route_startable": repair_route.get("startable") is True,
+        "repair_owner": _clean_text(repair_route.get("repair_owner")) or "none",
+        "repair_must_rerun_from": _clean_text(repair_route.get("must_rerun_from")) or "none",
         "finalize_report": _clean_text(finalize_truth.get("status")) or "unknown",
         "delivery_truth": _clean_text(delivery_truth.get("status")) or "unknown",
         "delivery_valid": delivery_truth.get("valid") is True,

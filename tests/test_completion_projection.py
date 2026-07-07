@@ -296,6 +296,48 @@ def test_completion_projection_blocks_malformed_gate_report(tmp_path: Path) -> N
     assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
 
 
+def test_completion_projection_does_not_route_repair_from_invalid_gate_report(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_json(
+        _intermediate(ws) / "gates" / "finalize_quality_gate_report.json",
+        {
+            "schema_version": "multi-agent-brief-quality-gates/v1",
+            "status": "fail",
+            "metadata": {
+                "stage_id": "finalize",
+                "gate_stage_id": "finalize",
+                "gate_artifact_id": "finalize_quality_gate_report",
+            },
+            "findings": [
+                {
+                    "finding_id": "QG_SPOOFED_001",
+                    "finding_type": "target_relevance_gap",
+                    "severity": "high",
+                    "blocking_level": "blocking",
+                    "blocking": True,
+                    "artifact_id": "audited_brief",
+                    "repair_owner": "editor",
+                    "repair_stage_id": "editor",
+                    "repair_artifact_id": "audited_brief",
+                }
+            ],
+        },
+    )
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["status"] == "invalid"
+    assert any("gate_results must be a list" in item for item in payload["gate_truth"]["validation_errors"])
+    assert payload["repair_route"]["status"] == "invalid"
+    assert payload["repair_route"]["available"] is False
+    assert payload["repair_route"]["repair_owner"] == "none"
+    assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
+
+
 def test_completion_projection_rejects_gate_report_not_bound_to_finalize(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
@@ -327,6 +369,108 @@ def test_completion_projection_blocks_blocking_gate_report(tmp_path: Path) -> No
 
     assert payload["gate_truth"]["blocking"] is True
     assert payload["next_allowed_action"] == "stop_resolve_blocking_gate_report"
+
+
+def test_completion_projection_routes_editor_repair_for_content_edit_gate(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    gate = _write_gate_report(ws, blocking=True, artifact_id="audited_brief")
+    gate["findings"][0].update({
+        "finding_type": "target_relevance_gap",
+        "stage_id": "editor",
+        "artifact_id": "audited_brief",
+        "repair_owner": "editor",
+        "repair_stage_id": "editor",
+        "repair_artifact_id": "audited_brief",
+    })
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", gate)
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["blocking"] is True
+    assert payload["repair_route"]["status"] == "available"
+    assert payload["repair_route"]["route_kind"] == "owner_stage_repair"
+    assert payload["repair_route"]["startable"] is True
+    assert payload["repair_route"]["repair_owner"] == "editor"
+    assert payload["repair_route"]["allowed_artifacts"] == ["output/intermediate/audited_brief.md"]
+    assert payload["repair_route"]["must_rerun_from"] == "auditor"
+    assert payload["repair_route"]["source"]["kind"] == "finalize_quality_gate_report"
+    assert payload["repair_route"]["source"]["stage_id"] == "finalize"
+    assert payload["next_allowed_action"] == "start_owner_stage_repair_for_blocking_gate"
+
+
+def test_completion_projection_uses_current_blocking_gate_route(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    auditor_gate = _write_gate_report(ws, stage_id="auditor", blocking=True, artifact_id="audited_brief")
+    auditor_gate["findings"][0].update({
+        "finding_id": "QG_AUDITOR_OLD",
+        "finding_type": "target_relevance_gap",
+        "stage_id": "editor",
+        "artifact_id": "audited_brief",
+        "repair_owner": "editor",
+        "repair_stage_id": "editor",
+        "repair_artifact_id": "audited_brief",
+    })
+    auditor_gate["gate_results"][-1]["finding_ids"] = ["QG_AUDITOR_OLD"]
+    _write_json(_intermediate(ws) / "gates" / "auditor_quality_gate_report.json", auditor_gate)
+    finalize_gate = _write_gate_report(ws, blocking=True, artifact_id="audited_brief")
+    finalize_gate["findings"][0].update({
+        "finding_id": "QG_FINALIZE_CURRENT",
+        "finding_type": "target_relevance_gap",
+        "stage_id": "editor",
+        "artifact_id": "audited_brief",
+        "repair_owner": "editor",
+        "repair_stage_id": "editor",
+        "repair_artifact_id": "audited_brief",
+    })
+    finalize_gate["gate_results"][-1]["finding_ids"] = ["QG_FINALIZE_CURRENT"]
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", finalize_gate)
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["stage_id"] == "finalize"
+    assert payload["repair_route"]["available"] is True
+    assert payload["repair_route"]["source"]["kind"] == "finalize_quality_gate_report"
+    assert payload["repair_route"]["source"]["stage_id"] == "finalize"
+    assert payload["repair_route"]["source"]["finding_id"] == "QG_FINALIZE_CURRENT"
+    assert payload["next_allowed_action"] == "start_owner_stage_repair_for_blocking_gate"
+
+
+def test_completion_projection_routes_human_gate_to_human_review(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    gate = _write_gate_report(ws, blocking=True, artifact_id="audited_brief")
+    gate["findings"][0].update({
+        "finding_type": "target_mapping_ambiguous",
+        "stage_id": "editor",
+        "artifact_id": "audited_brief",
+        "repair_owner": "human",
+        "repair_stage_id": "editor",
+        "repair_artifact_id": "audited_brief",
+    })
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", gate)
+    _append_finalize_event(ws)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["gate_truth"]["blocking"] is True
+    assert payload["repair_route"]["status"] == "human_review_required"
+    assert payload["repair_route"]["route_kind"] == "human_review"
+    assert payload["repair_route"]["startable"] is False
+    assert payload["repair_route"]["repair_owner"] == "human"
+    assert payload["repair_route"]["available"] is False
+    assert payload["repair_route"]["allowed_artifacts"] == []
+    assert payload["repair_route"]["must_rerun_from"] == ""
+    assert payload["next_allowed_action"] == "request_human_review_for_blocking_gate"
 
 
 def test_completion_projection_blocks_failed_finalize_report(tmp_path: Path) -> None:

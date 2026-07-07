@@ -156,6 +156,35 @@ def _gate_report(status: str) -> dict[str, object]:
     }
 
 
+def _write_blocking_human_gate(ws: Path) -> None:
+    report = _gate_report("fail")
+    report["gate_results"][-1] = {
+        "gate_id": "target_relevance",
+        "status": "fail",
+        "blocking": True,
+        "finding_ids": ["QG_TARGET_RELEVANCE_001"],
+    }
+    report["findings"] = [
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_mapping_ambiguous",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "blocking": True,
+            "stage_id": "editor",
+            "gate_stage_id": "finalize",
+            "artifact_id": "audited_brief",
+            "gate_artifact_id": "finalize_quality_gate_report",
+            "repair_owner": "human",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Target entity or topic could not be derived from workspace config.",
+            "metadata": {},
+        }
+    ]
+    _write_json(_intermediate(ws) / "gates" / "finalize_quality_gate_report.json", report)
+
+
 def _diagnose_json(ws: Path, capsys) -> dict:
     rc = main(["workbuddy", "diagnose", "--workspace", str(ws), "--json"])
     assert rc == 0
@@ -180,6 +209,68 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     assert payload["delivery"]["truth"] == projection["delivery_truth"]
     assert payload["finalize"]["truth"] == projection["finalize_truth"]
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_workbuddy_diagnose_repeats_human_repair_route(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _init_runtime(ws)
+    _write_finalized_delivery(ws)
+    _write_blocking_human_gate(ws)
+
+    payload = _diagnose_json(ws, capsys)
+
+    projection = payload["completion_projection"]
+    assert payload["repair_route"] == projection["repair_route"]
+    assert projection["repair_route"]["status"] == "human_review_required"
+    assert projection["repair_route"]["route_kind"] == "human_review"
+    assert projection["repair_route"]["startable"] is False
+    assert payload["run_card"]["repair_route_status"] == "human_review_required"
+    assert payload["run_card"]["repair_route_kind"] == "human_review"
+    assert payload["run_card"]["repair_route_startable"] is False
+    assert payload["run_card"]["repair_owner"] == "human"
+    assert payload["run_card"]["repair_must_rerun_from"] == "none"
+    assert payload["run_card"]["next_allowed_action"] == "request_human_review_for_blocking_gate"
+
+
+def test_workbuddy_diagnose_does_not_advertise_repair_from_invalid_gate(tmp_path: Path, capsys) -> None:
+    ws = _workspace(tmp_path)
+    _init_runtime(ws)
+    _write_finalized_delivery(ws)
+    _write_json(
+        _intermediate(ws) / "gates" / "finalize_quality_gate_report.json",
+        {
+            "schema_version": QUALITY_GATE_SCHEMA,
+            "status": "fail",
+            "metadata": {
+                "stage_id": "finalize",
+                "gate_stage_id": "finalize",
+                "gate_artifact_id": "finalize_quality_gate_report",
+            },
+            "findings": [
+                {
+                    "finding_id": "QG_SPOOFED_001",
+                    "finding_type": "target_relevance_gap",
+                    "severity": "high",
+                    "blocking_level": "blocking",
+                    "blocking": True,
+                    "artifact_id": "audited_brief",
+                    "repair_owner": "editor",
+                    "repair_stage_id": "editor",
+                    "repair_artifact_id": "audited_brief",
+                }
+            ],
+        },
+    )
+
+    payload = _diagnose_json(ws, capsys)
+
+    projection = payload["completion_projection"]
+    assert projection["gate_truth"]["status"] == "invalid"
+    assert projection["repair_route"]["status"] == "invalid"
+    assert projection["repair_route"]["available"] is False
+    assert payload["run_card"]["repair_route_status"] == "invalid"
+    assert payload["run_card"]["repair_route_startable"] is False
+    assert payload["run_card"]["next_allowed_action"] == "stop_resolve_blocking_gate_report"
 
 
 def test_workbuddy_diagnose_doctor_error_overlays_completion_next_action(tmp_path: Path, capsys) -> None:

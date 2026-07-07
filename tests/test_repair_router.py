@@ -44,20 +44,71 @@ def _write_audit_report(ws: Path, finding: dict[str, object], *, audit_status: s
     )
 
 
+def _quality_gate_finding(finding: dict[str, object], *, stage_id: str, gate_artifact_id: str) -> dict[str, object]:
+    payload = dict(finding)
+    payload.setdefault("finding_type", "target_relevance_gap")
+    payload.setdefault("severity", "high")
+    payload.setdefault("blocking_level", "blocking")
+    payload.setdefault("blocking", payload.get("blocking_level") == "blocking")
+    payload.setdefault("stage_id", stage_id)
+    payload.setdefault("gate_stage_id", stage_id)
+    payload.setdefault("gate_artifact_id", gate_artifact_id)
+    payload.setdefault("message", "Synthetic repair route gate finding.")
+    payload["blocking"] = payload.get("blocking_level") == "blocking"
+    return payload
+
+
+def _quality_gate_payload(
+    finding: dict[str, object] | list[dict[str, object]],
+    *,
+    stage_id: str,
+    gate_artifact_id: str,
+) -> dict[str, object]:
+    raw_findings = finding if isinstance(finding, list) else [finding]
+    gate_findings = [
+        _quality_gate_finding(item, stage_id=stage_id, gate_artifact_id=gate_artifact_id)
+        for item in raw_findings
+    ]
+    finding_ids = [
+        str(item["finding_id"])
+        for item in gate_findings
+        if item.get("blocking") is True
+    ]
+    return {
+        "schema_version": "multi-agent-brief-quality-gates/v1",
+        "created_at": "2026-07-06T00:00:00+00:00",
+        "updated_at": "2026-07-06T00:00:00+00:00",
+        "workspace": ".",
+        "report_date": "2026-07-06",
+        "policy_pack": "default",
+        "status": "fail" if finding_ids else "warning",
+        "gate_results": [
+            {"gate_id": "coverage_omission", "status": "pass", "blocking": False, "finding_ids": []},
+            {"gate_id": "freshness", "status": "pass", "blocking": False, "finding_ids": []},
+            {"gate_id": "material_fact", "status": "pass", "blocking": False, "finding_ids": []},
+            {
+                "gate_id": "target_relevance",
+                "status": "fail" if finding_ids else "warning",
+                "blocking": bool(finding_ids),
+                "finding_ids": finding_ids,
+            },
+        ],
+        "findings": gate_findings,
+        "metadata": {
+            "stage_id": stage_id,
+            "gate_stage_id": stage_id,
+            "gate_artifact_id": gate_artifact_id,
+            "brief": "output/intermediate/audited_brief.md",
+            "ledger": "output/intermediate/claim_ledger.json",
+        },
+    }
+
+
 def _write_quality_gate_report(ws: Path, finding: dict[str, object]) -> None:
     path = _intermediate(ws) / "gates" / "auditor_quality_gate_report.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(
-            {
-                "schema_version": "multi-agent-brief-quality-gates/v1",
-                "status": "fail",
-                "findings": [finding],
-                "metadata": {"gate_stage_id": "auditor"},
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        json.dumps(_quality_gate_payload(finding, stage_id="auditor", gate_artifact_id="auditor_quality_gate_report"), ensure_ascii=False, indent=2)
         + "\n",
         encoding="utf-8",
     )
@@ -101,16 +152,7 @@ def _write_finalize_report_with_reader_clean_failure(ws: Path) -> None:
 def _write_legacy_quality_gate_report(ws: Path, finding: dict[str, object]) -> None:
     path = _intermediate(ws) / "quality_gate_report.json"
     path.write_text(
-        json.dumps(
-            {
-                "schema_version": "multi-agent-brief-quality-gates/v1",
-                "status": "fail",
-                "findings": [finding],
-                "metadata": {"gate_stage_id": "auditor"},
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        json.dumps(_quality_gate_payload(finding, stage_id="auditor", gate_artifact_id="auditor_quality_gate_report"), ensure_ascii=False, indent=2)
         + "\n",
         encoding="utf-8",
     )
@@ -354,6 +396,90 @@ def test_repair_route_ignores_stale_finalize_report_outside_finalize_stage(tmp_p
     assert payload["repair_owner"] == "none"
     assert payload["finding_count"] == 0
     assert not any(route.get("source", {}).get("kind") == "finalize_report" for route in payload["routes"])
+
+
+def test_repair_route_marks_non_current_gate_route_not_startable(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _set_workflow_stages(
+        ws,
+        completed=[
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+            "auditor",
+        ],
+        current_stage="finalize",
+    )
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_AUDITOR_OLD",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Old auditor gate route should not be startable from finalize.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["source"]["stage_id"] == "auditor"
+    assert payload["route_kind"] == "owner_stage_repair"
+    assert payload["startable"] is False
+    assert payload["routes"][0]["startable"] is False
+
+
+def test_repair_start_rejects_non_current_gate_route_with_stage_mismatch(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _set_workflow_stages(
+        ws,
+        completed=[
+            "doctor",
+            "source-discovery",
+            "input-governance",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+            "auditor",
+        ],
+        current_stage="finalize",
+    )
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_AUDITOR_OLD",
+            "finding_type": "target_relevance_gap",
+            "severity": "high",
+            "artifact_id": "audited_brief",
+            "repair_owner": "editor",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Old auditor gate route should not start from finalize.",
+        },
+    )
+
+    rc = main(["repair", "start", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_ILLEGAL_TRANSITION"
+    assert "source stage does not match the current workflow stage" in payload["error"]
+    assert payload["details"]["route_stage_id"] == "auditor"
+    assert payload["details"]["current_stage"] == "finalize"
 
 
 def test_repair_start_accepts_finalize_reader_clean_route_from_finalize_stage(tmp_path, capsys):
@@ -795,6 +921,79 @@ def test_repair_route_does_not_auto_repair_input_limitation_findings(tmp_path, c
     assert payload["recommended_action"] == "request_human_review_or_start_fresh_workspace"
 
 
+def test_repair_route_human_owner_overrides_stage_metadata(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_mapping_ambiguous",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "blocking": True,
+            "artifact_id": "audited_brief",
+            "repair_owner": "human",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Target entity or topic could not be derived from workspace config.",
+        },
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["route_kind"] == "human_review"
+    assert payload["startable"] is False
+    assert payload["repair_owner"] == "human"
+    assert payload["allowed_artifacts"] == []
+    assert payload["must_rerun_from"] == ""
+    assert payload["recommended_action"] == "request_human_review"
+    assert payload["source"]["route_classification"] == "human_review"
+
+
+def test_repair_start_rejects_human_review_route_before_allowed_artifacts(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    _write_quality_gate_report(
+        ws,
+        {
+            "finding_id": "QG_TARGET_RELEVANCE_001",
+            "finding_type": "target_mapping_ambiguous",
+            "severity": "high",
+            "blocking_level": "blocking",
+            "blocking": True,
+            "artifact_id": "audited_brief",
+            "repair_owner": "human",
+            "repair_stage_id": "editor",
+            "repair_artifact_id": "audited_brief",
+            "message": "Target entity or topic could not be derived from workspace config.",
+        },
+    )
+    before_workflow = runtime_state_paths(ws)["workflow_state"].read_bytes()
+
+    rc = main([
+        "repair",
+        "start",
+        "--workspace",
+        str(ws),
+        "--finding-id",
+        "QG_TARGET_RELEVANCE_001",
+        "--json",
+    ])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_REPAIR_NO_LEGAL_ROUTE"
+    assert "human review" in payload["error"]
+    assert "allowed artifacts" not in payload["error"].lower()
+    assert payload["details"]["required_decisions"] == ["request_human_review", "block_run"]
+    assert payload["details"]["repair_route"]["route_kind"] == "human_review"
+    assert payload["details"]["repair_route"]["startable"] is False
+    assert runtime_state_paths(ws)["workflow_state"].read_bytes() == before_workflow
+
+
 def _write_imported_claim_ledger_audit_warning(ws: Path) -> None:
     _write_audit_report(
         ws,
@@ -1044,10 +1243,8 @@ def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_p
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {
-                "schema_version": "multi-agent-brief-quality-gates/v1",
-                "status": "fail",
-                "findings": [
+            _quality_gate_payload(
+                [
                     {
                         "finding_id": "QG_FINAL_001",
                         "finding_type": "insufficient_claims",
@@ -1069,8 +1266,9 @@ def test_repair_route_prioritizes_input_limitation_over_routeable_findings(tmp_p
                         "message": "A number-like value appears without a source reference.",
                     },
                 ],
-                "metadata": {"gate_stage_id": "auditor"},
-            },
+                stage_id="auditor",
+                gate_artifact_id="auditor_quality_gate_report",
+            ),
             ensure_ascii=False,
             indent=2,
         )
@@ -1130,6 +1328,52 @@ def test_repair_route_rejects_invalid_gate_report_json(tmp_path, capsys):
     assert payload["ok"] is False
     assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
     assert payload["input_errors"][0]["source"] == "auditor_quality_gate_report"
+
+
+def test_repair_route_rejects_schema_invalid_gate_report_with_spoofed_route(tmp_path, capsys):
+    ws = _workspace(tmp_path)
+    initialize_runtime_state(workspace=ws)
+    path = _intermediate(ws) / "gates" / "finalize_quality_gate_report.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "multi-agent-brief-quality-gates/v1",
+                "status": "fail",
+                "metadata": {
+                    "stage_id": "finalize",
+                    "gate_stage_id": "finalize",
+                    "gate_artifact_id": "finalize_quality_gate_report",
+                },
+                "findings": [
+                    {
+                        "finding_id": "QG_SPOOFED_001",
+                        "finding_type": "target_relevance_gap",
+                        "severity": "high",
+                        "blocking_level": "blocking",
+                        "blocking": True,
+                        "artifact_id": "audited_brief",
+                        "repair_owner": "editor",
+                        "repair_stage_id": "editor",
+                        "repair_artifact_id": "audited_brief",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc = main(["repair", "route", "--workspace", str(ws), "--json"])
+
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["error_code"] == "E_REPAIR_INPUT_INVALID"
+    assert payload["input_errors"][0]["source"] == "finalize_quality_gate_report"
+    assert "gate_results must be a list" in payload["input_errors"][0]["error"]
 
 
 def test_repair_route_rejects_invalid_artifact_registry_json(tmp_path, capsys):

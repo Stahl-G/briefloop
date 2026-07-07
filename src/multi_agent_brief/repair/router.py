@@ -20,7 +20,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import _build_artifact_registry
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
-from multi_agent_brief.quality_gates.contract import quality_gate_paths
+from multi_agent_brief.quality_gates.contract import quality_gate_paths, validate_quality_gate_report_payload
 
 
 INTERMEDIATE_DIR = Path("output/intermediate")
@@ -135,7 +135,12 @@ def route_repair(
     routes = [_route_for_finding(finding) for finding in findings]
     routes = [route for route in routes if route is not None]
     routes = sorted(routes, key=_route_priority)
-    routes = _annotated_routes(routes, imported_fact_layer=_workspace_has_fact_layer_import(payloads))
+    current_stage = _current_workflow_stage(payloads.get("workflow_state"))
+    routes = _annotated_routes(
+        routes,
+        imported_fact_layer=_workspace_has_fact_layer_import(payloads),
+        current_stage=current_stage,
+    )
     selected = _select_route(routes, route_index=route_index, finding_id=finding_id)
     if not selected.get("ok", True):
         return {
@@ -160,12 +165,21 @@ def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[
     input_errors: list[dict[str, str]] = []
     payloads: dict[str, dict[str, Any]] = {}
     input_paths = _input_paths(workspace)
+    stages, artifacts = _repair_contracts(workspace)
     for label, path in input_paths.items():
         payload, error = _read_json_object(path)
         if error:
             input_errors.append({"source": label, "path": _workspace_relative(workspace, path), "error": error})
             continue
         if payload is None:
+            continue
+        validation_errors = _control_payload_errors(label, payload, stages=stages, artifacts=artifacts)
+        if validation_errors:
+            input_errors.append({
+                "source": label,
+                "path": _workspace_relative(workspace, path),
+                "error": "; ".join(validation_errors),
+            })
             continue
         payloads[label] = payload
     current_stage = _current_workflow_stage(payloads.get("workflow_state"))
@@ -179,6 +193,23 @@ def _collect_findings(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[
     findings.extend(_findings_from_artifact_registry(registry))
     findings.extend(_findings_from_frozen_artifact_integrity(workspace, payloads))
     return _dedupe_findings(findings), input_errors, payloads
+
+
+def _repair_contracts(workspace: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    repo = resolve_repo_workdir(None, workspace=workspace)
+    return load_stage_specs(repo), load_artifact_contracts(repo)
+
+
+def _control_payload_errors(
+    label: str,
+    payload: dict[str, Any],
+    *,
+    stages: list[dict[str, Any]],
+    artifacts: list[dict[str, Any]],
+) -> list[str]:
+    if label not in {"auditor_quality_gate_report", "finalize_quality_gate_report", "quality_gate_report"}:
+        return []
+    return validate_quality_gate_report_payload(payload, stages=stages, artifacts=artifacts)
 
 
 def _current_workflow_stage(workflow_state: dict[str, Any] | None) -> str:
@@ -457,6 +488,9 @@ def _route_for_finding(finding: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _explicit_repair_route(finding: dict[str, Any]) -> dict[str, Any] | None:
+    explicit_owner = _normalize_owner(finding.get("repair_owner"))
+    if explicit_owner == "human":
+        return _human_review_route(finding)
     owner = _normalize_owner(finding.get("repair_stage_id") or finding.get("repair_owner"))
     if owner is None:
         return None
@@ -475,6 +509,7 @@ def _explicit_repair_route(finding: dict[str, Any]) -> dict[str, Any] | None:
         must_rerun_from=RERUN_FROM_BY_OWNER.get(owner, ""),
         blocked_direct_edits=DOWNSTREAM_BLOCKED_EDITS.get(owner, []),
         reason=_reason(finding, f"{owner} repair required"),
+        route_kind="owner_stage_repair",
         source=finding,
     )
 
@@ -526,6 +561,8 @@ def _is_input_limitation_finding(finding: dict[str, Any]) -> bool:
 
 def _input_limitation_route(finding: dict[str, Any]) -> dict[str, Any]:
     return {
+        "route_kind": "human_review",
+        "startable": False,
         "repair_owner": "none",
         "allowed_artifacts": [],
         "must_rerun_from": "",
@@ -549,6 +586,36 @@ def _input_limitation_route(finding: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _human_review_route(finding: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "route_kind": "human_review",
+        "startable": False,
+        "repair_owner": "human",
+        "allowed_artifacts": [],
+        "must_rerun_from": "",
+        "blocked_direct_edits": [
+            "output/intermediate/claim_ledger.json",
+            "output/intermediate/audited_brief.md",
+            "output/intermediate/audit_report.json",
+        ],
+        "reason": _reason(finding, "Human review or target clarification required."),
+        "recommended_action": "request_human_review",
+        "run_integrity_effect": None,
+        "source": {
+            "file": finding.get("_source_path"),
+            "kind": finding.get("_source"),
+            "stage_id": finding.get("_source_stage_id") or finding.get("gate_stage_id") or finding.get("stage_id"),
+            "finding_id": finding.get("finding_id") or finding.get("id"),
+            "finding_type": finding.get("finding_type") or finding.get("category"),
+            "artifact_id": finding.get("artifact_id"),
+            "severity": finding.get("severity"),
+            "status": finding.get("_report_status") or finding.get("status") or finding.get("audit_status"),
+            "blocking": finding.get("blocking"),
+            "route_classification": "human_review",
+        },
+    }
+
+
 def _is_audited_brief_binding_issue(finding_type: str, artifact_id: str) -> bool:
     return (
         finding_type in {"unsupported_claim", "claim_binding_imprecise"}
@@ -563,9 +630,12 @@ def _route(
     must_rerun_from: str,
     blocked_direct_edits: list[str],
     reason: str,
+    route_kind: str = "owner_stage_repair",
     source: dict[str, Any],
 ) -> dict[str, Any]:
     return {
+        "route_kind": route_kind,
+        "startable": route_kind == "owner_stage_repair",
         "repair_owner": repair_owner,
         "allowed_artifacts": allowed_artifacts,
         "must_rerun_from": must_rerun_from,
@@ -589,6 +659,8 @@ def _route(
 
 def _no_route() -> dict[str, Any]:
     return {
+        "route_kind": "none",
+        "startable": False,
         "repair_owner": "none",
         "allowed_artifacts": [],
         "must_rerun_from": "",
@@ -622,7 +694,12 @@ def _workspace_has_fact_layer_import(payloads: dict[str, dict[str, Any]]) -> boo
     return isinstance(manifest, dict) and isinstance(manifest.get("fact_layer_import"), dict)
 
 
-def _annotated_routes(routes: list[dict[str, Any]], *, imported_fact_layer: bool) -> list[dict[str, Any]]:
+def _annotated_routes(
+    routes: list[dict[str, Any]],
+    *,
+    imported_fact_layer: bool,
+    current_stage: str,
+) -> list[dict[str, Any]]:
     annotated: list[dict[str, Any]] = []
     for rank, route in enumerate(routes):
         item = dict(route)
@@ -630,12 +707,35 @@ def _annotated_routes(routes: list[dict[str, Any]], *, imported_fact_layer: bool
         item["route_rank"] = rank
         item["is_blocking"] = _route_is_blocking(item)
         item["is_imported_fact_layer_forbidden"] = forbidden
+        item["startable"] = _route_is_startable(item, current_stage=current_stage)
         item["default_selected"] = False
         annotated.append(item)
     default = _default_selected_route(annotated)
     if default is not None:
         default["default_selected"] = True
     return annotated
+
+
+def _route_is_startable(route: dict[str, Any], *, current_stage: str) -> bool:
+    if route.get("route_kind") != "owner_stage_repair":
+        return False
+    source_stage = _route_source_stage(route)
+    return bool(not source_stage or source_stage == current_stage)
+
+
+def _route_source_stage(route: dict[str, Any]) -> str:
+    source = route.get("source") if isinstance(route.get("source"), dict) else {}
+    stage_id = str(source.get("stage_id") or "")
+    if stage_id:
+        return stage_id
+    kind = str(source.get("kind") or "")
+    if kind == "auditor_quality_gate_report":
+        return "auditor"
+    if kind == "finalize_quality_gate_report":
+        return "finalize"
+    if kind == "audit_report":
+        return "auditor"
+    return ""
 
 
 def _select_route(

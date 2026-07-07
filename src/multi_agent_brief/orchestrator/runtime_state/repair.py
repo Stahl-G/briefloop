@@ -404,6 +404,34 @@ def start_repair_transaction(
             if route.get("no_legal_route")
             else E_ILLEGAL_TRANSITION,
         )
+    if route.get("route_kind") != "owner_stage_repair":
+        raise RuntimeStateError(
+            "Selected route requires human review or block_run; it is not an owner-stage repair transaction.",
+            details={
+                "repair_route": route,
+                "required_decisions": ["request_human_review", "block_run"],
+                "workspace": str(ws),
+            },
+            error_code=E_REPAIR_NO_LEGAL_ROUTE,
+        )
+    route_stage = _source_stage_for_repair_route(route)
+    current_stage = str(workflow.get("current_stage") or "")
+    if route_stage and route_stage != current_stage:
+        raise RuntimeStateError(
+            "Repair route source stage does not match the current workflow stage.",
+            details={
+                "route_stage_id": route_stage,
+                "current_stage": current_stage,
+                "source": route.get("source") or {},
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
+    if route.get("startable") is not True:
+        raise RuntimeStateError(
+            "Selected owner-stage repair route is not startable for the current workflow state.",
+            details={"repair_route": route, "current_stage": current_stage, "workspace": str(ws)},
+            error_code=E_ILLEGAL_TRANSITION,
+        )
     if not route.get("allowed_artifacts"):
         raise RuntimeStateError(
             "Deterministic repair route has no allowed artifacts.",
@@ -423,18 +451,6 @@ def start_repair_transaction(
     artifacts = load_artifact_contracts(repo)
     transaction_id = uuid.uuid4().hex
     now = utc_now()
-    route_stage = _source_stage_for_repair_route(route)
-    current_stage = str(workflow.get("current_stage") or "")
-    if route_stage and route_stage != current_stage:
-        raise RuntimeStateError(
-            "Repair route source stage does not match the current workflow stage.",
-            details={
-                "route_stage_id": route_stage,
-                "current_stage": current_stage,
-                "source": route.get("source") or {},
-            },
-            error_code=E_ILLEGAL_TRANSITION,
-        )
     baseline_registry = _build_artifact_registry(
         workspace=ws,
         run_id=run_id,

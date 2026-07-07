@@ -112,6 +112,7 @@ def build_completion_projection(
         event_records=event_records,
         intermediate=intermediate,
     )
+    repair_route = _repair_route_projection(workspace=ws, gate_truth=gate_truth)
     delivery_truth = _delivery_truth(
         finalize_truth=finalize_truth,
         finalize_completion_reasons=finalize_completion_reasons,
@@ -126,6 +127,7 @@ def build_completion_projection(
         run_integrity=run_integrity,
         artifact_truth=artifact_truth,
         gate_truth=gate_truth,
+        repair_route=repair_route,
         finalize_truth=finalize_truth,
         delivery_truth=delivery_truth,
         event_truth=event_truth,
@@ -148,6 +150,7 @@ def build_completion_projection(
         "run_integrity": run_integrity,
         "artifacts": artifact_truth,
         "gate_truth": gate_truth,
+        "repair_route": repair_route,
         "finalize_truth": finalize_truth,
         "delivery_truth": delivery_truth,
         "event_truth": event_truth,
@@ -226,6 +229,7 @@ def _stage_gate_truth(
     if status == "missing":
         return {
             "status": "missing",
+            "stage_id": stage,
             "artifact_id": artifact_id,
             "path": _workspace_relative(workspace, path),
             "blocking": False,
@@ -235,6 +239,7 @@ def _stage_gate_truth(
     if status != "present" or not isinstance(payload, Mapping):
         return {
             "status": "invalid",
+            "stage_id": stage,
             "artifact_id": artifact_id,
             "path": _workspace_relative(workspace, path),
             "blocking": True,
@@ -254,6 +259,7 @@ def _stage_gate_truth(
     if errors:
         return {
             "status": "invalid",
+            "stage_id": stage,
             "artifact_id": artifact_id,
             "path": _workspace_relative(workspace, path),
             "blocking": True,
@@ -264,6 +270,7 @@ def _stage_gate_truth(
     blocking_count = _blocking_gate_result_count(payload) + _blocking_finding_count(payload)
     return {
         "status": gate_status,
+        "stage_id": stage,
         "artifact_id": artifact_id,
         "path": _workspace_relative(workspace, path),
         "blocking": gate_status == "fail" or blocking_count > 0,
@@ -427,6 +434,7 @@ def _next_allowed_action(
     run_integrity: Mapping[str, Any],
     artifact_truth: Mapping[str, Any],
     gate_truth: Mapping[str, Any],
+    repair_route: Mapping[str, Any],
     finalize_truth: Mapping[str, Any],
     delivery_truth: Mapping[str, Any],
     event_truth: Mapping[str, Any],
@@ -450,6 +458,10 @@ def _next_allowed_action(
             return "inspect_auditable_brief_target_status"
         return "continue_current_stage_or_handoff_workflow"
     if gate_truth.get("blocking") is True or gate_truth.get("status") == "fail":
+        if repair_route.get("available") is True:
+            return "start_owner_stage_repair_for_blocking_gate"
+        if repair_route.get("status") == "human_review_required":
+            return "request_human_review_for_blocking_gate"
         return "stop_resolve_blocking_gate_report"
     if artifact_truth.get("invalid_or_stale"):
         return "inspect_invalid_or_stale_artifacts"
@@ -464,6 +476,135 @@ def _next_allowed_action(
     if delivery_truth.get("valid") is True:
         return "inspect_status_before_delivery_or_quality"
     return "inspect_invalid_or_incomplete_finalize_report_delivery_truth"
+
+
+def _repair_route_projection(*, workspace: Path, gate_truth: Mapping[str, Any]) -> dict[str, Any]:
+    if _gate_is_blocking(gate_truth) and _gate_report_authority_invalid(gate_truth):
+        validation_errors = gate_truth.get("validation_errors")
+        return {
+            "status": "invalid",
+            "available": False,
+            "startable": False,
+            "current_gate_match": False,
+            "route_kind": "invalid",
+            "repair_owner": "none",
+            "allowed_artifacts": [],
+            "must_rerun_from": "",
+            "blocked_direct_edits": [],
+            "reason": "current gate report is invalid",
+            "recommended_action": "resolve_blocking_gate_report",
+            "validation_errors": [str(item) for item in validation_errors] if isinstance(validation_errors, list) else [],
+            "source": {},
+        }
+    try:
+        from multi_agent_brief.repair.router import route_repair
+
+        payload = route_repair(workspace=workspace)
+    except Exception as exc:  # pragma: no cover - defensive read-only projection path.
+        return {
+            "status": "invalid",
+            "available": False,
+            "route_kind": "invalid",
+            "error": str(exc),
+        }
+    if payload.get("ok") is not True:
+        return {
+            "status": "invalid",
+            "available": False,
+            "route_kind": "invalid",
+            "error_code": _clean_text(payload.get("error_code")),
+            "message": _clean_text(payload.get("message") or payload.get("error")),
+        }
+    selected_payload = _route_for_current_gate(payload, gate_truth=gate_truth)
+    owner = _clean_text(selected_payload.get("repair_owner")) or "none"
+    route_kind = _clean_text(payload.get("route_kind")) or ("none" if owner == "none" else "owner_stage_repair")
+    route_kind = _clean_text(selected_payload.get("route_kind")) or route_kind
+    allowed = selected_payload.get("allowed_artifacts")
+    allowed_artifacts = [str(item) for item in allowed] if isinstance(allowed, list) else []
+    must_rerun_from = _clean_text(selected_payload.get("must_rerun_from"))
+    current_gate_match = _route_matches_current_gate(selected_payload, gate_truth=gate_truth)
+    available = bool(
+        route_kind == "owner_stage_repair"
+        and selected_payload.get("startable") is True
+        and owner not in {"", "none", "human"}
+        and allowed_artifacts
+        and must_rerun_from
+        and current_gate_match
+    )
+    if available:
+        status = "available"
+    elif route_kind == "human_review" and current_gate_match:
+        status = "human_review_required"
+    elif owner == "none":
+        status = "none"
+    else:
+        status = "unavailable"
+    blocked = selected_payload.get("blocked_direct_edits")
+    source = selected_payload.get("source")
+    return {
+        "status": status,
+        "available": available,
+        "startable": selected_payload.get("startable") is True,
+        "current_gate_match": current_gate_match,
+        "route_kind": route_kind,
+        "repair_owner": owner,
+        "allowed_artifacts": allowed_artifacts,
+        "must_rerun_from": must_rerun_from,
+        "blocked_direct_edits": [str(item) for item in blocked] if isinstance(blocked, list) else [],
+        "reason": _clean_text(selected_payload.get("reason")),
+        "recommended_action": _clean_text(selected_payload.get("recommended_action")),
+        "source": dict(source) if isinstance(source, Mapping) else {},
+    }
+
+
+def _gate_report_authority_invalid(gate_truth: Mapping[str, Any]) -> bool:
+    if gate_truth.get("status") != "invalid":
+        return False
+    validation_errors = gate_truth.get("validation_errors")
+    if not isinstance(validation_errors, list):
+        return True
+    non_authority_errors = (
+        "Quality gate report status is fail.",
+        "Quality gate report has failing gate_results:",
+        "Quality gate report has blocking gate_results:",
+        "Quality gate report has blocking findings:",
+    )
+    return any(
+        not any(str(error).startswith(prefix) for prefix in non_authority_errors)
+        for error in validation_errors
+    )
+
+
+def _route_for_current_gate(payload: Mapping[str, Any], *, gate_truth: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not _gate_is_blocking(gate_truth):
+        return payload
+    if _route_matches_current_gate(payload, gate_truth=gate_truth):
+        return payload
+    routes = payload.get("routes")
+    if isinstance(routes, list):
+        for route in routes:
+            if isinstance(route, Mapping) and _route_matches_current_gate(route, gate_truth=gate_truth):
+                return route
+    return payload
+
+
+def _gate_is_blocking(gate_truth: Mapping[str, Any]) -> bool:
+    return gate_truth.get("blocking") is True or gate_truth.get("status") == "fail"
+
+
+def _route_matches_current_gate(route: Mapping[str, Any], *, gate_truth: Mapping[str, Any]) -> bool:
+    if not _gate_is_blocking(gate_truth):
+        return True
+    source = route.get("source")
+    if not isinstance(source, Mapping):
+        return False
+    stage_id = _clean_text(gate_truth.get("stage_id"))
+    artifact_id = _clean_text(gate_truth.get("artifact_id"))
+    path = _clean_text(gate_truth.get("path"))
+    source_stage = _clean_text(source.get("stage_id"))
+    source_kind = _clean_text(source.get("kind"))
+    source_file = _clean_text(source.get("file"))
+    return bool(source_stage == stage_id and (source_kind == artifact_id or source_file == path))
 
 
 def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, Any]:

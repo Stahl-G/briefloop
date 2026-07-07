@@ -1039,6 +1039,9 @@ def test_quality_gates_warn_on_unsupported_strategic_implication(tmp_path):
     assert strategic[0]["blocking"] is False
     assert strategic[0]["category"] == "strategic_overreach"
     assert strategic[0]["metadata"]["support_check"] == "lexical_phrase_absent_from_claim_ledger"
+    assert strategic[0].get("requires_content_edit") is not True
+    assert strategic[0].get("post_freeze_action") != "open_editor_repair"
+    assert strategic[0].get("delivery_effect") != "blocks_until_repaired"
 
 
 def test_quality_gates_warn_when_strategic_implication_only_appears_in_limitations(tmp_path):
@@ -1909,6 +1912,10 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     assert gap["gate_stage_id"] == "finalize"
     assert gap["gate_artifact_id"] == "finalize_quality_gate_report"
     assert gap["stage_id"] == "editor"
+    assert gap["requires_content_edit"] is True
+    assert gap["owner_stage"] == "editor"
+    assert gap["post_freeze_action"] == "open_editor_repair"
+    assert gap["delivery_effect"] == "blocks_until_repaired"
 
     state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     assert state["workflow_state"]["current_stage"] == "finalize"
@@ -1934,6 +1941,53 @@ def test_reader_brief_missing_target_blocks_finalize_stage(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_COMPLETION_TRANSACTION_REQUIRED"
     assert payload["details"]["required_command"] == "finalize-complete"
+
+
+def test_target_mapping_ambiguity_routes_to_human_not_content_edit(tmp_path, capsys):
+    ws = write_workspace_files_under(
+        tmp_path,
+        config_text="""
+project:
+  name: ""
+output:
+  path: "output"
+input:
+  path: "input"
+""".strip(),
+        user_text="# User\n",
+        include_input_dir=True,
+    )
+    _write_report_spec(ws, policy_profile="finance_default")
+    _write_ledger(ws, [])
+    _write_audited_brief(ws, "## Executive Summary\nMarket update.\n")
+
+    rc = main([
+        "gates",
+        "check",
+        "--workspace",
+        str(ws),
+        "--repo-workdir",
+        str(ROOT),
+        "--json",
+    ])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    report = payload["quality_gate_report"]
+    finding = next(item for item in report["findings"] if item["finding_type"] == "target_mapping_ambiguous")
+    assert finding["blocking_level"] == "blocking"
+    assert finding["repair_owner"] == "human"
+    assert finding["repair_stage_id"] == "editor"
+    assert finding.get("requires_content_edit") is not True
+    assert finding.get("post_freeze_action") != "open_editor_repair"
+    assert payload["repair_route"]["route_kind"] == "human_review"
+    assert payload["repair_route"]["repair_owner"] == "human"
+    assert payload["repair_route"]["allowed_artifacts"] == []
+    assert payload["required_commands"] == [
+        f"multi-agent-brief repair route --workspace {ws.resolve()} --json",
+        f"multi-agent-brief state decide --workspace {ws.resolve()} --stage <stage> --decision request_human_review --reason \"<reason>\" --json",
+        f"multi-agent-brief state decide --workspace {ws.resolve()} --stage <stage> --decision block_run --reason \"<reason>\" --json",
+    ]
 
 
 def test_freshness_reads_config_report_defaults_and_preserves_zero(tmp_path, capsys):

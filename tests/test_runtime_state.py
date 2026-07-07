@@ -667,19 +667,41 @@ def _write_editor_repair_gate_report(ws: Path) -> None:
         "status": "fail",
         "gate_results": [
             {
+                "gate_id": "coverage_omission",
+                "status": "pass",
+                "blocking": False,
+                "finding_ids": [],
+            },
+            {
+                "gate_id": "freshness",
+                "status": "pass",
+                "blocking": False,
+                "finding_ids": [],
+            },
+            {
                 "gate_id": "material_fact",
                 "status": "fail",
                 "blocking": True,
                 "finding_ids": ["QG_EDITOR_REPAIR_001"],
-            }
+            },
+            {
+                "gate_id": "target_relevance",
+                "status": "pass",
+                "blocking": False,
+                "finding_ids": [],
+            },
         ],
         "findings": [
             {
                 "finding_id": "QG_EDITOR_REPAIR_001",
                 "finding_type": "unsupported_claim",
                 "severity": "high",
+                "blocking_level": "blocking",
                 "blocking": True,
+                "stage_id": "auditor",
+                "gate_stage_id": "auditor",
                 "artifact_id": "audited_brief",
+                "gate_artifact_id": "auditor_quality_gate_report",
                 "repair_owner": "editor",
                 "repair_stage_id": "editor",
                 "repair_artifact_id": "audited_brief",
