@@ -355,6 +355,11 @@ def _control_payloads_for_route_context(workspace: Path) -> tuple[dict[str, dict
             input_errors.append({"source": label, "path": _workspace_relative(workspace, path), "error": error})
             continue
         if payload is None:
+            input_errors.append({
+                "source": label,
+                "path": _workspace_relative(workspace, path),
+                "error": f"{label} required control context file is missing.",
+            })
             continue
         schema_version = payload.get("schema_version")
         if not schema_version:
