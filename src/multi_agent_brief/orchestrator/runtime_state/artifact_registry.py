@@ -1649,6 +1649,7 @@ def interpret_frozen_artifact_integrity(
     artifacts: list[dict[str, Any]],
     stages: list[dict[str, Any]],
     mutating_stage: str | None = None,
+    exempt_artifact_ids: set[str] | None = None,
 ) -> FrozenArtifactIntegrityVerdict:
     reasons: list[str] = []
     if old_registry is not None:
@@ -1671,13 +1672,17 @@ def interpret_frozen_artifact_integrity(
         if str(stage.get("stage_id") or "") == str(mutating_stage or "")
         for item in (stage.get("produces") or [])
     }
+    mutation_exempt_artifacts = {
+        *mutating_stage_produces,
+        *(str(item) for item in (exempt_artifact_ids or set()) if item),
+    }
     for artifact in artifacts:
         artifact_id = str(artifact.get("artifact_id") or "")
         if not artifact_id:
             continue
         if _artifact_is_non_workflow_projection(artifact):
             continue
-        if artifact_id in mutating_stage_produces:
+        if artifact_id in mutation_exempt_artifacts:
             continue
         producer_stage = str(artifact.get("producer_stage") or "")
         old_record = old_records.get(artifact_id) or {}

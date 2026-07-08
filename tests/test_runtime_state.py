@@ -143,6 +143,68 @@ def _write_input_classification(ws: Path, payload: dict) -> None:
     )
 
 
+def _write_source_discovery_plan_with_evidence(ws: Path) -> None:
+    sources_dir = ws / "input" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    (sources_dir / "source-001.md").write_text(
+        "Title: Source 001\nURL: https://example.com/source\nExcerpt: Example evidence.\n",
+        encoding="utf-8",
+    )
+    (ws / "sources.yaml").write_text(
+        "source_strategy:\n"
+        "  enabled_providers:\n"
+        "    - web_search\n"
+        "web_search:\n"
+        "  enabled: true\n"
+        "  mode: runtime_tool\n",
+        encoding="utf-8",
+    )
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_plan_only\n"
+        "evidence_status: not_evidence\n"
+        "recommended_sources:\n"
+        "  - name: Source 001\n"
+        "    url: https://example.com/source\n",
+        encoding="utf-8",
+    )
+
+
+def _write_source_evidence_pack_manifest(ws: Path, *, source_label: str) -> None:
+    source_path = ws / "input" / "sources" / "source-001.md"
+    record = {
+        "path": "input/sources/source-001.md",
+        "sha256": _sha256_file(source_path),
+        "size_bytes": source_path.stat().st_size,
+        "source_id": "SOURCE_001",
+    }
+    normalized_records = [record]
+    pack_sha = hashlib.sha256(
+        json.dumps(
+            normalized_records,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    _write_json_artifact(
+        ws,
+        "source_evidence_pack_manifest.json",
+        json.dumps(
+            {
+                "schema_version": "mabw.source_evidence_pack_manifest.v1",
+                "source": source_label,
+                "record_count": 1,
+                "records": [record],
+                "pack_sha256": pack_sha,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+    )
+
+
 def _write_feedback_issue(ws: Path, *, stage_id: str, artifact_id: str, status: str = "open") -> None:
     out = _intermediate(ws)
     (out / "feedback_issues.json").write_text(
@@ -7307,6 +7369,117 @@ def test_supersede_stage_rejects_invalid_current_artifact_bytes_without_writing_
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "artifact_registry").read_bytes() == before_registry
     assert _state_file(ws, "event_log").read_bytes() == before_events
+    assert [
+        event for event in _event_records(ws)
+        if event["event_type"] == "repair_stage_superseded"
+    ] == []
+
+
+def test_supersede_stage_accepts_selected_contract_artifact_not_in_stage_produces(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_source_discovery_plan_with_evidence(ws)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+    _write_source_evidence_pack_manifest(ws, source_label="original")
+    completed = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        reason="source discovery complete",
+    )
+    old_sha = completed["artifact_registry"]["artifacts"]["source_evidence_pack_manifest"]["sha256"]
+
+    _write_source_evidence_pack_manifest(ws, source_label="human-approved-supersede")
+    current_sha = _sha256_file(_intermediate(ws) / "source_evidence_pack_manifest.json")
+    assert current_sha != old_sha
+    with pytest.raises(RuntimeStateError):
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    state = supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        artifact="output/intermediate/source_evidence_pack_manifest.json",
+        reason="human approved source evidence manifest supersede",
+    )
+
+    repair = state["repair"]
+    assert repair["superseded"] is True
+    assert repair["artifact_id"] == "source_evidence_pack_manifest"
+    assert repair["old_registered_sha256"] == old_sha
+    assert repair["current_bytes_sha256"] == current_sha
+    registry_record = state["artifact_registry"]["artifacts"]["source_evidence_pack_manifest"]
+    assert registry_record["status"] == "valid"
+    assert registry_record["sha256"] == current_sha
+    assert state["workflow_state"]["current_stage"] == "input-governance"
+    supersede_events = [
+        event for event in _event_records(ws)
+        if event["event_type"] == "repair_stage_superseded"
+    ]
+    assert supersede_events[-1]["artifact_id"] == "source_evidence_pack_manifest"
+
+
+def test_supersede_stage_rejects_unselected_frozen_artifact_change(tmp_path):
+    ws = _write_workspace(tmp_path)
+    _write_source_discovery_plan_with_evidence(ws)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    complete_stage_transaction(workspace=ws, repo_workdir=ROOT, stage_id="doctor", reason="doctor complete")
+    _write_source_evidence_pack_manifest(ws, source_label="original")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        reason="source discovery complete",
+    )
+    _write_input_classification(
+        ws,
+        {
+            "evidence": [{"path": str(ws / "input" / "sources" / "source-001.md"), "name": "source-001.md"}],
+            "feedback": [],
+            "instruction": [],
+            "context": [],
+            "skipped": [],
+        },
+    )
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="input-governance",
+        reason="input governance complete",
+    )
+
+    _write_source_evidence_pack_manifest(ws, source_label="human-approved-supersede")
+    _write_input_classification(
+        ws,
+        {
+            "evidence": [
+                {
+                    "path": str(ws / "input" / "sources" / "source-001.md"),
+                    "name": "source-001-renamed.md",
+                }
+            ],
+            "feedback": [],
+            "instruction": [],
+            "context": [],
+            "skipped": [],
+        },
+    )
+    with pytest.raises(RuntimeStateError):
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        supersede_stage_artifact_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="source-discovery",
+            artifact="output/intermediate/source_evidence_pack_manifest.json",
+            reason="should not exempt unrelated frozen artifact changes",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    reasons = "\n".join(excinfo.value.details["reasons"])
+    assert "input_classification.json" in reasons
+    assert "source_evidence_pack_manifest.json" not in reasons
     assert [
         event for event in _event_records(ws)
         if event["event_type"] == "repair_stage_superseded"

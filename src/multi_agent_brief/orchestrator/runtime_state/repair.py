@@ -901,6 +901,7 @@ def supersede_stage_artifact_transaction(
         artifacts=artifacts,
         stages=stages,
         mutating_stage=stage_id,
+        exempt_artifact_ids={artifact_id},
     )
     frozen_reasons = require_frozen_artifact_integrity_pass(frozen_verdict)
     if frozen_reasons:
