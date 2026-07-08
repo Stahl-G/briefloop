@@ -3991,6 +3991,128 @@ def test_default_topology_scout_completion_satisfies_screener(tmp_path):
     assert screener_timing["status"] == "satisfied_by_topology"
 
 
+def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_target(tmp_path):
+    repo = _repo_with_role_topology(
+        tmp_path,
+        "default",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "claim-ledger")
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_discovery_candidates\n"
+        "recommended_sources:\n"
+        "  - name: Original Source\n"
+        "    url: https://example.com/original\n",
+        encoding="utf-8",
+    )
+    _write_json_artifact(ws, "candidate_claims.json", _valid_candidate_claims_payload())
+    _write_json_artifact(ws, "screened_candidates.json", _valid_screened_candidates_payload())
+    baseline_state = check_runtime_state(workspace=ws, repo_workdir=repo)
+    baseline_registry = baseline_state["artifact_registry"]["artifacts"]
+    screened_baseline_sha = baseline_registry["screened_candidates"]["sha256"]
+    assert baseline_registry["screened_candidates"]["status"] == "valid"
+
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_discovery_candidates\n"
+        "recommended_sources:\n"
+        "  - name: Superseded Source\n"
+        "    url: https://example.com/superseded\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeStateError):
+        check_runtime_state(workspace=ws, repo_workdir=repo)
+
+    superseded = supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="source-discovery",
+        artifact="source_candidates.yaml",
+        reason="human approved supersede after source candidate edit",
+    )
+    screener_metadata = superseded["workflow_state"]["stage_statuses"]["screener"]["metadata"]
+    assert screener_metadata["stale_after_supersede"] is True
+    assert (
+        screener_metadata["stale_artifact_baselines"]["screened_candidates"]["sha256"]
+        == screened_baseline_sha
+    )
+    assert (
+        superseded["artifact_registry"]["artifacts"]["screened_candidates"]["validation_result"]
+        == "stale_after_supersede"
+    )
+
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="input-governance",
+        reason="input governance reran after source supersede",
+    )
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-001",
+                    "claim": "ExampleCo opened an updated demo facility.",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+    )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="scout reran after source supersede",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert "screened_candidates" in str(excinfo.value)
+    assert "stale after supersede" in str(excinfo.value)
+    checked = check_runtime_state(workspace=ws, repo_workdir=repo)
+    checked_screener = checked["workflow_state"]["stage_statuses"]["screener"]
+    assert checked_screener["metadata"]["stale_after_supersede"] is True
+    checked_screened = checked["artifact_registry"]["artifacts"]["screened_candidates"]
+    assert checked_screened["status"] == "stale"
+    assert checked_screened["validation_result"] == "stale_after_supersede"
+
+    _write_json_artifact(
+        ws,
+        "screened_candidates.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-001",
+                    "screening_status": "selected",
+                    "screening_reason": "refreshed_after_supersede",
+                }
+            ]
+        )
+        + "\n",
+    )
+    completed = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="scout reran after screener artifact refresh",
+    )
+
+    workflow = completed["workflow_state"]
+    assert workflow["current_stage"] == "claim-ledger"
+    refreshed_screener = workflow["stage_statuses"]["screener"]
+    assert refreshed_screener["status"] == "complete"
+    assert refreshed_screener["metadata"]["satisfied_by_topology"] is True
+    assert refreshed_screener["metadata"].get("stale_after_supersede") is not True
+    refreshed_screened = completed["artifact_registry"]["artifacts"]["screened_candidates"]
+    assert refreshed_screened["status"] == "valid"
+
+
 def test_default_topology_screener_replay_rejects_without_contamination(tmp_path):
     repo = _repo_with_role_topology(
         tmp_path,

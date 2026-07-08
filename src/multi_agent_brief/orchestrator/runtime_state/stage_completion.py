@@ -724,8 +724,13 @@ def _stale_expected_artifact_refresh_reasons(
         )
         current_sha = _sha256_file(path)
         if isinstance(stale_sha, str) and stale_sha == current_sha:
+            stale_kind = "owner-stage revision"
+            if record.get("validation_result") == "stale_after_repair":
+                stale_kind = "repair"
+            elif record.get("validation_result") == "stale_after_supersede":
+                stale_kind = "supersede"
             reasons.append(
-                f"Expected artifact '{artifact_id}' at '{rel_path}' is stale after repair "
+                f"Expected artifact '{artifact_id}' at '{rel_path}' is stale after {stale_kind} "
                 "and still has the stale hash; rerun the producer stage and refresh the artifact before stage-complete."
             )
     return reasons
@@ -908,6 +913,19 @@ def _complete_stage_transaction(
             stages=stages,
             artifacts=artifacts,
         )
+        for target_stage_id, _rule in topology_targets:
+            target_stage = stage_by_id.get(target_stage_id)
+            if not isinstance(target_stage, dict):
+                continue
+            topology_target_reasons.extend(
+                _stale_expected_artifact_refresh_reasons(
+                    workspace=ws,
+                    workflow=workflow,
+                    stage=target_stage,
+                    artifacts_by_id=artifacts_by_id,
+                    old_registry=old_registry_for_stale_check,
+                )
+            )
         if topology_target_reasons:
             _raise_completion_reasons(
                 message=f"Cannot complete stage '{stage_id}' because a topology-satisfied downstream stage is blocked",
