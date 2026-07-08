@@ -493,7 +493,46 @@ def test_completion_projection_stops_on_contaminated_run_integrity(tmp_path: Pat
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["run_integrity"]["status"] == "contaminated"
-    assert payload["next_allowed_action"] == "stop_run_integrity_not_clean"
+    assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
+
+
+def test_completion_projection_contaminated_prefers_supersede_over_workflow_blocked(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(
+        ws,
+        blocked=True,
+        blocking_reason="Frozen artifact changed after stage-complete.",
+        run_integrity={
+            "status": "contaminated",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [{"reason_code": "frozen_artifact_changed"}],
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
+
+
+def test_completion_projection_contaminated_repaired_requires_downstream_rerun(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(
+        ws,
+        run_integrity={
+            "status": "contaminated_repaired",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [{"reason_code": "frozen_artifact_changed"}],
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["run_integrity"]["status"] == "contaminated_repaired"
+    assert payload["next_allowed_action"] == "rerun_downstream_auditor_finalize"
 
 
 def test_completion_projection_rejects_invalid_experiment_condition_before_finalize(tmp_path: Path) -> None:
