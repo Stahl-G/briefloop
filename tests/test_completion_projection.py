@@ -535,6 +535,61 @@ def test_completion_projection_contaminated_repaired_requires_downstream_rerun(t
     assert payload["next_allowed_action"] == "rerun_downstream_auditor_finalize"
 
 
+def test_completion_projection_contaminated_repaired_prefers_rerun_over_workflow_blocked(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(
+        ws,
+        blocked=True,
+        blocking_reason="Frozen artifact changed after stage-complete.",
+        run_integrity={
+            "status": "contaminated_repaired",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [{"reason_code": "frozen_artifact_changed"}],
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["next_allowed_action"] == "rerun_downstream_auditor_finalize"
+
+
+def test_completion_projection_active_repair_prefers_repair_over_workflow_blocked(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(
+        ws,
+        blocked=True,
+        blocking_reason="Fail-closed while repair is open.",
+        active_repair={"stage_id": "editor"},
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["workflow"]["active_repair_present"] is True
+    assert payload["next_allowed_action"] == "stop_complete_or_inspect_active_repair"
+
+
+def test_completion_projection_unknown_integrity_prefers_integrity_over_workflow_blocked(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(
+        ws,
+        blocked=True,
+        blocking_reason="Gate blocked human review.",
+        run_integrity={
+            "status": "unknown",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["next_allowed_action"] == "stop_run_integrity_not_clean"
+
+
 def test_completion_projection_rejects_invalid_experiment_condition_before_finalize(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
