@@ -17,7 +17,13 @@ from multi_agent_brief.contracts.target_contract import (
     project_assessment_target_status,
 )
 from multi_agent_brief.orchestrator.active_repair import active_repair_is_open
-from multi_agent_brief.orchestrator.run_integrity import interpret_run_integrity, project_for_read
+from multi_agent_brief.orchestrator.run_integrity import (
+    RUN_INTEGRITY_CLEAN,
+    RUN_INTEGRITY_CONTAMINATED,
+    RUN_INTEGRITY_CONTAMINATED_REPAIRED,
+    interpret_run_integrity,
+    project_for_read,
+)
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
     load_artifact_contracts,
@@ -435,12 +441,13 @@ def _next_allowed_action(
 ) -> str:
     if any(status in _CONTROL_STOP_STATUSES for status in control_file_status.values()):
         return "inspect_unreadable_or_missing_control_files"
-    if workflow_truth.get("blocked"):
-        return "stop_workflow_blocked_human_review_required"
     if workflow_truth.get("active_repair_present"):
         return "stop_complete_or_inspect_active_repair"
-    if _clean_text(run_integrity.get("status")) not in {"clean", "pass", "ok"}:
-        return "stop_run_integrity_not_clean"
+    integrity_action = _next_allowed_action_for_run_integrity(run_integrity)
+    if integrity_action is not None:
+        return integrity_action
+    if workflow_truth.get("blocked"):
+        return "stop_workflow_blocked_human_review_required"
     if assessment_target.get("status") == "invalid_condition":
         return "inspect_invalid_experiment_condition"
     if assessment_target.get("assessment_target") == "auditable_brief":
@@ -464,6 +471,17 @@ def _next_allowed_action(
     if delivery_truth.get("valid") is True:
         return "inspect_status_before_delivery_or_quality"
     return "inspect_invalid_or_incomplete_finalize_report_delivery_truth"
+
+
+def _next_allowed_action_for_run_integrity(run_integrity: Mapping[str, Any]) -> str | None:
+    status = _clean_text(run_integrity.get("status"))
+    if status in {RUN_INTEGRITY_CLEAN, "pass", "ok"}:
+        return None
+    if status == RUN_INTEGRITY_CONTAMINATED:
+        return "stop_human_review_or_supersede"
+    if status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
+        return "rerun_downstream_auditor_finalize"
+    return "stop_run_integrity_not_clean"
 
 
 def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, Any]:
