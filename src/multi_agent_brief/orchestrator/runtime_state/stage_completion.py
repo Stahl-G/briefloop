@@ -18,6 +18,7 @@ from multi_agent_brief.contracts.target_contract import (
     auditable_gate_has_only_final_abstract_advisory_warnings,
     load_experiment_080_condition_metadata,
     project_assessment_target_status,
+    repair_history_transaction_ids_for_artifact,
 )
 from multi_agent_brief.feedback.feedback_contract import current_stage_feedback_blocking_reasons
 from multi_agent_brief.quality_gates.contract import current_stage_quality_gate_blocking_reasons
@@ -96,7 +97,6 @@ from multi_agent_brief.orchestrator.runtime_state.paths import (
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.runtime_state.repair import (
-    _artifact_allowed,
     raise_if_active_repair_open,
 )
 from multi_agent_brief.orchestrator.runtime_state.trajectory import (
@@ -329,26 +329,11 @@ def _repair_transaction_ids_for_artifact(
     *,
     artifact_path: str,
 ) -> list[str]:
-    ids: list[str] = []
-    for event in event_records:
-        if event.get("event_type") != "repair_completed":
-            continue
-        metadata = (
-            event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
-        )
-        allowed = [str(item) for item in metadata.get("allowed_artifacts") or []]
-        if not _artifact_allowed(artifact_path, allowed):
-            continue
-        transaction_id = metadata.get("transaction_id") or metadata.get(
-            "repair_transaction_id"
-        )
-        if (
-            isinstance(transaction_id, str)
-            and transaction_id
-            and transaction_id not in ids
-        ):
-            ids.append(transaction_id)
-    return ids
+    return repair_history_transaction_ids_for_artifact(
+        event_records,
+        artifact_id="audited_brief",
+        artifact_path=artifact_path,
+    )
 
 
 def _stage_runtime_provenance(

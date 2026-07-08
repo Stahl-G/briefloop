@@ -17,6 +17,7 @@ import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_l
 import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
 from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.contracts.target_contract import project_assessment_target_status
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
@@ -7060,6 +7061,83 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
             reason="cannot finalize before auditor rerun",
         )
     assert excinfo.value.error_code == runtime_state.operations.E_STAGE_MISMATCH
+
+
+def test_supersede_stage_rejects_invalid_current_artifact_bytes_without_writing_control_files(tmp_path):
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("", encoding="utf-8")
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_registry = _state_file(ws, "artifact_registry").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        supersede_stage_artifact_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="editor",
+            artifact="output/intermediate/audited_brief.md",
+            reason="should reject invalid supersede bytes",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ARTIFACT_INVALID
+    assert excinfo.value.details["artifact_id"] == "audited_brief"
+    assert excinfo.value.details["artifact_status"] == "invalid"
+    assert excinfo.value.details["validation_result"] == "empty"
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "artifact_registry").read_bytes() == before_registry
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+    assert [
+        event for event in _event_records(ws)
+        if event["event_type"] == "repair_stage_superseded"
+    ] == []
+
+
+def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding(tmp_path):
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+
+    superseded = supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    supersede_transaction_id = superseded["transaction"]["transaction_id"]
+    refreshed_report = json.loads(_valid_audit_report_payload())
+    refreshed_report["supersede_reviewed"] = True
+    _write_json_artifact(ws, "audit_report.json", json.dumps(refreshed_report) + "\n")
+    _write_quality_gate_report(ws, stage_id="auditor")
+
+    audited_state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor reran after editor supersede",
+    )
+
+    workflow = audited_state["workflow_state"]
+    auditor_metadata = workflow["stage_statuses"]["auditor"]["metadata"]
+    assert auditor_metadata["audit_binding"]["relevant_repair_transaction_ids"] == [
+        supersede_transaction_id
+    ]
+    condition_metadata = {
+        "case_id": "runtime-state-supersede-auditable",
+        "condition": "controlled",
+        "assessment_target": "auditable_brief",
+    }
+    auditor_gate = json.loads(
+        (_intermediate(ws) / "gates" / "auditor_quality_gate_report.json").read_text(encoding="utf-8")
+    )
+    projection = project_assessment_target_status(
+        condition_metadata=condition_metadata,
+        workflow_state=workflow,
+        artifact_registry=audited_state["artifact_registry"],
+        auditor_gate_report=auditor_gate,
+        event_records=_event_records(ws),
+    )
+    assert "audit binding relevant_repair_transaction_ids does not match event_log" not in projection["reasons"]
+    assert "run_integrity is not clean" in projection["reasons"]
 
 
 def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):

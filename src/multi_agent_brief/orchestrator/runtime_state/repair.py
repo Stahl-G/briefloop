@@ -27,6 +27,7 @@ from multi_agent_brief.orchestrator.runtime_state._transactions import (
     _preflight_transaction_files,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
+    ARTIFACT_VALID,
     _build_artifact_registry,
     _changed_artifact_events,
     interpret_frozen_artifact_integrity,
@@ -908,6 +909,19 @@ def supersede_stage_artifact_transaction(
                 "actual_sha256": new_record.get("sha256"),
             },
             error_code=E_TRANSACTION_INTEGRITY,
+        )
+    if new_record.get("status") != ARTIFACT_VALID:
+        raise RuntimeStateError(
+            "Stage supersede artifact bytes are not valid for the target artifact contract.",
+            details={
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "artifact": artifact_path,
+                "artifact_status": new_record.get("status"),
+                "validation_result": new_record.get("validation_result"),
+                "current_sha256": current_bytes_sha256,
+            },
+            error_code=E_ARTIFACT_INVALID,
         )
     artifact_events = _changed_artifact_events(
         old_registry=old_registry,

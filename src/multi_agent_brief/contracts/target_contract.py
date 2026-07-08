@@ -401,18 +401,45 @@ def _auditable_brief_repair_transaction_ids(
     *,
     run_id: str,
 ) -> list[str]:
+    return repair_history_transaction_ids_for_artifact(
+        records,
+        artifact_id="audited_brief",
+        artifact_path="output/intermediate/audited_brief.md",
+        run_id=run_id,
+    )
+
+
+def repair_history_transaction_ids_for_artifact(
+    records: list[dict[str, Any]],
+    *,
+    artifact_id: str,
+    artifact_path: str,
+    run_id: str | None = None,
+) -> list[str]:
     ids: list[str] = []
-    artifact_path = "output/intermediate/audited_brief.md"
     for event in records:
-        if event.get("run_id") != run_id:
-            continue
-        if event.get("event_type") != "repair_completed":
+        if run_id is not None and event.get("run_id") != run_id:
             continue
         metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
-        allowed = [str(item) for item in metadata.get("allowed_artifacts") or []]
-        if not any(_artifact_path_matches(pattern, artifact_path) for pattern in allowed):
+        transaction_id: Any = None
+        if event.get("event_type") == "repair_completed":
+            allowed = [str(item) for item in metadata.get("allowed_artifacts") or []]
+            if not any(_artifact_path_matches(pattern, artifact_path) for pattern in allowed):
+                continue
+            transaction_id = metadata.get("transaction_id") or metadata.get("repair_transaction_id")
+        elif event.get("event_type") == "repair_stage_superseded":
+            event_artifact_id = event.get("artifact_id")
+            metadata_artifact_id = metadata.get("artifact_id")
+            metadata_artifact_path = metadata.get("artifact_path")
+            if (
+                event_artifact_id != artifact_id
+                and metadata_artifact_id != artifact_id
+                and metadata_artifact_path != artifact_path
+            ):
+                continue
+            transaction_id = metadata.get("transaction_id")
+        else:
             continue
-        transaction_id = metadata.get("transaction_id") or metadata.get("repair_transaction_id")
         if isinstance(transaction_id, str) and transaction_id and transaction_id not in ids:
             ids.append(transaction_id)
     return ids
