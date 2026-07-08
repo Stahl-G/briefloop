@@ -100,9 +100,10 @@ For the full charter, read `docs/charter/README.md`. Short form:
 4. Source plans, candidates, search summaries, and model summaries are discovery material, not evidence.
 5. Frozen artifacts are append-only; post-freeze changes require a new revision, event, or contamination record.
 6. Resolve conflicts by declared precedence, not model persuasion; prompts cannot skip control duties.
-7. Speed must not remove ledgers, gates, approvals, events, snapshots, archives, or human delivery.
-8. Public claims must not exceed artifacts: say `NOT MEASURED` or traceability rather than proof.
-9. Private facts must not justify public mechanisms; demos need public-safe or synthetic material.
+7. Close cross-cutting invariants structurally, not path by path: one invariant per merge over its whole lifecycle; state × path matrix before code; authority in one record that recomputation reads; shared fail-closed control-file loading; same-PR instruction sweep; fail-open gaps never deferred; a second same-shape review finding forces the structural fix, not another path patch.
+8. Speed must not remove ledgers, gates, approvals, events, snapshots, archives, or human delivery.
+9. Public claims must not exceed artifacts: say `NOT MEASURED` or traceability rather than proof.
+10. Private facts must not justify public mechanisms; demos need public-safe or synthetic material.
 
 ### Implementation Plan Checklist
 
@@ -169,9 +170,7 @@ Before implementing a feature or writing a code plan, answer these questions exp
 
 ## Onboarding
 
-Use `multi-agent-brief onboard` for requirement capture. It collects company or organization, industry or theme, task objective, audience, language, cadence, source style, output style, must-watch topics, excluded topics, and source/search preference.
-
-For details, see `docs/onboarding.md`.
+Use `multi-agent-brief onboard` for requirement capture. It collects company or organization, industry or theme, task objective, audience, language, cadence, source style, output style, must-watch topics, excluded topics, and source/search preference. For details, see `docs/onboarding.md`.
 
 ## Role Details
 

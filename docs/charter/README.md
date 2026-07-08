@@ -106,6 +106,33 @@ brief objective, reader, time window, source policy, or delivery standard, recor
 it as an explicit user decision, config change, or new run. Do not let it drift
 silently inside the current run.
 
+### 7. Cross-cutting invariants are closed structurally, not path by path.
+
+A cross-cutting invariant — run integrity, staleness, freeze/supersede
+semantics, repair routing, delivery truth, gate authority — holds only if every
+writer and recomputer of the affected state upholds it. Enforcing it path by
+path decays into repeated fix rounds: each recompute path silently drops the
+invariant, and review becomes the enumeration mechanism. The merge unit for
+such a change is the whole invariant lifecycle, not a file or layer slice.
+Authority for a cross-cutting fact lives in exactly one record that
+recomputation reads. Control files load through one shared fail-closed helper
+rather than per-consumer readers. Operator command flows have one source of
+truth, swept to every contract, adapter, guidance emitter, and string-asserting
+test in the same change.
+
+Decision test: before implementing, enumerate the state × path matrix — every
+writer and recomputer of the affected state, the expected outcome per cell, and
+one test per row. If the paths cannot be enumerated, redesign so enumeration is
+unnecessary by moving the fact into one authoritative record. If an
+implementation stores a cross-cutting fact in stage metadata or any structure
+that state recomputation rebuilds, treat it as a design error, not a
+preservation chore. Deferral is legal only for a named propagation gap such as
+a consumer not yet migrated; an input accepted without validation or a path
+that skips the invariant must close in the same change. In review, a second
+finding of the same shape means stop patching paths and fix the structure; a
+third means the change is at the wrong altitude and must be redesigned before
+further fix commits.
+
 ## MABW Operating Disciplines
 
 ### Product Spine: speed must not steal accountability.
