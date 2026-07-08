@@ -7514,6 +7514,56 @@ def test_supersede_stage_rejects_audit_report_control_artifact_without_writing_c
     ] == []
 
 
+def test_supersede_stage_rejects_claim_ledger_control_anchor_without_refreeze(tmp_path):
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _freeze_claim_ledger_fixture(ws)
+    completed = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="claim-ledger",
+        reason="claim ledger complete",
+    )
+    old_freeze_sha = completed["manifest"]["claim_ledger_freeze"]["claim_ledger_sha256"]
+    ledger_path = _intermediate(ws) / "claim_ledger.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger[0]["statement"] = "Contaminated claim ledger statement."
+    ledger_path.write_text(
+        json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    assert _sha256_file(ledger_path) != old_freeze_sha
+    with pytest.raises(RuntimeStateError):
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    before_manifest = _state_file(ws, "runtime_manifest").read_bytes()
+    before_registry = _state_file(ws, "artifact_registry").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        supersede_stage_artifact_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="claim-ledger",
+            artifact="output/intermediate/claim_ledger.json",
+            reason="should not supersede claim ledger without refreeze",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert "claim_ledger_freeze" in str(excinfo.value)
+    assert excinfo.value.details["artifact_id"] == "claim_ledger"
+    assert excinfo.value.details["recommended_action"] == "rerun_claim_ledger_freeze"
+    assert _state_file(ws, "runtime_manifest").read_bytes() == before_manifest
+    assert _state_file(ws, "artifact_registry").read_bytes() == before_registry
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+    manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
+    assert manifest["claim_ledger_freeze"]["claim_ledger_sha256"] == old_freeze_sha
+    assert [
+        event for event in _event_records(ws)
+        if event["event_type"] == "repair_stage_superseded"
+    ] == []
+
+
 def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding(tmp_path):
     ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
 

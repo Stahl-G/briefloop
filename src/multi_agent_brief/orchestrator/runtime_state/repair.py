@@ -827,15 +827,20 @@ def supersede_stage_artifact_transaction(
     )
     artifact_id = str(artifact_contract.get("artifact_id") or "")
     artifact_path = str(artifact_contract.get("path") or artifact_ref)
-    if stage_id == "auditor" and artifact_id == "audit_report":
+    blocked_anchor = _forbidden_supersede_control_anchor_reason(
+        stage_id=stage_id,
+        artifact_id=artifact_id,
+    )
+    if blocked_anchor:
+        reason, recommended_action = blocked_anchor
         raise RuntimeStateError(
-            "Stage supersede cannot accept audit_report because auditor completion metadata "
-            "contains Python-owned audit_binding; rerun the auditor stage instead.",
+            f"Stage supersede cannot accept {artifact_id} because {reason}; "
+            f"use {recommended_action} instead.",
             details={
                 "stage_id": stage_id,
                 "artifact_id": artifact_id,
                 "artifact": artifact_path,
-                "recommended_action": "rerun_auditor",
+                "recommended_action": recommended_action,
             },
             error_code=E_ILLEGAL_TRANSITION,
         )
@@ -1132,6 +1137,24 @@ def _artifact_contract_for_supersede(
         details={"stage_id": stage_id, "artifact": artifact_ref},
         error_code=E_ILLEGAL_TRANSITION,
     )
+
+
+def _forbidden_supersede_control_anchor_reason(
+    *,
+    stage_id: str,
+    artifact_id: str,
+) -> tuple[str, str] | None:
+    if stage_id == "auditor" and artifact_id == "audit_report":
+        return (
+            "audit_report is bound by Python-owned audit_binding metadata",
+            "rerun_auditor",
+        )
+    if stage_id == "claim-ledger" and artifact_id == "claim_ledger":
+        return (
+            "claim_ledger is bound by Python-owned claim_ledger_freeze metadata",
+            "rerun_claim_ledger_freeze",
+        )
+    return None
 
 
 def _workflow_after_stage_supersede(
