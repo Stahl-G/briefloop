@@ -111,6 +111,7 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     STAGE_SKIPPED,
     _allowed_decisions_for_stage,
     _next_stage_id,
+    _owner_revision_stale_metadata,
     _stage_status,
     _status_entry,
     _workflow_after_completion,
@@ -498,7 +499,17 @@ def _workflow_with_topology_satisfaction(
         )
         current_stage = _next_stage_id(stages, target_stage_id)
         if current_stage:
-            statuses[current_stage] = _status_entry(STAGE_READY, "", now)
+            previous_next = (
+                statuses.get(current_stage)
+                if isinstance(statuses.get(current_stage), dict)
+                else {}
+            )
+            statuses[current_stage] = _status_entry(
+                STAGE_READY,
+                "",
+                now,
+                metadata=_owner_revision_stale_metadata(previous_next),
+            )
 
     updated["current_stage"] = current_stage
     updated["blocked"] = False

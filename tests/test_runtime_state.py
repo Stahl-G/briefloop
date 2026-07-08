@@ -4009,10 +4009,13 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     )
     _write_json_artifact(ws, "candidate_claims.json", _valid_candidate_claims_payload())
     _write_json_artifact(ws, "screened_candidates.json", _valid_screened_candidates_payload())
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
     baseline_state = check_runtime_state(workspace=ws, repo_workdir=repo)
     baseline_registry = baseline_state["artifact_registry"]["artifacts"]
     screened_baseline_sha = baseline_registry["screened_candidates"]["sha256"]
+    claim_ledger_baseline_sha = baseline_registry["claim_ledger"]["sha256"]
     assert baseline_registry["screened_candidates"]["status"] == "valid"
+    assert baseline_registry["claim_ledger"]["status"] == "valid"
 
     (ws / "source_candidates.yaml").write_text(
         "schema_version: mabw.source_candidates.v1\n"
@@ -4041,6 +4044,12 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     assert (
         superseded["artifact_registry"]["artifacts"]["screened_candidates"]["validation_result"]
         == "stale_after_supersede"
+    )
+    claim_ledger_metadata = superseded["workflow_state"]["stage_statuses"]["claim-ledger"]["metadata"]
+    assert claim_ledger_metadata["stale_after_supersede"] is True
+    assert (
+        claim_ledger_metadata["stale_artifact_baselines"]["claim_ledger"]["sha256"]
+        == claim_ledger_baseline_sha
     )
 
     complete_stage_transaction(
@@ -4109,8 +4118,30 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     assert refreshed_screener["status"] == "complete"
     assert refreshed_screener["metadata"]["satisfied_by_topology"] is True
     assert refreshed_screener["metadata"].get("stale_after_supersede") is not True
+    claim_ledger_status = workflow["stage_statuses"]["claim-ledger"]
+    assert claim_ledger_status["status"] == "ready"
+    assert claim_ledger_status["metadata"]["stale_after_supersede"] is True
+    assert (
+        claim_ledger_status["metadata"]["stale_artifact_baselines"]["claim_ledger"]["sha256"]
+        == claim_ledger_baseline_sha
+    )
     refreshed_screened = completed["artifact_registry"]["artifacts"]["screened_candidates"]
     assert refreshed_screened["status"] == "valid"
+    stale_claim_ledger = completed["artifact_registry"]["artifacts"]["claim_ledger"]
+    assert stale_claim_ledger["status"] == "stale"
+    assert stale_claim_ledger["validation_result"] == "stale_after_supersede"
+
+    with pytest.raises(RuntimeStateError) as claim_excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="claim-ledger",
+            reason="claim ledger did not refresh after supersede",
+        )
+
+    assert claim_excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "claim_ledger" in str(claim_excinfo.value)
+    assert "stale after supersede" in str(claim_excinfo.value)
 
 
 def test_default_topology_screener_replay_rejects_without_contamination(tmp_path):
