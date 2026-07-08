@@ -134,6 +134,9 @@ def test_repair_reference_requires_transaction_path() -> None:
     assert "do not use unscoped repair" in text
     assert "Do not use bare" in text
     assert "briefloop repair complete" in text
+    assert "briefloop repair supersede-stage --workspace <workspace>" in text
+    assert "old registered hash, current bytes hash, and reason" in text
+    assert "original contamination event" in text
     assert "allowed_artifacts" in text
     assert "does not make a contaminated run clean" in text
 

@@ -30,6 +30,7 @@ from .repair import (
     complete_repair_transaction,
     raise_if_active_repair_open,
     start_repair_transaction,
+    supersede_stage_artifact_transaction,
 )
 from .stage_completion import (
     complete_finalize_transaction,
@@ -68,5 +69,6 @@ __all__ = sorted([
     "runtime_state_paths",
     "show_runtime_state",
     "start_repair_transaction",
+    "supersede_stage_artifact_transaction",
     "utc_now",
 ])

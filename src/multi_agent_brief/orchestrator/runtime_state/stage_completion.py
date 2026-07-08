@@ -18,6 +18,7 @@ from multi_agent_brief.contracts.target_contract import (
     auditable_gate_has_only_final_abstract_advisory_warnings,
     load_experiment_080_condition_metadata,
     project_assessment_target_status,
+    repair_history_transaction_ids_for_artifact,
 )
 from multi_agent_brief.feedback.feedback_contract import current_stage_feedback_blocking_reasons
 from multi_agent_brief.quality_gates.contract import current_stage_quality_gate_blocking_reasons
@@ -96,7 +97,6 @@ from multi_agent_brief.orchestrator.runtime_state.paths import (
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.runtime_state.repair import (
-    _artifact_allowed,
     raise_if_active_repair_open,
 )
 from multi_agent_brief.orchestrator.runtime_state.trajectory import (
@@ -111,6 +111,7 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     STAGE_SKIPPED,
     _allowed_decisions_for_stage,
     _next_stage_id,
+    _owner_revision_stale_metadata,
     _stage_status,
     _status_entry,
     _workflow_after_completion,
@@ -329,26 +330,11 @@ def _repair_transaction_ids_for_artifact(
     *,
     artifact_path: str,
 ) -> list[str]:
-    ids: list[str] = []
-    for event in event_records:
-        if event.get("event_type") != "repair_completed":
-            continue
-        metadata = (
-            event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
-        )
-        allowed = [str(item) for item in metadata.get("allowed_artifacts") or []]
-        if not _artifact_allowed(artifact_path, allowed):
-            continue
-        transaction_id = metadata.get("transaction_id") or metadata.get(
-            "repair_transaction_id"
-        )
-        if (
-            isinstance(transaction_id, str)
-            and transaction_id
-            and transaction_id not in ids
-        ):
-            ids.append(transaction_id)
-    return ids
+    return repair_history_transaction_ids_for_artifact(
+        event_records,
+        artifact_id="audited_brief",
+        artifact_path=artifact_path,
+    )
 
 
 def _stage_runtime_provenance(
@@ -513,7 +499,17 @@ def _workflow_with_topology_satisfaction(
         )
         current_stage = _next_stage_id(stages, target_stage_id)
         if current_stage:
-            statuses[current_stage] = _status_entry(STAGE_READY, "", now)
+            previous_next = (
+                statuses.get(current_stage)
+                if isinstance(statuses.get(current_stage), dict)
+                else {}
+            )
+            statuses[current_stage] = _status_entry(
+                STAGE_READY,
+                "",
+                now,
+                metadata=_owner_revision_stale_metadata(previous_next),
+            )
 
     updated["current_stage"] = current_stage
     updated["blocked"] = False
@@ -739,8 +735,13 @@ def _stale_expected_artifact_refresh_reasons(
         )
         current_sha = _sha256_file(path)
         if isinstance(stale_sha, str) and stale_sha == current_sha:
+            stale_kind = "owner-stage revision"
+            if record.get("validation_result") == "stale_after_repair":
+                stale_kind = "repair"
+            elif record.get("validation_result") == "stale_after_supersede":
+                stale_kind = "supersede"
             reasons.append(
-                f"Expected artifact '{artifact_id}' at '{rel_path}' is stale after repair "
+                f"Expected artifact '{artifact_id}' at '{rel_path}' is stale after {stale_kind} "
                 "and still has the stale hash; rerun the producer stage and refresh the artifact before stage-complete."
             )
     return reasons
@@ -923,6 +924,19 @@ def _complete_stage_transaction(
             stages=stages,
             artifacts=artifacts,
         )
+        for target_stage_id, _rule in topology_targets:
+            target_stage = stage_by_id.get(target_stage_id)
+            if not isinstance(target_stage, dict):
+                continue
+            topology_target_reasons.extend(
+                _stale_expected_artifact_refresh_reasons(
+                    workspace=ws,
+                    workflow=workflow,
+                    stage=target_stage,
+                    artifacts_by_id=artifacts_by_id,
+                    old_registry=old_registry_for_stale_check,
+                )
+            )
         if topology_target_reasons:
             _raise_completion_reasons(
                 message=f"Cannot complete stage '{stage_id}' because a topology-satisfied downstream stage is blocked",

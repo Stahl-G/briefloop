@@ -10,6 +10,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
     RuntimeStateError,
     complete_repair_transaction,
     start_repair_transaction,
+    supersede_stage_artifact_transaction,
 )
 from multi_agent_brief.repair.router import route_repair
 
@@ -85,6 +86,29 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Actor recorded in event_log.jsonl.",
     )
     complete_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    supersede_parser = actions.add_parser(
+        "supersede-stage",
+        help="Record a contaminated owner-stage artifact revision and require downstream rerun.",
+    )
+    supersede_parser.add_argument("--workspace", required=True, help="Path to workspace directory.")
+    supersede_parser.add_argument("--stage", required=True, help="Owner stage that produced the superseded artifact.")
+    supersede_parser.add_argument(
+        "--artifact",
+        required=True,
+        help="Workspace-relative artifact path or artifact id to supersede.",
+    )
+    supersede_parser.add_argument("--reason", required=True, help="Human/operator reason for the supersede.")
+    supersede_parser.add_argument(
+        "--repo-workdir",
+        help="Repository or packaged contract base (default: auto-detect).",
+    )
+    supersede_parser.add_argument(
+        "--actor",
+        default="orchestrator",
+        choices=("cli", "orchestrator", "runtime", "system"),
+        help="Actor recorded in event_log.jsonl.",
+    )
+    supersede_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -126,6 +150,20 @@ def handle(args: argparse.Namespace) -> int:
                 print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
             else:
                 _print_repair_state("repair complete", payload)
+            return 0
+        if args.repair_action == "supersede-stage":
+            payload = supersede_stage_artifact_transaction(
+                workspace=args.workspace,
+                stage_id=args.stage,
+                artifact=args.artifact,
+                reason=args.reason,
+                repo_workdir=getattr(args, "repo_workdir", None),
+                actor=getattr(args, "actor", "orchestrator"),
+            )
+            if getattr(args, "json", False):
+                print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            else:
+                _print_repair_state("repair supersede-stage", payload)
             return 0
     except RuntimeStateError as exc:
         if getattr(args, "json", False):
