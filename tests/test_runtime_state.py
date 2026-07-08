@@ -7054,6 +7054,20 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
     assert metadata["current_bytes_sha256"] == current_sha
     assert metadata["reference_eligible"] is False
 
+    checked_once = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    checked_twice = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    for checked in (checked_once, checked_twice):
+        checked_workflow = checked["workflow_state"]
+        assert checked_workflow["stage_statuses"]["auditor"]["metadata"]["stale_after_supersede"] is True
+        assert (
+            checked_workflow["stage_statuses"]["auditor"]["metadata"]["supersede_transaction_id"]
+            == state["transaction"]["transaction_id"]
+        )
+        assert checked_workflow["stage_statuses"]["finalize"]["metadata"]["stale_after_supersede"] is True
+        checked_registry = checked["artifact_registry"]["artifacts"]
+        assert checked_registry["audit_report"]["status"] == "stale"
+        assert checked_registry["audit_report"]["validation_result"] == "stale_after_supersede"
+
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_finalize_transaction(
             workspace=ws,
@@ -7118,9 +7132,13 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
 
     workflow = audited_state["workflow_state"]
     auditor_metadata = workflow["stage_statuses"]["auditor"]["metadata"]
+    assert auditor_metadata.get("stale_after_supersede") is not True
     assert auditor_metadata["audit_binding"]["relevant_repair_transaction_ids"] == [
         supersede_transaction_id
     ]
+    finalize_metadata = workflow["stage_statuses"]["finalize"]["metadata"]
+    assert finalize_metadata["stale_after_supersede"] is True
+    assert finalize_metadata["supersede_transaction_id"] == supersede_transaction_id
     condition_metadata = {
         "case_id": "runtime-state-supersede-auditable",
         "condition": "controlled",

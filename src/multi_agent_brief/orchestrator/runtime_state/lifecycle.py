@@ -85,6 +85,7 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     _allowed_decisions_for_stage,
     _changed_workflow_events,
     _initial_workflow_state,
+    _owner_revision_stale_metadata,
     _required_consumed_artifacts,
     _status_entry,
     _workflow_is_finalized,
@@ -447,7 +448,12 @@ def _recompute_stage_state(
             continue
 
         if current_stage is not None:
-            new_statuses[stage_id] = _status_entry(STAGE_PENDING, "", updated_at)
+            new_statuses[stage_id] = _status_entry(
+                STAGE_PENDING,
+                "",
+                updated_at,
+                metadata=_owner_revision_stale_metadata(previous),
+            )
             continue
 
         last_decision = previous_workflow.get("last_decision") or {}
@@ -501,7 +507,12 @@ def _recompute_stage_state(
             new_statuses[stage_id] = _status_entry(STAGE_BLOCKED, blocking_reason, updated_at)
         else:
             current_stage = stage_id
-            new_statuses[stage_id] = _status_entry(STAGE_READY, "", updated_at)
+            new_statuses[stage_id] = _status_entry(
+                STAGE_READY,
+                "",
+                updated_at,
+                metadata=_owner_revision_stale_metadata(previous),
+            )
 
     workflow = dict(previous_workflow)
     workflow["updated_at"] = updated_at
