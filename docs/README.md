@@ -32,7 +32,6 @@ tree is fully bilingual.
 | Orchestrator contracts | [orchestrator-contracts.md](orchestrator-contracts.md) | [orchestrator-contracts.zh-CN.md](orchestrator-contracts.zh-CN.md) |
 | Roadmap | [roadmap.md](roadmap.md) | [roadmap.zh-CN.md](roadmap.zh-CN.md) |
 | BriefLoop naming policy | [briefloop-naming.md](briefloop-naming.md) | English-first |
-| Brief-loop engineering | [brief-loop-engineering.md](brief-loop-engineering.md) | English-first |
 | Migration notes | [MIGRATION.md](MIGRATION.md) | [MIGRATION.zh-CN.md](MIGRATION.zh-CN.md) |
 | What MABW tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
 | Archived MABW-080 experiment guide | [experiments-080.md](experiments-080.md) | English-first |
@@ -50,7 +49,6 @@ tree is fully bilingual.
 - [Function map](features.md)
 - [Runtime agent contract](agent-contract.md)
 - [BriefLoop naming policy](briefloop-naming.md)
-- [Brief-loop engineering](brief-loop-engineering.md)
 - [Evidence Span Registry](evidence-span-registry.md)
 - [Claim-Support Matrix](claim-support-matrix.md)
 - [Archived MABW-080 experiment guide](experiments-080.md)
@@ -78,9 +76,6 @@ These longer-form technical notes are design and architecture references. Treat
 implementation/support source of truth when they differ.
 
 - [BriefLoop architecture reference v0.3.0](briefloop-architecture-reference-v0.3.0.md)
-- [MABW architecture reference v0.2.0 compatibility pointer](mabw-architecture-reference-v0.2.0.md)
-- [MABW architecture reference v0.3.0 legacy](mabw-architecture-reference-v0.3.0-legacy.md)
-- [MABW architecture reference v0.3.0 revision roadmap](mabw-architecture-reference-v0.3.0-revision-roadmap.md)
 - [Tech report v0.3.0 abstract draft](tech-report-v0.3.0/abstract-draft-v0.3.0.md)
 - [Tech report v0.3.0 industrial related work](tech-report-v0.3.0/industrial-related-work.md)
 - [Tech report v0.3.0 v0.9 design rationale](tech-report-v0.3.0/v09-design-rationale.md)
@@ -91,10 +86,8 @@ The following documents are intentionally not part of the first bilingual
 coverage pass. They are either historical memos, contributor prompts, or
 specialized notes.
 
-- `docs/architecture-memo-*.md` files whose body is Chinese
 - [agent-dev-guide.zh-CN.md](agent-dev-guide.zh-CN.md)
 - [agent-dev-prompt.zh-CN.md](agent-dev-prompt.zh-CN.md)
-- [mas-v2-evaluation.zh-CN.md](mas-v2-evaluation.zh-CN.md)
 - [modules/market-competitor.zh-CN.md](modules/market-competitor.zh-CN.md)
 - [charter/Charter_CN.md](charter/Charter_CN.md), because
   [charter/README.md](charter/README.md) is the English charter entrypoint
@@ -103,10 +96,14 @@ specialized notes.
 
 - Market competitor module guide
 - Agent developer guide
-- MAS v2 evaluation note
-- Selected architecture memos after their public value and currentness are
-  reviewed
 
 Do not treat this backlog as implemented coverage. Public-facing English entry
 points should link to English documents when an English document exists, and
 should explicitly label Chinese-only documents when no English version exists.
+
+## Archive
+
+Superseded architecture references, dated memos, and one-off design notes live
+under [docs/archive/](archive/README.md). Archived documents are historical
+records: they are not updated for current behavior, and current docs must not
+cite them as implementation or support truth.

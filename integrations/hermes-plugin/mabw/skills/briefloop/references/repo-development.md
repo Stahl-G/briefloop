@@ -63,3 +63,13 @@ For release/readme public surfaces, `scripts/check_product_baseline.py` is now
 part of release readiness. It guards stable product entries, README boundary
 wording, `README_en.md` compatibility-pointer shape, and forbidden positive
 public claims.
+
+## v1.0 RC Readiness Gate
+
+The project is in v1.0 RC hardening until the pilot evidence gate is
+satisfied. `docs/v1-pilot-evidence.md` is the release evidence record and
+`scripts/check_v1_rc_readiness.py` is its deterministic checker; the release
+command path runs it with `--require-satisfied`. Do not call v1.0 ready, and
+do not weaken the checker, while the gate reports `not_satisfied`. Recording
+new evidence means appending a complete public-safe record to the evidence
+doc, not editing the checker.

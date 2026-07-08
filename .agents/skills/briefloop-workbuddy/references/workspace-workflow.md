@@ -1,29 +1,27 @@
-# Workspace Workflow
+# 工作区工作流
 
-BriefLoop workspaces are advanced by deterministic CLI transactions and
-role-owned draft artifacts. WorkBuddy may help the user operate the loop, but it
-must not hand-edit control files.
+BriefLoop 工作区靠确定性 CLI 事务和角色专属草稿工件推进。WorkBuddy 可以
+帮用户操作这个循环，但不得手改控制文件。
 
-## Normal Loop
+## 正常循环
 
-1. Confirm the workspace path.
-2. Run CodeBuddy handoff:
+1. 确认工作区路径。
+2. 运行 CodeBuddy handoff：
 
    ```bash
    briefloop run --workspace <workspace> --runtime codebuddy
    ```
 
-3. Read `output/intermediate/agent_handoff.md` and
-   `output/intermediate/agent_handoff.json`.
-4. Before each stage or role-owned artifact action, re-read the relevant
-   `agent_handoff.md` / `agent_handoff.json` step.
-5. Invoke the matching role subagent for role-owned artifact work assigned by
-   the handoff.
-6. Use the owning CLI transaction when an artifact is ready.
-7. After every CLI command, re-read the relevant handoff step before continuing.
-8. Re-check status before repair, finalize, quality summary, or delivery.
+3. 阅读 `output/intermediate/agent_handoff.md` 和
+   `output/intermediate/agent_handoff.json`。
+4. 在每个 stage 或角色工件动作之前，重读相应的
+   `agent_handoff.md` / `agent_handoff.json` 步骤。
+5. 为 handoff 指派的角色工件工作调用匹配的角色子代理。
+6. 工件就绪时使用对应的 owning CLI 事务。
+7. 每条 CLI 命令之后，先重读相应的 handoff 步骤再继续。
+8. 在 repair、finalize、quality 摘要或交付之前重新检查 status。
 
-## Common Inspection Commands
+## 常用查看命令
 
 ```bash
 multi-agent-brief status --workspace <workspace>
@@ -32,14 +30,13 @@ multi-agent-brief state check --workspace <workspace>
 multi-agent-brief quality summarize --workspace <workspace>
 ```
 
-## Progress Updates
+## 进度更新
 
-After each deterministic CLI transaction, summarize progress to the user. Only
-report completed states that are visible in `status`, `workflow_state.json`,
-`event_log.jsonl`, or generated artifacts.
+每个确定性 CLI 事务之后，向用户总结进度。只报告可在 `status`、
+`workflow_state.json`、`event_log.jsonl` 或生成工件中看到的完成状态。
 
-Use a Run Card after every key CLI command, role return, repair action, gate
-check, finalize attempt, quality summary, or bundle/export request:
+在每个关键 CLI 命令、角色返回、repair 动作、gate 检查、finalize 尝试、
+quality 摘要或打包/导出请求之后使用 Run Card：
 
 ```text
 runtime:
@@ -52,13 +49,12 @@ delivery_truth:
 next_allowed_action:
 ```
 
-Read these fields from `briefloop workbuddy diagnose --workspace <workspace>
---json`, which formats the canonical completion projection and applies only
-WorkBuddy doctor/secret safety overlays to `next_allowed_action`. Do not
-reconstruct delivery, gate, finalize, or next-action truth from file existence
-checks or from prose.
+这些字段从 `briefloop workbuddy diagnose --workspace <workspace>
+--json` 读取；该命令格式化的是规范 completion projection，只对
+`next_allowed_action` 叠加 WorkBuddy 的 doctor/密钥安全覆盖。不要从文件
+存在性检查或叙述文字重构交付、gate、finalize 或下一步动作的真值。
 
-Allowed examples:
+允许的示例：
 
 ```text
 已创建工作区。
@@ -67,33 +63,31 @@ Allowed examples:
 Quality Panel 已生成。
 ```
 
-Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
-artifact, event, transaction, or status output exists.
+不要说 `Analyst 已经分析完成` 或 `Auditor 已通过`，除非对应的工件、事件、
+事务或 status 输出存在。
 
-Do not say `交付完成`, `delivered`, or `delivery complete` unless WorkBuddy
-diagnosis reports `delivery_truth.valid=true`.
+不要说 `交付完成`、`delivered` 或 `delivery complete`，除非 WorkBuddy
+诊断报告 `delivery_truth.valid=true`。
 
-## Hard Stops
+## 硬停
 
-- If `doctor` reports any error, stop. Show the full doctor output, workspace
-  path, current user, output path existence/writability result, and permission
-  or ACL output. Do not downgrade the error yourself.
-- If `run_integrity` is not clean, stop finalize, delivery, export, and share
-  actions. Do not run finalize or delivery. For early-stage role work, report
-  the Run Card and continue only with non-delivery workflow steps allowed by
-  the handoff.
-- If WorkBuddy diagnosis does not report `delivery_truth.valid=true`, do not
-  claim delivery or export a delivery package. Report draft-only status only when
-  `output/intermediate/audited_brief.md` exists; otherwise
-  report that no draft or delivery exists yet. This is normal before finalize
-  and must not block earlier handoff-assigned stages by itself.
-- If a zip, export, or attachment candidate contains `.env` or secrets, stop.
-  Do not share it; recommend rotating any exposed key.
+- 如果 `doctor` 报告任何错误，停止。展示完整 doctor 输出、工作区路径、
+  当前用户、输出路径存在性/可写性结果、以及权限或 ACL 输出。不要自行降级
+  该错误。
+- 如果 `run_integrity` 不是 clean，停止 finalize、交付、导出与分享动作。
+  不要运行 finalize 或交付。对于早期阶段的草稿工作，报告 Run Card，并只
+  继续 handoff 允许的非交付工作流步骤。
+- 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要声称已交付，
+  也不要导出交付包。仅当 `output/intermediate/audited_brief.md` 存在时才
+  报告"仅有草稿"；否则说目前既没有草稿也没有交付。这在 finalize 之前是
+  正常状态，本身不阻塞更早的 handoff 指派阶段。
+- 如果 zip、导出或附件候选包含 `.env` 或密钥，停止。不要分享；建议轮换
+  任何暴露的密钥。
 
-## Role Delegation
+## 角色委派
 
-The WorkBuddy main session must delegate role-owned draft work explicitly. Use
-the checked-in CodeBuddy-compatible role names exactly:
+WorkBuddy 主会话必须显式委派角色专属草稿工作。严格使用签入的兼容
+CodeBuddy 的角色名：
 
 ```text
 briefloop-scout
@@ -105,20 +99,17 @@ briefloop-auditor
 briefloop-formatter
 ```
 
-Role subagents draft only handoff-assigned artifacts. They do not run
-BriefLoop CLI commands, edit control files, run gates, approve delivery, or
-authorize release. The main WorkBuddy session runs deterministic CLI
-transactions after a role returns.
+角色子代理只起草 handoff 指派的工件。它们不运行 BriefLoop CLI 命令、
+不编辑控制文件、不执行 gate、不批准交付、不授权 release。角色返回之后，
+由 WorkBuddy 主会话运行确定性 CLI 事务。
 
-Do not claim Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or
-Formatter subagents ran unless WorkBuddy actually delegated those roles.
+除非 WorkBuddy 确实委派了这些角色，否则不要声称 Scout、Screener、
+Claim Ledger、Analyst、Editor、Auditor 或 Formatter 子代理已运行。
 
-If role subagents are not available, stop before full workflow execution. You
-may still run deterministic setup, `status`, `state check`, `quality summarize`,
-or demo commands, but you must not hand-author workflow JSON artifacts.
+如果角色子代理不可用，在完整工作流执行之前停下。你仍可以运行确定性
+setup、`status`、`state check`、`quality summarize` 或 demo 命令，但不得
+手写工作流 JSON 工件。
 
-If the user is chatting in Chinese, explain the next action in Chinese when
-useful, but follow the generated handoff literally. Preserve command
-names, artifact names, and handoff obligations exactly. Translation must not
-drop steps, soften gate/blocker language, or turn main-session work into a claimed
-subagent run.
+如果用户在用中文交流，可在需要时用中文解释下一步动作，但要严格按生成的
+handoff 执行。逐字保留命令名、工件名与 handoff 义务。翻译不得漏掉步骤、
+弱化 gate/阻塞语言，或把主会话的工作说成子代理已运行。

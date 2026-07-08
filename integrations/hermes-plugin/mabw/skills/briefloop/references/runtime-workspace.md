@@ -53,6 +53,22 @@ Read this when operating a real BriefLoop workspace.
   records. These commands write event-linked control records; they do not
   authorize public release or bypass gates.
 
+## Agent Artifact Intake
+
+Scout, Screener, and Claim Draft artifacts pass through deterministic intake
+validation before registry acceptance and Claim Ledger freeze. Recoverable
+shape drift (alternate field or wrapper names, textual confidence forms) is
+normalized deterministically with recorded findings; evidence identity
+violations fail closed. Do not "help" by hand-reshaping an agent artifact to
+pass intake, and never let a draft invent what only Python may assign:
+
+- `source_url` holding a source name instead of an HTTP(S) URL is fatal
+- missing `evidence_text` or missing source identity is fatal
+- claim drafts carrying `claim_id` / `CL-*` values are fatal; Python assigns
+  claim IDs at freeze
+- a silently shrunk candidate universe or a discard without a reason code is a
+  finding, not something to paper over
+
 ## Forbidden Actions
 
 - Do not edit control files directly.
@@ -80,6 +96,9 @@ Stop and report the exact error when:
 - `active_repair` exists
 - run integrity is contaminated
 - gate reports have blocking findings
+- a delivery, export, or completion claim is requested while the completion
+  projection (`briefloop workbuddy diagnose --json`) does not report
+  `delivery_truth.valid=true`
 - target status says `auditable_brief` complete or incomplete
 - a command asks for human review or fresh evidence setup
 - quality summary / HTML artifacts are stale or hand-edited; rerun

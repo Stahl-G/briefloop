@@ -1,6 +1,7 @@
 ---
-name: briefloop
+name: briefloop-operator-protocol
 description: Thin Claude projection for the canonical BriefLoop operator protocol. Use when Claude is operating BriefLoop workspaces, archived MABW-080 / BriefLoop-090 experiment tooling, repair/gates/status/finalize/delivery decisions, repo-development contract changes, naming compatibility, or public claims.
+user-invocable: false
 ---
 
 # BriefLoop Claude Skill Wrapper

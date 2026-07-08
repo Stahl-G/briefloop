@@ -1,5 +1,23 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-operator-skill-v0.2.0 — 2026-07-08
+
+- Rewrote the skill to the v1.0 RC operating contract: delivery truth is
+  `finalize_report.json` plus the completion projection
+  (`briefloop workbuddy diagnose --json`), never file existence; failed
+  reader-clean does not promote delivery.
+- Added the contaminated supersede recovery lane semantics: downstream
+  artifacts stay stale until regenerated; freeze-owned artifacts cannot be
+  superseded outside their freeze transaction; the run stays
+  non-reference-eligible.
+- Added agent artifact intake boundaries (fail-closed evidence identity and
+  claim-ID rules; deterministic normalization is a pending v1.0.2 surface).
+- Added the v1.0 pilot evidence gate (`docs/v1-pilot-evidence.md`,
+  `scripts/check_v1_rc_readiness.py`) to repo-development validation and
+  RC-phase public-claim wording rules.
+- Restructured the version matrix with "v1.0 RC Landed Surfaces" and
+  "Pending Before v1.0" sections.
+
 ## briefloop-operator-skill-v0.1.12 — 2026-07-05
 
 - Reclassified MABW-080 / BriefLoop-090 as archived experimental measurement

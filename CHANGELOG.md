@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Rewrote the BriefLoop operator skill to the v1.0 RC operating contract
+  (`briefloop-operator-skill-v0.2.0`): delivery truth is `finalize_report.json`
+  plus the completion projection (`briefloop workbuddy diagnose --json`), never
+  file existence; supersede recovery marks downstream artifacts stale until
+  regenerated; agent artifact intake identity rules are documented as
+  fail-closed; the version matrix now separates "v1.0 RC Landed Surfaces" from
+  "Pending Before v1.0" (intake normalization, pilot evidence satisfaction).
+  Runtime command surfaces (`/briefloop`, `/mabw`, `/generate-brief`, OpenCode
+  adapters) were updated to the transactional finalize + delivery-truth flow,
+  and the Claude skill wrapper became a model-invoked background protocol
+  (`user-invocable: false`) so `/briefloop` resolves to the writer command.
+- Rewrote the experimental WorkBuddy Skill (`.agents/skills/briefloop-workbuddy/`)
+  in Chinese for its WorkBuddy first-user audience, preserving all CLI command
+  strings, Run Card fields, role names, and control boundaries; skill pack
+  tests now assert the Chinese contract.
+- Archived superseded documentation (old MABW architecture references, dated
+  2026-06-11 memos, one-off design notes) under `docs/archive/` with an
+  archive policy README; current docs no longer link archived material as
+  implementation truth.
 - Made finalize promotion transactional: reader output is rendered and checked
   as a candidate before `output/brief.md` or `output/delivery/` are updated, and
   successful promotion records the delivery artifacts and their sha256 hashes in

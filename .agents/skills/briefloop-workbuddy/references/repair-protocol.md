@@ -1,87 +1,92 @@
-# Repair Protocol
+# Repair 协议
 
-Repairs are deterministic transactions around owner-stage artifact edits.
-WorkBuddy must not invent a repair by editing control files.
+Repair 是围绕 owner-stage 工件编辑的确定性事务。WorkBuddy 不得靠编辑
+控制文件来"发明"一次 repair。
 
-## Inspect Current-Gate Guidance
+## 查看当前 gate 指引
 
 ```bash
 multi-agent-brief gates show --workspace <workspace> --json
 ```
 
-Follow the emitted `required_commands`. If no route exists, report that result.
-Do not start an unowned repair.
+按输出的 `required_commands` 执行。如果没有路由，如实报告该结果。不要
+启动一个没有归属的 repair。
 
-## Start Current-Gate Repair
+## 启动当前 gate 的 repair
 
-Use the scoped repair start command from `gates show`. Current-gate repair
-start must include `--gate-stage` and `--gate-artifact`; do not use unscoped
-repair start for current-gate blockers.
+使用 `gates show` 给出的加 scope 的 repair start 命令。当前 gate 的
+repair start 必须带 `--gate-stage` 和 `--gate-artifact`；不要对当前 gate
+阻塞使用未加 scope 的 repair start（do not use unscoped repair start for
+current-gate blockers）。
 
-## Start Non-Gate Repair
+## 启动非 gate 的 repair
 
-For non-gate owner-stage repair routes from audit_report, finalize_report,
-artifact_registry, or transaction_integrity, inspect:
+对来自 audit_report、finalize_report、artifact_registry 或
+transaction_integrity 的非 gate owner-stage 修复路由，先查看：
 
 ```bash
 multi-agent-brief repair route --workspace <workspace> --json
 ```
 
-Start the selected non-gate route with `--finding-id <finding_id>` or
-`--route-index <route_index>`. Do not use bare
-`repair start --workspace <workspace>`.
+用 `--finding-id <finding_id>` 或 `--route-index <route_index>` 启动选中的
+非 gate 路由。不要使用裸的
+`repair start --workspace <workspace>`。
 
-After this transaction, edit only the artifacts allowed by the active repair
-record and only for the repair owner/stage shown by BriefLoop.
+事务开始后，只编辑 active repair 记录允许的工件，且只做 BriefLoop 显示的
+repair owner/stage 的工作。
 
-## Complete Repair
+## 完成 repair
 
 ```bash
 multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"
 ```
 
-Then rerun the downstream status/gate path that BriefLoop reports.
+然后按 BriefLoop 报告的下游 status/gate 路径重跑。
 
-## Contaminated Recovery
+## 污染恢复（supersede）
 
-If a frozen owner-stage artifact was edited outside an active repair and the
-run is already contaminated, do not clear the contamination or edit
-`artifact_registry.json`. When the operator/human decision is to accept the
-current bytes as a new owner-stage revision, record that recovery transaction:
+如果冻结的 owner-stage 工件在没有 active repair 的情况下被改动、run 已经
+contaminated，不要清除 contamination，也不要编辑
+`artifact_registry.json`。当操作者/人类决定接受当前字节作为新的
+owner-stage 修订时，记录这笔恢复事务：
 
 ```bash
 multi-agent-brief repair supersede-stage --workspace <workspace> --stage <owner_stage> --artifact <artifact_path> --reason "<reason>" --json
 ```
 
-This records the old registered hash, current bytes hash, and reason, preserves
-the original contamination event, keeps `reference_eligible=false`, and requires
-downstream stages to rerun.
+这会记录旧的注册哈希、当前字节哈希与原因（old registered hash, current
+bytes hash, and reason），保留原始 contamination 事件（original
+contamination event），保持 `reference_eligible=false`，并要求下游 stage
+重跑。supersede 之后，下游工件按记录的基线标记为过期：未重新生成的下游
+工件在 `state check` 重算和拓扑满足中保持过期，字节真正重新生成之前下游
+stage 无法完成。冻结事务拥有的工件（例如 `claim_ledger.json`）不能绕过其
+冻结事务被 supersede。
 
-When `briefloop workbuddy diagnose` or `multi-agent-brief status --json` reports
-`next_allowed_action=stop_human_review_or_supersede`, use this lane instead of
-hand-editing control files.
+当 `briefloop workbuddy diagnose` 或 `multi-agent-brief status --json`
+报告 `next_allowed_action=stop_human_review_or_supersede` 时，走这条
+恢复通道，而不是手改控制文件。
 
-## Boundaries
+## 边界
 
-- `repair route` is read-only.
-- `repair start` creates `workflow_state.active_repair`.
-- `repair supersede-stage` records a contaminated owner-stage revision; it does
-  not make the run clean or reference-eligible.
-- Workspace-wide `repair route` is for non-gate route inspection; bare
-  `repair start --workspace <workspace>` is not a legal current-gate or
-  non-gate repair command.
-- While `active_repair` exists, stage completion, finalize completion, delivery,
-  and gate-report writes must fail closed.
-- Direct edits to frozen artifacts without active repair remain contamination.
-- Repair does not make a contaminated run clean or reference-eligible.
+- `repair route` 是只读的。
+- `repair start` 创建 `workflow_state.active_repair`。
+- `repair supersede-stage` 记录一次 contaminated owner-stage 修订；它不会
+  让 run 变回 clean 或恢复 reference-eligible（does not make the run
+  clean or reference-eligible）。
+- 工作区级 `repair route` 用于非 gate 路由查看；裸的
+  `repair start --workspace <workspace>` 不是合法的当前 gate 或非 gate
+  repair 命令。
+- `active_repair` 存在期间，stage 完成、finalize 完成、交付和 gate 报告
+  写入必须 fail closed。
+- 没有 active repair 时直接编辑冻结工件仍是 contamination。
+- Repair 不会让 contaminated 的 run 变回 clean 或 reference-eligible。
 
-## Hard Stops
+## 硬停
 
-Stop and ask for human review when:
+出现以下情况时停下并请求人工审阅：
 
-- trajectory regulation narrows decisions to `request_human_review` or
-  `block_run`;
-- repair would require changing frozen artifacts directly without a recorded
-  repair or supersede transaction;
-- the route asks for a stage or artifact WorkBuddy cannot safely perform;
-- the user asks to bypass gates, delivery checks, or approval records.
+- 轨迹调控把可选决策收窄到 `request_human_review` 或 `block_run`；
+- repair 需要在没有记录的 repair 或 supersede 事务的情况下直接改冻结
+  工件；
+- 路由要求的 stage 或工件是 WorkBuddy 无法安全执行的；
+- 用户要求绕过 gate、交付检查或审批记录。

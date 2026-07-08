@@ -410,4 +410,4 @@ configs/policy_packs/default.yaml
 - `docs/architecture-status.md`
 - `docs/support-matrix.md`
 - `docs/modules/improvement.md`
-- `docs/design-note-preference-taste-governance-2026-06-11.md`
+- `docs/archive/design-note-preference-taste-governance-2026-06-11.md`

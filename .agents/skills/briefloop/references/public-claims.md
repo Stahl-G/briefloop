@@ -35,3 +35,19 @@ Use wording like:
 - "pilot-level observation"
 - "formal denominator excludes invalid or unbound runs"
 - "not a management-ready delivery claim" for `auditable_brief`
+
+## RC-Phase Wording
+
+While `docs/v1-pilot-evidence.md` reports `not_satisfied`, allowed:
+
+- "BriefLoop is in v1.0 release-candidate hardening."
+- "We are validating the full first-user workflow and failure/recovery paths
+  before calling it v1.0."
+
+Forbidden while the gate is unsatisfied:
+
+- "BriefLoop v1.0 is ready."
+- "The WorkBuddy/CodeBuddy first-user path is stable."
+- "BriefLoop can safely recover contaminated runs." (supersede recovery
+  preserves contamination and keeps the run non-reference-eligible; it is not
+  a clean-recovery claim)

@@ -44,8 +44,15 @@ def test_claude_projection_is_thin_wrapper() -> None:
 
 def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> None:
     text = _read(CANONICAL / "references" / "version-matrix.md")
-    assert "briefloop-operator-skill-v0.1.2" in text
+    assert "briefloop-operator-skill-v0.2.0" in text
     assert f"v{_read(ROOT / 'VERSION').strip()}" in text
+    assert "v1.0 RC Landed Surfaces" in text
+    assert "Pending Before v1.0" in text
+    assert "single delivery-truth record" in text
+    assert "briefloop workbuddy diagnose --workspace <workspace>" in text
+    assert "repair supersede-stage" in text
+    assert "not_satisfied" in text
+    assert "not yet landed" in text
     assert "Public CLI: `briefloop`" in text
     assert "Compatibility CLI: `multi-agent-brief`" in text
     assert "Claude writer command: `/briefloop`" in text
@@ -139,6 +146,8 @@ def test_repair_reference_requires_transaction_path() -> None:
     assert "original contamination event" in text
     assert "allowed_artifacts" in text
     assert "does not make a contaminated run clean" in text
+    assert "downstream artifacts are marked stale" in text
+    assert "cannot be superseded without routing" in text
 
 
 def test_public_claims_and_red_lines_forbid_overclaims() -> None:
@@ -181,8 +190,17 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
     assert "Approval ledger records must be scoped to the current run" in status
     assert "branding_context" in status
     assert "SHA-256 binding" in status
+    assert "Completion And Delivery Truth" in status
+    assert "delivery_truth.valid=true" in status
+    assert "leaves any prior delivery bundle unchanged" in status
+    assert "delivery_truth.valid=true" in runtime
+    assert "Agent Artifact Intake" in runtime
+    assert "Python assigns" in runtime
     assert "Use the owning CLI transaction instead." in control
     assert "agent draft surfaces" in control
+    control_normalized = " ".join(control.split())
+    assert "single delivery-truth record" in control_normalized
+    assert "There is no separate delivery manifest" in control_normalized
 
 
 def test_repo_development_reference_includes_product_baseline_and_review_checklist() -> None:
