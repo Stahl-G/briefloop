@@ -42,12 +42,46 @@ multi-agent-brief repair complete --workspace <workspace> --reason "<reason>"
 
 Then rerun the downstream status/gate path that BriefLoop reports.
 
+## Contaminated Recovery
+
+If a frozen owner-stage artifact was edited outside an active repair and the
+run is already contaminated, do not clear the contamination or edit
+`artifact_registry.json`. When the operator/human decision is to accept the
+current bytes as a new owner-stage revision, record that recovery transaction:
+
+```bash
+multi-agent-brief repair supersede-stage --workspace <workspace> --stage <owner_stage> --artifact <artifact_path> --reason "<reason>" --json
+```
+
+This records the old registered hash, current bytes hash, and reason, preserves
+the original contamination event, keeps `reference_eligible=false`, and requires
+downstream stages to rerun.
+
+When `briefloop workbuddy diagnose` or `multi-agent-brief status --json` reports
+`next_allowed_action=stop_human_review_or_supersede`, use this lane instead of
+hand-editing control files.
+
+## Boundaries
+
+- `repair route` is read-only.
+- `repair start` creates `workflow_state.active_repair`.
+- `repair supersede-stage` records a contaminated owner-stage revision; it does
+  not make the run clean or reference-eligible.
+- Workspace-wide `repair route` is for non-gate route inspection; bare
+  `repair start --workspace <workspace>` is not a legal current-gate or
+  non-gate repair command.
+- While `active_repair` exists, stage completion, finalize completion, delivery,
+  and gate-report writes must fail closed.
+- Direct edits to frozen artifacts without active repair remain contamination.
+- Repair does not make a contaminated run clean or reference-eligible.
+
 ## Hard Stops
 
 Stop and ask for human review when:
 
 - trajectory regulation narrows decisions to `request_human_review` or
   `block_run`;
-- repair would require changing frozen artifacts directly;
+- repair would require changing frozen artifacts directly without a recorded
+  repair or supersede transaction;
 - the route asks for a stage or artifact WorkBuddy cannot safely perform;
 - the user asks to bypass gates, delivery checks, or approval records.

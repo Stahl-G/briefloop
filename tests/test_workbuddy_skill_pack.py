@@ -300,6 +300,16 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
     assert _bare_repair_start_offenders(text) == []
 
 
+def test_workbuddy_repair_reference_documents_supersede_lane() -> None:
+    for text in (_all_skill_text(), _all_legacy_workbuddy_text()):
+        compact = _compact(text)
+        assert "multi-agent-brief repair supersede-stage --workspace <workspace>" in text
+        assert "old registered hash, current bytes hash, and reason" in compact
+        assert "original contamination event" in compact
+        assert "does not make the run clean or reference-eligible" in compact
+        assert "stop_human_review_or_supersede" in compact
+
+
 def _bare_repair_start_offenders(text: str) -> list[str]:
     bare_start = re.compile(
         r"multi-agent-brief\s+repair\s+start\s+--workspace\s+<workspace>"
