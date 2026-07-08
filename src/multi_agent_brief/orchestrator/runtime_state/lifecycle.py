@@ -465,7 +465,12 @@ def _recompute_stage_state(
             current_stage = stage_id
             blocked = True
             blocking_reason = str(previous.get("reason") or last_decision.get("reason") or "")
-            new_statuses[stage_id] = _status_entry(STAGE_BLOCKED, blocking_reason, updated_at)
+            new_statuses[stage_id] = _status_entry(
+                STAGE_BLOCKED,
+                blocking_reason,
+                updated_at,
+                metadata=_owner_revision_stale_metadata(previous),
+            )
             continue
 
         reasons: list[str] = []
@@ -504,7 +509,12 @@ def _recompute_stage_state(
             current_stage = stage_id
             blocked = True
             blocking_reason = " ".join(reasons)
-            new_statuses[stage_id] = _status_entry(STAGE_BLOCKED, blocking_reason, updated_at)
+            new_statuses[stage_id] = _status_entry(
+                STAGE_BLOCKED,
+                blocking_reason,
+                updated_at,
+                metadata=_owner_revision_stale_metadata(previous),
+            )
         else:
             current_stage = stage_id
             new_statuses[stage_id] = _status_entry(
@@ -609,10 +619,12 @@ def check_runtime_state(
         current_stage = refreshed_workflow.get("current_stage")
         if current_stage:
             statuses = dict(refreshed_workflow.get("stage_statuses") or {})
+            current_entry = statuses.get(str(current_stage)) if isinstance(statuses.get(str(current_stage)), dict) else {}
             statuses[str(current_stage)] = _status_entry(
                 STAGE_BLOCKED,
                 transaction_integrity_warning,
                 now,
+                metadata=_owner_revision_stale_metadata(current_entry),
             )
             refreshed_workflow["stage_statuses"] = statuses
 

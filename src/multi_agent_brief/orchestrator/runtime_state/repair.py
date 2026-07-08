@@ -827,6 +827,18 @@ def supersede_stage_artifact_transaction(
     )
     artifact_id = str(artifact_contract.get("artifact_id") or "")
     artifact_path = str(artifact_contract.get("path") or artifact_ref)
+    if stage_id == "auditor" and artifact_id == "audit_report":
+        raise RuntimeStateError(
+            "Stage supersede cannot accept audit_report because auditor completion metadata "
+            "contains Python-owned audit_binding; rerun the auditor stage instead.",
+            details={
+                "stage_id": stage_id,
+                "artifact_id": artifact_id,
+                "artifact": artifact_path,
+                "recommended_action": "rerun_auditor",
+            },
+            error_code=E_ILLEGAL_TRANSITION,
+        )
     target_path = ws / artifact_path
     if not target_path.exists() or not target_path.is_file():
         raise RuntimeStateError(

@@ -1093,6 +1093,46 @@ def _contaminated_editor_artifact_workspace(tmp_path: Path) -> tuple[Path, str, 
     return ws, old_sha, current_sha
 
 
+def _contaminated_auditor_artifact_workspace(tmp_path: Path) -> tuple[Path, str, str]:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    _set_current_stage(ws, "analyst")
+    audited = _intermediate(ws) / "audited_brief.md"
+    audited.write_text("# Brief\n\nAnalyst draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="analyst",
+        reason="analyst complete",
+    )
+    audited.write_text("# Brief\n\nEditor-polished draft. [src:CL-001]\n", encoding="utf-8")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        reason="editor complete",
+    )
+    _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
+    _write_quality_gate_report(ws, stage_id="auditor")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor complete",
+    )
+    registry = json.loads(_state_file(ws, "artifact_registry").read_text(encoding="utf-8"))
+    old_sha = registry["artifacts"]["audit_report"]["sha256"]
+    report = json.loads(_valid_audit_report_payload())
+    report["post_freeze_direct_edit"] = True
+    _write_json_artifact(ws, "audit_report.json", json.dumps(report) + "\n")
+    current_sha = _sha256_file(_intermediate(ws) / "audit_report.json")
+    assert current_sha != old_sha
+    with pytest.raises(RuntimeStateError):
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    return ws, old_sha, current_sha
+
+
 def _advance_to_source_discovery(ws: Path) -> None:
     complete_stage_transaction(
         workspace=ws,
@@ -7068,6 +7108,19 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
         assert checked_registry["audit_report"]["status"] == "stale"
         assert checked_registry["audit_report"]["validation_result"] == "stale_after_supersede"
 
+    _write_quality_gate_report(ws, status="fail", blocking=True, stage_id="auditor")
+    blocked_once = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    blocked_twice = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    for blocked in (blocked_once, blocked_twice):
+        blocked_workflow = blocked["workflow_state"]
+        auditor_status = blocked_workflow["stage_statuses"]["auditor"]
+        assert auditor_status["status"] == "blocked"
+        assert auditor_status["metadata"]["stale_after_supersede"] is True
+        assert auditor_status["metadata"]["supersede_transaction_id"] == state["transaction"]["transaction_id"]
+        blocked_registry = blocked["artifact_registry"]["artifacts"]
+        assert blocked_registry["audit_report"]["status"] == "stale"
+        assert blocked_registry["audit_report"]["validation_result"] == "stale_after_supersede"
+
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_finalize_transaction(
             workspace=ws,
@@ -7098,6 +7151,34 @@ def test_supersede_stage_rejects_invalid_current_artifact_bytes_without_writing_
     assert excinfo.value.details["artifact_id"] == "audited_brief"
     assert excinfo.value.details["artifact_status"] == "invalid"
     assert excinfo.value.details["validation_result"] == "empty"
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "artifact_registry").read_bytes() == before_registry
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+    assert [
+        event for event in _event_records(ws)
+        if event["event_type"] == "repair_stage_superseded"
+    ] == []
+
+
+def test_supersede_stage_rejects_audit_report_control_artifact_without_writing_control_files(tmp_path):
+    ws, _old_sha, _current_sha = _contaminated_auditor_artifact_workspace(tmp_path)
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_registry = _state_file(ws, "artifact_registry").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        supersede_stage_artifact_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            stage_id="auditor",
+            artifact="output/intermediate/audit_report.json",
+            reason="should not supersede Python-owned audit binding artifact",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ILLEGAL_TRANSITION
+    assert "audit_binding" in str(excinfo.value)
+    assert excinfo.value.details["artifact_id"] == "audit_report"
+    assert excinfo.value.details["recommended_action"] == "rerun_auditor"
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "artifact_registry").read_bytes() == before_registry
     assert _state_file(ws, "event_log").read_bytes() == before_events
