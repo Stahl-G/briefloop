@@ -194,21 +194,43 @@ def test_finalize_guidance_is_promotion_gated_everywhere() -> None:
         "docs/agents",
     ]
     suffixes = {".md", ".py", ".toml", ".yaml", ".yml", ".json"}
-    offenders: list[str] = []
+    scan_paths: list[Path] = []
     for root in roots:
         base = ROOT / root
         if not base.exists():
             continue
-        for path in base.rglob("*"):
-            if not path.is_file() or path.suffix not in suffixes:
-                continue
-            if "__pycache__" in path.parts:
-                continue
-            text = path.read_text(encoding="utf-8", errors="ignore")
-            for pattern in stale_patterns:
-                if pattern.search(text):
-                    offenders.append(f"{path.relative_to(ROOT)}: {pattern.pattern}")
+        scan_paths.extend(base.rglob("*"))
+    # Repo-root guidance files (e.g. HERMES.md, AGENTS.md, README*.md) also ship
+    # finalize guidance and must not drift back to the ungated wording family.
+    scan_paths.extend(p for p in ROOT.glob("*") if p.is_file())
+    offenders: list[str] = []
+    for path in scan_paths:
+        if not path.is_file() or path.suffix not in suffixes:
+            continue
+        if "__pycache__" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for pattern in stale_patterns:
+            if pattern.search(text):
+                offenders.append(f"{path.relative_to(ROOT)}: {pattern.pattern}")
     assert offenders == [], f"unconditional finalize guidance found in: {offenders}"
+
+
+def test_stage_completion_protocol_ships_promotion_and_delivery_truth_gate() -> None:
+    """Positive gate: the finalize guidance embedded in every handoff must carry
+    the transactional promotion + delivery-truth contract, not just avoid stale
+    wording. This closes the coverage hole where a rule could drop the gate
+    without matching any stale pattern.
+    """
+    from multi_agent_brief.orchestrator.handoff import (
+        FINALIZE_GATE_NOTE,
+        STAGE_COMPLETION_PROTOCOL_RULES,
+    )
+
+    protocol_text = "\n".join(STAGE_COMPLETION_PROTOCOL_RULES)
+    assert 'delivery_promotion "promoted"' in protocol_text
+    assert "delivery_truth.valid=true" in protocol_text
+    assert 'delivery_promotion "promoted"' in FINALIZE_GATE_NOTE
 
 
 def test_runtime_status_and_control_references_track_quality_and_release_surfaces() -> None:

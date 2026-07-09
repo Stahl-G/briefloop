@@ -233,3 +233,4 @@ your editorial judgment.
     - Report switchboard selections.
     - Report optional provenance graph path when created.
     - Report remaining limitations.
+    - Report success only when the completion projection (briefloop workbuddy diagnose --json) reports delivery_truth.valid=true; audit status or artifact existence alone is not a delivery claim.

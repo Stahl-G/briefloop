@@ -201,7 +201,8 @@ STAGE_COMPLETION_PROTOCOL_RULES = [
     "Every stage handoff to a child agent must include complete context, required input artifact paths, required output artifact paths, and forbidden actions.",
     "Scout chunk outputs are scratch material only; if Scout work is split across chunks or child agents, join chunks deterministically before writing candidate_claims.json.",
     "Record successful stage transitions with briefloop state stage-complete only after artifact-level completion evidence is available.",
-    "Record finalize completion with briefloop state finalize-complete after delivery artifacts and finalize_report.json are clean.",
+    "Finalize is transactional: record finalize completion with briefloop state finalize-complete only after finalize_report.json reports delivery_promotion \"promoted\"; a failed reader-clean leaves delivery unpromoted, so never run finalize-complete on an unpromoted or failed finalize_report.json.",
+    "Do not claim delivery from artifact existence or audit/gate status alone; confirm briefloop workbuddy diagnose --json reports delivery_truth.valid=true before reporting a delivered brief.",
 ]
 DEFAULT_STAGE_FORBIDDEN_ACTIONS = [
     "Do not claim stage completion based on prose acknowledgement alone.",
@@ -686,7 +687,7 @@ def _codebuddy_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             "11. Ask `briefloop-auditor` to draft the audit report.",
             "12. Run deterministic auditor gate and stage-complete commands in the main CodeBuddy session.",
             "13. Ask `briefloop-formatter` for finalize readiness only; it must not write files or run CLI commands.",
-            "14. Run finalize, finalize gate, finalize-complete, quality, and delivery commands from the main CodeBuddy session only when allowed.",
+            "14. From the main CodeBuddy session run finalize, then proceed to the finalize gate and finalize-complete only after finalize_report.json reports delivery_promotion \"promoted\", and confirm briefloop workbuddy diagnose --json reports delivery_truth.valid=true before any delivery claim (see the finalize gate note below).",
         ]
     )
     return AgentHandoff(
