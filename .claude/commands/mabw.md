@@ -282,14 +282,26 @@ Once the current stage is `finalize`, run:
 
 ```bash
 $BRIEFLOOP_CLI finalize --config <workspace>/config.yaml
-$BRIEFLOOP_CLI gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
-$BRIEFLOOP_CLI state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
 
 Finalize is a transactional reader projection: it renders and checks a staged
 candidate first, and only successful reader-clean promotes `output/brief.md`
 and `output/delivery/`. A failed reader-clean writes a failed
 `finalize_report.json` and leaves any prior delivery bundle unchanged.
+
+Check the finalize result before continuing: proceed only when
+`output/intermediate/finalize_report.json` reports
+`delivery_promotion: "promoted"`. If promotion did not happen (reader-clean
+failed or promotion was skipped), stop — do not run the finalize gate check or
+`state finalize-complete` against unpromoted output. Route the reported
+findings through the repair path above instead.
+
+After promotion succeeds, run:
+
+```bash
+$BRIEFLOOP_CLI gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
+$BRIEFLOOP_CLI state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+```
 
 Finalize reads `output/intermediate/audited_brief.md` as frozen input. Do not
 edit `audited_brief.md`, `audit_report.json`, artifact registry, or workflow

@@ -134,6 +134,7 @@ Stage sequence:
 15. Finalize only after the gates/state completion path passes:
     - Run: `briefloop finalize --config $ARGUMENTS/config.yaml`
     - Finalize is a transactional reader projection: it stages a candidate, checks reader-clean, and only successful reader-clean promotes `output/brief.md` and `output/delivery/`; a failed reader-clean writes a failed `finalize_report.json` and leaves any prior delivery unchanged.
+    - Proceed only when `output/intermediate/finalize_report.json` reports `delivery_promotion: "promoted"`; if promotion was skipped or reader-clean failed, stop and route repair instead of running the finalize gate or finalize-complete.
     - After finalize promotes delivery artifacts, run: `briefloop gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.
     - Then run: `briefloop state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`
     - Verify delivery truth with `briefloop workbuddy diagnose --workspace $ARGUMENTS --json`; do not claim delivery unless it reports `delivery_truth.valid=true`, and do not infer delivery from file existence.

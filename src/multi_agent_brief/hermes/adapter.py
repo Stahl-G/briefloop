@@ -204,7 +204,7 @@ def build_hermes_cron_plan(
                 f"briefloop state check --workspace {workspace_path} --strict\n"
                 f"briefloop state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
                 f"Then run briefloop finalize --config {workspace_path}/config.yaml.\n"
-                f"After finalize writes reader-facing artifacts, run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+                f"Finalize is transactional: a failed reader-clean does not promote output/brief.md and leaves prior delivery unchanged. Only when finalize_report.json reports delivery_promotion \"promoted\", run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\" If promotion was skipped or reader-clean failed, stop and route repair instead.\n"
                 "finalize is not a quality-gate executor.\n"
                 "Optionally run briefloop provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
@@ -258,7 +258,7 @@ def build_hermes_cron_plan(
                 f"briefloop state check --workspace {workspace_path} --strict\n"
                 f"briefloop state stage-complete --workspace {workspace_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
                 f"Then run briefloop finalize --config {workspace_path}/config.yaml.\n"
-                f"After finalize writes reader-facing artifacts, run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+                f"Finalize is transactional: a failed reader-clean does not promote output/brief.md and leaves prior delivery unchanged. Only when finalize_report.json reports delivery_promotion \"promoted\", run briefloop gates check --workspace {workspace_path} --stage finalize --brief {workspace_path}/output/brief.md, then run briefloop state finalize-complete --workspace {workspace_path} --reason \"Reader-facing artifacts passed finalize checks.\" If promotion was skipped or reader-clean failed, stop and route repair instead.\n"
                 "finalize is not a quality-gate executor.\n"
                 "Optionally run briefloop provenance build/show/validate after runtime state exists for an audit/debug projection; it is not semantic proof."
             ),
@@ -465,6 +465,7 @@ briefloop gates check --workspace <workspace> --stage auditor
 briefloop state check --workspace <workspace> --strict
 briefloop state stage-complete --workspace <workspace> --stage auditor --reason "Audit and quality gates passed."
 briefloop finalize --config <workspace>/config.yaml
+# only when finalize_report.json reports delivery_promotion "promoted":
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
 ```
@@ -700,7 +701,7 @@ As the Hermes Orchestrator main agent, execute:
 22. Run finalize only after the gates/state completion path passes. finalize is not a quality-gate executor:
     briefloop finalize --config {workspace}/config.yaml
 
-23. After finalize writes delivery artifacts under output/delivery/, verify completion:
+23. Finalize is transactional: failed reader-clean does not promote delivery and leaves any prior delivery unchanged. Only when finalize_report.json reports delivery_promotion "promoted", verify completion (otherwise stop and route repair):
     briefloop gates check --workspace {workspace} --stage finalize --brief {workspace}/output/brief.md
     briefloop state finalize-complete --workspace {workspace} --reason "Reader-facing artifacts passed finalize checks."
 
