@@ -172,12 +172,16 @@ def test_public_claims_and_red_lines_forbid_overclaims() -> None:
 def test_finalize_guidance_is_promotion_gated_everywhere() -> None:
     """No guidance surface may teach unconditional post-finalize completion.
 
-    The stale wording pattern told operators to run the finalize gate and
-    `state finalize-complete` "after finalize writes" artifacts, ignoring the
-    transactional promotion result. Every writer/adapter/skill surface must
-    gate those steps on `delivery_promotion: "promoted"` instead.
+    The stale wording family told operators to run the finalize gate and
+    `state finalize-complete` after finalize "writes" artifacts, ignoring the
+    transactional promotion result, or to report success from audit status
+    alone. Every writer/adapter/skill surface must gate those steps on
+    `delivery_promotion: "promoted"` and delivery truth instead.
     """
-    stale = "After finalize " + "writes"
+    stale_patterns = [
+        re.compile(r"after (the )?finalize( tool)? writes", re.IGNORECASE),
+        re.compile(r"success when audit status " + "supports delivery", re.IGNORECASE),
+    ]
     roots = [
         "configs",
         ".agents",
@@ -201,8 +205,9 @@ def test_finalize_guidance_is_promotion_gated_everywhere() -> None:
             if "__pycache__" in path.parts:
                 continue
             text = path.read_text(encoding="utf-8", errors="ignore")
-            if stale in text:
-                offenders.append(str(path.relative_to(ROOT)))
+            for pattern in stale_patterns:
+                if pattern.search(text):
+                    offenders.append(f"{path.relative_to(ROOT)}: {pattern.pattern}")
     assert offenders == [], f"unconditional finalize guidance found in: {offenders}"
 
 

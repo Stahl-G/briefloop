@@ -31,7 +31,11 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
 - 直接编辑控制文件或冻结工件；
 - 在 WorkBuddy 没有真正委派时说专家子代理已运行；
 - 对完整工作流静默切换到 `--runtime operator`（silently fall back）；
-- 角色子代理不可用时手写 BriefLoop 工作流 JSON 工件；
+  切换 operator 运行时必须由用户明确决定，并重新生成 operator handoff；
+- 在 codebuddy handoff 下由主会话代写角色专属工件；
+- 建议修改角色子代理 frontmatter 的 tools 清单来绕过派发失败；
+- 在 Run Card 里自行宣布 `run_integrity=contaminated`——完整性由 Python
+  判定，只能引用 diagnose/status 输出；
 - 说 `Analyst 已经分析完成` 或 `Auditor 已通过`，除非对应的工件、事件、
   事务或 status 输出存在；
 - 说 `delivered`、`delivery complete` 或 `交付完成`，除非

@@ -90,6 +90,14 @@ Role sub-agents may draft only handoff-assigned role artifacts. They must not
 run `briefloop` or `multi-agent-brief` CLI commands. They return artifact paths
 or readiness summaries to the main CodeBuddy session.
 
+If the host cannot dispatch these project sub-agents (for example the Agent
+tool fails to honor the frontmatter-restricted tool set), stop before full
+codebuddy workflow execution. Do not draft role-owned artifacts in the main
+conversation under a codebuddy handoff, and do not suggest editing the role
+agents' frontmatter tools. The only legal continuation is an explicit user
+decision to regenerate the handoff with `--runtime operator`, whose contract
+allows operator-authored artifact work and never claims sub-agents ran.
+
 ## Deterministic Transactions
 
 The main CodeBuddy session owns deterministic CLI transactions. After a role

@@ -145,11 +145,16 @@ FINALIZE_GATE_NOTE = (
     "request_human_review/block_run. Complete auditor with "
     "`briefloop state stage-complete --workspace <workspace> --stage auditor "
     "--reason \"Audit and quality gates passed.\"` only when audit readiness and "
-    "quality gates pass. After the finalize tool writes delivery artifacts under "
-    "`output/delivery/`, run `briefloop gates check --workspace <workspace> "
+    "quality gates pass. Finalize is transactional; a failed reader-clean does not promote "
+    "delivery and leaves prior delivery unchanged. Only when "
+    "`output/intermediate/finalize_report.json` reports delivery_promotion "
+    "\"promoted\", run `briefloop gates check --workspace <workspace> "
     "--stage finalize --brief <workspace>/output/brief.md`, then run "
     "`briefloop state finalize-complete --workspace <workspace> --reason "
-    "\"Reader artifacts finalized and clean.\"`. Finalize/formatter reads "
+    "\"Reader artifacts finalized and clean.\"`, and confirm "
+    "`briefloop workbuddy diagnose --workspace <workspace> --json` reports "
+    "delivery_truth.valid=true before reporting delivery; otherwise stop "
+    "and route repair. Finalize/formatter reads "
     "`output/intermediate/audited_brief.md` as frozen input and must not edit it; "
     "if reader-clean requires wording changes in the audited brief, stop, run "
     "`briefloop gates show --workspace <workspace> --json`, and follow its scoped "
@@ -805,8 +810,9 @@ def _operator_handoff(
             f"13. briefloop state stage-complete --workspace {ws_path} --stage auditor --reason \"Audit and quality gates passed.\"\n"
             f"14. briefloop finalize --config {ws_path}/config.yaml "
             "(read audited_brief.md as frozen input; do not edit it during finalize)\n"
-            f"15. briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
-            f"16. briefloop state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\""
+            f"15. Only when output/intermediate/finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair): briefloop gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md\n"
+            f"16. briefloop state finalize-complete --workspace {ws_path} --reason \"Reader artifacts finalized and clean.\"\n"
+            f"17. briefloop workbuddy diagnose --workspace {ws_path} --json  (do not report delivery unless delivery_truth.valid=true)"
         ),
         expected_artifacts=list(EXPECTED_WORKFLOW_ARTIFACTS),
         runtime_capabilities=_operator_runtime_capabilities(legacy_alias=legacy_alias),
@@ -1521,7 +1527,8 @@ def _without_auditable_delivery_steps(text: str) -> str:
         "Continue through Analyst, Editor, Auditor, gates, finalize",
         "After all artifacts are ready",
         "Before finalize,",
-        "After the finalize tool writes",
+        "delivery_promotion",
+        "workbuddy diagnose",
         "The 'auditor' step and required gates check must run before finalize",
         "Record finalize completion",
         "Formatter/finalize may only write",

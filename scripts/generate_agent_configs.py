@@ -955,7 +955,7 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "    - Report quality gate status.\n"
         "    - Report switchboard selections.\n"
         "    - Report optional provenance graph path when created.\n"
-        "    - Report success when audit status supports delivery.\n"
+        "    - Report success only when the completion projection (briefloop workbuddy diagnose --json) reports delivery_truth.valid=true; audit status alone is not a delivery claim.\n"
     )
 
 

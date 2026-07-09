@@ -259,7 +259,12 @@ def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default(
     assert "briefloop-auditor" in text
     assert "不要退回手写 BriefLoop JSON 工件" in compact
     assert "静默切换到 `--runtime operator`" in compact
-    assert "run --workspace <workspace> --runtime operator" not in text
+    # operator runtime may appear only as the explicit user-decision escape
+    # lane, never as a default or silent fallback
+    assert "必须由用户明确决定" in compact
+    assert "briefloop run --workspace <workspace> --runtime operator" in text
+    assert "绝不声称 子代理运行过" in compact or "绝不声称子代理运行过" in compact
+    assert "frontmatter 的 tools 清单" in compact
     assert "Use `--runtime operator`" not in text
     assert "use `--runtime operator` for handoff" not in text
     assert "--runtime manual" not in text
@@ -602,7 +607,9 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
         assert sorted(archive.namelist()) == sorted(names)
         skill_text = archive.read("briefloop/SKILL.md").decode("utf-8")
     assert "--runtime codebuddy" in skill_text
-    assert "run --workspace <workspace> --runtime operator" not in skill_text
+    # operator runtime appears only inside the explicit user-decision escape lane
+    assert "必须由用户明确决定" in skill_text
+    assert "静默切换到 `--runtime operator`" in skill_text
     assert "BriefLoop WorkBuddy Skill" in skill_text
     assert "BriefLoop Operator Protocol" not in skill_text
     assert "semantic proof" in skill_text

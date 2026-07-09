@@ -155,4 +155,4 @@ Stage sequence:
     - Report quality gate status.
     - Report switchboard selections.
     - Report optional provenance graph path when created.
-    - Report success when audit status supports delivery.
+    - Report success only when the completion projection (briefloop workbuddy diagnose --json) reports delivery_truth.valid=true; audit status alone is not a delivery claim.

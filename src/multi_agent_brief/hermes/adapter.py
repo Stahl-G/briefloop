@@ -468,6 +468,7 @@ briefloop finalize --config <workspace>/config.yaml
 # only when finalize_report.json reports delivery_promotion "promoted":
 briefloop gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 briefloop state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+briefloop workbuddy diagnose --workspace <workspace> --json
 ```
 
 Audit warnings, overstatement findings, support-calibration findings, and

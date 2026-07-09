@@ -143,10 +143,24 @@ finalize、交付和 quality 命令。
 .codebuddy/agents/briefloop-*.md
 ```
 
-如果当前 WorkBuddy 环境无法调用这些角色子代理，在完整工作流执行之前停下。
-你仍可以运行确定性 setup、`status`、`state check`、`quality summarize` 或
-`demo` 命令，但不要退回手写 BriefLoop JSON 工件，也不要静默切换到
-`--runtime operator`。
+如果当前 WorkBuddy 环境无法调用这些角色子代理（例如 Agent 工具无法按
+frontmatter 受限工具集派发项目级子代理），在 codebuddy 完整工作流执行之前
+停下。你仍可以运行确定性 setup、`status`、`state check`、`quality
+summarize` 或 `demo` 命令，但在 codebuddy handoff 下不要退回手写 BriefLoop
+JSON 工件，不要静默切换到 `--runtime operator`，也不要建议修改角色子代理
+frontmatter 的 tools 清单来绕过设计。
+
+此时合法的继续通道只有一条，且必须由用户明确决定：向用户说明本环境无法
+派发角色子代理，请用户选择是否改用 operator 运行时重新生成 handoff：
+
+```bash
+briefloop run --workspace <workspace> --runtime operator
+```
+
+operator handoff 是主机无关的紧凑工作流，明确允许主会话亲自起草角色工件
+（operator-authored artifact work），不假设也绝不声称子代理运行过。用户
+同意后按新生成的 operator handoff 逐步执行；用户不同意则停在当前状态并
+输出 Run Card。
 
 在每个 stage 或角色工件动作之前、以及每条 BriefLoop CLI 命令之后，先重新
 打开 `output/intermediate/agent_handoff.md` 和
@@ -184,6 +198,9 @@ finalize 或下一步动作的真值。如果 `delivery_truth.valid` 不是 `tru
 Run Card 不得声称已交付。仅当角色专属草稿工件（例如
 `output/intermediate/audited_brief.md`）确实存在时才说 run 里有草稿；
 否则说目前既没有草稿也没有交付。
+
+`run_integrity` 等完整性判定字段同样只能引用 diagnose/status 的输出；
+完整性由 Python 判定，不要根据自己的操作推断或自行宣布 contamination。
 
 ## 硬停规则
 
