@@ -81,8 +81,10 @@ def handle_mabw(ctx, argstr: str):
             "  multi-agent-brief state stage-complete --workspace <workspace> --stage auditor --reason \"Audit and quality gates passed.\"\n\n"
             "Step 6 — Run finalize only after gates/state pass; finalize alone is not a quality-gate executor:\n"
             "  multi-agent-brief finalize --config <workspace>/config.yaml\n\n"
-            "Step 7 — After finalize writes reader-facing artifacts, verify completion:\n"
-            "  multi-agent-brief state finalize-complete --workspace <workspace> --reason \"Reader-facing artifacts passed finalize checks.\""
+            "Step 7 — Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:\n"
+            "  multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md\n"
+            "  multi-agent-brief state finalize-complete --workspace <workspace> --reason \"Reader-facing artifacts passed finalize checks.\"\n"
+            "  multi-agent-brief workbuddy diagnose --workspace <workspace> --json  # delivery_truth.valid must be true before reporting delivery"
         )
 
     if sub == "run":
@@ -132,8 +134,10 @@ def handle_mabw(ctx, argstr: str):
             lines.append("Then run finalize. finalize alone is not a quality-gate executor:")
             lines.append(f"  multi-agent-brief finalize --config {ws_path}/config.yaml")
             lines.append("")
-            lines.append("After finalize writes reader-facing artifacts, verify completion:")
+            lines.append("Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:")
+            lines.append(f"  multi-agent-brief gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md")
             lines.append(f"  multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"")
+            lines.append(f"  multi-agent-brief workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery")
             lines.append("")
             lines.append("Optional provenance projection after runtime state exists:")
             lines.append(f"  multi-agent-brief provenance build --workspace {ws_path}")
@@ -181,8 +185,10 @@ def handle_mabw(ctx, argstr: str):
             "Then run finalize. finalize alone is not a quality-gate executor:",
             f"  multi-agent-brief finalize --config {ws_path}/config.yaml",
             "",
-            "After finalize writes reader-facing artifacts, verify completion:",
+            "Proceed only when finalize_report.json reports delivery_promotion \"promoted\" (otherwise stop and route repair), then verify completion:",
+            f"  multi-agent-brief gates check --workspace {ws_path} --stage finalize --brief {ws_path}/output/brief.md",
             f"  multi-agent-brief state finalize-complete --workspace {ws_path} --reason \"Reader-facing artifacts passed finalize checks.\"",
+            f"  multi-agent-brief workbuddy diagnose --workspace {ws_path} --json  # delivery_truth.valid must be true before reporting delivery",
             "",
             "Optional provenance projection after runtime state exists:",
             f"  multi-agent-brief provenance build --workspace {ws_path}",

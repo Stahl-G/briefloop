@@ -587,7 +587,7 @@ def _codex_handoff(workspace: Path, repo: Path, venv: str) -> AgentHandoff:
             f"{ROLE_TOPOLOGY_HANDOFF_NOTE}\n\n"
             f"{role_mapping}\n"
             "Do not call the next specialist until `briefloop state stage-complete` succeeds for the current stage.\n"
-            "Finalize is a Python delivery/rendering tool. After finalize writes delivery artifacts, record completion with `briefloop state finalize-complete`.\n\n"
+            "Finalize is a Python delivery/rendering tool and is transactional: a failed reader-clean does not promote delivery and leaves prior delivery unchanged. Record completion with `briefloop state finalize-complete` only when finalize_report.json reports delivery_promotion \"promoted\", and confirm `briefloop workbuddy diagnose --json` reports delivery_truth.valid=true before reporting delivery.\n\n"
             f"{ORCHESTRATOR_CONTEXT_READING_NOTE}\n\n"
             f"{DECISION_RECORDING_NOTE}\n\n"
             f"{FINALIZE_GATE_NOTE}\n\n"

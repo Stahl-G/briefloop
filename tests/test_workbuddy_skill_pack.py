@@ -319,6 +319,15 @@ def _bare_repair_start_offenders(text: str) -> list[str]:
     return [line for line in text.splitlines() if bare_start.search(line) and "Do not use bare" not in line]
 
 
+def test_legacy_workbuddy_mirror_declares_non_authoritative_status() -> None:
+    text = _read(LEGACY_WORKBUDDY_SKILL / "SKILL.md")
+    compact = _compact(text)
+    assert "Legacy mirror only" in text
+    assert ".agents/skills/briefloop-workbuddy/" in text
+    assert "not the operating source of truth" in compact
+    assert "delivery_truth.valid" in compact
+
+
 def test_legacy_workbuddy_mirror_uses_scoped_repair_contract() -> None:
     text = _all_legacy_workbuddy_text()
     compact = _compact(text)

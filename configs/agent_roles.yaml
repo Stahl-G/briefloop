@@ -151,10 +151,14 @@ roles:
       request_human_review, or block_run.
       Record auditor completion with state stage-complete only when audit
       readiness and quality gates pass.
-    - After finalize writes reader-facing artifacts, verify completion with
+    - Finalize is transactional. A failed reader-clean does not promote
+      output/brief.md and leaves prior delivery unchanged. Proceed only when
+      finalize_report.json reports delivery_promotion "promoted"; otherwise
+      stop and route repair. After promotion, verify completion with
       `briefloop gates check --stage finalize --brief <workspace>/output/brief.md`
-      and then briefloop state finalize-complete before reporting the
-      run complete.
+      and then briefloop state finalize-complete, and confirm
+      briefloop workbuddy diagnose --json reports delivery_truth.valid=true
+      before reporting the run complete.
     - Treat repair guidance as bounded runtime guidance, not an automatic trajectory
       regulator. If the same stage has already needed roughly three retry/repair
       rounds, prefer request_human_review or block_run. If a repair would touch

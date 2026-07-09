@@ -159,10 +159,51 @@ def test_public_claims_and_red_lines_forbid_overclaims() -> None:
         "BriefLoop eliminates hallucinations",
         "automatically ready to send",
         "Improvement Memory improves output quality",
+        "RC-Phase Wording",
+        "not_satisfied",
+        "BriefLoop v1.0 is ready.",
+        "BriefLoop can safely recover contaminated runs.",
     ]:
         assert phrase in public_claims
     assert "Do not edit frozen artifacts in place." in red_lines
     assert "Do not edit control files" in red_lines
+
+
+def test_finalize_guidance_is_promotion_gated_everywhere() -> None:
+    """No guidance surface may teach unconditional post-finalize completion.
+
+    The stale wording pattern told operators to run the finalize gate and
+    `state finalize-complete` "after finalize writes" artifacts, ignoring the
+    transactional promotion result. Every writer/adapter/skill surface must
+    gate those steps on `delivery_promotion: "promoted"` instead.
+    """
+    stale = "After finalize " + "writes"
+    roots = [
+        "configs",
+        ".agents",
+        ".claude",
+        ".codex",
+        ".opencode",
+        ".codebuddy",
+        "integrations",
+        "src/multi_agent_brief",
+        "docs/agents",
+    ]
+    suffixes = {".md", ".py", ".toml", ".yaml", ".yml", ".json"}
+    offenders: list[str] = []
+    for root in roots:
+        base = ROOT / root
+        if not base.exists():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix not in suffixes:
+                continue
+            if "__pycache__" in path.parts:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            if stale in text:
+                offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == [], f"unconditional finalize guidance found in: {offenders}"
 
 
 def test_runtime_status_and_control_references_track_quality_and_release_surfaces() -> None:
@@ -206,6 +247,10 @@ def test_runtime_status_and_control_references_track_quality_and_release_surface
 def test_repo_development_reference_includes_product_baseline_and_review_checklist() -> None:
     text = _read(CANONICAL / "references" / "repo-development.md")
 
+    assert "v1.0 RC Readiness Gate" in text
+    assert "docs/v1-pilot-evidence.md" in text
+    assert "check_v1_rc_readiness.py" in text
+    assert "--require-satisfied" in text
     assert "python3 scripts/check_product_baseline.py" in text
     assert "direct import smoke" in text
     assert "hand-edited artifact smoke" in text

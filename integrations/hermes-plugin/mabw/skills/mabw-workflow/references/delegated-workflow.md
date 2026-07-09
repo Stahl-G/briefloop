@@ -65,11 +65,17 @@ multi-agent-brief state stage-complete --workspace <workspace> --stage auditor -
 
 If `state check` reports blocking quality gate findings, choose `delegate_repair`, `request_human_review`, or `block_run` instead of finalizing. `multi-agent-brief finalize` only renders reader-facing outputs; it is not a quality-gate executor.
 
-After finalize writes reader-facing artifacts, run:
+Finalize is transactional: proceed only when `finalize_report.json` reports
+`delivery_promotion: "promoted"`; otherwise stop and route repair. After
+promotion, run:
 
 ```bash
+multi-agent-brief gates check --workspace <workspace> --stage finalize --brief <workspace>/output/brief.md
 multi-agent-brief state finalize-complete --workspace <workspace> --reason "Reader-facing artifacts passed finalize checks."
+multi-agent-brief workbuddy diagnose --workspace <workspace> --json
 ```
+
+Do not report delivery unless diagnose shows `delivery_truth.valid=true`.
 
 If audit findings or human feedback exist, use `multi-agent-brief feedback ingest`, `feedback plan`, `feedback resolve`, `feedback show --json`, and `feedback validate` to structure issues and create a bounded repair plan. These commands do not execute repair or edit brief artifacts.
 
