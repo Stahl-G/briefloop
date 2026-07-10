@@ -132,7 +132,11 @@ def _artifact_gate_reasons_for_ids(
             workspace / rel_path,
             fmt,
             str(artifact_id),
-            intake_result=intake_bundle.get(artifact_id) if intake_bundle is not None else None,
+            intake_result=(
+                intake_bundle.get(artifact_id)
+                if intake_bundle is not None and artifact_id in AGENT_ARTIFACT_IDS
+                else None
+            ),
         )
         required = bool(contract.get("required", False))
         if required and status != ARTIFACT_VALID:

@@ -4233,6 +4233,58 @@ def test_default_topology_scout_completion_satisfies_screener(tmp_path):
     ]
 
 
+def test_topology_completion_supports_mixed_agent_and_non_agent_artifacts(
+    tmp_path: Path,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    stage_specs_path = repo / "configs" / "stage_specs.yaml"
+    import yaml
+
+    stage_specs = yaml.safe_load(stage_specs_path.read_text(encoding="utf-8"))
+    screener = next(
+        stage
+        for stage in stage_specs["workflow"]["stages"]
+        if stage["stage_id"] == "screener"
+    )
+    screener["topology_satisfaction"]["default"]["required_artifacts"].append(
+        "input_classification"
+    )
+    stage_specs_path.write_text(
+        yaml.safe_dump(stage_specs, sort_keys=False),
+        encoding="utf-8",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
+    _write_input_classification(
+        ws,
+        {
+            "evidence": [],
+            "feedback": [],
+            "instruction": [],
+            "context": [],
+            "skipped": [],
+        },
+    )
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="mixed topology artifacts complete",
+    )
+
+    screener_status = state["workflow_state"]["stage_statuses"]["screener"]
+    assert screener_status["status"] == "complete"
+    assert screener_status["metadata"]["required_artifacts"] == [
+        "candidate_claims",
+        "screened_candidates",
+        "input_classification",
+    ]
+
+
 def test_default_topology_intake_views(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)
