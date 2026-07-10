@@ -23,7 +23,10 @@ from multi_agent_brief.contracts.target_contract import (
 from multi_agent_brief.feedback.feedback_contract import current_stage_feedback_blocking_reasons
 from multi_agent_brief.quality_gates.contract import current_stage_quality_gate_blocking_reasons
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
-from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_truth
+from multi_agent_brief.orchestrator.recovery_state import (
+    evaluate_recovery_truth,
+    recovery_stage_order,
+)
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _read_json,
     _read_json_if_exists,
@@ -875,7 +878,7 @@ def _complete_stage_transaction(
             workflow=workflow,
             event_records=event_records,
             run_id=run_id,
-            stage_order=_stage_ids(stages),
+            stage_order=recovery_stage_order(stages),
         )
     decision = "finalize" if finalize else "continue"
     _raise_if_trajectory_narrows_success_path(

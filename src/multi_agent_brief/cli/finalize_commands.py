@@ -8,7 +8,10 @@ import sys
 from pathlib import Path
 
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
-from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_truth
+from multi_agent_brief.orchestrator.recovery_state import (
+    evaluate_recovery_truth,
+    recovery_stage_order,
+)
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
     RUN_INTEGRITY_CONTAMINATED,
@@ -26,10 +29,12 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import load_stage_specs
 from multi_agent_brief.orchestrator.runtime_state.event_log import (
     read_event_log_records_strict,
 )
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
+from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -141,6 +146,11 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
             _raise_if_run_integrity_blocks_finalize(
                 workflow,
                 event_records=event_records,
+                stage_order=recovery_stage_order(
+                    load_stage_specs(
+                        resolve_repo_workdir(None, workspace=workspace)
+                    )
+                ),
             )
         raise_if_auditable_target_complete_blocks_downstream(
             workspace=workspace,
@@ -161,6 +171,7 @@ def _raise_if_run_integrity_blocks_finalize(
     workflow: dict[str, object],
     *,
     event_records: list[dict[str, object]],
+    stage_order: list[str],
 ) -> None:
     effective_workflow = workflow_with_sticky_contamination_events(
         workflow,
@@ -177,8 +188,6 @@ def _raise_if_run_integrity_blocks_finalize(
         and integrity.get("reference_eligible") is True
     ):
         return
-    stage_statuses = effective_workflow.get("stage_statuses")
-    stage_order = list(stage_statuses) if isinstance(stage_statuses, dict) else []
     recovery_truth = evaluate_recovery_truth(
         workflow=effective_workflow,
         workflow_status="present",

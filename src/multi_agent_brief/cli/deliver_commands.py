@@ -31,12 +31,19 @@ from multi_agent_brief.orchestrator.runtime_state import (
 from multi_agent_brief.orchestrator.delivery_eligibility import (
     evaluate_delivery_eligibility,
 )
-from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_truth
+from multi_agent_brief.orchestrator.recovery_state import (
+    evaluate_recovery_truth,
+    recovery_stage_order,
+)
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+    load_stage_specs,
+)
 from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
     workflow_with_sticky_contamination_events,
 )
+from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.outputs.reader_final_gate import (
     combine_reader_final_gate_results,
     detect_reader_residue,
@@ -879,8 +886,15 @@ def _delivery_integrity_context(
             field_present="run_integrity" in workflow,
         )
     )
-    stage_statuses = workflow.get("stage_statuses")
-    stage_order = list(stage_statuses) if isinstance(stage_statuses, dict) else []
+    try:
+        stage_order = recovery_stage_order(
+            load_stage_specs(resolve_repo_workdir(None, workspace=workspace))
+        )
+    except (RuntimeStateError, OSError, ValueError) as exc:
+        raise DeliverCommandError(
+            f"Delivery recovery stage contract is unavailable: {exc}",
+            error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
+        ) from exc
     recovery_truth = evaluate_recovery_truth(
         workflow=workflow,
         workflow_status="present",

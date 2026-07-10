@@ -26,6 +26,7 @@ from multi_agent_brief.orchestrator.recovery_state import (
     RECOVERY_READY_FOR_FINALIZE,
     RECOVERY_RERUN_PENDING,
     evaluate_recovery_truth,
+    recovery_stage_order,
 )
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
@@ -120,11 +121,7 @@ def build_completion_projection(
     )
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
-    stage_order = [
-        _clean_text(stage.get("stage_id"))
-        for stage in stages
-        if _clean_text(stage.get("stage_id"))
-    ]
+    stage_order = recovery_stage_order(stages)
     manifest_run_id = _clean_text(manifest.get("run_id")) if isinstance(manifest, Mapping) else ""
     recovery_truth = evaluate_recovery_truth(
         workflow=effective_workflow,

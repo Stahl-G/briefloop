@@ -23,6 +23,16 @@ _RECOVERY_EVENT_DECISIONS = {
 }
 
 
+def recovery_stage_order(stages: Sequence[Mapping[str, Any]]) -> list[str]:
+    """Return canonical recovery order from stage-spec authority."""
+
+    return [
+        stage_id
+        for stage in stages
+        if (stage_id := _clean_text(stage.get("stage_id")))
+    ]
+
+
 def evaluate_recovery_truth(
     *,
     workflow: Mapping[str, Any] | None,

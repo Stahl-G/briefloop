@@ -6,10 +6,13 @@ from pathlib import Path
 
 import pytest
 
+import multi_agent_brief.cli.deliver_commands as deliver_commands
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.delivery.base import DeliveryResult
 from multi_agent_brief.delivery.gws import GwsGmailDeliveryConnector
 from multi_agent_brief.orchestrator.runtime_state import RuntimeStateError, initialize_runtime_state, runtime_state_paths
+from multi_agent_brief.orchestrator.recovery_state import recovery_stage_order
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import load_stage_specs
 from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_minimal_workspace
 
@@ -133,6 +136,42 @@ def test_deliver_local_lists_only_delivery_bundle(tmp_path: Path, capsys) -> Non
     events = _delivery_events(ws)
     assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_succeeded"]
     assert events[0]["metadata"]["artifact"] == "output/delivery/brief.md"
+
+
+def test_delivery_recovery_uses_stage_specs_not_workflow_key_order(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    ws = _workspace(tmp_path)
+    _write_bundle(ws)
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    statuses = workflow["stage_statuses"]
+    workflow["stage_statuses"] = {
+        stage_id: statuses[stage_id]
+        for stage_id in reversed(list(statuses))
+    }
+    paths["workflow_state"].write_text(
+        json.dumps(workflow, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def _capture_recovery_truth(**kwargs):
+        captured["stage_order"] = kwargs["stage_order"]
+        return {"status": "none", "delivery_allowed": False}
+
+    monkeypatch.setattr(
+        deliver_commands,
+        "evaluate_recovery_truth",
+        _capture_recovery_truth,
+    )
+
+    deliver_commands._delivery_integrity_context(ws)
+
+    expected = recovery_stage_order(load_stage_specs(ROOT))
+    assert captured["stage_order"] == expected
+    assert captured["stage_order"] != list(workflow["stage_statuses"])
 
 
 def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Path, capsys) -> None:
