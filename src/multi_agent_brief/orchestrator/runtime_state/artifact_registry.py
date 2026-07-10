@@ -1170,6 +1170,7 @@ def _artifact_record(
         and sha256 == stale_baseline_sha256
         and path.exists()
         and path.is_file()
+        and status == ARTIFACT_VALID
     ):
         status = ARTIFACT_STALE
         stale_after_supersede = (

@@ -8742,6 +8742,52 @@ def test_repair_stale_precedes_intake_validity(tmp_path: Path) -> None:
     assert record["intake_projection"]["fatal_finding_count"] == 0
 
 
+@pytest.mark.parametrize(
+    "recovery_event_type",
+    ["repair_completed", "repair_stage_superseded"],
+    ids=["INTAKE-STALE-03-repair", "INTAKE-STALE-03-supersede"],
+)
+def test_invalid_intake_precedes_recovery_stale_overlay(
+    tmp_path: Path,
+    recovery_event_type: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "candidate_claims.json", "{broken")
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    baseline = checked["artifact_registry"]["artifacts"]["candidate_claims"]
+    assert baseline["status"] == "invalid"
+    assert baseline["validation_result"] == "parse_error"
+
+    registry = _build_artifact_registry(
+        workspace=ws,
+        run_id=initialized["manifest"]["run_id"],
+        artifacts=load_artifact_contracts(ROOT),
+        workflow=checked["workflow_state"],
+        updated_at="2026-07-10T00:00:00+00:00",
+        recovery_state={
+            "owner_revision": {
+                "event_type": recovery_event_type,
+                "transaction_id": f"{recovery_event_type}-tx",
+                "owner_stage": "source-discovery",
+                "stale_artifact_baselines": {
+                    "candidate_claims": {
+                        "path": baseline["path"],
+                        "sha256": baseline["sha256"],
+                    }
+                },
+            }
+        },
+    )
+
+    record = registry["artifacts"]["candidate_claims"]
+    assert record["status"] == "invalid"
+    assert record["validation_result"] == "parse_error"
+    assert "failed minimum json validation" in record["blocking_reason"]
+    assert record["intake_projection"]["fatal_finding_count"] == 1
+    assert record["intake_projection"]["findings"][0]["code"] == "parse_error"
+
+
 def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downstream(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
