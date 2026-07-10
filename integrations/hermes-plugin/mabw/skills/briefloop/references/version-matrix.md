@@ -63,7 +63,14 @@ currently available commands.
   - canonical path: `.agents/skills/briefloop-workbuddy/`
   - legacy mirror: `integrations/workbuddy/briefloop/`
   - status: experimental; source-clone-only
-  - uses `--runtime operator` and deterministic BriefLoop CLI transactions
+  - default full-workflow command:
+    `briefloop run --workspace <workspace> --runtime codebuddy`
+  - use the default only when the source checkout contains the CodeBuddy project
+    Skill and role-agent assets and role-subagent delegation is available
+  - `--runtime operator` is an explicit user-approved fallback only when those
+    role subagents cannot be delegated; it permits main-session drafting and
+    must not be represented as role-subagent execution
+  - deterministic BriefLoop CLI transactions remain in the WorkBuddy main session
   - `briefloop workbuddy pack-skill` /
     `briefloop workbuddy pack-skill` generates a deterministic local
     Skill zip and sidecar manifest from the canonical source-clone Skill files

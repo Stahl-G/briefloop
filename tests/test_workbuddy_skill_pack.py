@@ -31,6 +31,7 @@ WORKBUDDY_DOCS = (
 WORKBUDDY_SMOKE_CHECKLIST = ROOT / "docs" / "workbuddy-smoke-checklist.md"
 CODEBUDDY_AGENT_ROOT = ROOT / ".codebuddy" / "agents"
 CODEBUDDY_SKILL = ROOT / ".codebuddy" / "skills" / "briefloop" / "SKILL.md"
+VERSION_MATRIX = ROOT / ".agents" / "skills" / "briefloop" / "references" / "version-matrix.md"
 CODEBUDDY_ROLE_AGENTS = {
     "briefloop-scout.md": {
         "tools": "tools: Read, Write, Grep, Glob",
@@ -269,6 +270,27 @@ def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default(
     assert "use `--runtime operator` for handoff" not in text
     assert "--runtime manual" not in text
     assert "legacy manual" not in text.lower()
+
+
+def test_workbuddy_default_runtime_matches_version_matrix() -> None:
+    matrix = _read(VERSION_MATRIX)
+    matrix_workbuddy = matrix.split("- WorkBuddy Skill source bundle:", 1)[1].split(
+        "- CodeBuddy project Skill adapter:", 1
+    )[0]
+    skill = _read(WORKBUDDY_SKILL / "SKILL.md")
+    skill_runtime = skill.split("## 运行模式", 1)[1].split("## Run Card 协议", 1)[0]
+    runtime_pattern = re.compile(
+        r"briefloop run --workspace <workspace> --runtime (?P<runtime>[a-z0-9-]+)"
+    )
+
+    matrix_default = runtime_pattern.search(matrix_workbuddy)
+    skill_default = runtime_pattern.search(skill_runtime)
+
+    assert matrix_default is not None
+    assert skill_default is not None
+    assert matrix_default.group("runtime") == skill_default.group("runtime") == "codebuddy"
+    assert "`--runtime operator` is an explicit user-approved fallback only" in matrix_workbuddy
+    assert "必须由用户明确决定" in _compact(skill_runtime)
 
 
 def test_workbuddy_skill_includes_required_cli_surface() -> None:

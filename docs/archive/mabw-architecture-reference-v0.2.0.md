@@ -11,5 +11,5 @@ The historical MABW v0.3.0 reference now lives at:
 No separate public v0.2.0 architecture reference is retained in this docs tree.
 For the current implementation and support status, use:
 
-- [Architecture status](architecture-status.md)
-- [Support matrix](support-matrix.md)
+- [Architecture status](../architecture-status.md)
+- [Support matrix](../support-matrix.md)

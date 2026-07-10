@@ -65,6 +65,9 @@ def test_version_matrix_tracks_current_surface_without_planned_overclaim() -> No
     assert "integrations/workbuddy/briefloop/" in text
     assert "legacy mirror" in text
     assert "source-clone-only" in text
+    assert "briefloop run --workspace <workspace> --runtime codebuddy" in text
+    assert "`--runtime operator` is an explicit user-approved fallback only" in text
+    assert "uses `--runtime operator`" not in text
     assert "workbuddy pack-skill" in text
     assert "not a WorkBuddy Marketplace publication" in text
     assert "CodeBuddy project Skill adapter" in text
