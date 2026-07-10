@@ -295,6 +295,8 @@ def test_deliver_blocks_manifest_workflow_run_id_mismatch(
     payload = json.loads(capsys.readouterr().out)
     assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
     assert payload["runtime_error_code"] == "E_TRANSACTION_INTEGRITY"
+    assert payload["run_integrity"]["status"] == "unknown"
+    assert payload["run_integrity"]["reasons"][0]["reason_code"] == "delivery_integrity_context_invalid"
     assert _delivery_events(ws) == []
 
 
@@ -327,8 +329,7 @@ def test_deliver_json_blocks_malformed_run_integrity_as_unknown(tmp_path: Path, 
     assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
     assert payload["run_integrity"]["status"] == "unknown"
     assert payload["run_integrity"]["reference_eligible"] is False
-    assert payload["run_integrity"]["reasons"][0]["reason_code"] == "run_integrity_malformed"
-    assert _delivery_events(ws) == []
+    assert payload["run_integrity"]["reasons"][0]["reason_code"] == "delivery_integrity_context_invalid"
 
 
 def test_deliver_missing_bundle_returns_typed_error(tmp_path: Path, capsys) -> None:

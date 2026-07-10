@@ -807,26 +807,14 @@ def _delivery_run_id(workspace: Path) -> str:
 def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
     try:
         run_integrity, _recovery_truth = _delivery_integrity_context(workspace)
-    except DeliverCommandError:
-        workflow_path = runtime_state_paths(workspace)["workflow_state"]
-        try:
-            workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            workflow = None
-        if isinstance(workflow, dict):
-            return project_for_read(
-                interpret_run_integrity(
-                    workflow.get("run_integrity"),
-                    field_present="run_integrity" in workflow,
-                )
-            )
+    except DeliverCommandError as exc:
         return project_for_read(
             interpret_run_integrity(
                 None,
                 field_present=True,
                 unavailable_reason={
                     "reason_code": "delivery_integrity_context_invalid",
-                    "message": "Delivery integrity context could not be verified.",
+                    "message": f"Delivery integrity context could not be verified: {exc}",
                 },
             )
         )
