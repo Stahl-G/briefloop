@@ -189,6 +189,7 @@ blocked:
 latest_gate_status:
 finalize_report:
 delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
@@ -196,8 +197,12 @@ next_allowed_action:
 --json` 读取；该命令格式化的是规范 completion projection，只对
 `next_allowed_action` 叠加 WorkBuddy 的 doctor/密钥安全覆盖。不要从
 `workflow_state.json`、`event_log.jsonl` 或文件存在性检查重构交付、gate、
-finalize 或下一步动作的真值。如果 `delivery_truth.valid` 不是 `true`，
-Run Card 不得声称已交付。仅当角色专属草稿工件（例如
+finalize 或下一步动作的真值。`delivery_truth.valid=true` 只表示当前 reader
+bundle 可以进入交付动作，不表示交付已经发生。实际结果读取
+`event_truth.delivery_outcome` 并显示为 `delivery_event`：
+`delivery_bundle_prepared` 表示本地包已准备，`delivery_draft_created` 表示草稿
+已创建，这两者都不是 delivered；只有当前 run/render/recovery cycle 绑定的
+`delivery_succeeded` 才允许声称已交付。仅当角色专属草稿工件（例如
 `output/intermediate/audited_brief.md`）确实存在时才说 run 里有草稿；
 否则说目前既没有草稿也没有交付。
 
@@ -231,8 +236,10 @@ finalize 之前的正常状态当作流程停止。
    对于早期阶段的草稿工作，报告 Run Card，并只继续 handoff 允许的非交付
    工作流步骤。
 3. 对交付、导出、分享或完成声明：如果 WorkBuddy 诊断载荷没有报告
-   `delivery_truth.valid=true`，停止该动作。不要说 "delivered"、
-   "交付完成"或 "delivery complete"。
+   `delivery_truth.valid=true`，停止交付动作。如果 `delivery_event` 不是
+   `delivery_succeeded`，不要说 "delivered"、"交付完成"或
+   "delivery complete"；对 `delivery_bundle_prepared` 只能说本地包已准备，
+   对 `delivery_draft_created` 只能说草稿已创建。
    仅当 `output/intermediate/audited_brief.md` 存在时才说有草稿；否则说
    目前既没有草稿也没有交付。
    只有 handoff 和 Run Card 允许时才继续更早的角色工作阶段。
@@ -276,8 +283,10 @@ handoff 步骤再继续。
 - 不要把可追溯性说成语义证明（semantic proof）或输出质量提升。
 - 不要说 "Analyst is complete" 或 "Auditor passed"，除非对应的工件、事件、
   status 或事务确实存在。
-- 除非 `briefloop workbuddy diagnose --json` 报告
-  `delivery_truth.valid=true`，否则不要说"已交付"。
+- 除非 `briefloop workbuddy diagnose --json` 同时报告
+  `delivery_truth.valid=true` 和 `event_truth.delivery_succeeded=true`，否则不要
+  说"已交付"。`delivery_bundle_prepared` 与 `delivery_draft_created` 都不是
+  已交付。
 - 不要打包或分享整个工作区。存在时使用 BriefLoop 生成的 delivery 或 audit
   bundle；绝不包含 `.env`。如需支持排查，只分享经人工确认的非敏感摘录，
   来自 `briefloop status --json` 或 doctor 输出。

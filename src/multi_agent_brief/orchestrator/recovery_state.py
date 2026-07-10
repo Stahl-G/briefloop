@@ -35,6 +35,7 @@ from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 
 
 RECOVERY_STATE_SCHEMA = "briefloop.recovery_state.v1"
+OWNER_REVISION_SCHEMA = "briefloop.owner_revision.v1"
 
 RECOVERY_NOT_APPLICABLE = "not_applicable"
 RECOVERY_AWAITING = "awaiting_recovery"
@@ -125,6 +126,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
     owner_revision, owner_revision_error = _latest_owner_revision(
         current_events,
         stage_ids=context.stage_ids,
+        workflow=context.workflow,
     )
     if owner_revision_error:
         return _invalid(context, "owner_revision_binding_invalid", owner_revision_error)
@@ -684,14 +686,26 @@ def _latest_owner_revision(
     events: Sequence[Mapping[str, Any]],
     *,
     stage_ids: Sequence[str],
+    workflow: Mapping[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    revisions = [
-        event
-        for event in events
-        if event.get("event_type") in {"repair_completed", "repair_stage_superseded"}
-    ]
+    revisions: list[Mapping[str, Any]] = []
+    legacy_revisions: list[Mapping[str, Any]] = []
+    for event in events:
+        if event.get("event_type") not in {"repair_completed", "repair_stage_superseded"}:
+            continue
+        schema_version = _text(_metadata(event).get("owner_revision_schema_version"))
+        if not schema_version:
+            legacy_revisions.append(event)
+            continue
+        if schema_version != OWNER_REVISION_SCHEMA:
+            return _empty_owner_revision(), "Owner revision schema_version is unsupported."
+        revisions.append(event)
     if not revisions:
-        return _empty_owner_revision(), ""
+        return _legacy_owner_revision(
+            legacy_revisions,
+            stage_ids=stage_ids,
+            workflow=workflow,
+        )
     event = revisions[-1]
     metadata = _metadata(event)
     transaction_id = _text(metadata.get("transaction_id"))
@@ -709,11 +723,75 @@ def _latest_owner_revision(
     return _owner_revision_projection(event), ""
 
 
+def _legacy_owner_revision(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    stage_ids: Sequence[str],
+    workflow: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    if not events:
+        return _empty_owner_revision(), ""
+    event = events[-1]
+    metadata = _metadata(event)
+    transaction_id = _text(metadata.get("transaction_id"))
+    if not transaction_id:
+        return _empty_owner_revision(), ""
+
+    baselines: dict[str, Any] = {}
+    statuses = workflow.get("stage_statuses")
+    if isinstance(statuses, Mapping):
+        for entry in statuses.values():
+            stage_metadata = (
+                entry.get("metadata")
+                if isinstance(entry, Mapping) and isinstance(entry.get("metadata"), Mapping)
+                else {}
+            )
+            if (
+                stage_metadata.get("stale_after_repair") is not True
+                or _text(stage_metadata.get("repair_transaction_id")) != transaction_id
+            ):
+                continue
+            stage_baselines = stage_metadata.get("stale_artifact_baselines")
+            if not isinstance(stage_baselines, Mapping):
+                return _empty_owner_revision(), "Legacy owner revision stale baselines are invalid."
+            for artifact_id, baseline in stage_baselines.items():
+                key = _text(artifact_id)
+                if not key or not isinstance(baseline, Mapping):
+                    return _empty_owner_revision(), "Legacy owner revision stale baselines are invalid."
+                if key in baselines and baselines[key] != baseline:
+                    return _empty_owner_revision(), "Legacy owner revision stale baselines conflict."
+                baselines[key] = dict(baseline)
+    if not baselines:
+        return _empty_owner_revision(), ""
+
+    pointer = workflow.get("last_repair_transaction")
+    if not isinstance(pointer, Mapping) or _text(pointer.get("transaction_id")) != transaction_id:
+        return _empty_owner_revision(), "Legacy owner revision pointer does not match stale metadata."
+    owner_stage = _text(metadata.get("repair_owner")) or _text(event.get("stage_id"))
+    rerun_stage = _text(metadata.get("must_rerun_from")) or _text(metadata.get("next_stage"))
+    if owner_stage not in stage_ids:
+        return _empty_owner_revision(), "Legacy owner revision owner_stage is not canonical."
+    if rerun_stage not in stage_ids or stage_ids.index(rerun_stage) <= stage_ids.index(owner_stage):
+        return _empty_owner_revision(), "Legacy owner revision rerun_start_stage is not canonical."
+    return {
+        "status": "legacy_migrated",
+        "schema_version": "legacy_unversioned",
+        "event_id": _text(event.get("event_id")),
+        "event_type": _text(event.get("event_type")),
+        "transaction_id": transaction_id,
+        "owner_stage": owner_stage,
+        "artifact_id": "",
+        "rerun_start_stage": rerun_stage,
+        "stale_artifact_baselines": baselines,
+    }, ""
+
+
 def _owner_revision_projection(event: Mapping[str, Any]) -> dict[str, Any]:
     metadata = _metadata(event)
     baselines = metadata.get("stale_artifact_baselines")
     return {
         "status": "present",
+        "schema_version": _text(metadata.get("owner_revision_schema_version")),
         "event_id": _text(event.get("event_id")),
         "event_type": _text(event.get("event_type")),
         "transaction_id": _text(metadata.get("transaction_id")),
@@ -727,6 +805,7 @@ def _owner_revision_projection(event: Mapping[str, Any]) -> dict[str, Any]:
 def _empty_owner_revision() -> dict[str, Any]:
     return {
         "status": "none",
+        "schema_version": "",
         "event_id": "",
         "event_type": "",
         "transaction_id": "",

@@ -12,6 +12,7 @@ from multi_agent_brief.cli.deliver_commands import (
 )
 from multi_agent_brief.experiments.experiment_080 import _registered_run_integrity
 from multi_agent_brief.orchestrator.recovery_state import (
+    OWNER_REVISION_SCHEMA,
     RECOVERY_AWAITING,
     RECOVERY_COMPLETED_NON_REFERENCE,
     RECOVERY_FINALIZE_COMPLETION_PENDING,
@@ -21,6 +22,7 @@ from multi_agent_brief.orchestrator.recovery_state import (
     RECOVERY_NOT_APPLICABLE,
     RECOVERY_RERUN_PENDING,
     evaluate_recovery_state,
+    recovery_stale_artifact_baselines,
 )
 from multi_agent_brief.orchestrator.runtime_state import build_completion_projection
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
@@ -144,6 +146,7 @@ def _recovery_event(*, rerun_start_stage: str = "auditor") -> dict:
         stage_id="editor",
         decision="repair_complete",
         metadata={
+            "owner_revision_schema_version": OWNER_REVISION_SCHEMA,
             "transaction_id": RECOVERY_ID,
             "repair_start_transaction_id": "repair-start-001",
             "contamination_event_id": CONTAMINATION_ID,
@@ -359,6 +362,9 @@ def test_recovery_state_rejects_unbound_legacy_repaired_status(tmp_path: Path) -
         "recovery-before-latest-contamination-ignored",
         "recovery-bound-to-older-contamination-invalid",
         "old-run-events-ignored",
+        "legacy-unversioned-clean-repair-ignored",
+        "legacy-unversioned-stale-metadata-migrated",
+        "versioned-owner-revision-missing-binding-invalid",
         "second-recovery-latest-wins",
         "new-contamination-opens-cycle",
     ],
@@ -388,6 +394,75 @@ def test_recovery_event_timeline_matrix(tmp_path: Path, case_id: str) -> None:
         old_recovery["run_id"] = "old-run"
         events = [old, old_recovery]
         expected_status = RECOVERY_NOT_APPLICABLE
+        expected_contamination = ""
+    elif case_id == "legacy-unversioned-clean-repair-ignored":
+        events = [
+            _event(
+                "repair_completed",
+                "legacy-repair-event",
+                stage_id="editor",
+                decision="repair_complete",
+                metadata={
+                    "transaction_id": "legacy-repair-transaction",
+                    "repair_owner": "editor",
+                    "must_rerun_from": "auditor",
+                    "next_stage": "auditor",
+                    "allowed_artifacts": ["output/intermediate/audited_brief.md"],
+                },
+            )
+        ]
+        expected_status = RECOVERY_NOT_APPLICABLE
+        expected_contamination = ""
+    elif case_id == "legacy-unversioned-stale-metadata-migrated":
+        events = [
+            _event(
+                "repair_completed",
+                "legacy-repair-event",
+                stage_id="editor",
+                decision="repair_complete",
+                metadata={
+                    "transaction_id": "legacy-repair-transaction",
+                    "repair_owner": "editor",
+                    "must_rerun_from": "auditor",
+                    "next_stage": "auditor",
+                },
+            )
+        ]
+        workflow["last_repair_transaction"] = {
+            "transaction_id": "legacy-repair-transaction",
+            "stage_id": "editor",
+            "decision": "repair_complete",
+        }
+        workflow["stage_statuses"] = {
+            "auditor": {
+                "status": "ready",
+                "metadata": {
+                    "stale_after_repair": True,
+                    "repair_transaction_id": "legacy-repair-transaction",
+                    "repair_owner": "editor",
+                    "stale_artifact_baselines": {
+                        "audit_report": {"sha256": "legacy-audit-sha"},
+                    },
+                },
+            }
+        }
+        expected_status = RECOVERY_NOT_APPLICABLE
+        expected_contamination = ""
+    elif case_id == "versioned-owner-revision-missing-binding-invalid":
+        events = [
+            _event(
+                "repair_completed",
+                "invalid-current-repair-event",
+                stage_id="editor",
+                decision="repair_complete",
+                metadata={
+                    "owner_revision_schema_version": OWNER_REVISION_SCHEMA,
+                    "transaction_id": "current-repair-transaction",
+                },
+            )
+        ]
+        expected_status = RECOVERY_INVALID
+        expected_reason = "owner_revision_binding_invalid"
         expected_contamination = ""
     else:
         workflow["run_integrity"] = {
@@ -439,6 +514,16 @@ def test_recovery_event_timeline_matrix(tmp_path: Path, case_id: str) -> None:
         assert payload["contamination_event_id"] == expected_contamination
     if expected_recovery:
         assert payload["recovery_transaction_id"] == expected_recovery
+    if case_id == "legacy-unversioned-clean-repair-ignored":
+        assert payload["owner_revision"]["status"] == "none"
+    if case_id == "legacy-unversioned-stale-metadata-migrated":
+        assert payload["owner_revision"]["status"] == "legacy_migrated"
+        assert payload["owner_revision"]["stale_artifact_baselines"] == {
+            "audit_report": {"sha256": "legacy-audit-sha"},
+        }
+        assert recovery_stale_artifact_baselines(payload) == {
+            "audit_report": {"sha256": "legacy-audit-sha"},
+        }
 
 
 @pytest.mark.parametrize(

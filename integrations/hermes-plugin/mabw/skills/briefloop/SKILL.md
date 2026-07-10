@@ -103,9 +103,11 @@ Hard boundaries:
 - Do not bypass gates, stage completion, repair transactions, or
   `finalize-complete`.
 - Do not auto-deliver; delivery remains human-triggered and gated.
-- Delivery truth comes from `finalize_report.json` and the completion
-  projection, never from file existence; do not claim delivery unless
-  `delivery_truth.valid=true`.
+- Delivery eligibility comes from `finalize_report.json`; action outcome comes
+  from the completion projection's current-bound delivery event. Never infer
+  either from file existence. `delivery_truth.valid=true` permits a delivery
+  action but does not prove it occurred; claim delivery only when
+  `event_truth.delivery_succeeded=true`.
 - Do not approve Improvement Memory without explicit human approval.
 - Do not continue from an active owner-stage repair except through
   `repair complete` or read-only inspection.

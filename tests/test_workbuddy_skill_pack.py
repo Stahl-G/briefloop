@@ -454,6 +454,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "latest_gate_status:",
         "finalize_report:",
         "delivery_truth:",
+        "delivery_event:",
         "next_allowed_action:",
     ]:
         assert field in text
@@ -464,7 +465,8 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "`recovery_status` 为",
         "`recovery_status=completed_non_reference`",
         "`recovery_action` / `next_allowed_action`",
-        "`delivery_truth.valid` 不是",
+        "`delivery_truth.valid=true` 只表示当前 reader",
+        "`event_truth.delivery_succeeded=true`",
         "才说 run 里有草稿",
         "任何导出、分享、打包、zip 或附件候选包含",
     ]:
@@ -476,7 +478,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "非交付工作流步骤",
         "否则说目前既没有草稿也没有交付",
         "本身不阻塞更早的 handoff 指派阶段",
-        "`briefloop workbuddy diagnose --json` 报告 `delivery_truth.valid=true`",
+        "`briefloop workbuddy diagnose --json` 同时报告 `delivery_truth.valid=true`",
         "不要打包或分享整个工作区",
         "绝不包含 `.env`",
         "只分享经人工确认的非敏感摘录",
@@ -509,6 +511,28 @@ def test_workbuddy_recovery_hard_stops_use_canonical_recovery_state() -> None:
         assert "delivery_truth.valid=true" in compact, path
         assert "不要再次运行 finalize" in compact, path
         assert "不要从 `run_integrity`" in compact, path
+
+
+def test_workbuddy_delivery_outcome_contract_is_consistent() -> None:
+    canonical = _compact(_all_skill_text())
+    legacy = _compact(_all_legacy_workbuddy_text())
+
+    for text in (canonical, legacy):
+        for token in [
+            "delivery_truth.valid=true",
+            "delivery_event",
+            "delivery_bundle_prepared",
+            "delivery_draft_created",
+            "delivery_succeeded",
+            "event_truth.delivery_succeeded=true",
+        ]:
+            assert token in text
+
+    assert "只表示当前 reader bundle" in canonical
+    assert "不表示交付已经发生" in canonical
+    assert "这两者都不是 delivered" in canonical
+    assert "does not mean delivery occurred" in legacy
+    assert "neither is delivered" in legacy
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:

@@ -99,20 +99,24 @@ After every key command or role return, print this Run Card from machine facts:
 runtime:
 current_stage:
 run_integrity:
+recovery_status:
+recovery_action:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
 If `doctor` reports any error, stop and show the complete doctor output before
-continuing. If `run_integrity` is not clean, stop finalize, delivery, export,
-and share actions; for earlier role-work stages, report the Run Card and
-continue only with non-delivery workflow steps allowed by the handoff. If
-`output/intermediate/finalize_report.json` or `output/delivery/` is missing,
-do not claim delivery or export a delivery package. Say the run has a draft
-only when `output/intermediate/audited_brief.md` exists;
+continuing. Read recovery and delivery fields from `briefloop workbuddy
+diagnose --workspace <workspace> --json`; do not infer recovery from
+`run_integrity`. `delivery_truth.valid=true` permits a delivery action but does
+not prove delivery. Report `delivery_bundle_prepared` as local ready and
+`delivery_draft_created` as draft created; claim delivered only for
+`delivery_event=delivery_succeeded`. Say the run has a role draft only when
+`output/intermediate/audited_brief.md` exists;
 otherwise say no draft or delivery exists yet. Continue earlier stages only
 when the handoff allows them.
 

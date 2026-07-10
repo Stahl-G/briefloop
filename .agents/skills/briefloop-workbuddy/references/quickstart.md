@@ -115,6 +115,7 @@ blocked:
 latest_gate_status:
 finalize_report:
 delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
@@ -127,8 +128,11 @@ next_allowed_action:
 `delivery_truth.valid=true` 时才可本地交付，并且永久不具备 reference 资格，
 否则停止交付。对更早的角色工作阶段，报告 Run Card，并只继续 handoff
 允许的非交付工作流步骤。
-如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要声称已交付，
-也不要导出交付包。仅当 `output/intermediate/audited_brief.md` 存在时才说
+`delivery_truth.valid=true` 只表示当前 reader bundle 可进入交付动作。只有
+`delivery_event=delivery_succeeded` 才允许声称已交付；
+`delivery_bundle_prepared` 只能报告本地包已准备，`delivery_draft_created` 只能
+报告草稿已创建。如果 WorkBuddy 诊断没有报告 valid bundle，不要执行交付。
+仅当 `output/intermediate/audited_brief.md` 存在时才说
 run 里有草稿；否则说目前既没有草稿也没有交付。只有 handoff 允许时才继续
 更早的阶段。
 

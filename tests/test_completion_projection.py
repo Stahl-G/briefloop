@@ -324,6 +324,18 @@ def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path:
 
     append_event(
         workspace=ws,
+        run_id="old-run",
+        event_type="delivery_succeeded",
+        actor="cli",
+        reason="Old run reused the render transaction ID.",
+        metadata={"render_transaction_id": "tx-finalize-001"},
+    )
+    old_run = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    assert old_run["event_truth"]["delivery_outcome"] == "delivery_bundle_prepared"
+    assert old_run["event_truth"]["delivery_succeeded"] is False
+
+    append_event(
+        workspace=ws,
         run_id=state["manifest"]["run_id"],
         event_type="delivery_succeeded",
         actor="cli",
@@ -345,6 +357,29 @@ def test_completion_projection_distinguishes_current_delivery_outcomes(tmp_path:
     delivered = build_completion_projection(workspace=ws, repo_workdir=ROOT)
     assert delivered["event_truth"]["delivery_outcome"] == "delivery_succeeded"
     assert delivered["event_truth"]["delivery_succeeded"] is True
+
+
+def test_completion_projection_ignores_old_run_finalize_event(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_gate_report(ws)
+    append_event(
+        workspace=ws,
+        run_id="old-run",
+        event_type="decision_recorded",
+        actor="cli",
+        stage_id="finalize",
+        decision="finalize",
+        reason="Old run finalize completion.",
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["event_truth"]["finalize_event_present"] is False
+    assert payload["delivery_truth"]["valid"] is False
+    assert "finalize_event_missing" in payload["delivery_truth"]["findings"]
 
 
 def test_completion_projection_stops_on_missing_required_control_file(tmp_path: Path) -> None:

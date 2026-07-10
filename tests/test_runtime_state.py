@@ -19,7 +19,10 @@ from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.deliver_commands import deliver_workspace
 from multi_agent_brief.contracts.target_contract import project_assessment_target_status
-from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
+from multi_agent_brief.orchestrator.recovery_state import (
+    OWNER_REVISION_SCHEMA,
+    evaluate_recovery_state,
+)
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
@@ -7570,6 +7573,15 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
         reason="human approved supersede after contaminated direct edit",
     )
     supersede_transaction_id = superseded["transaction"]["transaction_id"]
+    supersede_event = next(
+        event
+        for event in _event_records(ws)
+        if event["event_type"] == "repair_stage_superseded"
+    )
+    assert (
+        supersede_event["metadata"]["owner_revision_schema_version"]
+        == OWNER_REVISION_SCHEMA
+    )
     refreshed_report = json.loads(_valid_audit_report_payload())
     refreshed_report["supersede_reviewed"] = True
     _write_json_artifact(ws, "audit_report.json", json.dumps(refreshed_report) + "\n")
@@ -7865,6 +7877,7 @@ def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downs
     ]
     events = _event_records(ws)
     assert events[-1]["event_type"] == "repair_completed"
+    assert events[-1]["metadata"]["owner_revision_schema_version"] == OWNER_REVISION_SCHEMA
     assert events[-1]["metadata"]["repair_owner"] == "editor"
     stale_validated_events = [
         event

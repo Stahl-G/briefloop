@@ -783,7 +783,10 @@ def test_status_command_projects_recovery_without_replaying_run_integrity(tmp_pa
     assert "[status] recovery: awaiting_recovery action=request_recovery_decision" in out
 
 
-def test_status_command_rejects_auditable_target_with_unbound_repair_event(tmp_path, capsys):
+def test_status_command_keeps_legacy_repair_history_out_of_recovery_guidance(
+    tmp_path,
+    capsys,
+):
     ws = _minimal_workspace(tmp_path / "ws")
     initialize_runtime_state(workspace=ws, runtime="claude", actor="cli")
     _write_auditable_target_complete_state(ws)
@@ -817,10 +820,9 @@ def test_status_command_rejects_auditable_target_with_unbound_repair_event(tmp_p
     experiment = payload["experiment_080"]
     assert experiment["target_complete"] is False
     assert "audit binding relevant_repair_transaction_ids does not match event_log" in experiment["reasons"]
+    assert payload["recovery_state"]["status"] == "not_applicable"
     assert "experiments 080 register-run" not in payload["suggested_next_command"]
-    assert payload["suggested_next_command"] == (
-        f"briefloop workbuddy diagnose --workspace {ws} --json"
-    )
+    assert payload["suggested_next_command"] == f"briefloop status --workspace {ws} --json"
     assert "/mabw deliver" not in payload["suggested_next_command"]
     assert "/generate-brief" not in payload["suggested_next_command"]
 

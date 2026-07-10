@@ -93,6 +93,14 @@ QUALITY_GATE_ROUTE_SOURCES = {
     "finalize_quality_gate_report",
     "quality_gate_report",
 }
+
+
+def _owner_revision_schema_version() -> str:
+    from multi_agent_brief.orchestrator.recovery_state import OWNER_REVISION_SCHEMA
+
+    return OWNER_REVISION_SCHEMA
+
+
 GATE_SCOPED_STAGES = {"auditor", "finalize"}
 NON_GATE_ROUTE_SOURCES = {
     "audit_report",
@@ -1106,6 +1114,7 @@ def supersede_stage_artifact_transaction(
             artifact_id=artifact_id,
             reason=reason,
             metadata={
+                "owner_revision_schema_version": _owner_revision_schema_version(),
                 "transaction_id": transaction_id,
                 "repair_start_transaction_id": transaction_id,
                 "run_id": run_id,
@@ -1786,6 +1795,7 @@ def complete_repair_transaction(
                 **_repair_event_metadata(
                     {**active_repair, "transaction_id": transaction_id}
                 ),
+                "owner_revision_schema_version": _owner_revision_schema_version(),
                 "run_id": run_id,
                 "contamination_event_id": active_repair.get("contamination_event_id"),
                 "owner_stage": owner,

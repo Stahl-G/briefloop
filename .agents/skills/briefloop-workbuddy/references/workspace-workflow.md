@@ -48,6 +48,7 @@ blocked:
 latest_gate_status:
 finalize_report:
 delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
@@ -71,8 +72,10 @@ Quality Panel 已生成。
 不要说 `Analyst 已经分析完成` 或 `Auditor 已通过`，除非对应的工件、事件、
 事务或 status 输出存在。
 
-不要说 `交付完成`、`delivered` 或 `delivery complete`，除非 WorkBuddy
-诊断报告 `delivery_truth.valid=true`。
+`delivery_truth.valid=true` 只表示当前 reader bundle 可进入交付动作。不要说
+`交付完成`、`delivered` 或 `delivery complete`，除非 WorkBuddy 诊断报告
+`delivery_event=delivery_succeeded`。`delivery_bundle_prepared` 表示本地包已
+准备，`delivery_draft_created` 表示草稿已创建；两者都不是 delivered。
 
 ## 硬停
 
@@ -86,8 +89,9 @@ Quality Panel 已生成。
   资格，否则停止交付。
 - 对于早期阶段的草稿工作，报告 Run Card，并只继续 handoff 允许的非交付
   工作流步骤。
-- 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要声称已交付，
-  也不要导出交付包。仅当 `output/intermediate/audited_brief.md` 存在时才
+- 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要执行交付；
+  如果 `delivery_event` 不是 `delivery_succeeded`，不要声称已交付。仅当
+  `output/intermediate/audited_brief.md` 存在时才
   报告"仅有草稿"；否则说目前既没有草稿也没有交付。这在 finalize 之前是
   正常状态，本身不阻塞更早的 handoff 指派阶段。
 - 如果 zip、导出或附件候选包含 `.env` 或密钥，停止。不要分享；建议轮换

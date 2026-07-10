@@ -392,6 +392,12 @@ def _event_truth(
     finalize_truth: Mapping[str, Any],
     recovery_state: Mapping[str, Any],
 ) -> dict[str, Any]:
+    current_run_id = _clean_text(recovery_state.get("run_id"))
+    current_events = [
+        event
+        for event in event_records
+        if current_run_id and _clean_text(event.get("run_id")) == current_run_id
+    ]
     outcome_types = {
         "delivery_bundle_prepared",
         "delivery_draft_created",
@@ -400,7 +406,7 @@ def _event_truth(
     }
     bound_outcomes = [
         event
-        for event in event_records
+        for event in current_events
         if event.get("event_type") in outcome_types
         and _delivery_event_is_current(
             event,
@@ -409,10 +415,20 @@ def _event_truth(
         )
     ]
     latest_outcome = _clean_text(bound_outcomes[-1].get("event_type")) if bound_outcomes else ""
+    bound_attempts = [
+        event
+        for event in current_events
+        if event.get("event_type") == "delivery_attempted"
+        and _delivery_event_is_current(
+            event,
+            finalize_truth=finalize_truth,
+            recovery_state=recovery_state,
+        )
+    ]
     return {
         "status": event_log_status,
-        "finalize_event_present": _has_finalize_event(event_records),
-        "delivery_attempt_present": _has_event(event_records, {"delivery_attempted"}),
+        "finalize_event_present": _has_finalize_event(current_events),
+        "delivery_attempt_present": bool(bound_attempts),
         "delivery_event_present": bool(bound_outcomes),
         "delivery_outcome": latest_outcome or "missing",
         "delivery_bundle_prepared": latest_outcome == "delivery_bundle_prepared",
@@ -428,6 +444,9 @@ def _delivery_event_is_current(
     finalize_truth: Mapping[str, Any],
     recovery_state: Mapping[str, Any],
 ) -> bool:
+    current_run_id = _clean_text(recovery_state.get("run_id"))
+    if not current_run_id or _clean_text(event.get("run_id")) != current_run_id:
+        return False
     metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else {}
     render_transaction_id = _clean_text(finalize_truth.get("render_transaction_id"))
     if not render_transaction_id or _clean_text(metadata.get("render_transaction_id")) != render_transaction_id:
