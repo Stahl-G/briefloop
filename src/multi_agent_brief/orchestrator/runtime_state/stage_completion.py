@@ -111,7 +111,6 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     STAGE_SKIPPED,
     _allowed_decisions_for_stage,
     _next_stage_id,
-    _owner_revision_stale_metadata,
     _stage_status,
     _status_entry,
     _workflow_after_completion,
@@ -499,16 +498,10 @@ def _workflow_with_topology_satisfaction(
         )
         current_stage = _next_stage_id(stages, target_stage_id)
         if current_stage:
-            previous_next = (
-                statuses.get(current_stage)
-                if isinstance(statuses.get(current_stage), dict)
-                else {}
-            )
             statuses[current_stage] = _status_entry(
                 STAGE_READY,
                 "",
                 now,
-                metadata=_owner_revision_stale_metadata(previous_next),
             )
 
     updated["current_stage"] = current_stage
@@ -708,6 +701,13 @@ def _stale_expected_artifact_refresh_reasons(
         if isinstance(old_registry.get("artifacts"), dict)
         else {}
     )
+    from multi_agent_brief.orchestrator.recovery_state import (
+        evaluate_recovery_state,
+        recovery_stale_artifact_baselines,
+    )
+
+    recovery_state = evaluate_recovery_state(workspace=workspace)
+    recovery_baselines = recovery_stale_artifact_baselines(recovery_state)
     reasons: list[str] = []
     for artifact_id in [str(item) for item in (stage.get("expected_artifacts") or [])]:
         record = registry_artifacts.get(artifact_id)
@@ -728,8 +728,7 @@ def _stale_expected_artifact_refresh_reasons(
         if not path.is_file():
             continue
         stale_sha = _stale_artifact_baseline_sha(
-            workflow=workflow,
-            stage_id=str(stage.get("stage_id") or ""),
+            stale_artifact_baselines=recovery_baselines,
             artifact_id=artifact_id,
             record=record,
         )
@@ -749,32 +748,13 @@ def _stale_expected_artifact_refresh_reasons(
 
 def _stale_artifact_baseline_sha(
     *,
-    workflow: dict[str, Any],
-    stage_id: str,
+    stale_artifact_baselines: dict[str, dict[str, Any]],
     artifact_id: str,
     record: dict[str, Any],
 ) -> str | None:
-    statuses = (
-        workflow.get("stage_statuses")
-        if isinstance(workflow.get("stage_statuses"), dict)
-        else {}
-    )
-    stage_status = (
-        statuses.get(stage_id) if isinstance(statuses.get(stage_id), dict) else {}
-    )
-    metadata = (
-        stage_status.get("metadata")
-        if isinstance(stage_status.get("metadata"), dict)
-        else {}
-    )
-    baselines = (
-        metadata.get("stale_artifact_baselines")
-        if isinstance(metadata.get("stale_artifact_baselines"), dict)
-        else {}
-    )
     baseline = (
-        baselines.get(artifact_id)
-        if isinstance(baselines.get(artifact_id), dict)
+        stale_artifact_baselines.get(artifact_id)
+        if isinstance(stale_artifact_baselines.get(artifact_id), dict)
         else {}
     )
     baseline_sha = baseline.get("sha256")

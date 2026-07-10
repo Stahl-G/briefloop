@@ -321,7 +321,8 @@ def test_recovery_state_rejects_duplicate_event_ids(tmp_path: Path) -> None:
     payload = _evaluate(ws)
 
     assert payload["status"] == RECOVERY_INVALID
-    assert payload["reason_code"] == "event_identity_invalid"
+    assert payload["reason_code"] == "control_context_invalid"
+    assert "Duplicate event_id" in payload["reason"]
 
 
 def test_recovery_state_rejects_unbound_legacy_repaired_status(tmp_path: Path) -> None:

@@ -18,6 +18,7 @@ import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_
 from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts.target_contract import project_assessment_target_status
+from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
@@ -4097,20 +4098,17 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
         artifact="source_candidates.yaml",
         reason="human approved supersede after source candidate edit",
     )
-    screener_metadata = superseded["workflow_state"]["stage_statuses"]["screener"]["metadata"]
-    assert screener_metadata["stale_after_supersede"] is True
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
     assert (
-        screener_metadata["stale_artifact_baselines"]["screened_candidates"]["sha256"]
+        recovery["stale_artifact_baselines"]["screened_candidates"]["sha256"]
         == screened_baseline_sha
     )
     assert (
         superseded["artifact_registry"]["artifacts"]["screened_candidates"]["validation_result"]
         == "stale_after_supersede"
     )
-    claim_ledger_metadata = superseded["workflow_state"]["stage_statuses"]["claim-ledger"]["metadata"]
-    assert claim_ledger_metadata["stale_after_supersede"] is True
     assert (
-        claim_ledger_metadata["stale_artifact_baselines"]["claim_ledger"]["sha256"]
+        recovery["stale_artifact_baselines"]["claim_ledger"]["sha256"]
         == claim_ledger_baseline_sha
     )
 
@@ -4148,7 +4146,9 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     assert "stale after supersede" in str(excinfo.value)
     checked = check_runtime_state(workspace=ws, repo_workdir=repo)
     checked_screener = checked["workflow_state"]["stage_statuses"]["screener"]
-    assert checked_screener["metadata"]["stale_after_supersede"] is True
+    assert "metadata" not in checked_screener
+    checked_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
+    assert checked_recovery["stale_artifact_baselines"]["screened_candidates"]["sha256"] == screened_baseline_sha
     checked_screened = checked["artifact_registry"]["artifacts"]["screened_candidates"]
     assert checked_screened["status"] == "stale"
     assert checked_screened["validation_result"] == "stale_after_supersede"
@@ -4182,11 +4182,9 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     assert refreshed_screener["metadata"].get("stale_after_supersede") is not True
     claim_ledger_status = workflow["stage_statuses"]["claim-ledger"]
     assert claim_ledger_status["status"] == "ready"
-    assert claim_ledger_status["metadata"]["stale_after_supersede"] is True
-    assert (
-        claim_ledger_status["metadata"]["stale_artifact_baselines"]["claim_ledger"]["sha256"]
-        == claim_ledger_baseline_sha
-    )
+    assert "metadata" not in claim_ledger_status
+    completed_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
+    assert completed_recovery["stale_artifact_baselines"]["claim_ledger"]["sha256"] == claim_ledger_baseline_sha
     refreshed_screened = completed["artifact_registry"]["artifacts"]["screened_candidates"]
     assert refreshed_screened["status"] == "valid"
     stale_claim_ledger = completed["artifact_registry"]["artifacts"]["claim_ledger"]
@@ -7284,9 +7282,10 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
     assert workflow["stage_statuses"]["editor"]["status"] == "complete"
     assert workflow["stage_statuses"]["editor"]["metadata"]["superseded"] is True
     assert workflow["stage_statuses"]["auditor"]["status"] == "ready"
-    assert workflow["stage_statuses"]["auditor"]["metadata"]["stale_after_supersede"] is True
     assert workflow["stage_statuses"]["finalize"]["status"] == "pending"
-    assert workflow["stage_statuses"]["finalize"]["metadata"]["stale_after_supersede"] is True
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert recovery["recovery_event_type"] == "repair_stage_superseded"
+    assert recovery["recovery_transaction_id"] == state["transaction"]["transaction_id"]
 
     registry = state["artifact_registry"]["artifacts"]
     assert registry["audited_brief"]["sha256"] == current_sha
@@ -7312,16 +7311,11 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
     checked_once = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     checked_twice = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     for checked in (checked_once, checked_twice):
-        checked_workflow = checked["workflow_state"]
-        assert checked_workflow["stage_statuses"]["auditor"]["metadata"]["stale_after_supersede"] is True
-        assert (
-            checked_workflow["stage_statuses"]["auditor"]["metadata"]["supersede_transaction_id"]
-            == state["transaction"]["transaction_id"]
-        )
-        assert checked_workflow["stage_statuses"]["finalize"]["metadata"]["stale_after_supersede"] is True
         checked_registry = checked["artifact_registry"]["artifacts"]
         assert checked_registry["audit_report"]["status"] == "stale"
         assert checked_registry["audit_report"]["validation_result"] == "stale_after_supersede"
+        checked_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+        assert checked_recovery["recovery_transaction_id"] == state["transaction"]["transaction_id"]
 
     _write_quality_gate_report(ws, status="fail", blocking=True, stage_id="auditor")
     blocked_once = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -7330,11 +7324,11 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
         blocked_workflow = blocked["workflow_state"]
         auditor_status = blocked_workflow["stage_statuses"]["auditor"]
         assert auditor_status["status"] == "blocked"
-        assert auditor_status["metadata"]["stale_after_supersede"] is True
-        assert auditor_status["metadata"]["supersede_transaction_id"] == state["transaction"]["transaction_id"]
         blocked_registry = blocked["artifact_registry"]["artifacts"]
         assert blocked_registry["audit_report"]["status"] == "stale"
         assert blocked_registry["audit_report"]["validation_result"] == "stale_after_supersede"
+        blocked_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+        assert blocked_recovery["recovery_transaction_id"] == state["transaction"]["transaction_id"]
 
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_finalize_transaction(
@@ -7593,9 +7587,9 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
     assert auditor_metadata["audit_binding"]["relevant_repair_transaction_ids"] == [
         supersede_transaction_id
     ]
-    finalize_metadata = workflow["stage_statuses"]["finalize"]["metadata"]
-    assert finalize_metadata["stale_after_supersede"] is True
-    assert finalize_metadata["supersede_transaction_id"] == supersede_transaction_id
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert recovery["recovery_transaction_id"] == supersede_transaction_id
+    assert recovery["status"] == "finalize_render_required"
     condition_metadata = {
         "case_id": "runtime-state-supersede-auditable",
         "condition": "controlled",
@@ -7855,9 +7849,9 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
     assert refreshed_audit_sha != stale_audit_sha
     refreshed_state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     refreshed_audit_record = refreshed_state["artifact_registry"]["artifacts"]["audit_report"]
-    assert refreshed_audit_record["status"] == "stale"
+    assert refreshed_audit_record["status"] == "valid"
     assert refreshed_audit_record["sha256"] == refreshed_audit_sha
-    assert refreshed_audit_record["stale_baseline_sha256"] == stale_audit_sha
+    assert "stale_baseline_sha256" not in refreshed_audit_record
     _write_quality_gate_report(ws, stage_id="auditor")
     audited_state = complete_stage_transaction(
         workspace=ws,
@@ -7908,15 +7902,15 @@ def test_auditor_rerun_after_editor_repair_accepts_new_artifact_without_stale_ba
         reason="editor repaired audited brief before auditor wrote audit report",
     )
     repair_transaction_id = repaired["transaction"]["transaction_id"]
-    auditor_metadata = repaired["workflow_state"]["stage_statuses"]["auditor"]["metadata"]
-    baselines = auditor_metadata["stale_artifact_baselines"]
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    baselines = recovery["owner_revision"]["stale_artifact_baselines"]
     assert baselines["audit_report"]["sha256"] is None
 
     _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
     refreshed_audit_sha = _sha256_file(_intermediate(ws) / "audit_report.json")
     refreshed_state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     refreshed_audit_record = refreshed_state["artifact_registry"]["artifacts"]["audit_report"]
-    assert refreshed_audit_record["status"] == "stale"
+    assert refreshed_audit_record["status"] == "valid"
     assert refreshed_audit_record["sha256"] == refreshed_audit_sha
     assert "stale_baseline_sha256" not in refreshed_audit_record
     _write_quality_gate_report(ws, stage_id="auditor")

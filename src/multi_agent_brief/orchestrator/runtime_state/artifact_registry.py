@@ -1507,6 +1507,7 @@ def _artifact_record(
     workspace: Path,
     artifact: dict[str, Any],
     workflow: dict[str, Any],
+    recovery_state: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     artifact_id = str(artifact.get("artifact_id") or "")
     rel_path = str(artifact.get("path") or "")
@@ -1542,19 +1543,34 @@ def _artifact_record(
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
     sha256 = _sha256_file(path) if path.exists() and path.is_file() else None
-    stale_metadata = _producer_stage_stale_after_owner_revision(workflow, producer_stage)
-    if stale_metadata and path.exists() and path.is_file():
+    stale_metadata = _recovery_stale_metadata(
+        recovery_state=recovery_state,
+        artifact_id=artifact_id,
+    )
+    stale_baseline_sha256 = None
+    baseline = stale_metadata.get("baseline") if stale_metadata else None
+    if isinstance(baseline, Mapping):
+        baseline_sha = baseline.get("sha256")
+        if isinstance(baseline_sha, str) and baseline_sha:
+            stale_baseline_sha256 = baseline_sha
+    if (
+        stale_metadata
+        and stale_baseline_sha256
+        and sha256 == stale_baseline_sha256
+        and path.exists()
+        and path.is_file()
+    ):
         status = ARTIFACT_STALE
-        stale_after_supersede = stale_metadata.get("stale_after_supersede") is True
+        stale_after_supersede = (
+            stale_metadata.get("recovery_event_type") == "repair_stage_superseded"
+        )
         validation_result = "stale_after_supersede" if stale_after_supersede else "stale_after_repair"
         revision_tx = (
-            stale_metadata.get("supersede_transaction_id")
-            or stale_metadata.get("repair_transaction_id")
+            stale_metadata.get("recovery_transaction_id")
             or "<unknown>"
         )
         revision_owner = (
-            stale_metadata.get("supersede_stage")
-            or stale_metadata.get("repair_owner")
+            stale_metadata.get("owner_stage")
             or "<unknown>"
         )
         revision_kind = "supersede" if stale_after_supersede else "repair"
@@ -1563,18 +1579,6 @@ def _artifact_record(
             f"{revision_tx} by '{revision_owner}'; rerun producer stage '{producer_stage}' "
             "before consuming it."
         )
-    stale_baseline_sha256 = None
-    if stale_metadata:
-        baselines = (
-            stale_metadata.get("stale_artifact_baselines")
-            if isinstance(stale_metadata.get("stale_artifact_baselines"), dict)
-            else {}
-        )
-        baseline = baselines.get(artifact_id) if isinstance(baselines.get(artifact_id), dict) else {}
-        baseline_sha = baseline.get("sha256")
-        if isinstance(baseline_sha, str) and baseline_sha:
-            stale_baseline_sha256 = baseline_sha
-
     record = {
         "artifact_id": artifact_id,
         "path": rel_path,
@@ -1592,21 +1596,32 @@ def _artifact_record(
         "mtime": mtime,
         "sha256": sha256,
     }
-    if stale_baseline_sha256:
+    if status == ARTIFACT_STALE and stale_baseline_sha256:
         record["stale_baseline_sha256"] = stale_baseline_sha256
     return record
 
 
-def _producer_stage_stale_after_owner_revision(
-    workflow: dict[str, Any],
-    producer_stage: str,
+def _recovery_stale_metadata(
+    *,
+    recovery_state: Mapping[str, Any] | None,
+    artifact_id: str,
 ) -> dict[str, Any] | None:
-    statuses = workflow.get("stage_statuses") if isinstance(workflow.get("stage_statuses"), dict) else {}
-    stage_status = statuses.get(producer_stage) if isinstance(statuses.get(producer_stage), dict) else {}
-    metadata = stage_status.get("metadata") if isinstance(stage_status.get("metadata"), dict) else {}
-    if metadata.get("stale_after_repair") is True or metadata.get("stale_after_supersede") is True:
-        return metadata
-    return None
+    if not isinstance(recovery_state, Mapping):
+        return None
+    owner_revision = recovery_state.get("owner_revision")
+    authority = owner_revision if isinstance(owner_revision, Mapping) else recovery_state
+    baselines = authority.get("stale_artifact_baselines")
+    if not isinstance(baselines, Mapping):
+        return None
+    baseline = baselines.get(artifact_id)
+    if not isinstance(baseline, Mapping):
+        return None
+    return {
+        "baseline": baseline,
+        "recovery_event_type": authority.get("event_type") or recovery_state.get("recovery_event_type"),
+        "recovery_transaction_id": authority.get("transaction_id") or recovery_state.get("recovery_transaction_id"),
+        "owner_stage": authority.get("owner_stage") or recovery_state.get("owner_stage"),
+    }
 
 
 def _build_artifact_registry(
@@ -1616,12 +1631,20 @@ def _build_artifact_registry(
     artifacts: list[dict[str, Any]],
     workflow: dict[str, Any],
     updated_at: str,
+    recovery_state: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if recovery_state is None:
+        from multi_agent_brief.orchestrator.recovery_state import (
+            evaluate_recovery_state,
+        )
+
+        recovery_state = evaluate_recovery_state(workspace=workspace)
     records = {
         str(artifact.get("artifact_id")): _artifact_record(
             workspace=workspace,
             artifact=artifact,
             workflow=workflow,
+            recovery_state=recovery_state,
         )
         for artifact in artifacts
         if artifact.get("artifact_id")

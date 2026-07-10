@@ -342,6 +342,10 @@ def _gate_scoped_artifact_id_for_stage(stage_id: str | None) -> str | None:
 def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
     return {
         "transaction_id": active_repair.get("transaction_id"),
+        "repair_start_transaction_id": active_repair.get("repair_start_transaction_id"),
+        "repair_started_event_id": active_repair.get("repair_started_event_id"),
+        "run_id": active_repair.get("run_id"),
+        "contamination_event_id": active_repair.get("contamination_event_id"),
         "repair_owner": active_repair.get("repair_owner"),
         "allowed_artifacts": list(active_repair.get("allowed_artifacts") or []),
         "blocked_direct_edits": list(active_repair.get("blocked_direct_edits") or []),
@@ -350,6 +354,50 @@ def _repair_event_metadata(active_repair: dict[str, Any]) -> dict[str, Any]:
         "recommended_action": active_repair.get("recommended_action"),
         "run_integrity_effect": active_repair.get("run_integrity_effect"),
     }
+
+
+def _latest_contamination_event_id(
+    event_records: list[dict[str, Any]], *, run_id: str
+) -> str:
+    for event in reversed(event_records):
+        if (
+            event.get("event_type") == "run_integrity_contaminated"
+            and str(event.get("run_id") or "") == run_id
+        ):
+            return str(event.get("event_id") or "")
+    return ""
+
+
+def _repair_primary_artifact_id(active_repair: dict[str, Any]) -> str:
+    source = active_repair.get("source")
+    if isinstance(source, dict) and source.get("artifact_id"):
+        return str(source["artifact_id"])
+    return ""
+
+
+def _recovery_stale_artifact_baselines(
+    *,
+    stages: list[dict[str, Any]],
+    owner_stage: str,
+    baseline_records: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    stage_ids = _stage_ids(stages)
+    if owner_stage not in stage_ids:
+        return {}
+    downstream_stages = set(stage_ids[stage_ids.index(owner_stage) + 1 :])
+    baselines: dict[str, dict[str, Any]] = {}
+    for artifact_id, record in baseline_records.items():
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("producer_stage") or "") not in downstream_stages:
+            continue
+        baselines[str(artifact_id)] = {
+            "path": record.get("path"),
+            "status": record.get("status"),
+            "validation_result": record.get("validation_result"),
+            "sha256": record.get("sha256"),
+        }
+    return baselines
 
 
 def _workflow_with_repair_run_integrity_effect(
@@ -442,6 +490,7 @@ def _repair_artifact_baseline(registry: dict[str, Any]) -> dict[str, dict[str, A
             continue
         baseline[str(artifact_id)] = {
             "path": record.get("path"),
+            "producer_stage": record.get("producer_stage"),
             "status": record.get("status"),
             "validation_result": record.get("validation_result"),
             "sha256": record.get("sha256"),
@@ -646,6 +695,7 @@ def start_repair_transaction(
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
     transaction_id = uuid.uuid4().hex
+    repair_started_event_id = uuid.uuid4().hex
     now = utc_now()
     route_stage = _source_stage_for_repair_route(route)
     current_stage = str(workflow.get("current_stage") or "")
@@ -666,9 +716,36 @@ def start_repair_transaction(
         workflow=workflow,
         updated_at=now,
     )
+    current_integrity = (
+        workflow.get("run_integrity")
+        if isinstance(workflow.get("run_integrity"), dict)
+        else {}
+    )
+    effect = route.get("run_integrity_effect")
+    creates_contamination = (
+        isinstance(effect, dict)
+        and effect.get("reference_eligible") is False
+        and current_integrity.get("status") == RUN_INTEGRITY_CLEAN
+        and current_integrity.get("reference_eligible", True) is True
+    )
+    contamination_event_id = _latest_contamination_event_id(
+        event_records, run_id=run_id
+    )
+    if creates_contamination:
+        contamination_event_id = uuid.uuid4().hex
+    elif current_integrity.get("status") != RUN_INTEGRITY_CLEAN and not contamination_event_id:
+        raise RuntimeStateError(
+            "Non-clean repair start requires a current-run contamination event.",
+            details={"run_id": run_id, "run_integrity": current_integrity},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
     active_repair = {
-        "schema_version": "mabw.active_repair.v1",
+        "schema_version": "mabw.active_repair.v2",
         "transaction_id": transaction_id,
+        "repair_start_transaction_id": transaction_id,
+        "repair_started_event_id": repair_started_event_id,
+        "run_id": run_id,
+        "contamination_event_id": contamination_event_id,
         "repair_owner": route.get("repair_owner"),
         "allowed_artifacts": list(route.get("allowed_artifacts") or []),
         "blocked_direct_edits": list(route.get("blocked_direct_edits") or []),
@@ -700,6 +777,7 @@ def start_repair_transaction(
             workspace=ws,
             run_id=str(manifest["run_id"]),
             event_type="repair_started",
+            event_id=repair_started_event_id,
             actor=actor,
             stage_id=str(active_repair["repair_owner"]),
             reason=str(active_repair.get("reason") or "Repair transaction started."),
@@ -710,6 +788,7 @@ def start_repair_transaction(
                 workspace=ws,
                 run_id=str(manifest["run_id"]),
                 event_type="run_integrity_contaminated",
+                event_id=contamination_event_id,
                 actor=actor,
                 stage_id=contamination_reason.get("stage_id"),
                 artifact_id=contamination_reason.get("artifact_id"),
@@ -794,11 +873,21 @@ def supersede_stage_artifact_transaction(
             details={"run_integrity": integrity},
             error_code=E_ILLEGAL_TRANSITION,
         )
-    contamination_events = _run_integrity_contamination_events(event_records)
+    run_id = str(manifest["run_id"])
+    contamination_events = _run_integrity_contamination_events(
+        event_records, run_id=run_id
+    )
     if not contamination_events:
         raise RuntimeStateError(
             "Stage supersede requires a recorded run_integrity_contaminated event.",
             details={"run_integrity": integrity},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
+    contamination_event_id = str(contamination_events[-1].get("event_id") or "")
+    if not contamination_event_id:
+        raise RuntimeStateError(
+            "Stage supersede requires a contamination event identity.",
+            details={"run_id": run_id},
             error_code=E_TRANSACTION_INTEGRITY,
         )
 
@@ -887,17 +976,29 @@ def supersede_stage_artifact_transaction(
         reason=reason,
         now=now,
         transaction_id=transaction_id,
+        run_id=run_id,
+        contamination_event_id=contamination_event_id,
         old_registered_sha256=old_registered_sha256,
         current_bytes_sha256=current_bytes_sha256,
         baseline_records=old_records,
     )
-    run_id = str(manifest["run_id"])
     registry = _build_artifact_registry(
         workspace=ws,
         run_id=run_id,
         artifacts=artifacts,
         workflow=next_workflow,
         updated_at=now,
+        recovery_state={
+            "recovery_event_type": "repair_stage_superseded",
+            "recovery_transaction_id": transaction_id,
+            "owner_stage": stage_id,
+            "stale_artifact_baselines": (
+                (next_workflow.get("last_repair_transaction") or {}).get(
+                    "stale_artifact_baselines"
+                )
+                or {}
+            ),
+        },
     )
     frozen_verdict = interpret_frozen_artifact_integrity(
         old_registry=old_registry,
@@ -1006,12 +1107,23 @@ def supersede_stage_artifact_transaction(
             reason=reason,
             metadata={
                 "transaction_id": transaction_id,
+                "repair_start_transaction_id": transaction_id,
+                "run_id": run_id,
+                "contamination_event_id": contamination_event_id,
+                "owner_stage": stage_id,
                 "stage_id": stage_id,
                 "artifact_id": artifact_id,
                 "artifact_path": artifact_path,
                 "old_registered_sha256": old_registered_sha256,
                 "current_bytes_sha256": current_bytes_sha256,
+                "rerun_start_stage": next_workflow.get("current_stage"),
                 "next_stage": next_workflow.get("current_stage"),
+                "stale_artifact_baselines": (
+                    (next_workflow.get("last_repair_transaction") or {}).get(
+                        "stale_artifact_baselines"
+                    )
+                    or {}
+                ),
                 "reference_eligible": False,
                 "run_integrity_status": (next_workflow.get("run_integrity") or {}).get("status"),
                 "contamination_event_count": len(contamination_events),
@@ -1061,11 +1173,15 @@ def supersede_stage_artifact_transaction(
     return state
 
 
-def _run_integrity_contamination_events(event_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _run_integrity_contamination_events(
+    event_records: list[dict[str, Any]], *, run_id: str
+) -> list[dict[str, Any]]:
     return [
         event
         for event in event_records
-        if isinstance(event, dict) and event.get("event_type") == "run_integrity_contaminated"
+        if isinstance(event, dict)
+        and event.get("event_type") == "run_integrity_contaminated"
+        and str(event.get("run_id") or "") == run_id
     ]
 
 
@@ -1167,13 +1283,14 @@ def _workflow_after_stage_supersede(
     reason: str,
     now: str,
     transaction_id: str,
+    run_id: str,
+    contamination_event_id: str,
     old_registered_sha256: str,
     current_bytes_sha256: str,
     baseline_records: dict[str, Any],
 ) -> dict[str, Any]:
     stage_ids = _stage_ids(stages)
     stage_index = stage_ids.index(stage_id)
-    stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
     rerun_stage = _next_stage_id(stages, stage_id)
     if rerun_stage is None:
         raise RuntimeStateError(
@@ -1181,6 +1298,11 @@ def _workflow_after_stage_supersede(
             details={"stage_id": stage_id},
             error_code=E_ILLEGAL_TRANSITION,
         )
+    recovery_baselines = _recovery_stale_artifact_baselines(
+        stages=stages,
+        owner_stage=stage_id,
+        baseline_records=baseline_records,
+    )
     statuses = dict(workflow.get("stage_statuses") or {})
     statuses[stage_id] = _status_entry(
         STAGE_COMPLETE,
@@ -1196,31 +1318,17 @@ def _workflow_after_stage_supersede(
         },
     )
     for downstream_stage_id in stage_ids[stage_index + 1 :]:
-        stale_artifact_baselines = _stale_artifact_baselines_for_stage(
-            stage=stage_by_id.get(downstream_stage_id) or {},
-            baseline_records=baseline_records,
-        )
-        metadata = {
-            "stale_after_supersede": True,
-            "supersede_transaction_id": transaction_id,
-            "supersede_stage": stage_id,
-            "supersede_artifact": artifact_path,
-        }
-        if stale_artifact_baselines:
-            metadata["stale_artifact_baselines"] = stale_artifact_baselines
         if downstream_stage_id == rerun_stage:
             statuses[downstream_stage_id] = _status_entry(
                 STAGE_READY,
                 "Ready after owner-stage supersede.",
                 now,
-                metadata=metadata,
             )
         else:
             statuses[downstream_stage_id] = _status_entry(
                 STAGE_PENDING,
                 "Pending rerun after owner-stage supersede.",
                 now,
-                metadata=metadata,
             )
     updated = dict(workflow)
     updated.pop("active_repair", None)
@@ -1237,6 +1345,13 @@ def _workflow_after_stage_supersede(
     }
     updated["last_repair_transaction"] = {
         "transaction_id": transaction_id,
+        "repair_start_transaction_id": transaction_id,
+        "run_id": run_id,
+        "contamination_event_id": contamination_event_id,
+        "owner_stage": stage_id,
+        "artifact_id": artifact_id,
+        "rerun_start_stage": rerun_stage,
+        "stale_artifact_baselines": recovery_baselines,
         "stage_id": stage_id,
         "decision": "supersede_stage",
         "reason": reason,
@@ -1352,11 +1467,15 @@ def _workflow_after_repair_completion(
             error_code=E_ILLEGAL_TRANSITION,
         )
     owner_index = stage_ids.index(owner)
-    stage_by_id = {str(stage.get("stage_id")): stage for stage in stages}
     baseline_records = (
         active_repair.get("artifact_baseline")
         if isinstance(active_repair.get("artifact_baseline"), dict)
         else {}
+    )
+    recovery_baselines = _recovery_stale_artifact_baselines(
+        stages=stages,
+        owner_stage=owner,
+        baseline_records=baseline_records,
     )
     requested_rerun = str(active_repair.get("must_rerun_from") or "")
     rerun_stage = (
@@ -1376,33 +1495,17 @@ def _workflow_after_repair_completion(
         },
     )
     for stage_id in stage_ids[owner_index + 1 :]:
-        stale_artifact_baselines = _stale_artifact_baselines_for_stage(
-            stage=stage_by_id.get(stage_id) or {},
-            baseline_records=baseline_records,
-        )
         if stage_id == rerun_stage:
             statuses[stage_id] = _status_entry(
                 STAGE_READY,
                 "Ready after owner-stage repair completion.",
                 now,
-                metadata={
-                    "stale_after_repair": True,
-                    "repair_transaction_id": transaction_id,
-                    "repair_owner": owner,
-                    "stale_artifact_baselines": stale_artifact_baselines,
-                },
             )
         else:
             statuses[stage_id] = _status_entry(
                 STAGE_PENDING,
                 "Pending rerun after owner-stage repair completion.",
                 now,
-                metadata={
-                    "stale_after_repair": True,
-                    "repair_transaction_id": transaction_id,
-                    "repair_owner": owner,
-                    "stale_artifact_baselines": stale_artifact_baselines,
-                },
             )
     updated = dict(workflow)
     updated.pop("active_repair", None)
@@ -1419,6 +1522,13 @@ def _workflow_after_repair_completion(
     }
     updated["last_repair_transaction"] = {
         "transaction_id": transaction_id,
+        "repair_start_transaction_id": active_repair.get("repair_start_transaction_id"),
+        "run_id": active_repair.get("run_id"),
+        "contamination_event_id": active_repair.get("contamination_event_id"),
+        "owner_stage": owner,
+        "artifact_id": _repair_primary_artifact_id(active_repair),
+        "rerun_start_stage": rerun_stage,
+        "stale_artifact_baselines": recovery_baselines,
         "stage_id": owner,
         "decision": "repair_complete",
         "reason": reason,
@@ -1578,6 +1688,17 @@ def complete_repair_transaction(
         artifacts=artifacts,
         workflow=next_workflow,
         updated_at=now,
+        recovery_state={
+            "recovery_event_type": "repair_completed",
+            "recovery_transaction_id": transaction_id,
+            "owner_stage": owner,
+            "stale_artifact_baselines": (
+                (next_workflow.get("last_repair_transaction") or {}).get(
+                    "stale_artifact_baselines"
+                )
+                or {}
+            ),
+        },
     )
     frozen_verdict = interpret_frozen_artifact_integrity(
         old_registry=old_registry,
@@ -1597,6 +1718,11 @@ def complete_repair_transaction(
         )
     artifact_events = _changed_artifact_events(
         old_registry=old_registry, registry=registry
+    )
+    recovery_baselines = _recovery_stale_artifact_baselines(
+        stages=stages,
+        owner_stage=owner,
+        baseline_records=baseline_records,
     )
 
     state_snapshots = _snapshot_state_files(
@@ -1660,6 +1786,12 @@ def complete_repair_transaction(
                 **_repair_event_metadata(
                     {**active_repair, "transaction_id": transaction_id}
                 ),
+                "run_id": run_id,
+                "contamination_event_id": active_repair.get("contamination_event_id"),
+                "owner_stage": owner,
+                "artifact_id": _repair_primary_artifact_id(active_repair),
+                "rerun_start_stage": next_workflow.get("current_stage"),
+                "stale_artifact_baselines": recovery_baselines,
                 "next_stage": next_workflow.get("current_stage"),
             },
         )

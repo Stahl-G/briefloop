@@ -122,6 +122,12 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
         return _invalid(context, "run_integrity_invalid", "run_integrity is invalid.")
 
     current_events = [event for event in context.event_records if _text(event.get("run_id")) == context.run_id]
+    owner_revision, owner_revision_error = _latest_owner_revision(
+        current_events,
+        stage_ids=context.stage_ids,
+    )
+    if owner_revision_error:
+        return _invalid(context, "owner_revision_binding_invalid", owner_revision_error)
     contaminations = [
         event for event in current_events if event.get("event_type") == "run_integrity_contaminated"
     ]
@@ -134,6 +140,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
                 run_id=context.run_id,
                 current_stage=_text(context.workflow.get("current_stage")),
                 reference_eligible=True,
+                owner_revision=owner_revision,
             )
         reason_code = (
             "legacy_recovery_unbound"
@@ -178,6 +185,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
             rerun_start_stage=_text(active_repair.get("must_rerun_from")),
             current_stage=_text(context.workflow.get("current_stage")),
             recommended_recovery_action=ACTION_COMPLETE_ACTIVE_REPAIR,
+            owner_revision=owner_revision,
         )
 
     recovery_events = [
@@ -206,6 +214,7 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
             recommended_recovery_action=(
                 ACTION_START_NEW_RUN if finalized else ACTION_REQUEST_DECISION
             ),
+            owner_revision=owner_revision,
         )
 
     for event in recovery_events:
@@ -309,7 +318,12 @@ def interpret_recovery_state(context: RecoveryContext) -> dict[str, Any]:
 def recovery_stale_artifact_baselines(state: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """Return current event-derived stale baselines from a recovery projection."""
 
-    values = state.get("stale_artifact_baselines")
+    owner_revision = state.get("owner_revision")
+    values = (
+        owner_revision.get("stale_artifact_baselines")
+        if isinstance(owner_revision, Mapping)
+        else state.get("stale_artifact_baselines")
+    )
     if not isinstance(values, Mapping):
         return {}
     return {
@@ -556,6 +570,7 @@ def _bound_recovery_state(
         finalize_completion_transaction_id=finalize_completion_transaction_id,
         recommended_recovery_action=action,
         stale_artifact_baselines=metadata.get("stale_artifact_baselines"),
+        owner_revision=_owner_revision_projection(event),
     )
 
 
@@ -579,6 +594,7 @@ def _state(
     stale_artifact_baselines: Any = None,
     reference_eligible: bool = False,
     details: Mapping[str, Any] | None = None,
+    owner_revision: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     blocks = {
         RECOVERY_NOT_APPLICABLE: (False, False, False),
@@ -617,6 +633,7 @@ def _state(
             if isinstance(stale_artifact_baselines, Mapping)
             else {}
         ),
+        "owner_revision": dict(owner_revision or _empty_owner_revision()),
         "details": dict(details or {}),
     }
 
@@ -634,6 +651,63 @@ def _invalid(context: RecoveryContext, reason_code: str, reason: str) -> dict[st
 def _metadata(event: Mapping[str, Any]) -> Mapping[str, Any]:
     value = event.get("metadata")
     return value if isinstance(value, Mapping) else {}
+
+
+def _latest_owner_revision(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    stage_ids: Sequence[str],
+) -> tuple[dict[str, Any], str]:
+    revisions = [
+        event
+        for event in events
+        if event.get("event_type") in {"repair_completed", "repair_stage_superseded"}
+    ]
+    if not revisions:
+        return _empty_owner_revision(), ""
+    event = revisions[-1]
+    metadata = _metadata(event)
+    transaction_id = _text(metadata.get("transaction_id"))
+    owner_stage = _text(metadata.get("owner_stage"))
+    rerun_stage = _text(metadata.get("rerun_start_stage"))
+    baselines = metadata.get("stale_artifact_baselines")
+    if not transaction_id:
+        return _empty_owner_revision(), "Owner revision transaction_id is required."
+    if owner_stage not in stage_ids:
+        return _empty_owner_revision(), "Owner revision owner_stage is not canonical."
+    if rerun_stage not in stage_ids or stage_ids.index(rerun_stage) <= stage_ids.index(owner_stage):
+        return _empty_owner_revision(), "Owner revision rerun_start_stage is not canonical."
+    if not isinstance(baselines, Mapping):
+        return _empty_owner_revision(), "Owner revision stale_artifact_baselines must be an object."
+    return _owner_revision_projection(event), ""
+
+
+def _owner_revision_projection(event: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = _metadata(event)
+    baselines = metadata.get("stale_artifact_baselines")
+    return {
+        "status": "present",
+        "event_id": _text(event.get("event_id")),
+        "event_type": _text(event.get("event_type")),
+        "transaction_id": _text(metadata.get("transaction_id")),
+        "owner_stage": _text(metadata.get("owner_stage")),
+        "artifact_id": _text(metadata.get("artifact_id")),
+        "rerun_start_stage": _text(metadata.get("rerun_start_stage")),
+        "stale_artifact_baselines": dict(baselines) if isinstance(baselines, Mapping) else {},
+    }
+
+
+def _empty_owner_revision() -> dict[str, Any]:
+    return {
+        "status": "none",
+        "event_id": "",
+        "event_type": "",
+        "transaction_id": "",
+        "owner_stage": "",
+        "artifact_id": "",
+        "rerun_start_stage": "",
+        "stale_artifact_baselines": {},
+    }
 
 
 def _active_repair_artifact_id(active_repair: Mapping[str, Any]) -> str:
