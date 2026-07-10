@@ -124,7 +124,8 @@ next_allowed_action:
 ```
 
 If `doctor` reports any error, stop and show the complete doctor output before
-continuing. If `run_integrity` is not clean, stop finalize, delivery, export,
+continuing. If `run_integrity` is `contaminated`, `stale_or_invalid`, or unknown, stop
+finalize, delivery, export,
 and share actions; for earlier role-work stages, report the Run Card and
 continue only with non-delivery workflow steps allowed by the handoff. If
 WorkBuddy diagnosis does not report `delivery_truth.valid=true`, do not claim

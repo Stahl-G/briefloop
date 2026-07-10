@@ -660,6 +660,121 @@ def test_completion_projection_recovery_binding_mismatch_fails_closed(tmp_path: 
     assert payload["next_allowed_action"] == "stop_invalid_recovery_state"
 
 
+def test_completion_projection_recovery_survives_downstream_progress(tmp_path: Path) -> None:
+    """metadata.next_stage is the rerun START stage, not a permanent
+    current-stage requirement: after the auditor rerun completes for real and
+    the workflow advances to finalize, recovery must stay pending and point at
+    the new current stage instead of failing closed."""
+    from multi_agent_brief.orchestrator.runtime_state import (
+        complete_stage_transaction,
+        supersede_stage_artifact_transaction,
+    )
+    from tests.test_runtime_state import (
+        _contaminated_editor_artifact_workspace,
+        _valid_audit_report_payload,
+        _write_json_artifact,
+        _write_quality_gate_report,
+    )
+
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    refreshed = json.loads(_valid_audit_report_payload())
+    refreshed["summary"] = "Auditor rerun against the superseded brief revision."
+    _write_json_artifact(ws, "audit_report.json", json.dumps(refreshed) + "\n")
+    _write_quality_gate_report(ws, stage_id="auditor")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor reran against the superseded revision",
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["workflow"]["current_stage"] == "finalize"
+    recovery = payload["recovery_truth"]
+    assert recovery["status"] == "downstream_rerun_pending"
+    assert recovery["rerun_start_stage"] == "auditor"
+    assert payload["next_allowed_action"] == "rerun_downstream_from_finalize"
+
+
+def test_completion_projection_source_discovery_supersede_advances_multiple_stages(tmp_path: Path) -> None:
+    """A source-discovery supersede rewinds to input-governance; completing
+    input-governance for real advances the workflow and recovery must follow
+    the current stage downstream of the rerun start."""
+    from multi_agent_brief.orchestrator.runtime_state import (
+        check_runtime_state,
+        complete_stage_transaction,
+        initialize_runtime_state,
+        supersede_stage_artifact_transaction,
+    )
+    from tests.test_runtime_state import (
+        _set_current_stage,
+        _valid_candidate_claims_payload,
+        _valid_claim_ledger_payload,
+        _valid_screened_candidates_payload,
+        _write_json_artifact,
+    )
+
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_discovery_candidates\n"
+        "recommended_sources:\n"
+        "  - name: Original Source\n"
+        "    url: https://example.com/original\n",
+        encoding="utf-8",
+    )
+    _write_json_artifact(ws, "candidate_claims.json", _valid_candidate_claims_payload())
+    _write_json_artifact(ws, "screened_candidates.json", _valid_screened_candidates_payload())
+    _write_json_artifact(ws, "claim_ledger.json", _valid_claim_ledger_payload())
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    (ws / "source_candidates.yaml").write_text(
+        "schema_version: mabw.source_candidates.v1\n"
+        "artifact_type: source_discovery_candidates\n"
+        "recommended_sources:\n"
+        "  - name: Superseded Source\n"
+        "    url: https://example.com/superseded\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeStateError):
+        check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="source-discovery",
+        artifact="source_candidates.yaml",
+        reason="human approved supersede after source candidate edit",
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    assert payload["workflow"]["current_stage"] == "input-governance"
+    assert payload["recovery_truth"]["status"] == "downstream_rerun_pending"
+    assert payload["next_allowed_action"] == "rerun_downstream_from_input-governance"
+
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="input-governance",
+        reason="input governance reran after source supersede",
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+    current_stage = payload["workflow"]["current_stage"]
+    recovery = payload["recovery_truth"]
+    assert recovery["status"] == "downstream_rerun_pending"
+    assert recovery["rerun_start_stage"] == "input-governance"
+    assert payload["next_allowed_action"] == f"rerun_downstream_from_{current_stage}"
+
+
 def test_completion_projection_supersede_rerun_prefers_rerun_over_workflow_blocked(tmp_path: Path) -> None:
     from multi_agent_brief.orchestrator.runtime_state import supersede_stage_artifact_transaction
     from tests.test_runtime_state import _contaminated_editor_artifact_workspace
@@ -726,8 +841,16 @@ def test_completion_projection_contaminated_repaired_terminal_is_not_a_rerun_dem
 
     assert payload["run_integrity"]["status"] == "contaminated_repaired"
     assert payload["recovery_truth"]["status"] == "completed_non_reference"
+    assert payload["delivery_truth"]["eligibility"]["allowed"] is True
+    assert payload["delivery_truth"]["eligibility"]["reference_eligible"] is False
     assert not str(payload["next_allowed_action"]).startswith("rerun_downstream")
     assert payload["next_allowed_action"] != "stop_human_review_or_supersede"
+
+    # The executor consumes the same shared rule: a real deliver succeeds.
+    from multi_agent_brief.cli.main import main as cli_main
+
+    rc = cli_main(["deliver", "--workspace", str(ws), "--target", "local"])
+    assert rc == 0
 
 
 def test_completion_projection_active_repair_prefers_repair_over_workflow_blocked(tmp_path: Path) -> None:

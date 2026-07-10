@@ -28,6 +28,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
     read_event_log_records_strict,
     runtime_state_paths,
 )
+from multi_agent_brief.orchestrator.delivery_eligibility import (
+    evaluate_delivery_eligibility,
+)
 from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
@@ -838,7 +841,10 @@ def _preflight_run_integrity_for_delivery(
     target: str,
     channel: str,
 ) -> None:
-    if run_integrity.get("status") == "clean" and run_integrity.get("reference_eligible") is True:
+    eligibility = evaluate_delivery_eligibility(run_integrity)
+    if eligibility["allowed"]:
+        # contaminated_repaired delivers as permanently non-reference-eligible;
+        # the run-integrity warning printer surfaces that status.
         return
     reasons = run_integrity.get("reasons") if isinstance(run_integrity.get("reasons"), list) else []
     first_reason = reasons[0] if reasons and isinstance(reasons[0], dict) else {}

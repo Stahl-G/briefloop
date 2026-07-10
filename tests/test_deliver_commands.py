@@ -150,6 +150,43 @@ def test_deliver_local_fails_without_events_when_active_repair_open(tmp_path: Pa
     assert _delivery_events(ws) == []
 
 
+def _mark_run_contaminated_repaired(ws: Path) -> None:
+    paths = runtime_state_paths(ws)
+    workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
+    workflow["run_integrity"] = {
+        "status": "contaminated_repaired",
+        "reference_eligible": False,
+        "clean_single_shot": False,
+        "reasons": [
+            {
+                "reason_code": "frozen_artifact_changed",
+                "message": "Contaminated run completed finalize after recovery.",
+                "created_at": "2026-06-13T00:00:00+00:00",
+            }
+        ],
+    }
+    paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def test_deliver_local_allows_contaminated_repaired_run_as_non_reference(tmp_path: Path, capsys) -> None:
+    """Product ruling: a contaminated run that recovered and completed finalize
+    (terminal contaminated_repaired) may deliver, but is permanently
+    non-reference-eligible. The executor and the completion projection consume
+    the same shared delivery-eligibility rule."""
+    ws = _workspace(tmp_path)
+    _write_bundle(ws)
+    _mark_run_contaminated_repaired(ws)
+
+    rc = main(["deliver", "--workspace", str(ws), "--target", "local"])
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "output/delivery/brief.md" in captured.out
+    assert "contaminated_repaired" in captured.err
+    events = _delivery_events(ws)
+    assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_succeeded"]
+
+
 def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
     _write_bundle(ws)

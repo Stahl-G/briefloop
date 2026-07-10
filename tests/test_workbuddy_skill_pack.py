@@ -418,7 +418,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "After every key CLI command, role return, repair action, gate check, finalize",
         "`briefloop doctor` reports any error",
         "Show the full doctor output",
-        "`run_integrity` is not clean",
+        "`run_integrity` is `contaminated`, `stale_or_invalid`, or unknown",
         "Do not run finalize or delivery",
         "`delivery_truth.valid` is not",
         "Say the run has a draft only when",
@@ -427,6 +427,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         assert phrase in text
     for phrase in [
         "Do not turn normal pre-finalize state into a workflow stop",
+        "deliverable but permanently non-reference-eligible",
         "stop finalize, delivery, export, and share actions",
         "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
         "otherwise say no draft or delivery exists yet",

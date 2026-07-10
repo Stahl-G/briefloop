@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Separated recovery progress from run integrity in the completion
+  projection: a structured `recovery_truth` is derived from the current run's
+  bound transaction timeline (latest contamination event vs latest
+  `repair_stage_superseded` / `repair_completed` event, bound to
+  `workflow.last_repair_transaction` by transaction id, decision kind, and
+  owner stage, with the event's `next_stage` interpreted as the rerun START
+  stage so legitimate downstream progress is not blocked). Binding mismatches
+  fail closed (`stop_invalid_recovery_state`).
+- Introduced a shared delivery-eligibility rule consumed by both the `deliver`
+  executor and the completion projection: clean reference-eligible runs and
+  terminal `contaminated_repaired` runs may deliver (the latter permanently
+  non-reference-eligible, per the recovery ruling); contaminated, unknown, and
+  mid-recovery states remain blocked. Previously the projection reported valid
+  delivery while the executor rejected every non-clean run. WorkBuddy skill
+  hard-stop guidance now carries the same exception.
 - Made finalize promotion transactional: reader output is rendered and checked
   as a candidate before `output/brief.md` or `output/delivery/` are updated, and
   successful promotion records the delivery artifacts and their sha256 hashes in
