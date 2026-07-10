@@ -74,8 +74,9 @@ Quality Panel 已生成。
 - 如果 `doctor` 报告任何错误，停止。展示完整 doctor 输出、工作区路径、
   当前用户、输出路径存在性/可写性结果、以及权限或 ACL 输出。不要自行降级
   该错误。
-- 如果 `run_integrity` 不是 clean，停止 finalize、交付、导出与分享动作。
-  不要运行 finalize 或交付。对于早期阶段的草稿工作，报告 Run Card，并只
+- 如果 `run_integrity` 处于 `contaminated`、`stale_or_invalid` 或 unknown
+  状态，停止 finalize、交付、导出与分享动作。不要运行 finalize 或交付。
+  例外：`contaminated_repaired`（finalize-complete 写入的终态恢复）且 `delivery_truth.valid=true` 的 run 可以交付，但永久不具备 reference 资格；如实报告该状态，而不是停止。对于早期阶段的草稿工作，报告 Run Card，并只
   继续 handoff 允许的非交付工作流步骤。
 - 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要声称已交付，
   也不要导出交付包。仅当 `output/intermediate/audited_brief.md` 存在时才

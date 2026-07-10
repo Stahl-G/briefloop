@@ -210,8 +210,9 @@ finalize 之前的正常状态当作流程停止。
 1. `briefloop doctor` 报告任何错误。展示完整 doctor 输出、实际工作区路径、
    当前用户、输出路径存在性/可写性检查结果、以及平台权限/ACL 输出。不要在
    叙述里降级该错误；除非用户明确确认证据，不要把 doctor 标记为已完成。
-2. 对 finalize、交付、导出或分享请求：如果 `run_integrity` 不是 clean，或
-   处于 `contaminated`、`stale_or_invalid`、unknown 状态，停止该动作。
+2. 对 finalize、交付、导出或分享请求：如果 `run_integrity` 处于
+   `contaminated`、`stale_or_invalid` 或 unknown 状态，停止该动作。
+   例外：`contaminated_repaired`（finalize-complete 写入的终态恢复）且 `delivery_truth.valid=true` 的 run 可以交付，但永久不具备 reference 资格；如实报告该状态，而不是停止。
    不要运行 finalize 或交付。下一步安全动作是全新 run、受控 repair 或人工
    审阅。对于早期阶段的草稿工作，报告 Run Card，并只继续 handoff 允许的
    非交付工作流步骤。
