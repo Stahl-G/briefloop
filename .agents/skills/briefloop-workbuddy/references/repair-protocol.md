@@ -62,9 +62,10 @@ contamination event），保持 `reference_eligible=false`，并要求下游 sta
 stage 无法完成。冻结事务拥有的工件（例如 `claim_ledger.json`）不能绕过其
 冻结事务被 supersede。
 
-当 `briefloop workbuddy diagnose` 或 `multi-agent-brief status --json`
-报告 `next_allowed_action=stop_human_review_or_supersede` 时，走这条
-恢复通道，而不是手改控制文件。
+当 `briefloop workbuddy diagnose --workspace <workspace> --json` 报告
+`next_allowed_action=stop_human_review_or_supersede` 时，走这条恢复通道，
+而不是手改控制文件。该字段只由 WorkBuddy diagnose 透传 completion
+projection；`status --json` 不输出 `next_allowed_action`。
 
 ## 边界
 
