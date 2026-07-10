@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -14,16 +13,15 @@ import yaml
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
-from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    AGENT_ARTIFACT_IDS,
+    IntakeResult,
+    evaluate_agent_artifact_intake,
+)
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 from multi_agent_brief.contracts.schemas.source_evidence_pack_manifest import SourceEvidencePackManifestContract
-from multi_agent_brief.contracts.source_metadata import (
-    local_file_without_url_missing_identity,
-    source_category_error,
-    source_url_error,
-)
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
 from multi_agent_brief.feedback.feedback_contract import optional_feedback_artifact_activated
@@ -93,55 +91,6 @@ FROZEN_ARTIFACT_CONTROL_FILE_GUIDANCE = (
     "event_log.jsonl, or SHA fields to hide the change."
 )
 
-_SCREENING_STATUSES = {
-    "keep",
-    "selected",
-    "reject",
-    "rejected",
-    "deprioritized",
-    "exclude",
-    "excluded",
-    "watch",
-}
-_SCREENING_STATUSES_REQUIRING_REASON = {
-    "reject",
-    "rejected",
-    "deprioritized",
-    "exclude",
-    "excluded",
-}
-_SCREENING_DISCARD_REASON_CODES = {
-    "capacity_capped",
-    "duplicate_source",
-    "low_confidence",
-    "low_tier",
-    "off_focus",
-    "other",
-    "outside_scope",
-    "stale_source",
-    "unsafe_evidence_boundary",
-    "weak_relevance",
-}
-_SCREENING_DISCARD_REASON_ALIASES = {
-    "capacity_cut": "capacity_capped",
-    "capacity_cap": "capacity_capped",
-    "capacity_capped": "capacity_capped",
-    "duplicate": "duplicate_source",
-    "duplicate_source": "duplicate_source",
-    "duplicate_sources": "duplicate_source",
-    "low_confidence": "low_confidence",
-    "low_tier": "low_tier",
-    "off_focus": "off_focus",
-    "off_topic": "off_focus",
-    "other": "other",
-    "outside_scope": "outside_scope",
-    "stale": "stale_source",
-    "stale_source": "stale_source",
-    "stale_sources": "stale_source",
-    "unsafe_evidence": "unsafe_evidence_boundary",
-    "unsafe_evidence_boundary": "unsafe_evidence_boundary",
-    "weak_relevance": "weak_relevance",
-}
 _INPUT_CLASSIFICATION_BUCKETS = {"evidence", "context", "feedback", "instruction", "skipped"}
 _INPUT_CLASSIFICATION_PATH_KEYS = {
     "path",
@@ -165,455 +114,116 @@ class FrozenArtifactIntegrityVerdict:
 
 
 def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str, str]:
+    status, validation_result, _intake = _validate_artifact_with_intake(
+        path,
+        fmt,
+        artifact_id,
+    )
+    return status, validation_result
+
+
+def _validate_artifact_with_intake(
+    path: Path,
+    fmt: str,
+    artifact_id: str = "",
+    *,
+    intake_result: IntakeResult | None = None,
+) -> tuple[str, str, IntakeResult | None]:
     if not path.exists():
-        return ARTIFACT_EXPECTED, "not_checked"
+        return ARTIFACT_EXPECTED, "not_checked", None
     if not path.is_file():
-        return ARTIFACT_INVALID, "not_a_file"
+        return ARTIFACT_INVALID, "not_a_file", None
+    if fmt == "json" and artifact_id in AGENT_ARTIFACT_IDS:
+        result = intake_result
+        if result is None:
+            candidate_universe = None
+            if artifact_id == "screened_candidates":
+                candidate_path = path.with_name("candidate_claims.json")
+                if candidate_path.exists() and candidate_path.is_file():
+                    candidate_universe = evaluate_agent_artifact_intake(
+                        candidate_path,
+                        artifact_id="candidate_claims",
+                    )
+            result = evaluate_agent_artifact_intake(
+                path,
+                artifact_id=artifact_id,  # type: ignore[arg-type]
+                candidate_universe=candidate_universe,
+            )
+        status = ARTIFACT_VALID if result.status == "valid" else ARTIFACT_INVALID
+        return status, result.validation_result, result
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return ARTIFACT_INVALID, "decode_error"
+        return ARTIFACT_INVALID, "decode_error", None
     except OSError:
-        return ARTIFACT_INVALID, "read_error"
+        return ARTIFACT_INVALID, "read_error", None
     if not text.strip():
-        return ARTIFACT_INVALID, "empty"
+        return ARTIFACT_INVALID, "empty", None
 
     try:
         if fmt == "json":
             payload = json.loads(text)
             if artifact_id == "claim_ledger":
-                return _validate_claim_ledger_payload(payload)
-            if artifact_id == "claim_drafts":
-                return _validate_claim_drafts_payload(payload)
+                status, result = _validate_claim_ledger_payload(payload)
+                return status, result, None
             if artifact_id == "atomic_claim_graph":
-                return _validate_atomic_claim_graph_payload(payload, artifact_path=path)
+                status, result = _validate_atomic_claim_graph_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "evidence_span_registry":
-                return _validate_evidence_span_registry_payload(payload, artifact_path=path)
+                status, result = _validate_evidence_span_registry_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "claim_support_matrix":
-                return _validate_claim_support_matrix_payload(payload, artifact_path=path)
+                status, result = _validate_claim_support_matrix_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "semantic_assessment_report":
-                return _validate_semantic_assessment_report_payload(payload, artifact_path=path)
+                status, result = _validate_semantic_assessment_report_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "semantic_support_acceptance_ledger":
-                return _validate_semantic_support_acceptance_ledger_payload(payload, artifact_path=path)
+                status, result = _validate_semantic_support_acceptance_ledger_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "audit_report":
-                return _validate_audit_report_payload(payload)
-            if artifact_id == "candidate_claims":
-                return _validate_candidate_claims_payload(payload)
-            if artifact_id == "screened_candidates":
-                return _validate_screened_candidates_payload(payload, artifact_path=path)
+                status, result = _validate_audit_report_payload(payload)
+                return status, result, None
             if artifact_id == "input_classification":
-                return _validate_input_classification_payload(payload, artifact_path=path)
+                status, result = _validate_input_classification_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "source_evidence_pack_manifest":
-                return _validate_source_evidence_pack_manifest_payload(payload, artifact_path=path)
+                status, result = _validate_source_evidence_pack_manifest_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "evidence_extract_source_lock":
-                return _validate_evidence_extract_source_lock_payload(payload, artifact_path=path)
+                status, result = _validate_evidence_extract_source_lock_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "evidence_extract_page_inventory":
-                return _validate_evidence_extract_page_inventory_payload(payload, artifact_path=path)
+                status, result = _validate_evidence_extract_page_inventory_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "human_approval_ledger":
-                return _validate_human_approval_ledger_payload(payload, artifact_path=path)
+                status, result = _validate_human_approval_ledger_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "release_readiness_report":
-                return _validate_release_readiness_report_payload(payload, artifact_path=path)
+                status, result = _validate_release_readiness_report_payload(payload, artifact_path=path)
+                return status, result, None
             if artifact_id == "quality_panel":
-                return _validate_quality_panel_payload(payload)
+                status, result = _validate_quality_panel_payload(payload)
+                return status, result, None
             if artifact_id == "guidance_manifestation_report":
-                return _validate_guidance_manifestation_report_payload(payload, artifact_path=path)
+                status, result = _validate_guidance_manifestation_report_payload(payload, artifact_path=path)
+                return status, result, None
         elif fmt in {"yaml", "yml"}:
             yaml.safe_load(text)
         elif fmt == "markdown":
             if artifact_id == "quality_summary":
-                return _validate_quality_summary_markdown(text, artifact_path=path)
+                status, result = _validate_quality_summary_markdown(text, artifact_path=path)
+                return status, result, None
         elif fmt == "html":
             if artifact_id == "quality_panel_html":
-                return _validate_quality_panel_html(text, artifact_path=path)
+                status, result = _validate_quality_panel_html(text, artifact_path=path)
+                return status, result, None
     except json.JSONDecodeError:
-        return ARTIFACT_INVALID, "parse_error"
+        return ARTIFACT_INVALID, "parse_error", None
     except yaml.YAMLError:
-        return ARTIFACT_INVALID, "parse_error"
+        return ARTIFACT_INVALID, "parse_error", None
 
-    return ARTIFACT_VALID, "valid_minimum"
-
-
-def _validate_candidate_claims_payload(payload: Any) -> tuple[str, str]:
-    if not isinstance(payload, list):
-        return ARTIFACT_INVALID, "candidate_claims_schema_error:not_list"
-
-    seen_ids: set[str] = set()
-    for idx, candidate in enumerate(payload):
-        if not isinstance(candidate, dict):
-            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}]"
-        if _candidate_claim_uses_legacy_shape(candidate):
-            status, result = _validate_legacy_candidate_claim(candidate, idx=idx, seen_ids=seen_ids)
-        else:
-            status, result = _validate_contract_candidate_claim(candidate, idx=idx, seen_ids=seen_ids)
-        if status != ARTIFACT_VALID:
-            return status, result
-
-    return ARTIFACT_VALID, "valid_candidate_claims_schema"
-
-
-def _candidate_claim_uses_legacy_shape(candidate: dict[str, Any]) -> bool:
-    return "statement" not in candidate and ("claim" in candidate or "candidate_id" in candidate)
-
-
-def _validate_legacy_candidate_claim(
-    candidate: dict[str, Any],
-    *,
-    idx: int,
-    seen_ids: set[str],
-) -> tuple[str, str]:
-    for field in ("candidate_id", "claim", "source_id"):
-        value = candidate.get(field)
-        if not isinstance(value, str) or not value.strip():
-            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
-    candidate_id = str(candidate["candidate_id"]).strip()
-    if candidate_id in seen_ids:
-        return ARTIFACT_INVALID, f"candidate_claims_schema_error:duplicate_candidate_id:{candidate_id}"
-    seen_ids.add(candidate_id)
-    return ARTIFACT_VALID, "valid_candidate_claims_schema"
-
-
-def _validate_contract_candidate_claim(
-    candidate: dict[str, Any],
-    *,
-    idx: int,
-    seen_ids: set[str],
-) -> tuple[str, str]:
-    for field in ("statement", "evidence_text", "topic", "claim_type"):
-        value = candidate.get(field)
-        if not isinstance(value, str) or not value.strip():
-            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
-    url_error = source_url_error(candidate.get("source_url"))
-    if url_error:
-        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].source_url"
-    category_error = source_category_error(candidate.get("source_category"))
-    if category_error:
-        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].source_category"
-    local_identity_error = local_file_without_url_missing_identity(candidate)
-    if local_identity_error:
-        return ARTIFACT_INVALID, (
-            f"candidate_claims_schema_error:candidate[{idx}].{local_identity_error}"
-        )
-    if not _candidate_claim_has_source_identity(candidate):
-        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].source_url_or_source_path"
-    if not _candidate_claim_has_source_date(candidate):
-        return ARTIFACT_INVALID, (
-            f"candidate_claims_schema_error:candidate[{idx}].published_at_or_retrieved_at"
-        )
-    if not _non_empty_scalar(candidate.get("confidence")):
-        return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].confidence"
-    for field in ("source_id", "source_path"):
-        value = candidate.get(field)
-        if value is not None and not _non_empty_string(value):
-            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].{field}"
-    candidate_id = candidate.get("candidate_id")
-    if candidate_id is not None:
-        if not _non_empty_string(candidate_id):
-            return ARTIFACT_INVALID, f"candidate_claims_schema_error:candidate[{idx}].candidate_id"
-        normalized_id = candidate_id.strip()
-        if normalized_id in seen_ids:
-            return ARTIFACT_INVALID, f"candidate_claims_schema_error:duplicate_candidate_id:{normalized_id}"
-        seen_ids.add(normalized_id)
-    return ARTIFACT_VALID, "valid_candidate_claims_schema"
-
-
-def _candidate_claim_has_source_identity(candidate: dict[str, Any]) -> bool:
-    return _non_empty_string(candidate.get("source_url")) or _non_empty_string(
-        candidate.get("source_path")
-    )
-
-
-def _candidate_claim_has_source_date(candidate: dict[str, Any]) -> bool:
-    return _non_empty_string(candidate.get("published_at")) or _non_empty_string(
-        candidate.get("retrieved_at")
-    )
-
-
-def _non_empty_scalar(value: Any) -> bool:
-    return (isinstance(value, str) and bool(value.strip())) or (
-        isinstance(value, (int, float)) and not isinstance(value, bool)
-    )
-
-
-def _validate_screened_candidates_payload(
-    payload: Any,
-    *,
-    artifact_path: Path | None = None,
-) -> tuple[str, str]:
-    if isinstance(payload, list):
-        return _validate_legacy_screened_candidates(payload)
-    if isinstance(payload, dict):
-        status, result = _validate_contract_screened_candidates(payload)
-        if status != ARTIFACT_VALID:
-            return status, result
-        universe_error = _screened_candidates_candidate_universe_error(
-            payload,
-            artifact_path=artifact_path,
-        )
-        if universe_error:
-            return ARTIFACT_INVALID, f"screened_candidates_schema_error:{universe_error}"
-        return status, result
-    return ARTIFACT_INVALID, "screened_candidates_schema_error:not_list_or_object"
-
-
-def _validate_legacy_screened_candidates(payload: list[Any]) -> tuple[str, str]:
-    for idx, candidate in enumerate(payload):
-        if not isinstance(candidate, dict):
-            return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}]"
-        candidate_id = candidate.get("candidate_id")
-        if not isinstance(candidate_id, str) or not candidate_id.strip():
-            return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}].candidate_id"
-        status = candidate.get("screening_status")
-        if not isinstance(status, str) or status.strip() not in _SCREENING_STATUSES:
-            return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}].screening_status"
-        if status.strip() in _SCREENING_STATUSES_REQUIRING_REASON:
-            has_reason = any(
-                _non_empty_string(candidate.get(field))
-                for field in ("reason", "screening_reason", "excluded_reason")
-            )
-            if not has_reason:
-                return ARTIFACT_INVALID, f"screened_candidates_schema_error:candidate[{idx}].reason"
-
-    return ARTIFACT_VALID, "valid_screened_candidates_schema"
-
-
-def _validate_contract_screened_candidates(payload: dict[str, Any]) -> tuple[str, str]:
-    selected = payload.get("selected")
-    if not isinstance(selected, list):
-        return ARTIFACT_INVALID, "screened_candidates_schema_error:selected"
-    for idx, candidate in enumerate(selected):
-        validation_error = _selected_screened_candidate_error(candidate)
-        if validation_error:
-            return ARTIFACT_INVALID, f"screened_candidates_schema_error:selected[{idx}].{validation_error}"
-
-    screening_policy = payload.get("screening_policy")
-    if not isinstance(screening_policy, dict) or not screening_policy:
-        return ARTIFACT_INVALID, "screened_candidates_schema_error:screening_policy"
-
-    total_candidates, total_error = _screened_candidates_total(payload, screening_policy)
-    if total_error:
-        return ARTIFACT_INVALID, f"screened_candidates_schema_error:{total_error}"
-
-    has_discard_bucket = False
-    for bucket in ("excluded", "deprioritized"):
-        entries = payload.get(bucket)
-        if entries is None:
-            continue
-        if not isinstance(entries, list):
-            return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}"
-        has_discard_bucket = True
-        for idx, candidate in enumerate(entries):
-            if not _valid_screened_candidate_entry(candidate):
-                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}]"
-            if not _screened_candidate_reason_code(candidate):
-                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].reason_code"
-            if not _screened_candidate_has_short_explanation(candidate):
-                return ARTIFACT_INVALID, f"screened_candidates_schema_error:{bucket}[{idx}].explanation"
-    if not has_discard_bucket:
-        return ARTIFACT_INVALID, "screened_candidates_schema_error:excluded_or_deprioritized"
-
-    if total_candidates is not None:
-        discard_count = _screened_candidates_discard_count(payload)
-        expected_discards = total_candidates - len(selected)
-        if expected_discards < 0:
-            return ARTIFACT_INVALID, "screened_candidates_schema_error:total_candidates"
-        if expected_discards > 0 and discard_count == 0:
-            return ARTIFACT_INVALID, "screened_candidates_schema_error:discard_audit_missing"
-        if len(selected) + discard_count != total_candidates:
-            return ARTIFACT_INVALID, "screened_candidates_schema_error:discard_audit_count"
-
-    return ARTIFACT_VALID, "valid_screened_candidates_schema"
-
-
-def _selected_screened_candidate_error(candidate: Any) -> str | None:
-    if not isinstance(candidate, dict):
-        return "entry"
-    for field in ("statement", "evidence_text"):
-        if not _non_empty_string(candidate.get(field)):
-            return field
-    if source_url_error(candidate.get("source_url")):
-        return "source_url"
-    if source_category_error(candidate.get("source_category")):
-        return "source_category"
-    local_identity_error = local_file_without_url_missing_identity(candidate)
-    if local_identity_error:
-        return local_identity_error
-    if not _screened_candidate_has_source_identity(candidate):
-        return "source_id_or_source_url_or_source_path"
-    if not _candidate_claim_has_source_date(candidate):
-        return "published_at_or_retrieved_at"
-    return None
-
-
-def _screened_candidate_has_source_identity(candidate: dict[str, Any]) -> bool:
-    return any(
-        _non_empty_string(candidate.get(field))
-        for field in ("source_id", "source_url", "source_path")
-    )
-
-
-def _valid_screened_candidate_entry(candidate: Any) -> bool:
-    if not isinstance(candidate, dict):
-        return False
-    return any(_non_empty_string(candidate.get(field)) for field in ("candidate_id", "statement", "claim"))
-
-
-def _screened_candidate_reason_code(candidate: dict[str, Any]) -> str:
-    for field in (
-        "reason_code",
-        "screening_reason_code",
-        "excluded_reason_code",
-        "deprioritized_reason_code",
-    ):
-        code = _normalize_screening_reason_code(candidate.get(field))
-        if code:
-            return code
-    return ""
-
-
-def _normalize_screening_reason_code(value: Any) -> str:
-    if not isinstance(value, str):
-        return ""
-    raw = value.strip().lower()
-    if not raw:
-        return ""
-    normalized = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
-    if normalized in _SCREENING_DISCARD_REASON_CODES:
-        return normalized
-    return _SCREENING_DISCARD_REASON_ALIASES.get(normalized, "")
-
-
-def _screened_candidate_has_short_explanation(candidate: dict[str, Any]) -> bool:
-    code = _screened_candidate_reason_code(candidate)
-    for field in (
-        "explanation",
-        "short_explanation",
-        "screening_explanation",
-        "reason_explanation",
-        "screening_reason",
-        "excluded_reason",
-        "deprioritized_reason",
-    ):
-        value = candidate.get(field)
-        if not _non_empty_string(value):
-            continue
-        if _normalize_screening_reason_code(value) == code:
-            continue
-        return True
-    return False
-
-
-def _screened_candidates_total(
-    payload: dict[str, Any],
-    screening_policy: dict[str, Any],
-) -> tuple[int | None, str | None]:
-    total_values: list[int] = []
-    for container, prefix in (
-        (payload, ""),
-        (screening_policy, "screening_policy."),
-    ):
-        for key in (
-            "total_candidates",
-            "candidate_count",
-            "input_candidate_count",
-            "found_candidate_count",
-        ):
-            value = container.get(key)
-            if value is None:
-                continue
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                return None, f"{prefix}{key}"
-            total_values.append(value)
-    if not total_values:
-        return None, None
-    first = total_values[0]
-    if any(value != first for value in total_values[1:]):
-        return None, "total_candidates_mismatch"
-    return first, None
-
-
-def _screened_candidates_discard_count(payload: dict[str, Any]) -> int:
-    count = 0
-    for bucket in ("excluded", "deprioritized"):
-        entries = payload.get(bucket)
-        if isinstance(entries, list):
-            count += len(entries)
-    return count
-
-
-def _screened_candidates_candidate_universe_error(
-    payload: dict[str, Any],
-    *,
-    artifact_path: Path | None,
-) -> str | None:
-    if artifact_path is None:
-        return None
-    screening_policy = payload.get("screening_policy")
-    if not isinstance(screening_policy, dict):
-        return None
-    declared_total, total_error = _screened_candidates_total(payload, screening_policy)
-    if total_error:
-        return None
-
-    candidate_payload = _read_json_payload(artifact_path.with_name("candidate_claims.json"))
-    if not isinstance(candidate_payload, list):
-        return None
-    candidate_status, _ = _validate_candidate_claims_payload(candidate_payload)
-    if candidate_status != ARTIFACT_VALID:
-        return None
-
-    if declared_total is not None and declared_total != len(candidate_payload):
-        return "candidate_universe_count_mismatch"
-
-    candidate_ids = _candidate_claim_ids(candidate_payload)
-    if candidate_ids is None:
-        return None
-
-    screened_ids, screened_id_error = _screened_candidate_ids(payload, candidate_ids)
-    if screened_id_error:
-        return screened_id_error
-
-    if declared_total is None:
-        return None
-
-    if screened_ids != candidate_ids:
-        return "candidate_universe_id_coverage_mismatch"
-    return None
-
-
-def _screened_candidate_ids(
-    payload: dict[str, Any],
-    candidate_ids: set[str],
-) -> tuple[set[str], str | None]:
-    screened_ids: set[str] = set()
-    for bucket in ("selected", "excluded", "deprioritized"):
-        entries = payload.get(bucket)
-        if not isinstance(entries, list):
-            continue
-        for idx, candidate in enumerate(entries):
-            if not isinstance(candidate, dict):
-                continue
-            candidate_id = candidate.get("candidate_id")
-            if not _non_empty_string(candidate_id):
-                return screened_ids, f"{bucket}[{idx}].candidate_id"
-            normalized_id = candidate_id.strip()
-            if normalized_id not in candidate_ids:
-                return screened_ids, f"{bucket}[{idx}].unknown_candidate_id:{normalized_id}"
-            if normalized_id in screened_ids:
-                return screened_ids, f"duplicate_screened_candidate_id:{normalized_id}"
-            screened_ids.add(normalized_id)
-    return screened_ids, None
-
-
-def _candidate_claim_ids(payload: list[Any]) -> set[str] | None:
-    ids: set[str] = set()
-    for candidate in payload:
-        if not isinstance(candidate, dict):
-            return None
-        candidate_id = candidate.get("candidate_id")
-        if not _non_empty_string(candidate_id):
-            return None
-        ids.add(candidate_id.strip())
-    return ids
+    return ARTIFACT_VALID, "valid_minimum", None
 
 
 def _validate_input_classification_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
@@ -1257,17 +867,6 @@ def _validate_claim_ledger_payload(payload: Any) -> tuple[str, str]:
     return ARTIFACT_VALID, "valid_claim_ledger_schema"
 
 
-def _validate_claim_drafts_payload(payload: Any) -> tuple[str, str]:
-    if not isinstance(payload, dict):
-        return ARTIFACT_INVALID, "claim_drafts_schema_error:not_object"
-    violations = ClaimDraftContract.validate(payload)
-    errors = [violation for violation in violations if violation.severity == "error"]
-    if errors:
-        first = errors[0]
-        return ARTIFACT_INVALID, f"claim_drafts_schema_error:{first.field}"
-    return ARTIFACT_VALID, "valid_claim_drafts_schema"
-
-
 def _validate_atomic_claim_graph_payload(payload: Any, *, artifact_path: Path) -> tuple[str, str]:
     if not isinstance(payload, dict):
         return ARTIFACT_INVALID, "atomic_claim_graph_schema_error:not_object"
@@ -1508,12 +1107,18 @@ def _artifact_record(
     artifact: dict[str, Any],
     workflow: dict[str, Any],
     recovery_state: Mapping[str, Any] | None = None,
+    intake_result: IntakeResult | None = None,
 ) -> dict[str, Any]:
     artifact_id = str(artifact.get("artifact_id") or "")
     rel_path = str(artifact.get("path") or "")
     fmt = str(artifact.get("format") or "")
     producer_stage = str(artifact.get("producer_stage") or "")
-    status, validation_result = _validate_artifact(workspace / rel_path, fmt, artifact_id)
+    status, validation_result, intake_result = _validate_artifact_with_intake(
+        workspace / rel_path,
+        fmt,
+        artifact_id,
+        intake_result=intake_result,
+    )
 
     activated_optional = optional_feedback_artifact_activated(
         workspace=workspace,
@@ -1543,6 +1148,12 @@ def _artifact_record(
     size_bytes = path.stat().st_size if path.exists() and path.is_file() else None
     mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).replace(microsecond=0).isoformat() if path.exists() else None
     sha256 = _sha256_file(path) if path.exists() and path.is_file() else None
+    if intake_result is not None and sha256 != intake_result.raw_sha256:
+        status = ARTIFACT_INVALID
+        validation_result = "intake_projection_raw_sha_mismatch"
+        blocking_reason = (
+            f"Artifact '{rel_path}' changed while deterministic intake was being evaluated."
+        )
     stale_metadata = _recovery_stale_metadata(
         recovery_state=recovery_state,
         artifact_id=artifact_id,
@@ -1598,6 +1209,8 @@ def _artifact_record(
     }
     if status == ARTIFACT_STALE and stale_baseline_sha256:
         record["stale_baseline_sha256"] = stale_baseline_sha256
+    if intake_result is not None:
+        record["intake_projection"] = intake_result.projection()
     return record
 
 
@@ -1639,12 +1252,14 @@ def _build_artifact_registry(
         )
 
         recovery_state = evaluate_recovery_state(workspace=workspace)
+    intake_results = _agent_intake_results(workspace=workspace, artifacts=artifacts)
     records = {
         str(artifact.get("artifact_id")): _artifact_record(
             workspace=workspace,
             artifact=artifact,
             workflow=workflow,
             recovery_state=recovery_state,
+            intake_result=intake_results.get(str(artifact.get("artifact_id") or "")),
         )
         for artifact in artifacts
         if artifact.get("artifact_id")
@@ -1657,11 +1272,32 @@ def _build_artifact_registry(
     }
 
 
-def _read_json_payload(path: Path) -> Any:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
+def _agent_intake_results(
+    *,
+    workspace: Path,
+    artifacts: list[dict[str, Any]],
+) -> dict[str, IntakeResult]:
+    artifacts_by_id = {
+        str(artifact.get("artifact_id") or ""): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    results: dict[str, IntakeResult] = {}
+    for artifact_id in ("candidate_claims", "screened_candidates", "claim_drafts"):
+        artifact = artifacts_by_id.get(artifact_id)
+        if not isinstance(artifact, dict):
+            continue
+        path = workspace / str(artifact.get("path") or "")
+        if not path.exists() or not path.is_file():
+            continue
+        results[artifact_id] = evaluate_agent_artifact_intake(
+            path,
+            artifact_id=artifact_id,  # type: ignore[arg-type]
+            candidate_universe=results.get("candidate_claims")
+            if artifact_id == "screened_candidates"
+            else None,
+        )
+    return results
 
 
 def interpret_frozen_artifact_integrity(

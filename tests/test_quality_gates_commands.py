@@ -1725,6 +1725,44 @@ def test_coverage_omission_warns_when_high_priority_selected_candidate_missing_f
     assert "not full-world recall" in findings[0]["metadata"]["semantic_boundary"]
 
 
+def test_coverage_omission_consumes_normalized_intake_view(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _write_supported_target_ledger(ws)
+    (_intermediate(ws) / "screened_candidates.json").write_text(
+        json.dumps(
+            {
+                "selected_candidates": [
+                    {
+                        "candidate_id": "CAND-999",
+                        "claim_statement": "TargetCo disclosed a high-priority omitted item.",
+                        "source_excerpt": "TargetCo disclosed the omitted item.",
+                        "source_id": "SRC-999",
+                        "published_at": "2026-06-01",
+                        "priority": "high",
+                    }
+                ],
+                "excluded_candidates": [],
+                "screening_policy": {"total_candidates": 1},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
+    )
+
+    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    projection = state["quality_gate_report"]["metadata"]["coverage_omission_projection"]
+    assert projection["status"] == "checked"
+    assert projection["high_priority_selected_count"] == 1
+    assert projection["missing_from_ledger_count"] == 1
+
+
 def test_coverage_omission_blocks_in_strict_mode(tmp_path):
     ws = _write_workspace(tmp_path)
     _write_supported_target_ledger(ws)

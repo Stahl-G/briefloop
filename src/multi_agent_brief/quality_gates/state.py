@@ -15,6 +15,9 @@ import yaml
 
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    evaluate_agent_artifact_intake,
+)
 from multi_agent_brief.core.citations import SRC_REF_PATTERN
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AuditFinding
@@ -31,10 +34,6 @@ from multi_agent_brief.orchestrator.runtime_state import (
 )
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
-)
-from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
-    ARTIFACT_VALID,
-    _validate_screened_candidates_payload,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ACTIVE_REPAIR_OPEN,
@@ -1142,19 +1141,13 @@ def _coverage_omission_projection(
         base["status"] = "missing"
         base["not_interpreted_reason"] = "screened_candidates_missing"
         return base
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    intake = evaluate_agent_artifact_intake(path, artifact_id="screened_candidates")
+    base["screened_candidates_validation_result"] = intake.validation_result
+    if intake.status != "valid":
         base["status"] = "invalid"
-        base["not_interpreted_reason"] = f"screened_candidates_unreadable:{type(exc).__name__}"
+        base["not_interpreted_reason"] = intake.validation_result
         return base
-
-    artifact_status, validation_result = _validate_screened_candidates_payload(payload)
-    base["screened_candidates_validation_result"] = validation_result
-    if artifact_status != ARTIFACT_VALID:
-        base["status"] = "invalid"
-        base["not_interpreted_reason"] = validation_result
-        return base
+    payload = intake.normalized_payload
     if not isinstance(payload, dict):
         base["status"] = "legacy_not_interpreted"
         base["not_interpreted_reason"] = "legacy_list_shape_has_no_selected_bucket"

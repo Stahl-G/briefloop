@@ -18,6 +18,9 @@ import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_
 from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.deliver_commands import deliver_workspace
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    validate_registry_intake_context,
+)
 from multi_agent_brief.contracts.target_contract import project_assessment_target_status
 from multi_agent_brief.orchestrator.recovery_state import (
     OWNER_REVISION_SCHEMA,
@@ -26,7 +29,11 @@ from multi_agent_brief.orchestrator.recovery_state import (
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
+    _build_artifact_registry,
     interpret_frozen_artifact_integrity,
+)
+from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
+    load_artifact_contracts,
 )
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     build_semantic_assessment_checked_inputs,
@@ -558,6 +565,39 @@ def _valid_screened_candidates_payload(*, status: str = "selected", reason: str 
     if reason is not None:
         candidate["screening_reason"] = reason
     return json.dumps([candidate]) + "\n"
+
+
+def _normalized_intake_candidate(candidate_id: str = "CAND-001") -> dict[str, object]:
+    return {
+        "candidate_id": candidate_id,
+        "claim_statement": "ExampleCo opened a demo facility.",
+        "source_excerpt": "ExampleCo opened a demo facility in June.",
+        "source_url": "https://example.com/source",
+        "source_category": "industry_news",
+        "published_at": "2026-06-01",
+        "topic": "demo market",
+        "claim_type": "fact",
+        "confidence": 0.91,
+    }
+
+
+def _normalized_candidate_wrapper() -> str:
+    return json.dumps(
+        {
+            "metadata": {"producer": "test-scout"},
+            "claims": [_normalized_intake_candidate()],
+        }
+    ) + "\n"
+
+
+def _normalized_screened_alias_payload() -> str:
+    return json.dumps(
+        {
+            "selected_candidates": [_normalized_intake_candidate()],
+            "excluded_candidates": [],
+            "screening_policy": {"total_candidates": 1, "max_items": 8},
+        }
+    ) + "\n"
 
 
 def _freeze_claim_ledger_fixture(ws: Path, *, duplicate: bool = False) -> None:
@@ -2338,6 +2378,62 @@ def test_state_check_validates_candidate_screened_and_input_classification_shape
     assert registry["input_classification"]["validation_result"] == "valid_input_classification_schema"
 
 
+def test_registry_intake_rebuild_idempotent(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
+
+    first = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    second = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    first_records = first["artifact_registry"]["artifacts"]
+    second_records = second["artifact_registry"]["artifacts"]
+    for artifact_id in ("candidate_claims", "screened_candidates"):
+        assert first_records[artifact_id]["intake_projection"] == (
+            second_records[artifact_id]["intake_projection"]
+        )
+        assert first_records[artifact_id]["sha256"] == second_records[artifact_id]["sha256"]
+
+
+def test_registry_intake_projection_rejects_cross_run_context(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    registry = json.loads(json.dumps(state["artifact_registry"]))
+    registry["run_id"] = "old-run"
+
+    reasons = validate_registry_intake_context(
+        registry,
+        expected_run_id=initialized["manifest"]["run_id"],
+        artifact_id="candidate_claims",
+    )
+
+    assert reasons == ["artifact_registry run_id does not match the current run"]
+
+
+@pytest.mark.parametrize("field", ["schema_version", "transform_version"])
+def test_registry_intake_projection_rejects_unknown_version(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    registry = json.loads(json.dumps(state["artifact_registry"]))
+    registry["artifacts"]["candidate_claims"]["intake_projection"][field] = "future/v99"
+
+    reasons = validate_registry_intake_context(
+        registry,
+        expected_run_id=initialized["manifest"]["run_id"],
+        artifact_id="candidate_claims",
+    )
+
+    assert any(field in reason and "unsupported" in reason for reason in reasons)
+
+
 def test_state_check_accepts_contract_shaped_candidate_claims(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -4029,6 +4125,108 @@ def test_default_topology_scout_completion_satisfies_screener(tmp_path):
         "candidate_claims",
         "screened_candidates",
     ]
+
+
+def test_default_topology_intake_views(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="normalized Scout artifacts complete",
+    )
+
+    records = state["artifact_registry"]["artifacts"]
+    assert records["candidate_claims"]["status"] == "valid"
+    assert records["candidate_claims"]["validation_result"] == (
+        "valid_candidate_claims_schema_normalized"
+    )
+    assert records["screened_candidates"]["status"] == "valid"
+    assert records["screened_candidates"]["validation_result"] == (
+        "valid_screened_candidates_schema_normalized"
+    )
+    assert records["candidate_claims"]["intake_projection"]["normalization_count"] > 0
+    assert records["screened_candidates"]["intake_projection"]["normalization_count"] > 0
+
+
+def test_strict_scout_intake_view(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "strict")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="normalized Scout artifact complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "screener"
+    record = state["artifact_registry"]["artifacts"]["candidate_claims"]
+    assert record["status"] == "valid"
+    assert record["validation_result"] == "valid_candidate_claims_schema_normalized"
+
+
+def test_strict_screener_output_intake(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "strict")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="Scout complete",
+    )
+    _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="screener",
+        reason="normalized Screener artifact complete",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "claim-ledger"
+    records = state["artifact_registry"]["artifacts"]
+    assert records["candidate_claims"]["intake_projection"]["normalization_count"] > 0
+    assert records["screened_candidates"]["validation_result"] == (
+        "valid_screened_candidates_schema_normalized"
+    )
+    assert not (ws / "output" / "intermediate" / "normalized_screened_candidates.json").exists()
+
+
+def test_topology_satisfaction_intake(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="Scout and topology-satisfied Screener complete",
+    )
+
+    workflow = state["workflow_state"]
+    screener = state["workflow_state"]["stage_statuses"]["screener"]
+    assert screener["status"] == "complete"
+    assert screener["metadata"]["satisfied_by_topology"] is True
+    records = state["artifact_registry"]["artifacts"]
+    assert "intake_projection" in records["candidate_claims"]
+    assert "intake_projection" in records["screened_candidates"]
     events = _event_records(ws)
     topology_events = [
         event
@@ -4058,7 +4256,7 @@ def test_default_topology_scout_completion_satisfies_screener(tmp_path):
     assert screener_timing["status"] == "satisfied_by_topology"
 
 
-def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_target(tmp_path):
+def test_supersede_stale_precedes_intake_validity(tmp_path):
     repo = _repo_with_role_topology(
         tmp_path,
         "default",
@@ -4156,6 +4354,7 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     checked_screened = checked["artifact_registry"]["artifacts"]["screened_candidates"]
     assert checked_screened["status"] == "stale"
     assert checked_screened["validation_result"] == "stale_after_supersede"
+    assert checked_screened["intake_projection"]["fatal_finding_count"] == 0
 
     _write_json_artifact(
         ws,
@@ -7815,6 +8014,41 @@ def test_repair_start_rejects_stale_report_from_non_current_stage(tmp_path):
     assert "source stage does not match" in str(excinfo.value)
     assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
     assert _state_file(ws, "event_log").read_bytes() == before_events
+
+
+def test_repair_stale_precedes_intake_validity(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_json_artifact(ws, "candidate_claims.json", _normalized_candidate_wrapper())
+    checked = check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    baseline = checked["artifact_registry"]["artifacts"]["candidate_claims"]
+
+    registry = _build_artifact_registry(
+        workspace=ws,
+        run_id=initialized["manifest"]["run_id"],
+        artifacts=load_artifact_contracts(ROOT),
+        workflow=checked["workflow_state"],
+        updated_at="2026-07-10T00:00:00+00:00",
+        recovery_state={
+            "owner_revision": {
+                "event_type": "repair_completed",
+                "transaction_id": "repair-tx",
+                "owner_stage": "source-discovery",
+                "stale_artifact_baselines": {
+                    "candidate_claims": {
+                        "path": baseline["path"],
+                        "sha256": baseline["sha256"],
+                    }
+                },
+            }
+        },
+    )
+
+    record = registry["artifacts"]["candidate_claims"]
+    assert record["status"] == "stale"
+    assert record["validation_result"] == "stale_after_repair"
+    assert record["intake_projection"]["normalization_count"] > 0
+    assert record["intake_projection"]["fatal_finding_count"] == 0
 
 
 def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downstream(tmp_path):

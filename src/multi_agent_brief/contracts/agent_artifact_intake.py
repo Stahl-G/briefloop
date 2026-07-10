@@ -414,6 +414,35 @@ def validate_intake_projection(
     return reasons
 
 
+def validate_registry_intake_context(
+    registry: Any,
+    *,
+    expected_run_id: str,
+    artifact_id: AgentArtifactId,
+    result: IntakeResult | None = None,
+) -> list[str]:
+    """Bind a persisted intake projection to its registry, run, and raw record."""
+
+    if not isinstance(registry, dict):
+        return ["artifact_registry must be an object"]
+    reasons: list[str] = []
+    if registry.get("run_id") != expected_run_id:
+        reasons.append("artifact_registry run_id does not match the current run")
+    artifacts = registry.get("artifacts")
+    if not isinstance(artifacts, dict):
+        reasons.append("artifact_registry artifacts must be an object")
+        return reasons
+    record = artifacts.get(artifact_id)
+    if not isinstance(record, dict):
+        reasons.append(f"artifact_registry is missing {artifact_id}")
+        return reasons
+    projection = record.get("intake_projection")
+    reasons.extend(validate_intake_projection(projection, result=result))
+    if isinstance(projection, dict) and record.get("sha256") != projection.get("raw_sha256"):
+        reasons.append("artifact record sha256 does not match intake_projection raw_sha256")
+    return reasons
+
+
 def _normalize_record_aliases(
     record: dict[str, Any],
     *,

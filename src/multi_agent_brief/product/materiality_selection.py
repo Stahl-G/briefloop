@@ -7,7 +7,6 @@ screening output, resurrect candidates, run gates, or approve delivery.
 
 from __future__ import annotations
 
-import json
 import re
 from collections import Counter
 from pathlib import Path
@@ -15,6 +14,9 @@ from typing import Any, Mapping
 
 import yaml
 
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    evaluate_agent_artifact_intake,
+)
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 
 
@@ -100,24 +102,18 @@ def project_workspace_materiality_selection(
             "screened_candidates_present": False,
         }
 
-    try:
-        screened = json.loads(screened_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    intake = evaluate_agent_artifact_intake(
+        screened_path,
+        artifact_id="screened_candidates",
+    )
+    if intake.status != "valid":
         return {
             **base,
             "status": "invalid_screened_candidates",
-            "reason": f"screened_candidates_unreadable:{type(exc).__name__}",
+            "reason": intake.validation_result,
             "screened_candidates_present": True,
         }
-
-    validation_reason = _screened_candidates_validation_reason(screened)
-    if validation_reason:
-        return {
-            **base,
-            "status": "invalid_screened_candidates",
-            "reason": validation_reason,
-            "screened_candidates_present": True,
-        }
+    screened = intake.normalized_payload
     if isinstance(screened, list):
         return {
             **base,
@@ -264,18 +260,6 @@ def _workspace_focus_terms(workspace: Path) -> list[str]:
         return []
     focus = config.get("focus") if isinstance(config.get("focus"), Mapping) else {}
     return _string_list(focus.get("areas"))
-
-
-def _screened_candidates_validation_reason(payload: Any) -> str | None:
-    from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
-        ARTIFACT_VALID,
-        _validate_screened_candidates_payload,
-    )
-
-    status, validation_result = _validate_screened_candidates_payload(payload)
-    if status == ARTIFACT_VALID:
-        return None
-    return validation_result
 
 
 def _discarded_candidates(payload: Mapping[str, Any]) -> list[dict[str, Any]]:

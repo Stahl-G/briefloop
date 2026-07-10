@@ -139,6 +139,41 @@ def test_materiality_selection_flags_capacity_capped_policy_or_focus_terms(tmp_p
     assert validate_materiality_selection_payload(projection) is None
 
 
+def test_materiality_selection_consumes_normalized_intake_view(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    path = ws / "output" / "intermediate" / "screened_candidates.json"
+    path.write_text(
+        json.dumps(
+            {
+                "selected_candidates": [],
+                "excluded_candidates": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "claim_statement": (
+                            "ExampleCo capacity expansion is delayed by tariff uncertainty."
+                        ),
+                        "source_id": "SRC-002",
+                        "reason_code": "capacity_capped",
+                        "explanation": "Capacity cap applied after selection.",
+                    }
+                ],
+                "screening_policy": {"total_candidates": 1},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    projection = project_workspace_materiality_selection(ws)
+
+    assert projection["status"] == "checked"
+    assert projection["discarded_count"] == 1
+    assert projection["findings"][0]["candidate_id"] == "CAND-002"
+    assert projection["findings"][0]["statement"].startswith("ExampleCo capacity")
+
+
 def test_status_and_quality_panel_surface_materiality_selection_without_authority(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     _write_screened_candidates(ws)
