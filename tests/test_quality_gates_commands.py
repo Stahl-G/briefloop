@@ -118,6 +118,23 @@ def _write_screened_candidates(
     selected: list[dict],
     excluded: list[dict] | None = None,
 ) -> None:
+    universe = [*selected, *(excluded or [])]
+    (_intermediate(ws) / "candidate_claims.json").write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": item["candidate_id"],
+                    "claim": item.get("statement") or item["candidate_id"],
+                    "source_id": item.get("source_id") or f"SRC-{item['candidate_id']}",
+                }
+                for item in universe
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (_intermediate(ws) / "screened_candidates.json").write_text(
         json.dumps(
             {
@@ -1728,6 +1745,19 @@ def test_coverage_omission_warns_when_high_priority_selected_candidate_missing_f
 def test_coverage_omission_consumes_normalized_intake_view(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _write_supported_target_ledger(ws)
+    (_intermediate(ws) / "candidate_claims.json").write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-999",
+                    "claim": "TargetCo disclosed a high-priority omitted item.",
+                    "source_id": "SRC-999",
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (_intermediate(ws) / "screened_candidates.json").write_text(
         json.dumps(
             {
@@ -1923,13 +1953,50 @@ def test_coverage_omission_does_not_interpret_invalid_screened_candidates(tmp_pa
         "## Executive Summary\nTargetCo opened a demo facility and reported 42 deployments. [src:CL-001]\n",
     )
 
-    state = quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+    with pytest.raises(RuntimeStateError) as excinfo:
+        quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
 
-    projection = state["quality_gate_report"]["metadata"]["coverage_omission_projection"]
-    findings = [item for item in state["quality_gate_report"]["findings"] if item["gate_id"] == "coverage_omission"]
-    assert projection["status"] == "invalid"
-    assert "screened_candidates_schema_error" in projection["not_interpreted_reason"]
-    assert findings == []
+    assert excinfo.value.error_code == runtime_state.operations.E_ARTIFACT_INVALID
+    assert "screened_candidates_schema_error" in str(excinfo.value.details)
+    assert not _auditor_report_path(ws).exists()
+
+
+def test_coverage_gate_rejects_screened_candidate_universe_mismatch(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_supported_target_ledger(ws)
+    _write_screened_candidates(
+        ws,
+        selected=[_selected_candidate(candidate_id="CAND-999")],
+    )
+    (_intermediate(ws) / "candidate_claims.json").write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-001",
+                    "claim": "TargetCo opened a demo facility.",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_audited_brief(
+        ws,
+        "## Executive Summary\nTargetCo opened a demo facility. [src:CL-001]\n",
+    )
+    event_path = _intermediate(ws) / "event_log.jsonl"
+    before_events = event_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        quality_gate_state.check_quality_gates(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ARTIFACT_INVALID
+    assert "unknown_candidate_id:CAND-999" in str(excinfo.value.details)
+    assert not _auditor_report_path(ws).exists()
+    assert event_path.read_bytes() == before_events
+    assert "quality_gate_passed" not in event_path.read_text(encoding="utf-8")
 
 
 def test_quality_gate_invalid_atomic_graph_is_non_blocking(tmp_path):

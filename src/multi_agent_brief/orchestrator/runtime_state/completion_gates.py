@@ -7,6 +7,11 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from multi_agent_brief.contracts.agent_artifact_intake import (
+    AGENT_ARTIFACT_IDS,
+    evaluate_workspace_agent_artifact_intakes,
+)
+
 import yaml
 
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -111,6 +116,11 @@ def _artifact_gate_reasons_for_ids(
     optional_prefix: str,
 ) -> list[str]:
     reasons: list[str] = []
+    intake_bundle = (
+        evaluate_workspace_agent_artifact_intakes(workspace)
+        if any(artifact_id in AGENT_ARTIFACT_IDS for artifact_id in artifact_ids)
+        else None
+    )
     for artifact_id in artifact_ids:
         contract = artifacts_by_id.get(str(artifact_id))
         if not contract:
@@ -118,7 +128,12 @@ def _artifact_gate_reasons_for_ids(
             continue
         rel_path = str(contract.get("path") or "")
         fmt = str(contract.get("format") or "")
-        status, validation_result = _validate_artifact(workspace / rel_path, fmt, str(artifact_id))
+        status, validation_result = _validate_artifact(
+            workspace / rel_path,
+            fmt,
+            str(artifact_id),
+            intake_result=intake_bundle.get(artifact_id) if intake_bundle is not None else None,
+        )
         required = bool(contract.get("required", False))
         if required and status != ARTIFACT_VALID:
             reasons.append(

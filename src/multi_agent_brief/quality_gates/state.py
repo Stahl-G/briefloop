@@ -16,7 +16,7 @@ import yaml
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.contracts.agent_artifact_intake import (
-    evaluate_agent_artifact_intake,
+    evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.core.citations import SRC_REF_PATTERN
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -37,6 +37,7 @@ from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import (
     E_ACTIVE_REPAIR_OPEN,
+    E_ARTIFACT_INVALID,
     E_FROZEN_GATE_REPORT_ALREADY_EXISTS,
     E_TRANSACTION_INTEGRITY,
 )
@@ -1141,7 +1142,11 @@ def _coverage_omission_projection(
         base["status"] = "missing"
         base["not_interpreted_reason"] = "screened_candidates_missing"
         return base
-    intake = evaluate_agent_artifact_intake(path, artifact_id="screened_candidates")
+    intake = evaluate_workspace_agent_artifact_intakes(workspace).screened_candidates
+    if intake is None:
+        base["status"] = "invalid"
+        base["not_interpreted_reason"] = "screened_candidates_intake_result_unavailable"
+        return base
     base["screened_candidates_validation_result"] = intake.validation_result
     if intake.status != "valid":
         base["status"] = "invalid"
@@ -2215,6 +2220,18 @@ def check_quality_gates(
         ledger=claim_ledger,
         reader_facing_mode=reader_mode,
     )
+    if coverage_omission_projection.get("status") == "invalid":
+        raise RuntimeStateError(
+            "Quality gates cannot consume invalid screened candidates.",
+            details={
+                "artifact_id": "screened_candidates",
+                "validation_result": coverage_omission_projection.get(
+                    "screened_candidates_validation_result"
+                ),
+                "reason": coverage_omission_projection.get("not_interpreted_reason"),
+            },
+            error_code=E_ARTIFACT_INVALID,
+        )
 
     gate_findings = evaluate_quality_gate_findings(
         markdown=markdown,

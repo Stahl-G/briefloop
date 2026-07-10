@@ -15,8 +15,9 @@ from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGr
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_IDS,
+    AgentArtifactId,
     IntakeResult,
-    evaluate_agent_artifact_intake,
+    evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
@@ -113,11 +114,18 @@ class FrozenArtifactIntegrityVerdict:
     contaminates_run: bool = False
 
 
-def _validate_artifact(path: Path, fmt: str, artifact_id: str = "") -> tuple[str, str]:
+def _validate_artifact(
+    path: Path,
+    fmt: str,
+    artifact_id: str = "",
+    *,
+    intake_result: IntakeResult | None = None,
+) -> tuple[str, str]:
     status, validation_result, _intake = _validate_artifact_with_intake(
         path,
         fmt,
         artifact_id,
+        intake_result=intake_result,
     )
     return status, validation_result
 
@@ -136,18 +144,10 @@ def _validate_artifact_with_intake(
     if fmt == "json" and artifact_id in AGENT_ARTIFACT_IDS:
         result = intake_result
         if result is None:
-            candidate_universe = None
-            if artifact_id == "screened_candidates":
-                candidate_path = path.with_name("candidate_claims.json")
-                if candidate_path.exists() and candidate_path.is_file():
-                    candidate_universe = evaluate_agent_artifact_intake(
-                        candidate_path,
-                        artifact_id="candidate_claims",
-                    )
-            result = evaluate_agent_artifact_intake(
-                path,
-                artifact_id=artifact_id,  # type: ignore[arg-type]
-                candidate_universe=candidate_universe,
+            return (
+                ARTIFACT_INVALID,
+                f"{artifact_id}_intake_result_unavailable",
+                None,
             )
         status = ARTIFACT_VALID if result.status == "valid" else ARTIFACT_INVALID
         return status, result.validation_result, result
@@ -1277,27 +1277,30 @@ def _agent_intake_results(
     workspace: Path,
     artifacts: list[dict[str, Any]],
 ) -> dict[str, IntakeResult]:
+    artifact_ids: tuple[AgentArtifactId, ...] = (
+        "candidate_claims",
+        "screened_candidates",
+        "claim_drafts",
+    )
     artifacts_by_id = {
         str(artifact.get("artifact_id") or ""): artifact
         for artifact in artifacts
         if artifact.get("artifact_id")
     }
-    results: dict[str, IntakeResult] = {}
-    for artifact_id in ("candidate_claims", "screened_candidates", "claim_drafts"):
-        artifact = artifacts_by_id.get(artifact_id)
-        if not isinstance(artifact, dict):
-            continue
-        path = workspace / str(artifact.get("path") or "")
-        if not path.exists() or not path.is_file():
-            continue
-        results[artifact_id] = evaluate_agent_artifact_intake(
-            path,
-            artifact_id=artifact_id,  # type: ignore[arg-type]
-            candidate_universe=results.get("candidate_claims")
-            if artifact_id == "screened_candidates"
-            else None,
-        )
-    return results
+    artifact_paths = {
+        artifact_id: workspace / str(artifact.get("path") or "")
+        for artifact_id in artifact_ids
+        if isinstance((artifact := artifacts_by_id.get(artifact_id)), dict)
+    }
+    bundle = evaluate_workspace_agent_artifact_intakes(
+        workspace,
+        artifact_paths=artifact_paths,
+    )
+    return {
+        artifact_id: result
+        for artifact_id in artifact_ids
+        if (result := bundle.get(artifact_id)) is not None
+    }
 
 
 def interpret_frozen_artifact_integrity(

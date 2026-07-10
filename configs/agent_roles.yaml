@@ -266,8 +266,8 @@ roles:
     - Step 1 discovery always extracts structured candidate claims from source content
       and writes output/intermediate/candidate_claims.json once as the complete
       found universe.
-    - 'Each claim must include: statement, evidence_text, source identity, published_at
-      or retrieved_at, topic, claim_type, and confidence. Source identity is either
+    - 'Each claim must include: stable candidate_id, statement, evidence_text,
+      source identity, published_at or retrieved_at, topic, claim_type, and confidence. Source identity is either
       source_url for HTTP(S) web sources or source_path for local/package sources.'
     - Preserve source ID, source path or URL, source title/name, publisher when
       known, source_category, provider source_type, source date, and evidence text.

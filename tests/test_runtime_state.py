@@ -147,6 +147,24 @@ def _write_json_artifact(ws: Path, name: str, payload: str = "[]\n") -> None:
     (_intermediate(ws) / name).write_text(payload, encoding="utf-8")
 
 
+def _write_candidate_universe(ws: Path, *candidate_ids: str) -> None:
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        json.dumps(
+            [
+                {
+                    "candidate_id": candidate_id,
+                    "claim": f"Example candidate {candidate_id}.",
+                    "source_id": f"SRC-{candidate_id}",
+                }
+                for candidate_id in candidate_ids
+            ]
+        )
+        + "\n",
+    )
+
+
 def _write_input_classification(ws: Path, payload: dict) -> None:
     output_dir = ws / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2479,6 +2497,7 @@ def test_state_check_accepts_contract_shaped_candidate_claims(tmp_path):
         json.dumps(
             [
                 {
+                    "candidate_id": "CAND-001",
                     "statement": "ExampleCo opened a demo facility.",
                     "evidence_text": "ExampleCo opened a demo facility in June.",
                     "source_url": "https://example.com/source",
@@ -2510,6 +2529,7 @@ def test_state_check_accepts_contract_candidate_with_claim_alias(tmp_path):
         json.dumps(
             [
                 {
+                    "candidate_id": "CAND-001",
                     "statement": "ExampleCo opened a demo facility.",
                     "claim": "ExampleCo opened a demo facility.",
                     "evidence_text": "ExampleCo opened a demo facility in June.",
@@ -2541,6 +2561,7 @@ def test_state_check_accepts_contract_candidate_with_source_path_only(tmp_path):
         json.dumps(
             [
                 {
+                    "candidate_id": "CAND-001",
                     "statement": "ExampleCo opened a demo facility.",
                     "evidence_text": "ExampleCo opened a demo facility in June.",
                     "source_path": "input/sources/source-001.md",
@@ -2571,6 +2592,7 @@ def test_state_check_accepts_local_file_candidate_with_source_category(tmp_path)
         json.dumps(
             [
                 {
+                    "candidate_id": "CAND-001",
                     "statement": "ExampleCo opened a demo facility.",
                     "evidence_text": "ExampleCo opened a demo facility in June.",
                     "source_type": "local_file",
@@ -2604,6 +2626,7 @@ def test_state_check_rejects_contract_candidate_plain_text_source_url(tmp_path):
         json.dumps(
             [
                 {
+                    "candidate_id": "CAND-001",
                     "statement": "ExampleCo opened a demo facility.",
                     "evidence_text": "ExampleCo opened a demo facility in June.",
                     "source_url": "GEN Top 10 organoid companies",
@@ -2634,6 +2657,7 @@ def test_state_check_rejects_contract_candidate_without_source_identity(tmp_path
         json.dumps(
             [
                 {
+                    "candidate_id": "CAND-001",
                     "statement": "ExampleCo opened a demo facility.",
                     "evidence_text": "ExampleCo opened a demo facility in June.",
                     "published_at": "2026-06-01",
@@ -2666,6 +2690,7 @@ def test_state_check_rejects_contract_candidate_without_source_date(tmp_path):
         json.dumps(
             [
                 {
+                    "candidate_id": "CAND-001",
                     "statement": "ExampleCo opened a demo facility.",
                     "evidence_text": "ExampleCo opened a demo facility in June.",
                     "source_url": "https://example.com/source",
@@ -2729,6 +2754,7 @@ def test_state_check_marks_duplicate_candidate_claim_ids_invalid(tmp_path):
 def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -2745,6 +2771,7 @@ def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
                 ],
                 "excluded": [
                     {
+                        "candidate_id": "CAND-002",
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
                         "reason_code": "duplicate_source",
@@ -2768,6 +2795,7 @@ def test_state_check_accepts_object_shaped_screened_candidates(tmp_path):
 def test_state_check_rejects_object_screened_candidates_reason_only_discard_audit(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -2784,6 +2812,7 @@ def test_state_check_rejects_object_screened_candidates_reason_only_discard_audi
                 ],
                 "excluded": [
                     {
+                        "candidate_id": "CAND-002",
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
                     }
@@ -2804,6 +2833,7 @@ def test_state_check_rejects_object_screened_candidates_reason_only_discard_audi
 def test_state_check_accepts_object_screened_candidates_with_source_url_identity(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -2811,6 +2841,7 @@ def test_state_check_accepts_object_screened_candidates_with_source_url_identity
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_url": "https://example.com/source",
@@ -2822,6 +2853,7 @@ def test_state_check_accepts_object_screened_candidates_with_source_url_identity
                 ],
                 "excluded": [
                     {
+                        "candidate_id": "CAND-002",
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
                         "reason_code": "duplicate_source",
@@ -2844,6 +2876,7 @@ def test_state_check_accepts_object_screened_candidates_with_source_url_identity
 def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -2851,6 +2884,7 @@ def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_type": "local_file",
@@ -2865,6 +2899,7 @@ def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_
                 ],
                 "excluded": [
                     {
+                        "candidate_id": "CAND-002",
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
                         "reason_code": "duplicate_source",
@@ -2887,6 +2922,7 @@ def test_state_check_accepts_object_screened_candidates_local_file_category(tmp_
 def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -2894,6 +2930,7 @@ def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tm
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_url": "GEN Top 10 organoid companies",
@@ -2905,6 +2942,7 @@ def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tm
                 ],
                 "excluded": [
                     {
+                        "candidate_id": "CAND-002",
                         "statement": "An older duplicate item.",
                         "reason": "duplicate",
                         "reason_code": "duplicate_source",
@@ -2927,12 +2965,18 @@ def test_state_check_rejects_object_screened_candidates_plain_text_source_url(tm
 def test_state_check_rejects_object_screened_candidates_without_selected_evidence(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
         json.dumps(
             {
-                "selected": [{"statement": "ExampleCo opened a demo facility."}],
+                "selected": [
+                    {
+                        "candidate_id": "CAND-001",
+                        "statement": "ExampleCo opened a demo facility.",
+                    }
+                ],
                 "excluded": [],
                 "screening_policy": {"max_items": 8},
             }
@@ -2950,6 +2994,7 @@ def test_state_check_rejects_object_screened_candidates_without_selected_evidenc
 def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -2957,13 +3002,19 @@ def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path)
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
                         "published_at": "2026-06-01",
                     }
                 ],
-                "excluded": [{"statement": "An older duplicate item."}],
+                "excluded": [
+                    {
+                        "candidate_id": "CAND-002",
+                        "statement": "An older duplicate item.",
+                    }
+                ],
                 "screening_policy": {"max_items": 8},
             }
         )
@@ -2980,6 +3031,7 @@ def test_state_check_rejects_object_screened_candidates_missing_reason(tmp_path)
 def test_state_check_rejects_screened_candidates_missing_discard_audit(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -2987,6 +3039,7 @@ def test_state_check_rejects_screened_candidates_missing_discard_audit(tmp_path)
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -3010,6 +3063,7 @@ def test_state_check_rejects_screened_candidates_missing_discard_audit(tmp_path)
 def test_state_check_accepts_screened_candidates_reason_code_without_legacy_reason(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -3017,6 +3071,7 @@ def test_state_check_accepts_screened_candidates_reason_code_without_legacy_reas
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -3046,6 +3101,7 @@ def test_state_check_accepts_screened_candidates_reason_code_without_legacy_reas
 def test_state_check_rejects_screened_candidates_discard_count_mismatch(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002", "CAND-003")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -3053,6 +3109,7 @@ def test_state_check_rejects_screened_candidates_discard_count_mismatch(tmp_path
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -3083,6 +3140,7 @@ def test_state_check_rejects_screened_candidates_discard_count_mismatch(tmp_path
 def test_state_check_rejects_screened_candidates_unknown_discard_reason_code(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -3090,6 +3148,7 @@ def test_state_check_rejects_screened_candidates_unknown_discard_reason_code(tmp
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -3120,6 +3179,7 @@ def test_state_check_rejects_screened_candidates_unknown_discard_reason_code(tmp
 def test_state_check_rejects_screened_candidates_missing_discard_explanation(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(ws, "CAND-001", "CAND-002")
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -3127,6 +3187,7 @@ def test_state_check_rejects_screened_candidates_missing_discard_explanation(tmp
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -3156,6 +3217,13 @@ def test_state_check_rejects_screened_candidates_missing_discard_explanation(tmp
 def test_state_check_accepts_screened_candidates_complete_discard_audit(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _write_candidate_universe(
+        ws,
+        "CAND-001",
+        "CAND-002",
+        "CAND-003",
+        "CAND-004",
+    )
     _write_json_artifact(
         ws,
         "screened_candidates.json",
@@ -3163,6 +3231,7 @@ def test_state_check_accepts_screened_candidates_complete_discard_audit(tmp_path
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -3225,6 +3294,7 @@ def test_state_check_rejects_screened_candidates_total_below_candidate_universe(
             {
                 "selected": [
                     {
+                        "candidate_id": "CAND-001",
                         "statement": "ExampleCo opened a demo facility.",
                         "evidence_text": "ExampleCo opened a demo facility in June.",
                         "source_id": "SRC-001",
@@ -5004,6 +5074,142 @@ def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
     assert frozen["manifest"]["claim_ledger_freeze"]["schema_version"].endswith(".v2")
 
 
+def test_legacy_freeze_rejects_cross_run_transplant(tmp_path: Path) -> None:
+    ws_a = _write_workspace(tmp_path / "run-a")
+    initialized_a = initialize_runtime_state(workspace=ws_a, repo_workdir=ROOT)
+    _set_current_stage(ws_a, "claim-ledger")
+    _write_json_artifact(ws_a, "claim_drafts.json", _valid_claim_drafts_payload())
+    frozen_a = freeze_claim_ledger_transaction(workspace=ws_a, repo_workdir=ROOT)
+    current = frozen_a["manifest"]["claim_ledger_freeze"]
+    legacy_freeze = {
+        "schema_version": "mabw.claim_ledger_freeze.v1",
+        "status": "frozen",
+        "frozen_at": current["frozen_at"],
+        "transaction_id": current["transaction_id"],
+        "id_strategy": current["id_strategy"],
+        "source_artifact_id": "claim_drafts",
+        "source_path": current["source_path"],
+        "source_schema_version": current["source_schema_version"],
+        "source_sha256": current["source_raw_sha256"],
+        "claim_ledger_path": current["claim_ledger_path"],
+        "claim_ledger_sha256": current["claim_ledger_sha256"],
+        "claim_count": current["claim_count"],
+    }
+
+    ws_b = _write_workspace(tmp_path / "run-b")
+    initialized_b = initialize_runtime_state(workspace=ws_b, repo_workdir=ROOT)
+    _set_current_stage(ws_b, "claim-ledger")
+    _write_json_artifact(ws_b, "claim_drafts.json", _valid_claim_drafts_payload())
+    (_intermediate(ws_b) / "claim_ledger.json").write_bytes(
+        (_intermediate(ws_a) / "claim_ledger.json").read_bytes()
+    )
+    manifest_path = _state_file(ws_b, "runtime_manifest")
+    manifest_b = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_b["claim_ledger_freeze"] = legacy_freeze
+    manifest_path.write_text(
+        json.dumps(manifest_b, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    before_manifest = manifest_path.read_bytes()
+    before_events = _state_file(ws_b, "event_log").read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws_b, repo_workdir=ROOT)
+
+    assert initialized_a["manifest"]["run_id"] != initialized_b["manifest"]["run_id"]
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "matching current-run event" in str(excinfo.value.details["freeze_reasons"])
+    assert manifest_path.read_bytes() == before_manifest
+    assert _state_file(ws_b, "event_log").read_bytes() == before_events
+
+
+def test_freeze_binding_rejects_duplicate_transaction_events(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    frozen = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    binding = frozen["manifest"]["claim_ledger_freeze"]
+    runtime_event_log.append_event(
+        workspace=ws,
+        run_id=initialized["manifest"]["run_id"],
+        event_type="claim_ledger_frozen",
+        actor="cli",
+        stage_id="claim-ledger",
+        artifact_id="claim_ledger",
+        reason="Conflicting duplicate freeze event.",
+        metadata={
+            "transaction_id": binding["transaction_id"],
+            "source_artifact_id": "claim_drafts",
+            "source_path": binding["source_path"],
+            "source_sha256": binding["source_raw_sha256"],
+            "freeze_schema_version": binding["schema_version"],
+            "source_raw_sha256": binding["source_raw_sha256"],
+            "source_normalized_sha256": "0" * 64,
+            "normalization_policy": binding["normalization_policy"],
+            "claim_ledger_path": binding["claim_ledger_path"],
+            "claim_ledger_sha256": binding["claim_ledger_sha256"],
+        },
+    )
+    before = {
+        key: _state_file(ws, key).read_bytes()
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    }
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "multiple matching current-run events" in str(
+        excinfo.value.details["freeze_reasons"]
+    )
+    assert {
+        key: _state_file(ws, key).read_bytes()
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    } == before
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_reason"),
+    [
+        ("stage_id", "auditor", "event stage_id is not claim-ledger"),
+        ("artifact_id", "audit_report", "event artifact_id is not claim_ledger"),
+    ],
+)
+def test_freeze_binding_rejects_wrong_event_identity(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    expected_reason: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    event_path = _state_file(ws, "event_log")
+    records = _event_records(ws)
+    freeze_event = next(
+        event for event in records if event.get("event_type") == "claim_ledger_frozen"
+    )
+    freeze_event[field] = value
+    event_path.write_text(
+        "".join(
+            json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+            for event in records
+        ),
+        encoding="utf-8",
+    )
+    before = event_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert expected_reason in str(excinfo.value.details["freeze_reasons"])
+    assert event_path.read_bytes() == before
+
+
 def test_unknown_freeze_binding_schema_fails_closed(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -5023,6 +5229,103 @@ def test_unknown_freeze_binding_schema_fails_closed(tmp_path: Path) -> None:
 
     assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
     assert "unsupported schema" in str(excinfo.value.details["freeze_reasons"])
+
+
+@pytest.mark.parametrize(
+    ("recovery_event_type", "expected_validation_result"),
+    [
+        ("repair_completed", "stale_after_repair"),
+        ("repair_stage_superseded", "stale_after_supersede"),
+    ],
+    ids=["INTAKE-FREEZE-07-repair", "INTAKE-FREEZE-07-supersede"],
+)
+@pytest.mark.parametrize(
+    "operation",
+    ["repeat-freeze", "stage-complete"],
+)
+def test_stale_claim_drafts_blocks_repeat_freeze_and_stage_completion(
+    tmp_path: Path,
+    recovery_event_type: str,
+    expected_validation_result: str,
+    operation: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialized = initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
+    frozen = freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    baseline = frozen["artifact_registry"]["artifacts"]["claim_drafts"]
+    run_id = initialized["manifest"]["run_id"]
+    stale_registry = _build_artifact_registry(
+        workspace=ws,
+        run_id=run_id,
+        artifacts=load_artifact_contracts(ROOT),
+        workflow=frozen["workflow_state"],
+        updated_at="2026-07-10T00:00:00+00:00",
+        recovery_state={
+            "owner_revision": {
+                "event_type": recovery_event_type,
+                "transaction_id": f"{recovery_event_type}-tx",
+                "owner_stage": "screener",
+                "stale_artifact_baselines": {
+                    "claim_drafts": {
+                        "path": baseline["path"],
+                        "sha256": baseline["sha256"],
+                    }
+                },
+            }
+        },
+    )
+    stale_record = stale_registry["artifacts"]["claim_drafts"]
+    assert stale_record["status"] == "stale"
+    assert stale_record["validation_result"] == expected_validation_result
+    assert stale_record["intake_projection"] == baseline["intake_projection"]
+    current_intake = evaluate_agent_artifact_intake(
+        _intermediate(ws) / "claim_drafts.json",
+        artifact_id="claim_drafts",
+    )
+    assert validate_registry_intake_context(
+        stale_registry,
+        expected_run_id=run_id,
+        artifact_id="claim_drafts",
+        result=current_intake,
+    ) == []
+
+    registry_path = _state_file(ws, "artifact_registry")
+    registry_path.write_text(
+        json.dumps(stale_registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    state_paths = {
+        key: _state_file(ws, key)
+        for key in ("runtime_manifest", "workflow_state", "artifact_registry", "event_log")
+    }
+    before = {key: path.read_bytes() for key, path in state_paths.items()}
+    ledger_path = _intermediate(ws) / "claim_ledger.json"
+    ledger_before = ledger_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        if operation == "repeat-freeze":
+            freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+        else:
+            complete_stage_transaction(
+                workspace=ws,
+                repo_workdir=ROOT,
+                stage_id="claim-ledger",
+                reason="stale claim drafts must not authorize stage completion",
+            )
+
+    expected_code = (
+        runtime_state.operations.E_TRANSACTION_INTEGRITY
+        if operation == "repeat-freeze"
+        else runtime_state.operations.E_COMPLETION_TRANSACTION_REQUIRED
+    )
+    assert excinfo.value.error_code == expected_code
+    assert "claim_drafts artifact record status must be valid" in (
+        f"{excinfo.value} {excinfo.value.details}"
+    )
+    assert {key: path.read_bytes() for key, path in state_paths.items()} == before
+    assert ledger_path.read_bytes() == ledger_before
 
 
 def test_freeze_claim_ledger_preserves_draft_provenance_metadata(tmp_path):

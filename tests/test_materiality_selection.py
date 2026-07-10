@@ -70,6 +70,26 @@ def _workspace(tmp_path: Path, *, with_policy: bool = True) -> Path:
 def _write_screened_candidates(ws: Path) -> None:
     intermediate = ws / "output" / "intermediate"
     intermediate.mkdir(parents=True, exist_ok=True)
+    (intermediate / "candidate_claims.json").write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": candidate_id,
+                    "claim": f"Example candidate {candidate_id}.",
+                    "source_id": source_id,
+                }
+                for candidate_id, source_id in (
+                    ("CAND-001", "SRC-001"),
+                    ("CAND-002", "SRC-002"),
+                    ("CAND-003", "SRC-003"),
+                )
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (intermediate / "screened_candidates.json").write_text(
         json.dumps(
             {
@@ -141,6 +161,20 @@ def test_materiality_selection_flags_capacity_capped_policy_or_focus_terms(tmp_p
 
 def test_materiality_selection_consumes_normalized_intake_view(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
+    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    candidate_path.write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-002",
+                    "claim": "ExampleCo capacity expansion is delayed by tariff uncertainty.",
+                    "source_id": "SRC-002",
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     path = ws / "output" / "intermediate" / "screened_candidates.json"
     path.write_text(
         json.dumps(
@@ -239,6 +273,50 @@ def test_materiality_selection_rejects_contract_invalid_screened_candidates(tmp_
     assert status["materiality_selection"]["status"] == "invalid_screened_candidates"
     assert panel["materiality_selection"]["status"] == "invalid_screened_candidates"
     assert validate_quality_panel_payload(panel) is None
+
+
+def test_materiality_does_not_interpret_universe_invalid_screening(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    intermediate = ws / "output" / "intermediate"
+    (intermediate / "candidate_claims.json").write_text(
+        json.dumps(
+            [
+                {
+                    "candidate_id": "CAND-001",
+                    "claim": "ExampleCo reported a supplier update.",
+                    "source_id": "SRC-001",
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (intermediate / "screened_candidates.json").write_text(
+        json.dumps(
+            {
+                "selected": [
+                    {
+                        "candidate_id": "CAND-999",
+                        "statement": "ExampleCo reported a supplier update.",
+                        "evidence_text": "ExampleCo reported a supplier update.",
+                        "source_id": "SRC-001",
+                        "retrieved_at": "2026-07-01",
+                    }
+                ],
+                "excluded": [],
+                "screening_policy": {"total_candidates": 1},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    projection = project_workspace_materiality_selection(ws)
+
+    assert projection["status"] == "invalid_screened_candidates"
+    assert "unknown_candidate_id:CAND-999" in projection["reason"]
+    assert projection["summary_counts"]["finding_count"] == 0
+    assert projection["recommended_actions"] == []
 
 
 def test_materiality_selection_rejects_malformed_discard_bucket(tmp_path: Path) -> None:

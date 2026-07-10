@@ -11,9 +11,23 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
     INTAKE_PROJECTION_SCHEMA_VERSION,
     canonical_normalized_json_bytes,
     evaluate_agent_artifact_intake,
+    evaluate_workspace_agent_artifact_intakes,
     normalize_claim_drafts,
     validate_intake_projection,
+    validate_registry_intake_context,
 )
+from multi_agent_brief.core.claim_ledger import ClaimLedger
+from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
+    initialize_runtime_state,
+)
+from multi_agent_brief.product.materiality_selection import (
+    project_workspace_materiality_selection,
+)
+from multi_agent_brief.quality_gates.state import _coverage_omission_projection
+
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -55,6 +69,24 @@ def _screened_payload() -> dict[str, object]:
         "selected": [_candidate()],
         "excluded": [],
         "screening_policy": {"total_candidates": 1},
+    }
+
+
+def _legacy_candidate(candidate_id: str) -> dict[str, str]:
+    return {
+        "candidate_id": candidate_id,
+        "claim": f"Example claim for {candidate_id}.",
+        "source_id": f"SRC-{candidate_id}",
+    }
+
+
+def _selected_candidate(candidate_id: str) -> dict[str, str]:
+    return {
+        "candidate_id": candidate_id,
+        "statement": f"Example selected claim for {candidate_id}.",
+        "evidence_text": "Public-safe example evidence.",
+        "source_id": "SRC-001",
+        "published_at": "2026-06-01",
     }
 
 
@@ -126,6 +158,43 @@ def test_candidate_intake_plain_source_url(tmp_path: Path) -> None:
     assert result.normalized_payload[0]["source_url"] == "South China Morning Post"
 
 
+def test_candidate_intake_requires_candidate_id(tmp_path: Path) -> None:
+    path = tmp_path / "candidate_claims.json"
+    candidate = _candidate()
+    candidate.pop("candidate_id")
+    _write_json(path, [candidate])
+
+    result = evaluate_agent_artifact_intake(path, artifact_id="candidate_claims")
+
+    assert result.status == "invalid"
+    assert result.validation_result == "candidate_claims_schema_error:candidate[0].candidate_id"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_url", "South China Morning Post"),
+        ("source_url", ""),
+        ("source_category", "unregistered_category"),
+        ("published_at", ""),
+    ],
+)
+def test_legacy_candidate_supplied_identity_fields_are_validated(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    path = tmp_path / "candidate_claims.json"
+    candidate = _legacy_candidate("CAND-001")
+    candidate[field] = value
+    _write_json(path, [candidate])
+
+    result = evaluate_agent_artifact_intake(path, artifact_id="candidate_claims")
+
+    assert result.status == "invalid"
+    assert result.validation_result == f"candidate_claims_schema_error:candidate[0].{field}"
+
+
 def test_candidate_intake_duplicate_ids(tmp_path: Path) -> None:
     path = tmp_path / "candidate_claims.json"
     _write_json(path, [_candidate(), _candidate()])
@@ -163,6 +232,7 @@ def test_screened_reason_not_reason_code(tmp_path: Path) -> None:
         "excluded": [
             {
                 "candidate_id": "CAND-001",
+                "statement": "Example item outside the requested scope.",
                 "reason": "Outside the requested scope.",
                 "explanation": "The item does not match the requested market.",
             }
@@ -223,6 +293,117 @@ def test_screened_universe_duplicate_id(tmp_path: Path) -> None:
     assert candidate_result.status == "invalid"
     assert screened_result.status == "invalid"
     assert "candidate_universe_duplicate_candidate_id" in screened_result.validation_result
+
+
+def test_screened_candidate_requires_candidate_id_without_universe(tmp_path: Path) -> None:
+    path = tmp_path / "screened_candidates.json"
+    payload = _screened_payload()
+    payload["selected"][0].pop("candidate_id")
+    _write_json(path, payload)
+
+    result = evaluate_agent_artifact_intake(path, artifact_id="screened_candidates")
+
+    assert result.status == "invalid"
+    assert result.validation_result == (
+        "screened_candidates_schema_error:selected[0].candidate_id"
+    )
+
+
+def test_workspace_intake_bundle_rejects_missing_candidate_universe(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    intermediate = workspace / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_json(intermediate / "screened_candidates.json", _screened_payload())
+
+    bundle = evaluate_workspace_agent_artifact_intakes(workspace)
+
+    assert bundle.candidate_claims is None
+    assert bundle.screened_candidates is not None
+    assert bundle.screened_candidates.status == "invalid"
+    assert bundle.screened_candidates.validation_result == (
+        "screened_candidates_schema_error:candidate_universe_invalid"
+    )
+
+
+@pytest.mark.parametrize(
+    ("candidate_payload", "screened_payload", "expected_result"),
+    [
+        (
+            [_legacy_candidate("CAND-001")],
+            {
+                "selected": [_selected_candidate("CAND-999")],
+                "excluded": [],
+                "screening_policy": {"total_candidates": 1},
+            },
+            "screened_candidates_schema_error:selected[0].unknown_candidate_id:CAND-999",
+        ),
+        (
+            [_legacy_candidate("CAND-001"), _legacy_candidate("CAND-001")],
+            {
+                "selected": [_selected_candidate("CAND-001")],
+                "excluded": [],
+                "screening_policy": {"method": "deterministic_test"},
+            },
+            "screened_candidates_schema_error:candidate_universe_duplicate_candidate_id:CAND-001",
+        ),
+        (
+            [_legacy_candidate("CAND-001"), _legacy_candidate("CAND-002")],
+            {
+                "selected": [_selected_candidate("CAND-001")],
+                "excluded": [],
+                "screening_policy": {"total_candidates": 1},
+            },
+            "screened_candidates_schema_error:candidate_universe_count_mismatch",
+        ),
+    ],
+    ids=["INTAKE-UNIVERSE-03", "INTAKE-UNIVERSE-04", "INTAKE-UNIVERSE-05"],
+)
+def test_workspace_intake_bundle_owns_screened_universe_verdict(
+    tmp_path: Path,
+    candidate_payload: list[dict[str, str]],
+    screened_payload: dict[str, object],
+    expected_result: str,
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "config.yaml").write_text(
+        "project:\n  name: Intake Consumer Equivalence\n"
+        "output:\n  path: output\n"
+        "input:\n  path: input\n",
+        encoding="utf-8",
+    )
+    (workspace / "user.md").write_text("# User\n", encoding="utf-8")
+    (workspace / "input").mkdir()
+    initialize_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    intermediate = workspace / "output" / "intermediate"
+    _write_json(intermediate / "candidate_claims.json", candidate_payload)
+    _write_json(intermediate / "screened_candidates.json", screened_payload)
+
+    bundle = evaluate_workspace_agent_artifact_intakes(workspace)
+    state = check_runtime_state(workspace=workspace, repo_workdir=ROOT)
+    registry_record = state["artifact_registry"]["artifacts"]["screened_candidates"]
+    materiality = project_workspace_materiality_selection(workspace)
+    coverage = _coverage_omission_projection(
+        workspace=workspace,
+        markdown="## Executive Summary\n",
+        ledger=ClaimLedger(),
+    )
+
+    assert bundle.candidate_claims is not None
+    assert bundle.screened_candidates is not None
+    assert bundle.screened_candidates.status == "invalid"
+    assert bundle.screened_candidates.validation_result == expected_result
+    assert registry_record["status"] == "invalid"
+    assert materiality["status"] == "invalid_screened_candidates"
+    assert coverage["status"] == "invalid"
+    assert {
+        registry_record["validation_result"],
+        materiality["reason"],
+        coverage["screened_candidates_validation_result"],
+        coverage["not_interpreted_reason"],
+    } == {expected_result}
 
 
 def test_claim_draft_mechanical_normalization(tmp_path: Path) -> None:
@@ -343,6 +524,22 @@ def test_normalize_claim_drafts_does_not_mutate_input() -> None:
             "normalized_sha256",
             "intake_projection normalized_sha256 must be empty or a lowercase SHA-256 digest",
         ),
+        (
+            "normalization_operation",
+            "intake_projection normalizations[0].operation must be a non-empty string",
+        ),
+        (
+            "normalization_target",
+            "intake_projection normalizations[0].target is required",
+        ),
+        (
+            "finding_code",
+            "intake_projection findings[0].code must be a non-empty string",
+        ),
+        (
+            "finding_severity",
+            "intake_projection findings[0].severity must be fatal",
+        ),
     ],
 )
 def test_intake_projection_internal_binding_fails_closed(
@@ -367,9 +564,106 @@ def test_intake_projection_internal_binding_fails_closed(
         projection["findings"] = ["not-an-object"]
     elif corruption == "raw_sha256":
         projection["raw_sha256"] = "not-a-digest"
-    else:
+    elif corruption == "normalized_sha256":
         projection["normalized_sha256"] = "not-a-digest"
+    elif corruption == "normalization_operation":
+        projection["normalizations"] = [
+            {"operation": "", "path": "candidate[0]", "source": "a", "target": "b"}
+        ]
+        projection["normalization_count"] = 1
+    elif corruption == "normalization_target":
+        projection["normalizations"] = [
+            {"operation": "field_alias", "path": "candidate[0]", "source": "a"}
+        ]
+        projection["normalization_count"] = 1
+    else:
+        projection["findings"] = [
+            {
+                "artifact_id": "candidate_claims",
+                "severity": "warning" if corruption == "finding_severity" else "fatal",
+                "code": "" if corruption == "finding_code" else "contract_invalid",
+                "path": "candidate[0].candidate_id",
+                "message": "candidate id missing",
+                "validation_result": "candidate_claims_schema_error:candidate[0].candidate_id",
+            }
+        ]
+        projection["fatal_finding_count"] = (
+            0 if corruption == "finding_severity" else 1
+        )
 
     reasons = validate_intake_projection(projection)
+
+    assert expected_reason in reasons
+
+
+@pytest.mark.parametrize(
+    ("status", "normalized_sha256", "fatal_finding_count", "findings", "expected_reason"),
+    [
+        (
+            "valid",
+            "",
+            0,
+            [],
+            "valid artifact record requires a normalized intake digest",
+        ),
+        (
+            "valid",
+            "a" * 64,
+            1,
+            [
+                {
+                    "artifact_id": "candidate_claims",
+                    "severity": "fatal",
+                    "code": "contract_invalid",
+                    "path": "candidate[0].candidate_id",
+                    "message": "candidate id missing",
+                    "validation_result": (
+                        "candidate_claims_schema_error:candidate[0].candidate_id"
+                    ),
+                }
+            ],
+            "valid artifact record cannot contain fatal intake findings",
+        ),
+        (
+            "invalid",
+            "a" * 64,
+            0,
+            [],
+            "invalid artifact record requires a fatal intake finding",
+        ),
+    ],
+)
+def test_projection_rejects_impossible_status_digest_finding_combination(
+    status: str,
+    normalized_sha256: str,
+    fatal_finding_count: int,
+    findings: list[dict[str, object]],
+    expected_reason: str,
+) -> None:
+    registry = {
+        "run_id": "run-current",
+        "artifacts": {
+            "candidate_claims": {
+                "status": status,
+                "sha256": "b" * 64,
+                "intake_projection": {
+                    "schema_version": INTAKE_PROJECTION_SCHEMA_VERSION,
+                    "transform_version": AGENT_ARTIFACT_INTAKE_TRANSFORM_VERSION,
+                    "raw_sha256": "b" * 64,
+                    "normalized_sha256": normalized_sha256,
+                    "normalization_count": 0,
+                    "fatal_finding_count": fatal_finding_count,
+                    "normalizations": [],
+                    "findings": findings,
+                },
+            }
+        },
+    }
+
+    reasons = validate_registry_intake_context(
+        registry,
+        expected_run_id="run-current",
+        artifact_id="candidate_claims",
+    )
 
     assert expected_reason in reasons

@@ -1147,3 +1147,19 @@ def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
         "intake_projection schema_version is unsupported"
     ]
     assert "[status] intake: invalid" in format_workspace_status(status)
+
+    persisted["schema_version"] = "briefloop.intake_projection.v1"
+    persisted["normalized_sha256"] = ""
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    impossible_status = build_workspace_status(ws)
+    impossible_intake = impossible_status["artifacts"]["intake"]
+
+    assert impossible_intake["valid"] is False
+    assert impossible_intake["invalid_projection_count"] == 1
+    assert impossible_intake["artifacts"][0]["reasons"] == [
+        "valid artifact record requires a normalized intake digest"
+    ]

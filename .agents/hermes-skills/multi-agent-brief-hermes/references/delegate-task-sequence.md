@@ -44,7 +44,7 @@ Context should include:
 - Approved evidence inputs, cached source packages, local source files, and source config
 - Write path: `output/intermediate/candidate_claims.json`
 - Default topology write path: `output/intermediate/screened_candidates.json`
-- Required fields: statement, evidence text, source identity, source date, topic, claim type, confidence
+- Required fields: stable `candidate_id`, statement, evidence text, source identity, source date, topic, claim type, confidence
 - Source metadata: use `source_url` only for HTTP(S) URLs, `source_path` for local/package sources, and preserve source title/name, publisher when known, `source_category`, and provider `source_type`
 - Default topology screening fields: selected candidates, excluded candidates with reasons, and screening policy snapshot
 

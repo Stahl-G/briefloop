@@ -19,7 +19,7 @@ Responsibilities:
         - Runtime may split Scout discovery across source chunks or child agents when supported, but chunk outputs are scratch/intermediate runtime material, not workflow artifacts.
         - Join all chunk outputs deterministically before writing workflow artifacts; stable ordering must be based on source identity, source path or URL, source date, topic, and evidence text, not completion order.
         - Step 1 discovery always extracts structured candidate claims from source content and writes output/intermediate/candidate_claims.json once as the complete found universe.
-        - Each claim must include: statement, evidence_text, source identity, published_at or retrieved_at, topic, claim_type, and confidence. Source identity is either source_url for HTTP(S) web sources or source_path for local/package sources.
+        - Each claim must include: stable candidate_id, statement, evidence_text, source identity, published_at or retrieved_at, topic, claim_type, and confidence. Source identity is either source_url for HTTP(S) web sources or source_path for local/package sources.
         - Preserve source ID, source path or URL, source title/name, publisher when known, source_category, provider source_type, source date, and evidence text.
         - Treat source_url as a URL field only. Never place a title, search query, generic source label, or local path in source_url; use source_title/source_name and source_path instead.
         - Treat source_type as provider/storage type, such as local_file or web_search. Treat source_category as the reader-facing evidence category, such as regulator, peer_reviewed_paper, company_press_release, market_report, news_media, or other.

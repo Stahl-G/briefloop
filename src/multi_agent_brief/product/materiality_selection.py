@@ -15,7 +15,7 @@ from typing import Any, Mapping
 import yaml
 
 from multi_agent_brief.contracts.agent_artifact_intake import (
-    evaluate_agent_artifact_intake,
+    evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
 
@@ -102,10 +102,14 @@ def project_workspace_materiality_selection(
             "screened_candidates_present": False,
         }
 
-    intake = evaluate_agent_artifact_intake(
-        screened_path,
-        artifact_id="screened_candidates",
-    )
+    intake = evaluate_workspace_agent_artifact_intakes(ws).screened_candidates
+    if intake is None:
+        return {
+            **base,
+            "status": "invalid_screened_candidates",
+            "reason": "screened_candidates_intake_result_unavailable",
+            "screened_candidates_present": True,
+        }
     if intake.status != "valid":
         return {
             **base,

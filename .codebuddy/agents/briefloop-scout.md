@@ -36,6 +36,9 @@ Allowed outputs:
 - `output/intermediate/screened_candidates.json` only when the handoff says the
   current topology lets Scout satisfy screening
 
+Every `candidate_claims.json` row must include a stable `candidate_id`; do not
+defer candidate identity creation to Screener or the Claim Ledger.
+
 Forbidden edits:
 
 - `workflow_state.json`

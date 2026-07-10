@@ -9,7 +9,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from multi_agent_brief.contracts.schemas.claim import VALID_CLAIM_TYPES, VALID_CONFIDENCE
 from multi_agent_brief.contracts.schemas.claim_draft import (
@@ -139,6 +139,20 @@ class IntakeResult:
         }
 
 
+@dataclass(frozen=True)
+class WorkspaceAgentArtifactIntakes:
+    """One dependency-ordered interpretation of workspace agent proposals."""
+
+    candidate_claims: IntakeResult | None = None
+    screened_candidates: IntakeResult | None = None
+    claim_drafts: IntakeResult | None = None
+
+    def get(self, artifact_id: AgentArtifactId) -> IntakeResult | None:
+        """Return the intake result for one declared agent artifact."""
+
+        return getattr(self, artifact_id)
+
+
 def evaluate_agent_artifact_intake(
     path: Path,
     *,
@@ -243,6 +257,69 @@ def evaluate_agent_artifact_intake(
         normalized_payload=kernel.normalized_payload,
         normalizations=kernel.normalizations,
         findings=tuple(findings),
+    )
+
+
+def evaluate_workspace_agent_artifact_intakes(
+    workspace: Path,
+    *,
+    artifact_paths: Mapping[AgentArtifactId, Path] | None = None,
+) -> WorkspaceAgentArtifactIntakes:
+    """Evaluate workspace proposals once in their required dependency order.
+
+    ``screened_candidates`` is always interpreted against the candidate result
+    produced by this bundle evaluation. Callers may override contract-resolved
+    paths, but they cannot provide a consumer-local candidate interpretation.
+    Missing proposal files have no result; their owning artifact consumer keeps
+    responsibility for missing/not-a-file status semantics.
+    """
+
+    paths: dict[AgentArtifactId, Path] = {
+        "candidate_claims": workspace / "output" / "intermediate" / "candidate_claims.json",
+        "screened_candidates": workspace / "output" / "intermediate" / "screened_candidates.json",
+        "claim_drafts": workspace / "output" / "intermediate" / "claim_drafts.json",
+    }
+    if artifact_paths:
+        paths.update({artifact_id: Path(path) for artifact_id, path in artifact_paths.items()})
+
+    candidate_result = _evaluate_existing_agent_artifact(
+        paths["candidate_claims"],
+        artifact_id="candidate_claims",
+    )
+    screened_result = _evaluate_existing_agent_artifact(
+        paths["screened_candidates"],
+        artifact_id="screened_candidates",
+        candidate_universe=candidate_result
+        or _unparsed_result(
+            "candidate_claims",
+            raw_sha256="",
+            code="missing_dependency",
+            message="candidate_claims is required to validate screened_candidates.",
+        ),
+    )
+    claim_drafts_result = _evaluate_existing_agent_artifact(
+        paths["claim_drafts"],
+        artifact_id="claim_drafts",
+    )
+    return WorkspaceAgentArtifactIntakes(
+        candidate_claims=candidate_result,
+        screened_candidates=screened_result,
+        claim_drafts=claim_drafts_result,
+    )
+
+
+def _evaluate_existing_agent_artifact(
+    path: Path,
+    *,
+    artifact_id: AgentArtifactId,
+    candidate_universe: IntakeResult | None = None,
+) -> IntakeResult | None:
+    if not path.exists():
+        return None
+    return evaluate_agent_artifact_intake(
+        path,
+        artifact_id=artifact_id,
+        candidate_universe=candidate_universe,
     )
 
 
@@ -416,6 +493,19 @@ def validate_intake_projection(
     if isinstance(normalizations, list):
         if any(not isinstance(item, dict) for item in normalizations):
             reasons.append("intake_projection normalizations entries must be objects")
+        for index, item in enumerate(normalizations):
+            if not isinstance(item, dict):
+                continue
+            for field in ("operation", "path"):
+                if not _non_empty_string(item.get(field)):
+                    reasons.append(
+                        f"intake_projection normalizations[{index}].{field} must be a non-empty string"
+                    )
+            for field in ("source", "target"):
+                if field not in item:
+                    reasons.append(
+                        f"intake_projection normalizations[{index}].{field} is required"
+                    )
         normalization_count = projection.get("normalization_count")
         if isinstance(normalization_count, int) and not isinstance(normalization_count, bool):
             if normalization_count != len(normalizations):
@@ -424,6 +514,31 @@ def validate_intake_projection(
     if isinstance(findings, list):
         if any(not isinstance(item, dict) for item in findings):
             reasons.append("intake_projection findings entries must be objects")
+        for index, item in enumerate(findings):
+            if not isinstance(item, dict):
+                continue
+            if item.get("artifact_id") not in AGENT_ARTIFACT_IDS:
+                reasons.append(
+                    f"intake_projection findings[{index}].artifact_id is unsupported"
+                )
+            if item.get("severity") != "fatal":
+                reasons.append(
+                    f"intake_projection findings[{index}].severity must be fatal"
+                )
+            for field in ("code", "path", "message", "validation_result"):
+                if not _non_empty_string(item.get(field)):
+                    reasons.append(
+                        f"intake_projection findings[{index}].{field} must be a non-empty string"
+                    )
+            for field in ("allowed_values", "forbidden_fields", "required_fields"):
+                if field in item and not isinstance(item.get(field), list):
+                    reasons.append(
+                        f"intake_projection findings[{index}].{field} must be a list"
+                    )
+            if "hint" in item and not _non_empty_string(item.get("hint")):
+                reasons.append(
+                    f"intake_projection findings[{index}].hint must be a non-empty string"
+                )
         fatal_count = sum(
             1
             for item in findings
@@ -482,9 +597,18 @@ def validate_registry_intake_context(
                 reasons.append("intake_projection finding artifact_id does not match artifact record")
                 break
     fatal_finding_count = projection.get("fatal_finding_count") if isinstance(projection, dict) else None
-    if record.get("status") == "valid" and isinstance(fatal_finding_count, int):
-        if fatal_finding_count > 0:
+    record_status = record.get("status")
+    if record_status == "valid" and isinstance(projection, dict):
+        normalized_sha256 = projection.get("normalized_sha256")
+        if not isinstance(normalized_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", normalized_sha256
+        ):
+            reasons.append("valid artifact record requires a normalized intake digest")
+        if isinstance(fatal_finding_count, int) and fatal_finding_count > 0:
             reasons.append("valid artifact record cannot contain fatal intake findings")
+    elif record_status == "invalid" and isinstance(fatal_finding_count, int):
+        if fatal_finding_count == 0:
+            reasons.append("invalid artifact record requires a fatal intake finding")
     return reasons
 
 
@@ -635,6 +759,9 @@ def _legacy_candidate_error(
     for field in ("candidate_id", "claim", "source_id"):
         if not _non_empty_string(candidate.get(field)):
             return f"candidate[{index}].{field}"
+    metadata_error = _provided_candidate_metadata_error(candidate, index=index)
+    if metadata_error:
+        return metadata_error
     candidate_id = str(candidate["candidate_id"]).strip()
     if candidate_id in seen_ids:
         return f"duplicate_candidate_id:{candidate_id}"
@@ -648,7 +775,7 @@ def _contract_candidate_error(
     index: int,
     seen_ids: set[str],
 ) -> str | None:
-    for field in ("statement", "evidence_text", "topic", "claim_type"):
+    for field in ("candidate_id", "statement", "evidence_text", "topic", "claim_type"):
         if not _non_empty_string(candidate.get(field)):
             return f"candidate[{index}].{field}"
     if source_url_error(candidate.get("source_url")):
@@ -677,14 +804,30 @@ def _contract_candidate_error(
         value = candidate.get(field)
         if value is not None and not _non_empty_string(value):
             return f"candidate[{index}].{field}"
-    candidate_id = candidate.get("candidate_id")
-    if candidate_id is not None:
-        if not _non_empty_string(candidate_id):
-            return f"candidate[{index}].candidate_id"
-        normalized_id = candidate_id.strip()
-        if normalized_id in seen_ids:
-            return f"duplicate_candidate_id:{normalized_id}"
-        seen_ids.add(normalized_id)
+    candidate_id = str(candidate["candidate_id"]).strip()
+    if candidate_id in seen_ids:
+        return f"duplicate_candidate_id:{candidate_id}"
+    seen_ids.add(candidate_id)
+    return None
+
+
+def _provided_candidate_metadata_error(
+    candidate: dict[str, Any],
+    *,
+    index: int,
+) -> str | None:
+    for field, validator in (
+        ("source_url", source_url_error),
+        ("source_category", source_category_error),
+    ):
+        if field not in candidate:
+            continue
+        value = candidate.get(field)
+        if not _non_empty_string(value) or validator(value):
+            return f"candidate[{index}].{field}"
+    for field in ("source_id", "source_path", "published_at", "retrieved_at"):
+        if field in candidate and not _non_empty_string(candidate.get(field)):
+            return f"candidate[{index}].{field}"
     return None
 
 
@@ -766,7 +909,7 @@ def _validate_screened_candidates(
 def _selected_candidate_error(candidate: Any) -> str | None:
     if not isinstance(candidate, dict):
         return "entry"
-    for field in ("statement", "evidence_text"):
+    for field in ("candidate_id", "statement", "evidence_text"):
         if not _non_empty_string(candidate.get(field)):
             return field
     if source_url_error(candidate.get("source_url")):
@@ -796,9 +939,8 @@ def _selected_candidate_error(candidate: Any) -> str | None:
 
 
 def _valid_screened_candidate_entry(candidate: Any) -> bool:
-    return isinstance(candidate, dict) and any(
-        _non_empty_string(candidate.get(field))
-        for field in ("candidate_id", "statement", "claim")
+    return isinstance(candidate, dict) and _non_empty_string(
+        candidate.get("candidate_id")
     )
 
 
@@ -876,11 +1018,15 @@ def _candidate_universe_error(
     declared_total: int | None,
     candidate_universe: IntakeResult | None,
 ) -> str | None:
-    if candidate_universe is None or not isinstance(candidate_universe.normalized_payload, list):
+    if candidate_universe is None:
         return None
+    if not isinstance(candidate_universe.normalized_payload, list):
+        return "candidate_universe_invalid"
     candidate_ids, candidate_error = _candidate_ids(candidate_universe.normalized_payload)
     if candidate_error:
         return candidate_error
+    if candidate_universe.status != "valid":
+        return "candidate_universe_invalid"
     if declared_total is not None and declared_total != len(candidate_universe.normalized_payload):
         return "candidate_universe_count_mismatch"
     screened_ids: set[str] = set()

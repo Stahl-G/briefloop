@@ -364,13 +364,12 @@ def _claim_ledger_freeze_reasons(
         reasons.append(
             f"Frozen Claim Ledger hash does not match current claim_ledger.json. {CLAIM_LEDGER_FROZEN_EDIT_GUIDANCE}"
         )
-    if schema_version == CLAIM_LEDGER_FREEZE_SCHEMA:
-        _append_freeze_event_binding_reasons(
-            reasons,
-            workspace=workspace,
-            manifest=manifest,
-            freeze=freeze,
-        )
+    _append_freeze_event_binding_reasons(
+        reasons,
+        workspace=workspace,
+        manifest=manifest,
+        freeze=freeze,
+    )
     return reasons
 
 
@@ -405,13 +404,35 @@ def _append_current_intake_binding_reasons(
         return
     reasons.extend(
         f"Claim Ledger freeze intake binding: {reason}"
-        for reason in validate_registry_intake_context(
+        for reason in _claim_drafts_freeze_binding_reasons(
             registry,
             expected_run_id=run_id,
-            artifact_id="claim_drafts",
             result=intake,
         )
     )
+
+
+def _claim_drafts_freeze_binding_reasons(
+    registry: Any,
+    *,
+    expected_run_id: str,
+    result: IntakeResult | None = None,
+) -> list[str]:
+    """Validate the current projection plus freeze-source eligibility."""
+
+    reasons = validate_registry_intake_context(
+        registry,
+        expected_run_id=expected_run_id,
+        artifact_id="claim_drafts",
+        result=result,
+    )
+    artifacts = registry.get("artifacts") if isinstance(registry, dict) else None
+    record = artifacts.get("claim_drafts") if isinstance(artifacts, dict) else None
+    if isinstance(record, dict) and record.get("status") != ARTIFACT_VALID:
+        reasons.append(
+            "claim_drafts artifact record status must be valid for Claim Ledger freeze binding"
+        )
+    return reasons
 
 
 def _append_freeze_event_binding_reasons(
@@ -428,29 +449,47 @@ def _append_freeze_event_binding_reasons(
     except RuntimeStateError as exc:
         reasons.append(f"Claim Ledger freeze event log is invalid: {exc}")
         return
-    event = next(
-        (
-            record
-            for record in records
-            if record.get("run_id") == run_id
-            and record.get("event_type") == "claim_ledger_frozen"
-            and isinstance(record.get("metadata"), dict)
-            and record["metadata"].get("transaction_id") == transaction_id
-        ),
-        None,
-    )
-    if not isinstance(event, dict):
+    matching_events = [
+        record
+        for record in records
+        if record.get("run_id") == run_id
+        and record.get("event_type") == "claim_ledger_frozen"
+        and isinstance(record.get("metadata"), dict)
+        and record["metadata"].get("transaction_id") == transaction_id
+    ]
+    if not matching_events:
         reasons.append("Claim Ledger freeze transaction has no matching current-run event.")
         return
+    if len(matching_events) != 1:
+        reasons.append(
+            "Claim Ledger freeze transaction has multiple matching current-run events."
+        )
+        return
+    event = matching_events[0]
+    if event.get("stage_id") != "claim-ledger":
+        reasons.append("Claim Ledger freeze event stage_id is not claim-ledger.")
+    if event.get("artifact_id") != "claim_ledger":
+        reasons.append("Claim Ledger freeze event artifact_id is not claim_ledger.")
     metadata = event["metadata"]
-    expected = {
-        "freeze_schema_version": CLAIM_LEDGER_FREEZE_SCHEMA,
-        "source_raw_sha256": freeze.get("source_raw_sha256"),
-        "source_normalized_sha256": freeze.get("source_normalized_sha256"),
-        "normalization_policy": freeze.get("normalization_policy"),
-        "claim_ledger_sha256": freeze.get("frozen_claim_ledger_sha256")
-        or freeze.get("claim_ledger_sha256"),
-    }
+    expected = {"source_artifact_id": "claim_drafts"}
+    if freeze.get("schema_version") == CLAIM_LEDGER_FREEZE_LEGACY_SCHEMA:
+        expected.update(
+            {
+                "source_sha256": freeze.get("source_sha256"),
+                "claim_ledger_sha256": freeze.get("claim_ledger_sha256"),
+            }
+        )
+    else:
+        expected.update(
+            {
+                "freeze_schema_version": CLAIM_LEDGER_FREEZE_SCHEMA,
+                "source_raw_sha256": freeze.get("source_raw_sha256"),
+                "source_normalized_sha256": freeze.get("source_normalized_sha256"),
+                "normalization_policy": freeze.get("normalization_policy"),
+                "claim_ledger_sha256": freeze.get("frozen_claim_ledger_sha256")
+                or freeze.get("claim_ledger_sha256"),
+            }
+        )
     for field, value in expected.items():
         if metadata.get(field) != value:
             reasons.append(f"Claim Ledger freeze event {field} does not match manifest binding.")
@@ -483,10 +522,9 @@ def _registry_bound_to_current_intake(
             )
         record = (existing.get("artifacts") or {}).get("claim_drafts")
         if isinstance(record, dict) and "intake_projection" in record:
-            reasons = validate_registry_intake_context(
+            reasons = _claim_drafts_freeze_binding_reasons(
                 existing,
                 expected_run_id=run_id,
-                artifact_id="claim_drafts",
                 result=intake,
             )
             if reasons:
@@ -516,10 +554,9 @@ def _registry_bound_to_current_intake(
         workflow=workflow,
         updated_at=updated_at,
     )
-    reasons = validate_registry_intake_context(
+    reasons = _claim_drafts_freeze_binding_reasons(
         registry,
         expected_run_id=run_id,
-        artifact_id="claim_drafts",
         result=intake,
     )
     if reasons:
@@ -679,10 +716,9 @@ def freeze_claim_ledger_transaction(
             workflow=workflow,
             updated_at=frozen_at,
         )
-        binding_reasons = validate_registry_intake_context(
+        binding_reasons = _claim_drafts_freeze_binding_reasons(
             registry,
             expected_run_id=run_id,
-            artifact_id="claim_drafts",
             result=intake,
         )
         if binding_reasons:
