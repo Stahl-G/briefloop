@@ -121,6 +121,7 @@ blocked:
 latest_gate_status:
 finalize_report:
 delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
@@ -138,7 +139,9 @@ integrity, delivery requires both
 permanently non-reference-eligible. For earlier role-work stages, report
 the Run Card and continue only with non-delivery workflow steps allowed by the
 handoff. If WorkBuddy diagnosis does not report `delivery_truth.valid=true`,
-do not claim delivery or export a delivery package. Say the run has a draft only when
+do not export a delivery package. When it is `true`, report only that a valid
+bundle is ready; do not claim completed delivery unless
+`delivery_event=present`. Say the run has a draft only when
 `output/intermediate/audited_brief.md` exists;
 otherwise say no draft or delivery exists yet. Continue earlier stages only
 when the handoff allows them.

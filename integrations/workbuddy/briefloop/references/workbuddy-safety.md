@@ -39,7 +39,8 @@ authority layer.
 - say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching artifact,
   event, transaction, or status output exists;
 - say `delivered`, `delivery complete`, or `交付完成` unless
-  `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`;
+  `briefloop workbuddy diagnose --json` reports both
+  `delivery_truth.valid=true` and `delivery_event=present`;
 - never authorize or block finalize or delivery from `run_integrity` alone. A
   `contaminated` run may execute only the recovery finalize transaction step
   named by `next_allowed_action` when

@@ -528,7 +528,7 @@ def _next_allowed_action(
     )
     if integrity_action is not None:
         return integrity_action
-    if workflow_truth.get("blocked"):
+    if workflow_truth.get("blocked") and not _recovery_owns_next_action(recovery_truth):
         return "stop_workflow_blocked_human_review_required"
     if assessment_target.get("status") == "invalid_condition":
         return "inspect_invalid_experiment_condition"
@@ -595,6 +595,16 @@ def _next_allowed_action_for_run_integrity(
             return None
         return "stop_invalid_recovery_state"
     return "stop_run_integrity_not_clean"
+
+
+def _recovery_owns_next_action(recovery_truth: Mapping[str, Any] | None) -> bool:
+    """Return whether bound recovery truth supersedes a stale generic blocker."""
+
+    return (recovery_truth or {}).get("status") in {
+        RECOVERY_RERUN_PENDING,
+        RECOVERY_READY_FOR_FINALIZE,
+        RECOVERY_COMPLETED_NON_REFERENCE,
+    }
 
 
 def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, Any]:

@@ -785,6 +785,56 @@ def test_completion_projection_recovery_binding_mismatch_fails_closed(tmp_path: 
     assert payload["next_allowed_action"] == "stop_invalid_recovery_state"
 
 
+def test_recovery_truth_rejects_empty_finalize_transaction_id() -> None:
+    from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_truth
+
+    payload = evaluate_recovery_truth(
+        workflow={
+            "run_id": "run-recovery-001",
+            "last_repair_transaction": {
+                "transaction_id": "tx-repair-001",
+                "decision": "supersede_stage",
+                "stage_id": "editor",
+            },
+            "last_completion_transaction": {
+                "transaction_id": "",
+                "stage_id": "finalize",
+                "decision": "finalize",
+            },
+        },
+        workflow_status="present",
+        event_records=[
+            {
+                "run_id": "run-recovery-001",
+                "event_type": "run_integrity_contaminated",
+            },
+            {
+                "run_id": "run-recovery-001",
+                "event_type": "repair_stage_superseded",
+                "stage_id": "editor",
+                "metadata": {
+                    "transaction_id": "tx-repair-001",
+                    "next_stage": "auditor",
+                },
+            },
+            {
+                "run_id": "run-recovery-001",
+                "event_type": "decision_recorded",
+                "stage_id": "finalize",
+                "decision": "finalize",
+                "metadata": {"transaction_id": ""},
+            },
+        ],
+        run_integrity={"status": "contaminated_repaired"},
+        run_id="run-recovery-001",
+        current_stage="finalize",
+        stage_order=["editor", "auditor", "finalize"],
+    )
+
+    assert payload["status"] == "invalid_recovery_state"
+    assert payload["reason_code"] == "terminal_finalize_binding_invalid"
+
+
 def test_completion_projection_later_orphan_recovery_event_fails_closed(tmp_path: Path) -> None:
     """A later recovery-shaped event without the workflow transaction binding
     is a partial-write signal, not an event the projection may silently skip."""
@@ -854,6 +904,11 @@ def test_completion_projection_recovery_survives_downstream_progress(tmp_path: P
         repo_workdir=ROOT,
         stage_id="auditor",
         reason="auditor reran against the superseded revision",
+    )
+    _set_workflow(
+        ws,
+        blocked=True,
+        blocking_reason="Stale blocker retained after the bound auditor rerun.",
     )
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
@@ -1006,6 +1061,11 @@ def test_completion_projection_contaminated_repaired_terminal_is_not_a_rerun_dem
         repo_workdir=ROOT,
         reason="reader artifacts finalized after repair",
     )
+    _set_workflow(
+        ws,
+        blocked=True,
+        blocking_reason="Stale blocker retained after the bound finalize transaction.",
+    )
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
@@ -1013,12 +1073,12 @@ def test_completion_projection_contaminated_repaired_terminal_is_not_a_rerun_dem
     assert payload["recovery_truth"]["status"] == "completed_non_reference"
     assert payload["delivery_truth"]["eligibility"]["allowed"] is True
     assert payload["delivery_truth"]["eligibility"]["reference_eligible"] is False
-    assert not str(payload["next_allowed_action"]).startswith("rerun_downstream")
-    assert payload["next_allowed_action"] != "stop_human_review_or_supersede"
+    assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
 
     # The executor consumes the same shared rule: a real deliver succeeds.
     from multi_agent_brief.cli.main import main as cli_main
 
+    _set_workflow(ws, blocked=False, blocking_reason="")
     rc = cli_main(["deliver", "--workspace", str(ws), "--target", "local"])
     assert rc == 0
 

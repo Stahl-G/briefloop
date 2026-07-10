@@ -68,8 +68,10 @@ Quality Panel 已生成。
 Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
 artifact, event, transaction, or status output exists.
 
-Do not say `交付完成`, `delivered`, or `delivery complete` unless
-WorkBuddy diagnosis reports `delivery_truth.valid=true`.
+Do not say `交付完成`, `delivered`, or `delivery complete` unless WorkBuddy
+diagnosis reports both `delivery_truth.valid=true` and
+`delivery_event=present`. A valid bundle without that event is only ready for
+delivery.
 
 ## Hard Stops
 
@@ -89,7 +91,8 @@ WorkBuddy diagnosis reports `delivery_truth.valid=true`.
   Run Card and continue only with non-delivery workflow steps allowed by the
   handoff.
 - If WorkBuddy diagnosis does not report `delivery_truth.valid=true`, do not
-  claim delivery or export a delivery package. Report draft-only status only when
+  export a delivery package. Do not claim completed delivery unless
+  `delivery_event=present`. Report draft-only status only when
   `output/intermediate/audited_brief.md` exists; otherwise
   report that no draft or delivery exists yet. This is normal before finalize
   and must not block earlier handoff-assigned stages by itself.

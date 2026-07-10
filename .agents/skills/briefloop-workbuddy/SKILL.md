@@ -194,6 +194,7 @@ blocked:
 latest_gate_status:
 finalize_report:
 delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
@@ -201,10 +202,11 @@ Read these values from `briefloop workbuddy diagnose --workspace <workspace>
 --json`, which formats the canonical completion projection and applies only
 WorkBuddy doctor/secret safety overlays to `next_allowed_action`. Do not
 reconstruct delivery, gate, finalize, or next-action truth from
-`workflow_state.json`, `event_log.jsonl`, or file existence checks. If
-`delivery_truth.valid` is not `true`, the Run Card must not claim delivery. Say
-the run has a draft only when an actual role-owned draft artifact exists, such
-as `output/intermediate/audited_brief.md`; otherwise say no draft or delivery
+`workflow_state.json`, `event_log.jsonl`, or file existence checks. A valid
+bundle may be reported as ready when `delivery_truth.valid=true`; a
+completed-delivery claim requires `delivery_event=present`. Say the run has a
+draft only when an actual role-owned draft artifact exists, such as
+`output/intermediate/audited_brief.md`; otherwise say no draft or delivery
 exists yet.
 
 ## Hard Stop Rules
@@ -233,9 +235,10 @@ workflow stop.
    `next_allowed_action` for repair, rerun, human review, or finalize. For
    early-stage draft work, report the Run Card and continue only with
    non-delivery workflow steps allowed by the handoff.
-3. For delivery, export, share, or completion claims: if the WorkBuddy diagnosis
-   payload does not report `delivery_truth.valid=true`, stop that action. Do not
-   say "delivered", "交付完成", or "delivery complete".
+3. For delivery, export, or share actions: if the WorkBuddy diagnosis payload
+   does not report `delivery_truth.valid=true`, stop that action. When it is
+   `true`, report only that a valid bundle is ready. Do not say "delivered",
+   "交付完成", or "delivery complete" unless `delivery_event=present`.
    Say only that a draft exists when `output/intermediate/audited_brief.md` exists; otherwise say no draft or delivery exists yet.
    Continue earlier role-work stages only when the handoff and Run Card allow
    them.
@@ -282,7 +285,7 @@ Read the relevant reference before acting:
 - Do not say "Analyst is complete" or "Auditor passed" unless the matching
   artifact, event, status, or transaction is present.
 - Do not say "delivered" unless `briefloop workbuddy diagnose --json` reports
-  `delivery_truth.valid=true`.
+  both `delivery_truth.valid=true` and `delivery_event=present`.
 - Do not zip or share the whole workspace. Use BriefLoop-generated delivery
   or audit bundles when present; never include `.env`. If support is needed,
   share only manually reviewed, non-secret excerpts from `briefloop status

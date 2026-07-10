@@ -254,11 +254,13 @@ def _finalize_transaction_binds(
     if not isinstance(event, Mapping) or not isinstance(last_completion_transaction, Mapping):
         return False
     metadata = _event_metadata(event)
+    transaction_id = _clean_text(last_completion_transaction.get("transaction_id"))
+    if not transaction_id:
+        return False
     return (
         _clean_text(event.get("stage_id")) == "finalize"
         and _clean_text(event.get("decision")) == "finalize"
-        and _clean_text(metadata.get("transaction_id"))
-        == _clean_text(last_completion_transaction.get("transaction_id"))
+        and _clean_text(metadata.get("transaction_id")) == transaction_id
         and _clean_text(last_completion_transaction.get("stage_id")) == "finalize"
         and _clean_text(last_completion_transaction.get("decision")) == "finalize"
     )

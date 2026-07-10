@@ -412,6 +412,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "latest_gate_status:",
         "finalize_report:",
         "delivery_truth:",
+        "delivery_event:",
         "next_allowed_action:",
     ]:
         assert field in text
@@ -419,7 +420,6 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "After every key CLI command, role return, repair action, gate check, finalize",
         "`briefloop doctor` reports any error",
         "Show the full doctor output",
-        "`delivery_truth.valid` is not",
         "Say the run has a draft only when",
         "Any export, share, package, zip, or attachment candidate contains",
     ]:
@@ -429,12 +429,14 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "use the WorkBuddy diagnosis fields jointly",
         "delivery, export, and share remain blocked",
         "Any permitted recovery remains permanently non-reference-eligible",
+        "A valid bundle may be reported as ready",
+        "completed-delivery claim requires `delivery_event=present`",
         "delivery_truth.eligibility.allowed=true",
         "allow only the recovery finalize transaction step",
         "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
         "otherwise say no draft or delivery exists yet",
         "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
-        "Do not say \"delivered\" unless `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`",
+        "Do not say \"delivered\" unless `briefloop workbuddy diagnose --json` reports both `delivery_truth.valid=true` and `delivery_event=present`",
         "Do not zip or share the whole workspace. Use BriefLoop-generated delivery or audit bundles when present; never include `.env`",
         "share only manually reviewed, non-secret excerpts from `briefloop status --json` or doctor output",
         "Never share a whole workspace zip",
@@ -468,6 +470,7 @@ def test_workbuddy_recovery_guidance_uses_joint_projection_contract() -> None:
         "run_finalize_gate_or_finalize_complete",
         "delivery_truth.valid=true",
         "delivery_truth.eligibility.allowed=true",
+        "delivery_event=present",
         "permanently non-reference-eligible",
     ]
     forbidden = [
@@ -483,6 +486,12 @@ def test_workbuddy_recovery_guidance_uses_joint_projection_contract() -> None:
             assert phrase in normalized, path
         for phrase in forbidden:
             assert phrase not in normalized, path
+        assert not re.search(
+            r"(?:say|claim)[^.]{0,160}(?:delivered|delivery complete|交付完成)"
+            r"[^.]{0,160}unless[^.]{0,160}delivery_truth\.valid=true"
+            r"(?![^.]{0,120}delivery_event=present)",
+            normalized,
+        ), path
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:
