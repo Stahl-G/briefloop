@@ -163,6 +163,11 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
     payload["materiality_selection"] = project_workspace_materiality_selection(
         ws,
         policy_profile=payload["policy_profile"],
+        artifact_registry=(
+            registry.get("payload")
+            if registry.get("status") == "present"
+            else None
+        ),
     )
     payload["support_wording"] = project_workspace_support_wording(
         ws,

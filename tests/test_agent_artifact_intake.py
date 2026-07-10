@@ -9,6 +9,7 @@ import pytest
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_INTAKE_TRANSFORM_VERSION,
     INTAKE_PROJECTION_SCHEMA_VERSION,
+    agent_artifact_paths_from_contracts,
     canonical_normalized_json_bytes,
     evaluate_agent_artifact_intake,
     evaluate_workspace_agent_artifact_intakes,
@@ -489,6 +490,59 @@ def test_workspace_intake_bundle_owns_screened_universe_verdict(
         coverage["screened_candidates_validation_result"],
         coverage["not_interpreted_reason"],
     } == {expected_result}
+
+
+def test_quality_and_materiality_bind_contract_resolved_intake_paths(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    intermediate = workspace / "output" / "intermediate"
+    custom = workspace / "custom"
+    intermediate.mkdir(parents=True)
+    custom.mkdir()
+    (workspace / "config.yaml").write_text(
+        "project:\n  name: Contract Path Consumer Equivalence\n",
+        encoding="utf-8",
+    )
+    _write_json(intermediate / "candidate_claims.json", {"malformed": True})
+    _write_json(intermediate / "screened_candidates.json", {"malformed": True})
+    _write_json(custom / "candidate_claims.json", [_legacy_candidate("CAND-001")])
+    _write_json(
+        custom / "screened_candidates.json",
+        {
+            "selected": [_selected_candidate("CAND-001")],
+            "excluded": [],
+            "screening_policy": {"total_candidates": 1},
+        },
+    )
+    artifact_registry = {
+        "artifacts": {
+            "candidate_claims": {"path": "custom/candidate_claims.json"},
+            "screened_candidates": {"path": "custom/screened_candidates.json"},
+        }
+    }
+    artifact_paths = agent_artifact_paths_from_contracts(
+        workspace,
+        artifact_registry["artifacts"],
+    )
+
+    materiality = project_workspace_materiality_selection(
+        workspace,
+        artifact_registry=artifact_registry,
+    )
+    coverage = _coverage_omission_projection(
+        workspace=workspace,
+        markdown="## Executive Summary\n",
+        ledger=ClaimLedger(),
+        artifact_paths=artifact_paths,
+    )
+
+    assert materiality["status"] == "no_materiality_policy"
+    assert materiality["screened_candidates_present"] is True
+    assert coverage["status"] == "checked"
+    assert coverage["screened_candidates_validation_result"] == (
+        "valid_screened_candidates_schema"
+    )
 
 
 def test_claim_draft_mechanical_normalization(tmp_path: Path) -> None:

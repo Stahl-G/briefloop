@@ -9,13 +9,15 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import yaml
 
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.audit.harness import QualityHarnessAuditAgent
 from multi_agent_brief.contracts.agent_artifact_intake import (
+    AgentArtifactId,
+    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.core.citations import SRC_REF_PATTERN
@@ -1114,6 +1116,7 @@ def _coverage_omission_projection(
     markdown: str,
     ledger: ClaimLedger,
     reader_facing_mode: bool = False,
+    artifact_paths: Mapping[AgentArtifactId, Path] | None = None,
 ) -> dict[str, Any]:
     base: dict[str, Any] = {
         "status": "not_available",
@@ -1137,12 +1140,19 @@ def _coverage_omission_projection(
         base["not_interpreted_reason"] = "workspace_not_provided"
         return base
 
-    path = workspace / "output" / "intermediate" / "screened_candidates.json"
+    paths = dict(artifact_paths or {})
+    path = paths.get(
+        "screened_candidates",
+        workspace / "output" / "intermediate" / "screened_candidates.json",
+    )
     if not path.exists():
         base["status"] = "missing"
         base["not_interpreted_reason"] = "screened_candidates_missing"
         return base
-    intake = evaluate_workspace_agent_artifact_intakes(workspace).screened_candidates
+    intake = evaluate_workspace_agent_artifact_intakes(
+        workspace,
+        artifact_paths=paths,
+    ).screened_candidates
     if intake is None:
         base["status"] = "invalid"
         base["not_interpreted_reason"] = "screened_candidates_intake_result_unavailable"
@@ -2219,6 +2229,14 @@ def check_quality_gates(
         markdown=markdown,
         ledger=claim_ledger,
         reader_facing_mode=reader_mode,
+        artifact_paths=agent_artifact_paths_from_contracts(
+            ws,
+            {
+                str(artifact.get("artifact_id") or ""): artifact
+                for artifact in artifacts
+                if artifact.get("artifact_id")
+            },
+        ),
     )
     if coverage_omission_projection.get("status") == "invalid":
         raise RuntimeStateError(

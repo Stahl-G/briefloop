@@ -15,6 +15,7 @@ from typing import Any, Mapping
 import yaml
 
 from multi_agent_brief.contracts.agent_artifact_intake import (
+    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.product.policy_projection import project_workspace_policy_profile
@@ -76,6 +77,7 @@ def project_workspace_materiality_selection(
     workspace: str | Path,
     *,
     policy_profile: Mapping[str, Any] | None = None,
+    artifact_registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project materiality-aware screening diagnostics without side effects."""
 
@@ -87,7 +89,19 @@ def project_workspace_materiality_selection(
     )
     materiality_terms = _policy_materiality_terms(policy_projection)
     must_watch_terms = _workspace_focus_terms(ws)
-    screened_path = ws / _INTERMEDIATE / "screened_candidates.json"
+    artifact_records = (
+        artifact_registry.get("artifacts")
+        if isinstance(artifact_registry, Mapping)
+        else None
+    )
+    artifact_paths = agent_artifact_paths_from_contracts(
+        ws,
+        artifact_records if isinstance(artifact_records, Mapping) else {},
+    )
+    screened_path = artifact_paths.get(
+        "screened_candidates",
+        ws / _INTERMEDIATE / "screened_candidates.json",
+    )
     base = _base_projection(
         policy_profile=policy_projection,
         materiality_terms=materiality_terms,
@@ -102,7 +116,10 @@ def project_workspace_materiality_selection(
             "screened_candidates_present": False,
         }
 
-    intake = evaluate_workspace_agent_artifact_intakes(ws).screened_candidates
+    intake = evaluate_workspace_agent_artifact_intakes(
+        ws,
+        artifact_paths=artifact_paths,
+    ).screened_candidates
     if intake is None:
         return {
             **base,
