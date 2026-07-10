@@ -99,18 +99,26 @@ After every key command or role return, print this Run Card from machine facts:
 runtime:
 current_stage:
 run_integrity:
+recovery_truth:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
 next_allowed_action:
 ```
 
 If `doctor` reports any error, stop and show the complete doctor output before
-continuing. If `run_integrity` is not clean, stop finalize, delivery, export,
-and share actions; for earlier role-work stages, report the Run Card and
-continue only with non-delivery workflow steps allowed by the handoff. If
-`output/intermediate/finalize_report.json` or `output/delivery/` is missing,
+continuing. Never authorize or block finalize or delivery from `run_integrity`
+alone. For `contaminated` integrity, finalize requires
+`recovery_truth.finalize_allowed=true` and
+`next_allowed_action=run_finalize_after_recovery`; delivery, export, and share
+remain blocked. For `contaminated_repaired` integrity, delivery requires both
+`delivery_truth.valid=true` and
+`delivery_truth.eligibility.allowed=true`. Stop finalize and delivery for
+`stale_or_invalid` or unknown integrity. Any permitted recovery remains
+permanently non-reference-eligible. For earlier role-work stages, report
+the Run Card and continue only with non-delivery workflow steps allowed by the
+handoff. If WorkBuddy diagnosis does not report `delivery_truth.valid=true`,
 do not claim delivery or export a delivery package. Say the run has a draft
 only when `output/intermediate/audited_brief.md` exists;
 otherwise say no draft or delivery exists yet. Continue earlier stages only

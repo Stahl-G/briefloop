@@ -78,11 +78,17 @@ diagnosis reports `delivery_truth.valid=true`.
 - If `doctor` reports any error, stop. Show the full doctor output, workspace
   path, current user, output path existence/writability result, and permission
   or ACL output. Do not downgrade the error yourself.
-- If `run_integrity` is `contaminated`, `stale_or_invalid`, or unknown, stop
-  finalize, delivery, export, and share actions. Do not run finalize or
-  delivery. Exception: a `contaminated_repaired` run with both `delivery_truth.valid=true` and `delivery_truth.eligibility.allowed=true` is transaction-bound terminal recovery and may be delivered, but it remains permanently non-reference-eligible; report that status instead of stopping. For early-stage role work, report
-  the Run Card and continue only with non-delivery workflow steps allowed by
-  the handoff.
+- Never authorize or block finalize or delivery from `run_integrity` alone.
+  For `contaminated` integrity, finalize requires
+  `recovery_truth.finalize_allowed=true` and
+  `next_allowed_action=run_finalize_after_recovery`; delivery, export, and
+  share remain blocked. For `contaminated_repaired` integrity, delivery
+  requires both `delivery_truth.valid=true` and
+  `delivery_truth.eligibility.allowed=true`. Stop both actions for
+  `stale_or_invalid` or unknown integrity. Every permitted recovery remains
+  permanently non-reference-eligible. For early-stage role work, report the
+  Run Card and continue only with non-delivery workflow steps allowed by the
+  handoff.
 - If WorkBuddy diagnosis does not report `delivery_truth.valid=true`, do not
   claim delivery or export a delivery package. Report draft-only status only when
   `output/intermediate/audited_brief.md` exists; otherwise

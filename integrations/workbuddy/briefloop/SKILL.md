@@ -171,19 +171,23 @@ guessing:
 runtime:
 current_stage:
 run_integrity:
+recovery_truth:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
 next_allowed_action:
 ```
 
-Read the values from `briefloop status --workspace <workspace> --json`,
-`briefloop state check --workspace <workspace> --json`,
-`workflow_state.json`, `event_log.jsonl`, and file existence checks. If
-`output/intermediate/finalize_report.json` and `output/delivery/` are missing,
-the Run Card must not claim delivery. Say the run has a draft only when an
-actual role-owned draft artifact exists, such as `output/intermediate/audited_brief.md`; otherwise say no draft or delivery exists yet.
+Read these values from `briefloop workbuddy diagnose --workspace <workspace>
+--json`, which formats the canonical completion projection and applies only
+WorkBuddy doctor/secret safety overlays to `next_allowed_action`. Do not
+reconstruct delivery, gate, finalize, recovery, or next-action truth from
+`workflow_state.json`, `event_log.jsonl`, or file existence checks. If
+`delivery_truth.valid` is not `true`, the Run Card must not claim delivery. Say
+the run has a draft only when an actual role-owned draft artifact exists, such
+as `output/intermediate/audited_brief.md`; otherwise say no draft or delivery
+exists yet.
 
 ## Hard Stop Rules
 
@@ -195,15 +199,22 @@ workflow stop.
    workspace path, current user, output path existence/writability check, and
    platform permission/ACL output. Do not downgrade the error in prose and do
    not mark doctor complete unless the user explicitly confirms the evidence.
-2. For finalize, delivery, export, or share requests: if `run_integrity` is not
-   clean, or it is `contaminated`, `stale_or_invalid`, or unknown, stop that
-   action. Do not run finalize or delivery. The next safe action is fresh run,
-   controlled repair, or human review. For early-stage draft work, report the
-   Run Card and continue only with non-delivery workflow steps allowed by the
-   handoff.
-3. For delivery, export, share, or completion claims: if
-   `output/intermediate/finalize_report.json` or `output/delivery/` is missing,
-   stop that action. Do not say "delivered", "交付完成", or "delivery complete".
+2. For finalize, delivery, export, or share requests, use the WorkBuddy
+   diagnosis fields jointly; never authorize or block finalize or delivery
+   from `run_integrity` alone. If integrity is `stale_or_invalid` or unknown, stop.
+   If integrity is `contaminated`, allow finalize only when
+   `recovery_truth.finalize_allowed=true` and `next_allowed_action` is
+   `run_finalize_after_recovery`; delivery, export, and share remain blocked.
+   If integrity is `contaminated_repaired`, allow delivery only when both
+   `delivery_truth.valid=true` and
+   `delivery_truth.eligibility.allowed=true`; otherwise stop. Any permitted
+   recovery remains permanently non-reference-eligible. Follow the projected
+   `next_allowed_action` for repair, rerun, human review, or finalize. For
+   early-stage draft work, report the Run Card and continue only with
+   non-delivery workflow steps allowed by the handoff.
+3. For delivery, export, share, or completion claims: if the WorkBuddy
+   diagnosis payload does not report `delivery_truth.valid=true`, stop that
+   action. Do not say "delivered", "交付完成", or "delivery complete".
    Say only that a draft exists when `output/intermediate/audited_brief.md` exists; otherwise say no draft or delivery exists yet.
    Continue earlier role-work stages only when the handoff and Run Card allow
    them.

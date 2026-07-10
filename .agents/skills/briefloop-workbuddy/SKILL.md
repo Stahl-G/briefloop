@@ -189,6 +189,7 @@ guessing:
 runtime:
 current_stage:
 run_integrity:
+recovery_truth:
 blocked:
 latest_gate_status:
 finalize_report:
@@ -216,12 +217,19 @@ workflow stop.
    workspace path, current user, output path existence/writability check, and
    platform permission/ACL output. Do not downgrade the error in prose and do
    not mark doctor complete unless the user explicitly confirms the evidence.
-2. For finalize, delivery, export, or share requests: if `run_integrity` is
-   `contaminated`, `stale_or_invalid`, or unknown, stop that
-   action. Do not run finalize or delivery. Exception: a `contaminated_repaired` run with both `delivery_truth.valid=true` and `delivery_truth.eligibility.allowed=true` is transaction-bound terminal recovery and may be delivered, but it remains permanently non-reference-eligible; report that status instead of stopping. The next safe action is fresh run,
-   controlled repair, or human review. For early-stage draft work, report the
-   Run Card and continue only with non-delivery workflow steps allowed by the
-   handoff.
+2. For finalize, delivery, export, or share requests, use the WorkBuddy
+   diagnosis fields jointly; never authorize or block finalize or delivery
+   from `run_integrity` alone. If integrity is `stale_or_invalid` or unknown, stop.
+   If integrity is `contaminated`, allow finalize only when
+   `recovery_truth.finalize_allowed=true` and `next_allowed_action` is
+   `run_finalize_after_recovery`; delivery, export, and share remain blocked.
+   If integrity is `contaminated_repaired`, allow delivery only when both
+   `delivery_truth.valid=true` and
+   `delivery_truth.eligibility.allowed=true`; otherwise stop. Any permitted
+   recovery remains permanently non-reference-eligible. Follow the projected
+   `next_allowed_action` for repair, rerun, human review, or finalize. For
+   early-stage draft work, report the Run Card and continue only with
+   non-delivery workflow steps allowed by the handoff.
 3. For delivery, export, share, or completion claims: if the WorkBuddy diagnosis
    payload does not report `delivery_truth.valid=true`, stop that action. Do not
    say "delivered", "交付完成", or "delivery complete".

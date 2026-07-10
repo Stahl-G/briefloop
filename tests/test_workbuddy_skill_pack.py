@@ -407,6 +407,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "runtime:",
         "current_stage:",
         "run_integrity:",
+        "recovery_truth:",
         "blocked:",
         "latest_gate_status:",
         "finalize_report:",
@@ -418,8 +419,7 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "After every key CLI command, role return, repair action, gate check, finalize",
         "`briefloop doctor` reports any error",
         "Show the full doctor output",
-        "`run_integrity` is `contaminated`, `stale_or_invalid`, or unknown",
-        "Do not run finalize or delivery",
+        "delivery, export, and share remain blocked",
         "`delivery_truth.valid` is not",
         "Say the run has a draft only when",
         "Any export, share, package, zip, or attachment candidate contains",
@@ -427,9 +427,10 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         assert phrase in text
     for phrase in [
         "Do not turn normal pre-finalize state into a workflow stop",
-        "may be delivered, but it remains permanently non-reference-eligible",
+        "use the WorkBuddy diagnosis fields jointly",
+        "Any permitted recovery remains permanently non-reference-eligible",
         "delivery_truth.eligibility.allowed=true",
-        "stop finalize, delivery, export, and share actions",
+        "allow finalize only when `recovery_truth.finalize_allowed=true`",
         "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
         "otherwise say no draft or delivery exists yet",
         "This is normal before finalize and must not block earlier handoff-assigned stages by itself",
@@ -447,6 +448,40 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "support package",
     ]:
         assert phrase not in compact
+
+
+def test_workbuddy_recovery_guidance_uses_joint_projection_contract() -> None:
+    paths = [
+        WORKBUDDY_SKILL / "SKILL.md",
+        WORKBUDDY_SKILL / "references" / "quickstart.md",
+        WORKBUDDY_SKILL / "references" / "workbuddy-safety.md",
+        WORKBUDDY_SKILL / "references" / "workspace-workflow.md",
+        LEGACY_WORKBUDDY_SKILL / "SKILL.md",
+        LEGACY_WORKBUDDY_SKILL / "references" / "quickstart.md",
+        LEGACY_WORKBUDDY_SKILL / "references" / "workbuddy-safety.md",
+        LEGACY_WORKBUDDY_SKILL / "references" / "workspace-workflow.md",
+    ]
+    required = [
+        "never authorize or block finalize or delivery from run_integrity alone",
+        "recovery_truth.finalize_allowed=true",
+        "run_finalize_after_recovery",
+        "delivery_truth.valid=true",
+        "delivery_truth.eligibility.allowed=true",
+        "permanently non-reference-eligible",
+    ]
+    forbidden = [
+        "if run_integrity is not clean, stop finalize",
+        "if run_integrity is contaminated, stale_or_invalid, or unknown, stop finalize",
+        "run finalize or delivery when run_integrity is contaminated or not clean",
+        "say delivered, delivery complete, or 交付完成 unless output/intermediate/finalize_report.json",
+    ]
+
+    for path in paths:
+        normalized = _compact_without_code_ticks(_read(path)).lower()
+        for phrase in required:
+            assert phrase in normalized, path
+        for phrase in forbidden:
+            assert phrase not in normalized, path
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:

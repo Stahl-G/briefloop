@@ -42,10 +42,14 @@ authority layer.
   event, transaction, or status output exists;
 - say `delivered`, `delivery complete`, or `交付完成` unless
   `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`;
-- run finalize or delivery when `run_integrity` is `contaminated`,
-  `stale_or_invalid`, or unknown (a `contaminated_repaired` run requires both
-  `delivery_truth.valid=true` and `delivery_truth.eligibility.allowed=true` to
-  be deliverable, and remains permanently non-reference-eligible);
+- never authorize or block finalize or delivery from `run_integrity` alone. A
+  `contaminated` run may finalize only when
+  `recovery_truth.finalize_allowed=true` and
+  `next_allowed_action=run_finalize_after_recovery`; it may not deliver,
+  export, or share. A `contaminated_repaired` run may deliver only when both
+  `delivery_truth.valid=true` and `delivery_truth.eligibility.allowed=true`.
+  `stale_or_invalid` or unknown integrity blocks both actions, and every
+  permitted recovery remains permanently non-reference-eligible;
 - downgrade a `doctor` error in prose; show the full output and wait for user
   confirmation;
 - zip or share the whole workspace; never include `.env`, tokens, or private
