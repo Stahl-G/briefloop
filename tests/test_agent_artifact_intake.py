@@ -4,12 +4,15 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_INTAKE_TRANSFORM_VERSION,
     INTAKE_PROJECTION_SCHEMA_VERSION,
     canonical_normalized_json_bytes,
     evaluate_agent_artifact_intake,
     normalize_claim_drafts,
+    validate_intake_projection,
 )
 
 
@@ -314,3 +317,59 @@ def test_normalize_claim_drafts_does_not_mutate_input() -> None:
     normalize_claim_drafts(payload)
 
     assert payload == original == copy_payload
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_reason"),
+    [
+        (
+            "normalization_count",
+            "intake_projection normalization_count does not match normalizations",
+        ),
+        (
+            "fatal_finding_count",
+            "intake_projection fatal_finding_count does not match findings",
+        ),
+        (
+            "normalization_entry",
+            "intake_projection normalizations entries must be objects",
+        ),
+        ("finding_entry", "intake_projection findings entries must be objects"),
+        (
+            "raw_sha256",
+            "intake_projection raw_sha256 must be a lowercase SHA-256 digest",
+        ),
+        (
+            "normalized_sha256",
+            "intake_projection normalized_sha256 must be empty or a lowercase SHA-256 digest",
+        ),
+    ],
+)
+def test_intake_projection_internal_binding_fails_closed(
+    tmp_path: Path,
+    corruption: str,
+    expected_reason: str,
+) -> None:
+    path = tmp_path / "candidate_claims.json"
+    _write_json(path, [_candidate()])
+    projection = evaluate_agent_artifact_intake(
+        path,
+        artifact_id="candidate_claims",
+    ).projection()
+    if corruption == "normalization_count":
+        projection["normalization_count"] = 1
+    elif corruption == "fatal_finding_count":
+        projection["fatal_finding_count"] = 1
+    elif corruption == "normalization_entry":
+        projection["normalizations"] = ["not-an-object"]
+        projection["normalization_count"] = 1
+    elif corruption == "finding_entry":
+        projection["findings"] = ["not-an-object"]
+    elif corruption == "raw_sha256":
+        projection["raw_sha256"] = "not-a-digest"
+    else:
+        projection["normalized_sha256"] = "not-a-digest"
+
+    reasons = validate_intake_projection(projection)
+
+    assert expected_reason in reasons

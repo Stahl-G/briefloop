@@ -395,6 +395,16 @@ def validate_intake_projection(
     for field in ("raw_sha256", "normalized_sha256"):
         if not isinstance(projection.get(field), str):
             reasons.append(f"intake_projection {field} must be a string")
+    raw_sha256 = projection.get("raw_sha256")
+    if isinstance(raw_sha256, str) and not re.fullmatch(r"[0-9a-f]{64}", raw_sha256):
+        reasons.append("intake_projection raw_sha256 must be a lowercase SHA-256 digest")
+    normalized_sha256 = projection.get("normalized_sha256")
+    if (
+        isinstance(normalized_sha256, str)
+        and normalized_sha256
+        and not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256)
+    ):
+        reasons.append("intake_projection normalized_sha256 must be empty or a lowercase SHA-256 digest")
     for field in ("normalization_count", "fatal_finding_count"):
         value = projection.get(field)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
@@ -402,6 +412,27 @@ def validate_intake_projection(
     for field in ("normalizations", "findings"):
         if not isinstance(projection.get(field), list):
             reasons.append(f"intake_projection {field} must be a list")
+    normalizations = projection.get("normalizations")
+    if isinstance(normalizations, list):
+        if any(not isinstance(item, dict) for item in normalizations):
+            reasons.append("intake_projection normalizations entries must be objects")
+        normalization_count = projection.get("normalization_count")
+        if isinstance(normalization_count, int) and not isinstance(normalization_count, bool):
+            if normalization_count != len(normalizations):
+                reasons.append("intake_projection normalization_count does not match normalizations")
+    findings = projection.get("findings")
+    if isinstance(findings, list):
+        if any(not isinstance(item, dict) for item in findings):
+            reasons.append("intake_projection findings entries must be objects")
+        fatal_count = sum(
+            1
+            for item in findings
+            if isinstance(item, dict) and item.get("severity") == "fatal"
+        )
+        projected_fatal_count = projection.get("fatal_finding_count")
+        if isinstance(projected_fatal_count, int) and not isinstance(projected_fatal_count, bool):
+            if projected_fatal_count != fatal_count:
+                reasons.append("intake_projection fatal_finding_count does not match findings")
     if result is not None:
         expected = result.projection()
         for field in (
@@ -445,6 +476,15 @@ def validate_registry_intake_context(
     reasons.extend(validate_intake_projection(projection, result=result))
     if isinstance(projection, dict) and record.get("sha256") != projection.get("raw_sha256"):
         reasons.append("artifact record sha256 does not match intake_projection raw_sha256")
+    if isinstance(projection, dict) and isinstance(projection.get("findings"), list):
+        for finding in projection["findings"]:
+            if isinstance(finding, dict) and finding.get("artifact_id") != artifact_id:
+                reasons.append("intake_projection finding artifact_id does not match artifact record")
+                break
+    fatal_finding_count = projection.get("fatal_finding_count") if isinstance(projection, dict) else None
+    if record.get("status") == "valid" and isinstance(fatal_finding_count, int):
+        if fatal_finding_count > 0:
+            reasons.append("valid artifact record cannot contain fatal intake findings")
     return reasons
 
 
