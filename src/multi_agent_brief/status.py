@@ -706,7 +706,8 @@ def _intake_projection_summary(
     expected_run_id: str,
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
-        "status": "not_available",
+        "present": False,
+        "valid": None,
         "projection_count": 0,
         "normalized_artifact_count": 0,
         "normalization_count": 0,
@@ -749,7 +750,7 @@ def _intake_projection_summary(
         artifacts.append(
             {
                 "artifact_id": artifact_id,
-                "projection_status": "invalid" if reasons else "valid",
+                "projection_valid": not reasons,
                 "artifact_status": record.get("status"),
                 "validation_result": record.get("validation_result"),
                 "transform_version": projection.get("transform_version")
@@ -773,15 +774,23 @@ def _intake_projection_summary(
     summary["projection_count"] = len(artifacts)
     summary["reasons"] = list(dict.fromkeys(context_reasons))
     if artifacts:
-        summary["status"] = "invalid" if context_reasons else "available"
+        summary["present"] = True
+        summary["valid"] = not context_reasons
     return summary
 
 
 def _format_intake_projection_line(value: Any) -> str:
     intake = value if isinstance(value, dict) else {}
+    state = (
+        "not_available"
+        if intake.get("present") is not True
+        else "available"
+        if intake.get("valid") is True
+        else "invalid"
+    )
     return (
         "[status] intake: "
-        f"{intake.get('status') or 'not_available'} "
+        f"{state} "
         f"projections={intake.get('projection_count', 0)} "
         f"normalized={intake.get('normalized_artifact_count', 0)} "
         f"normalizations={intake.get('normalization_count', 0)} "

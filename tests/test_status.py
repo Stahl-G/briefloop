@@ -1107,13 +1107,14 @@ def test_status_formats_intake_projection(tmp_path: Path) -> None:
 
     assert before_intake == after_intake
     assert before_line == after_line
-    assert before_intake["status"] == "available"
+    assert before_intake["present"] is True
+    assert before_intake["valid"] is True
     assert before_intake["projection_count"] == 1
     assert before_intake["normalized_artifact_count"] == 1
     assert before_intake["normalization_count"] > 0
     assert before_intake["fatal_finding_count"] == 0
     assert before_intake["artifacts"][0]["artifact_id"] == "candidate_claims"
-    assert before_intake["artifacts"][0]["projection_status"] == "valid"
+    assert before_intake["artifacts"][0]["projection_valid"] is True
 
 
 def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
@@ -1136,11 +1137,12 @@ def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
     status = build_workspace_status(ws)
     intake = status["artifacts"]["intake"]
 
-    assert intake["status"] == "invalid"
+    assert intake["present"] is True
+    assert intake["valid"] is False
     assert intake["invalid_projection_count"] == 1
     assert intake["normalization_count"] == persisted_normalization_count
     assert intake["fatal_finding_count"] == 0
-    assert intake["artifacts"][0]["projection_status"] == "invalid"
+    assert intake["artifacts"][0]["projection_valid"] is False
     assert intake["artifacts"][0]["reasons"] == [
         "intake_projection schema_version is unsupported"
     ]
