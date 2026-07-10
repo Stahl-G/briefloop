@@ -516,13 +516,80 @@ def test_completion_projection_contaminated_prefers_supersede_over_workflow_bloc
     assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
 
 
-def test_completion_projection_contaminated_repaired_requires_downstream_rerun(tmp_path: Path) -> None:
+def test_completion_projection_contaminated_without_supersede_stops(tmp_path: Path) -> None:
+    """Real contaminated state (frozen artifact edited after freeze) with no
+    supersede recorded must stop at human review / supersede, never rerun."""
+    from tests.test_runtime_state import _contaminated_editor_artifact_workspace
+
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["run_integrity"]["status"] == "contaminated"
+    assert payload["recovery_truth"]["status"] == "none"
+    assert payload["next_allowed_action"] == "stop_human_review_or_supersede"
+
+
+def test_completion_projection_supersede_rerun_tracks_owner_downstream(tmp_path: Path) -> None:
+    """After a real supersede transaction the run stays contaminated; the rerun
+    lane comes from the recorded supersede evidence plus the transaction's own
+    workflow.current_stage rewind (editor supersede rewinds to auditor)."""
+    from multi_agent_brief.orchestrator.runtime_state import supersede_stage_artifact_transaction
+    from tests.test_runtime_state import _contaminated_editor_artifact_workspace
+
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["run_integrity"]["status"] == "contaminated"
+    recovery = payload["recovery_truth"]
+    assert recovery["status"] == "superseded_awaiting_downstream_rerun"
+    assert recovery["superseded_stages"] == ["editor"]
+    assert "auditor" in recovery["stale_stages"]
+    assert recovery["supersede_event_present"] is True
+    assert payload["workflow"]["current_stage"] == "auditor"
+    assert payload["next_allowed_action"] == "rerun_downstream_from_auditor"
+
+
+def test_completion_projection_supersede_rerun_prefers_rerun_over_workflow_blocked(tmp_path: Path) -> None:
+    from multi_agent_brief.orchestrator.runtime_state import supersede_stage_artifact_transaction
+    from tests.test_runtime_state import _contaminated_editor_artifact_workspace
+
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    _set_workflow(ws, blocked=True, blocking_reason="Synthetic blocker on top of real supersede state.")
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["next_allowed_action"] == "rerun_downstream_from_auditor"
+
+
+def test_completion_projection_contaminated_repaired_terminal_is_not_a_rerun_demand(tmp_path: Path) -> None:
+    """`contaminated_repaired` is the terminal status finalize-complete writes
+    for a contaminated run that finished anyway (run_integrity.finalize_run_integrity);
+    it is not a waiting-for-rerun state. A completed run with valid delivery
+    must fall through to the normal delivery flow instead of demanding rerun."""
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
-    # editor supersede rewinds the workflow to its direct downstream: auditor
+    _write_finalize_report(ws)
+    _write_gate_report(ws)
+    _append_finalize_event(ws)
     _set_workflow(
         ws,
-        current_stage="auditor",
+        current_stage="finalize",
         run_integrity={
             "status": "contaminated_repaired",
             "reference_eligible": False,
@@ -534,68 +601,9 @@ def test_completion_projection_contaminated_repaired_requires_downstream_rerun(t
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["run_integrity"]["status"] == "contaminated_repaired"
-    assert payload["next_allowed_action"] == "rerun_downstream_from_auditor"
-
-
-def test_completion_projection_contaminated_repaired_rerun_tracks_supersede_owner_stage(tmp_path: Path) -> None:
-    """A source-discovery supersede rewinds to input-governance; the rerun
-    action must consume workflow.current_stage, not hardcode auditor/finalize."""
-    ws = _write_workspace(tmp_path)
-    _init_workspace(ws)
-    _set_workflow(
-        ws,
-        current_stage="input-governance",
-        run_integrity={
-            "status": "contaminated_repaired",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
-        },
-    )
-
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
-
-    assert payload["next_allowed_action"] == "rerun_downstream_from_input-governance"
-
-
-def test_completion_projection_contaminated_repaired_unknown_stage_falls_back_generic(tmp_path: Path) -> None:
-    ws = _write_workspace(tmp_path)
-    _init_workspace(ws)
-    _set_workflow(
-        ws,
-        current_stage="unknown",
-        run_integrity={
-            "status": "contaminated_repaired",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
-        },
-    )
-
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
-
-    assert payload["next_allowed_action"] == "rerun_downstream_stages"
-
-
-def test_completion_projection_contaminated_repaired_prefers_rerun_over_workflow_blocked(tmp_path: Path) -> None:
-    ws = _write_workspace(tmp_path)
-    _init_workspace(ws)
-    _set_workflow(
-        ws,
-        current_stage="auditor",
-        blocked=True,
-        blocking_reason="Frozen artifact changed after stage-complete.",
-        run_integrity={
-            "status": "contaminated_repaired",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "reasons": [{"reason_code": "frozen_artifact_changed"}],
-        },
-    )
-
-    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
-
-    assert payload["next_allowed_action"] == "rerun_downstream_from_auditor"
+    assert payload["recovery_truth"]["status"] == "completed_after_contamination"
+    assert payload["delivery_truth"]["valid"] is True
+    assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
 
 
 def test_completion_projection_active_repair_prefers_repair_over_workflow_blocked(tmp_path: Path) -> None:

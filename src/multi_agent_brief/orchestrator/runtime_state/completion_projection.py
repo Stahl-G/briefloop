@@ -91,6 +91,7 @@ def build_completion_projection(
     current_stage = _clean_text(workflow.get("current_stage")) if isinstance(workflow, Mapping) else ""
     current_stage = current_stage or "unknown"
     run_integrity = _run_integrity_projection(workflow, workflow_status)
+    recovery_truth = _recovery_truth(workflow, workflow_status, event_records, run_integrity)
     workflow_truth = _workflow_truth(workflow, workflow_status)
     artifact_truth = _artifact_truth(registry, registry_status)
     stages = load_stage_specs(repo)
@@ -130,6 +131,7 @@ def build_completion_projection(
         control_file_status=control_file_status,
         workflow_truth=workflow_truth,
         run_integrity=run_integrity,
+        recovery_truth=recovery_truth,
         artifact_truth=artifact_truth,
         gate_truth=gate_truth,
         finalize_truth=finalize_truth,
@@ -152,6 +154,7 @@ def build_completion_projection(
             "run_id": _clean_text(manifest.get("run_id")) if isinstance(manifest, Mapping) else "",
         },
         "run_integrity": run_integrity,
+        "recovery_truth": recovery_truth,
         "artifacts": artifact_truth,
         "gate_truth": gate_truth,
         "finalize_truth": finalize_truth,
@@ -438,12 +441,15 @@ def _next_allowed_action(
     event_truth: Mapping[str, Any],
     assessment_target: Mapping[str, Any],
     current_stage: str,
+    recovery_truth: Mapping[str, Any] | None = None,
 ) -> str:
     if any(status in _CONTROL_STOP_STATUSES for status in control_file_status.values()):
         return "inspect_unreadable_or_missing_control_files"
     if workflow_truth.get("active_repair_present"):
         return "stop_complete_or_inspect_active_repair"
-    integrity_action = _next_allowed_action_for_run_integrity(run_integrity, current_stage)
+    integrity_action = _next_allowed_action_for_run_integrity(
+        run_integrity, current_stage, recovery_truth
+    )
     if integrity_action is not None:
         return integrity_action
     if workflow_truth.get("blocked"):
@@ -474,24 +480,85 @@ def _next_allowed_action(
 
 
 def _next_allowed_action_for_run_integrity(
-    run_integrity: Mapping[str, Any], current_stage: str = ""
+    run_integrity: Mapping[str, Any],
+    current_stage: str = "",
+    recovery_truth: Mapping[str, Any] | None = None,
 ) -> str | None:
     status = _clean_text(run_integrity.get("status"))
+    recovery = recovery_truth or {}
     if status in {RUN_INTEGRITY_CLEAN, "pass", "ok"}:
         return None
     if status == RUN_INTEGRITY_CONTAMINATED:
+        # run_integrity and recovery progress are two dimensions: a supersede
+        # keeps the run contaminated permanently, so the rerun lane is
+        # detected from the recorded supersede evidence, not from the
+        # integrity status. The supersede transaction already rewound
+        # workflow.current_stage to the owner stage's direct downstream;
+        # consume that authoritative fact instead of hardcoding a target.
+        if recovery.get("status") == "superseded_awaiting_downstream_rerun":
+            stage = _clean_text(current_stage)
+            if stage and stage != "unknown":
+                return f"rerun_downstream_from_{stage}"
+            return "rerun_downstream_stages"
         return "stop_human_review_or_supersede"
     if status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
-        # The supersede/repair transaction already rewound
-        # workflow.current_stage to the owner stage's direct downstream;
-        # consume that authoritative fact instead of hardcoding a rerun
-        # target. A source-discovery supersede must rerun from
-        # input-governance, not from auditor/finalize.
-        stage = _clean_text(current_stage)
-        if stage and stage != "unknown":
-            return f"rerun_downstream_from_{stage}"
-        return "rerun_downstream_stages"
+        # Terminal status written by finalize-complete for a contaminated run
+        # that finished anyway (never reference-eligible). The run is done;
+        # fall through to the normal finalize/delivery-truth flow instead of
+        # demanding another rerun.
+        return None
     return "stop_run_integrity_not_clean"
+
+
+def _recovery_truth(
+    workflow: Any,
+    workflow_status: str,
+    event_records: list[Any],
+    run_integrity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project recovery progress separately from run integrity.
+
+    ``run_integrity`` says whether the run is clean/reference-eligible;
+    recovery progress says whether a contaminated run has been superseded and
+    is awaiting its downstream rerun, or already completed through
+    finalize-complete (`contaminated_repaired`).
+    """
+
+    superseded_stages: list[str] = []
+    stale_stages: list[str] = []
+    if workflow_status == "present" and isinstance(workflow, Mapping):
+        stage_statuses = workflow.get("stage_statuses")
+        if isinstance(stage_statuses, Mapping):
+            for stage_id, value in stage_statuses.items():
+                if not isinstance(value, Mapping):
+                    continue
+                metadata = value.get("metadata")
+                if not isinstance(metadata, Mapping):
+                    continue
+                if metadata.get("superseded") is True:
+                    superseded_stages.append(str(stage_id))
+                if metadata.get("stale_after_supersede") is True:
+                    stale_stages.append(str(stage_id))
+    supersede_event_present = any(
+        isinstance(record, Mapping)
+        and record.get("event_type") == "repair_stage_superseded"
+        for record in event_records
+    )
+    integrity_status = _clean_text(run_integrity.get("status"))
+    if integrity_status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
+        status = "completed_after_contamination"
+    elif integrity_status == RUN_INTEGRITY_CONTAMINATED and (
+        superseded_stages or supersede_event_present
+    ):
+        status = "superseded_awaiting_downstream_rerun"
+    else:
+        status = "none"
+    return {
+        "status": status,
+        "superseded_stages": sorted(superseded_stages),
+        "stale_stages": sorted(stale_stages),
+        "supersede_event_present": supersede_event_present,
+    }
 
 
 def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, Any]:
