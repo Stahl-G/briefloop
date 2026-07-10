@@ -328,6 +328,91 @@ def test_workspace_intake_bundle_rejects_missing_candidate_universe(
 
 
 @pytest.mark.parametrize(
+    ("screened_payload", "expected_result"),
+    [
+        (
+            [
+                {"candidate_id": "CAND-999", "screening_status": "selected"},
+                {
+                    "candidate_id": "CAND-002",
+                    "screening_status": "rejected",
+                    "screening_reason": "outside scope",
+                },
+            ],
+            "screened_candidates_schema_error:candidate[0].unknown_candidate_id:CAND-999",
+        ),
+        (
+            [{"candidate_id": "CAND-001", "screening_status": "selected"}],
+            "screened_candidates_schema_error:candidate_universe_id_coverage_mismatch",
+        ),
+        (
+            [
+                {"candidate_id": "CAND-001", "screening_status": "selected"},
+                {
+                    "candidate_id": "CAND-001",
+                    "screening_status": "rejected",
+                    "screening_reason": "duplicate",
+                },
+            ],
+            "screened_candidates_schema_error:duplicate_screened_candidate_id:CAND-001",
+        ),
+    ],
+    ids=[
+        "INTAKE-UNIVERSE-08-unknown",
+        "INTAKE-UNIVERSE-08-coverage",
+        "INTAKE-UNIVERSE-08-duplicate",
+    ],
+)
+def test_workspace_intake_bundle_binds_legacy_list_universe(
+    tmp_path: Path,
+    screened_payload: list[dict[str, str]],
+    expected_result: str,
+) -> None:
+    workspace = tmp_path / "ws"
+    intermediate = workspace / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_json(
+        intermediate / "candidate_claims.json",
+        [_legacy_candidate("CAND-001"), _legacy_candidate("CAND-002")],
+    )
+    _write_json(intermediate / "screened_candidates.json", screened_payload)
+
+    bundle = evaluate_workspace_agent_artifact_intakes(workspace)
+
+    assert bundle.screened_candidates is not None
+    assert bundle.screened_candidates.status == "invalid"
+    assert bundle.screened_candidates.validation_result == expected_result
+
+
+def test_workspace_intake_bundle_requires_object_universe_coverage_without_total(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    intermediate = workspace / "output" / "intermediate"
+    intermediate.mkdir(parents=True)
+    _write_json(
+        intermediate / "candidate_claims.json",
+        [_legacy_candidate("CAND-001"), _legacy_candidate("CAND-002")],
+    )
+    _write_json(
+        intermediate / "screened_candidates.json",
+        {
+            "selected": [_selected_candidate("CAND-001")],
+            "excluded": [],
+            "screening_policy": {"method": "deterministic_test"},
+        },
+    )
+
+    bundle = evaluate_workspace_agent_artifact_intakes(workspace)
+
+    assert bundle.screened_candidates is not None
+    assert bundle.screened_candidates.status == "invalid"
+    assert bundle.screened_candidates.validation_result == (
+        "screened_candidates_schema_error:candidate_universe_id_coverage_mismatch"
+    )
+
+
+@pytest.mark.parametrize(
     ("candidate_payload", "screened_payload", "expected_result"),
     [
         (

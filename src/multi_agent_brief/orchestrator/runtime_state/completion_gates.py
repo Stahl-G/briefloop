@@ -9,6 +9,7 @@ from typing import Any
 
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_IDS,
+    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 
@@ -117,7 +118,13 @@ def _artifact_gate_reasons_for_ids(
 ) -> list[str]:
     reasons: list[str] = []
     intake_bundle = (
-        evaluate_workspace_agent_artifact_intakes(workspace)
+        evaluate_workspace_agent_artifact_intakes(
+            workspace,
+            artifact_paths=agent_artifact_paths_from_contracts(
+                workspace,
+                artifacts_by_id,
+            ),
+        )
         if any(artifact_id in AGENT_ARTIFACT_IDS for artifact_id in artifact_ids)
         else None
     )

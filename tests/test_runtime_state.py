@@ -4285,6 +4285,77 @@ def test_topology_completion_supports_mixed_agent_and_non_agent_artifacts(
     ]
 
 
+@pytest.mark.parametrize(
+    "custom_candidate_valid",
+    [True, False],
+    ids=["INTAKE-PATH-01-valid-custom", "INTAKE-PATH-02-invalid-custom"],
+)
+def test_topology_completion_binds_intake_to_contract_paths(
+    tmp_path: Path,
+    custom_candidate_valid: bool,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    for artifact in contracts["artifacts"]:
+        artifact_id = artifact.get("artifact_id")
+        if artifact_id in {"candidate_claims", "screened_candidates"}:
+            artifact["path"] = f"custom/{artifact_id}.json"
+    contracts_path.write_text(
+        yaml.safe_dump(contracts, sort_keys=False),
+        encoding="utf-8",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    custom_dir = ws / "custom"
+    custom_dir.mkdir()
+    (custom_dir / "candidate_claims.json").write_text(
+        _normalized_candidate_wrapper() if custom_candidate_valid else "{broken",
+        encoding="utf-8",
+    )
+    (custom_dir / "screened_candidates.json").write_text(
+        _normalized_screened_alias_payload(),
+        encoding="utf-8",
+    )
+    _write_json_artifact(
+        ws,
+        "candidate_claims.json",
+        "{broken" if custom_candidate_valid else _normalized_candidate_wrapper(),
+    )
+    _write_json_artifact(ws, "screened_candidates.json", _normalized_screened_alias_payload())
+
+    if custom_candidate_valid:
+        state = complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="custom contract paths complete",
+        )
+        records = state["artifact_registry"]["artifacts"]
+        assert state["workflow_state"]["current_stage"] == "claim-ledger"
+        assert records["candidate_claims"]["path"] == "custom/candidate_claims.json"
+        assert records["candidate_claims"]["status"] == "valid"
+        return
+
+    before_workflow = _state_file(ws, "workflow_state").read_bytes()
+    before_events = _state_file(ws, "event_log").read_bytes()
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="invalid custom contract path must fail",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_ARTIFACT_INVALID
+    assert "parse_error" in str(excinfo.value)
+    assert _state_file(ws, "workflow_state").read_bytes() == before_workflow
+    assert _state_file(ws, "event_log").read_bytes() == before_events
+
+
 def test_default_topology_intake_views(tmp_path: Path) -> None:
     repo = _repo_with_role_topology(tmp_path, "default")
     ws = _write_workspace(tmp_path)

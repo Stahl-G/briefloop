@@ -153,6 +153,23 @@ class WorkspaceAgentArtifactIntakes:
         return getattr(self, artifact_id)
 
 
+def agent_artifact_paths_from_contracts(
+    workspace: Path,
+    artifacts_by_id: Mapping[str, Mapping[str, Any]],
+) -> dict[AgentArtifactId, Path]:
+    """Resolve the one contract-bound path map used by intake consumers."""
+
+    paths: dict[AgentArtifactId, Path] = {}
+    for artifact_id in AGENT_ARTIFACT_IDS:
+        artifact = artifacts_by_id.get(artifact_id)
+        if not isinstance(artifact, Mapping):
+            continue
+        rel_path = artifact.get("path")
+        if _non_empty_string(rel_path):
+            paths[artifact_id] = workspace / str(rel_path)
+    return paths
+
+
 def evaluate_agent_artifact_intake(
     path: Path,
     *,
@@ -850,6 +867,12 @@ def _validate_screened_candidates(
                 for field in ("reason", "screening_reason", "excluded_reason")
             ):
                 return f"screened_candidates_schema_error:candidate[{index}].reason"
+        universe_error = _legacy_screened_candidate_universe_error(
+            payload,
+            candidate_universe=candidate_universe,
+        )
+        if universe_error:
+            return f"screened_candidates_schema_error:{universe_error}"
         return None
     if not isinstance(payload, dict):
         return "screened_candidates_schema_error:not_list_or_object"
@@ -1018,16 +1041,12 @@ def _candidate_universe_error(
     declared_total: int | None,
     candidate_universe: IntakeResult | None,
 ) -> str | None:
-    if candidate_universe is None:
-        return None
-    if not isinstance(candidate_universe.normalized_payload, list):
-        return "candidate_universe_invalid"
-    candidate_ids, candidate_error = _candidate_ids(candidate_universe.normalized_payload)
+    candidate_ids, candidate_error = _bound_candidate_universe_ids(candidate_universe)
     if candidate_error:
         return candidate_error
-    if candidate_universe.status != "valid":
-        return "candidate_universe_invalid"
-    if declared_total is not None and declared_total != len(candidate_universe.normalized_payload):
+    if candidate_ids is None:
+        return None
+    if declared_total is not None and declared_total != len(candidate_ids):
         return "candidate_universe_count_mismatch"
     screened_ids: set[str] = set()
     for bucket in ("selected", "excluded", "deprioritized"):
@@ -1046,9 +1065,52 @@ def _candidate_universe_error(
             if normalized_id in screened_ids:
                 return f"duplicate_screened_candidate_id:{normalized_id}"
             screened_ids.add(normalized_id)
-    if declared_total is not None and screened_ids != candidate_ids:
+    if screened_ids != candidate_ids:
         return "candidate_universe_id_coverage_mismatch"
     return None
+
+
+def _legacy_screened_candidate_universe_error(
+    payload: list[Any],
+    *,
+    candidate_universe: IntakeResult | None,
+) -> str | None:
+    candidate_ids, candidate_error = _bound_candidate_universe_ids(candidate_universe)
+    if candidate_error:
+        return candidate_error
+    if candidate_ids is None:
+        return None
+    screened_ids: set[str] = set()
+    for index, candidate in enumerate(payload):
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = candidate.get("candidate_id")
+        if not _non_empty_string(candidate_id):
+            continue
+        normalized_id = candidate_id.strip()
+        if normalized_id not in candidate_ids:
+            return f"candidate[{index}].unknown_candidate_id:{normalized_id}"
+        if normalized_id in screened_ids:
+            return f"duplicate_screened_candidate_id:{normalized_id}"
+        screened_ids.add(normalized_id)
+    if screened_ids != candidate_ids:
+        return "candidate_universe_id_coverage_mismatch"
+    return None
+
+
+def _bound_candidate_universe_ids(
+    candidate_universe: IntakeResult | None,
+) -> tuple[set[str] | None, str | None]:
+    if candidate_universe is None:
+        return None, None
+    if not isinstance(candidate_universe.normalized_payload, list):
+        return None, "candidate_universe_invalid"
+    candidate_ids, candidate_error = _candidate_ids(candidate_universe.normalized_payload)
+    if candidate_error:
+        return None, candidate_error
+    if candidate_universe.status != "valid":
+        return None, "candidate_universe_invalid"
+    return candidate_ids, None
 
 
 def _candidate_ids(payload: list[Any]) -> tuple[set[str], str | None]:

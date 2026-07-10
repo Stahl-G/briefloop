@@ -17,6 +17,7 @@ from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_IDS,
     AgentArtifactId,
     IntakeResult,
+    agent_artifact_paths_from_contracts,
     evaluate_workspace_agent_artifact_intakes,
 )
 from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSupportMatrixContract
@@ -1288,14 +1289,12 @@ def _agent_intake_results(
         for artifact in artifacts
         if artifact.get("artifact_id")
     }
-    artifact_paths = {
-        artifact_id: workspace / str(artifact.get("path") or "")
-        for artifact_id in artifact_ids
-        if isinstance((artifact := artifacts_by_id.get(artifact_id)), dict)
-    }
     bundle = evaluate_workspace_agent_artifact_intakes(
         workspace,
-        artifact_paths=artifact_paths,
+        artifact_paths=agent_artifact_paths_from_contracts(
+            workspace,
+            artifacts_by_id,
+        ),
     )
     return {
         artifact_id: result
