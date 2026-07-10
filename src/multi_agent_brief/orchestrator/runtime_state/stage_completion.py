@@ -802,15 +802,16 @@ def _complete_stage_transaction(
     )
     run_id = str(manifest["run_id"])
     finalize_recovery_binding: dict[str, Any] = {}
-    if finalize:
-        from multi_agent_brief.orchestrator.recovery_state import (
-            RECOVERY_FINALIZE_COMPLETION_PENDING,
-            RECOVERY_NOT_APPLICABLE,
-            evaluate_recovery_state,
-        )
+    from multi_agent_brief.orchestrator.recovery_state import (
+        RECOVERY_FINALIZE_COMPLETION_PENDING,
+        RECOVERY_NOT_APPLICABLE,
+        RECOVERY_RERUN_PENDING,
+        evaluate_recovery_state,
+    )
 
-        recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
-        recovery_status = recovery.get("status")
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
+    recovery_status = recovery.get("status")
+    if finalize:
         if recovery_status == RECOVERY_FINALIZE_COMPLETION_PENDING:
             finalize_recovery_binding = {
                 "run_id": run_id,
@@ -825,6 +826,18 @@ def _complete_stage_transaction(
                 error_code=E_TRANSACTION_INTEGRITY,
                 details={"stage_id": stage_id, "recovery_state": recovery},
             )
+    elif recovery_status not in {RECOVERY_NOT_APPLICABLE, RECOVERY_RERUN_PENDING}:
+        _raise_completion_reasons(
+            message="Cannot complete stage because recovery is not ready",
+            reasons=[
+                str(
+                    recovery.get("reason")
+                    or "Recovery state does not allow ordinary stage completion."
+                )
+            ],
+            error_code=E_TRANSACTION_INTEGRITY,
+            details={"stage_id": stage_id, "recovery_state": recovery},
+        )
     decision = "finalize" if finalize else "continue"
     _raise_if_trajectory_narrows_success_path(
         workspace=ws,
