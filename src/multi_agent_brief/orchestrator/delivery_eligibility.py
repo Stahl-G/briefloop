@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from multi_agent_brief.orchestrator.recovery_state import (
+    RECOVERY_COMPLETED_NON_REFERENCE,
+)
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
     RUN_INTEGRITY_CONTAMINATED_REPAIRED,
@@ -26,7 +29,11 @@ DELIVERY_ALLOWED_NON_REFERENCE = "allowed_contaminated_repaired_non_reference"
 DELIVERY_BLOCKED_RUN_INTEGRITY = "blocked_run_integrity_not_clean"
 
 
-def evaluate_delivery_eligibility(run_integrity: Mapping[str, Any] | None) -> dict[str, Any]:
+def evaluate_delivery_eligibility(
+    run_integrity: Mapping[str, Any] | None,
+    *,
+    recovery_truth: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Evaluate whether run integrity permits reader-facing delivery.
 
     - clean + reference_eligible: delivery allowed, reference-eligible.
@@ -44,7 +51,12 @@ def evaluate_delivery_eligibility(run_integrity: Mapping[str, Any] | None) -> di
             "code": DELIVERY_ALLOWED_CLEAN,
             "run_integrity_status": status,
         }
-    if status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
+    recovery = recovery_truth if isinstance(recovery_truth, Mapping) else {}
+    if (
+        status == RUN_INTEGRITY_CONTAMINATED_REPAIRED
+        and recovery.get("status") == RECOVERY_COMPLETED_NON_REFERENCE
+        and recovery.get("delivery_allowed") is True
+    ):
         return {
             "allowed": True,
             "reference_eligible": False,

@@ -43,9 +43,9 @@ authority layer.
 - say `delivered`, `delivery complete`, or `交付完成` unless
   `briefloop workbuddy diagnose --json` reports `delivery_truth.valid=true`;
 - run finalize or delivery when `run_integrity` is `contaminated`,
-  `stale_or_invalid`, or unknown (a `contaminated_repaired` run with
-  `delivery_truth.valid=true` is deliverable but permanently
-  non-reference-eligible);
+  `stale_or_invalid`, or unknown (a `contaminated_repaired` run requires both
+  `delivery_truth.valid=true` and `delivery_truth.eligibility.allowed=true` to
+  be deliverable, and remains permanently non-reference-eligible);
 - downgrade a `doctor` error in prose; show the full output and wait for user
   confirmation;
 - zip or share the whole workspace; never include `.env`, tokens, or private

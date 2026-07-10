@@ -80,7 +80,7 @@ diagnosis reports `delivery_truth.valid=true`.
   or ACL output. Do not downgrade the error yourself.
 - If `run_integrity` is `contaminated`, `stale_or_invalid`, or unknown, stop
   finalize, delivery, export, and share actions. Do not run finalize or
-  delivery. Exception: a `contaminated_repaired` run (terminal recovery written by finalize-complete) with `delivery_truth.valid=true` is deliverable but permanently non-reference-eligible; report that status instead of stopping. For early-stage role work, report
+  delivery. Exception: a `contaminated_repaired` run with both `delivery_truth.valid=true` and `delivery_truth.eligibility.allowed=true` is transaction-bound terminal recovery and may be delivered, but it remains permanently non-reference-eligible; report that status instead of stopping. For early-stage role work, report
   the Run Card and continue only with non-delivery workflow steps allowed by
   the handoff.
 - If WorkBuddy diagnosis does not report `delivery_truth.valid=true`, do not

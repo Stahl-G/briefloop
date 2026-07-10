@@ -168,23 +168,23 @@ def _mark_run_contaminated_repaired(ws: Path) -> None:
     paths["workflow_state"].write_text(json.dumps(workflow, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def test_deliver_local_allows_contaminated_repaired_run_as_non_reference(tmp_path: Path, capsys) -> None:
-    """Product ruling: a contaminated run that recovered and completed finalize
-    (terminal contaminated_repaired) may deliver, but is permanently
-    non-reference-eligible. The executor and the completion projection consume
-    the same shared delivery-eligibility rule."""
+def test_deliver_local_rejects_unbound_contaminated_repaired_status(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """A persisted status alone cannot claim a completed recovery transaction."""
     ws = _workspace(tmp_path)
     _write_bundle(ws)
     _mark_run_contaminated_repaired(ws)
 
-    rc = main(["deliver", "--workspace", str(ws), "--target", "local"])
+    rc = main(["deliver", "--workspace", str(ws), "--target", "local", "--json"])
 
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "output/delivery/brief.md" in captured.out
-    assert "contaminated_repaired" in captured.err
-    events = _delivery_events(ws)
-    assert [event["event_type"] for event in events] == ["delivery_attempted", "delivery_succeeded"]
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "E_DELIVERY_RUN_INTEGRITY_BLOCKED"
+    assert payload["run_integrity"]["status"] == "contaminated_repaired"
+    assert payload["recovery_truth"]["status"] == "invalid_recovery_state"
+    assert _delivery_events(ws) == []
 
 
 def test_deliver_local_blocks_contaminated_run_without_events(tmp_path: Path, capsys) -> None:

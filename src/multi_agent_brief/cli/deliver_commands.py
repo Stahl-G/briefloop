@@ -31,6 +31,7 @@ from multi_agent_brief.orchestrator.runtime_state import (
 from multi_agent_brief.orchestrator.delivery_eligibility import (
     evaluate_delivery_eligibility,
 )
+from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_truth
 from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
@@ -196,9 +197,10 @@ def deliver_workspace(
     _preflight_delivery_event_surface(ws)
     _preflight_no_active_repair(ws, target=target, channel=channel)
     _refresh_runtime_state_before_delivery(ws, target=target, channel=channel)
-    run_integrity = _delivery_run_integrity(ws)
+    run_integrity, recovery_truth = _delivery_integrity_context(ws)
     _preflight_run_integrity_for_delivery(
         run_integrity,
+        recovery_truth=recovery_truth,
         target=target,
         channel=channel,
     )
@@ -796,9 +798,40 @@ def _delivery_run_id(workspace: Path) -> str:
 
 
 def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
+    try:
+        run_integrity, _recovery_truth = _delivery_integrity_context(workspace)
+    except DeliverCommandError:
+        workflow_path = runtime_state_paths(workspace)["workflow_state"]
+        try:
+            workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            workflow = None
+        if isinstance(workflow, dict):
+            return project_for_read(
+                interpret_run_integrity(
+                    workflow.get("run_integrity"),
+                    field_present="run_integrity" in workflow,
+                )
+            )
+        return project_for_read(
+            interpret_run_integrity(
+                None,
+                field_present=True,
+                unavailable_reason={
+                    "reason_code": "delivery_integrity_context_invalid",
+                    "message": "Delivery integrity context could not be verified.",
+                },
+            )
+        )
+    return run_integrity
+
+
+def _delivery_integrity_context(
+    workspace: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     paths = runtime_state_paths(workspace)
     if not paths["workflow_state"].exists():
-        return project_for_read(
+        run_integrity = project_for_read(
             interpret_run_integrity(
                 None,
                 field_present=True,
@@ -807,6 +840,15 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
                     "message": "workflow_state.json is missing.",
                 },
             )
+        )
+        return run_integrity, evaluate_recovery_truth(
+            workflow=None,
+            workflow_status="missing",
+            event_records=[],
+            run_integrity=run_integrity,
+            run_id="",
+            current_stage="",
+            stage_order=[],
         )
     try:
         workflow = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
@@ -821,27 +863,47 @@ def _delivery_run_integrity(workspace: Path) -> dict[str, Any]:
             error_code=E_DELIVERY_EVENT_FAILED,
         )
     try:
+        event_records = read_event_log_records_strict(paths["event_log"])
         workflow = workflow_with_sticky_contamination_events(
             workflow,
-            read_event_log_records_strict(paths["event_log"]),
+            event_records,
         )
-    except RuntimeStateError:
-        pass
-    return project_for_read(
+    except RuntimeStateError as exc:
+        raise DeliverCommandError(
+            f"Delivery integrity context is invalid: {exc}",
+            error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
+        ) from exc
+    run_integrity = project_for_read(
         interpret_run_integrity(
             workflow.get("run_integrity"),
             field_present="run_integrity" in workflow,
         )
     )
+    stage_statuses = workflow.get("stage_statuses")
+    stage_order = list(stage_statuses) if isinstance(stage_statuses, dict) else []
+    recovery_truth = evaluate_recovery_truth(
+        workflow=workflow,
+        workflow_status="present",
+        event_records=event_records,
+        run_integrity=run_integrity,
+        run_id=str(workflow.get("run_id") or ""),
+        current_stage=str(workflow.get("current_stage") or ""),
+        stage_order=stage_order,
+    )
+    return run_integrity, recovery_truth
 
 
 def _preflight_run_integrity_for_delivery(
     run_integrity: dict[str, Any],
     *,
+    recovery_truth: dict[str, Any],
     target: str,
     channel: str,
 ) -> None:
-    eligibility = evaluate_delivery_eligibility(run_integrity)
+    eligibility = evaluate_delivery_eligibility(
+        run_integrity,
+        recovery_truth=recovery_truth,
+    )
     if eligibility["allowed"]:
         # contaminated_repaired delivers as permanently non-reference-eligible;
         # the run-integrity warning printer surfaces that status.
@@ -855,7 +917,10 @@ def _preflight_run_integrity_for_delivery(
         error_code=E_DELIVERY_RUN_INTEGRITY_BLOCKED,
         target=target,
         channel=channel,
-        extra={"run_integrity": run_integrity},
+        extra={
+            "run_integrity": run_integrity,
+            "recovery_truth": recovery_truth,
+        },
     )
 
 

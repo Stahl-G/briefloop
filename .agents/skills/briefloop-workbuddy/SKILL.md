@@ -218,7 +218,7 @@ workflow stop.
    not mark doctor complete unless the user explicitly confirms the evidence.
 2. For finalize, delivery, export, or share requests: if `run_integrity` is
    `contaminated`, `stale_or_invalid`, or unknown, stop that
-   action. Do not run finalize or delivery. Exception: a `contaminated_repaired` run (terminal recovery written by finalize-complete) with `delivery_truth.valid=true` is deliverable but permanently non-reference-eligible; report that status instead of stopping. The next safe action is fresh run,
+   action. Do not run finalize or delivery. Exception: a `contaminated_repaired` run with both `delivery_truth.valid=true` and `delivery_truth.eligibility.allowed=true` is transaction-bound terminal recovery and may be delivered, but it remains permanently non-reference-eligible; report that status instead of stopping. The next safe action is fresh run,
    controlled repair, or human review. For early-stage draft work, report the
    Run Card and continue only with non-delivery workflow steps allowed by the
    handoff.

@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 
 from multi_agent_brief.core.config import build_run_settings, get_output_config, load_config
+from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_truth
+from multi_agent_brief.orchestrator.run_integrity import (
+    RUN_INTEGRITY_CLEAN,
+    RUN_INTEGRITY_CONTAMINATED,
+    interpret_run_integrity,
+    project_for_read,
+    workflow_with_sticky_contamination_events,
+)
 from multi_agent_brief.orchestrator.runtime_state import (
     E_ACTIVE_REPAIR_OPEN,
     E_ASSESSMENT_TARGET_COMPLETE,
@@ -18,6 +26,9 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY
+from multi_agent_brief.orchestrator.runtime_state.event_log import (
+    read_event_log_records_strict,
+)
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
 
@@ -126,7 +137,11 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
                 ) from exc
             if not isinstance(workflow, dict):
                 raise RuntimeStateError("workflow_state.json must contain an object after runtime state refresh.")
-            _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow)
+            event_records = read_event_log_records_strict(paths["event_log"])
+            _raise_if_run_integrity_blocks_finalize(
+                workflow,
+                event_records=event_records,
+            )
         raise_if_auditable_target_complete_blocks_downstream(
             workspace=workspace,
             workflow=workflow,
@@ -142,12 +157,47 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
         raise RuntimeStateError(f"Unable to verify runtime state before finalize: {exc}") from exc
 
 
-def _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow: dict[str, object]) -> None:
-    integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
-    if integrity.get("status") == "clean" and integrity.get("reference_eligible") is True:
+def _raise_if_run_integrity_blocks_finalize(
+    workflow: dict[str, object],
+    *,
+    event_records: list[dict[str, object]],
+) -> None:
+    effective_workflow = workflow_with_sticky_contamination_events(
+        workflow,
+        event_records,
+    )
+    integrity = project_for_read(
+        interpret_run_integrity(
+            effective_workflow.get("run_integrity"),
+            field_present="run_integrity" in effective_workflow,
+        )
+    )
+    if (
+        integrity.get("status") == RUN_INTEGRITY_CLEAN
+        and integrity.get("reference_eligible") is True
+    ):
+        return
+    stage_statuses = effective_workflow.get("stage_statuses")
+    stage_order = list(stage_statuses) if isinstance(stage_statuses, dict) else []
+    recovery_truth = evaluate_recovery_truth(
+        workflow=effective_workflow,
+        workflow_status="present",
+        event_records=event_records,
+        run_integrity=integrity,
+        run_id=str(effective_workflow.get("run_id") or ""),
+        current_stage=str(effective_workflow.get("current_stage") or ""),
+        stage_order=stage_order,
+    )
+    if (
+        integrity.get("status") == RUN_INTEGRITY_CONTAMINATED
+        and recovery_truth.get("finalize_allowed") is True
+    ):
         return
     raise RuntimeStateError(
-        "Runtime state integrity check failed because run integrity is not clean before finalize.",
-        details={"run_integrity": integrity},
+        "Runtime state integrity check failed because the run has no bound recovery ready for finalize.",
+        details={
+            "run_integrity": integrity,
+            "recovery_truth": recovery_truth,
+        },
         error_code=E_TRANSACTION_INTEGRITY,
     )

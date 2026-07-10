@@ -758,7 +758,7 @@ def test_finalize_cli_replays_sticky_contamination_before_auditable_target_block
     assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
     captured = capsys.readouterr()
 
-    assert "run integrity is not clean before finalize" in captured.err
+    assert "no bound recovery ready for finalize" in captured.err
     assert "TARGET COMPLETE: auditable_brief" not in captured.err
     assert not (output_dir / "brief.md").exists()
     assert not (output_dir / "delivery").exists()
@@ -827,12 +827,60 @@ def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
     assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
     captured = capsys.readouterr()
 
-    assert "run integrity is not clean before finalize" in captured.err
+    assert "no bound recovery ready for finalize" in captured.err
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
     refreshed = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))
     assert refreshed["run_integrity"]["status"] == "contaminated"
     assert refreshed["run_integrity"]["reference_eligible"] is False
+
+
+def test_finalize_cli_allows_bound_recovery_ready_at_finalize(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from multi_agent_brief.orchestrator.runtime_state import (
+        complete_stage_transaction,
+        supersede_stage_artifact_transaction,
+    )
+    from tests.test_runtime_state import (
+        _contaminated_editor_artifact_workspace,
+        _valid_audit_report_payload,
+        _write_json_artifact,
+        _write_quality_gate_report,
+    )
+
+    workspace, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(
+        tmp_path
+    )
+    supersede_stage_artifact_transaction(
+        workspace=workspace,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    refreshed = json.loads(_valid_audit_report_payload())
+    refreshed["summary"] = "Auditor rerun against the superseded brief revision."
+    _write_json_artifact(
+        workspace,
+        "audit_report.json",
+        json.dumps(refreshed) + "\n",
+    )
+    _write_quality_gate_report(workspace, stage_id="auditor")
+    complete_stage_transaction(
+        workspace=workspace,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor reran against the superseded revision",
+    )
+
+    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "Delivery Markdown" in captured.out
+    assert (workspace / "output" / "delivery" / "brief.md").exists()
 
 
 def test_finalize_cli_blocks_modified_frozen_audited_brief_before_writing(tmp_path: Path, capsys):

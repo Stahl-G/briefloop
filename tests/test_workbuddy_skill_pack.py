@@ -427,7 +427,8 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         assert phrase in text
     for phrase in [
         "Do not turn normal pre-finalize state into a workflow stop",
-        "deliverable but permanently non-reference-eligible",
+        "may be delivered, but it remains permanently non-reference-eligible",
+        "delivery_truth.eligibility.allowed=true",
         "stop finalize, delivery, export, and share actions",
         "For early-stage draft work, report the Run Card and continue only with non-delivery workflow steps allowed by the handoff",
         "otherwise say no draft or delivery exists yet",

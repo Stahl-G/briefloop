@@ -147,3 +147,31 @@ def test_sticky_contamination_event_keeps_repaired_terminal_status():
     assert updated["run_integrity"]["status"] == "contaminated_repaired"
     assert updated["run_integrity"]["reference_eligible"] is False
     assert updated["run_integrity"]["reasons"][0]["reason_code"] == "prior_repair"
+
+
+def test_sticky_contamination_ignores_events_from_an_old_run():
+    workflow = {
+        "run_id": "run-current-001",
+        "run_integrity": {
+            "status": "clean",
+            "reference_eligible": True,
+            "clean_single_shot": True,
+            "reasons": [],
+        },
+    }
+    event_records = [
+        {
+            "event_type": "run_integrity_contaminated",
+            "run_id": "run-archived-001",
+            "created_at": "2026-06-14T00:00:00+00:00",
+            "metadata": {
+                "reason_code": "old_run_contamination",
+                "message": "This event belongs to a prior run.",
+            },
+        }
+    ]
+
+    updated = workflow_with_sticky_contamination_events(workflow, event_records)
+
+    assert updated["run_integrity"]["status"] == "clean"
+    assert updated["run_integrity"]["reasons"] == []

@@ -8812,7 +8812,7 @@ def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
     assert persisted == integrity
 
 
-def test_finalize_complete_keeps_contaminated_run_out_of_reference_pack(tmp_path):
+def test_finalize_complete_rejects_contamination_without_bound_recovery(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
@@ -8825,15 +8825,50 @@ def test_finalize_complete_keeps_contaminated_run_out_of_reference_pack(tmp_path
         event_type="run_integrity_contaminated",
         actor="orchestrator",
         stage_id="auditor",
-        reason="Prior repair contaminated this run.",
+        reason="Synthetic contamination has no recovery transaction.",
         metadata={
-            "reason_code": "prior_repair",
-            "message": "Prior repair contaminated this run.",
-            "reference_eligible": False,
-            "clean_single_shot": False,
-            "stage_id": "auditor",
+            "reason_code": "synthetic_contamination",
+            "message": "Synthetic contamination has no recovery transaction.",
         },
     )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="must not finalize without recovery authority",
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert not any(
+        event.get("event_type") == "decision_recorded"
+        and event.get("stage_id") == "finalize"
+        for event in _event_records(ws)
+    )
+
+
+def test_finalize_complete_keeps_recovered_run_out_of_reference_pack(tmp_path):
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    refreshed = json.loads(_valid_audit_report_payload())
+    refreshed["summary"] = "Auditor rerun against the superseded brief revision."
+    _write_json_artifact(ws, "audit_report.json", json.dumps(refreshed) + "\n")
+    _write_quality_gate_report(ws, stage_id="auditor")
+    complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="auditor",
+        reason="auditor reran against the superseded revision",
+    )
+    _write_quality_gate_report(ws, stage_id="finalize")
+    _write_finalize_report(ws)
+    manifest = json.loads(_state_file(ws, "runtime_manifest").read_text(encoding="utf-8"))
 
     state = complete_finalize_transaction(
         workspace=ws,

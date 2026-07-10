@@ -20,12 +20,20 @@ from multi_agent_brief.orchestrator.active_repair import active_repair_is_open
 from multi_agent_brief.orchestrator.delivery_eligibility import (
     evaluate_delivery_eligibility,
 )
+from multi_agent_brief.orchestrator.recovery_state import (
+    RECOVERY_COMPLETED_NON_REFERENCE,
+    RECOVERY_INVALID,
+    RECOVERY_READY_FOR_FINALIZE,
+    RECOVERY_RERUN_PENDING,
+    evaluate_recovery_truth,
+)
 from multi_agent_brief.orchestrator.run_integrity import (
     RUN_INTEGRITY_CLEAN,
     RUN_INTEGRITY_CONTAMINATED,
     RUN_INTEGRITY_CONTAMINATED_REPAIRED,
     interpret_run_integrity,
     project_for_read,
+    workflow_with_sticky_contamination_events,
 )
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import ARTIFACT_REGISTRY_SCHEMA
 from multi_agent_brief.orchestrator.runtime_state.contracts_loader import (
@@ -57,6 +65,7 @@ _CONTROL_STOP_STATUSES = {
     "invalid_json_shape",
     "invalid_schema",
     "unreadable",
+    "invalid_run_integrity",
 }
 
 
@@ -91,9 +100,24 @@ def build_completion_projection(
         "artifact_registry": registry_status,
         "event_log": event_log_status,
     }
-    current_stage = _clean_text(workflow.get("current_stage")) if isinstance(workflow, Mapping) else ""
+    effective_workflow, effective_workflow_status = _workflow_with_event_integrity(
+        workflow=workflow,
+        workflow_status=workflow_status,
+        event_records=event_records,
+        event_log_status=event_log_status,
+    )
+    if workflow_status == "present" and effective_workflow_status != "present":
+        control_file_status["workflow_state"] = effective_workflow_status
+    current_stage = (
+        _clean_text(effective_workflow.get("current_stage"))
+        if isinstance(effective_workflow, Mapping)
+        else ""
+    )
     current_stage = current_stage or "unknown"
-    run_integrity = _run_integrity_projection(workflow, workflow_status)
+    run_integrity = _run_integrity_projection(
+        effective_workflow,
+        effective_workflow_status,
+    )
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
     stage_order = [
@@ -102,16 +126,16 @@ def build_completion_projection(
         if _clean_text(stage.get("stage_id"))
     ]
     manifest_run_id = _clean_text(manifest.get("run_id")) if isinstance(manifest, Mapping) else ""
-    recovery_truth = _recovery_truth(
-        workflow,
-        workflow_status,
-        event_records,
-        run_integrity,
-        manifest_run_id,
-        current_stage,
-        stage_order,
+    recovery_truth = evaluate_recovery_truth(
+        workflow=effective_workflow,
+        workflow_status=effective_workflow_status,
+        event_records=event_records,
+        run_integrity=run_integrity,
+        run_id=manifest_run_id,
+        current_stage=current_stage,
+        stage_order=stage_order,
     )
-    workflow_truth = _workflow_truth(workflow, workflow_status)
+    workflow_truth = _workflow_truth(effective_workflow, effective_workflow_status)
     artifact_truth = _artifact_truth(registry, registry_status)
     gate_truth = _stage_gate_truth(
         workspace=ws,
@@ -131,7 +155,7 @@ def build_completion_projection(
     event_truth = _event_truth(event_records=event_records, event_log_status=event_log_status)
     assessment_target = _assessment_target_projection(
         workspace=ws,
-        workflow=workflow,
+        workflow=effective_workflow,
         registry=registry,
         event_records=event_records,
         intermediate=intermediate,
@@ -143,7 +167,10 @@ def build_completion_projection(
         event_truth=event_truth,
         artifact_truth=artifact_truth,
     )
-    delivery_truth["eligibility"] = evaluate_delivery_eligibility(run_integrity)
+    delivery_truth["eligibility"] = evaluate_delivery_eligibility(
+        run_integrity,
+        recovery_truth=recovery_truth,
+    )
 
     next_allowed_action = _next_allowed_action(
         control_file_status=control_file_status,
@@ -185,6 +212,33 @@ def build_completion_projection(
             "delivery_truth_source=finalize_report"
         ),
     }
+
+
+def _workflow_with_event_integrity(
+    *,
+    workflow: Any,
+    workflow_status: str,
+    event_records: list[Mapping[str, Any]],
+    event_log_status: str,
+) -> tuple[Any, str]:
+    if workflow_status != "present" or not isinstance(workflow, Mapping):
+        return workflow, workflow_status
+    if event_log_status != "present":
+        return workflow, workflow_status
+    verdict = interpret_run_integrity(
+        workflow.get("run_integrity"),
+        field_present="run_integrity" in workflow,
+    )
+    if verdict.kind != "canonical":
+        return workflow, workflow_status
+    try:
+        effective = workflow_with_sticky_contamination_events(
+            dict(workflow),
+            [dict(record) for record in event_records],
+        )
+    except RuntimeStateError:
+        return workflow, "invalid_run_integrity"
+    return effective, "present"
 
 
 def _workflow_truth(workflow: Any, status: str) -> dict[str, Any]:
@@ -513,180 +567,21 @@ def _next_allowed_action_for_run_integrity(
         # contamination event vs latest bound recovery transaction), never
         # from the integrity status alone or from recomputed stage metadata.
         recovery_status = recovery.get("status")
-        if recovery_status == "downstream_rerun_pending":
+        if recovery_status == RECOVERY_RERUN_PENDING:
             stage = _clean_text(current_stage)
             if stage and stage != "unknown":
                 return f"rerun_downstream_from_{stage}"
             return "rerun_downstream_stages"
-        if recovery_status == "invalid_recovery_state":
+        if recovery_status == RECOVERY_READY_FOR_FINALIZE:
+            return "run_finalize_after_recovery"
+        if recovery_status == RECOVERY_INVALID:
             return "stop_invalid_recovery_state"
         return "stop_human_review_or_supersede"
     if status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
-        # Terminal status written by finalize-complete for a contaminated run
-        # that finished anyway (never reference-eligible). The run is done;
-        # fall through to the normal finalize/delivery-truth flow instead of
-        # demanding another rerun.
-        return None
+        if recovery.get("status") == RECOVERY_COMPLETED_NON_REFERENCE:
+            return None
+        return "stop_invalid_recovery_state"
     return "stop_run_integrity_not_clean"
-
-
-_RECOVERY_EVENT_TYPES = {"repair_stage_superseded", "repair_completed"}
-
-
-def _recovery_truth(
-    workflow: Any,
-    workflow_status: str,
-    event_records: list[Any],
-    run_integrity: Mapping[str, Any],
-    run_id: str,
-    current_stage: str,
-    stage_order: list[str] | None = None,
-) -> dict[str, Any]:
-    """Project recovery progress separately from run integrity.
-
-    Authority comes from the current run's transaction timeline: the latest
-    ``run_integrity_contaminated`` event is compared against the latest
-    recovery transaction event (``repair_stage_superseded`` /
-    ``repair_completed``). A recovery event counts only when it binds to
-    ``workflow.last_repair_transaction`` (transaction id, decision kind, and
-    owner stage) and when ``workflow.current_stage`` is at or downstream of
-    the event's recorded rerun start stage (``metadata.next_stage`` is the
-    rerun START, not a permanent current-stage requirement — legitimate
-    recovery advances through downstream stages). Stage status metadata
-    (``superseded`` / ``stale_after_supersede``) is recomputed state and is
-    surfaced as diagnostics only, never as recovery authority.
-    """
-
-    superseded_stages: list[str] = []
-    stale_stages: list[str] = []
-    last_repair_transaction: Mapping[str, Any] = {}
-    if workflow_status == "present" and isinstance(workflow, Mapping):
-        raw_last = workflow.get("last_repair_transaction")
-        if isinstance(raw_last, Mapping):
-            last_repair_transaction = raw_last
-        stage_statuses = workflow.get("stage_statuses")
-        if isinstance(stage_statuses, Mapping):
-            for stage_id, value in stage_statuses.items():
-                if not isinstance(value, Mapping):
-                    continue
-                metadata = value.get("metadata")
-                if not isinstance(metadata, Mapping):
-                    continue
-                if metadata.get("superseded") is True:
-                    superseded_stages.append(str(stage_id))
-                if metadata.get("stale_after_supersede") is True:
-                    stale_stages.append(str(stage_id))
-
-    clean_run_id = _clean_text(run_id)
-    last_contamination_index: int | None = None
-    last_recovery_index: int | None = None
-    last_recovery_event: Mapping[str, Any] | None = None
-    for index, record in enumerate(event_records):
-        if not isinstance(record, Mapping):
-            continue
-        if clean_run_id and _clean_text(record.get("run_id")) != clean_run_id:
-            continue
-        event_type = _clean_text(record.get("event_type"))
-        if event_type == "run_integrity_contaminated":
-            last_contamination_index = index
-        elif event_type in _RECOVERY_EVENT_TYPES:
-            last_recovery_index = index
-            last_recovery_event = record
-
-    integrity_status = _clean_text(run_integrity.get("status"))
-    rerun_start_stage = ""
-    if integrity_status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
-        status = "completed_non_reference"
-    elif integrity_status == RUN_INTEGRITY_CONTAMINATED:
-        if last_recovery_index is None or (
-            last_contamination_index is not None
-            and last_contamination_index > last_recovery_index
-        ):
-            # The latest contamination has no recovery transaction after it;
-            # an old supersede/repair cannot vouch for a new contamination.
-            status = "awaiting_human_or_supersede"
-        else:
-            metadata = (
-                last_recovery_event.get("metadata")
-                if isinstance(last_recovery_event, Mapping)
-                and isinstance(last_recovery_event.get("metadata"), Mapping)
-                else {}
-            )
-            rerun_start_stage = _clean_text(metadata.get("next_stage"))
-            if _recovery_event_binds(
-                event=last_recovery_event or {},
-                metadata=metadata,
-                last_repair_transaction=last_repair_transaction,
-                current_stage=_clean_text(current_stage),
-                rerun_start_stage=rerun_start_stage,
-                stage_order=stage_order or [],
-            ):
-                status = "downstream_rerun_pending"
-            else:
-                # Recovery evidence exists but does not bind to the workflow's
-                # recorded transaction/owner stage, or the current stage is
-                # not at/downstream of the recorded rerun start; fail closed.
-                status = "invalid_recovery_state"
-    else:
-        status = "none"
-    return {
-        "status": status,
-        "rerun_start_stage": rerun_start_stage,
-        "last_recovery_event_type": (
-            _clean_text(last_recovery_event.get("event_type"))
-            if isinstance(last_recovery_event, Mapping)
-            else ""
-        ),
-        "last_recovery_transaction_id": (
-            _clean_text((last_recovery_event.get("metadata") or {}).get("transaction_id"))
-            if isinstance(last_recovery_event, Mapping)
-            and isinstance(last_recovery_event.get("metadata"), Mapping)
-            else ""
-        ),
-        "superseded_stages": sorted(superseded_stages),
-        "stale_stages": sorted(stale_stages),
-        "diagnostics_only_stage_metadata": True,
-    }
-
-
-_RECOVERY_EVENT_DECISIONS = {
-    "repair_stage_superseded": "supersede_stage",
-    "repair_completed": "repair_complete",
-}
-
-
-def _recovery_event_binds(
-    *,
-    event: Mapping[str, Any],
-    metadata: Mapping[str, Any],
-    last_repair_transaction: Mapping[str, Any],
-    current_stage: str,
-    rerun_start_stage: str,
-    stage_order: list[str],
-) -> bool:
-    bound_transaction = _clean_text(metadata.get("transaction_id"))
-    expected_transaction = _clean_text(last_repair_transaction.get("transaction_id"))
-    if not bound_transaction or bound_transaction != expected_transaction:
-        return False
-    event_type = _clean_text(event.get("event_type"))
-    expected_decision = _RECOVERY_EVENT_DECISIONS.get(event_type)
-    if not expected_decision or _clean_text(
-        last_repair_transaction.get("decision")
-    ) != expected_decision:
-        return False
-    owner_stage = _clean_text(event.get("stage_id"))
-    if owner_stage != _clean_text(last_repair_transaction.get("stage_id")):
-        return False
-    if not rerun_start_stage or not current_stage or current_stage == "unknown":
-        return False
-    if current_stage == rerun_start_stage:
-        return True
-    try:
-        current_index = stage_order.index(current_stage)
-        start_index = stage_order.index(rerun_start_stage)
-    except ValueError:
-        return False
-    return current_index >= start_index
 
 
 def _run_integrity_projection(workflow: Any, workflow_status: str) -> dict[str, Any]:

@@ -187,10 +187,15 @@ def workflow_with_sticky_contamination_events(
         workflow,
         path="workflow_state.run_integrity",
     )
+    run_id = str(updated.get("run_id") or "").strip()
     contamination_events = [
         event
         for event in event_records
-        if isinstance(event, dict) and event.get("event_type") == "run_integrity_contaminated"
+        if (
+            isinstance(event, dict)
+            and event.get("event_type") == "run_integrity_contaminated"
+            and (not run_id or str(event.get("run_id") or "").strip() == run_id)
+        )
     ]
     if not contamination_events:
         return updated

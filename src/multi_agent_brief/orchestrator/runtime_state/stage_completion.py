@@ -23,6 +23,7 @@ from multi_agent_brief.contracts.target_contract import (
 from multi_agent_brief.feedback.feedback_contract import current_stage_feedback_blocking_reasons
 from multi_agent_brief.quality_gates.contract import current_stage_quality_gate_blocking_reasons
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_truth
 from multi_agent_brief.orchestrator.runtime_state._io import (
     _read_json,
     _read_json_if_exists,
@@ -120,7 +121,13 @@ from multi_agent_brief.orchestrator.run_archive import (
     RunArchiveError,
     preflight_finalized_run_archive,
 )
-from multi_agent_brief.orchestrator.run_integrity import finalize_run_integrity as _finalize_run_integrity
+from multi_agent_brief.orchestrator.run_integrity import (
+    RUN_INTEGRITY_CLEAN,
+    RUN_INTEGRITY_CONTAMINATED,
+    finalize_run_integrity as _finalize_run_integrity,
+    interpret_run_integrity,
+    project_for_read,
+)
 
 
 ANALYST_DRAFT_SNAPSHOT_PATH = Path("output/intermediate/analyst_draft_snapshot.md")
@@ -786,6 +793,48 @@ def _stale_artifact_baseline_sha(
     return None
 
 
+def _raise_if_recovery_not_ready_for_finalize(
+    *,
+    workflow: dict[str, Any],
+    event_records: list[dict[str, Any]],
+    run_id: str,
+    stage_order: list[str],
+) -> None:
+    run_integrity = project_for_read(
+        interpret_run_integrity(
+            workflow.get("run_integrity"),
+            field_present="run_integrity" in workflow,
+        )
+    )
+    if (
+        run_integrity.get("status") == RUN_INTEGRITY_CLEAN
+        and run_integrity.get("reference_eligible") is True
+    ):
+        return
+    recovery_truth = evaluate_recovery_truth(
+        workflow=workflow,
+        workflow_status="present",
+        event_records=event_records,
+        run_integrity=run_integrity,
+        run_id=run_id,
+        current_stage=str(workflow.get("current_stage") or ""),
+        stage_order=stage_order,
+    )
+    if (
+        run_integrity.get("status") == RUN_INTEGRITY_CONTAMINATED
+        and recovery_truth.get("finalize_allowed") is True
+    ):
+        return
+    raise RuntimeStateError(
+        "Finalize completion requires clean integrity or a bound recovery at finalize.",
+        details={
+            "run_integrity": run_integrity,
+            "recovery_truth": recovery_truth,
+        },
+        error_code=E_TRANSACTION_INTEGRITY,
+    )
+
+
 def _complete_stage_transaction(
     *,
     workspace: str | Path,
@@ -821,6 +870,13 @@ def _complete_stage_transaction(
         finalize=finalize,
     )
     run_id = str(manifest["run_id"])
+    if finalize:
+        _raise_if_recovery_not_ready_for_finalize(
+            workflow=workflow,
+            event_records=event_records,
+            run_id=run_id,
+            stage_order=_stage_ids(stages),
+        )
     decision = "finalize" if finalize else "continue"
     _raise_if_trajectory_narrows_success_path(
         workspace=ws,
