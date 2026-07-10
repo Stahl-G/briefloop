@@ -118,9 +118,11 @@ next_allowed_action:
 
 如果 `doctor` 报告任何错误，停下并展示完整 doctor 输出再继续。如果
 `run_integrity` 处于 `contaminated`、`stale_or_invalid` 或 unknown 状态，
-停止 finalize、交付、导出与分享动作（`contaminated_repaired` 且
-`delivery_truth.valid=true` 的 run 可交付，但永久不具备 reference 资格）；对更早的
-角色工作阶段，报告 Run Card，并只继续 handoff 允许的非交付工作流步骤。
+停止 finalize、交付、导出与分享动作，不要运行 finalize 或交付。
+`run_integrity` 为 `contaminated_repaired` 时，不要再次运行 finalize；仅当
+`delivery_truth.valid=true` 时才可交付，并且永久不具备 reference 资格，否则
+停止交付。对更早的角色工作阶段，报告 Run Card，并只继续 handoff 允许的
+非交付工作流步骤。
 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要声称已交付，
 也不要导出交付包。仅当 `output/intermediate/audited_brief.md` 存在时才说
 run 里有草稿；否则说目前既没有草稿也没有交付。只有 handoff 允许时才继续

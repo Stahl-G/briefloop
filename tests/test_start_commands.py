@@ -1013,6 +1013,9 @@ def test_start_handoff_projects_auditable_assessment_target(tmp_path):
     assert data["assessment_target_manifest"]["audit_binding_status"] == "required_python_owned"
     assert "output/delivery/brief.md" not in data["expected_artifacts"]
     assert "finalize" not in {stage["stage_id"] for stage in data["stage_completion_protocol"]["stages"]}
+    protocol_rules = "\n".join(str(rule) for rule in data["stage_completion_protocol"]["rules"]).lower()
+    for forbidden in ("finalize", "delivery_truth", "delivered brief", "workbuddy diagnose"):
+        assert forbidden not in protocol_rules
     ownership_outputs = data["artifact_ownership"]["cli_owned_outputs"]
     assert all("finalize" not in str(item.get("path", "")).lower() for item in ownership_outputs)
     assert all("output/delivery/" not in str(item.get("path", "")).lower() for item in ownership_outputs)
@@ -1048,6 +1051,9 @@ def test_start_codebuddy_handoff_strips_finalize_for_auditable_assessment_target
     text = data["prompt"] + "\n" + "\n".join(data["notes"]) + "\n" + md
     assert data["runtime"] == RUNTIME_CODEBUDDY
     assert data["assessment_target_manifest"]["assessment_target"] == "auditable_brief"
+    protocol_rules = "\n".join(str(rule) for rule in data["stage_completion_protocol"]["rules"]).lower()
+    for forbidden in ("finalize", "delivery_truth", "delivered brief", "workbuddy diagnose"):
+        assert forbidden not in protocol_rules
     assert "TARGET COMPLETE: auditable_brief" in text
     assert "briefloop-auditor" in text
     assert "briefloop-formatter" not in text

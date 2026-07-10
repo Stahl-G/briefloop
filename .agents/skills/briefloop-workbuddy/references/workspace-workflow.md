@@ -75,9 +75,12 @@ Quality Panel 已生成。
   当前用户、输出路径存在性/可写性结果、以及权限或 ACL 输出。不要自行降级
   该错误。
 - 如果 `run_integrity` 处于 `contaminated`、`stale_or_invalid` 或 unknown
-  状态，停止 finalize、交付、导出与分享动作。不要运行 finalize 或交付。
-  例外：`contaminated_repaired`（finalize-complete 写入的终态恢复）且 `delivery_truth.valid=true` 的 run 可以交付，但永久不具备 reference 资格；如实报告该状态，而不是停止。对于早期阶段的草稿工作，报告 Run Card，并只
-  继续 handoff 允许的非交付工作流步骤。
+  状态，停止 finalize、交付、导出与分享动作，不要运行 finalize 或交付。
+- 如果 `run_integrity` 为 `contaminated_repaired`，不要再次运行 finalize；仅当
+  `delivery_truth.valid=true` 时才可交付，并且永久不具备 reference 资格，
+  否则停止交付。
+- 对于早期阶段的草稿工作，报告 Run Card，并只继续 handoff 允许的非交付
+  工作流步骤。
 - 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要声称已交付，
   也不要导出交付包。仅当 `output/intermediate/audited_brief.md` 存在时才
   报告"仅有草稿"；否则说目前既没有草稿也没有交付。这在 finalize 之前是

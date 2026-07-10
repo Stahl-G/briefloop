@@ -41,8 +41,10 @@ WorkBuddy 是 BriefLoop 的本地操作外壳，不是新的 BriefLoop 权威层
 - 说 `delivered`、`delivery complete` 或 `交付完成`，除非
   `briefloop workbuddy diagnose --json` 报告 `delivery_truth.valid=true`；
 - 在 `run_integrity` 处于 `contaminated`、`stale_or_invalid` 或 unknown
-  状态时运行 finalize 或交付（`contaminated_repaired` 且
-  `delivery_truth.valid=true` 的 run 可交付，但永久不具备 reference 资格）；
+  状态时运行 finalize、交付、导出或分享；
+- 对 `contaminated_repaired` run，不要再次运行 finalize；WorkBuddy 诊断未报告
+  `delivery_truth.valid=true` 时也不要交付。有效的终态恢复仍永久不具备
+  reference 资格；
 - 在叙述里降级 `doctor` 错误；要展示完整输出并等待用户确认；
 - 打包或分享整个工作区；附件里绝不包含 `.env`、token 或私有规划文件；
 - 批准交付、release、gate 或 memory 条目；

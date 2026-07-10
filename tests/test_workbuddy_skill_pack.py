@@ -458,7 +458,6 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "`briefloop doctor` 报告任何错误",
         "展示完整 doctor 输出",
         "`run_integrity` 处于",
-        "可交付，但永久不具备 reference 资格",
         "不要运行 finalize 或交付",
         "`delivery_truth.valid` 不是",
         "才说 run 里有草稿",
@@ -488,6 +487,24 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "support package",
     ]:
         assert phrase not in compact
+
+
+def test_workbuddy_recovery_hard_stops_use_mutually_exclusive_states() -> None:
+    paths = [
+        WORKBUDDY_SKILL / "SKILL.md",
+        WORKBUDDY_SKILL / "references" / "quickstart.md",
+        WORKBUDDY_SKILL / "references" / "workbuddy-safety.md",
+        WORKBUDDY_SKILL / "references" / "workspace-workflow.md",
+    ]
+    for path in paths:
+        compact = _compact(_read(path))
+        assert "contaminated_repaired" in compact, path
+        assert "delivery_truth.valid=true" in compact, path
+        assert "不要再次运行 finalize" in compact, path
+        assert not re.search(
+            r"contaminated_repaired.{0,180}可交付.{0,180}不要运行 finalize 或交付",
+            compact,
+        ), path
 
 
 def test_workbuddy_skill_has_no_private_paths_or_overclaim_language() -> None:

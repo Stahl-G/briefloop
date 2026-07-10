@@ -1554,14 +1554,20 @@ def _without_auditable_delivery_steps(text: str) -> str:
 
 
 def _is_auditable_delivery_step_note(note: str) -> bool:
+    normalized = note.lower()
     blocked_fragments = (
-        FINALIZE_GATE_NOTE,
         "finalize",
         "delivery bundle",
         "delivery artifacts",
+        "reader delivery",
+        "delivery_promotion",
+        "delivery_truth",
+        "delivered brief",
+        "reporting delivery",
+        "workbuddy diagnose",
         "formatter",
     )
-    return any(fragment in note for fragment in blocked_fragments)
+    return note == FINALIZE_GATE_NOTE or any(fragment in normalized for fragment in blocked_fragments)
 
 
 def _without_auditable_delivery_protocol(protocol: dict[str, Any]) -> dict[str, Any]:
@@ -1576,7 +1582,7 @@ def _without_auditable_delivery_protocol(protocol: dict[str, Any]) -> dict[str, 
     rewritten["rules"] = [
         rule
         for rule in rewritten.get("rules", [])
-        if "finalize" not in str(rule).lower() and "reader delivery" not in str(rule).lower()
+        if not _is_auditable_delivery_step_note(str(rule))
     ]
     return rewritten
 
