@@ -63,9 +63,12 @@ stage 无法完成。冻结事务拥有的工件（例如 `claim_ledger.json`）
 冻结事务被 supersede。
 
 当 `briefloop workbuddy diagnose --workspace <workspace> --json` 报告
-`next_allowed_action=stop_human_review_or_supersede` 时，走这条恢复通道，
-而不是手改控制文件。该字段只由 WorkBuddy diagnose 透传 completion
-projection；`status --json` 不输出 `next_allowed_action`。
+`recovery_state.status=awaiting_recovery` 且
+`recovery_state.recommended_recovery_action=request_recovery_decision` 时，先读取
+其 contamination / owner-revision 绑定，再由操作者决定受控 repair、
+supersede 或新 run；不要从 `run_integrity` 猜恢复通道，也不要手改控制文件。
+`next_allowed_action` 只由 WorkBuddy diagnose 透传 completion projection；
+`status --json` 不输出该字段。
 
 ## 边界
 

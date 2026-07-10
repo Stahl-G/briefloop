@@ -85,7 +85,6 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     _allowed_decisions_for_stage,
     _changed_workflow_events,
     _initial_workflow_state,
-    _owner_revision_stale_metadata,
     _required_consumed_artifacts,
     _status_entry,
     _workflow_is_finalized,
@@ -452,7 +451,6 @@ def _recompute_stage_state(
                 STAGE_PENDING,
                 "",
                 updated_at,
-                metadata=_owner_revision_stale_metadata(previous),
             )
             continue
 
@@ -469,7 +467,6 @@ def _recompute_stage_state(
                 STAGE_BLOCKED,
                 blocking_reason,
                 updated_at,
-                metadata=_owner_revision_stale_metadata(previous),
             )
             continue
 
@@ -513,7 +510,6 @@ def _recompute_stage_state(
                 STAGE_BLOCKED,
                 blocking_reason,
                 updated_at,
-                metadata=_owner_revision_stale_metadata(previous),
             )
         else:
             current_stage = stage_id
@@ -521,7 +517,6 @@ def _recompute_stage_state(
                 STAGE_READY,
                 "",
                 updated_at,
-                metadata=_owner_revision_stale_metadata(previous),
             )
 
     workflow = dict(previous_workflow)
@@ -619,12 +614,10 @@ def check_runtime_state(
         current_stage = refreshed_workflow.get("current_stage")
         if current_stage:
             statuses = dict(refreshed_workflow.get("stage_statuses") or {})
-            current_entry = statuses.get(str(current_stage)) if isinstance(statuses.get(str(current_stage)), dict) else {}
             statuses[str(current_stage)] = _status_entry(
                 STAGE_BLOCKED,
                 transaction_integrity_warning,
                 now,
-                metadata=_owner_revision_stale_metadata(current_entry),
             )
             refreshed_workflow["stage_statuses"] = statuses
 

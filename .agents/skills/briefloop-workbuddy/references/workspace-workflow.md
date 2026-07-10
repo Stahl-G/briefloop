@@ -42,10 +42,13 @@ quality 摘要或打包/导出请求之后使用 Run Card：
 runtime:
 current_stage:
 run_integrity:
+recovery_status:
+recovery_action:
 blocked:
 latest_gate_status:
 finalize_report:
 delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
@@ -53,6 +56,9 @@ next_allowed_action:
 --json` 读取；该命令格式化的是规范 completion projection，只对
 `next_allowed_action` 叠加 WorkBuddy 的 doctor/密钥安全覆盖。不要从文件
 存在性检查或叙述文字重构交付、gate、finalize 或下一步动作的真值。
+`recovery_status` 和 `recovery_action` 分别读取
+`recovery_state.status` 与 `recovery_state.recommended_recovery_action`；不要
+从 `run_integrity` 重构恢复进度。
 
 允许的示例：
 
@@ -66,23 +72,26 @@ Quality Panel 已生成。
 不要说 `Analyst 已经分析完成` 或 `Auditor 已通过`，除非对应的工件、事件、
 事务或 status 输出存在。
 
-不要说 `交付完成`、`delivered` 或 `delivery complete`，除非 WorkBuddy
-诊断报告 `delivery_truth.valid=true`。
+`delivery_truth.valid=true` 只表示当前 reader bundle 可进入交付动作。不要说
+`交付完成`、`delivered` 或 `delivery complete`，除非 WorkBuddy 诊断报告
+`delivery_event=delivery_succeeded`。`delivery_bundle_prepared` 表示本地包已
+准备，`delivery_draft_created` 表示草稿已创建；两者都不是 delivered。
 
 ## 硬停
 
 - 如果 `doctor` 报告任何错误，停止。展示完整 doctor 输出、工作区路径、
   当前用户、输出路径存在性/可写性结果、以及权限或 ACL 输出。不要自行降级
   该错误。
-- 如果 `run_integrity` 处于 `contaminated`、`stale_or_invalid` 或 unknown
-  状态，停止 finalize、交付、导出与分享动作，不要运行 finalize 或交付。
-- 如果 `run_integrity` 为 `contaminated_repaired`，不要再次运行 finalize；仅当
-  `delivery_truth.valid=true` 时才可交付，并且永久不具备 reference 资格，
-  否则停止交付。
+- 恢复非终态或无效时，只执行 `recovery_action` / `next_allowed_action` 指定的
+  事务；不要从 `run_integrity` 推断恢复通道，也不要交付、导出或分享。
+- 如果 `recovery_status=completed_non_reference`，不要再次运行 finalize；仅当
+  `delivery_truth.valid=true` 时才可本地交付，并且永久不具备 reference
+  资格，否则停止交付。
 - 对于早期阶段的草稿工作，报告 Run Card，并只继续 handoff 允许的非交付
   工作流步骤。
-- 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要声称已交付，
-  也不要导出交付包。仅当 `output/intermediate/audited_brief.md` 存在时才
+- 如果 WorkBuddy 诊断没有报告 `delivery_truth.valid=true`，不要执行交付；
+  如果 `delivery_event` 不是 `delivery_succeeded`，不要声称已交付。仅当
+  `output/intermediate/audited_brief.md` 存在时才
   报告"仅有草稿"；否则说目前既没有草稿也没有交付。这在 finalize 之前是
   正常状态，本身不阻塞更早的 handoff 指派阶段。
 - 如果 zip、导出或附件候选包含 `.env` 或密钥，停止。不要分享；建议轮换

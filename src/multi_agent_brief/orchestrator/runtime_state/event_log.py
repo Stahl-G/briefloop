@@ -64,6 +64,7 @@ EVENT_TYPES = {
     "improvement_reverted",
     "improvement_memory_snapshot_created",
     "delivery_attempted",
+    "delivery_bundle_prepared",
     "delivery_draft_created",
     "delivery_succeeded",
     "delivery_failed",
@@ -112,6 +113,7 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
         ) from exc
 
     records: list[dict[str, Any]] = []
+    event_ids: set[str] = set()
     for lineno, line in enumerate(decoded.splitlines(), start=1):
         if not line.strip():
             continue
@@ -150,6 +152,20 @@ def _read_event_log_records(path: Path) -> list[dict[str, Any]]:
                 details={"path": str(path), "line": lineno, "actor": actor},
                 error_code=E_TRANSACTION_INTEGRITY,
             )
+        event_id = payload.get("event_id")
+        if not isinstance(event_id, str) or not event_id.strip():
+            raise RuntimeStateError(
+                f"Event log line {lineno} is missing event_id: {path}",
+                details={"path": str(path), "line": lineno},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        if event_id in event_ids:
+            raise RuntimeStateError(
+                f"Duplicate event_id on event log line {lineno}: {event_id}",
+                details={"path": str(path), "line": lineno, "event_id": event_id},
+                error_code=E_TRANSACTION_INTEGRITY,
+            )
+        event_ids.add(event_id)
         records.append(payload)
     return records
 
@@ -171,6 +187,7 @@ def append_event(
     decision: str | None = None,
     reason: str = "",
     metadata: dict[str, Any] | None = None,
+    event_id: str | None = None,
 ) -> dict[str, Any]:
     if event_type not in EVENT_TYPES:
         raise RuntimeStateError(
@@ -183,10 +200,17 @@ def append_event(
             details={"actor": actor},
         )
     safe_run_id = _validate_runtime_run_id(run_id)
+    safe_event_id = event_id or uuid.uuid4().hex
+    if not isinstance(safe_event_id, str) or not safe_event_id.strip():
+        raise RuntimeStateError(
+            "event_id must be a non-empty string.",
+            details={"event_id": event_id},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
     ws = Path(workspace).expanduser().resolve()
     event = {
         "schema_version": EVENT_LOG_SCHEMA,
-        "event_id": uuid.uuid4().hex,
+        "event_id": safe_event_id,
         "run_id": safe_run_id,
         "created_at": utc_now(),
         "event_type": event_type,

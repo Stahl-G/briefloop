@@ -19,18 +19,6 @@ STAGE_COMPLETE = "complete"
 STAGE_BLOCKED = "blocked"
 STAGE_SKIPPED = "skipped"
 PERSISTED_STAGE_STATUSES = {STAGE_PENDING, STAGE_READY, STAGE_COMPLETE, STAGE_BLOCKED, STAGE_SKIPPED}
-OWNER_REVISION_STALE_METADATA_KEYS = (
-    "stale_after_repair",
-    "repair_transaction_id",
-    "repair_owner",
-    "stale_after_supersede",
-    "supersede_transaction_id",
-    "supersede_stage",
-    "supersede_artifact",
-    "stale_artifact_baselines",
-)
-
-
 @dataclass(frozen=True)
 class StageCompletionVerdict:
     """Single interpretation of one persisted stage status."""
@@ -315,21 +303,6 @@ def _status_entry(
     return entry
 
 
-def _owner_revision_stale_metadata(entry: dict[str, Any] | None) -> dict[str, Any] | None:
-    metadata = entry.get("metadata") if isinstance(entry, dict) and isinstance(entry.get("metadata"), dict) else {}
-    if not (
-        metadata.get("stale_after_repair") is True
-        or metadata.get("stale_after_supersede") is True
-    ):
-        return None
-    preserved = {
-        key: metadata[key]
-        for key in OWNER_REVISION_STALE_METADATA_KEYS
-        if key in metadata
-    }
-    return preserved or None
-
-
 def _workflow_after_completion(
     *,
     workflow: dict[str, Any],
@@ -348,12 +321,10 @@ def _workflow_after_completion(
     completion_metadata = {"runtime_provenance": runtime_provenance} if runtime_provenance else None
     statuses[stage_id] = _status_entry(STAGE_COMPLETE, reason, now, metadata=completion_metadata)
     if current_stage:
-        previous_next = statuses.get(current_stage) if isinstance(statuses.get(current_stage), dict) else {}
         statuses[current_stage] = _status_entry(
             STAGE_READY,
             "",
             now,
-            metadata=_owner_revision_stale_metadata(previous_next),
         )
     updated = dict(workflow)
     updated["updated_at"] = now

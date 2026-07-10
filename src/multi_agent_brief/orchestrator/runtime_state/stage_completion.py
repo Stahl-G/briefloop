@@ -111,7 +111,6 @@ from multi_agent_brief.orchestrator.runtime_state.workflow import (
     STAGE_SKIPPED,
     _allowed_decisions_for_stage,
     _next_stage_id,
-    _owner_revision_stale_metadata,
     _stage_status,
     _status_entry,
     _workflow_after_completion,
@@ -120,9 +119,6 @@ from multi_agent_brief.orchestrator.run_archive import (
     RunArchiveError,
     preflight_finalized_run_archive,
 )
-from multi_agent_brief.orchestrator.run_integrity import finalize_run_integrity as _finalize_run_integrity
-
-
 ANALYST_DRAFT_SNAPSHOT_PATH = Path("output/intermediate/analyst_draft_snapshot.md")
 
 
@@ -499,16 +495,10 @@ def _workflow_with_topology_satisfaction(
         )
         current_stage = _next_stage_id(stages, target_stage_id)
         if current_stage:
-            previous_next = (
-                statuses.get(current_stage)
-                if isinstance(statuses.get(current_stage), dict)
-                else {}
-            )
             statuses[current_stage] = _status_entry(
                 STAGE_READY,
                 "",
                 now,
-                metadata=_owner_revision_stale_metadata(previous_next),
             )
 
     updated["current_stage"] = current_stage
@@ -534,6 +524,7 @@ def _append_transaction_events(
     artifact_events: list[dict[str, Any]],
     topology_events: list[dict[str, Any]] | None = None,
     runtime_provenance: dict[str, Any] | None = None,
+    decision_metadata_extra: dict[str, Any] | None = None,
 ) -> None:
     try:
         for event in [*artifact_events, *(topology_events or [])]:
@@ -550,6 +541,8 @@ def _append_transaction_events(
                 metadata=metadata,
             )
         decision_metadata = {"next_stage": next_stage, "transaction_id": transaction_id}
+        if decision_metadata_extra:
+            decision_metadata.update(decision_metadata_extra)
         if runtime_provenance:
             decision_metadata["runtime_provenance"] = runtime_provenance
         append_event(
@@ -708,6 +701,13 @@ def _stale_expected_artifact_refresh_reasons(
         if isinstance(old_registry.get("artifacts"), dict)
         else {}
     )
+    from multi_agent_brief.orchestrator.recovery_state import (
+        evaluate_recovery_state,
+        recovery_stale_artifact_baselines,
+    )
+
+    recovery_state = evaluate_recovery_state(workspace=workspace)
+    recovery_baselines = recovery_stale_artifact_baselines(recovery_state)
     reasons: list[str] = []
     for artifact_id in [str(item) for item in (stage.get("expected_artifacts") or [])]:
         record = registry_artifacts.get(artifact_id)
@@ -728,8 +728,7 @@ def _stale_expected_artifact_refresh_reasons(
         if not path.is_file():
             continue
         stale_sha = _stale_artifact_baseline_sha(
-            workflow=workflow,
-            stage_id=str(stage.get("stage_id") or ""),
+            stale_artifact_baselines=recovery_baselines,
             artifact_id=artifact_id,
             record=record,
         )
@@ -749,32 +748,13 @@ def _stale_expected_artifact_refresh_reasons(
 
 def _stale_artifact_baseline_sha(
     *,
-    workflow: dict[str, Any],
-    stage_id: str,
+    stale_artifact_baselines: dict[str, dict[str, Any]],
     artifact_id: str,
     record: dict[str, Any],
 ) -> str | None:
-    statuses = (
-        workflow.get("stage_statuses")
-        if isinstance(workflow.get("stage_statuses"), dict)
-        else {}
-    )
-    stage_status = (
-        statuses.get(stage_id) if isinstance(statuses.get(stage_id), dict) else {}
-    )
-    metadata = (
-        stage_status.get("metadata")
-        if isinstance(stage_status.get("metadata"), dict)
-        else {}
-    )
-    baselines = (
-        metadata.get("stale_artifact_baselines")
-        if isinstance(metadata.get("stale_artifact_baselines"), dict)
-        else {}
-    )
     baseline = (
-        baselines.get(artifact_id)
-        if isinstance(baselines.get(artifact_id), dict)
+        stale_artifact_baselines.get(artifact_id)
+        if isinstance(stale_artifact_baselines.get(artifact_id), dict)
         else {}
     )
     baseline_sha = baseline.get("sha256")
@@ -821,6 +801,30 @@ def _complete_stage_transaction(
         finalize=finalize,
     )
     run_id = str(manifest["run_id"])
+    finalize_recovery_binding: dict[str, Any] = {}
+    if finalize:
+        from multi_agent_brief.orchestrator.recovery_state import (
+            RECOVERY_FINALIZE_COMPLETION_PENDING,
+            RECOVERY_NOT_APPLICABLE,
+            evaluate_recovery_state,
+        )
+
+        recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
+        recovery_status = recovery.get("status")
+        if recovery_status == RECOVERY_FINALIZE_COMPLETION_PENDING:
+            finalize_recovery_binding = {
+                "run_id": run_id,
+                "render_transaction_id": str(recovery.get("render_transaction_id") or ""),
+                "recovery_transaction_id": str(recovery.get("recovery_transaction_id") or ""),
+                "contamination_event_id": str(recovery.get("contamination_event_id") or ""),
+            }
+        elif recovery_status != RECOVERY_NOT_APPLICABLE:
+            _raise_completion_reasons(
+                message="Cannot complete finalize stage because recovery is not ready",
+                reasons=[str(recovery.get("reason") or "Recovery state is invalid for finalize-complete.")],
+                error_code=E_TRANSACTION_INTEGRITY,
+                details={"stage_id": stage_id, "recovery_state": recovery},
+            )
     decision = "finalize" if finalize else "continue"
     _raise_if_trajectory_narrows_success_path(
         workspace=ws,
@@ -1028,8 +1032,10 @@ def _complete_stage_transaction(
             finalize=finalize,
             runtime_provenance=runtime_provenance,
         )
-        if finalize:
-            next_workflow = _finalize_run_integrity(next_workflow)
+        if finalize_recovery_binding:
+            next_workflow["last_completion_transaction"].update(
+                finalize_recovery_binding
+            )
         next_workflow, topology_events = _workflow_with_topology_satisfaction(
             workflow=next_workflow,
             stages=stages,
@@ -1185,6 +1191,7 @@ def _complete_stage_transaction(
         artifact_events=artifact_events,
         topology_events=topology_events,
         runtime_provenance=runtime_provenance,
+        decision_metadata_extra=finalize_recovery_binding,
     )
 
     current_manifest = _read_json(paths["runtime_manifest"])

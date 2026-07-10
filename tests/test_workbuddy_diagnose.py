@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import append_event, initialize_runtime_state
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
@@ -179,7 +181,47 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     assert payload["delivery_truth"]["valid"] is True
     assert payload["delivery"]["truth"] == projection["delivery_truth"]
     assert payload["finalize"]["truth"] == projection["finalize_truth"]
+    assert payload["recovery_state"] == projection["recovery_state"]
+    assert payload["run_card"]["recovery_status"] == projection["recovery_state"]["status"]
+    assert payload["run_card"]["recovery_action"] == projection["recovery_state"][
+        "recommended_recovery_action"
+    ]
+    assert payload["delivery"]["outcome"] == projection["event_truth"]["delivery_outcome"]
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "delivery_bundle_prepared",
+        "delivery_draft_created",
+        "delivery_succeeded",
+    ],
+    ids=["local-prepared", "gmail-draft", "external-send-success"],
+)
+def test_workbuddy_diagnose_projects_exact_current_delivery_outcome(
+    tmp_path: Path,
+    capsys,
+    event_type: str,
+) -> None:
+    ws = _workspace(tmp_path)
+    state = _init_runtime(ws)
+    _write_finalized_delivery(ws)
+    append_event(
+        workspace=ws,
+        run_id=state["manifest"]["run_id"],
+        event_type=event_type,
+        actor="cli",
+        reason=event_type,
+        metadata={"render_transaction_id": "tx-finalize-001"},
+    )
+
+    payload = _diagnose_json(ws, capsys)
+
+    assert payload["delivery_truth"]["valid"] is True
+    assert payload["event_truth"]["delivery_outcome"] == event_type
+    assert payload["delivery"]["outcome"] == event_type
+    assert payload["run_card"]["delivery_event"] == event_type
 
 
 def test_workbuddy_diagnose_doctor_error_overlays_completion_next_action(tmp_path: Path, capsys) -> None:

@@ -176,12 +176,19 @@ Delivery truth is a single authoritative record: `finalize_report.json`.
   <workspace> --json`; runtime adapters format it and must not reconstruct
   delivery truth from `workflow_state.json`, `event_log.jsonl`, or file
   existence.
-- Do not claim delivery unless the completion projection reports
-  `delivery_truth.valid=true`.
+- `delivery_truth.valid=true` means the current reader bundle is eligible for a
+  delivery action; it is not an action outcome. Claim completed delivery only
+  when the projection also reports current-bound
+  `event_truth.delivery_succeeded=true`. `delivery_bundle_prepared` and
+  `delivery_draft_created` are ready/draft outcomes, not delivery success.
 - After a `repair supersede-stage` recovery, the completion projection keeps
   reporting the contamination and the required downstream reruns; delivery may
   become valid again after reruns, but the run stays
   `reference_eligible=false`.
+- Recovery progress comes only from `recovery_state.status` and
+  `recovery_state.recommended_recovery_action`. Do not derive it from
+  `run_integrity`: a recovered run remains contaminated and non-reference even
+  after the recovery state reaches `completed_non_reference`.
 
 ## Delivery Target
 

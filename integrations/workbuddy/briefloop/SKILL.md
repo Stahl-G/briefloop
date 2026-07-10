@@ -10,7 +10,8 @@ description: Operate BriefLoop from WorkBuddy through CodeBuddy-compatible role 
 > `.agents/skills/briefloop-workbuddy/` (Chinese), packaged by
 > `briefloop workbuddy pack-skill`. For delivery-truth semantics
 > (`finalize_report.json` `delivery_promotion`, `briefloop workbuddy diagnose`
-> `delivery_truth.valid`), follow the canonical skill.
+> `delivery_truth.valid`, and current-bound `delivery_event`), follow the
+> canonical skill.
 
 ## Scope
 
@@ -178,19 +179,23 @@ guessing:
 runtime:
 current_stage:
 run_integrity:
+recovery_status:
+recovery_action:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
-Read the values from `briefloop status --workspace <workspace> --json`,
-`briefloop state check --workspace <workspace> --json`,
-`workflow_state.json`, `event_log.jsonl`, and file existence checks. If
-`output/intermediate/finalize_report.json` and `output/delivery/` are missing,
-the Run Card must not claim delivery. Say the run has a draft only when an
-actual role-owned draft artifact exists, such as `output/intermediate/audited_brief.md`; otherwise say no draft or delivery exists yet.
+Read these values only from `briefloop workbuddy diagnose --workspace
+<workspace> --json`. `delivery_truth.valid=true` means the current reader
+bundle is eligible for a delivery action; it does not mean delivery occurred.
+Read `event_truth.delivery_outcome` as `delivery_event`:
+`delivery_bundle_prepared` means a local bundle is ready,
+`delivery_draft_created` means a draft exists, and neither is delivered. Only
+a current-bound `delivery_succeeded` permits a completed-delivery claim.
 
 ## Hard Stop Rules
 
@@ -202,15 +207,15 @@ workflow stop.
    workspace path, current user, output path existence/writability check, and
    platform permission/ACL output. Do not downgrade the error in prose and do
    not mark doctor complete unless the user explicitly confirms the evidence.
-2. For finalize, delivery, export, or share requests: if `run_integrity` is not
-   clean, or it is `contaminated`, `stale_or_invalid`, or unknown, stop that
-   action. Do not run finalize or delivery. The next safe action is fresh run,
-   controlled repair, or human review. For early-stage draft work, report the
-   Run Card and continue only with non-delivery workflow steps allowed by the
-   handoff.
-3. For delivery, export, share, or completion claims: if
-   `output/intermediate/finalize_report.json` or `output/delivery/` is missing,
-   stop that action. Do not say "delivered", "交付完成", or "delivery complete".
+2. Do not infer recovery progress from `run_integrity`. Follow only
+   `recovery_action` / `next_allowed_action`; a recovered run remains
+   contaminated and non-reference. Do not deliver while recovery is
+   nonterminal or invalid. For `completed_non_reference`, do not rerun
+   finalize; local delivery still requires `delivery_truth.valid=true`.
+3. For delivery actions, require `delivery_truth.valid=true`. For completion
+   claims, also require `delivery_event=delivery_succeeded`. Do not say
+   "delivered", "交付完成", or "delivery complete" for
+   `delivery_bundle_prepared` or `delivery_draft_created`.
    Say only that a draft exists when `output/intermediate/audited_brief.md` exists; otherwise say no draft or delivery exists yet.
    Continue earlier role-work stages only when the handoff and Run Card allow
    them.
@@ -256,8 +261,9 @@ Read the relevant reference before acting:
 - Do not present traceability as semantic proof or output-quality improvement.
 - Do not say "Analyst is complete" or "Auditor passed" unless the matching
   artifact, event, status, or transaction is present.
-- Do not say "delivered" unless `output/intermediate/finalize_report.json`,
-  `output/delivery/`, and the relevant finalize / delivery events exist.
+- Do not say "delivered" unless WorkBuddy diagnose reports both
+  `delivery_truth.valid=true` and current-bound
+  `event_truth.delivery_succeeded=true`.
 - Do not zip or share the whole workspace. Use BriefLoop-generated delivery
   or audit bundles when present; never include `.env`. If support is needed,
   share only manually reviewed, non-secret excerpts from `briefloop status

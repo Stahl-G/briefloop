@@ -1,0 +1,142 @@
+{
+  "blocked": false,
+  "blocking_reason": "",
+  "created_at": "2026-07-10T13:15:58+00:00",
+  "current_stage": "auditor",
+  "last_completion_transaction": {
+    "created_at": "2026-07-10T13:15:58+00:00",
+    "decision": "continue",
+    "reason": "auditor complete",
+    "stage_id": "auditor",
+    "transaction_id": "legacy-supersede-last-stage-transaction"
+  },
+  "last_decision": {
+    "created_at": "2026-07-10T13:15:58+00:00",
+    "decision": "supersede_stage",
+    "reason": "legacy contaminated supersede",
+    "stage_id": "editor"
+  },
+  "last_repair_transaction": {
+    "created_at": "2026-07-10T13:15:58+00:00",
+    "decision": "supersede_stage",
+    "reason": "legacy contaminated supersede",
+    "stage_id": "editor",
+    "transaction_id": "legacy-supersede-transaction"
+  },
+  "next_allowed_decisions": [
+    "continue",
+    "retry_stage",
+    "delegate_repair",
+    "request_human_review",
+    "block_run"
+  ],
+  "run_id": "mabw-20260710T131558Z-4f043c09",
+  "run_integrity": {
+    "clean_single_shot": false,
+    "reasons": [
+      {
+        "created_at": "2026-07-10T13:15:58+00:00",
+        "message": "Frozen artifact 'output/intermediate/audited_brief.md' from owner stage 'editor' changed after stage-complete; route repair back to the owner stage instead of downstream in-place conversion. Do not manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields to hide the change.",
+        "metadata": {
+          "blocking_reasons": [
+            "Frozen artifact 'output/intermediate/audited_brief.md' from owner stage 'editor' changed after stage-complete; route repair back to the owner stage instead of downstream in-place conversion. Do not manually update artifact_registry.json, runtime_manifest.json, workflow_state.json, event_log.jsonl, or SHA fields to hide the change."
+          ]
+        },
+        "reason_code": "frozen_artifact_changed",
+        "stage_id": "finalize"
+      }
+    ],
+    "reference_eligible": false,
+    "status": "contaminated"
+  },
+  "schema_version": "multi-agent-brief-workflow-state/v1",
+  "stage_statuses": {
+    "analyst": {
+      "reason": "analyst complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "auditor": {
+      "metadata": {
+        "stale_after_supersede": true,
+        "stale_artifact_baselines": {
+          "audit_report": {
+            "path": "output/intermediate/audit_report.json",
+            "sha256": "5973b144709e0dab48ca95ef9f24e59cbc896150e72e39728920bee3064e77f2",
+            "status": "valid",
+            "validation_result": "valid_audit_report_schema"
+          }
+        },
+        "supersede_artifact": "output/intermediate/audited_brief.md",
+        "supersede_stage": "editor",
+        "supersede_transaction_id": "legacy-supersede-transaction"
+      },
+      "reason": "Ready after owner-stage supersede.",
+      "status": "ready",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "claim-ledger": {
+      "reason": "claim-ledger fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "doctor": {
+      "reason": "doctor fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "editor": {
+      "metadata": {
+        "artifact_id": "audited_brief",
+        "artifact_path": "output/intermediate/audited_brief.md",
+        "current_bytes_sha256": "bb241f7749700140938bf1e9352ec31fae10d0c6d5a7ed0dc3810714075c1889",
+        "old_registered_sha256": "121b745046e5a1d2366a8ca80294c7264ea73385c4938885c0ed0528e30c1728",
+        "supersede_transaction_id": "legacy-supersede-transaction",
+        "superseded": true
+      },
+      "reason": "legacy contaminated supersede",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "finalize": {
+      "metadata": {
+        "stale_after_supersede": true,
+        "stale_artifact_baselines": {
+          "reader_brief": {
+            "path": "output/brief.md",
+            "sha256": null,
+            "status": "expected",
+            "validation_result": "not_checked"
+          }
+        },
+        "supersede_artifact": "output/intermediate/audited_brief.md",
+        "supersede_stage": "editor",
+        "supersede_transaction_id": "legacy-supersede-transaction"
+      },
+      "reason": "Pending rerun after owner-stage supersede.",
+      "status": "pending",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "input-governance": {
+      "reason": "input-governance fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "scout": {
+      "reason": "scout fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "screener": {
+      "reason": "screener fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    },
+    "source-discovery": {
+      "reason": "source-discovery fixture complete",
+      "status": "complete",
+      "updated_at": "2026-07-10T13:15:58+00:00"
+    }
+  },
+  "updated_at": "2026-07-10T13:15:58+00:00"
+}

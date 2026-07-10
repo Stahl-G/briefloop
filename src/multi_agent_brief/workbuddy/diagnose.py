@@ -41,6 +41,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "delivery": _delivery_payload_from_completion(completion),
         "delivery_truth": _mapping(completion.get("delivery_truth")),
         "event_truth": _mapping(completion.get("event_truth")),
+        "recovery_state": _mapping(completion.get("recovery_state")),
         "secret_risk": secret_risk,
         "boundary": (
             "read_only_workbuddy_run_card_formats_completion_projection_with_workbuddy_safety_overlay; "
@@ -60,6 +61,8 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
         "assessment_target",
         "assessment_target_status",
         "run_integrity",
+        "recovery_status",
+        "recovery_action",
         "blocked",
         "latest_gate_status",
         "finalize_report",
@@ -108,19 +111,22 @@ def _run_card_from_completion(
     event_truth = _mapping(completion.get("event_truth"))
     assessment_target = _mapping(completion.get("assessment_target"))
     run_integrity = _mapping(completion.get("run_integrity"))
+    recovery_state = _mapping(completion.get("recovery_state"))
     return {
         "runtime": _clean_text(runtime.get("runtime")) or "unknown",
         "current_stage": _clean_text(workflow.get("current_stage")) or "unknown",
         "assessment_target": _clean_text(assessment_target.get("assessment_target")) or "not_applicable",
         "assessment_target_status": _clean_text(assessment_target.get("status")) or "not_applicable",
         "run_integrity": _clean_text(run_integrity.get("status")) or "unknown",
+        "recovery_status": _clean_text(recovery_state.get("status")) or "unknown",
+        "recovery_action": _clean_text(recovery_state.get("recommended_recovery_action")) or "unknown",
         "blocked": bool(workflow.get("blocked")),
         "latest_gate_status": _gate_status_text(gate_truth),
         "finalize_report": _clean_text(finalize_truth.get("status")) or "unknown",
         "delivery_truth": _clean_text(delivery_truth.get("status")) or "unknown",
         "delivery_valid": delivery_truth.get("valid") is True,
         "finalize_event": "present" if event_truth.get("finalize_event_present") is True else "missing",
-        "delivery_event": "present" if event_truth.get("delivery_event_present") is True else "missing",
+        "delivery_event": _clean_text(event_truth.get("delivery_outcome")) or "missing",
         "share_workspace_zip_allowed": False,
         "next_allowed_action": _workbuddy_next_allowed_action(
             completion_next_allowed_action=_clean_text(completion.get("next_allowed_action")) or "unknown",
@@ -176,6 +182,7 @@ def _workflow_payload_from_completion(completion: Mapping[str, Any]) -> dict[str
         "blocking_reason": _clean_text(workflow.get("blocking_reason")),
         "active_repair_present": bool(workflow.get("active_repair_present")),
         "run_integrity": _mapping(completion.get("run_integrity")),
+        "recovery_state": _mapping(completion.get("recovery_state")),
     }
 
 
@@ -198,6 +205,7 @@ def _delivery_payload_from_completion(completion: Mapping[str, Any]) -> dict[str
         "exists": truth.get("valid") is True,
         "valid": truth.get("valid") is True,
         "event_present": event_truth.get("delivery_event_present") is True,
+        "outcome": _clean_text(event_truth.get("delivery_outcome")) or "missing",
         "truth": truth,
     }
 

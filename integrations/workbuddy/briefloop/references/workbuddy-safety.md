@@ -38,10 +38,12 @@ authority layer.
   unavailable;
 - say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching artifact,
   event, transaction, or status output exists;
-- say `delivered`, `delivery complete`, or `交付完成` unless
-  `output/intermediate/finalize_report.json`, `output/delivery/`, and the
-  relevant finalize / delivery events exist;
-- run finalize or delivery when `run_integrity` is contaminated or not clean;
+- treat `delivery_truth.valid=true` as proof that delivery occurred;
+- say `delivered`, `delivery complete`, or `交付完成` unless WorkBuddy diagnose
+  reports current-bound `event_truth.delivery_succeeded=true`;
+- describe `delivery_bundle_prepared` or `delivery_draft_created` as delivered;
+- infer recovery progress from `run_integrity` instead of following
+  `recovery_state` and `recovery_action`;
 - downgrade a `doctor` error in prose; show the full output and wait for user
   confirmation;
 - zip or share the whole workspace; never include `.env`, tokens, or private
@@ -65,9 +67,10 @@ Chinese as needed, but follow the handoff literally. Preserve command names,
 artifact names, and handoff obligations exactly. Do not skip steps, hide
 blockers, or claim subagents ran because of translation.
 
-If a user asks to share results, use only BriefLoop-generated delivery or audit
-bundles when present. If the workspace has no `output/delivery/` or
-`finalize_report.json`, say there is only a draft when
+If a user asks to execute delivery, require `delivery_truth.valid=true`. After
+the action, report delivered only for `delivery_event=delivery_succeeded`;
+report local prepared and Gmail draft outcomes literally. If no valid reader
+bundle exists, say there is only a role draft when
 `output/intermediate/audited_brief.md` exists; otherwise
 say no draft or delivery exists yet. If any package candidate contains `.env`,
 stop and recommend key rotation before sharing anything.

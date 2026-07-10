@@ -8,6 +8,7 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import (
+    append_event,
     check_runtime_state,
     initialize_runtime_state,
     runtime_state_paths,
@@ -1895,6 +1896,18 @@ def test_repair_start_records_non_reference_contaminated_repair_semantics(tmp_pa
         "reasons": [{"reason_code": "frozen_artifact_changed", "message": "fixture contamination"}],
     }
     workflow_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest = json.loads(
+        runtime_state_paths(ws)["runtime_manifest"].read_text(encoding="utf-8")
+    )
+    append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="run_integrity_contaminated",
+        actor="system",
+        stage_id="auditor",
+        reason="fixture contamination",
+        metadata={"reason_code": "frozen_artifact_changed"},
+    )
 
     rc = main(["repair", "start", "--workspace", str(ws), "--json"])
 

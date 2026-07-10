@@ -14,9 +14,7 @@ from multi_agent_brief.orchestrator.fact_layer_import import summarize_fact_laye
 from multi_agent_brief.orchestrator.run_integrity import (
     interpret_run_integrity,
     project_for_read,
-    workflow_with_sticky_contamination_events,
 )
-from multi_agent_brief.orchestrator.runtime_state.errors import RuntimeStateError
 from multi_agent_brief.orchestrator.runtime_state.claim_support_matrix import (
     project_claim_support_matrix_from_workspace,
 )
@@ -75,6 +73,7 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         "feedback": {},
         "experiment_080": {},
         "fact_layer_import": {},
+        "recovery_state": {},
         "atomic_reader_projection": {},
         "claim_support_matrix": {},
         "semantic_assessment_report": {},
@@ -110,13 +109,6 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
 
     event_log_path = ws / INTERMEDIATE_DIR / "event_log.jsonl"
     event_records = _event_records_best_effort(event_log_path)
-    workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
-    if isinstance(workflow_payload, dict):
-        workflow = dict(workflow)
-        try:
-            workflow["payload"] = workflow_with_sticky_contamination_events(workflow_payload, event_records)
-        except RuntimeStateError:
-            workflow["payload"] = workflow_payload
     workflow_payload = workflow.get("payload") if workflow.get("status") == "present" else None
 
     payload["runtime"] = _runtime_summary(manifest)
@@ -154,6 +146,9 @@ def build_workspace_status(workspace: str | Path) -> dict[str, Any]:
         workflow_payload if isinstance(workflow_payload, dict) else None,
         workspace=ws,
     )
+    from multi_agent_brief.orchestrator.recovery_state import evaluate_recovery_state
+
+    payload["recovery_state"] = evaluate_recovery_state(workspace=ws)
     payload["atomic_reader_projection"] = _atomic_reader_projection_summary(ws)
     payload["claim_support_matrix"] = project_claim_support_matrix_from_workspace(ws)
     payload["semantic_assessment_report"] = project_semantic_assessment_report_from_workspace(ws)
@@ -232,6 +227,7 @@ def format_workspace_status(status: dict[str, Any]) -> str:
     reader = status.get("reader_clean") or {}
     feedback = status.get("feedback") or {}
     fact_layer_import = status.get("fact_layer_import") or {}
+    recovery_state = status.get("recovery_state") or {}
     improvement = status.get("improvement") or {}
     experiment_080 = status.get("experiment_080") or {}
     atomic_projection = status.get("atomic_reader_projection") or {}
@@ -263,6 +259,11 @@ def format_workspace_status(status: dict[str, Any]) -> str:
                 "[status] run_integrity: "
                 f"{run_integrity.get('status') or 'unknown'} "
                 f"reference_eligible={run_integrity.get('reference_eligible')}"
+            ),
+            (
+                "[status] recovery: "
+                f"{recovery_state.get('status') or 'unknown'} "
+                f"action={recovery_state.get('recommended_recovery_action') or 'unknown'}"
             ),
             _format_progress_line(progress),
             _format_trajectory_decision_narrowing_line(workflow),
@@ -855,8 +856,11 @@ def _suggested_next_command(workspace: Path, status: dict[str, Any]) -> str:
     gate = status.get("quality_gate") or {}
     fact_layer_import = status.get("fact_layer_import") or {}
     experiment_080 = status.get("experiment_080") or {}
+    recovery_state = status.get("recovery_state") or {}
     if not (status.get("runtime") or {}).get("present"):
         return f"briefloop run --workspace {workspace} --runtime claude"
+    if recovery_state.get("status") not in {"not_applicable", "completed_non_reference"}:
+        return f"briefloop workbuddy diagnose --workspace {workspace} --json"
     if workflow.get("blocked"):
         return f"briefloop state show --workspace {workspace} --json"
     if (

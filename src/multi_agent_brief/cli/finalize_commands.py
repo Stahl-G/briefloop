@@ -18,6 +18,11 @@ from multi_agent_brief.orchestrator.runtime_state import (
     runtime_state_paths,
 )
 from multi_agent_brief.orchestrator.runtime_state.errors import E_TRANSACTION_INTEGRITY
+from multi_agent_brief.orchestrator.recovery_state import (
+    RECOVERY_FINALIZE_RENDER_REQUIRED,
+    RECOVERY_NOT_APPLICABLE,
+    evaluate_recovery_state,
+)
 from multi_agent_brief.outputs.finalize import finalize_reader_outputs
 
 
@@ -126,12 +131,16 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
                 ) from exc
             if not isinstance(workflow, dict):
                 raise RuntimeStateError("workflow_state.json must contain an object after runtime state refresh.")
-            _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow)
         raise_if_auditable_target_complete_blocks_downstream(
             workspace=workspace,
             workflow=workflow,
             command="finalize",
         )
+        if paths["runtime_manifest"].exists():
+            _raise_if_recovery_not_ready_for_finalize(
+                workspace=workspace,
+                workflow=workflow,
+            )
     except RuntimeStateError as exc:
         if exc.error_code == E_ACTIVE_REPAIR_OPEN:
             raise
@@ -142,12 +151,23 @@ def _preflight_runtime_state_before_finalize(workspace: Path) -> None:
         raise RuntimeStateError(f"Unable to verify runtime state before finalize: {exc}") from exc
 
 
-def _raise_if_run_integrity_not_reference_eligible_before_finalize(workflow: dict[str, object]) -> None:
+def _raise_if_recovery_not_ready_for_finalize(
+    *,
+    workspace: Path,
+    workflow: dict[str, object],
+) -> None:
+    recovery = evaluate_recovery_state(workspace=workspace)
+    if recovery.get("status") == RECOVERY_FINALIZE_RENDER_REQUIRED:
+        return
     integrity = workflow.get("run_integrity") if isinstance(workflow.get("run_integrity"), dict) else {}
-    if integrity.get("status") == "clean" and integrity.get("reference_eligible") is True:
+    if (
+        recovery.get("status") == RECOVERY_NOT_APPLICABLE
+        and integrity.get("status") == "clean"
+        and integrity.get("reference_eligible") is True
+    ):
         return
     raise RuntimeStateError(
-        "Runtime state integrity check failed because run integrity is not clean before finalize.",
-        details={"run_integrity": integrity},
+        "Runtime recovery state does not permit finalize rendering.",
+        details={"run_integrity": integrity, "recovery_state": recovery},
         error_code=E_TRANSACTION_INTEGRITY,
     )

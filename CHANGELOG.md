@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Completion projection and WorkBuddy now expose canonical recovery action
+  vocabulary (`request_recovery_decision`, `rerun_from_stage`, and bound
+  finalize actions); delivery eligibility no longer implies delivery success,
+  which requires a current-run bound delivery outcome event.
 - Rewrote the BriefLoop operator skill to the v1.0 RC operating contract
   (`briefloop-operator-skill-v0.2.0`): delivery truth is `finalize_report.json`
   plus the completion projection (`briefloop workbuddy diagnose --json`), never

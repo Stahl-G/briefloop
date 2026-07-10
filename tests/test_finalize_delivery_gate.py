@@ -578,7 +578,7 @@ def test_finalize_cli_fails_without_writing_when_active_repair_open(tmp_path: Pa
     assert not (intermediate / "finalize_report.json").exists()
 
 
-def test_finalize_cli_replays_sticky_contamination_before_auditable_target_block(
+def test_finalize_cli_preserves_auditable_target_precedence_over_recovery_eligibility(
     tmp_path: Path,
     capsys,
 ):
@@ -758,8 +758,8 @@ def test_finalize_cli_replays_sticky_contamination_before_auditable_target_block
     assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
     captured = capsys.readouterr()
 
-    assert "run integrity is not clean before finalize" in captured.err
-    assert "TARGET COMPLETE: auditable_brief" not in captured.err
+    assert "TARGET INCOMPLETE: auditable_brief" in captured.err
+    assert "Runtime recovery state does not permit finalize rendering" not in captured.err
     assert not (output_dir / "brief.md").exists()
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
@@ -827,7 +827,7 @@ def test_finalize_cli_blocks_contaminated_delivery_run_before_writing(
     assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
     captured = capsys.readouterr()
 
-    assert "run integrity is not clean before finalize" in captured.err
+    assert "Runtime recovery state does not permit finalize rendering" in captured.err
     assert not (output_dir / "delivery").exists()
     assert not (intermediate / "finalize_report.json").exists()
     refreshed = json.loads(paths["workflow_state"].read_text(encoding="utf-8"))

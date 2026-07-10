@@ -45,16 +45,18 @@ check, finalize attempt, quality summary, or bundle/export request:
 runtime:
 current_stage:
 run_integrity:
+recovery_status:
+recovery_action:
 blocked:
 latest_gate_status:
 finalize_report:
-delivery_dir:
+delivery_truth:
+delivery_event:
 next_allowed_action:
 ```
 
-Read these fields from `briefloop status --workspace <workspace> --json`,
-`briefloop state check --workspace <workspace> --json`, `workflow_state.json`,
-`event_log.jsonl`, and file existence checks. Do not infer them from prose.
+Read these fields only from `briefloop workbuddy diagnose --workspace
+<workspace> --json`. Do not rebuild them from raw control files.
 
 Allowed examples:
 
@@ -68,21 +70,22 @@ Quality Panel 已生成。
 Do not say `Analyst 已经分析完成` or `Auditor 已通过` unless the matching
 artifact, event, transaction, or status output exists.
 
-Do not say `交付完成`, `delivered`, or `delivery complete` unless
-`output/intermediate/finalize_report.json`, `output/delivery/`, and the
-relevant finalize / delivery events exist.
+`delivery_truth.valid=true` means the current reader bundle is eligible for a
+delivery action. Do not say `交付完成`, `delivered`, or `delivery complete`
+unless `delivery_event=delivery_succeeded`. Report
+`delivery_bundle_prepared` as local ready and `delivery_draft_created` as draft
+created; neither is delivered.
 
 ## Hard Stops
 
 - If `doctor` reports any error, stop. Show the full doctor output, workspace
   path, current user, output path existence/writability result, and permission
   or ACL output. Do not downgrade the error yourself.
-- If `run_integrity` is not clean, stop finalize, delivery, export, and share
-  actions. Do not run finalize or delivery. For early-stage role work, report
-  the Run Card and continue only with non-delivery workflow steps allowed by
-  the handoff.
-- If finalize report or delivery directory is missing, do not claim delivery or
-  export a delivery package. Report draft-only status only when
+- Do not infer recovery from `run_integrity`; follow `recovery_action` and do
+  not deliver while recovery is nonterminal or invalid.
+- If `delivery_truth.valid` is not true, do not execute delivery. If
+  `delivery_event` is not `delivery_succeeded`, do not claim delivery. Report
+  role-draft-only status only when
   `output/intermediate/audited_brief.md` exists; otherwise
   report that no draft or delivery exists yet. This is normal before finalize
   and must not block earlier handoff-assigned stages by itself.

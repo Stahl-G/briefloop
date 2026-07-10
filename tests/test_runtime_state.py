@@ -17,7 +17,12 @@ import multi_agent_brief.orchestrator.runtime_state.event_log as runtime_event_l
 import multi_agent_brief.orchestrator.runtime_state.stage_completion as runtime_stage_completion
 from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.deliver_commands import deliver_workspace
 from multi_agent_brief.contracts.target_contract import project_assessment_target_status
+from multi_agent_brief.orchestrator.recovery_state import (
+    OWNER_REVISION_SCHEMA,
+    evaluate_recovery_state,
+)
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
 from multi_agent_brief.orchestrator.runtime_state.artifact_registry import (
     ARTIFACT_REGISTRY_SCHEMA,
@@ -4097,20 +4102,17 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
         artifact="source_candidates.yaml",
         reason="human approved supersede after source candidate edit",
     )
-    screener_metadata = superseded["workflow_state"]["stage_statuses"]["screener"]["metadata"]
-    assert screener_metadata["stale_after_supersede"] is True
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
     assert (
-        screener_metadata["stale_artifact_baselines"]["screened_candidates"]["sha256"]
+        recovery["stale_artifact_baselines"]["screened_candidates"]["sha256"]
         == screened_baseline_sha
     )
     assert (
         superseded["artifact_registry"]["artifacts"]["screened_candidates"]["validation_result"]
         == "stale_after_supersede"
     )
-    claim_ledger_metadata = superseded["workflow_state"]["stage_statuses"]["claim-ledger"]["metadata"]
-    assert claim_ledger_metadata["stale_after_supersede"] is True
     assert (
-        claim_ledger_metadata["stale_artifact_baselines"]["claim_ledger"]["sha256"]
+        recovery["stale_artifact_baselines"]["claim_ledger"]["sha256"]
         == claim_ledger_baseline_sha
     )
 
@@ -4148,7 +4150,9 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     assert "stale after supersede" in str(excinfo.value)
     checked = check_runtime_state(workspace=ws, repo_workdir=repo)
     checked_screener = checked["workflow_state"]["stage_statuses"]["screener"]
-    assert checked_screener["metadata"]["stale_after_supersede"] is True
+    assert "metadata" not in checked_screener
+    checked_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
+    assert checked_recovery["stale_artifact_baselines"]["screened_candidates"]["sha256"] == screened_baseline_sha
     checked_screened = checked["artifact_registry"]["artifacts"]["screened_candidates"]
     assert checked_screened["status"] == "stale"
     assert checked_screened["validation_result"] == "stale_after_supersede"
@@ -4182,11 +4186,9 @@ def test_default_topology_satisfaction_rejects_unrefreshed_supersede_stale_targe
     assert refreshed_screener["metadata"].get("stale_after_supersede") is not True
     claim_ledger_status = workflow["stage_statuses"]["claim-ledger"]
     assert claim_ledger_status["status"] == "ready"
-    assert claim_ledger_status["metadata"]["stale_after_supersede"] is True
-    assert (
-        claim_ledger_status["metadata"]["stale_artifact_baselines"]["claim_ledger"]["sha256"]
-        == claim_ledger_baseline_sha
-    )
+    assert "metadata" not in claim_ledger_status
+    completed_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=repo)
+    assert completed_recovery["stale_artifact_baselines"]["claim_ledger"]["sha256"] == claim_ledger_baseline_sha
     refreshed_screened = completed["artifact_registry"]["artifacts"]["screened_candidates"]
     assert refreshed_screened["status"] == "valid"
     stale_claim_ledger = completed["artifact_registry"]["artifacts"]["claim_ledger"]
@@ -7284,9 +7286,10 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
     assert workflow["stage_statuses"]["editor"]["status"] == "complete"
     assert workflow["stage_statuses"]["editor"]["metadata"]["superseded"] is True
     assert workflow["stage_statuses"]["auditor"]["status"] == "ready"
-    assert workflow["stage_statuses"]["auditor"]["metadata"]["stale_after_supersede"] is True
     assert workflow["stage_statuses"]["finalize"]["status"] == "pending"
-    assert workflow["stage_statuses"]["finalize"]["metadata"]["stale_after_supersede"] is True
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert recovery["recovery_event_type"] == "repair_stage_superseded"
+    assert recovery["recovery_transaction_id"] == state["transaction"]["transaction_id"]
 
     registry = state["artifact_registry"]["artifacts"]
     assert registry["audited_brief"]["sha256"] == current_sha
@@ -7308,20 +7311,16 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
     assert metadata["old_registered_sha256"] == old_sha
     assert metadata["current_bytes_sha256"] == current_sha
     assert metadata["reference_eligible"] is False
+    assert metadata["repair_start_transaction_id"] == metadata["transaction_id"]
 
     checked_once = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     checked_twice = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     for checked in (checked_once, checked_twice):
-        checked_workflow = checked["workflow_state"]
-        assert checked_workflow["stage_statuses"]["auditor"]["metadata"]["stale_after_supersede"] is True
-        assert (
-            checked_workflow["stage_statuses"]["auditor"]["metadata"]["supersede_transaction_id"]
-            == state["transaction"]["transaction_id"]
-        )
-        assert checked_workflow["stage_statuses"]["finalize"]["metadata"]["stale_after_supersede"] is True
         checked_registry = checked["artifact_registry"]["artifacts"]
         assert checked_registry["audit_report"]["status"] == "stale"
         assert checked_registry["audit_report"]["validation_result"] == "stale_after_supersede"
+        checked_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+        assert checked_recovery["recovery_transaction_id"] == state["transaction"]["transaction_id"]
 
     _write_quality_gate_report(ws, status="fail", blocking=True, stage_id="auditor")
     blocked_once = check_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -7330,11 +7329,11 @@ def test_supersede_stage_records_contaminated_owner_revision_and_requires_downst
         blocked_workflow = blocked["workflow_state"]
         auditor_status = blocked_workflow["stage_statuses"]["auditor"]
         assert auditor_status["status"] == "blocked"
-        assert auditor_status["metadata"]["stale_after_supersede"] is True
-        assert auditor_status["metadata"]["supersede_transaction_id"] == state["transaction"]["transaction_id"]
         blocked_registry = blocked["artifact_registry"]["artifacts"]
         assert blocked_registry["audit_report"]["status"] == "stale"
         assert blocked_registry["audit_report"]["validation_result"] == "stale_after_supersede"
+        blocked_recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+        assert blocked_recovery["recovery_transaction_id"] == state["transaction"]["transaction_id"]
 
     with pytest.raises(RuntimeStateError) as excinfo:
         complete_finalize_transaction(
@@ -7575,6 +7574,15 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
         reason="human approved supersede after contaminated direct edit",
     )
     supersede_transaction_id = superseded["transaction"]["transaction_id"]
+    supersede_event = next(
+        event
+        for event in _event_records(ws)
+        if event["event_type"] == "repair_stage_superseded"
+    )
+    assert (
+        supersede_event["metadata"]["owner_revision_schema_version"]
+        == OWNER_REVISION_SCHEMA
+    )
     refreshed_report = json.loads(_valid_audit_report_payload())
     refreshed_report["supersede_reviewed"] = True
     _write_json_artifact(ws, "audit_report.json", json.dumps(refreshed_report) + "\n")
@@ -7593,9 +7601,9 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
     assert auditor_metadata["audit_binding"]["relevant_repair_transaction_ids"] == [
         supersede_transaction_id
     ]
-    finalize_metadata = workflow["stage_statuses"]["finalize"]["metadata"]
-    assert finalize_metadata["stale_after_supersede"] is True
-    assert finalize_metadata["supersede_transaction_id"] == supersede_transaction_id
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert recovery["recovery_transaction_id"] == supersede_transaction_id
+    assert recovery["status"] == "finalize_render_required"
     condition_metadata = {
         "case_id": "runtime-state-supersede-auditable",
         "condition": "controlled",
@@ -7613,6 +7621,73 @@ def test_auditor_rerun_after_editor_supersede_records_supersede_in_audit_binding
     )
     assert "audit binding relevant_repair_transaction_ids does not match event_log" not in projection["reasons"]
     assert "run_integrity is not clean" in projection["reasons"]
+
+    _write_quality_gate_report(ws, stage_id="finalize")
+    finalized = finalize_reader_outputs(
+        output_dir=ws / "output",
+        project_name="Recovered Runtime State Test",
+        output_formats=["markdown"],
+        output_named_outputs=False,
+        workspace_dir=ws,
+    )
+    binding = finalized.recovery_binding
+    assert binding["recovery_transaction_id"] == supersede_transaction_id
+    assert binding["contamination_event_id"]
+    assert binding["reference_eligible"] is False
+
+    completed = complete_finalize_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        reason="reader artifacts finalized after bound recovery",
+    )
+    completion = completed["workflow_state"]["last_completion_transaction"]
+    assert completion["render_transaction_id"] == finalized.finalize_transaction_id
+    assert completion["recovery_transaction_id"] == supersede_transaction_id
+    assert completion["contamination_event_id"] == binding["contamination_event_id"]
+    assert completed["workflow_state"]["run_integrity"]["status"] == "contaminated"
+    terminal = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert terminal["status"] == "completed_non_reference"
+    assert terminal["reference_eligible"] is False
+    archive_manifest = json.loads(
+        (
+            ws
+            / "output"
+            / "runs"
+            / completed["manifest"]["run_id"]
+            / "manifest.json"
+        ).read_text(encoding="utf-8")
+    )
+    archived_recovery = archive_manifest["recovery_state"]
+    assert archived_recovery["runtime_effect"] == "derived_archive_snapshot_not_authority"
+    assert archived_recovery["status"] == "completed_non_reference"
+    assert archived_recovery["recovery_transaction_id"] == supersede_transaction_id
+    assert archived_recovery["reference_eligible"] is False
+    assert any(
+        event["event_type"] == "decision_recorded"
+        and (event.get("metadata") or {}).get("render_transaction_id")
+        == finalized.finalize_transaction_id
+        and (event.get("metadata") or {}).get("recovery_transaction_id")
+        == supersede_transaction_id
+        for event in _event_records(ws)
+    )
+
+    delivery = deliver_workspace(workspace=ws, target="local", channel="local")
+    assert delivery["ok"] is True
+    assert delivery["delivered"] is False
+    assert delivery["recovery_state"]["status"] == "completed_non_reference"
+    delivery_events = [
+        event
+        for event in _event_records(ws)
+        if event["event_type"].startswith("delivery_")
+    ]
+    assert [event["event_type"] for event in delivery_events] == [
+        "delivery_attempted",
+        "delivery_bundle_prepared",
+    ]
+    prepared = delivery_events[-1]["metadata"]
+    assert prepared["render_transaction_id"] == finalized.finalize_transaction_id
+    assert prepared["recovery_transaction_id"] == supersede_transaction_id
+    assert prepared["contamination_event_id"] == binding["contamination_event_id"]
 
 
 def test_supersede_stage_rejects_clean_run_without_contamination(tmp_path):
@@ -7793,9 +7868,28 @@ def test_repair_complete_refreezes_allowed_editor_artifact_and_invalidates_downs
     assert artifacts["auditor_quality_gate_report"]["status"] == "stale"
     assert artifacts["auditor_quality_gate_report"]["validation_result"] == "stale_after_repair"
     assert workflow["run_integrity"]["status"] == "clean"
+    owner_revision = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert owner_revision["status"] == "not_applicable"
+    assert owner_revision["owner_revision"]["transaction_id"] == state["transaction"][
+        "transaction_id"
+    ]
+    assert owner_revision["owner_revision"]["stale_artifact_baselines"]["audit_report"][
+        "sha256"
+    ]
     events = _event_records(ws)
     assert events[-1]["event_type"] == "repair_completed"
+    assert events[-1]["metadata"]["owner_revision_schema_version"] == OWNER_REVISION_SCHEMA
     assert events[-1]["metadata"]["repair_owner"] == "editor"
+    started_event = next(
+        event for event in events if event["event_type"] == "repair_started"
+    )
+    assert events[-1]["metadata"]["repair_started_event_id"] == started_event[
+        "event_id"
+    ]
+    assert events[-1]["metadata"]["repair_start_transaction_id"] == started_event[
+        "metadata"
+    ]["transaction_id"]
+    assert events.index(started_event) < len(events) - 1
     stale_validated_events = [
         event
         for event in events
@@ -7855,9 +7949,12 @@ def test_auditor_rerun_after_editor_repair_clears_stale_downstream_artifacts(tmp
     assert refreshed_audit_sha != stale_audit_sha
     refreshed_state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     refreshed_audit_record = refreshed_state["artifact_registry"]["artifacts"]["audit_report"]
-    assert refreshed_audit_record["status"] == "stale"
+    assert refreshed_audit_record["status"] == "valid"
     assert refreshed_audit_record["sha256"] == refreshed_audit_sha
-    assert refreshed_audit_record["stale_baseline_sha256"] == stale_audit_sha
+    assert "stale_baseline_sha256" not in refreshed_audit_record
+    owner_revision = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    assert owner_revision["status"] == "not_applicable"
+    assert owner_revision["owner_revision"]["transaction_id"] == repair_transaction_id
     _write_quality_gate_report(ws, stage_id="auditor")
     audited_state = complete_stage_transaction(
         workspace=ws,
@@ -7908,15 +8005,15 @@ def test_auditor_rerun_after_editor_repair_accepts_new_artifact_without_stale_ba
         reason="editor repaired audited brief before auditor wrote audit report",
     )
     repair_transaction_id = repaired["transaction"]["transaction_id"]
-    auditor_metadata = repaired["workflow_state"]["stage_statuses"]["auditor"]["metadata"]
-    baselines = auditor_metadata["stale_artifact_baselines"]
+    recovery = evaluate_recovery_state(workspace=ws, repo_workdir=ROOT)
+    baselines = recovery["owner_revision"]["stale_artifact_baselines"]
     assert baselines["audit_report"]["sha256"] is None
 
     _write_json_artifact(ws, "audit_report.json", _valid_audit_report_payload())
     refreshed_audit_sha = _sha256_file(_intermediate(ws) / "audit_report.json")
     refreshed_state = check_runtime_state(workspace=ws, repo_workdir=ROOT)
     refreshed_audit_record = refreshed_state["artifact_registry"]["artifacts"]["audit_report"]
-    assert refreshed_audit_record["status"] == "stale"
+    assert refreshed_audit_record["status"] == "valid"
     assert refreshed_audit_record["sha256"] == refreshed_audit_sha
     assert "stale_baseline_sha256" not in refreshed_audit_record
     _write_quality_gate_report(ws, stage_id="auditor")
@@ -8812,7 +8909,7 @@ def test_run_integrity_contamination_event_is_sticky_on_state_check(tmp_path):
     assert persisted == integrity
 
 
-def test_finalize_complete_keeps_contaminated_run_out_of_reference_pack(tmp_path):
+def test_finalize_complete_rejects_unbound_contaminated_run(tmp_path):
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
     _advance_to_finalize(ws)
@@ -8834,23 +8931,21 @@ def test_finalize_complete_keeps_contaminated_run_out_of_reference_pack(tmp_path
             "stage_id": "auditor",
         },
     )
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
 
-    state = complete_finalize_transaction(
-        workspace=ws,
-        repo_workdir=ROOT,
-        reason="reader artifacts finalized after repair",
-    )
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_finalize_transaction(
+            workspace=ws,
+            repo_workdir=ROOT,
+            reason="reader artifacts finalized without a bound recovery",
+        )
 
-    integrity = state["workflow_state"]["run_integrity"]
-    archive_manifest = json.loads(
-        (ws / "output" / "runs" / manifest["run_id"] / "manifest.json").read_text(encoding="utf-8")
-    )
-
-    assert integrity["status"] == "contaminated_repaired"
-    assert integrity["reference_eligible"] is False
-    assert integrity["clean_single_shot"] is False
-    assert archive_manifest["run_integrity"]["status"] == "contaminated_repaired"
-    assert archive_manifest["run_integrity"]["reference_eligible"] is False
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert "recovery is not ready" in str(excinfo.value)
+    workflow = json.loads(_state_file(ws, "workflow_state").read_text(encoding="utf-8"))
+    assert workflow["current_stage"] == "finalize"
+    assert workflow["run_integrity"]["status"] == "contaminated"
+    assert not (ws / "output" / "runs" / manifest["run_id"] / "manifest.json").exists()
 
 
 def test_finalize_complete_archives_delivery_intermediate_and_control_files(tmp_path):

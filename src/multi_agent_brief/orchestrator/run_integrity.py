@@ -257,28 +257,6 @@ def workflow_with_sticky_contamination_events(
     return updated
 
 
-def finalize_run_integrity(workflow: dict[str, Any]) -> dict[str, Any]:
-    """Mark a completed contaminated run as repaired but not reference-eligible."""
-
-    updated = workflow_with_persistable_run_integrity(
-        workflow,
-        path="workflow_state.run_integrity",
-    )
-    integrity = require_persistable(
-        interpret_run_integrity(updated.get("run_integrity"), field_present=True),
-        path="workflow_state.run_integrity",
-    )
-    if integrity.get("status") == RUN_INTEGRITY_CLEAN:
-        return updated
-    integrity.update({
-        "status": RUN_INTEGRITY_CONTAMINATED_REPAIRED,
-        "reference_eligible": False,
-        "clean_single_shot": False,
-    })
-    updated["run_integrity"] = integrity
-    return updated
-
-
 def contaminate_run_integrity_with_event_flag(
     workflow: dict[str, Any],
     *,
