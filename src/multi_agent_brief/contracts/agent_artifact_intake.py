@@ -161,13 +161,31 @@ def agent_artifact_paths_from_contracts(
 
     paths: dict[AgentArtifactId, Path] = {}
     for artifact_id in AGENT_ARTIFACT_IDS:
-        artifact = artifacts_by_id.get(artifact_id)
-        if not isinstance(artifact, Mapping):
-            continue
-        rel_path = artifact.get("path")
-        if _non_empty_string(rel_path):
-            paths[artifact_id] = workspace / str(rel_path)
+        path = artifact_path_from_contracts(
+            workspace,
+            artifacts_by_id,
+            artifact_id=artifact_id,
+        )
+        if path is not None:
+            paths[artifact_id] = path
     return paths
+
+
+def artifact_path_from_contracts(
+    workspace: Path,
+    artifacts_by_id: Mapping[str, Mapping[str, Any]],
+    *,
+    artifact_id: str,
+    default_path: Path | None = None,
+) -> Path | None:
+    """Resolve one artifact path from the authoritative contract map."""
+
+    artifact = artifacts_by_id.get(artifact_id)
+    if isinstance(artifact, Mapping) and _non_empty_string(artifact.get("path")):
+        return workspace / str(artifact["path"])
+    if default_path is not None:
+        return workspace / default_path
+    return None
 
 
 def evaluate_agent_artifact_intake(

@@ -15,6 +15,8 @@ from typing import Any
 from multi_agent_brief.contracts.agent_artifact_intake import (
     AGENT_ARTIFACT_INTAKE_TRANSFORM_VERSION,
     IntakeResult,
+    agent_artifact_paths_from_contracts,
+    artifact_path_from_contracts,
     evaluate_agent_artifact_intake,
     validate_registry_intake_context,
 )
@@ -139,8 +141,8 @@ def _claim_draft_warnings(drafts: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _read_claim_drafts_for_freeze(
     workspace: Path,
+    path: Path,
 ) -> tuple[Path, IntakeResult, list[dict[str, Any]]]:
-    path = workspace / CLAIM_DRAFTS_PATH
     if not path.exists():
         raise RuntimeStateError(
             "Claim drafts are required before freezing the Claim Ledger.",
@@ -471,7 +473,11 @@ def _append_freeze_event_binding_reasons(
     if event.get("artifact_id") != "claim_ledger":
         reasons.append("Claim Ledger freeze event artifact_id is not claim_ledger.")
     metadata = event["metadata"]
-    expected = {"source_artifact_id": "claim_drafts"}
+    expected = {
+        "source_artifact_id": "claim_drafts",
+        "source_path": freeze.get("source_path"),
+        "claim_ledger_path": freeze.get("claim_ledger_path"),
+    }
     if freeze.get("schema_version") == CLAIM_LEDGER_FREEZE_LEGACY_SCHEMA:
         expected.update(
             {
@@ -594,6 +600,31 @@ def freeze_claim_ledger_transaction(
     repo = resolve_repo_workdir(repo_workdir, workspace=ws)
     stages = load_stage_specs(repo)
     artifacts = load_artifact_contracts(repo)
+    artifacts_by_id = {
+        str(artifact.get("artifact_id") or ""): artifact
+        for artifact in artifacts
+        if artifact.get("artifact_id")
+    }
+    agent_artifact_paths = agent_artifact_paths_from_contracts(
+        ws,
+        artifacts_by_id,
+    )
+    draft_path = agent_artifact_paths.get(
+        "claim_drafts",
+        ws / CLAIM_DRAFTS_PATH,
+    )
+    ledger_path = artifact_path_from_contracts(
+        ws,
+        artifacts_by_id,
+        artifact_id="claim_ledger",
+        default_path=CLAIM_LEDGER_PATH,
+    )
+    if ledger_path is None:
+        raise RuntimeStateError(
+            "Claim Ledger artifact path is not configured.",
+            details={"artifact_id": "claim_ledger"},
+            error_code=E_TRANSACTION_INTEGRITY,
+        )
     run_id = str(manifest["run_id"])
     if not _current_run_start_event_exists(event_records, run_id):
         raise RuntimeStateError(
@@ -603,11 +634,10 @@ def freeze_claim_ledger_transaction(
         )
     transaction_id = uuid.uuid4().hex
     frozen_at = utc_now()
-    draft_path, intake, drafts = _read_claim_drafts_for_freeze(ws)
+    draft_path, intake, drafts = _read_claim_drafts_for_freeze(ws, draft_path)
     warnings = _claim_draft_warnings(drafts)
     claims = _canonical_claims_from_drafts(drafts)
     ledger_bytes = _claim_ledger_bytes(claims)
-    ledger_path = ws / CLAIM_LEDGER_PATH
     source_sha = intake.raw_sha256
     ledger_sha = _sha256_bytes(ledger_bytes)
 

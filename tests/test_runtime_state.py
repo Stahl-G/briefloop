@@ -5157,6 +5157,88 @@ def test_freeze_intake_binding_rolls_back_atomically(
     assert _state_file(ws, "event_log").read_bytes() == events_before
 
 
+@pytest.mark.parametrize(
+    "custom_drafts_valid",
+    [True, False],
+    ids=["INTAKE-PATH-04-valid-freeze", "INTAKE-PATH-05-invalid-freeze"],
+)
+def test_freeze_binds_claim_paths_from_artifact_contracts(
+    tmp_path: Path,
+    custom_drafts_valid: bool,
+) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    contracts_path = repo / "configs" / "artifact_contracts.yaml"
+    import yaml
+
+    contracts = yaml.safe_load(contracts_path.read_text(encoding="utf-8"))
+    custom_paths = {
+        "claim_drafts": "custom/claim_drafts.json",
+        "claim_ledger": "custom/claim_ledger.json",
+    }
+    for artifact in contracts["artifacts"]:
+        artifact_id = artifact.get("artifact_id")
+        if artifact_id in custom_paths:
+            artifact["path"] = custom_paths[artifact_id]
+    contracts_path.write_text(
+        yaml.safe_dump(contracts, sort_keys=False),
+        encoding="utf-8",
+    )
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "claim-ledger")
+    custom_dir = ws / "custom"
+    custom_dir.mkdir()
+    custom_drafts = custom_dir / "claim_drafts.json"
+    custom_drafts.write_text(
+        _valid_claim_drafts_payload() if custom_drafts_valid else "{broken",
+        encoding="utf-8",
+    )
+    _write_json_artifact(
+        ws,
+        "claim_drafts.json",
+        "{broken" if custom_drafts_valid else _valid_claim_drafts_payload(),
+    )
+    default_ledger = _intermediate(ws) / "claim_ledger.json"
+    default_ledger.write_text("default ledger must remain untouched\n", encoding="utf-8")
+    default_ledger_before = default_ledger.read_bytes()
+
+    if custom_drafts_valid:
+        frozen = freeze_claim_ledger_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+        )
+        binding = frozen["manifest"]["claim_ledger_freeze"]
+        records = frozen["artifact_registry"]["artifacts"]
+        assert binding["source_path"] == "custom/claim_drafts.json"
+        assert binding["claim_ledger_path"] == "custom/claim_ledger.json"
+        assert records["claim_drafts"]["path"] == "custom/claim_drafts.json"
+        assert records["claim_ledger"]["path"] == "custom/claim_ledger.json"
+        assert records["claim_ledger"]["status"] == "valid"
+        assert (custom_dir / "claim_ledger.json").is_file()
+        assert default_ledger.read_bytes() == default_ledger_before
+
+        repeated = freeze_claim_ledger_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+        )
+        assert repeated["transaction"]["decision"] == "freeze_claim_ledger_idempotent"
+        return
+
+    manifest_before = _state_file(ws, "runtime_manifest").read_bytes()
+    events_before = _state_file(ws, "event_log").read_bytes()
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+        )
+
+    assert excinfo.value.error_code == runtime_state.operations.E_CLAIM_DRAFT_CONTRACT_INVALID
+    assert not (custom_dir / "claim_ledger.json").exists()
+    assert default_ledger.read_bytes() == default_ledger_before
+    assert _state_file(ws, "runtime_manifest").read_bytes() == manifest_before
+    assert _state_file(ws, "event_log").read_bytes() == events_before
+
+
 def test_legacy_freeze_binding_behavior(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
@@ -5316,6 +5398,55 @@ def test_freeze_binding_rejects_wrong_event_identity(
         event for event in records if event.get("event_type") == "claim_ledger_frozen"
     )
     freeze_event[field] = value
+    event_path.write_text(
+        "".join(
+            json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+            for event in records
+        ),
+        encoding="utf-8",
+    )
+    before = event_path.read_bytes()
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == runtime_state.operations.E_TRANSACTION_INTEGRITY
+    assert expected_reason in str(excinfo.value.details["freeze_reasons"])
+    assert event_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_reason"),
+    [
+        (
+            "source_path",
+            "output/intermediate/other_drafts.json",
+            "event source_path does not match manifest binding",
+        ),
+        (
+            "claim_ledger_path",
+            "output/intermediate/other_ledger.json",
+            "event claim_ledger_path does not match manifest binding",
+        ),
+    ],
+)
+def test_freeze_binding_rejects_wrong_event_path_identity(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    expected_reason: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _valid_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    event_path = _state_file(ws, "event_log")
+    records = _event_records(ws)
+    freeze_event = next(
+        event for event in records if event.get("event_type") == "claim_ledger_frozen"
+    )
+    freeze_event["metadata"][field] = value
     event_path.write_text(
         "".join(
             json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
