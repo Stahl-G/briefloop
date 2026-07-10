@@ -19,6 +19,7 @@ from multi_agent_brief.repair import router as repair_router
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.deliver_commands import deliver_workspace
 from multi_agent_brief.contracts.agent_artifact_intake import (
+    evaluate_agent_artifact_intake,
     validate_registry_intake_context,
 )
 from multi_agent_brief.contracts.target_contract import project_assessment_target_status
@@ -2410,7 +2411,21 @@ def test_registry_intake_rebuild_idempotent(tmp_path: Path) -> None:
 
     first_records = first["artifact_registry"]["artifacts"]
     second_records = second["artifact_registry"]["artifacts"]
+    candidate_result = evaluate_agent_artifact_intake(
+        _intermediate(ws) / "candidate_claims.json",
+        artifact_id="candidate_claims",
+    )
+    screened_result = evaluate_agent_artifact_intake(
+        _intermediate(ws) / "screened_candidates.json",
+        artifact_id="screened_candidates",
+        candidate_universe=candidate_result,
+    )
+    expected = {
+        "candidate_claims": candidate_result.projection(),
+        "screened_candidates": screened_result.projection(),
+    }
     for artifact_id in ("candidate_claims", "screened_candidates"):
+        assert first_records[artifact_id]["intake_projection"] == expected[artifact_id]
         assert first_records[artifact_id]["intake_projection"] == (
             second_records[artifact_id]["intake_projection"]
         )
@@ -4277,6 +4292,67 @@ def test_topology_satisfaction_intake(tmp_path: Path) -> None:
     assert screener_timing["status"] == "satisfied_by_topology"
 
 
+def test_public_safe_recoverable_intake_fixture(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    fixture_root = ROOT / "tests" / "fixtures" / "agent_artifact_intake" / "recoverable"
+    for filename in ("candidate_claims.json", "screened_candidates.json"):
+        shutil.copyfile(fixture_root / filename, _intermediate(ws) / filename)
+
+    state = complete_stage_transaction(
+        workspace=ws,
+        repo_workdir=repo,
+        stage_id="scout",
+        reason="public-safe recoverable intake fixture",
+    )
+
+    assert state["workflow_state"]["current_stage"] == "claim-ledger"
+    records = state["artifact_registry"]["artifacts"]
+    for artifact_id in ("candidate_claims", "screened_candidates"):
+        assert records[artifact_id]["status"] == "valid"
+        assert records[artifact_id]["intake_projection"]["normalization_count"] > 0
+        assert records[artifact_id]["intake_projection"]["fatal_finding_count"] == 0
+    assert not (_intermediate(ws) / "normalized_candidate_claims.json").exists()
+    assert not (_intermediate(ws) / "normalized_screened_candidates.json").exists()
+
+
+def test_public_safe_fatal_intake_fixture(tmp_path: Path) -> None:
+    repo = _repo_with_role_topology(tmp_path, "default")
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=repo)
+    _set_current_stage(ws, "scout")
+    fixture_root = ROOT / "tests" / "fixtures" / "agent_artifact_intake"
+    shutil.copyfile(
+        fixture_root / "fatal" / "candidate_claims.json",
+        _intermediate(ws) / "candidate_claims.json",
+    )
+    shutil.copyfile(
+        fixture_root / "recoverable" / "screened_candidates.json",
+        _intermediate(ws) / "screened_candidates.json",
+    )
+    before_events = _event_records(ws)
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        complete_stage_transaction(
+            workspace=ws,
+            repo_workdir=repo,
+            stage_id="scout",
+            reason="fatal public-safe identity fixture",
+        )
+
+    assert excinfo.value.error_code == "E_ARTIFACT_INVALID"
+    assert "candidate_claims_schema_error:candidate[0].source_url" in str(excinfo.value)
+    assert _event_records(ws) == before_events
+    checked = check_runtime_state(workspace=ws, repo_workdir=repo)
+    record = checked["artifact_registry"]["artifacts"]["candidate_claims"]
+    assert record["status"] == "invalid"
+    projection = record["intake_projection"]
+    assert projection["fatal_finding_count"] == 1
+    assert projection["findings"][0]["path"] == "candidate[0].source_url"
+
+
 def test_supersede_stale_precedes_intake_validity(tmp_path):
     repo = _repo_with_role_topology(
         tmp_path,
@@ -4742,6 +4818,50 @@ def test_freeze_binds_intake_projection(tmp_path: Path) -> None:
     assert event["run_id"] == freeze["run_id"]
     assert event["metadata"]["transaction_id"] == freeze["transaction_id"]
     assert event["metadata"]["source_normalized_sha256"] == projection["normalized_sha256"]
+
+
+@pytest.mark.parametrize(
+    ("corruption", "expected_reason"),
+    [
+        ("cross_run_registry", "artifact_registry run_id does not match the current run"),
+        ("missing_freeze_event", "no matching current-run event"),
+    ],
+)
+def test_freeze_binding_rejects_invalid_control_lineage(
+    tmp_path: Path,
+    corruption: str,
+    expected_reason: str,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    _set_current_stage(ws, "claim-ledger")
+    _write_json_artifact(ws, "claim_drafts.json", _normalized_claim_drafts_payload())
+    freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+    if corruption == "cross_run_registry":
+        registry_path = _state_file(ws, "artifact_registry")
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["run_id"] = "old-run"
+        registry_path.write_text(
+            json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    else:
+        event_path = _state_file(ws, "event_log")
+        records = [
+            event
+            for event in _event_records(ws)
+            if event.get("event_type") != "claim_ledger_frozen"
+        ]
+        event_path.write_text(
+            "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in records),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(RuntimeStateError) as excinfo:
+        freeze_claim_ledger_transaction(workspace=ws, repo_workdir=ROOT)
+
+    assert excinfo.value.error_code == "E_TRANSACTION_INTEGRITY"
+    assert expected_reason in str(excinfo.value.details["freeze_reasons"])
 
 
 def test_freeze_rejects_projection_mismatch(tmp_path: Path) -> None:

@@ -9,7 +9,47 @@ import yaml
 from multi_agent_brief.orchestrator.runtime_state.semantic_assessment_report import (
     build_semantic_assessment_checked_inputs,
 )
+from multi_agent_brief.orchestrator.runtime_state import (
+    check_runtime_state,
+    initialize_runtime_state,
+)
 from multi_agent_brief.status import build_workspace_status, format_workspace_status
+from tests.helpers import write_workspace_files_under
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _write_runtime_workspace(tmp_path: Path) -> Path:
+    return write_workspace_files_under(
+        tmp_path,
+        config_text=(
+            'project:\n  name: "Status Intake Test"\n'
+            'output:\n  path: "output"\n'
+            'input:\n  path: "input"\n'
+        ),
+        include_input_dir=True,
+    )
+
+
+def _normalized_candidate_wrapper() -> str:
+    return json.dumps(
+        {
+            "claims": [
+                {
+                    "candidate_id": "CAND-001",
+                    "claim_statement": "ExampleCo opened a demo facility.",
+                    "source_excerpt": "ExampleCo opened a demo facility in June.",
+                    "source_url": "https://example.com/source",
+                    "source_category": "industry_news",
+                    "published_at": "2026-06-01",
+                    "topic": "demo market",
+                    "claim_type": "fact",
+                    "confidence": 0.91,
+                }
+            ]
+        }
+    ) + "\n"
 
 
 def _span_hash(text: str) -> str:
@@ -1044,3 +1084,64 @@ def test_status_reports_invalid_semantic_assessment_report_without_writes(tmp_pa
     ) in formatted
     assert not (intermediate / "quality_gate_report.json").exists()
     assert not (intermediate / "event_log.jsonl").exists()
+
+
+def test_status_formats_intake_projection(tmp_path: Path) -> None:
+    ws = _write_runtime_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    candidate_path.write_text(_normalized_candidate_wrapper(), encoding="utf-8")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+
+    before = build_workspace_status(ws)
+    before_intake = before["artifacts"]["intake"]
+    before_line = next(
+        line for line in format_workspace_status(before).splitlines() if line.startswith("[status] intake:")
+    )
+    candidate_path.write_text("{not current registry bytes", encoding="utf-8")
+    after = build_workspace_status(ws)
+    after_intake = after["artifacts"]["intake"]
+    after_line = next(
+        line for line in format_workspace_status(after).splitlines() if line.startswith("[status] intake:")
+    )
+
+    assert before_intake == after_intake
+    assert before_line == after_line
+    assert before_intake["status"] == "available"
+    assert before_intake["projection_count"] == 1
+    assert before_intake["normalized_artifact_count"] == 1
+    assert before_intake["normalization_count"] > 0
+    assert before_intake["fatal_finding_count"] == 0
+    assert before_intake["artifacts"][0]["artifact_id"] == "candidate_claims"
+    assert before_intake["artifacts"][0]["projection_status"] == "valid"
+
+
+def test_status_rejects_invalid_intake_projection(tmp_path: Path) -> None:
+    ws = _write_runtime_workspace(tmp_path)
+    initialize_runtime_state(workspace=ws, repo_workdir=ROOT)
+    candidate_path = ws / "output" / "intermediate" / "candidate_claims.json"
+    candidate_path.write_text(_normalized_candidate_wrapper(), encoding="utf-8")
+    check_runtime_state(workspace=ws, repo_workdir=ROOT)
+    registry_path = ws / "output" / "intermediate" / "artifact_registry.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    persisted = registry["artifacts"]["candidate_claims"]["intake_projection"]
+    persisted_normalization_count = persisted["normalization_count"]
+    persisted["schema_version"] = "briefloop.intake_projection.v99"
+    registry_path.write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    candidate_path.write_text("{malformed current bytes", encoding="utf-8")
+
+    status = build_workspace_status(ws)
+    intake = status["artifacts"]["intake"]
+
+    assert intake["status"] == "invalid"
+    assert intake["invalid_projection_count"] == 1
+    assert intake["normalization_count"] == persisted_normalization_count
+    assert intake["fatal_finding_count"] == 0
+    assert intake["artifacts"][0]["projection_status"] == "invalid"
+    assert intake["artifacts"][0]["reasons"] == [
+        "intake_projection schema_version is unsupported"
+    ]
+    assert "[status] intake: invalid" in format_workspace_status(status)
