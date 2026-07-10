@@ -443,7 +443,7 @@ def _next_allowed_action(
         return "inspect_unreadable_or_missing_control_files"
     if workflow_truth.get("active_repair_present"):
         return "stop_complete_or_inspect_active_repair"
-    integrity_action = _next_allowed_action_for_run_integrity(run_integrity)
+    integrity_action = _next_allowed_action_for_run_integrity(run_integrity, current_stage)
     if integrity_action is not None:
         return integrity_action
     if workflow_truth.get("blocked"):
@@ -473,14 +473,24 @@ def _next_allowed_action(
     return "inspect_invalid_or_incomplete_finalize_report_delivery_truth"
 
 
-def _next_allowed_action_for_run_integrity(run_integrity: Mapping[str, Any]) -> str | None:
+def _next_allowed_action_for_run_integrity(
+    run_integrity: Mapping[str, Any], current_stage: str = ""
+) -> str | None:
     status = _clean_text(run_integrity.get("status"))
     if status in {RUN_INTEGRITY_CLEAN, "pass", "ok"}:
         return None
     if status == RUN_INTEGRITY_CONTAMINATED:
         return "stop_human_review_or_supersede"
     if status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
-        return "rerun_downstream_auditor_finalize"
+        # The supersede/repair transaction already rewound
+        # workflow.current_stage to the owner stage's direct downstream;
+        # consume that authoritative fact instead of hardcoding a rerun
+        # target. A source-discovery supersede must rerun from
+        # input-governance, not from auditor/finalize.
+        stage = _clean_text(current_stage)
+        if stage and stage != "unknown":
+            return f"rerun_downstream_from_{stage}"
+        return "rerun_downstream_stages"
     return "stop_run_integrity_not_clean"
 
 

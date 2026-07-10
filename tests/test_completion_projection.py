@@ -519,8 +519,10 @@ def test_completion_projection_contaminated_prefers_supersede_over_workflow_bloc
 def test_completion_projection_contaminated_repaired_requires_downstream_rerun(tmp_path: Path) -> None:
     ws = _write_workspace(tmp_path)
     _init_workspace(ws)
+    # editor supersede rewinds the workflow to its direct downstream: auditor
     _set_workflow(
         ws,
+        current_stage="auditor",
         run_integrity={
             "status": "contaminated_repaired",
             "reference_eligible": False,
@@ -532,7 +534,47 @@ def test_completion_projection_contaminated_repaired_requires_downstream_rerun(t
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["run_integrity"]["status"] == "contaminated_repaired"
-    assert payload["next_allowed_action"] == "rerun_downstream_auditor_finalize"
+    assert payload["next_allowed_action"] == "rerun_downstream_from_auditor"
+
+
+def test_completion_projection_contaminated_repaired_rerun_tracks_supersede_owner_stage(tmp_path: Path) -> None:
+    """A source-discovery supersede rewinds to input-governance; the rerun
+    action must consume workflow.current_stage, not hardcode auditor/finalize."""
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(
+        ws,
+        current_stage="input-governance",
+        run_integrity={
+            "status": "contaminated_repaired",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [{"reason_code": "frozen_artifact_changed"}],
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["next_allowed_action"] == "rerun_downstream_from_input-governance"
+
+
+def test_completion_projection_contaminated_repaired_unknown_stage_falls_back_generic(tmp_path: Path) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(
+        ws,
+        current_stage="unknown",
+        run_integrity={
+            "status": "contaminated_repaired",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [{"reason_code": "frozen_artifact_changed"}],
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["next_allowed_action"] == "rerun_downstream_stages"
 
 
 def test_completion_projection_contaminated_repaired_prefers_rerun_over_workflow_blocked(tmp_path: Path) -> None:
@@ -540,6 +582,7 @@ def test_completion_projection_contaminated_repaired_prefers_rerun_over_workflow
     _init_workspace(ws)
     _set_workflow(
         ws,
+        current_stage="auditor",
         blocked=True,
         blocking_reason="Frozen artifact changed after stage-complete.",
         run_integrity={
@@ -552,7 +595,7 @@ def test_completion_projection_contaminated_repaired_prefers_rerun_over_workflow
 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
-    assert payload["next_allowed_action"] == "rerun_downstream_auditor_finalize"
+    assert payload["next_allowed_action"] == "rerun_downstream_from_auditor"
 
 
 def test_completion_projection_active_repair_prefers_repair_over_workflow_blocked(tmp_path: Path) -> None:
