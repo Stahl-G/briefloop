@@ -220,9 +220,12 @@ workflow stop.
 2. For finalize, delivery, export, or share requests, use the WorkBuddy
    diagnosis fields jointly; never authorize or block finalize or delivery
    from `run_integrity` alone. If integrity is `stale_or_invalid` or unknown, stop.
-   If integrity is `contaminated`, allow finalize only when
-   `recovery_truth.finalize_allowed=true` and `next_allowed_action` is
-   `run_finalize_after_recovery`; delivery, export, and share remain blocked.
+   If integrity is `contaminated`, allow only the recovery finalize transaction
+   step named by `next_allowed_action`, and only when
+   `recovery_truth.finalize_allowed=true`. The allowed projected actions are
+   `run_finalize_after_recovery` and
+   `run_finalize_gate_or_finalize_complete`; delivery, export, and share remain
+   blocked.
    If integrity is `contaminated_repaired`, allow delivery only when both
    `delivery_truth.valid=true` and
    `delivery_truth.eligibility.allowed=true`; otherwise stop. Any permitted

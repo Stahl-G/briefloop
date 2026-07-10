@@ -206,15 +206,18 @@ def workflow_with_sticky_contamination_events(
             error_code=E_TRANSACTION_INTEGRITY,
         )
     run_id = authority_run_id or workflow_run_id
-    contamination_events = [
+    current_run_records = [
         event
         for event in event_records
-        if (
-            isinstance(event, dict)
-            and event.get("event_type") == "run_integrity_contaminated"
-            and (not run_id or str(event.get("run_id") or "").strip() == run_id)
-        )
+        if isinstance(event, dict)
+        and (not run_id or str(event.get("run_id") or "").strip() == run_id)
     ]
+    contamination_indexes = [
+        index
+        for index, event in enumerate(current_run_records)
+        if event.get("event_type") == "run_integrity_contaminated"
+    ]
+    contamination_events = [current_run_records[index] for index in contamination_indexes]
     if not contamination_events:
         return updated
 
@@ -265,11 +268,16 @@ def workflow_with_sticky_contamination_events(
         seen.add(marker)
         reasons.append(reason)
 
-    sticky_status = (
-        RUN_INTEGRITY_CONTAMINATED
-        if integrity.get("status") == RUN_INTEGRITY_CLEAN
-        else str(integrity.get("status"))
-    )
+    sticky_status = str(integrity.get("status"))
+    if sticky_status == RUN_INTEGRITY_CLEAN:
+        sticky_status = RUN_INTEGRITY_CONTAMINATED
+    elif sticky_status == RUN_INTEGRITY_CONTAMINATED_REPAIRED:
+        finalize_index = _latest_bound_finalize_event_index(
+            workflow=updated,
+            event_records=current_run_records,
+        )
+        if finalize_index is not None and contamination_indexes[-1] > finalize_index:
+            sticky_status = RUN_INTEGRITY_CONTAMINATED
     integrity.update({
         "status": sticky_status,
         "reference_eligible": False,
@@ -278,6 +286,33 @@ def workflow_with_sticky_contamination_events(
     })
     updated["run_integrity"] = integrity
     return updated
+
+
+def _latest_bound_finalize_event_index(
+    *,
+    workflow: dict[str, Any],
+    event_records: list[dict[str, Any]],
+) -> int | None:
+    transaction = workflow.get("last_completion_transaction")
+    if not isinstance(transaction, dict):
+        return None
+    if transaction.get("stage_id") != "finalize" or transaction.get("decision") != "finalize":
+        return None
+    transaction_id = str(transaction.get("transaction_id") or "").strip()
+    if not transaction_id:
+        return None
+
+    latest: int | None = None
+    for index, event in enumerate(event_records):
+        metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+        if (
+            event.get("event_type") == "decision_recorded"
+            and event.get("stage_id") == "finalize"
+            and event.get("decision") == "finalize"
+            and str(metadata.get("transaction_id") or "").strip() == transaction_id
+        ):
+            latest = index
+    return latest
 
 
 def finalize_run_integrity(workflow: dict[str, Any]) -> dict[str, Any]:

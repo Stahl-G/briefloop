@@ -149,6 +149,78 @@ def test_sticky_contamination_event_keeps_repaired_terminal_status():
     assert updated["run_integrity"]["reasons"][0]["reason_code"] == "prior_repair"
 
 
+def test_sticky_contamination_keeps_repaired_when_event_precedes_bound_finalize():
+    workflow = {
+        "run_id": "run-current-001",
+        "last_completion_transaction": {
+            "transaction_id": "tx-finalize-001",
+            "stage_id": "finalize",
+            "decision": "finalize",
+        },
+        "run_integrity": {
+            "status": "contaminated_repaired",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [],
+        },
+    }
+    event_records = [
+        {
+            "event_type": "run_integrity_contaminated",
+            "run_id": "run-current-001",
+            "metadata": {"reason_code": "prior_contamination"},
+        },
+        {
+            "event_type": "decision_recorded",
+            "run_id": "run-current-001",
+            "stage_id": "finalize",
+            "decision": "finalize",
+            "metadata": {"transaction_id": "tx-finalize-001"},
+        },
+    ]
+
+    updated = workflow_with_sticky_contamination_events(workflow, event_records)
+
+    assert updated["run_integrity"]["status"] == "contaminated_repaired"
+
+
+def test_sticky_contamination_reopens_repaired_when_event_follows_bound_finalize():
+    workflow = {
+        "run_id": "run-current-001",
+        "last_completion_transaction": {
+            "transaction_id": "tx-finalize-001",
+            "stage_id": "finalize",
+            "decision": "finalize",
+        },
+        "run_integrity": {
+            "status": "contaminated_repaired",
+            "reference_eligible": False,
+            "clean_single_shot": False,
+            "reasons": [],
+        },
+    }
+    event_records = [
+        {
+            "event_type": "decision_recorded",
+            "run_id": "run-current-001",
+            "stage_id": "finalize",
+            "decision": "finalize",
+            "metadata": {"transaction_id": "tx-finalize-001"},
+        },
+        {
+            "event_type": "run_integrity_contaminated",
+            "run_id": "run-current-001",
+            "metadata": {"reason_code": "post_finalize_contamination"},
+        },
+    ]
+
+    updated = workflow_with_sticky_contamination_events(workflow, event_records)
+
+    assert updated["run_integrity"]["status"] == "contaminated"
+    assert updated["run_integrity"]["reference_eligible"] is False
+    assert updated["run_integrity"]["reasons"][-1]["reason_code"] == "post_finalize_contamination"
+
+
 def test_sticky_contamination_ignores_events_from_an_old_run():
     workflow = {
         "run_id": "run-current-001",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
@@ -223,6 +224,35 @@ def test_completion_projection_reads_recorded_finalize_delivery_truth(tmp_path: 
     assert payload["delivery_truth"]["source"] == "finalize_report"
     assert payload["finalize_truth"]["delivery_promotion"] == "promoted"
     assert payload["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_completion_projection_requires_delivery_eligibility_for_delivery_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ws = _write_workspace(tmp_path)
+    _init_workspace(ws)
+    _set_workflow(ws, current_stage="finalize")
+    _write_finalize_report(ws)
+    _write_gate_report(ws)
+    _append_finalize_event(ws)
+    monkeypatch.setattr(
+        importlib.import_module(
+            "multi_agent_brief.orchestrator.runtime_state.completion_projection"
+        ),
+        "evaluate_delivery_eligibility",
+        lambda *_args, **_kwargs: {
+            "allowed": False,
+            "reference_eligible": False,
+            "reason_code": "synthetic_eligibility_block",
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["delivery_truth"]["valid"] is True
+    assert payload["delivery_truth"]["eligibility"]["allowed"] is False
+    assert payload["next_allowed_action"] == "stop_delivery_not_eligible"
 
 
 def test_completion_projection_stops_on_missing_required_control_file(tmp_path: Path) -> None:
@@ -752,6 +782,41 @@ def test_completion_projection_recovery_binding_mismatch_fails_closed(tmp_path: 
     payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
 
     assert payload["recovery_truth"]["status"] == "invalid_recovery_state"
+    assert payload["next_allowed_action"] == "stop_invalid_recovery_state"
+
+
+def test_completion_projection_later_orphan_recovery_event_fails_closed(tmp_path: Path) -> None:
+    """A later recovery-shaped event without the workflow transaction binding
+    is a partial-write signal, not an event the projection may silently skip."""
+    from multi_agent_brief.orchestrator.runtime_state import supersede_stage_artifact_transaction
+    from tests.test_runtime_state import _contaminated_editor_artifact_workspace
+
+    ws, _old_sha, _current_sha = _contaminated_editor_artifact_workspace(tmp_path)
+    supersede_stage_artifact_transaction(
+        workspace=ws,
+        repo_workdir=ROOT,
+        stage_id="editor",
+        artifact="output/intermediate/audited_brief.md",
+        reason="human approved supersede after contaminated direct edit",
+    )
+    manifest = _load_json(_intermediate(ws) / "runtime_manifest.json")
+    append_event(
+        workspace=ws,
+        run_id=manifest["run_id"],
+        event_type="repair_completed",
+        actor="orchestrator",
+        stage_id="editor",
+        reason="Synthetic orphan recovery event.",
+        metadata={
+            "transaction_id": "tx-orphan-recovery-001",
+            "next_stage": "auditor",
+        },
+    )
+
+    payload = build_completion_projection(workspace=ws, repo_workdir=ROOT)
+
+    assert payload["recovery_truth"]["status"] == "invalid_recovery_state"
+    assert payload["recovery_truth"]["reason_code"] == "recovery_transaction_binding_invalid"
     assert payload["next_allowed_action"] == "stop_invalid_recovery_state"
 
 

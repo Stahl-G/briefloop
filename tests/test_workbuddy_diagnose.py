@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.orchestrator.runtime_state import append_event, initialize_runtime_state
 from multi_agent_brief.orchestrator.runtime_state._io import _sha256_file
@@ -175,11 +177,45 @@ def test_workbuddy_diagnose_formats_completion_projection(tmp_path: Path, capsys
     assert payload["run_card"]["next_allowed_action"] == projection["next_allowed_action"]
     assert payload["run_card"]["delivery_valid"] is True
     assert payload["run_card"]["delivery_truth"] == projection["delivery_truth"]["status"]
+    assert payload["recovery_truth"] == projection["recovery_truth"]
+    assert payload["run_card"]["recovery_truth"] == projection["recovery_truth"]["status"]
+    assert payload["run_card"]["recovery_finalize_allowed"] is False
+    assert payload["run_card"]["recovery_delivery_allowed"] is False
     assert payload["delivery_truth"] == projection["delivery_truth"]
     assert payload["delivery_truth"]["valid"] is True
     assert payload["delivery"]["truth"] == projection["delivery_truth"]
     assert payload["finalize"]["truth"] == projection["finalize_truth"]
     assert payload["run_card"]["next_allowed_action"] == "inspect_status_before_delivery_or_quality"
+
+
+def test_workbuddy_diagnose_projects_recovery_truth_without_reinferring(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from multi_agent_brief.workbuddy import diagnose
+
+    ws = _workspace(tmp_path)
+    recovery_truth = {
+        "status": "ready_for_finalize",
+        "finalize_allowed": True,
+        "delivery_allowed": False,
+    }
+    monkeypatch.setattr(
+        diagnose,
+        "build_completion_projection",
+        lambda **_kwargs: {
+            "recovery_truth": recovery_truth,
+            "next_allowed_action": "run_finalize_gate_or_finalize_complete",
+        },
+    )
+
+    payload = diagnose.build_workbuddy_diagnosis(workspace=ws)
+
+    assert payload["recovery_truth"] == recovery_truth
+    assert payload["run_card"]["recovery_truth"] == "ready_for_finalize"
+    assert payload["run_card"]["recovery_finalize_allowed"] is True
+    assert payload["run_card"]["recovery_delivery_allowed"] is False
+    assert payload["run_card"]["next_allowed_action"] == "run_finalize_gate_or_finalize_complete"
 
 
 def test_workbuddy_diagnose_doctor_error_overlays_completion_next_action(tmp_path: Path, capsys) -> None:
@@ -287,6 +323,7 @@ def test_workbuddy_diagnose_text_prints_projection_run_card(tmp_path: Path, caps
         "assessment_target:",
         "assessment_target_status:",
         "run_integrity:",
+        "recovery_truth:",
         "blocked:",
         "latest_gate_status:",
         "finalize_report:",

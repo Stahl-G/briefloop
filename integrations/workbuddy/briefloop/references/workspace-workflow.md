@@ -77,10 +77,11 @@ WorkBuddy diagnosis reports `delivery_truth.valid=true`.
   path, current user, output path existence/writability result, and permission
   or ACL output. Do not downgrade the error yourself.
 - Never authorize or block finalize or delivery from `run_integrity` alone.
-  For `contaminated` integrity, finalize requires
-  `recovery_truth.finalize_allowed=true` and
-  `next_allowed_action=run_finalize_after_recovery`; delivery, export, and
-  share remain blocked. For `contaminated_repaired` integrity, delivery
+  For `contaminated` integrity, allow only the recovery finalize transaction
+  step named by `next_allowed_action` when
+  `recovery_truth.finalize_allowed=true`; the projected action must be
+  `run_finalize_after_recovery` or `run_finalize_gate_or_finalize_complete`.
+  Delivery, export, and share remain blocked. For `contaminated_repaired` integrity, delivery
   requires both `delivery_truth.valid=true` and
   `delivery_truth.eligibility.allowed=true`. Stop both actions for
   `stale_or_invalid` or unknown integrity. Every permitted recovery remains

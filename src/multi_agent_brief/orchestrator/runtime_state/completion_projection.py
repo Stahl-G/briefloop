@@ -552,8 +552,15 @@ def _next_allowed_action(
         return "stop_finalize_failed_no_valid_delivery"
     if gate_truth.get("status") == "missing" or event_truth.get("finalize_event_present") is not True:
         return "run_finalize_gate_or_finalize_complete"
-    if delivery_truth.get("valid") is True:
+    delivery_eligibility = (
+        delivery_truth.get("eligibility")
+        if isinstance(delivery_truth.get("eligibility"), Mapping)
+        else {}
+    )
+    if delivery_truth.get("valid") is True and delivery_eligibility.get("allowed") is True:
         return "inspect_status_before_delivery_or_quality"
+    if delivery_truth.get("valid") is True:
+        return "stop_delivery_not_eligible"
     return "inspect_invalid_or_incomplete_finalize_report_delivery_truth"
 
 

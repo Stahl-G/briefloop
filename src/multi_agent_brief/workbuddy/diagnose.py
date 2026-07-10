@@ -39,6 +39,7 @@ def build_workbuddy_diagnosis(*, workspace: str | Path) -> dict[str, Any]:
         "artifacts": _mapping(completion.get("artifacts")),
         "finalize": _finalize_payload_from_completion(completion),
         "delivery": _delivery_payload_from_completion(completion),
+        "recovery_truth": _mapping(completion.get("recovery_truth")),
         "delivery_truth": _mapping(completion.get("delivery_truth")),
         "event_truth": _mapping(completion.get("event_truth")),
         "secret_risk": secret_risk,
@@ -60,6 +61,7 @@ def format_workbuddy_diagnosis(payload: Mapping[str, Any]) -> str:
         "assessment_target",
         "assessment_target_status",
         "run_integrity",
+        "recovery_truth",
         "blocked",
         "latest_gate_status",
         "finalize_report",
@@ -108,12 +110,16 @@ def _run_card_from_completion(
     event_truth = _mapping(completion.get("event_truth"))
     assessment_target = _mapping(completion.get("assessment_target"))
     run_integrity = _mapping(completion.get("run_integrity"))
+    recovery_truth = _mapping(completion.get("recovery_truth"))
     return {
         "runtime": _clean_text(runtime.get("runtime")) or "unknown",
         "current_stage": _clean_text(workflow.get("current_stage")) or "unknown",
         "assessment_target": _clean_text(assessment_target.get("assessment_target")) or "not_applicable",
         "assessment_target_status": _clean_text(assessment_target.get("status")) or "not_applicable",
         "run_integrity": _clean_text(run_integrity.get("status")) or "unknown",
+        "recovery_truth": _clean_text(recovery_truth.get("status")) or "none",
+        "recovery_finalize_allowed": recovery_truth.get("finalize_allowed") is True,
+        "recovery_delivery_allowed": recovery_truth.get("delivery_allowed") is True,
         "blocked": bool(workflow.get("blocked")),
         "latest_gate_status": _gate_status_text(gate_truth),
         "finalize_report": _clean_text(finalize_truth.get("status")) or "unknown",
